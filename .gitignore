@@ -29,6 +29,9 @@ dist/
 coverage/
 npm-debug.log*
 
+# Board tool runtime state (not source)
+tasks/.id-allocator.json
+
 # Assets (generated, reproducible from assets/src/)
 assets/out/
 
