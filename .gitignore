@@ -1,0 +1,43 @@
+# Godot
+.godot/
+*.import
+.import/
+export_presets.cfg
+*.translation
+android/
+
+# C++
+build/
+cmake-build-*/
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.exe
+*.a
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Node
+node_modules/
+dist/
+.vite/
+coverage/
+npm-debug.log*
+
+# Assets (generated, reproducible from assets/src/)
+assets/out/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
