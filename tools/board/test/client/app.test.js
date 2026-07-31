@@ -19,11 +19,12 @@ function task(overrides = {}) {
 
 function makeApp(overrides = {}) {
   const boardRoot = document.createElement("div");
+  const detailRoot = document.createElement("div");
   const fetchTasksImpl = overrides.fetchTasksImpl ?? vi.fn().mockResolvedValue([]);
   const patchTaskImpl = overrides.patchTaskImpl ?? vi.fn();
   const connectSocketImpl = overrides.connectSocketImpl ?? vi.fn();
-  const app = createApp({ boardRoot, fetchTasksImpl, patchTaskImpl, connectSocketImpl });
-  return { app, boardRoot, fetchTasksImpl, patchTaskImpl, connectSocketImpl };
+  const app = createApp({ boardRoot, detailRoot, fetchTasksImpl, patchTaskImpl, connectSocketImpl });
+  return { app, boardRoot, detailRoot, fetchTasksImpl, patchTaskImpl, connectSocketImpl };
 }
 
 describe("createApp init", () => {
@@ -82,5 +83,62 @@ describe("createApp handleSocketMessage", () => {
     app.handleSocketMessage({ type: "added", id: "T-0002", task: task({ id: "T-0002", title: "From elsewhere" }) });
 
     expect(boardRoot.textContent).toContain("From elsewhere");
+  });
+});
+
+describe("createApp card detail wiring", () => {
+  it("opens the detail panel with the clicked task's fields on handleCardClick", async () => {
+    const t = task({ id: "T-0001", title: "Inspect me", body: "## Context\nhi" });
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+
+    app.handleCardClick("T-0001");
+
+    expect(app.getSelectedId()).toBe("T-0001");
+    expect(detailRoot.hidden).toBe(false);
+    expect(detailRoot.querySelector(".detail-title").value).toBe("Inspect me");
+    expect(detailRoot.querySelector(".detail-body-preview").textContent).toContain("hi");
+  });
+
+  it("PATCHes only the edited fields on Save and refreshes both board and detail panel", async () => {
+    const t = task({ id: "T-0001", title: "Old title", priority: "P2" });
+    const patched = { ...t, title: "New title" };
+    const { app, boardRoot, detailRoot, patchTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t]),
+      patchTaskImpl: vi.fn().mockResolvedValue(patched)
+    });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    await app.handleSave("T-0001", { title: "New title" });
+
+    expect(patchTaskImpl).toHaveBeenCalledWith("T-0001", { title: "New title" });
+    expect(app.getTasks()).toEqual([patched]);
+    expect(boardRoot.textContent).toContain("New title");
+    expect(detailRoot.querySelector(".detail-title").value).toBe("New title");
+  });
+
+  it("closes and clears the selection on handleClose, hiding the panel cleanly", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+    expect(detailRoot.hidden).toBe(false);
+
+    app.handleClose();
+
+    expect(app.getSelectedId()).toBe(null);
+    expect(detailRoot.hidden).toBe(true);
+  });
+
+  it("keeps the detail panel in sync when the selected task changes over the socket", async () => {
+    const t = task({ id: "T-0001", title: "Old title" });
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...t, title: "Externally renamed" } });
+
+    expect(detailRoot.querySelector(".detail-title").value).toBe("Externally renamed");
   });
 });

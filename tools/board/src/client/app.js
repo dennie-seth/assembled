@@ -1,27 +1,48 @@
 import { fetchTasks, patchTask, connectBoardSocket } from "./api.js";
 import { applyTaskEvent, buildStatusPatch } from "./board.js";
 import { renderBoard } from "./boardView.js";
+import { renderDetailPanel } from "./detailPanel.js";
 
 export function createApp({
   boardRoot,
+  detailRoot,
   fetchTasksImpl = fetchTasks,
   patchTaskImpl = patchTask,
   connectSocketImpl = connectBoardSocket
 }) {
   let tasks = [];
+  let selectedId = null;
 
   function render() {
     renderBoard(boardRoot, tasks, { onDrop: handleDrop, onCardClick: handleCardClick });
+    if (detailRoot) {
+      const selected = tasks.find((task) => task.id === selectedId) ?? null;
+      renderDetailPanel(detailRoot, selected, { onSave: handleSave, onClose: handleClose });
+    }
   }
 
-  async function handleDrop(taskId, newStatus) {
-    const updated = await patchTaskImpl(taskId, buildStatusPatch(newStatus));
+  async function applyPatch(taskId, patch) {
+    const updated = await patchTaskImpl(taskId, patch);
     tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
     render();
   }
 
-  function handleCardClick(_taskId) {
-    // Card detail view lands in T-0017.
+  function handleDrop(taskId, newStatus) {
+    return applyPatch(taskId, buildStatusPatch(newStatus));
+  }
+
+  function handleCardClick(taskId) {
+    selectedId = taskId;
+    render();
+  }
+
+  function handleClose() {
+    selectedId = null;
+    render();
+  }
+
+  function handleSave(taskId, patch) {
+    return applyPatch(taskId, patch);
   }
 
   function handleSocketMessage(event) {
@@ -40,7 +61,10 @@ export function createApp({
     render,
     handleDrop,
     handleCardClick,
+    handleClose,
+    handleSave,
     handleSocketMessage,
-    getTasks: () => tasks
+    getTasks: () => tasks,
+    getSelectedId: () => selectedId
   };
 }
