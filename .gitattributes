@@ -1,0 +1,51 @@
+# Linux-native repo. Normalize everything to LF; never let CRLF slip in.
+* text=auto eol=lf
+
+# Godot
+*.gd     text eol=lf
+*.tscn   text eol=lf
+*.tres   text eol=lf
+*.godot  text eol=lf
+*.cfg    text eol=lf
+
+# C / C++
+*.c      text eol=lf
+*.h      text eol=lf
+*.cpp    text eol=lf
+*.hpp    text eol=lf
+*.cc     text eol=lf
+*.cxx    text eol=lf
+
+# JS / web
+*.js     text eol=lf
+*.mjs    text eol=lf
+*.cjs    text eol=lf
+*.ts     text eol=lf
+*.json   text eol=lf
+
+# Docs
+*.md     text eol=lf
+
+# Common binaries — never diff/normalize
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ttf    binary
+*.otf    binary
+*.wav    binary
+*.mp3    binary
+*.ogg    binary
+*.flac   binary
+
+# Git LFS — audio finals are large regardless of art direction, so LFS from day one.
+assets/final/audio/** filter=lfs diff=lfs merge=lfs -text
+
+# --- DEFERRED ---
+# Image LFS patterns (e.g. assets/final/**/*.png) are intentionally NOT
+# configured yet. Whether images need LFS depends on the art-direction call
+# (PLAN.md open question 3: pixel art vs painted 2D). Pixel art -> plain git
+# is fine; painted/high-res -> LFS required. This section MUST be updated
+# BEFORE any image binary is committed under assets/final/ — adding LFS
+# after binaries land requires a history rewrite.
