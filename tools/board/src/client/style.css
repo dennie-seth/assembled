@@ -1,0 +1,52 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 1rem;
+}
+
+.board {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.column {
+  flex: 1 1 0;
+  min-width: 12rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+}
+
+.column-header {
+  font-size: 0.9rem;
+  margin: 0 0 0.5rem;
+}
+
+.column-cards {
+  min-height: 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.card {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  background: Canvas;
+  cursor: grab;
+}
+
+.card-title {
+  font-weight: 600;
+}
+
+.card-meta {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}

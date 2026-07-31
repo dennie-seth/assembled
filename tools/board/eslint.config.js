@@ -18,6 +18,14 @@ export default [
     }
   },
   {
+    files: ["src/client/**/*.js", "test/client/**/*.js"],
+    languageOptions: {
+      globals: {
+        ...globals.browser
+      }
+    }
+  },
+  {
     ignores: ["dist/**", "node_modules/**"]
   }
 ];
