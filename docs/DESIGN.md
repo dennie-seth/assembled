@@ -13,4 +13,4 @@ scheduled after Phase 2 (see `docs/PLAN.md` open questions).
 | [04-data-model.md](design/04-data-model.md) | seeded from PLAN.md |
 | [05-art-direction.md](design/05-art-direction.md) | DRAFT — blocked on GDD |
 | [06-audio.md](design/06-audio.md) | DRAFT — blocked on GDD |
-| [07-agent-runner.md](design/07-agent-runner.md) | agreed — Phase 2 |
+| [agent-runner.md](design/agent-runner.md) | agreed — Phase 2 (tooling, not GDD-numbered; renamed from `07-agent-runner.md` to free the `07` slot for `07-items-economy.md`) |
