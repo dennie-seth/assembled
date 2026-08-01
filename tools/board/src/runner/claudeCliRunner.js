@@ -80,7 +80,14 @@ export class ClaudeCliRunner extends AgentRunner {
       // Detached so kill() can target the whole process group (-pid), not just this
       // one process -- a headless `claude -p` run may spawn its own Bash-tool
       // children, and a plain child.kill() would leave those orphaned on cancel.
-      detached: true
+      detached: true,
+      // stdin MUST NOT be left as an open, unwritten pipe: the prompt is already
+      // passed as an argv element, but the real CLI still probes stdin at
+      // startup, and Node's default 'pipe' stdio leaves that fd open with
+      // nothing ever written or closed -- the child blocks reading it forever.
+      // 'ignore' gives it immediate EOF (verified against the real CLI), which
+      // it treats the same as "no stdin input, use the prompt argument".
+      stdio: ["ignore", "pipe", "pipe"]
     });
     return { runId: task.id, child, invocation };
   }

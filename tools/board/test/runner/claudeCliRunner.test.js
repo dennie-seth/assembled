@@ -263,6 +263,17 @@ describe("ClaudeCliRunner.start / kill", () => {
     const [, , options] = spawnFn.mock.calls[0];
     expect(options.detached).toBe(true);
   });
+
+  it("start() never leaves stdin as an open, unwritten pipe -- the real CLI blocks forever reading it otherwise", async () => {
+    const child = fakeChild();
+    const spawnFn = vi.fn(() => child);
+    const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
+
+    await runner.start({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt" });
+
+    const [, , options] = spawnFn.mock.calls[0];
+    expect(options.stdio[0]).toBe("ignore");
+  });
 });
 
 describe("ClaudeCliRunner.kill process-group behavior (no orphans)", () => {
