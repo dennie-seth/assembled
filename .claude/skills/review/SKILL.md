@@ -1,0 +1,44 @@
+---
+name: review
+description: The reviewer agent's VALIDATION checklist — run verify, audit the diff against path rules and conduct.md, emit a PASS/FAIL verdict with specific notes, and set the card to review (pass) or in-progress (fail).
+---
+
+# review
+
+The `reviewer` agent's procedure for the `VALIDATION` lifecycle state (see
+`docs/design/07-agent-runner.md`). Read-only on source — this skill never
+edits production code, only the card's status and notes.
+
+## Steps
+
+1. **Run `verify`** for the paths the card's diff touches. If it can't even
+   run (broken environment, missing tool), stop here and set the card to
+   `blocked` with the reason — that is not a FAIL verdict, it's a runner
+   failure.
+2. **Load the applicable rules.** `.claude/rules/conduct.md` always, plus
+   whichever of `cpp.md` / `js.md` / `godot.md` / `sql.md` / `assets.md`
+   match the changed paths.
+3. **Audit the diff** (`git diff develop...HEAD`) against those rules:
+   - TDD evidence: was the test file committed before/alongside the
+     implementation, and does it actually exercise the acceptance criteria
+     — not just a happy-path smoke test?
+   - `conduct.md`: no free-text UGC surface added; commit carries the
+     `Co-authored-by: Claude` trailer; branch is `feature/T-NNNN-*` off
+     `develop`; any generated asset has an `ASSET_PROVENANCE.md` entry.
+   - Path-specific: SOLID/DRY, getters/setters, Doxygen coverage for C++;
+     typed GDScript and gdUnit4 coverage for `godot.md` paths; up/down
+     idempotency for `sql.md` paths; license allowlist + provenance for
+     `assets.md` paths.
+4. **Emit a verdict.**
+   - **PASS** — `verify` green and the audit finds nothing disqualifying.
+     Move the card to `review`, attach a short summary of what was checked.
+   - **FAIL** — either `verify` is red, or the audit finds a rule
+     violation. Move the card back to `in-progress` with specific notes:
+     cite file and line, name the rule violated, don't just say "needs
+     work."
+
+## Hard stop
+
+Never move a card to `done`. Never merge the PR. A PASS verdict's terminal
+action is `review` — the human is the only actor that can advance
+`review` -> `done`.
