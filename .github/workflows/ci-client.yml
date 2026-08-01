@@ -20,7 +20,12 @@ concurrency:
 
 env:
   GODOT_VERSION: "4.7.1"
-  GODOT_CPP_REF: "4.7"
+  # godot-cpp lags the engine's own release cadence - as of this pin there
+  # is no 4.6/4.7 branch or tag yet, only up to the 4.5 line (confirmed via
+  # `git ls-remote --heads/--tags https://github.com/godotengine/godot-cpp`).
+  # This is a concrete, immutable tag, not a moving branch. Bump once
+  # godot-cpp cuts a ref that actually matches GODOT_VERSION's line.
+  GODOT_CPP_REF: "godot-4.5-stable"
   # T-0030/T-0033: no real Phase 5 client exists yet (docs/PLAN.md T-0060).
   # This is a disposable feasibility-only project — see docs/ci-notes.md.
   SPIKE_PROJECT_DIR: .github/ci-spike/godot-client
@@ -33,23 +38,23 @@ jobs:
       SCONS_CACHE: ${{ github.workspace }}/.scons-cache
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Checkout godot-cpp
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: godotengine/godot-cpp
           ref: ${{ env.GODOT_CPP_REF }}
           submodules: recursive
           path: godot-cpp-spike
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
       # T-0034: SCons content-addressed cache dir, so a source-identical
       # rebuild reuses prior objects instead of recompiling godot-cpp.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ env.SCONS_CACHE }}
           key: scons-cache-windows-godot-cpp-${{ env.GODOT_CPP_REF }}-${{ github.sha }}
@@ -84,7 +89,7 @@ jobs:
           godot --headless --export-release "Windows Desktop" build/windows/assembled-ci-spike.exe
 
       # T-0035
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: client-windows-export
           path: ${{ env.SPIKE_PROJECT_DIR }}/build/windows
@@ -94,7 +99,7 @@ jobs:
     name: "Linux: headless export"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: chickensoft-games/setup-godot@v2
         with:
@@ -114,7 +119,7 @@ jobs:
           godot --headless --export-release "Linux" build/linux/assembled-ci-spike.x86_64
 
       # T-0035
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: client-linux-export
           path: ${{ env.SPIKE_PROJECT_DIR }}/build/linux

@@ -7,11 +7,27 @@ Phase 3 (CI/CD) implementation notes — see `docs/PLAN.md` §Phase 3 and the
 
 ## T-0030 — windows-latest godot-cpp + headless export spike
 
-**Status: implemented, not yet empirically verified.** This session had no
-`gh` CLI and no Windows/MSVC toolchain available locally (WSL Ubuntu only),
-so the spike could be *written* but not *run* — GitHub Actions only
-executes on push/PR, and per convention a human opens the PR, which is
-what produces the first real result.
+**Status: first live run (PR #9) failed at the godot-cpp checkout step —
+fixed, re-run pending.** The "Checkout godot-cpp" step failed its `git
+fetch` against `refs/heads/4.7*`/`refs/tags/4.7*` (exit 1, retried 3x).
+Root cause: `godotengine/godot-cpp` doesn't have a `4.7` branch or any
+`4.7.x` tag — the bindings repo lags the engine's own release cadence.
+Confirmed via `git ls-remote --heads`/`--tags
+https://github.com/godotengine/godot-cpp`: branches stop at `4.5`, the
+newest tag is `godot-4.5-stable`. `GODOT_CPP_REF` is now pinned to
+`godot-4.5-stable` (a concrete, immutable tag) in both
+`ci-client.yml` and the spike workflow. This doesn't need to track
+`GODOT_VERSION` (still `4.7.1`, the actual engine/export-template
+version) — the godot-cpp build and the headless export are independent
+checks in this spike, not linked into one working GDExtension. Whoever
+does the real Phase 5 GDExtension integration (T-0060/T-0061) will need
+to re-check whether godot-cpp has caught up by then.
+
+Also bumped `actions/checkout` v4→v7, `actions/setup-python` v5→v7,
+`actions/cache` v4→v6 in the same two files (GH's Node 20 deprecation
+warning; verified no breaking changes affect this repo's usage via each
+action's release notes before bumping — no `pull_request_target` or
+`pip-install` usage here).
 
 **What was built:**
 
@@ -19,10 +35,10 @@ what produces the first real result.
   only (on-demand, not a permanent CI gate — matches the card's
   "timeboxed investigation" framing rather than "every push"). Two
   checks:
-  1. `godotengine/godot-cpp` (external checkout, branch `4.7`) built via
-     `scons platform=windows target=template_release` on `windows-latest`
-     — no MinGW; relies on the MSVC toolchain already present on the
-     GH-hosted Windows image.
+  1. `godotengine/godot-cpp` (external checkout, tag `godot-4.5-stable`)
+     built via `scons platform=windows target=template_release` on
+     `windows-latest` — no MinGW; relies on the MSVC toolchain already
+     present on the GH-hosted Windows image.
   2. `godot --headless --export-release "Windows Desktop"` against a
      minimal placeholder project at `.github/ci-spike/godot-client/` (see
      below), using `chickensoft-games/setup-godot@v2` with
@@ -38,14 +54,13 @@ what produces the first real result.
 **Expectation, per `docs/PLAN.md`:** Godot 4's `--headless` flag uses the
 dummy rasterizer, so 2D import + export packaging is CPU-only — the free
 `windows-latest` runner (no GPU) should be sufficient. That's Godot's
-documented behavior, not something this session could verify first-hand.
+documented behavior, still unconfirmed first-hand pending the re-run.
 
-**Next step:** run the `spike-t0030-godot-windows` workflow (Actions tab →
-Run workflow) or watch `ci-client.yml`'s `windows-export` job on the first
-PR — they run the same steps. **Update this section with the actual
-result** (pass/fail, specifics) once that happens. If it fails, the
-fallback noted in `docs/PLAN.md` is a self-hosted Windows runner on the dev
-box (not WSL — needs the GPU + Godot editor already installed there).
+**Next step:** watch `ci-client.yml`'s `windows-export` job re-run on PR
+#9 after this fix pushes. **Update this section with the actual result**
+once that happens. If it fails again, the fallback noted in
+`docs/PLAN.md` is a self-hosted Windows runner on the dev box (not WSL —
+needs the GPU + Godot editor already installed there).
 
 ## T-0031 — ci-board.yml
 
@@ -72,9 +87,9 @@ ready for T-0040+ integration tests to read directly.
 Windows (`windows-latest`) and Linux (`ubuntu-latest`) export jobs against
 the same placeholder project used by the T-0030 spike (see above) —
 `platform="Linux"` per the export-preset rename in Godot 4.3+ (was
-`Linux/X11` before). Both are unverified for the same reason as T-0030;
-this is the permanent, every-push/PR version of the same steps the spike
-runs on demand.
+`Linux/X11` before). `linux-export` went green on PR #9's first run.
+`windows-export` failed on the same godot-cpp ref bug as T-0030 (same
+root cause, same fix — see above); re-run pending.
 
 ## T-0034 — caching
 

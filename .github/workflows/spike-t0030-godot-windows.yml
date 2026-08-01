@@ -9,7 +9,12 @@ on:
 
 env:
   GODOT_VERSION: "4.7.1"
-  GODOT_CPP_REF: "4.7"
+  # godot-cpp lags the engine's own release cadence - as of this pin there
+  # is no 4.6/4.7 branch or tag yet, only up to the 4.5 line (confirmed via
+  # `git ls-remote --heads/--tags https://github.com/godotengine/godot-cpp`).
+  # This is a concrete, immutable tag, not a moving branch. Bump once
+  # godot-cpp cuts a ref that actually matches GODOT_VERSION's line.
+  GODOT_CPP_REF: "godot-4.5-stable"
 
 jobs:
   godot-cpp-scons-build:
@@ -19,18 +24,18 @@ jobs:
       SCONS_CACHE: ${{ github.workspace }}/.scons-cache
     steps:
       - name: Checkout godot-cpp
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: godotengine/godot-cpp
           ref: ${{ env.GODOT_CPP_REF }}
           submodules: recursive
           path: godot-cpp-spike
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ env.SCONS_CACHE }}
           key: scons-cache-windows-godot-cpp-${{ env.GODOT_CPP_REF }}-${{ github.sha }}
@@ -47,7 +52,7 @@ jobs:
     name: "(b) godot --headless --export-release"
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: chickensoft-games/setup-godot@v2
         with:
