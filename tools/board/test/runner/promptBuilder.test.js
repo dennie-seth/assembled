@@ -137,6 +137,16 @@ describe("buildPrompt — template correctness", () => {
     expect(prompt.toLowerCase()).toContain("done");
   });
 
+  it("tells the implementer never to push or open a PR itself -- the orchestrator owns handoff/push after VALIDATION passes", () => {
+    // Regression test: a live smoke run showed the implementer (unrestricted Bash(git:*))
+    // following the old prompt's instruction to invoke open-review-pr itself, pushing
+    // the branch to origin before the reviewer ever validated it.
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).toMatch(/do not push|never push/i);
+    expect(prompt).toMatch(/do not open a pr|never open a pr/i);
+    expect(prompt).toMatch(/do not invoke the open-review-pr skill|never invoke the open-review-pr skill/i);
+  });
+
   it("works with no agentDef and no rules (still includes the task section)", () => {
     const prompt = buildPrompt({ task: TASK });
     expect(prompt).toContain("T-0099");
