@@ -83,6 +83,13 @@ jobs:
           mkdir -p build/windows
           godot --headless --export-release "Windows Desktop" build/windows/assembled-ci-spike.exe
 
+      # T-0035
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-windows-export
+          path: ${{ env.SPIKE_PROJECT_DIR }}/build/windows
+          if-no-files-found: error
+
   linux-export:
     name: "Linux: headless export"
     runs-on: ubuntu-latest
@@ -105,3 +112,10 @@ jobs:
         run: |
           mkdir -p build/linux
           godot --headless --export-release "Linux" build/linux/assembled-ci-spike.x86_64
+
+      # T-0035
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-linux-export
+          path: ${{ env.SPIKE_PROJECT_DIR }}/build/linux
+          if-no-files-found: error

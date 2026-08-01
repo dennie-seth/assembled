@@ -58,3 +58,11 @@ jobs:
       - name: Test
         working-directory: server/build
         run: ctest --output-on-failure
+
+      # T-0035: stands in for "server binary" until T-0040+ produces a real
+      # server executable — see docs/ci-notes.md.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-binary
+          path: server/build/server_tests
+          if-no-files-found: error
