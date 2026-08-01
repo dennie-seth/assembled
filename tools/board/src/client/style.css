@@ -6,6 +6,54 @@
 body {
   margin: 0;
   padding: 1rem;
+  padding-bottom: 18rem;
+}
+
+#terminal-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 16rem;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  transition: height 0.15s ease;
+}
+
+#terminal-panel.collapsed {
+  height: 2.25rem;
+}
+
+#terminal-panel.collapsed #terminal {
+  display: none;
+}
+
+.terminal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.375rem 0.75rem;
+  color: #ddd;
+  font-size: 0.8rem;
+  flex: 0 0 auto;
+}
+
+#terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 0.5rem 0.5rem;
+}
+
+.board-error {
+  background: color-mix(in srgb, red 15%, Canvas);
+  border: 1px solid color-mix(in srgb, red 40%, transparent);
+  color: color-mix(in srgb, red 60%, currentColor);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
 }
 
 .board {
