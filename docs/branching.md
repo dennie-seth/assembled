@@ -61,3 +61,24 @@ Rules, in priority order:
 The LFS decision for images is deferred to the art-direction call (see
 `docs/PLAN.md` open question 3) and must land before any image binary is
 committed — see `.gitattributes`.
+
+## Pre-push hook (T-0036)
+
+`.githooks/pre-push` runs a fast local subset of CI before a push leaves
+your machine: `tools/board` lint + test, and the `server/` doctest unit
+tests (no Postgres container — that part of CI only runs on GitHub).
+Cold, it takes well under a minute (~13s on the dev box, less once the
+CMake build dir already exists from a prior run).
+
+**Install** (once per clone):
+
+```sh
+git config core.hooksPath .githooks
+```
+
+**Bypass** for a single push (e.g. a WIP branch, or you know CI will
+catch it anyway):
+
+```sh
+git push --no-verify
+```
