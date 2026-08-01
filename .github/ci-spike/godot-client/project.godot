@@ -1,0 +1,15 @@
+; T-0030/T-0033 CI feasibility spike project.
+;
+; This is NOT the real Phase 5 client (docs/PLAN.md T-0060 owns that). It
+; exists only so ci-client.yml has something to run `godot --headless
+; --export-release` against while proving out the Windows/Linux export
+; pipeline ahead of real client code landing. See docs/ci-notes.md.
+
+config_version=5
+
+[application]
+
+config/name="assembled-ci-spike"
+config/description="CI feasibility spike (T-0030/T-0033) — not the real game client."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.3")

@@ -1,0 +1,126 @@
+name: ci-client
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "client/**"
+      - ".github/ci-spike/**"
+      - ".github/workflows/ci-client.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "client/**"
+      - ".github/ci-spike/**"
+      - ".github/workflows/ci-client.yml"
+
+concurrency:
+  group: ci-client-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.1"
+  # godot-cpp lags the engine's own release cadence - as of this pin there
+  # is no 4.6/4.7 branch or tag yet, only up to the 4.5 line (confirmed via
+  # `git ls-remote --heads/--tags https://github.com/godotengine/godot-cpp`).
+  # This is a concrete, immutable tag, not a moving branch. Bump once
+  # godot-cpp cuts a ref that actually matches GODOT_VERSION's line.
+  GODOT_CPP_REF: "godot-4.5-stable"
+  # T-0030/T-0033: no real Phase 5 client exists yet (docs/PLAN.md T-0060).
+  # This is a disposable feasibility-only project — see docs/ci-notes.md.
+  SPIKE_PROJECT_DIR: .github/ci-spike/godot-client
+
+jobs:
+  windows-export:
+    name: "Windows: godot-cpp build + headless export"
+    runs-on: windows-latest
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons-cache
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Checkout godot-cpp
+        uses: actions/checkout@v7
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          submodules: recursive
+          path: godot-cpp-spike
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      # T-0034: SCons content-addressed cache dir, so a source-identical
+      # rebuild reuses prior objects instead of recompiling godot-cpp.
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: scons-cache-windows-godot-cpp-${{ env.GODOT_CPP_REF }}-${{ github.sha }}
+          restore-keys: |
+            scons-cache-windows-godot-cpp-${{ env.GODOT_CPP_REF }}-
+
+      - run: pip install scons
+
+      - name: Build godot-cpp (template_release, MSVC)
+        working-directory: godot-cpp-spike
+        run: scons platform=windows target=template_release -j2
+
+      # T-0034: caches the editor download + export templates (cache: true
+      # is the action's default; set explicitly for clarity).
+      - uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+          cache: true
+
+      - name: Import project (headless)
+        shell: bash
+        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        run: godot --headless --import
+
+      - name: Export Windows Desktop
+        shell: bash
+        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        run: |
+          mkdir -p build/windows
+          godot --headless --export-release "Windows Desktop" build/windows/assembled-ci-spike.exe
+
+      # T-0035
+      - uses: actions/upload-artifact@v7
+        with:
+          name: client-windows-export
+          path: ${{ env.SPIKE_PROJECT_DIR }}/build/windows
+          if-no-files-found: error
+
+  linux-export:
+    name: "Linux: headless export"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+          cache: true
+
+      - name: Import project (headless)
+        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        run: godot --headless --import
+
+      - name: Export Linux
+        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        run: |
+          mkdir -p build/linux
+          godot --headless --export-release "Linux" build/linux/assembled-ci-spike.x86_64
+
+      # T-0035
+      - uses: actions/upload-artifact@v7
+        with:
+          name: client-linux-export
+          path: ${{ env.SPIKE_PROJECT_DIR }}/build/linux
+          if-no-files-found: error
