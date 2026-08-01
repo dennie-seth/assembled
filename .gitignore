@@ -6,6 +6,9 @@ export_presets.cfg
 *.translation
 android/
 
+# CI-owned, not a personal dev artifact (T-0030/T-0033) — see docs/ci-notes.md
+!/.github/ci-spike/godot-client/export_presets.cfg
+
 # C++
 build/
 cmake-build-*/
