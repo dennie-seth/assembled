@@ -100,4 +100,20 @@ describe("renderBoard", () => {
 
     expect(onDrop).not.toHaveBeenCalled();
   });
+
+  it("renders an error banner when an error message is provided", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), error: "unmet dependencies T-0002" });
+
+    const banner = root.querySelector(".board-error");
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toContain("unmet dependencies T-0002");
+  });
+
+  it("renders no error banner when there is no error", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    expect(root.querySelector(".board-error")).toBeNull();
+  });
 });

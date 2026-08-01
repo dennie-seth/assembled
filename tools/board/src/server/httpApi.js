@@ -1,4 +1,9 @@
 import http from "node:http";
+import {
+  assertCanMoveToInProgress,
+  UnmetDependencyError,
+  DependencyCycleError
+} from "../lib/dependencyGuard.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 
@@ -99,6 +104,17 @@ async function handlePatchTask(store, id, req, res) {
   const body = requireJsonObject(await readJsonBody(req));
   if ("id" in body && body.id !== id) {
     throw new HttpError(400, "Cannot change a task's id");
+  }
+
+  if (body.status === "in-progress") {
+    try {
+      await assertCanMoveToInProgress(store, id);
+    } catch (err) {
+      if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError) {
+        throw new HttpError(409, err.message);
+      }
+      throw err;
+    }
   }
 
   let updated;

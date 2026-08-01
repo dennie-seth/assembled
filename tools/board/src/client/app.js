@@ -12,9 +12,10 @@ export function createApp({
 }) {
   let tasks = [];
   let selectedId = null;
+  let error = null;
 
   function render() {
-    renderBoard(boardRoot, tasks, { onDrop: handleDrop, onCardClick: handleCardClick });
+    renderBoard(boardRoot, tasks, { onDrop: handleDrop, onCardClick: handleCardClick, error });
     if (detailRoot) {
       const selected = tasks.find((task) => task.id === selectedId) ?? null;
       renderDetailPanel(detailRoot, selected, { onSave: handleSave, onClose: handleClose });
@@ -24,11 +25,17 @@ export function createApp({
   async function applyPatch(taskId, patch) {
     const updated = await patchTaskImpl(taskId, patch);
     tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
+    error = null;
     render();
   }
 
-  function handleDrop(taskId, newStatus) {
-    return applyPatch(taskId, buildStatusPatch(newStatus));
+  async function handleDrop(taskId, newStatus) {
+    try {
+      await applyPatch(taskId, buildStatusPatch(newStatus));
+    } catch (err) {
+      error = err.message;
+      render();
+    }
   }
 
   function handleCardClick(taskId) {
@@ -41,8 +48,13 @@ export function createApp({
     render();
   }
 
-  function handleSave(taskId, patch) {
-    return applyPatch(taskId, patch);
+  async function handleSave(taskId, patch) {
+    try {
+      await applyPatch(taskId, patch);
+    } catch (err) {
+      error = err.message;
+      render();
+    }
   }
 
   function handleSocketMessage(event) {
@@ -65,6 +77,7 @@ export function createApp({
     handleSave,
     handleSocketMessage,
     getTasks: () => tasks,
-    getSelectedId: () => selectedId
+    getSelectedId: () => selectedId,
+    getError: () => error
   };
 }

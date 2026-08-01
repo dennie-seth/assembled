@@ -195,6 +195,87 @@ describe("PATCH /api/tasks/:id", () => {
   });
 });
 
+describe("PATCH /api/tasks/:id dependency guard", () => {
+  async function createTask(overrides = {}) {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody(overrides))
+    });
+    return res.json();
+  }
+
+  it("rejects moving to in-progress when a dependency is not done", async () => {
+    const dep = await createTask({ title: "Dependency" });
+    const task = await createTask({ title: "Blocked", depends_on: [dep.id] });
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "in-progress" })
+    });
+
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(new RegExp(dep.id));
+
+    const unchanged = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+    expect(unchanged.status).not.toBe("in-progress");
+  });
+
+  it("allows moving to in-progress once all dependencies are done", async () => {
+    const dep = await createTask({ title: "Dependency" });
+    await fetch(`${baseUrl}/api/tasks/${dep.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" })
+    });
+    const task = await createTask({ title: "Unblocked", depends_on: [dep.id] });
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "in-progress" })
+    });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("in-progress");
+  });
+
+  it("rejects with a clear error and does not hang when the dependency graph has a cycle", async () => {
+    const a = await createTask({ title: "A" });
+    const b = await createTask({ title: "B", depends_on: [a.id] });
+    await fetch(`${baseUrl}/api/tasks/${a.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ depends_on: [b.id] })
+    });
+
+    const res = await fetch(`${baseUrl}/api/tasks/${a.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "in-progress" })
+    });
+
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/cycle/i);
+  });
+
+  it("does not guard status changes that are not a move to in-progress", async () => {
+    const dep = await createTask({ title: "Dependency" });
+    const task = await createTask({ title: "Blocked", depends_on: [dep.id] });
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "ready" })
+    });
+
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("routing edge cases", () => {
   it("returns 404 for an unknown path", async () => {
     const res = await fetch(`${baseUrl}/api/nope`);

@@ -61,6 +61,69 @@ describe("createApp handleDrop", () => {
   });
 });
 
+describe("createApp handleDrop dependency guard", () => {
+  it("keeps the task in its original column and surfaces the server's error when the move is rejected", async () => {
+    const original = task({ id: "T-0001", status: "backlog", title: "Blocked task" });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      patchTaskImpl: vi
+        .fn()
+        .mockRejectedValue(
+          new Error("Cannot move T-0001 to in-progress: unmet dependencies T-0002")
+        )
+    });
+    await app.init();
+
+    await app.handleDrop("T-0001", "in-progress");
+
+    expect(app.getTasks()).toEqual([original]);
+    const backlogColumn = boardRoot.querySelector('.column[data-status="backlog"]');
+    expect(backlogColumn.textContent).toContain("Blocked task");
+    const inProgressColumn = boardRoot.querySelector('.column[data-status="in-progress"]');
+    expect(inProgressColumn.textContent).not.toContain("Blocked task");
+    expect(app.getError()).toMatch(/unmet dependencies T-0002/);
+    expect(boardRoot.textContent).toContain("unmet dependencies T-0002");
+  });
+
+  it("clears a previous error once a subsequent move succeeds", async () => {
+    const original = task({ id: "T-0001", status: "backlog", title: "Task" });
+    const patched = { ...original, status: "ready" };
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      patchTaskImpl: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("blocked"))
+        .mockResolvedValueOnce(patched)
+    });
+    await app.init();
+
+    await app.handleDrop("T-0001", "in-progress");
+    expect(app.getError()).toBe("blocked");
+
+    await app.handleDrop("T-0001", "ready");
+
+    expect(app.getError()).toBe(null);
+    expect(boardRoot.textContent).not.toContain("blocked");
+  });
+});
+
+describe("createApp handleSave dependency guard", () => {
+  it("surfaces the server's error and leaves the task unchanged when Save is rejected", async () => {
+    const original = task({ id: "T-0001", status: "backlog", title: "Task" });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      patchTaskImpl: vi.fn().mockRejectedValue(new Error("Dependency cycle detected: T-0001 -> T-0001"))
+    });
+    await app.init();
+
+    await app.handleSave("T-0001", { status: "in-progress" });
+
+    expect(app.getTasks()).toEqual([original]);
+    expect(app.getError()).toMatch(/cycle/i);
+    expect(boardRoot.textContent).toContain("cycle");
+  });
+});
+
 describe("createApp handleSocketMessage", () => {
   it("applies an external change event and re-renders without a page reload", async () => {
     const original = task({ id: "T-0001", title: "Old title" });

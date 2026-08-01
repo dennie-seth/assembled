@@ -69,6 +69,13 @@ export function renderBoard(root, tasks, callbacks) {
   const grouped = groupTasksByStatus(tasks);
   root.replaceChildren();
 
+  if (callbacks.error) {
+    const banner = document.createElement("div");
+    banner.className = "board-error";
+    banner.textContent = callbacks.error;
+    root.appendChild(banner);
+  }
+
   const board = document.createElement("div");
   board.className = "board";
 
