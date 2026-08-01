@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildPrompt, resolveRulesForTask, AGENT_PATH_SCOPES } from "../../src/runner/promptBuilder.js";
+import {
+  buildPrompt,
+  resolveRulesForTask,
+  resolveRulesForPaths,
+  matchesPattern,
+  AGENT_PATH_SCOPES
+} from "../../src/runner/promptBuilder.js";
 
 const TASK = {
   id: "T-0099",
@@ -56,6 +62,46 @@ describe("resolveRulesForTask", () => {
   it("exposes the agent -> path scope table used for matching", () => {
     expect(AGENT_PATH_SCOPES.infra).toEqual(expect.arrayContaining(["tools/**"]));
     expect(AGENT_PATH_SCOPES.server).toEqual(expect.arrayContaining(["server/**", "shared/**"]));
+  });
+});
+
+describe("matchesPattern", () => {
+  it("matches a trailing ** as any suffix under the prefix", () => {
+    expect(matchesPattern("tools/**", "tools/board/src/runner/gitOps.js")).toBe(true);
+    expect(matchesPattern("tools/**", "server/src/main.cpp")).toBe(false);
+  });
+
+  it("matches the universal ** pattern against any path", () => {
+    expect(matchesPattern("**", "server/src/main.cpp")).toBe(true);
+    expect(matchesPattern("**", "README.md")).toBe(true);
+  });
+
+  it("does not match a partial prefix that isn't actually inside the scoped directory", () => {
+    expect(matchesPattern("tools/**", "tools-other/file.js")).toBe(false);
+  });
+});
+
+describe("resolveRulesForPaths — rule resolution from real diffed file paths (reviewer)", () => {
+  it("resolves js + conduct for a diff that only touched tools/**", () => {
+    const resolved = resolveRulesForPaths(["tools/board/src/runner/gitOps.js"], ALL_RULES);
+    const names = resolved.map((r) => r.name);
+    expect(names).toEqual(expect.arrayContaining(["conduct", "js"]));
+    expect(names).not.toContain("cpp");
+    expect(names).not.toContain("sql");
+  });
+
+  it("resolves cpp + sql + conduct for a diff spanning server C++ and migrations", () => {
+    const resolved = resolveRulesForPaths(
+      ["server/src/main.cpp", "server/migrations/0001_up.sql"],
+      ALL_RULES
+    );
+    const names = resolved.map((r) => r.name);
+    expect(names).toEqual(expect.arrayContaining(["conduct", "cpp", "sql"]));
+    expect(names).not.toContain("js");
+  });
+
+  it("resolves only conduct when the diff is empty", () => {
+    expect(resolveRulesForPaths([], ALL_RULES).map((r) => r.name)).toEqual(["conduct"]);
   });
 });
 
