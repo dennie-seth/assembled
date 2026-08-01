@@ -54,6 +54,11 @@ describe("parseTask / serializeTask round-trip", () => {
     expect(parseTask(serializeTask(task))).toEqual(task);
   });
 
+  it("accepts status: validation (Agent Runner VALIDATION lifecycle state)", () => {
+    const task = { ...VALID_TASK, status: "validation" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
   it("parses the PLAN.md example format with unquoted YAML scalars", () => {
     const raw = [
       "---",

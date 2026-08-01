@@ -4,6 +4,7 @@ const STATUS_LABELS = {
   backlog: "Backlog",
   ready: "Ready",
   "in-progress": "In Progress",
+  validation: "Validation",
   review: "Review",
   done: "Done",
   blocked: "Blocked"
