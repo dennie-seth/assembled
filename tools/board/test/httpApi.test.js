@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -284,6 +284,114 @@ describe("routing edge cases", () => {
 
   it("returns 405 for an unsupported method on a known route", async () => {
     const res = await fetch(`${baseUrl}/api/tasks`, { method: "DELETE" });
+    expect(res.status).toBe(405);
+  });
+});
+
+describe("POST /api/tasks/:id/run and /cancel without an orchestrator configured", () => {
+  it("returns 501 for /run when no orchestrator is wired", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/T-9999/run`, { method: "POST" });
+    expect(res.status).toBe(501);
+  });
+
+  it("returns 501 for /cancel when no orchestrator is wired", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/T-9999/cancel`, { method: "POST" });
+    expect(res.status).toBe(501);
+  });
+});
+
+describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
+  let orchTmpDir;
+  let orchServer;
+  let orchBaseUrl;
+  let orchestrator;
+
+  beforeEach(async () => {
+    orchTmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-httpapi-orch-"));
+    const store = new FsTaskStore(orchTmpDir);
+    const idAllocator = new IdAllocator(orchTmpDir);
+    orchestrator = {
+      store,
+      running: new Set(),
+      runCard: async (id) => {
+        orchestrator.running.add(id);
+      },
+      cancelRun: async (id) => {
+        if (!orchestrator.running.has(id)) {
+          throw new Error(`No active run for ${id}`);
+        }
+        orchestrator.running.delete(id);
+        await store.update(id, { status: "blocked" });
+      },
+      isRunning: (id) => orchestrator.running.has(id)
+    };
+    orchServer = await startHttpServer({ store, idAllocator, orchestrator, port: 0 });
+    const { port } = orchServer.address();
+    orchBaseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise((resolve) => orchServer.close(resolve));
+    await fs.rm(orchTmpDir, { recursive: true, force: true });
+  });
+
+  async function createTask(overrides = {}) {
+    const res = await fetch(`${orchBaseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody(overrides))
+    });
+    return res.json();
+  }
+
+  it("returns 404 when running a task that does not exist", async () => {
+    const res = await fetch(`${orchBaseUrl}/api/tasks/T-9999/run`, { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 409 when running a task that is not ready", async () => {
+    const task = await createTask({ status: "backlog" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/ready/i);
+  });
+
+  it("accepts a run on a ready card and kicks off the orchestrator without blocking the response", async () => {
+    const task = await createTask({ status: "ready" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(202);
+    await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
+  });
+
+  it("returns 409 when running a card that already has an active run", async () => {
+    const task = await createTask({ status: "ready" });
+    await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
+
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(409);
+  });
+
+  it("returns 409 cancelling a card with no active run", async () => {
+    const task = await createTask({ status: "ready" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/cancel`, { method: "POST" });
+    expect(res.status).toBe(409);
+  });
+
+  it("cancels an active run and reflects the resulting task state", async () => {
+    const task = await createTask({ status: "ready" });
+    await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
+
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/cancel`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const payload = await res.json();
+    expect(payload.status).toBe("blocked");
+  });
+
+  it("returns 404 running/cancelling an unknown route method combination gracefully", async () => {
+    const res = await fetch(`${orchBaseUrl}/api/tasks/T-0001/run`, { method: "GET" });
     expect(res.status).toBe(405);
   });
 });

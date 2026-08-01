@@ -6,6 +6,8 @@ import {
 } from "../lib/dependencyGuard.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
+const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
+const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
 
 const DEFAULTS = {
   status: "backlog",
@@ -127,11 +129,49 @@ async function handlePatchTask(store, id, req, res) {
   sendJson(res, 200, updated);
 }
 
-export function createRequestListener({ store, idAllocator }) {
+async function handleRunTask(orchestrator, id, res) {
+  if (!orchestrator) {
+    throw new HttpError(501, "Agent Runner is not configured on this server");
+  }
+  const task = await orchestrator.store.get(id);
+  if (!task) {
+    throw new HttpError(404, `Task ${id} not found`);
+  }
+  if (task.status !== "ready") {
+    throw new HttpError(409, `Cannot run ${id}: status is "${task.status}", expected "ready"`);
+  }
+  if (orchestrator.isRunning(id)) {
+    throw new HttpError(409, `Task ${id} already has an active run`);
+  }
+
+  // Fire-and-forget: a run (implementer + reviewer) can take minutes. The
+  // client follows progress over the board WS, not this response.
+  orchestrator.runCard(id).catch((err) => {
+    console.error(`Agent Runner: run failed for ${id}:`, err);
+  });
+
+  sendJson(res, 202, task);
+}
+
+async function handleCancelTask(orchestrator, id, res) {
+  if (!orchestrator) {
+    throw new HttpError(501, "Agent Runner is not configured on this server");
+  }
+  if (!orchestrator.isRunning(id)) {
+    throw new HttpError(409, `No active run for ${id}`);
+  }
+  await orchestrator.cancelRun(id);
+  const task = await orchestrator.store.get(id);
+  sendJson(res, 200, task);
+}
+
+export function createRequestListener({ store, idAllocator, orchestrator }) {
   return async function requestListener(req, res) {
     try {
       const { pathname } = new URL(req.url, "http://localhost");
       const idMatch = TASK_ID_PATH_RE.exec(pathname);
+      const runMatch = TASK_RUN_PATH_RE.exec(pathname);
+      const cancelMatch = TASK_CANCEL_PATH_RE.exec(pathname);
 
       if (pathname === "/api/tasks" && req.method === "GET") {
         return await handleListTasks(store, res);
@@ -145,7 +185,13 @@ export function createRequestListener({ store, idAllocator }) {
       if (idMatch && req.method === "PATCH") {
         return await handlePatchTask(store, idMatch[1], req, res);
       }
-      if (pathname === "/api/tasks" || idMatch) {
+      if (runMatch && req.method === "POST") {
+        return await handleRunTask(orchestrator, runMatch[1], res);
+      }
+      if (cancelMatch && req.method === "POST") {
+        return await handleCancelTask(orchestrator, cancelMatch[1], res);
+      }
+      if (pathname === "/api/tasks" || idMatch || runMatch || cancelMatch) {
         throw new HttpError(405, `Method ${req.method} not allowed on ${pathname}`);
       }
       throw new HttpError(404, "Not found");
@@ -159,11 +205,11 @@ export function createRequestListener({ store, idAllocator }) {
   };
 }
 
-export function startHttpServer({ store, idAllocator, port = 0, host = "127.0.0.1" }) {
+export function startHttpServer({ store, idAllocator, orchestrator, port = 0, host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") {
     throw new Error("HTTP API must bind to 127.0.0.1 only");
   }
-  const server = http.createServer(createRequestListener({ store, idAllocator }));
+  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator }));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));

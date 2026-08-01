@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchTasks, patchTask, connectBoardSocket } from "../../src/client/api.js";
+import { fetchTasks, patchTask, connectBoardSocket, runTask, cancelTask } from "../../src/client/api.js";
 
 const originalFetch = global.fetch;
 
@@ -51,6 +51,50 @@ describe("patchTask", () => {
       json: async () => ({ error: "bad status" })
     });
     await expect(patchTask("T-0001", { status: "bogus" })).rejects.toThrow("bad status");
+  });
+});
+
+describe("runTask", () => {
+  it("POSTs to the task's /run endpoint", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => ({ id: "T-0001", status: "ready" })
+    });
+    const result = await runTask("T-0001");
+    expect(global.fetch).toHaveBeenCalledWith("/api/tasks/T-0001/run", { method: "POST" });
+    expect(result).toEqual({ id: "T-0001", status: "ready" });
+  });
+
+  it("throws the server-provided error message on failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: "already has an active run" })
+    });
+    await expect(runTask("T-0001")).rejects.toThrow("already has an active run");
+  });
+});
+
+describe("cancelTask", () => {
+  it("POSTs to the task's /cancel endpoint and returns the resulting task", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "T-0001", status: "blocked" })
+    });
+    const result = await cancelTask("T-0001");
+    expect(global.fetch).toHaveBeenCalledWith("/api/tasks/T-0001/cancel", { method: "POST" });
+    expect(result).toEqual({ id: "T-0001", status: "blocked" });
+  });
+
+  it("throws the server-provided error message on failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: "No active run for T-0001" })
+    });
+    await expect(cancelTask("T-0001")).rejects.toThrow("No active run for T-0001");
   });
 });
 

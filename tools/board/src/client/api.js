@@ -22,6 +22,23 @@ export async function patchTask(id, updates) {
   return res.json();
 }
 
+async function postAction(path) {
+  const res = await fetch(path, { method: "POST" });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `POST ${path} failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export function runTask(id) {
+  return postAction(`${TASKS_PATH}/${id}/run`);
+}
+
+export function cancelTask(id) {
+  return postAction(`${TASKS_PATH}/${id}/cancel`);
+}
+
 export function connectBoardSocket(onMessage) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${protocol}//${window.location.host}${WS_PATH}`);

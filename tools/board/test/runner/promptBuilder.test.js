@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildPrompt, resolveRulesForTask, AGENT_PATH_SCOPES } from "../../src/runner/promptBuilder.js";
+import {
+  buildPrompt,
+  resolveRulesForTask,
+  resolveRulesForPaths,
+  matchesPattern,
+  AGENT_PATH_SCOPES
+} from "../../src/runner/promptBuilder.js";
 
 const TASK = {
   id: "T-0099",
@@ -59,6 +65,46 @@ describe("resolveRulesForTask", () => {
   });
 });
 
+describe("matchesPattern", () => {
+  it("matches a trailing ** as any suffix under the prefix", () => {
+    expect(matchesPattern("tools/**", "tools/board/src/runner/gitOps.js")).toBe(true);
+    expect(matchesPattern("tools/**", "server/src/main.cpp")).toBe(false);
+  });
+
+  it("matches the universal ** pattern against any path", () => {
+    expect(matchesPattern("**", "server/src/main.cpp")).toBe(true);
+    expect(matchesPattern("**", "README.md")).toBe(true);
+  });
+
+  it("does not match a partial prefix that isn't actually inside the scoped directory", () => {
+    expect(matchesPattern("tools/**", "tools-other/file.js")).toBe(false);
+  });
+});
+
+describe("resolveRulesForPaths — rule resolution from real diffed file paths (reviewer)", () => {
+  it("resolves js + conduct for a diff that only touched tools/**", () => {
+    const resolved = resolveRulesForPaths(["tools/board/src/runner/gitOps.js"], ALL_RULES);
+    const names = resolved.map((r) => r.name);
+    expect(names).toEqual(expect.arrayContaining(["conduct", "js"]));
+    expect(names).not.toContain("cpp");
+    expect(names).not.toContain("sql");
+  });
+
+  it("resolves cpp + sql + conduct for a diff spanning server C++ and migrations", () => {
+    const resolved = resolveRulesForPaths(
+      ["server/src/main.cpp", "server/migrations/0001_up.sql"],
+      ALL_RULES
+    );
+    const names = resolved.map((r) => r.name);
+    expect(names).toEqual(expect.arrayContaining(["conduct", "cpp", "sql"]));
+    expect(names).not.toContain("js");
+  });
+
+  it("resolves only conduct when the diff is empty", () => {
+    expect(resolveRulesForPaths([], ALL_RULES).map((r) => r.name)).toEqual(["conduct"]);
+  });
+});
+
 describe("buildPrompt — template correctness", () => {
   it("includes the task id/title, the workflow ordering, the agent def, and matched rules in order", () => {
     const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
@@ -89,6 +135,16 @@ describe("buildPrompt — template correctness", () => {
     const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
     expect(prompt.toLowerCase()).toContain("never move");
     expect(prompt.toLowerCase()).toContain("done");
+  });
+
+  it("tells the implementer never to push or open a PR itself -- the orchestrator owns handoff/push after VALIDATION passes", () => {
+    // Regression test: a live smoke run showed the implementer (unrestricted Bash(git:*))
+    // following the old prompt's instruction to invoke open-review-pr itself, pushing
+    // the branch to origin before the reviewer ever validated it.
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).toMatch(/do not push|never push/i);
+    expect(prompt).toMatch(/do not open a pr|never open a pr/i);
+    expect(prompt).toMatch(/do not invoke the open-review-pr skill|never invoke the open-review-pr skill/i);
   });
 
   it("works with no agentDef and no rules (still includes the task section)", () => {
