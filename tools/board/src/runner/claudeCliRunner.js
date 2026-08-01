@@ -36,7 +36,7 @@ export class ClaudeCliRunner extends AgentRunner {
     return { ...env, ...this.extraEnv };
   }
 
-  buildInvocation({ task, prompt, allowedTools, worktreeDir }) {
+  buildInvocation({ task, prompt, allowedTools, worktreeDir, model }) {
     if (!task || typeof task.id !== "string" || task.id.length === 0) {
       throw new Error("ClaudeCliRunner requires a task with an id");
     }
@@ -58,8 +58,9 @@ export class ClaudeCliRunner extends AgentRunner {
       "--allowedTools",
       allowedTools.join(" ")
     ];
-    if (this.model) {
-      args.push("--model", this.model);
+    const resolvedModel = model ?? this.model;
+    if (resolvedModel) {
+      args.push("--model", resolvedModel);
     }
     args.push(prompt);
 
@@ -71,11 +72,15 @@ export class ClaudeCliRunner extends AgentRunner {
     };
   }
 
-  async start({ task, prompt, allowedTools, worktreeDir }) {
-    const invocation = this.buildInvocation({ task, prompt, allowedTools, worktreeDir });
+  async start({ task, prompt, allowedTools, worktreeDir, model }) {
+    const invocation = this.buildInvocation({ task, prompt, allowedTools, worktreeDir, model });
     const child = this.spawnFn(invocation.command, invocation.args, {
       cwd: invocation.cwd,
-      env: invocation.env
+      env: invocation.env,
+      // Detached so kill() can target the whole process group (-pid), not just this
+      // one process -- a headless `claude -p` run may spawn its own Bash-tool
+      // children, and a plain child.kill() would leave those orphaned on cancel.
+      detached: true
     });
     return { runId: task.id, child, invocation };
   }
@@ -86,8 +91,17 @@ export class ClaudeCliRunner extends AgentRunner {
 
   kill(run) {
     const child = run && run.child ? run.child : run;
-    if (child && typeof child.kill === "function") {
-      child.kill();
+    if (!child || typeof child.kill !== "function") {
+      return;
     }
+    if (typeof child.pid === "number") {
+      try {
+        process.kill(-child.pid, "SIGTERM");
+        return;
+      } catch {
+        // Not a process group leader (or already dead) -- fall back below.
+      }
+    }
+    child.kill();
   }
 }

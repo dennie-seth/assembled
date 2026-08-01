@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { spawn as nodeSpawn } from "node:child_process";
 import { AgentRunner } from "../../src/runner/agentRunner.js";
 import { ClaudeCliRunner } from "../../src/runner/claudeCliRunner.js";
 
@@ -6,6 +7,15 @@ const TASK = { id: "T-0099", agent: "infra" };
 
 function fakeChild() {
   return { stdout: {}, stderr: {}, kill: vi.fn(), on: vi.fn() };
+}
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe("ClaudeCliRunner argv construction", () => {
@@ -55,6 +65,29 @@ describe("ClaudeCliRunner argv construction", () => {
       worktreeDir: "/wt"
     });
     expect(invocation2.args).not.toContain("--model");
+  });
+
+  it("accepts a per-call model override that takes precedence over the constructor's model", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {}, model: "sonnet" });
+    const invocation = runner.buildInvocation({
+      task: TASK,
+      prompt: "x",
+      allowedTools: ["Read"],
+      worktreeDir: "/wt",
+      model: "opus"
+    });
+    expect(invocation.args[invocation.args.indexOf("--model") + 1]).toBe("opus");
+  });
+
+  it("falls back to the constructor's model when no per-call model is given", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {}, model: "sonnet" });
+    const invocation = runner.buildInvocation({
+      task: TASK,
+      prompt: "x",
+      allowedTools: ["Read"],
+      worktreeDir: "/wt"
+    });
+    expect(invocation.args[invocation.args.indexOf("--model") + 1]).toBe("sonnet");
   });
 
   it("never includes a dangerous-skip-permissions flag", () => {
@@ -218,5 +251,49 @@ describe("ClaudeCliRunner.start / kill", () => {
     const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
     expect(() => runner.kill({})).not.toThrow();
     expect(() => runner.kill(null)).not.toThrow();
+  });
+
+  it("start() spawns the child detached so its process group can be killed as a unit", async () => {
+    const child = fakeChild();
+    const spawnFn = vi.fn(() => child);
+    const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
+
+    await runner.start({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt" });
+
+    const [, , options] = spawnFn.mock.calls[0];
+    expect(options.detached).toBe(true);
+  });
+});
+
+describe("ClaudeCliRunner.kill process-group behavior (no orphans)", () => {
+  it("kills a detached child's whole process group, so a grandchild it spawned dies too", async () => {
+    const child = nodeSpawn("bash", ["-c", "sleep 50 & echo $!; wait"], {
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+
+    const grandchildPid = await new Promise((resolve) => {
+      child.stdout.on("data", (chunk) => resolve(Number.parseInt(chunk.toString().trim(), 10)));
+    });
+
+    expect(isAlive(child.pid)).toBe(true);
+    expect(isAlive(grandchildPid)).toBe(true);
+
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    runner.kill({ child });
+
+    await vi.waitFor(() => {
+      expect(isAlive(child.pid)).toBe(false);
+      expect(isAlive(grandchildPid)).toBe(false);
+    });
+  });
+
+  it("falls back to child.kill() when the child has no pid to target a process group with", () => {
+    const child = fakeChild();
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+
+    runner.kill({ child });
+
+    expect(child.kill).toHaveBeenCalledTimes(1);
   });
 });
