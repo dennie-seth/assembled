@@ -10,7 +10,19 @@ const STATUS_LABELS = {
   blocked: "Blocked"
 };
 
-function renderCard(task, { onCardClick }) {
+function actionButton(className, label, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+function renderCard(task, { onCardClick, onRun, onCancel }) {
   const card = document.createElement("div");
   card.className = "card";
   card.draggable = true;
@@ -30,6 +42,14 @@ function renderCard(task, { onCardClick }) {
   meta.textContent = `${task.id} · ${task.priority} · ${task.agent ?? "unassigned"} · phase ${task.phase}`;
 
   card.append(title, meta);
+
+  if (task.status === "ready" && onRun) {
+    card.appendChild(actionButton("card-run", "Run", () => onRun(task.id)));
+  }
+  if ((task.status === "in-progress" || task.status === "validation") && onCancel) {
+    card.appendChild(actionButton("card-cancel", "Cancel", () => onCancel(task.id)));
+  }
+
   return card;
 }
 

@@ -1,24 +1,41 @@
-import { fetchTasks, patchTask, connectBoardSocket } from "./api.js";
+import { fetchTasks, patchTask, connectBoardSocket, runTask, cancelTask } from "./api.js";
 import { applyTaskEvent, buildStatusPatch } from "./board.js";
 import { renderBoard } from "./boardView.js";
 import { renderDetailPanel } from "./detailPanel.js";
+import { renderConsolePanel } from "./consolePanel.js";
 
 export function createApp({
   boardRoot,
   detailRoot,
+  consoleRoot,
   fetchTasksImpl = fetchTasks,
   patchTaskImpl = patchTask,
-  connectSocketImpl = connectBoardSocket
+  connectSocketImpl = connectBoardSocket,
+  runTaskImpl = runTask,
+  cancelTaskImpl = cancelTask
 }) {
   let tasks = [];
   let selectedId = null;
   let error = null;
+  const runLogs = new Map();
 
   function render() {
-    renderBoard(boardRoot, tasks, { onDrop: handleDrop, onCardClick: handleCardClick, error });
+    renderBoard(boardRoot, tasks, {
+      onDrop: handleDrop,
+      onCardClick: handleCardClick,
+      onRun: handleRun,
+      onCancel: handleCancel,
+      error
+    });
     if (detailRoot) {
       const selected = tasks.find((task) => task.id === selectedId) ?? null;
       renderDetailPanel(detailRoot, selected, { onSave: handleSave, onClose: handleClose });
+    }
+    if (consoleRoot) {
+      renderConsolePanel(consoleRoot, {
+        taskId: selectedId,
+        entries: selectedId ? (runLogs.get(selectedId) ?? []) : []
+      });
     }
   }
 
@@ -57,7 +74,38 @@ export function createApp({
     }
   }
 
+  async function handleRun(taskId) {
+    try {
+      await runTaskImpl(taskId);
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
+  async function handleCancel(taskId) {
+    try {
+      const updated = await cancelTaskImpl(taskId);
+      tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
+  function handleRunEvent(event) {
+    const existing = runLogs.get(event.id) ?? [];
+    runLogs.set(event.id, [...existing, { phase: event.phase, event: event.event }]);
+    render();
+  }
+
   function handleSocketMessage(event) {
+    if (event.type === "run-event") {
+      handleRunEvent(event);
+      return;
+    }
     tasks = applyTaskEvent(tasks, event);
     render();
   }
@@ -75,6 +123,8 @@ export function createApp({
     handleCardClick,
     handleClose,
     handleSave,
+    handleRun,
+    handleCancel,
     handleSocketMessage,
     getTasks: () => tasks,
     getSelectedId: () => selectedId,

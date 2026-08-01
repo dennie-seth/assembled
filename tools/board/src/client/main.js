@@ -3,10 +3,11 @@ import { createTerminalPanel } from "./terminalPanel.js";
 
 const boardRoot = document.getElementById("board");
 const detailRoot = document.getElementById("detail");
+const consoleRoot = document.getElementById("console");
 const terminalRoot = document.getElementById("terminal");
 const terminalToggle = document.getElementById("terminal-toggle");
 
-const app = createApp({ boardRoot, detailRoot });
+const app = createApp({ boardRoot, detailRoot, consoleRoot });
 app.init();
 
 if (terminalRoot) {

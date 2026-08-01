@@ -20,11 +20,23 @@ function task(overrides = {}) {
 function makeApp(overrides = {}) {
   const boardRoot = document.createElement("div");
   const detailRoot = document.createElement("div");
+  const consoleRoot = document.createElement("div");
   const fetchTasksImpl = overrides.fetchTasksImpl ?? vi.fn().mockResolvedValue([]);
   const patchTaskImpl = overrides.patchTaskImpl ?? vi.fn();
   const connectSocketImpl = overrides.connectSocketImpl ?? vi.fn();
-  const app = createApp({ boardRoot, detailRoot, fetchTasksImpl, patchTaskImpl, connectSocketImpl });
-  return { app, boardRoot, detailRoot, fetchTasksImpl, patchTaskImpl, connectSocketImpl };
+  const runTaskImpl = overrides.runTaskImpl ?? vi.fn().mockResolvedValue({});
+  const cancelTaskImpl = overrides.cancelTaskImpl ?? vi.fn().mockResolvedValue({});
+  const app = createApp({
+    boardRoot,
+    detailRoot,
+    consoleRoot,
+    fetchTasksImpl,
+    patchTaskImpl,
+    connectSocketImpl,
+    runTaskImpl,
+    cancelTaskImpl
+  });
+  return { app, boardRoot, detailRoot, consoleRoot, fetchTasksImpl, patchTaskImpl, connectSocketImpl, runTaskImpl, cancelTaskImpl };
 }
 
 describe("createApp init", () => {
@@ -203,5 +215,120 @@ describe("createApp card detail wiring", () => {
     app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...t, title: "Externally renamed" } });
 
     expect(detailRoot.querySelector(".detail-title").value).toBe("Externally renamed");
+  });
+});
+
+describe("createApp Run / Cancel wiring", () => {
+  it("handleRun POSTs /run and clears any prior error on success", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const { app, runTaskImpl } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+
+    await app.handleRun("T-0001");
+
+    expect(runTaskImpl).toHaveBeenCalledWith("T-0001");
+    expect(app.getError()).toBe(null);
+  });
+
+  it("handleRun surfaces the server's error without touching task state", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const { app } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t]),
+      runTaskImpl: vi.fn().mockRejectedValue(new Error("Task T-0001 already has an active run"))
+    });
+    await app.init();
+
+    await app.handleRun("T-0001");
+
+    expect(app.getError()).toMatch(/already has an active run/);
+    expect(app.getTasks()).toEqual([t]);
+  });
+
+  it("handleCancel POSTs /cancel and applies the resulting task state", async () => {
+    const t = task({ id: "T-0001", status: "in-progress" });
+    const cancelled = { ...t, status: "blocked" };
+    const { app, boardRoot, cancelTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t]),
+      cancelTaskImpl: vi.fn().mockResolvedValue(cancelled)
+    });
+    await app.init();
+
+    await app.handleCancel("T-0001");
+
+    expect(cancelTaskImpl).toHaveBeenCalledWith("T-0001");
+    expect(app.getTasks()).toEqual([cancelled]);
+    const blockedColumn = boardRoot.querySelector('.column[data-status="blocked"]');
+    expect(blockedColumn.textContent).toContain(t.title);
+  });
+
+  it("handleCancel surfaces the server's error", async () => {
+    const t = task({ id: "T-0001", status: "in-progress" });
+    const { app } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t]),
+      cancelTaskImpl: vi.fn().mockRejectedValue(new Error("No active run for T-0001"))
+    });
+    await app.init();
+
+    await app.handleCancel("T-0001");
+
+    expect(app.getError()).toMatch(/No active run/);
+  });
+});
+
+describe("createApp agent console wiring (T-0022)", () => {
+  it("appends run-event socket messages to the selected card's console log", async () => {
+    const t = task({ id: "T-0001", status: "in-progress" });
+    const { app, consoleRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    app.handleSocketMessage({
+      type: "run-event",
+      id: "T-0001",
+      phase: "implementer",
+      event: { type: "system", subtype: "init" }
+    });
+
+    expect(consoleRoot.textContent).toContain("system: init");
+  });
+
+  it("does not treat a run-event message as a task-changed event", async () => {
+    const t = task({ id: "T-0001", status: "in-progress" });
+    const { app } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+
+    app.handleSocketMessage({
+      type: "run-event",
+      id: "T-0001",
+      phase: "implementer",
+      event: { type: "system", subtype: "init" }
+    });
+
+    expect(app.getTasks()).toEqual([t]);
+  });
+
+  it("keeps accumulating log entries for a card across multiple events, in order", async () => {
+    const t = task({ id: "T-0001", status: "in-progress" });
+    const { app, consoleRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "system", subtype: "init" } });
+    app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "result", result: "Done." } });
+
+    const lines = consoleRoot.querySelectorAll(".console-line");
+    expect(lines).toHaveLength(2);
+    expect(lines[0].textContent).toContain("init");
+    expect(lines[1].textContent).toContain("Done.");
+  });
+
+  it("shows no console panel for a card until it is selected, even if events arrive", async () => {
+    const t = task({ id: "T-0001", status: "in-progress" });
+    const { app, consoleRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+
+    app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "system", subtype: "init" } });
+
+    expect(consoleRoot.hidden).toBe(true);
   });
 });

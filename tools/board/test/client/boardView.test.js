@@ -101,6 +101,56 @@ describe("renderBoard", () => {
     expect(onDrop).not.toHaveBeenCalled();
   });
 
+  it("shows a Run control on a ready card and invokes onRun without triggering onCardClick", () => {
+    const root = document.createElement("div");
+    const onRun = vi.fn();
+    const onCardClick = vi.fn();
+    renderBoard(root, [task({ id: "T-0006", status: "ready" })], { onDrop: vi.fn(), onCardClick, onRun });
+
+    const runBtn = root.querySelector('.card[data-id="T-0006"] .card-run');
+    expect(runBtn).not.toBeNull();
+    runBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+
+    expect(onRun).toHaveBeenCalledWith("T-0006");
+    expect(onCardClick).not.toHaveBeenCalled();
+  });
+
+  it("does not show a Run control on a card that isn't ready", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [task({ id: "T-0007", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() });
+
+    expect(root.querySelector('.card[data-id="T-0007"] .card-run')).toBeNull();
+  });
+
+  it("shows a Cancel control on in-progress and validation cards and invokes onCancel", () => {
+    const root = document.createElement("div");
+    const onCancel = vi.fn();
+    renderBoard(
+      root,
+      [task({ id: "T-0008", status: "in-progress" }), task({ id: "T-0009", status: "validation" })],
+      { onDrop: vi.fn(), onCardClick: vi.fn(), onCancel }
+    );
+
+    const cancelBtn = root.querySelector('.card[data-id="T-0008"] .card-cancel');
+    expect(cancelBtn).not.toBeNull();
+    expect(root.querySelector('.card[data-id="T-0009"] .card-cancel')).not.toBeNull();
+
+    cancelBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+    expect(onCancel).toHaveBeenCalledWith("T-0008");
+  });
+
+  it("does not show a Cancel control on a ready or review card", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [task({ id: "T-0010", status: "ready" }), task({ id: "T-0011", status: "review" })], {
+      onDrop: vi.fn(),
+      onCardClick: vi.fn(),
+      onCancel: vi.fn()
+    });
+
+    expect(root.querySelector('.card[data-id="T-0010"] .card-cancel')).toBeNull();
+    expect(root.querySelector('.card[data-id="T-0011"] .card-cancel')).toBeNull();
+  });
+
   it("renders an error banner when an error message is provided", () => {
     const root = document.createElement("div");
     renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), error: "unmet dependencies T-0002" });
