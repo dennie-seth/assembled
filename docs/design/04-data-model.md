@@ -1,8 +1,8 @@
 # 04 — Data Model
 
 > **Author:** Claude (Opus 5)
-> **Status:** v1, drafted (T-0090) from `docs/HANDOFF.md` §5
-> Related: `08-invariants.md`, `09-identity.md`, `02-notes-system.md`, `07-items-economy.md` (pending)
+> **Status:** v1, drafted (T-0090) from `docs/HANDOFF.md` §5, cross-checked against `07-items-economy.md`
+> Related: `08-invariants.md`, `09-identity.md`, `02-notes-system.md`, `07-items-economy.md`, `10-time-and-progression.md`
 
 Postgres schema (Phase 4, `server/`), plain SQL migrations, no ORM. This
 supersedes the Phase-0 stub seeded from `PLAN.md` — that version was
@@ -67,10 +67,10 @@ variant(
 );
 ```
 
-World structure is **archetype → variant → room** (`01-vision.md` §7,
-pending delivery — see `docs/HANDOFF.md` §2 D-2). An archetype is a kind of
-place (e.g. "Hospital"); a variant is one authored instance of it; a room
-is inside a variant and isn't modeled here — rooms are content, not schema.
+World structure is **archetype → variant → room** (`01-vision.md` §7). An
+archetype is a kind of place (e.g. "Hospital"); a variant is one authored
+instance of it; a room is inside a variant and isn't modeled here — rooms
+are content, not schema.
 
 `anchor_tag` is the contract between archetypes and their variants: every
 tag an archetype declares must be implemented by every one of its variants.
@@ -79,9 +79,9 @@ the FK here only guarantees a tag references a real archetype, not that
 every variant honors it.
 
 `variant.unlock_population` is the population-gated release threshold
-(open question **V-9**, `docs/HANDOFF.md` §6-adjacent) — more variants
-unlock as `P` grows, which is how "more rooms" scales without inflating a
-single run's length (`08-invariants.md` INV-9, O-2).
+(open question **V-9**, `01-vision.md` §11) — more variants unlock as `P`
+grows, which is how "more rooms" scales without inflating a single run's
+length (`08-invariants.md` INV-9, O-2).
 
 ---
 
@@ -123,9 +123,9 @@ Two constraints here are load-bearing, not incidental:
   modeled as a separate `offering` row that references an
   `item_instance` still (nominally) anchored or held; the atomicity of
   "in escrow" is a transactional property (INV-4), not a column value.
-  Reconcile this against `07-items-economy.md` once it lands — that doc
-  is the authority on escrow/workbench mechanics and may refine how
-  escrowed custody is represented.
+  This matches `07-items-economy.md` §7 exactly: escrow is "ships in v1"
+  and is deliberately the only exchange mechanism — the deferred v2
+  "plea" object is out of scope for this schema.
 
 `custody_depth` increases strictly on every transfer (INV-5) — never
 decremented, never reset. It's a monotonic counter, not a stack depth; it
@@ -133,11 +133,18 @@ exists to detect stuck or looping custody chains during simulation and
 monitoring.
 
 `bleed_at` is the wall-clock deadline for this instance's current custody
-state: **held bleed** (60–90 min) while `holder IS NOT NULL`, **world/escrow
-bleed** (48–72 h) while anchored or in escrow. Both ranges are open pending
-**E-1** (`docs/HANDOFF.md` §6) — the simulation harness (T-0099) finds the
-exact values. INV-10 (bleed termination) requires that no instance sits
-past `bleed_at` without a transfer attempt being made.
+state: **held bleed** (60–90 min, ≈2× run length) while `holder IS NOT
+NULL`, **world/escrow bleed** (48–72 h) while anchored or in escrow — the
+two-timer split is deliberate, not an oversight: at 90 minutes escrow
+would be unusable, since exchange is a multi-session social process while
+held bleed is anti-hoarding pressure within a session
+(`07-items-economy.md` §5, `10-time-and-progression.md` §2). Both exact
+values within their ranges are open pending **E-1**
+(`docs/design/OPEN-QUESTIONS.md`) — the simulation harness (T-0099) finds
+the precise numbers. INV-10 (bleed termination) requires that no instance
+sits past `bleed_at` without a transfer attempt being made. A well-rated
+note slows its author's held bleed only, never the collapse clock
+(`10-time-and-progression.md` §5).
 
 ```sql
 offering(   -- escrow
@@ -160,9 +167,13 @@ anchor_tag)`; I want `wants_type` in return." The `UNIQUE` on
 the offered item to the taker and releasing the taker's payment to the
 author — happens in one transaction; there must be no observable
 intermediate state where both parties hold their own item, or neither does
-(T-0097). Full escrow/workbench semantics belong to `07-items-economy.md`;
-this table only carries what the schema needs to keep the invariant
-enforceable at the database boundary.
+(T-0097). `expires_at` is set from the same 48–72 h world/escrow bleed
+range as any other anchored instance — **unclaimed offerings bleed away on
+the standard timer, not a special one** (`07-items-economy.md` §5, §7).
+The workbench/transmuter (`07-items-economy.md` §6, two instances in, one
+out, net −1) needs no schema of its own beyond `item_instance` itself — it
+consumes two existing rows and inserts one new one in a single
+transaction, with no intermediate table.
 
 ---
 
@@ -255,10 +266,10 @@ Changes from the Phase-0 stub, explicitly:
 `secret_drops` and `drop_grants` from the Phase-0 stub are **removed, not
 carried forward.** They modeled drops as a weighted-RNG roll against a flat
 payload table — that model is superseded by the rarity-cap `item_instance`
-system above (D-7: rarity is a hard instance-count cap, not a drop
-probability; D-8: quit scatters items rather than draining the economy).
-`T-0048` (`/v1/roll`) needs rescoping once `07-items-economy.md` lands —
-see `03-net-protocol.md` for the corresponding API-level flag.
+system above, now confirmed directly by `07-items-economy.md` §2 and §4:
+rarity is a hard instance-count cap, not a drop probability, and sources
+are spontaneous world spawn rather than a per-request roll. `T-0048`
+(`/v1/roll`) is rescoped accordingly — see `03-net-protocol.md` §5.
 
 `shared/note_templates.hpp` (T-0043) and this table's seed generator must
 stay in parity — enforced by a C++/SQL parity test. T-0043 now also seeds
@@ -276,10 +287,13 @@ between client and server, not server-private.
   build-time check).
 - **`09-identity.md`** — `identity`/`session_lease` implement §1 and §3
   directly; `collapse_expires_at` implements §3a.
-- **`07-items-economy.md`** (pending) — authoritative on rarity caps,
-  bleed-timer curves, and escrow/workbench mechanics beyond what's needed
-  to keep INV-1/2/4 enforceable at the schema level. Reconcile
-  `item_instance` and `offering` against it once delivered.
+- **`07-items-economy.md`** — authoritative on rarity caps (§2), transfer
+  semantics (§3, `leave`/`use`/`take` in `03-net-protocol.md` §3),
+  bleed-timer curves (§5), and escrow/workbench mechanics (§6–7) beyond
+  what's needed to keep INV-1/2/4 enforceable at the schema level.
+- **`10-time-and-progression.md`** — the four wall-clocks this schema's
+  `bleed_at`, `unlock.expires_at`, `offering.expires_at`, and
+  `identity.collapse_expires_at` columns each implement one of.
 
 ---
 
@@ -288,3 +302,4 @@ between client and server, not server-private.
 | Date | Change | Author |
 |---|---|---|
 | 2026-08-01 | v1: replaces the Phase-0 notes-only stub. Identity, session lease, world (archetype/anchor_tag/variant), items (item_instance/offering), progression (unlock/vocabulary/run_archetypes), revised notes table | Claude (Opus 5) |
+| 2026-08-01 | v1.1: cross-checked against `07-items-economy.md` and `10-time-and-progression.md`, now both landed - "pending" framing removed throughout; escrow/workbench and bleed-timer notes confirmed rather than provisional | Claude (Opus 5) |
