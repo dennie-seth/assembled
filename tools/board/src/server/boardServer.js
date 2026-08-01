@@ -1,11 +1,17 @@
 import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { FsTaskStore } from "../lib/fsTaskStore.js";
 import { IdAllocator } from "../lib/idAllocator.js";
 import { TaskWatcher } from "../lib/taskWatcher.js";
 import { createRequestListener } from "./httpApi.js";
 import { WsHub } from "./wsHub.js";
+import { PtyBridge } from "./ptyBridge.js";
 
-const WS_PATH = "/ws/board";
+const WS_BOARD_PATH = "/ws/board";
+const WS_PTY_PATH = "/ws/pty";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") {
@@ -16,14 +22,17 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
   const idAllocator = new IdAllocator(tasksDir);
   const hub = new WsHub();
   const watcher = new TaskWatcher(tasksDir);
+  const ptyBridge = new PtyBridge({ cwd: REPO_ROOT });
 
   watcher.on("task-changed", (event) => hub.broadcast(event));
 
   const server = http.createServer(createRequestListener({ store, idAllocator }));
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = new URL(req.url, "http://localhost");
-    if (pathname === WS_PATH) {
+    if (pathname === WS_BOARD_PATH) {
       hub.handleUpgrade(req, socket, head);
+    } else if (pathname === WS_PTY_PATH) {
+      ptyBridge.handleUpgrade(req, socket, head);
     } else {
       socket.destroy();
     }
@@ -41,8 +50,10 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     idAllocator,
     hub,
     watcher,
+    ptyBridge,
     async close() {
       hub.close();
+      ptyBridge.close();
       await watcher.close();
       await new Promise((resolve) => server.close(resolve));
     }

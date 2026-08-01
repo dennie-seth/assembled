@@ -103,3 +103,31 @@ describe("board server integration", () => {
     expect(board.server.address().address).toBe("127.0.0.1");
   });
 });
+
+describe("pty terminal integration", () => {
+  it("serves a working shell over /ws/pty on the same server", async () => {
+    const { port } = board.server.address();
+    const client = new WebSocket(`ws://127.0.0.1:${port}/ws/pty`);
+    await waitForOpen(client);
+
+    const messages = [];
+    const gotHello = new Promise((resolve) => {
+      client.on("message", (data) => {
+        const msg = JSON.parse(data.toString());
+        messages.push(msg);
+        if (msg.type === "data" && msg.data.includes("integration-hello")) {
+          resolve();
+        }
+      });
+    });
+
+    client.send(JSON.stringify({ type: "input", data: "echo integration-hello\n" }));
+    await gotHello;
+
+    expect(board.ptyBridge.sessions.size).toBe(1);
+    client.close();
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(board.ptyBridge.sessions.size).toBe(0);
+  });
+});
