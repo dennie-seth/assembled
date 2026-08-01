@@ -29,6 +29,8 @@ jobs:
   windows-export:
     name: "Windows: godot-cpp build + headless export"
     runs-on: windows-latest
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons-cache
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -45,17 +47,29 @@ jobs:
         with:
           python-version: "3.x"
 
+      # T-0034: SCons content-addressed cache dir, so a source-identical
+      # rebuild reuses prior objects instead of recompiling godot-cpp.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: scons-cache-windows-godot-cpp-${{ env.GODOT_CPP_REF }}-${{ github.sha }}
+          restore-keys: |
+            scons-cache-windows-godot-cpp-${{ env.GODOT_CPP_REF }}-
+
       - run: pip install scons
 
       - name: Build godot-cpp (template_release, MSVC)
         working-directory: godot-cpp-spike
         run: scons platform=windows target=template_release -j2
 
+      # T-0034: caches the editor download + export templates (cache: true
+      # is the action's default; set explicitly for clarity).
       - uses: chickensoft-games/setup-godot@v2
         with:
           version: ${{ env.GODOT_VERSION }}
           use-dotnet: false
           include-templates: true
+          cache: true
 
       - name: Import project (headless)
         shell: bash
@@ -80,6 +94,7 @@ jobs:
           version: ${{ env.GODOT_VERSION }}
           use-dotnet: false
           include-templates: true
+          cache: true
 
       - name: Import project (headless)
         working-directory: ${{ env.SPIKE_PROJECT_DIR }}
