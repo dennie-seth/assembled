@@ -51,6 +51,27 @@ describe("createTerminalPanel", () => {
     expect(fitAddon.fit).toHaveBeenCalled();
   });
 
+  it("re-fits on the next animation frame to correct for layout not settled at mount time", () => {
+    const term = makeFakeTerm();
+    const fitAddon = makeFakeFitAddon();
+    let frameCallback;
+
+    createTerminalPanel({
+      root: document.createElement("div"),
+      TerminalCtor: ctorReturning(term),
+      FitAddonCtor: ctorReturning(fitAddon),
+      connect: vi.fn(() => makeFakeSocket()),
+      requestFrame: (cb) => {
+        frameCallback = cb;
+      }
+    });
+
+    const callsBeforeFrame = fitAddon.fit.mock.calls.length;
+    frameCallback();
+
+    expect(fitAddon.fit.mock.calls.length).toBe(callsBeforeFrame + 1);
+  });
+
   it("forwards keystrokes typed into the terminal to the socket as input messages", () => {
     const term = makeFakeTerm();
     const ws = makeFakeSocket();
