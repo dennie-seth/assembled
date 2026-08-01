@@ -1,0 +1,53 @@
+name: ci-server
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "server/**"
+      - "shared/**"
+      - ".github/workflows/ci-server.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "server/**"
+      - "shared/**"
+      - ".github/workflows/ci-server.yml"
+
+concurrency:
+  group: ci-server-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: cmake build + ctest
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: assembled
+          POSTGRES_PASSWORD: assembled
+          POSTGRES_DB: assembled_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # T-0040+ integration tests read this; the T-0032 skeleton doesn't use it yet.
+      DATABASE_URL: postgresql://assembled:assembled@localhost:5432/assembled_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S server -B server/build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build server/build --parallel
+
+      - name: Test
+        working-directory: server/build
+        run: ctest --output-on-failure
