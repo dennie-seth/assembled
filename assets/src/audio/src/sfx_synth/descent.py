@@ -50,7 +50,17 @@ def measure_integrated_loudness(samples: np.ndarray, sample_rate: int) -> float:
     on anything shorter, which is most one-shots. Shrink the block to fit.
     """
     duration_s = len(samples) / sample_rate
-    block_size = min(0.4, duration_s) if duration_s > 0 else 0.4
+    if duration_s >= 0.4:
+        block_size = 0.4
+    else:
+        # `duration_s * rate` doesn't always round-trip back to exactly
+        # `len(samples)` in floating point (it can round *up* by ~1e-13
+        # relative), which makes pyloudnorm's `block_size * rate <=
+        # len(samples)` check flip and raise on a clip whose length is
+        # legitimately (just barely) the block size. Back off by a
+        # margin far bigger than that rounding error, not by handling
+        # the boundary exactly.
+        block_size = duration_s * (1 - 1e-9) if duration_s > 0 else 0.4
     meter = pyln.Meter(sample_rate, block_size=block_size)
     return float(meter.integrated_loudness(samples.astype(np.float64)))
 
