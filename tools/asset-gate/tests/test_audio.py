@@ -72,6 +72,22 @@ def test_integrated_loudness_fails_when_outside_tolerance():
     assert not result.passed
 
 
+def test_integrated_loudness_measures_a_one_shot_shorter_than_400ms():
+    # pyloudnorm's default 400ms gating block raises ValueError on anything
+    # shorter (T-0101 one-shots are 20-400ms) -- the check must shrink its
+    # measurement block to fit rather than blow up on legitimate input.
+    samples = _sine(1000, 0.15, amplitude=0.3)
+    sample_rate = 44100
+    import pyloudnorm as pyln
+
+    measured = pyln.Meter(sample_rate, block_size=0.15).integrated_loudness(
+        samples.astype(np.float64)
+    )
+    targets = {"gameplay_sfx": BusLoudnessTarget(target_lufs=measured, tolerance_db=1.0)}
+    result = check_integrated_loudness(samples, sample_rate, bus="gameplay_sfx", targets=targets)
+    assert result.passed
+
+
 def test_true_peak_fails_for_full_scale_signal():
     samples = _sine(1000, 0.5, amplitude=0.999)
     result = check_true_peak(samples, max_dbtp=-1.0)
