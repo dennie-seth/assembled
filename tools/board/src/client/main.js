@@ -5,11 +5,12 @@ const boardRoot = document.getElementById("board");
 const detailRoot = document.getElementById("detail");
 const consoleRoot = document.getElementById("console");
 const createFormRoot = document.getElementById("create-form");
+const sidePanelRoot = document.getElementById("side-panel");
 const newCardBtn = document.getElementById("new-card-btn");
 const terminalRoot = document.getElementById("terminal");
 const terminalToggle = document.getElementById("terminal-toggle");
 
-const app = createApp({ boardRoot, detailRoot, consoleRoot, createFormRoot });
+const app = createApp({ boardRoot, detailRoot, consoleRoot, createFormRoot, sidePanelRoot });
 app.init();
 
 if (newCardBtn) {

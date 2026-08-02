@@ -22,6 +22,7 @@ function makeApp(overrides = {}) {
   const detailRoot = document.createElement("div");
   const consoleRoot = document.createElement("div");
   const createFormRoot = document.createElement("div");
+  const sidePanelRoot = document.createElement("div");
   const fetchTasksImpl = overrides.fetchTasksImpl ?? vi.fn().mockResolvedValue([]);
   const fetchAgentsImpl = overrides.fetchAgentsImpl ?? vi.fn().mockResolvedValue(["infra", "server"]);
   const patchTaskImpl = overrides.patchTaskImpl ?? vi.fn();
@@ -35,6 +36,7 @@ function makeApp(overrides = {}) {
     detailRoot,
     consoleRoot,
     createFormRoot,
+    sidePanelRoot,
     fetchTasksImpl,
     fetchAgentsImpl,
     patchTaskImpl,
@@ -50,6 +52,7 @@ function makeApp(overrides = {}) {
     detailRoot,
     consoleRoot,
     createFormRoot,
+    sidePanelRoot,
     fetchTasksImpl,
     fetchAgentsImpl,
     patchTaskImpl,
@@ -180,6 +183,29 @@ describe("createApp handleSocketMessage", () => {
     app.handleSocketMessage({ type: "added", id: "T-0002", task: task({ id: "T-0002", title: "From elsewhere" }) });
 
     expect(boardRoot.textContent).toContain("From elsewhere");
+  });
+});
+
+describe("createApp side panel visibility (Done column clipping regression)", () => {
+  it("keeps the side panel hidden after init when no card is selected", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, sidePanelRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+
+    await app.init();
+
+    expect(sidePanelRoot.hidden).toBe(true);
+  });
+
+  it("reveals the side panel only once a card is selected, and hides it again on close", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, sidePanelRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+
+    app.handleCardClick("T-0001");
+    expect(sidePanelRoot.hidden).toBe(false);
+
+    app.handleClose();
+    expect(sidePanelRoot.hidden).toBe(true);
   });
 });
 

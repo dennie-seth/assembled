@@ -9,6 +9,13 @@ body {
   padding-bottom: 18rem;
 }
 
+/* Reserve room for #side-panel only while it's actually showing content,
+   so its fixed overlay never overlaps (and permanently clips) board columns
+   scrolled underneath it - see #side-panel[hidden] below. */
+body:has(#side-panel:not([hidden])) {
+  padding-right: 29rem;
+}
+
 #terminal-panel {
   position: fixed;
   left: 0;
@@ -60,6 +67,8 @@ body {
   display: flex;
   gap: 0.75rem;
   align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
 }
 
 .column {
@@ -109,6 +118,14 @@ body {
   flex-direction: column;
   background: Canvas;
   border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+}
+
+/* Without this, the empty panel (both children `hidden`) still renders as an
+   opaque fixed box with a border, permanently covering whatever board column
+   ends up underneath it once the board is scrolled - the "Done column cut
+   off behind a stray divider" bug. */
+#side-panel[hidden] {
+  display: none;
 }
 
 #detail {

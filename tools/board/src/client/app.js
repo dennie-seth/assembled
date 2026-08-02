@@ -19,6 +19,7 @@ export function createApp({
   detailRoot,
   consoleRoot,
   createFormRoot,
+  sidePanelRoot,
   fetchTasksImpl = fetchTasks,
   fetchAgentsImpl = fetchAgents,
   patchTaskImpl = patchTask,
@@ -44,6 +45,9 @@ export function createApp({
       onCancel: handleCancel,
       error
     });
+    if (sidePanelRoot) {
+      sidePanelRoot.hidden = selectedId === null;
+    }
     if (detailRoot) {
       const selected = tasks.find((task) => task.id === selectedId) ?? null;
       renderDetailPanel(detailRoot, selected, {
