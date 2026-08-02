@@ -1,0 +1,285 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 1rem;
+  padding-bottom: 18rem;
+}
+
+/* Reserve room for #side-panel only while it's actually showing content,
+   so its fixed overlay never overlaps (and permanently clips) board columns
+   scrolled underneath it - see #side-panel[hidden] below. */
+body:has(#side-panel:not([hidden])) {
+  padding-right: 29rem;
+}
+
+#terminal-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 16rem;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  transition: height 0.15s ease;
+}
+
+#terminal-panel.collapsed {
+  height: 2.25rem;
+}
+
+#terminal-panel.collapsed #terminal {
+  display: none;
+}
+
+.terminal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.375rem 0.75rem;
+  color: #ddd;
+  font-size: 0.8rem;
+  flex: 0 0 auto;
+}
+
+#terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 0.5rem 0.5rem;
+}
+
+.board-error {
+  background: color-mix(in srgb, red 15%, Canvas);
+  border: 1px solid color-mix(in srgb, red 40%, transparent);
+  color: color-mix(in srgb, red 60%, currentColor);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.board {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.column {
+  flex: 1 1 0;
+  min-width: 12rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+}
+
+.column-header {
+  font-size: 0.9rem;
+  margin: 0 0 0.5rem;
+}
+
+.column-cards {
+  min-height: 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.card {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  background: Canvas;
+  cursor: grab;
+}
+
+.card-title {
+  font-weight: 600;
+}
+
+.card-meta {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+#side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(28rem, 100%);
+  display: flex;
+  flex-direction: column;
+  background: Canvas;
+  border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+}
+
+/* Without this, the empty panel (both children `hidden`) still renders as an
+   opaque fixed box with a border, permanently covering whatever board column
+   ends up underneath it once the board is scrolled - the "Done column cut
+   off behind a stray divider" bug. */
+#side-panel[hidden] {
+  display: none;
+}
+
+#detail {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+#console {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  background: #1e1e1e;
+  color: #ddd;
+}
+
+.console-panel {
+  padding: 0.5rem 0.75rem;
+}
+
+.console-heading {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.375rem;
+  opacity: 0.85;
+}
+
+.console-log {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-line {
+  padding: 0.0625rem 0;
+}
+
+.console-line-reviewer {
+  color: #9ecbff;
+}
+
+.console-empty {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.card-run,
+.card-cancel {
+  margin-top: 0.375rem;
+  margin-right: 0.375rem;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  cursor: pointer;
+}
+
+.card-cancel {
+  color: color-mix(in srgb, red 55%, currentColor);
+}
+
+.detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+
+.detail-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.detail-body-edit {
+  min-height: 8rem;
+  font-family: ui-monospace, monospace;
+}
+
+.detail-body-preview {
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.detail-deps {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.detail-branch {
+  font-size: 0.8rem;
+  font-family: ui-monospace, monospace;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.375rem 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.detail-delete-wrap {
+  margin-top: 0.75rem;
+}
+
+.detail-delete {
+  color: color-mix(in srgb, red 55%, currentColor);
+  border: 1px solid color-mix(in srgb, red 40%, transparent);
+  background: color-mix(in srgb, red 8%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+
+.detail-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.detail-delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  margin-top: 0.375rem;
+}
+
+#toolbar {
+  margin-bottom: 0.75rem;
+}
+
+#new-card-btn {
+  padding: 0.4rem 0.75rem;
+  border-radius: 0.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.create-form {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  max-width: 32rem;
+}
+
+.create-error {
+  color: color-mix(in srgb, red 60%, currentColor);
+  font-size: 0.85rem;
+  min-height: 1rem;
+}

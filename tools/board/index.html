@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>assembled — board</title>
+    <link rel="stylesheet" href="/src/client/style.css" />
+  </head>
+  <body>
+    <div id="toolbar">
+      <button type="button" id="new-card-btn">+ New Card</button>
+    </div>
+    <div id="create-form" hidden></div>
+    <div id="board"></div>
+    <div id="side-panel" hidden>
+      <div id="detail" hidden></div>
+      <div id="console" hidden></div>
+    </div>
+    <div id="terminal-panel">
+      <div class="terminal-panel-header">
+        <span>Terminal</span>
+        <button type="button" id="terminal-toggle">Hide</button>
+      </div>
+      <div id="terminal"></div>
+    </div>
+    <script type="module" src="/src/client/main.js"></script>
+  </body>
+</html>

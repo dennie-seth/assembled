@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# T-0036: fast local subset of CI — board lint/test + server unit tests
+# (doctest, no Postgres container). Full CI (exports, PG-backed
+# integration tests) only runs on GitHub.
+#
+# Install: git config core.hooksPath .githooks
+# Bypass:  git push --no-verify
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "[pre-push] tools/board: lint + test"
+(cd tools/board && npm run lint && npm test)
+
+if [ -f server/CMakeLists.txt ]; then
+  echo "[pre-push] server: doctest unit tests (no PG)"
+  cmake -S server -B server/build -DCMAKE_BUILD_TYPE=Release >/dev/null
+  cmake --build server/build --parallel >/dev/null
+  (cd server/build && ctest --output-on-failure)
+fi
+
+echo "[pre-push] all checks passed"

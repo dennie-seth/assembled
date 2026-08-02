@@ -1,0 +1,252 @@
+// @vitest-environment happy-dom
+import { describe, it, expect, vi } from "vitest";
+import { renderDetailPanel } from "../../src/client/detailPanel.js";
+
+function task(overrides = {}) {
+  return {
+    id: "T-0001",
+    title: "Sample task",
+    status: "backlog",
+    priority: "P2",
+    phase: 1,
+    agent: "infra",
+    depends_on: [],
+    created: "2026-07-31",
+    body: "## Context\nsome context\n\n## Acceptance\n- [ ] do it",
+    ...overrides
+  };
+}
+
+function baseOpts(overrides = {}) {
+  return {
+    onSave: vi.fn(),
+    onClose: vi.fn(),
+    onDelete: vi.fn(),
+    agentOptions: ["infra", "server", "client", "assets", "audio"],
+    allTaskIds: ["T-0001", "T-0002", "T-0003"],
+    ...overrides
+  };
+}
+
+describe("renderDetailPanel", () => {
+  it("hides the root and renders nothing when there is no selected task", () => {
+    const root = document.createElement("div");
+    root.hidden = false;
+    renderDetailPanel(root, null, baseOpts());
+    expect(root.hidden).toBe(true);
+    expect(root.children.length).toBe(0);
+  });
+
+  it("shows the root and renders the task's title, priority and status", () => {
+    const root = document.createElement("div");
+    const t = task({ title: "Do the thing", priority: "P0", status: "review" });
+    renderDetailPanel(root, t, baseOpts());
+
+    expect(root.hidden).toBe(false);
+    expect(root.querySelector(".detail-title").value).toBe("Do the thing");
+    expect(root.querySelector(".detail-priority").value).toBe("P0");
+    expect(root.querySelector(".detail-status").value).toBe("review");
+  });
+
+  it("renders the depends_on list", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ depends_on: ["T-0002", "T-0003"] }), baseOpts());
+    expect(root.querySelector(".detail-deps").textContent).toContain("T-0002");
+    expect(root.querySelector(".detail-deps").textContent).toContain("T-0003");
+  });
+
+  it("shows a no-dependencies message when depends_on is empty", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ depends_on: [] }), baseOpts());
+    expect(root.querySelector(".detail-deps").textContent).toMatch(/no dependencies/i);
+  });
+
+  it("renders the markdown body as HTML in the preview pane", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    const preview = root.querySelector(".detail-body-preview");
+    expect(preview.querySelector("h2").textContent).toBe("Context");
+    expect(preview.querySelector(".checklist")).not.toBeNull();
+  });
+
+  it("calls onClose when the close button is clicked", () => {
+    const root = document.createElement("div");
+    const onClose = vi.fn();
+    renderDetailPanel(root, task(), baseOpts({ onClose }));
+    root.querySelector(".detail-close").dispatchEvent(new Event("click", { bubbles: true }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("calls onSave with only the changed fields when Save is clicked", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    const t = task({ id: "T-0007" });
+    renderDetailPanel(root, t, baseOpts({ onSave }));
+
+    root.querySelector(".detail-title").value = "Renamed";
+    root.querySelector(".detail-priority").value = "P0";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0007", { title: "Renamed", priority: "P0" });
+  });
+
+  it("does not call onSave when nothing was edited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task(), baseOpts({ onSave }));
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("replaces previously rendered content on re-render", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts());
+    renderDetailPanel(root, task({ id: "T-0002" }), baseOpts());
+    expect(root.querySelectorAll(".detail-panel").length).toBe(1);
+  });
+});
+
+describe("renderDetailPanel editable agent/phase/depends_on", () => {
+  it("renders the agent select with the current value and available options", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ agent: "server" }), baseOpts());
+    const select = root.querySelector(".detail-agent");
+    expect(select.value).toBe("server");
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(expect.arrayContaining(["", "infra", "server", "client", "assets", "audio"]));
+  });
+
+  it("renders an unassigned option that maps to null", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ agent: null }), baseOpts());
+    const select = root.querySelector(".detail-agent");
+    expect(select.value).toBe("");
+  });
+
+  it("includes the current agent value even if it is not in agentOptions", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ agent: "legacy-agent" }), baseOpts({ agentOptions: ["infra"] }));
+    const select = root.querySelector(".detail-agent");
+    expect(select.value).toBe("legacy-agent");
+  });
+
+  it("renders the phase number input with the current value", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ phase: 3 }), baseOpts());
+    expect(root.querySelector(".detail-phase").value).toBe("3");
+  });
+
+  it("renders a dependencies multi-select excluding the task itself, pre-selected to depends_on", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ id: "T-0001", depends_on: ["T-0002"] }), baseOpts());
+    const select = root.querySelector(".detail-deps-edit");
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).not.toContain("T-0001");
+    expect(optionValues).toEqual(expect.arrayContaining(["T-0002", "T-0003"]));
+    const selected = Array.from(select.selectedOptions).map((o) => o.value);
+    expect(selected).toEqual(["T-0002"]);
+  });
+
+  it("includes agent, phase, and depends_on in the Save patch when changed", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001", agent: "infra", phase: 1, depends_on: ["T-0002"] }), baseOpts({ onSave }));
+
+    root.querySelector(".detail-agent").value = "server";
+    root.querySelector(".detail-phase").value = "5";
+    const depsSelect = root.querySelector(".detail-deps-edit");
+    Array.from(depsSelect.options).forEach((opt) => {
+      opt.selected = opt.value === "T-0003";
+    });
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { agent: "server", phase: 5, depends_on: ["T-0003"] });
+  });
+
+  it("maps the unassigned select option back to a null agent on save", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001", agent: "infra" }), baseOpts({ onSave }));
+
+    root.querySelector(".detail-agent").value = "";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { agent: null });
+  });
+});
+
+describe("renderDetailPanel review metadata (branch/commit)", () => {
+  it("shows the branch and a shortened commit when present", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(
+      root,
+      task({ status: "review", branch: "feature/T-0001", commit: "abc1234def5678abc1234def5678abc1234def5" }),
+      baseOpts()
+    );
+    const info = root.querySelector(".detail-branch");
+    expect(info).not.toBeNull();
+    expect(info.textContent).toContain("feature/T-0001");
+    expect(info.textContent).toContain("abc1234");
+  });
+
+  it("does not render branch metadata when absent", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ branch: null, commit: null }), baseOpts());
+    expect(root.querySelector(".detail-branch")).toBeNull();
+  });
+});
+
+describe("renderDetailPanel delete", () => {
+  it("shows a delete button that reveals a confirmation step instead of deleting immediately", () => {
+    const root = document.createElement("div");
+    const onDelete = vi.fn();
+    renderDetailPanel(root, task(), baseOpts({ onDelete }));
+
+    root.querySelector(".detail-delete").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(root.querySelector(".detail-delete-confirm").hidden).toBe(false);
+  });
+
+  it("calls onDelete only after confirming", () => {
+    const root = document.createElement("div");
+    const onDelete = vi.fn();
+    const t = task({ id: "T-0009" });
+    renderDetailPanel(root, t, baseOpts({ onDelete }));
+
+    root.querySelector(".detail-delete").dispatchEvent(new Event("click", { bubbles: true }));
+    root.querySelector(".detail-delete-confirm-yes").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onDelete).toHaveBeenCalledWith("T-0009");
+  });
+
+  it("cancelling the confirmation does not call onDelete", () => {
+    const root = document.createElement("div");
+    const onDelete = vi.fn();
+    renderDetailPanel(root, task(), baseOpts({ onDelete }));
+
+    root.querySelector(".detail-delete").dispatchEvent(new Event("click", { bubbles: true }));
+    root.querySelector(".detail-delete-confirm-no").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(root.querySelector(".detail-delete-confirm").hidden).toBe(true);
+  });
+
+  it("disables the delete button for a task with an active run (in-progress)", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ status: "in-progress" }), baseOpts());
+    expect(root.querySelector(".detail-delete").disabled).toBe(true);
+  });
+
+  it("disables the delete button for a task with an active run (validation)", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ status: "validation" }), baseOpts());
+    expect(root.querySelector(".detail-delete").disabled).toBe(true);
+  });
+
+  it("leaves the delete button enabled for a task without an active run", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ status: "ready" }), baseOpts());
+    expect(root.querySelector(".detail-delete").disabled).toBe(false);
+  });
+});

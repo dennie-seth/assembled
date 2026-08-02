@@ -1,0 +1,16 @@
+; T-0030/T-0033 CI feasibility spike project.
+;
+; SUPERSEDED (T-0060, 2026-08-02): the real Phase 5 client now exists at
+; client/ (Godot project + godot-cpp GDExtension), and ci-client.yml has
+; been repointed at it. This spike project is kept only as a historical
+; record for the on-demand spike-t0030-godot-windows.yml workflow — it is
+; no longer wired into the regular push/PR CI. See docs/ci-notes.md T-0060.
+
+config_version=5
+
+[application]
+
+config/name="assembled-ci-spike"
+config/description="CI feasibility spike (T-0030/T-0033) — not the real game client."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.3")

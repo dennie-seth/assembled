@@ -14,3 +14,12 @@ paths: ["server/**", "client/**"]
   `server/` or `client/` — include from `shared/`.
 - Client (Godot/GDExtension) and server (Drogon) both depend on `shared/`;
   neither depends on the other.
+- SOLID + DRY: one reason for a class to change; no copy-pasted logic
+  standing in for a shared abstraction.
+- Encapsulation is not optional: always use getters/setters, never access
+  another object's member variables directly. This applies within a
+  translation unit too, not just across the `shared/` boundary.
+- Document code in Doxygen style (`///` or `/** */` with `@param`/`@return`
+  as applicable) on public classes, methods, and free functions. Private
+  implementation details only need a comment when the *why* isn't obvious
+  from the code.

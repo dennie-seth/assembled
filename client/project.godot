@@ -1,0 +1,21 @@
+; assembled — Godot 4 client project.
+;
+; T-0060/T-0061: this is the real Phase 5 client dev-env (not the
+; .github/ci-spike/godot-client throwaway). Still pre-gameplay — the main
+; scene only proves the GDExtension loads and round-trips a value to
+; GDScript. See client/README.md for build/run commands and
+; docs/ci-notes.md for the godot-cpp/engine version decision.
+
+config_version=5
+
+[application]
+
+config/name="assembled"
+config/description="Assembled — client dev-env + GDExtension proof-of-life (Phase 5 in progress)."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.5")
+
+[rendering]
+
+renderer/rendering_method="gl_compatible"
+renderer/rendering_method.mobile="gl_compatible"
