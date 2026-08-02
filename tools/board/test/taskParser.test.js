@@ -187,6 +187,11 @@ describe("parseTask missing/invalid fields", () => {
     expect(() => parseTask(frontmatter({ agent: "designer" }))).toThrow(/agent/i);
   });
 
+  it("accepts agent: planner (backlog-audit agent, distinct from the implementer agents)", () => {
+    const task = { ...VALID_TASK, agent: "planner" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
   it("throws on non-integer phase", () => {
     expect(() => parseTask(frontmatter({ phase: "one" }))).toThrow(/phase/i);
   });

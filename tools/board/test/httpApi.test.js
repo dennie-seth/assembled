@@ -162,6 +162,15 @@ describe("GET /api/agents", () => {
     expect(await res.json()).toEqual(["infra", "server"]);
   });
 
+  it("includes planner in the New Card agent dropdown source, same as any other implementer agent", async () => {
+    await fs.writeFile(path.join(agentsDir, "planner.md"), "---\nname: planner\n---\nbody", "utf8");
+    await fs.writeFile(path.join(agentsDir, "reviewer.md"), "---\nname: reviewer\n---\nbody", "utf8");
+
+    const res = await fetch(`${baseUrl}/api/agents`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(["planner"]);
+  });
+
   it("returns 200 with an empty array when no agentsDir is configured on the server", async () => {
     const bareStore = new FsTaskStore(tmpDir);
     const bareAllocator = new IdAllocator(tmpDir);

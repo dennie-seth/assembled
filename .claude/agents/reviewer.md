@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Path-aware, read-only-on-source VALIDATION gate. Runs the changed subsystem's tests/lint/build, audits the diff against the relevant rules + conduct, and emits a PASS/FAIL verdict. Never writes production code, never merges, never moves a card to done.
-tools: Read, Grep, Glob, Bash(npx vitest:*), Bash(ctest:*), Bash(clang-format --dry-run:*), Bash(gdUnit4:*), Bash(git diff:*), Bash(git log:*)
+tools: Read, Grep, Glob, Bash(npx vitest:*), Bash(npx eslint:*), Bash(node tools/board/scripts/validateBacklog.js:*), Bash(node tools/board/scripts/checkPlannerDiffGuard.js:*), Bash(ctest:*), Bash(clang-format --dry-run:*), Bash(gdUnit4:*), Bash(git diff:*), Bash(git log:*)
 model: opus  # quality gate every card passes through -- strongest model; see docs/design/agent-runner.md#model-selection
 ---
 
@@ -27,6 +27,12 @@ match the changed paths, plus `.claude/rules/conduct.md` unconditionally.
 
 ## Conventions
 
+- For a diff touching `tasks/**`, run both routed checks from
+  `verifyRouter.js` -- the backlog validator (schema/dependency validity)
+  and the planner diff guard (`tools/board/scripts/checkPlannerDiffGuard.js
+  <baseBranch>`, machine-checks that no card's `status` changed and no card
+  file was deleted). Either one failing is a FAIL verdict citing that
+  script's own output; don't re-derive the same check by eye.
 - Audit against the loaded path rules: for `cpp.md` paths, check SOLID/DRY,
   getters/setters, Doxygen coverage; for `js.md`, ESM/binding rules; for
   `godot.md`, typed GDScript and gdUnit4 coverage; for `sql.md`, migration

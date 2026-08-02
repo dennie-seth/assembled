@@ -16,12 +16,13 @@ edits production code, only the card's status and notes.
    `blocked` with the reason — that is not a FAIL verdict, it's a runner
    failure.
 2. **Load the applicable rules.** `.claude/rules/conduct.md` always, plus
-   whichever of `cpp.md` / `js.md` / `godot.md` / `sql.md` / `assets.md`
-   match the changed paths.
+   whichever of `cpp.md` / `js.md` / `godot.md` / `sql.md` / `assets.md` /
+   `planner.md` match the changed paths.
 3. **Audit the diff** (`git diff develop...HEAD`) against those rules:
    - TDD evidence: was the test file committed before/alongside the
      implementation, and does it actually exercise the acceptance criteria
-     — not just a happy-path smoke test?
+     — not just a happy-path smoke test? (Not applicable to a `planner`
+     diff — its "tests" are the backlog validator, covered above.)
    - `conduct.md`: no free-text UGC surface added; commit carries the
      `Co-authored-by: Claude` trailer; branch is `feature/T-NNNN-*` off
      `develop`; any generated asset has an `ASSET_PROVENANCE.md` entry.
@@ -29,6 +30,13 @@ edits production code, only the card's status and notes.
      typed GDScript and gdUnit4 coverage for `godot.md` paths; up/down
      idempotency for `sql.md` paths; license allowlist + provenance for
      `assets.md` paths.
+   - `planner.md` (`tasks/**` diffs — see `.claude/rules/planner.md`): no
+     card's `status` field changed from the base branch (diff the frontmatter,
+     not just the body — `status` is runtime state the planner must never
+     touch); no card was deleted (an obsolete card gets an in-body note
+     instead, the file stays); every rewritten/new card cites a specific
+     `docs/` reference, not invented scope; new ids follow the gap-tolerant
+     `T-NNNN` scheme with no reuse.
 4. **Emit a verdict.**
    - **PASS** — `verify` green and the audit finds nothing disqualifying.
      Move the card to `review`, attach a short summary of what was checked.

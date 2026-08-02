@@ -63,6 +63,21 @@ describe("resolveRulesForTask", () => {
     expect(AGENT_PATH_SCOPES.infra).toEqual(expect.arrayContaining(["tools/**"]));
     expect(AGENT_PATH_SCOPES.server).toEqual(expect.arrayContaining(["server/**", "shared/**"]));
   });
+
+  it("scopes the planner agent to tasks/** and docs/** only -- it never touches source", () => {
+    expect(AGENT_PATH_SCOPES.planner).toEqual(expect.arrayContaining(["tasks/**", "docs/**"]));
+  });
+
+  it("resolves planner + conduct rules (not js/cpp/sql) for a planner-agent task", () => {
+    const plannerTask = { ...TASK, agent: "planner" };
+    const PLANNER_RULE = { name: "planner", paths: ["tasks/**"], body: "# planner\n\nGround every change in a design doc." };
+    const resolved = resolveRulesForTask(plannerTask, [...ALL_RULES, PLANNER_RULE]);
+    const names = resolved.map((r) => r.name);
+    expect(names).toEqual(expect.arrayContaining(["conduct", "planner"]));
+    expect(names).not.toContain("js");
+    expect(names).not.toContain("cpp");
+    expect(names).not.toContain("sql");
+  });
 });
 
 describe("matchesPattern", () => {

@@ -9,6 +9,7 @@ function makeFakeTerm() {
     write: vi.fn(),
     dispose: vi.fn(),
     loadAddon: vi.fn(),
+    focus: vi.fn(),
     onData: (cb) => {
       handlers.data = cb;
     },
@@ -183,5 +184,96 @@ describe("createTerminalPanel", () => {
     fitAddon.fit.mockClear();
     window.dispatchEvent(new Event("resize"));
     expect(fitAddon.fit).not.toHaveBeenCalled();
+  });
+});
+
+describe("createTerminalPanel -- auto-focus", () => {
+  it("focuses the terminal as soon as the panel is created (visible by default)", () => {
+    const term = makeFakeTerm();
+
+    createTerminalPanel({
+      root: document.createElement("div"),
+      TerminalCtor: ctorReturning(term),
+      FitAddonCtor: ctorReturning(makeFakeFitAddon()),
+      connect: vi.fn(() => makeFakeSocket())
+    });
+
+    expect(term.focus).toHaveBeenCalled();
+  });
+
+  it("exposes a focus() method that refocuses the terminal", () => {
+    const term = makeFakeTerm();
+
+    const panel = createTerminalPanel({
+      root: document.createElement("div"),
+      TerminalCtor: ctorReturning(term),
+      FitAddonCtor: ctorReturning(makeFakeFitAddon()),
+      connect: vi.fn(() => makeFakeSocket())
+    });
+    term.focus.mockClear();
+
+    panel.focus();
+
+    expect(term.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses the terminal when the wider panel area (not just the xterm mount) is clicked", () => {
+    const term = makeFakeTerm();
+    const root = document.createElement("div");
+    const panelRoot = document.createElement("div");
+    panelRoot.appendChild(root);
+    const header = document.createElement("div");
+    panelRoot.appendChild(header);
+
+    createTerminalPanel({
+      root,
+      panelRoot,
+      TerminalCtor: ctorReturning(term),
+      FitAddonCtor: ctorReturning(makeFakeFitAddon()),
+      connect: vi.fn(() => makeFakeSocket())
+    });
+    term.focus.mockClear();
+
+    header.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(term.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults panelRoot to root when not given, so clicking the mount still focuses", () => {
+    const term = makeFakeTerm();
+    const root = document.createElement("div");
+
+    createTerminalPanel({
+      root,
+      TerminalCtor: ctorReturning(term),
+      FitAddonCtor: ctorReturning(makeFakeFitAddon()),
+      connect: vi.fn(() => makeFakeSocket())
+    });
+    term.focus.mockClear();
+
+    root.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(term.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose() stops listening for panel clicks", () => {
+    const term = makeFakeTerm();
+    const root = document.createElement("div");
+    const panelRoot = document.createElement("div");
+    panelRoot.appendChild(root);
+
+    const panel = createTerminalPanel({
+      root,
+      panelRoot,
+      TerminalCtor: ctorReturning(term),
+      FitAddonCtor: ctorReturning(makeFakeFitAddon()),
+      connect: vi.fn(() => makeFakeSocket())
+    });
+    panel.dispose();
+    term.focus.mockClear();
+
+    panelRoot.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(term.focus).not.toHaveBeenCalled();
   });
 });

@@ -18,10 +18,17 @@ that wastes time and produces a verdict about code nobody changed.
    | Paths | Command |
    |---|---|
    | `tools/**` | `npm test` (Vitest) + `npx eslint .` in `tools/board` |
+   | `tasks/**` (planner backlog changes) | `node tools/board/scripts/validateBacklog.js` (or `npm run validate:backlog` from `tools/board`) — validates the whole backlog as a set, not just the changed files |
    | `server/**`, `shared/**` (C++ side) | `cmake --build build && ctest --test-dir build` + `clang-format --dry-run --Werror` on changed files |
    | `client/**` (GDExtension C++) | `scons` + `clang-format --dry-run --Werror` on changed files |
    | `client/**` (`.gd`/`.tscn`) | `godot --headless` gdUnit4 test run |
    | `server/**/migrations/**` | apply `up` then `down` then `up` again against a throwaway `docker compose` Postgres — must be idempotent and error-free |
+
+   A diff touching both `tasks/**` and `tools/board/**` (e.g. a planner run
+   that also required a validator fix) runs both rows, not just one. See
+   `tools/board/src/runner/verifyRouter.js` for the code-enforced version of
+   this routing, injected directly into the reviewer's prompt as a
+   `## Required verification for this diff` section for these two paths.
 
 3. Capture full output, not just the exit code — a FAIL verdict downstream
    (in the `review` skill) needs the actual failure text, not "tests

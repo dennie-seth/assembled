@@ -132,7 +132,13 @@ export class RunOrchestrator {
     const reviewerAgentDef = this.loadAgentDefFn("reviewer", { agentsDir: this.agentsDir });
     const reviewerRules = resolveRulesForPaths(changedPaths, this.loadRulesFn({ rulesDir: this.rulesDir }));
     const reviewerAllowedTools = this.resolveAllowedToolsFn("reviewer", { agentsDir: this.agentsDir });
-    const reviewerPrompt = this.buildReviewerPromptFn({ task, agentDef: reviewerAgentDef, rules: reviewerRules });
+    const reviewerPrompt = this.buildReviewerPromptFn({
+      task,
+      agentDef: reviewerAgentDef,
+      rules: reviewerRules,
+      changedPaths,
+      baseBranch: this.baseBranch
+    });
 
     const reviewerResult = await this._runPhase({
       taskId,
