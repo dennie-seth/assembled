@@ -72,6 +72,36 @@ def test_integrated_loudness_fails_when_outside_tolerance():
     assert not result.passed
 
 
+def test_integrated_loudness_does_not_raise_on_a_block_size_fp_boundary():
+    # `duration_s * rate` doesn't always round-trip back to exactly
+    # `len(samples)` in floating point -- it can round *up* by a hair,
+    # which flips pyloudnorm's `block_size * rate <= len(samples)` check
+    # and raises on a clip whose length legitimately *is* the block size.
+    # 3547 samples @ 44100Hz is a real example a synthesized one-shot hit.
+    sample_rate = 44100
+    n = 3547
+    samples = _sine(1000, n / sample_rate, sample_rate=sample_rate, amplitude=0.3)
+    targets = {"gameplay_sfx": BusLoudnessTarget(target_lufs=-16.0, tolerance_db=20.0)}
+    result = check_integrated_loudness(samples, sample_rate, bus="gameplay_sfx", targets=targets)
+    assert np.isfinite(result.details["measured_lufs"])
+
+
+def test_integrated_loudness_measures_a_one_shot_shorter_than_400ms():
+    # pyloudnorm's default 400ms gating block raises ValueError on anything
+    # shorter (T-0101 one-shots are 20-400ms) -- the check must shrink its
+    # measurement block to fit rather than blow up on legitimate input.
+    samples = _sine(1000, 0.15, amplitude=0.3)
+    sample_rate = 44100
+    import pyloudnorm as pyln
+
+    measured = pyln.Meter(sample_rate, block_size=0.15).integrated_loudness(
+        samples.astype(np.float64)
+    )
+    targets = {"gameplay_sfx": BusLoudnessTarget(target_lufs=measured, tolerance_db=1.0)}
+    result = check_integrated_loudness(samples, sample_rate, bus="gameplay_sfx", targets=targets)
+    assert result.passed
+
+
 def test_true_peak_fails_for_full_scale_signal():
     samples = _sine(1000, 0.5, amplitude=0.999)
     result = check_true_peak(samples, max_dbtp=-1.0)

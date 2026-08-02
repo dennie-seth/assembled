@@ -91,12 +91,31 @@ def check_integrated_loudness(
 ) -> CheckResult:
     """EBU R128 integrated loudness must land within `tolerance_db` of the
     bus's target LUFS. TODO(AU-2): targets are placeholders, see
-    config/loudness_targets.placeholder.json."""
+    config/loudness_targets.placeholder.json.
+
+    pyloudnorm's default 400ms gating block raises `ValueError` on anything
+    shorter -- fine for loops/music, not for a T-0101 one-shot (a footstep
+    or click can be well under 400ms). Shrink the block to fit the clip
+    instead of rejecting legitimate short input; a single undersized block
+    is still a meaningful (if less statistically stable) K-weighted measure.
+    """
     if bus not in targets:
         raise ValueError(f"no loudness target configured for bus {bus!r}")
     target = targets[bus]
 
-    meter = pyln.Meter(sample_rate)
+    duration_s = len(_to_mono(samples)) / sample_rate
+    if duration_s >= 0.4:
+        block_size = 0.4
+    else:
+        # `duration_s * rate` doesn't always round-trip back to exactly
+        # `len(samples)` in floating point (it can round *up* by ~1e-13
+        # relative), which flips pyloudnorm's `block_size * rate <=
+        # len(samples)` check and raises on a clip whose length
+        # legitimately *is* the block size. Back off by a margin far
+        # bigger than that rounding error, not by handling the boundary
+        # exactly.
+        block_size = duration_s * (1 - 1e-9) if duration_s > 0 else 0.4
+    meter = pyln.Meter(sample_rate, block_size=block_size)
     measured = meter.integrated_loudness(samples.astype(np.float64))
 
     if not np.isfinite(measured):
