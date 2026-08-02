@@ -7,9 +7,9 @@ from __future__ import annotations
 import json
 
 import pytest
+from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
 from comfy_client import cli
-from comfy_client.license_allowlist import CheckpointNotAllowedError
 from comfy_client.pipeline import GenerationResult
 from comfy_client.provenance import build_provenance_record
 from comfy_client.recipe import Recipe

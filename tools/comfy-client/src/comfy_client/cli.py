@@ -12,8 +12,9 @@ import argparse
 import json
 import sys
 
+from gen_client_base.license_allowlist import CheckpointNotAllowedError
+
 from comfy_client.errors import ComfyClientError
-from comfy_client.license_allowlist import CheckpointNotAllowedError
 from comfy_client.pipeline import DEFAULT_OUT_DIR, generate
 from comfy_client.provenance import provenance_to_dict
 from comfy_client.recipe import load_recipe

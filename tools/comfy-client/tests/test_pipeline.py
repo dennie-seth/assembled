@@ -5,9 +5,9 @@ provenance -- the T-0071 handoff point for T-0073 (descend) and T-0102
 from __future__ import annotations
 
 import pytest
+from gen_client_base.client import GenerationClient
+from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
-from comfy_client.client import GenerationClient
-from comfy_client.license_allowlist import CheckpointNotAllowedError
 from comfy_client.pipeline import generate
 from comfy_client.recipe import Recipe
 

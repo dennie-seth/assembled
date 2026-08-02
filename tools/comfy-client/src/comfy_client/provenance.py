@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from comfy_client.license_allowlist import assert_checkpoint_allowed
+from gen_client_base.license_allowlist import assert_checkpoint_allowed
+
 from comfy_client.recipe import Recipe
 
 
