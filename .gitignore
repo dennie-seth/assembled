@@ -16,6 +16,12 @@ client/bin/
 client/godot-cpp/bin/
 .sconsign.dblite
 
+# ci-client.yml's import/smoke/export step logs (local repro artifacts,
+# CI keeps its own via the Actions log — not source)
+client/import.log
+client/smoke.log
+client/export.log
+
 # C++
 build/
 cmake-build-*/

@@ -73,22 +73,88 @@ jobs:
           include-templates: true
           cache: true
 
+      # T-0060/T-0061: `godot --headless --import` has a known abort-on-exit
+      # (SIGABRT / exit 134) on some headless Linux/Windows CI runners —
+      # it fires *after* every real import stage has already completed and
+      # been written to disk. Root cause is believed to be in Godot's
+      # headless *editor*-teardown path (`--import` loads EditorNode
+      # internals even under `--headless`); not reproducible in an
+      # unconstrained WSL shell or a plain `ubuntu:24.04` Docker container
+      # with matching CPU/memory limits — see docs/ci-notes.md T-0060/T-0061
+      # for the repro attempts. Forgive it ONLY when the log proves every
+      # stage actually finished and no GDExtension/parse error was ever
+      # printed; anything else (including a signal abort that happens
+      # before completion) still fails the build.
       - name: Import project (headless)
         shell: bash
         working-directory: ${{ env.CLIENT_DIR }}
-        run: godot --headless --import
+        run: |
+          set -o pipefail
+          # Strip ANSI colour codes before writing the log: Godot's progress
+          # lines wrap "[ DONE ]"/stage names in SGR escapes even when not
+          # attached to a tty, which breaks a literal grep match on them
+          # (confirmed locally — see docs/ci-notes.md T-0060/T-0061).
+          if godot --headless --import 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee import.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$status" -gt 128 ] \
+             && grep -qF '[ DONE ] loading_editor_layout' import.log \
+             && ! grep -qE 'SCRIPT ERROR|Parser Error|Failed to load extension|Can.t open dynamic library|Unable to load GDExtension' import.log; then
+            echo "::warning::godot --headless --import exited $status (signal $((status - 128))) after every import stage completed — known headless editor-teardown abort-on-exit, not a real failure. See docs/ci-notes.md T-0060/T-0061."
+            exit 0
+          fi
+          echo "::error::godot --headless --import failed for real (exit $status)"
+          exit "$status"
 
+      # Gate on the script's own explicit verdict (tests/smoke_test.gd
+      # calls quit(0)/quit(1) itself after asserting AssembledPing loaded
+      # and round-tripped), not on Godot's raw process exit code, for the
+      # same abort-on-exit reason as the import step above — see
+      # docs/ci-notes.md.
       - name: Smoke test — GDExtension loads and round-trips (headless)
         shell: bash
         working-directory: ${{ env.CLIENT_DIR }}
-        run: godot --headless --script tests/smoke_test.gd
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/smoke_test.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee smoke.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'SMOKE TEST PASS' smoke.log; then
+            echo "Smoke test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::smoke test did not print SMOKE TEST PASS (godot exit $status)"
+          exit 1
 
+      # Same abort-on-exit class can hit export (also editor-only
+      # machinery under headless) — gate on the exported artifacts
+      # actually existing and being non-empty, not on Godot's exit code.
       - name: Export Windows Desktop
         shell: bash
         working-directory: ${{ env.CLIENT_DIR }}
         run: |
+          set -o pipefail
           mkdir -p build/windows
-          godot --headless --export-release "Windows Desktop" build/windows/assembled.exe
+          if godot --headless --export-release "Windows Desktop" build/windows/assembled.exe 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee export.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ -s build/windows/assembled.exe ] && [ -s build/windows/assembled.pck ]; then
+            if [ "$status" -ne 0 ]; then
+              echo "::warning::export exited $status but produced a complete Windows build — treating as the known headless abort-on-exit. See docs/ci-notes.md."
+            fi
+            exit 0
+          fi
+          echo "::error::export failed — Windows build artifacts missing or empty (exit $status)"
+          exit 1
 
       - uses: actions/upload-artifact@v7
         with:
@@ -134,19 +200,68 @@ jobs:
           include-templates: true
           cache: true
 
+      # See the matching step in windows-export above for the full
+      # explanation of the headless abort-on-exit this forgives (and
+      # doesn't) — this is the exact failure PR #12 hit on this job.
       - name: Import project (headless)
         working-directory: ${{ env.CLIENT_DIR }}
-        run: godot --headless --import
+        run: |
+          set -o pipefail
+          # Strip ANSI colour codes before writing the log: Godot's progress
+          # lines wrap "[ DONE ]"/stage names in SGR escapes even when not
+          # attached to a tty, which breaks a literal grep match on them
+          # (confirmed locally — see docs/ci-notes.md T-0060/T-0061).
+          if godot --headless --import 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee import.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$status" -gt 128 ] \
+             && grep -qF '[ DONE ] loading_editor_layout' import.log \
+             && ! grep -qE 'SCRIPT ERROR|Parser Error|Failed to load extension|Can.t open dynamic library|Unable to load GDExtension' import.log; then
+            echo "::warning::godot --headless --import exited $status (signal $((status - 128))) after every import stage completed — known headless editor-teardown abort-on-exit, not a real failure. See docs/ci-notes.md T-0060/T-0061."
+            exit 0
+          fi
+          echo "::error::godot --headless --import failed for real (exit $status)"
+          exit "$status"
 
       - name: Smoke test — GDExtension loads and round-trips (headless)
         working-directory: ${{ env.CLIENT_DIR }}
-        run: godot --headless --script tests/smoke_test.gd
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/smoke_test.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee smoke.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'SMOKE TEST PASS' smoke.log; then
+            echo "Smoke test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::smoke test did not print SMOKE TEST PASS (godot exit $status)"
+          exit 1
 
       - name: Export Linux
         working-directory: ${{ env.CLIENT_DIR }}
         run: |
+          set -o pipefail
           mkdir -p build/linux
-          godot --headless --export-release "Linux" build/linux/assembled.x86_64
+          if godot --headless --export-release "Linux" build/linux/assembled.x86_64 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee export.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ -s build/linux/assembled.x86_64 ] && [ -s build/linux/assembled.pck ]; then
+            if [ "$status" -ne 0 ]; then
+              echo "::warning::export exited $status but produced a complete Linux build — treating as the known headless abort-on-exit. See docs/ci-notes.md."
+            fi
+            exit 0
+          fi
+          echo "::error::export failed — Linux build artifacts missing or empty (exit $status)"
+          exit 1
 
       - uses: actions/upload-artifact@v7
         with:

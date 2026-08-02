@@ -122,6 +122,18 @@ godot --headless --import
 godot --headless --script tests/smoke_test.gd   # proof-of-life check, exits 1 on failure
 ```
 
+**If `godot --headless --import` prints `Aborted (core dumped)` after
+finishing all its stages** (you'll see `[ DONE ] loading_editor_layout`
+right before it), that's a known Godot headless abort-on-exit — it fires
+*after* the import work is already done, most reliably on a freshly
+deleted `client/.godot` cache. It isn't specific to this project and
+isn't something to fix here; CI treats it as non-fatal for exactly this
+reason, gated on the import actually having completed rather than on
+Godot's exit code. See `docs/ci-notes.md` ("PR #12") for the full
+reproduction and the reasoning. The `tests/smoke_test.gd` run on the next
+line is the real correctness check regardless — if that prints
+`SMOKE TEST PASS`, the extension genuinely loaded.
+
 To actually run the (non-quitting) main scene instead of the smoke test:
 
 ```sh

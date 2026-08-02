@@ -193,3 +193,108 @@ import and export, then export. SCons caching (T-0034) is keyed the same
 way as the spike's was. Path triggers no longer include
 `.github/ci-spike/**` — that project is frozen/superseded, not touched by
 ongoing client work.
+
+### PR #12 — `godot --headless --import` abort-on-exit (SIGABRT / 134)
+
+**First real CI run (PR #12) failed on `linux-export`'s `Import project
+(headless)` step: `Aborted (core dumped)`, exit 134 — after the log showed
+`first_scan_filesystem` DONE, GDExtension verification, `update_scripts_classes`
+DONE, and `loading_editor_layout` DONE. No error text, no undefined-symbol
+report, nothing GDExtension-related — the crash is purely in process
+teardown, after every real import stage already finished and was written
+to disk.**
+
+**Reproduced locally**, after several failed attempts (see below) —
+running the *exact* `Import project (headless)` `run:` block, byte-for-byte
+extracted from the committed `ci-client.yml`, against a **freshly deleted
+`client/.godot` cache** (i.e. simulating a fresh checkout, not a warm
+rebuild) reproduces `Aborted (core dumped)`, exit 134, **5/5 times** in a
+row in plain WSL — no container needed once the cache is genuinely cold.
+It does not reproduce against an already-imported project. This points at
+Godot's first-time resource-import thread pool: spinning up and tearing
+down the extra worker/import threads that only run on a cold cache is
+the likely trigger, racing against main-thread exit during headless
+*editor*-teardown (`--import` loads `EditorNode` internals even under
+`--headless`) — consistent with it being flaky/environment-sensitive
+rather than a deterministic bug, and with GH Actions runners (always a
+fresh checkout) hitting it far more reliably than a dev box with a
+pre-populated `.godot/` cache.
+
+Repro attempts that did **not** reproduce it, for the record (each was a
+genuine attempt, not just "didn't try hard enough"): plain WSL with a
+warm cache; WSL with `DISPLAY`/`PULSE_SERVER`/`WAYLAND_DISPLAY` unset; a
+bare `ubuntu:24.04` Docker container (no X11/Pulse at all, only the libs
+`ldd` reported missing: `libfontconfig1`, `libgl1`); the same container
+constrained to `--cpus=2 --memory=7g` to match GH's `ubuntu-latest` spec,
+run 3x. None of these abort — **only a genuinely cold `.godot/` cache
+does**, which was the missing variable.
+
+**The fix is not "ignore the exit code."** That would mask a real
+load/ABI failure just as easily as it hides the benign one. Instead, each
+of the three `godot --headless` invocations in `ci-client.yml` (import,
+smoke, export) is gated on independent evidence that the *real* work
+succeeded, never on Godot's raw process exit code alone:
+
+1. **Import step:** forgive a nonzero exit only when **all** of: the exit
+   code is signal-terminated (`> 128`, i.e. `128 + SIGABRT` = 134, not an
+   ordinary `exit 1`); the log reaches `[ DONE ] loading_editor_layout`
+   (proof every import stage actually finished, not just started); and no
+   `SCRIPT ERROR`/`Parser Error`/`Failed to load extension`/`Can't open
+   dynamic library`/`Unable to load GDExtension` line ever appeared.
+   Verified via both fake-`godot` stand-ins (four scenarios: clean
+   success, benign abort-after-completion, a real error that also happens
+   to abort, and a crash before completion — the last two must still
+   fail) and a negative control against the real binary: renaming away
+   the built `.so` still correctly fails this step's *sibling* smoke-test
+   gate (see below) even though the import step itself, tellingly, still
+   exits 0 in that case — Godot's raw import exit code was never a
+   reliable success signal even before this bug, which is exactly why the
+   real gate is elsewhere.
+2. **Smoke test step:** gates purely on `tests/smoke_test.gd`'s own
+   explicit `SMOKE TEST PASS` stdout marker (the script calls
+   `quit(0)`/`quit(1)` itself after asserting `AssembledPing` loaded and
+   round-tripped — see `client/tests/smoke_test.gd`), never on Godot's
+   exit code. This is the real correctness gate for the whole job.
+   Negative-control-verified: with the built `.so` renamed away, GDScript
+   fails to parse the script's `AssembledPing` type annotation at all
+   (`SCRIPT ERROR: ... Could not find type "AssembledPing"`), no PASS
+   marker is ever printed, and the step correctly fails — even though
+   Godot's own exit code for that run is 0, not nonzero, which is the
+   sharpest illustration of why exit-code gating was never safe to begin
+   with, abort-on-exit bug or not.
+3. **Export step:** gates on the exported binary and `.pck` both existing
+   and being non-empty (`[ -s ... ]`), same class of editor-only headless
+   machinery as import, same treatment.
+
+All three `godot --headless ...` invocations are also piped through
+`sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g'` before `tee`-ing to a log file:
+Godot's progress-bar lines (`[ DONE ] stage_name`) are wrapped in ANSI SGR
+colour escapes even when stdout isn't a tty, which silently breaks a
+literal `grep -F` match on them — caught by testing the classification
+logic against the *real* binary's output, not just hand-written fake
+`godot` stand-ins (the fakes didn't emit ANSI codes, so they falsely
+validated a broken pattern first).
+
+**Full pipeline re-verified end-to-end** with the fix, running the exact
+`run:` blocks from the committed `linux-export` job (extracted from the
+YAML with `yaml.safe_load`, not retyped) against a freshly-cleared
+`client/.godot`: Import hit the real abort (134), correctly forgave it
+with a `::warning::`; Smoke test genuinely passed (`SMOKE TEST PASS`);
+Export produced a real, complete `assembled.x86_64` + `.pck`. Also
+confirmed `set -o pipefail` alone is not enough under GitHub Actions'
+default bash step flags (`--noprofile --norc -eo pipefail {0}` — `-e` is
+on by default): a bare `cmd | tee log; status=$?` would abort the whole
+step at the failing pipeline before the status line ever ran. Every
+wrapper here uses `if cmd | tee log; then status=0; else status=$?; fi`
+instead, which is exempt from `-e` by bash's own if-condition rule.
+
+**Applies to:** both `windows-export` and `linux-export` jobs identically
+(the Windows leg hadn't reached its own import step yet when PR #12's
+Linux job failed, but the same editor-teardown code path applies on any
+platform — same treatment, same reasoning, not verified live on Windows
+locally since WSL can't run the Windows binary, but `windows-export`'s own
+CI run is what confirms it there). Local commands in `client/README.md`
+are unaffected — a human running `godot --headless --import` once by
+hand and seeing `Aborted (core dumped)` after the same `DONE` markers can
+now cross-reference this section instead of assuming something is
+broken.
