@@ -1,0 +1,55 @@
+"""Recipe -> ComfyUI workflow-graph rendering (T-0071).
+
+Templates are versioned JSON under `templates/` -- `render_workflow` loads
+one, deep-copies its node graph, and substitutes the recipe's fields into
+known node IDs. This is deliberately not a generic graph-templating engine:
+node IDs are fixed per template version, and a graph-shape change means a
+new template file (`sdxl_txt2img_v2.json`, ...), never editing node IDs in
+an existing one -- see `templates/sdxl_txt2img_v1.json`'s `meta` block.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+from importlib import resources
+from typing import Any
+
+from comfy_client.recipe import Recipe
+
+DEFAULT_TEMPLATE_NAME = "sdxl_txt2img_v1"
+
+
+def load_template(name: str = DEFAULT_TEMPLATE_NAME) -> dict[str, Any]:
+    template_path = resources.files("comfy_client.templates").joinpath(f"{name}.json")
+    return json.loads(template_path.read_text())
+
+
+def render_workflow(recipe: Recipe, template: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Render `recipe` into a ComfyUI `/prompt`-ready node graph.
+
+    Returns a fresh dict each call -- the shared template is never mutated.
+    """
+    tmpl = load_template() if template is None else template
+    graph = copy.deepcopy(tmpl["graph"])
+
+    graph["4"]["inputs"]["ckpt_name"] = recipe.checkpoint
+    graph["6"]["inputs"]["text"] = recipe.prompt
+    graph["7"]["inputs"]["text"] = recipe.negative_prompt
+    graph["5"]["inputs"]["width"] = recipe.width
+    graph["5"]["inputs"]["height"] = recipe.height
+    graph["3"]["inputs"]["seed"] = recipe.seed
+    graph["3"]["inputs"]["steps"] = recipe.steps
+    graph["3"]["inputs"]["cfg"] = recipe.cfg
+    graph["3"]["inputs"]["sampler_name"] = recipe.sampler
+    graph["3"]["inputs"]["scheduler"] = recipe.scheduler
+    graph["9"]["inputs"]["filename_prefix"] = recipe.name
+
+    return graph
+
+
+def workflow_hash(graph: dict[str, Any]) -> str:
+    """Deterministic sha256 of a rendered graph -- the provenance seam's workflow hash."""
+    canonical = json.dumps(graph, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
