@@ -1,11 +1,12 @@
 ---
-paths: ["tools/asset-gate/**", "assets/src/**"]
+paths: ["tools/asset-gate/**", "tools/comfy-client/**", "assets/src/**"]
 ---
 
 # Python conventions
 
 First Python code in the repo (T-0102). Establishes the pattern for later
-Python tooling (e.g. T-0101's deterministic synthesis script).
+Python tooling (e.g. T-0101's deterministic synthesis script, T-0071's
+`comfy-client`).
 
 - **Package layout:** `src/<pkg>/` + `tests/`, installed editable
   (`pip install -e ".[dev]"`) into a per-package `.venv/` (gitignored).
@@ -21,6 +22,10 @@ Python tooling (e.g. T-0101's deterministic synthesis script).
 - **Pure functions returning a shared result type.** Checks return
   `asset_gate.result.CheckResult` (or reuse that pattern in new packages)
   rather than raising or printing — keeps them composable and testable
-  without capturing stdout.
+  without capturing stdout. This applies to *validation checks*
+  (pass/fail assertions over static content); an operational client
+  (`comfy-client`'s HTTP submit/poll/fetch) legitimately raises typed
+  exceptions instead, since a submit/timeout/execution failure is a
+  real error to propagate, not a graded verdict.
 - Every check module documents which `docs/design/*.md` section it
   implements, and cites the invariant (`P-4`, `D-17`, etc.) where one exists.
