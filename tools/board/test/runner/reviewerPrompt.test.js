@@ -65,4 +65,51 @@ describe("buildReviewerPrompt", () => {
     expect(() => buildReviewerPrompt({})).toThrow();
     expect(() => buildReviewerPrompt({ task: { id: "T-0001" } })).toThrow();
   });
+
+  it("works with no changedPaths at all (defaults to no explicit routed verification section)", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).not.toContain("Required verification for this diff");
+  });
+});
+
+describe("buildReviewerPrompt -- routed verification section", () => {
+  it("tells the reviewer to run the backlog validator for a tasks/-only diff", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tasks/T-0200.md"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("node tools/board/scripts/validateBacklog.js");
+    expect(prompt).not.toContain("Board test/lint suite");
+  });
+
+  it("tells the reviewer to run the board suite for a tools/board diff, not the backlog validator", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tools/board/src/lib/fsTaskStore.js"]
+    });
+    expect(prompt).toContain("Board test/lint suite");
+    expect(prompt).not.toContain("validateBacklog.js");
+  });
+
+  it("tells the reviewer to run both when a diff touches tasks/** and tools/board/**", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tasks/T-0200.md", "tools/board/src/lib/fsTaskStore.js"]
+    });
+    expect(prompt).toContain("validateBacklog.js");
+    expect(prompt).toContain("Board test/lint suite");
+  });
+
+  it("omits the routed section entirely for a diff outside tasks/** and tools/board/** -- falls back to the verify skill's own table", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["server/src/main.cpp"]
+    });
+    expect(prompt).not.toContain("Required verification for this diff");
+  });
 });

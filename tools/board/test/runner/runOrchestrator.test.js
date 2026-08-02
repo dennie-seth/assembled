@@ -69,7 +69,7 @@ function baseTask(overrides = {}) {
   };
 }
 
-function makeOrchestrator({ store, git, runner, hub, runLogs = [] } = {}) {
+function makeOrchestrator({ store, git, runner, hub, runLogs = [], ...overrides } = {}) {
   const createRunLogFn = vi.fn(async () => {
     const log = makeRunLog();
     runLogs.push(log);
@@ -89,7 +89,8 @@ function makeOrchestrator({ store, git, runner, hub, runLogs = [] } = {}) {
     loadAgentDefFn: (name) => (name === "reviewer" ? REVIEWER_DEF : IMPLEMENTER_DEF),
     loadRulesFn: () => [{ name: "conduct", paths: ["**"], body: "TDD." }],
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
-    createRunLogFn
+    createRunLogFn,
+    ...overrides
   });
 }
 
@@ -174,6 +175,54 @@ describe("RunOrchestrator.runCard — happy path (PASS)", () => {
     expect(runEventMessages.every((m) => m.id === "T-0001")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "implementer")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "reviewer")).toBe(true);
+  });
+});
+
+describe("RunOrchestrator.runCard — routes the reviewer's changed paths through to the validation gate", () => {
+  it("passes the diff's changed paths (from git.diffNames) into the reviewer prompt builder -- a planner diff", async () => {
+    const store = makeStore([baseTask({ agent: "planner" })]);
+    const git = makeGit({ diffNames: vi.fn(async () => ["tasks/T-0200.md"]) });
+    const runner = makeRunner();
+    const buildReviewerPromptFn = vi.fn(() => "reviewer prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildReviewerPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "backlog validates")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(buildReviewerPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ changedPaths: ["tasks/T-0200.md"] })
+    );
+  });
+
+  it("passes a code diff's changed paths through unchanged -- code work keeps its own tests/lint/build routing", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ diffNames: vi.fn(async () => ["tools/board/src/lib/fsTaskStore.js"]) });
+    const runner = makeRunner();
+    const buildReviewerPromptFn = vi.fn(() => "reviewer prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildReviewerPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "suite green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(buildReviewerPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ changedPaths: ["tools/board/src/lib/fsTaskStore.js"] })
+    );
   });
 });
 

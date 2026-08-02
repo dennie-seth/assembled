@@ -1,4 +1,5 @@
 import { TASK_BODY_START, TASK_BODY_END, escapeTaskBody } from "./promptBuilder.js";
+import { resolveVerifyRoutes } from "./verifyRouter.js";
 
 const VERDICT_FOOTER = `## Verdict output format — REQUIRED
 
@@ -18,13 +19,24 @@ or
 
 This fenced block is the only channel your verdict is recorded through. If it is missing or not valid JSON, the run is treated as a runner failure, not a FAIL verdict.`;
 
+function buildRequiredVerificationSection(changedPaths) {
+  const routes = resolveVerifyRoutes(changedPaths);
+  if (routes.length === 0) {
+    return null;
+  }
+  const lines = routes.map((route) => `- **${route.label}:** \`${route.command}\``);
+  return `## Required verification for this diff\n\nRun exactly the following, in addition to (not instead of) the \`verify\` skill's own table for any other paths this diff touches:\n\n${lines.join("\n")}`;
+}
+
 /**
  * Builds the prompt handed to `claude -p` for the reviewer's VALIDATION run:
  * task identity, the reviewer's own agent definition, whichever rules match
- * the diff's actually-changed paths, the task body verbatim, and the
- * required machine-readable verdict format.
+ * the diff's actually-changed paths, an explicit routed-verification section
+ * when the diff matches a code-enforced route (tasks/** -> backlog
+ * validator, tools/board/** -> board suite -- see verifyRouter.js), the task
+ * body verbatim, and the required machine-readable verdict format.
  */
-export function buildReviewerPrompt({ task, agentDef, rules = [] }) {
+export function buildReviewerPrompt({ task, agentDef, rules = [], changedPaths = [] }) {
   if (!task || typeof task.body !== "string") {
     throw new Error("buildReviewerPrompt requires a task with a body");
   }
@@ -41,6 +53,11 @@ export function buildReviewerPrompt({ task, agentDef, rules = [] }) {
 
   for (const rule of rules) {
     sections.push(`## Rule: ${rule.name}\n\n${rule.body.trim()}`);
+  }
+
+  const requiredVerification = buildRequiredVerificationSection(changedPaths);
+  if (requiredVerification) {
+    sections.push(requiredVerification);
   }
 
   sections.push(

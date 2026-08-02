@@ -80,6 +80,7 @@ follows the same order, enforced by the `tdd` skill:
 | `client` | `client/**`, `shared/**` | Read, Write, Edit, Grep, Glob, Bash (scons, godot --headless, gdUnit4, git) | `sonnet` | Godot + GDExtension |
 | `assets` | `assets/**` | Read, Write, Edit, Bash (AssetAgent/ComfyUI HTTP), Grep, Glob | `sonnet` | Generated 2D art; license-allowlist hook gates every run; needs GPU; active only after art direction lands (PLAN.md open question 3) |
 | `audio` | `assets/src/**`, `assets/final/audio/**` | Read, Write, Edit, Bash (AssetAgent/ComfyUI HTTP, ACE-Step / Stable Audio), Grep, Glob | `sonnet` | Generated music/SFX; shares the `AssetAgent` interface with `assets` (DRY) |
+| `planner` | `tasks/**` (read/write), `docs/**` (read-only) | Read, Write, Edit, Grep, Glob — no Bash, no source paths | `opus` | Audits/extends the backlog against the design docs. Never touches `status`, never deletes a card, never marks anything `done`. |
 | `reviewer` | path-aware — loads rules for whatever paths a card actually touched | Read, Grep, Glob, Bash (subsystem tests/lint/build only) | `opus` | The `VALIDATION` gate. Read-only on source: no Write/Edit of production code. |
 
 Full definitions: `.claude/agents/*.md`.
@@ -129,6 +130,7 @@ touch that path. See `.claude/rules/*.md`.
 | `godot.md` | `client/**` (`*.gd`, `*.tscn`, `*.tres`) | GDScript conventions, gdUnit4, scene/node idioms, `shared/` template tables |
 | `assets.md` | `assets/**` | License allowlist hook, provenance, LFS, `art/*` branch policy |
 | `sql.md` | `server/**` (migrations) | Plain SQL + version table, up/down idempotent, FK-as-UGC-guarantee |
+| `planner.md` | `tasks/**` | Card-authoring quality, grounding in design docs, ID/dependency hygiene, never-touch-status / never-delete / never-done guardrails |
 
 ## Skills
 
