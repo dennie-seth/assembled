@@ -37,7 +37,8 @@ def test_default_gateway_ip_raises_when_no_default_route():
 
 
 def test_resolve_base_url_env_override_wins_and_strips_trailing_slash():
-    url = resolve_base_url(env={"COMFYUI_BASE_URL": "http://example.test:9000/"}, run=fake_run(IP_ROUTE_OUTPUT))
+    env = {"COMFYUI_BASE_URL": "http://example.test:9000/"}
+    url = resolve_base_url(env=env, run=fake_run(IP_ROUTE_OUTPUT))
     assert url == "http://example.test:9000"
 
 
