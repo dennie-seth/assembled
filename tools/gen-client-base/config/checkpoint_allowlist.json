@@ -14,6 +14,13 @@
       "license_family": "Apache-2.0",
       "source": "https://huggingface.co/ACE-Step/ACE-Step-v1-3.5B",
       "notes": "Installed on the Windows ACE-Step host, docs/ace-step-setup.md (T-0080). Ungated on HF, no login required. Consumed by audio-agent/AudioAgent (T-0082)."
+    },
+    {
+      "filename": "stabilityai/stable-audio-open-1.0",
+      "license": "Stability AI Community License",
+      "license_family": "Stability-Community",
+      "source": "https://huggingface.co/stabilityai/stable-audio-open-1.0",
+      "notes": "Installed on the Windows Stable Audio Open host, docs/stable-audio-setup.md (T-0081). Approved-with-caveat, not the plain Apache-2.0/OpenRAIL/CC0 tier: free under the Stability AI Community License while the project stays under $1M annual revenue -- Stability registration/commercial license required if that changes. Gated on HF, requires an authenticated huggingface-cli login. Consumed by audio-agent/AudioAgent (T-0082) for texture SFX (13-asset-pipeline.md §4.5)."
     }
   ]
 }

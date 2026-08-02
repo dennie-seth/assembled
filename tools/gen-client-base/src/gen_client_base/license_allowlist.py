@@ -17,7 +17,16 @@ from pathlib import Path
 
 # .claude/rules/assets.md: "generated assets only from Apache-2.0 / OpenRAIL /
 # CC0-derived models" -- no CC-BY-NC weights, ever.
-APPROVED_LICENSE_FAMILIES = {"Apache-2.0", "OpenRAIL", "CC0"}
+#
+# "Stability-Community" is an approved-with-caveat fourth family, added for
+# `stabilityai/stable-audio-open-1.0` (T-0081): the Stability AI Community
+# License is free for orgs under $1M annual revenue, but is NOT one of the
+# plain Apache-2.0/OpenRAIL/CC0 tier above -- if the project's revenue model
+# ever crosses that threshold, Stability registration/commercial licensing
+# is required for continued use (docs/stable-audio-setup.md). Still
+# categorically excludes CC-BY-NC (MusicGen, AudioGen, etc.), which has no
+# such compliance path at any revenue level.
+APPROVED_LICENSE_FAMILIES = {"Apache-2.0", "OpenRAIL", "CC0", "Stability-Community"}
 
 DEFAULT_ALLOWLIST_PATH = (
     Path(__file__).resolve().parents[2] / "config" / "checkpoint_allowlist.json"
