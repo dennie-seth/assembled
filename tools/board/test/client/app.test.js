@@ -21,22 +21,44 @@ function makeApp(overrides = {}) {
   const boardRoot = document.createElement("div");
   const detailRoot = document.createElement("div");
   const consoleRoot = document.createElement("div");
+  const createFormRoot = document.createElement("div");
   const fetchTasksImpl = overrides.fetchTasksImpl ?? vi.fn().mockResolvedValue([]);
+  const fetchAgentsImpl = overrides.fetchAgentsImpl ?? vi.fn().mockResolvedValue(["infra", "server"]);
   const patchTaskImpl = overrides.patchTaskImpl ?? vi.fn();
   const connectSocketImpl = overrides.connectSocketImpl ?? vi.fn();
   const runTaskImpl = overrides.runTaskImpl ?? vi.fn().mockResolvedValue({});
   const cancelTaskImpl = overrides.cancelTaskImpl ?? vi.fn().mockResolvedValue({});
+  const createTaskImpl = overrides.createTaskImpl ?? vi.fn();
+  const deleteTaskImpl = overrides.deleteTaskImpl ?? vi.fn();
   const app = createApp({
     boardRoot,
     detailRoot,
     consoleRoot,
+    createFormRoot,
     fetchTasksImpl,
+    fetchAgentsImpl,
     patchTaskImpl,
     connectSocketImpl,
     runTaskImpl,
-    cancelTaskImpl
+    cancelTaskImpl,
+    createTaskImpl,
+    deleteTaskImpl
   });
-  return { app, boardRoot, detailRoot, consoleRoot, fetchTasksImpl, patchTaskImpl, connectSocketImpl, runTaskImpl, cancelTaskImpl };
+  return {
+    app,
+    boardRoot,
+    detailRoot,
+    consoleRoot,
+    createFormRoot,
+    fetchTasksImpl,
+    fetchAgentsImpl,
+    patchTaskImpl,
+    connectSocketImpl,
+    runTaskImpl,
+    cancelTaskImpl,
+    createTaskImpl,
+    deleteTaskImpl
+  };
 }
 
 describe("createApp init", () => {
@@ -330,5 +352,105 @@ describe("createApp agent console wiring (T-0022)", () => {
     app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "system", subtype: "init" } });
 
     expect(consoleRoot.hidden).toBe(true);
+  });
+});
+
+describe("createApp create-card wiring", () => {
+  it("fetches the agent catalog on init", async () => {
+    const { app, fetchAgentsImpl } = makeApp();
+    await app.init();
+    expect(fetchAgentsImpl).toHaveBeenCalled();
+  });
+
+  it("keeps the create form hidden until toggled open", async () => {
+    const { app, createFormRoot } = makeApp();
+    await app.init();
+    expect(createFormRoot.hidden).toBe(true);
+  });
+
+  it("opens the create form on handleToggleCreateForm and closes it again", async () => {
+    const { app, createFormRoot } = makeApp();
+    await app.init();
+
+    app.handleToggleCreateForm();
+    expect(createFormRoot.hidden).toBe(false);
+
+    app.handleToggleCreateForm();
+    expect(createFormRoot.hidden).toBe(true);
+  });
+
+  it("creates a task, adds it to the board, and closes the form on success", async () => {
+    const created = task({ id: "T-0002", title: "Brand new" });
+    const { app, boardRoot, createFormRoot, createTaskImpl } = makeApp({
+      createTaskImpl: vi.fn().mockResolvedValue(created)
+    });
+    await app.init();
+    app.handleToggleCreateForm();
+
+    await app.handleCreateSubmit({ title: "Brand new", phase: 1 });
+
+    expect(createTaskImpl).toHaveBeenCalledWith({ title: "Brand new", phase: 1 });
+    expect(app.getTasks()).toContainEqual(created);
+    expect(boardRoot.textContent).toContain("Brand new");
+    expect(createFormRoot.hidden).toBe(true);
+  });
+
+  it("surfaces the server's validation error and keeps the form open on failure", async () => {
+    const { app, createFormRoot } = makeApp({
+      createTaskImpl: vi.fn().mockRejectedValue(new Error("title is required and must be a non-empty string"))
+    });
+    await app.init();
+    app.handleToggleCreateForm();
+
+    await app.handleCreateSubmit({ title: "", phase: 1 });
+
+    expect(app.getError()).toMatch(/title is required/);
+    expect(createFormRoot.hidden).toBe(false);
+  });
+
+  it("closes the form without creating anything on handleCancelCreate", async () => {
+    const { app, createFormRoot, createTaskImpl } = makeApp();
+    await app.init();
+    app.handleToggleCreateForm();
+
+    app.handleCancelCreate();
+
+    expect(createFormRoot.hidden).toBe(true);
+    expect(createTaskImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("createApp delete-card wiring", () => {
+  it("deletes a task, removes it from the board, and closes the detail panel if it was open", async () => {
+    const t = task({ id: "T-0001", title: "Doomed", status: "backlog" });
+    const { app, boardRoot, detailRoot, deleteTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t]),
+      deleteTaskImpl: vi.fn().mockResolvedValue({ id: "T-0001", deleted: true })
+    });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    await app.handleDelete("T-0001");
+
+    expect(deleteTaskImpl).toHaveBeenCalledWith("T-0001");
+    expect(app.getTasks()).toEqual([]);
+    expect(boardRoot.textContent).not.toContain("Doomed");
+    expect(app.getSelectedId()).toBe(null);
+    expect(detailRoot.hidden).toBe(true);
+  });
+
+  it("surfaces the server's error and keeps the task when delete is blocked", async () => {
+    const t = task({ id: "T-0001", title: "Running", status: "in-progress" });
+    const { app, deleteTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t]),
+      deleteTaskImpl: vi.fn().mockRejectedValue(new Error('Cannot delete T-0001: status is "in-progress" (active run)'))
+    });
+    await app.init();
+
+    await app.handleDelete("T-0001");
+
+    expect(deleteTaskImpl).toHaveBeenCalledWith("T-0001");
+    expect(app.getError()).toMatch(/active run/);
+    expect(app.getTasks()).toEqual([t]);
   });
 });
