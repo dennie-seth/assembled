@@ -1,6 +1,6 @@
 # Development Plan
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** draft v2
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v4
 > Machine-readable plan. Terse by design. Phases are strictly ordered; tasks inside a phase may parallelize unless `depends_on` says otherwise.
 
 ---
@@ -139,7 +139,7 @@ Phases 6/7 are independent of 4/5 and can run in parallel once Phase 2 exists.
 |---|---|
 | T-0001 | `git init`, MIT LICENSE, `.gitignore` (Godot + C++ + Node + `assets/out/`) |
 | T-0001a | `git flow init` (`main`/`develop`, standard prefixes); document `art/*` as an extra line |
-| T-0001b | `.gitattributes`: LF normalisation, `*.gd`/`*.tscn` text, LFS for `assets/final/audio/**`. Image patterns deferred to art-direction call — **must land before any binary is committed** |
+| T-0001b | `.gitattributes`: LF normalisation, `*.gd`/`*.tscn` text, LFS for `assets/final/audio/**`. **Images: plain git, no LFS** — pixel art is single-digit KB (art direction resolved) |
 | T-0002 | `CLAUDE.md` — <200 lines. Big picture, build cmds, conventions, do-not-touch list |
 | T-0003 | `.claude/rules/*.md` with `paths:` frontmatter (cpp / js / assets) |
 | T-0004 | `docs/design/` skeleton + `DESIGN.md` index |
@@ -243,7 +243,7 @@ created: 2026-07-31
 | T-0030 | **SPIKE:** verify `windows-latest` free runner can (a) build godot-cpp via SCons/MSVC, (b) `godot --headless --export-release`. Timebox 4h. Document result in `docs/ci-notes.md`. |
 | T-0031 | `ci-board.yml` — node, vitest, lint |
 | T-0032 | `ci-server.yml` — ubuntu, cmake, doctest, PG service container |
-| T-0033 | `ci-client.yml` — windows, godot-cpp build + headless export (gated on T-0030) |
+| T-0033 | `ci-client.yml` — **windows + linux**, godot-cpp build + headless export (gated on T-0030) |
 | T-0034 | Cache: godot-cpp objs, export templates, vcpkg/conan |
 | T-0035 | Artifact upload: client zip, server binary |
 | T-0036 | Local `pre-push` hook mirroring CI (fast subset) |
@@ -260,29 +260,35 @@ created: 2026-07-31
 
 ### Data model (`docs/design/04-data-model.md`)
 
+> **Sketch only.** The full schema — identity, sessions, items, escrow, unlocks, vocabulary — is in `docs/HANDOFF.md` §5 and lands as `docs/design/04-data-model.md` (T-0090).
+
 ```sql
 -- immutable template tables, seeded from shared/ headers
 note_templates(id SMALLINT PK, slots SMALLINT);   -- e.g. "Try {0} ahead"
 note_words(id SMALLINT PK, category SMALLINT);
 
+-- world is DISCRETE: anchor tags, never coordinates (open question 2, resolved)
+archetype(id SMALLINT PK);
+anchor_tag(archetype_id SMALLINT, tag SMALLINT, PRIMARY KEY(archetype_id, tag));
+
 notes(
-  id          BIGSERIAL PK,
-  zone_id     INT       NOT NULL,
-  pos_x       REAL      NOT NULL,
-  pos_y       REAL      NOT NULL,
-  template_id SMALLINT  NOT NULL REFERENCES note_templates,
-  slot_a      SMALLINT  REFERENCES note_words,
-  slot_b      SMALLINT  REFERENCES note_words,
-  author      UUID      NOT NULL,     -- anon client token
-  score       INT       NOT NULL DEFAULT 0,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  id           BIGSERIAL PK,
+  archetype_id SMALLINT  NOT NULL,
+  anchor_tag   SMALLINT  NOT NULL,
+  facing       SMALLINT,                -- optional
+  item_ref     SMALLINT,                -- optional
+  is_broadcast BOOLEAN   NOT NULL DEFAULT false,  -- petitions have no anchor
+  template_id  SMALLINT  NOT NULL REFERENCES note_templates,
+  slot_a       SMALLINT  REFERENCES note_words,
+  slot_b       SMALLINT  REFERENCES note_words,
+  author       UUID      NOT NULL,      -- phrase-derived identity token
+  score        INT       NOT NULL DEFAULT 0,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX ON notes (zone_id, score DESC);
-CREATE INDEX ON notes USING gist (point(pos_x, pos_y));
+CREATE INDEX ON notes (archetype_id, anchor_tag, score DESC);
+-- no GiST index. no geometry. lookup is equality.
 
 ratings(note_id BIGINT, voter UUID, val SMALLINT, PRIMARY KEY(note_id, voter));
-secret_drops(id SERIAL PK, zone_id INT, weight INT, payload_id INT);
-drop_grants(player UUID, drop_id INT, granted_at TIMESTAMPTZ, PRIMARY KEY(player, drop_id));
 ```
 
 FK constraints on `template_id`/`slot_*` are the UGC guarantee — arbitrary text is *unrepresentable*.
@@ -290,10 +296,9 @@ FK constraints on `template_id`/`slot_*` are the UGC guarantee — arbitrary tex
 ### API (`docs/design/03-net-protocol.md`)
 
 ```
-POST   /v1/notes            {zone,x,y,template_id,slots[]}   -> 201 {id}
-GET    /v1/notes?zone&x&y&r&limit                            -> 200 [{...}]
-POST   /v1/notes/{id}/rate  {val:+/-1}                       -> 204
-GET    /v1/roll?zone                                         -> 200 {drop_id,payload_id}|204
+POST   /v1/notes            {archetype,tag,template_id,slots[]}  -> 201 {id}
+GET    /v1/notes?archetype&tag&limit                             -> 200 [{...}]
+POST   /v1/notes/{id}/rate  {val:+/-1}                           -> 204
 ```
 
 ### Tasks
@@ -303,12 +308,11 @@ GET    /v1/roll?zone                                         -> 200 {drop_id,pay
 | T-0040 | CMake skeleton, Drogon + libpqxx/DbClient, doctest wired | build smoke |
 | T-0041 | `docker compose` PG for dev (Rancher: dockerd runtime) | — |
 | T-0042 | Migrations (plain SQL + version table; no ORM) | up/down idempotent |
-| T-0043 | `shared/note_templates.hpp` + SQL seed generator | C++/SQL parity test |
-| T-0044 | `NoteRepo` iface + PG impl | CRUD, FK reject, radius query |
+| T-0043 | `shared/note_templates.hpp` + SQL seed generator; also seeds **archetype + anchor-tag tables** | C++/SQL parity test |
+| T-0044 | `NoteRepo` iface + PG impl | CRUD, FK reject, **tag equality lookup** (no radius) |
 | T-0045 | `POST /v1/notes` handler + validation | bad template_id -> 400, slot arity mismatch -> 400 |
-| T-0046 | `GET /v1/notes` radius+ranking | ordering, limit clamp, empty zone |
+| T-0046 | `GET /v1/notes` tag equality + ranking | ordering, limit clamp, empty tag |
 | T-0047 | Rating, one vote per player | double-vote idempotent |
-| T-0048 | `/v1/roll` weighted RNG + grant idempotency | distribution chi-sq, repeat -> same result |
 | T-0049 | Rate limiting per token | burst rejected |
 | T-0050 | Structured logging + `/healthz` | — |
 
@@ -326,10 +330,10 @@ GET    /v1/roll?zone                                         -> 200 {drop_id,pay
 | T-0063 | `NoteClient` GDExtension node: post/fetch/rate/roll | mock server, timeout, 4xx/5xx paths |
 | T-0064 | Note rendering from `shared/` template table + localized strings | all templates render, missing loc key |
 | T-0065 | Note composer UI (dropdown selection only) | — |
-| T-0066 | Anon player token: generate, persist, never PII | persistence, regeneration |
-| T-0067 | Offline/degraded mode — game fully playable with server down | server-unreachable path |
+| T-0066 | **Seed-phrase identity**: server generates phrase -> derives token -> discards phrase; client persists phrase to file | derivation determinism, phrase absent from DB, persistence |
+| T-0067 | Offline/degraded mode — game **runnable** with server down, **not completable** | server-unreachable path |
 
-**T-0067 is a hard requirement, not a nice-to-have.** Notes are ambient flavour; a dead server must never block play.
+**T-0067 revised.** The game must run, explore, and progress partway with no server — but the ending is genuinely unreachable offline (`01-vision.md` §5). Design intent, not an engineering fallback.
 
 ---
 
@@ -340,8 +344,8 @@ GET    /v1/roll?zone                                         -> 200 {drop_id,pay
 | T-0070 | ComfyUI install + `--listen` on dev box; document GPU/VRAM baseline |
 | T-0071 | `AssetAgent`: workflow JSON template -> `POST /prompt` -> poll `/history` -> fetch `/view` |
 | T-0072 | Style lock: curate 30–50 refs, train SDXL style LoRA, commit training config |
-| T-0073 | Post-process chain: BiRefNet cutout -> palette quantize -> Real-ESRGAN |
-| T-0074 | Sprite-sheet packer (rectpack + Pillow) -> Godot `.tres` atlas |
+| T-0073 | Descent chain: box downscale -> palette quantize (Oklab, **dithering off**) -> cleanup. BiRefNet cutout for props. Quantizer blocked on V-5 |
+| T-0074 | Sprite-sheet packer -> Godot `.tres` atlas. **CI build step, not committed** — deterministic layout; assert output stays PIL mode `P` |
 | T-0075 | `ASSET_PROVENANCE.md` auto-writer (model/license/prompt/seed) |
 | T-0076 | Kanban `agent: assets` cards drive generation end-to-end |
 
@@ -354,16 +358,16 @@ GET    /v1/roll?zone                                         -> 200 {drop_id,pay
 | Task | Description |
 |---|---|
 | T-0080 | ACE-Step 1.5 local install, VRAM baseline |
-| T-0081 | Stable Audio Open for SFX; register with Stability if revenue model ever changes |
+| T-0081 | Stable Audio Open for **SFX textures only** (vocalizations, room events, drones); register with Stability if revenue model changes |
 | T-0082 | `AudioAgent` mirroring `AssetAgent` iface (same base class — DRY) |
-| T-0083 | Loudness normalize (EBU R128) + Godot import presets |
+| T-0083 | Trim/DC-offset -> **loop-fold** -> loudness normalize (EBU R128) -> encode -> **validate the encoded file** + Godot import presets |
 | T-0084 | Provenance logging shared with T-0075 |
 
 ---
 
 ## Phase 8 — Vertical Slice
 
-One zone, playable loop, notes visible, one secret drop, music + SFX, CI-built client artifact downloadable from a GH release.
+One zone, playable loop, notes visible, one tear, one item-granting puzzle, music + SFX, CI-built client artifact downloadable from a GH release.
 
 ---
 
@@ -391,11 +395,16 @@ One zone, playable loop, notes visible, one secret drop, music + SFX, CI-built c
 - ~~Branching model~~ -> git-flow + `art/*`. *2026-07-31*
 - ~~GDD timing~~ -> after Phases 0-2 land; local Claude then drafts the backlog, @DennieSeth promotes cards to TODO. *2026-07-31*
 
+- ~~**Game genre/loop**~~ -> `docs/design/01-vision.md`, v6 locked. *2026-08-01*
+- ~~**Zone coordinate space**~~ -> **discrete, permanently**. Notes and items bind to `(archetype_id, anchor_tag)`. No geometry, no GiST, no radius query. *2026-08-01*
+- ~~**Art direction**~~ -> pixel art, abandoned Soviet constructivism/brutalism. Images take **plain git, no LFS**. *2026-08-01*
+- ~~**Target resolution / aspect**~~ -> **384×216**, 16:9, integer-scaled, **16px tiles**, rooms authored 24×14. *2026-08-01 / 08-02*
+
 **Open**
-1. **Game genre/loop** — `docs/design/01-vision.md`. Scheduled: GDD session after Phase 2. Blocks Phases 5-7 content (not their infrastructure).
-2. **Zone coordinate space** — continuous map or discrete rooms? Determines whether the radius query is real geometry or just `zone_id` equality (much cheaper). Blocks T-0046.
-3. **Art direction** — pixel art vs painted 2D. Determines the Phase 6 model/LoRA stack **and** the LFS decision (see §2). Blocks T-0001b image patterns.
-4. **Target resolution / aspect** — needed before any asset generation; retrofitting is expensive.
+
+None at plan level. Remaining decisions are design-side and tracked in `docs/GDD-OPEN.md`; the only one blocking active work is **V-5** (palette hex set), which gates the quantizer in T-0073 and nothing else.
+
+**Pending application:** `docs/HANDOFF.md` §3–§5 deltas are reflected in this file, but the corresponding `tasks/*.md` cards and the new tasks T-0090–T-0103 still need creating.
 
 ---
 
@@ -405,3 +414,5 @@ One zone, playable loop, notes visible, one secret drop, music + SFX, CI-built c
 |---|---|---|
 | 2026-07-31 | Initial plan | Claude (Opus 5) |
 | 2026-07-31 | v2: monorepo confirmed, git-flow + `art/*` branching, binary/LFS policy, card<->git mapping, open questions triaged | Claude (Opus 5), rev. @DennieSeth |
+| 2026-08-01 | v3: secret drops cut (A-III) — `secret_drops`/`drop_grants` tables, `/v1/roll`, T-0048 removed; Phase 8 slice swaps secret drop for tear + puzzle reward | Claude, rev. @DennieSeth |
+| 2026-08-02 | v4: HANDOFF §3 deltas applied — anchor-tag schema replaces coordinates, radius queries removed, seed-phrase identity, Linux CI, LFS resolved, Phase 6/7 pipeline tasks updated; all four open questions closed | Claude, rev. pending |

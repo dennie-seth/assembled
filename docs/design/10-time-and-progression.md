@@ -1,6 +1,6 @@
 # 10 — Time & Progression
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v1, locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v2, locked
 > Related: `01-vision.md` §6, `07-items-economy.md`, `08-invariants.md`
 > **All timers in this document are wall-clock.** Real time passes whether or not the player is present. This is a design position, not an oversight.
 
@@ -26,7 +26,7 @@ collapse        weeks         identity     -> meta fail state
 | **Held bleed** | item in inventory | **60–90 min** (≈2× run) | Kills hoarding, forces circulation |
 | **World / escrow** | item at an anchor | **48–72 h** | Lets exchange span sessions |
 | **Unlock decay** | `(variant_id, tag)` | **minutes → long** (§3) | Keeps variants worth re-exploring |
-| **Collapse** | identity | **weeks** (V-10) | Ends the universe; the losing ending |
+| **Collapse** | identity | **~2–4 weeks nominal, ~1.5× for first universe** (V-10) | Ends the universe; the losing ending |
 
 ### Held vs. escrow must differ
 
@@ -52,7 +52,7 @@ Decay duration turns "unlock" into a spectrum, and the ends are different mechan
 |---|---|---|
 | **Tactical** | minutes | A shortcut opened and used *now*. Not progression at all. |
 | **Session** | hours – days | Cross-session convenience. |
-| **Unique-keyed** | long, always < collapse | **The only thing that accumulates.** |
+| **Unique-keyed** | **~1 week** (T-2), always < collapse | **The only thing that accumulates.** |
 
 A month of play is built from **unique-keyed unlocks plus vocabulary**. Nothing else survives.
 
@@ -99,6 +99,14 @@ Well-rated notes slow the **held bleed** timer (`02-notes-system.md` §7). They 
 
 Tempting — a strong pro-social pull — but a prolific solo player could extend their universe indefinitely, which re-opens exactly the permanent-lockout hole the clock was introduced to close. **Rejected.** If revisited, it must be a hard cap, never a multiplier.
 
+### Ending & restart
+
+Full sequence defined in `01-vision.md` §6 ("The Ending"): chroma overwhelm → summary (vocab tier, notes-left count) → a beat, no auto-continue → player-initiated restart. Same phrase, same identity — collapse ends the universe, not the identity (`09-identity.md` §3a).
+
+### First-universe grace
+
+The clock runs longer for a player's very first universe only — same mechanism as base duration, just a different multiplier (both sim territory, `08-invariants.md` §4). No pause/resume state: kept as a duration parameter, not a fifth clock-state, to avoid adding fragility to a system already flagged as breaking when tuned in isolation (§1).
+
 ---
 
 ## 6. Tuning Burden
@@ -119,14 +127,14 @@ Known interaction risks:
 
 | # | Question | Severity |
 |---|---|---|
-| **T-1** | Collapse duration; does it vary with anything? | **critical (V-10)** |
-| **T-2** | Unique-unlock decay duration — sets the endgame window | **critical** |
+| **T-1** | Exact collapse duration within the ~2–4 week bracket (§2) | sim tuning (V-10) |
+| **T-2** | Exact unique-unlock decay within the ~1 week bracket (§3) | sim tuning |
 | T-3 | Tactical / session tier durations | tuning |
 | T-4 | Warning as collapse nears — is chroma alone enough? | design |
-| T-5 | Does the collapse clock pause, ever? (First-run grace?) | design |
-| T-6 | What happens immediately after collapse — new universe at once, or a beat? | content |
 
-**T-1 and T-2 together define the shape of the entire late game.**
+**T-1 and T-2 together define the shape of the entire late game — order of magnitude is now set; the sim finds the exact values within these brackets.**
+
+**Resolved:** T-5 — first-universe grace multiplier, no pause state (§5). T-6 — beat + player-initiated restart (§5, `01-vision.md` §6). T-1/T-2 order of magnitude — collapse ~2–4 weeks, unique decay ~1 week (§2, §3).
 
 ---
 
@@ -135,3 +143,6 @@ Known interaction risks:
 | Date | Change | Author |
 |---|---|---|
 | 2026-08-01 | Initial — four clocks, unlock tiers, endgame race | Claude (Opus 5), rev. @DennieSeth |
+| 2026-08-01 | Collapse cluster: T-5/T-6 resolved — ending/restart flow, first-universe grace multiplier | Claude, rev. @DennieSeth |
+| 2026-08-01 | T-1/T-2 order of magnitude set: collapse ~2–4 weeks (~1.5× first universe), unique decay ~1 week | Claude, rev. @DennieSeth |
+| 2026-08-02 | v2: status line corrected | Claude, rev. pending |

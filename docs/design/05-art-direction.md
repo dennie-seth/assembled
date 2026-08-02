@@ -1,6 +1,6 @@
 # 05 — Art Direction
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v1, direction locked · numbers open
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v2, direction + tile size locked · palette open
 > Related: `01-vision.md` §8, `PLAN.md` Phase 6
 
 ---
@@ -57,21 +57,27 @@ Implementation: palette-index shader, `origin_palette` on the row. One dial serv
 - **Variants are dressing, not rebuilds.** A second Hospital reuses the archetype's tileset with different props, decay state, palette weighting, and hazard placement. This is what keeps variant count affordable — variants must be cheap or the population-scaled variety model (`01-vision.md` §7) is unaffordable.
 - **Anchor tags are authored, not generated.** Tag placement is level design; the generator supplies surfaces.
 
+> **How assets are actually made lives in `13-asset-pipeline.md`.** This document decides what the game looks like; that one decides the generation chain, the descent to native resolution, the validation gate, and the indexed-PNG storage format that the chroma swap depends on.
+
 ---
 
 ## 5. Open
 
 **Resolved — V-4: internal resolution is `384×216`, 16:9, integer-scaled.** Chosen over 320×180 for horizontal sightline, which side-on avoidance play needs more than most genres. Scales cleanly to 1920×1080 (×5) and 3840×2160 (×10).
 
+**Resolved — A-1: tile size is `16px`.** Decided on generation arithmetic: 16 divides 1024 exactly (×64), so a tile descends from a native SDXL resolution at a clean integer factor. 24px would need 1152 (×48) and lands off SDXL's aspect buckets more often.
+
+The cost is a half-tile band — 216 ÷ 16 = 13.5. **Rooms are authored on a 24×14 tile grid (384×224)**; the viewport shows 216 of it and the remaining 8px is non-gameplay bleed (floor thickness, ceiling shadow). Level design gets an integer grid; the band costs nothing. Full treatment in `13-asset-pipeline.md` §3.3.
+
 | # | Question | Blocks |
 |---|---|---|
 | **V-5** | Palette: colour count + hex values | **Phase 6** |
-| A-1 | Tile size — 16px gives 24×13.5 tiles/screen; 24px gives 16×9 | tileset generation |
 | A-2 | Asset inventory estimate: tiles / props / characters / VFX / UI | Phase 6 scope |
 | A-3 | Variant authoring budget — how many hours is a second Hospital? | V-9 release schedule |
 | A-4 | Chroma-intensity shader ramp vs. collapse proximity (`01-vision.md` §8) | Phase 6 |
+| A-5 | Bleed-alpha shader ramp — held/world timer proximity, contour-only at expiry (`07-items-economy.md` §5, `11-moment-to-moment.md` §6) | Phase 6 |
 
-**V-5 is now the last blocker for the art pipeline.** 24px does not divide 216 evenly (9 exactly, but 384/24 = 16 — both clean); 16px gives 216/16 = 13.5, so a half-tile band. Worth deciding with the first tileset rather than in the abstract.
+**V-5 is now the last blocker for the art pipeline.** Everything else in Phase 6 — LoRA training, the generation chain, the validation gate — can proceed without it (`13-asset-pipeline.md` §3.2).
 
 ---
 
@@ -80,3 +86,4 @@ Implementation: palette-index shader, `origin_palette` on the row. One dial serv
 | Date | Change | Author |
 |---|---|---|
 | 2026-08-01 | Initial — direction locked, numbers open | Claude (Opus 5), rev. @DennieSeth |
+| 2026-08-02 | v2: **A-1 resolved — 16px tiles**, 24×14 authoring grid, 8px band; pipeline split out to `13-asset-pipeline.md` | Claude, rev. pending |

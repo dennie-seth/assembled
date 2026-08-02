@@ -1,6 +1,6 @@
 # 09 — Identity & Sessions
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v1, locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v2, locked
 > Related: `02-notes-system.md`, `08-invariants.md`, `PLAN.md` T-0066
 
 ---
@@ -48,6 +48,8 @@ A boolean "logged in" column locks a player out of their own identity the moment
 | Lease TTL | short — tens of seconds (S-1) |
 | Expiry | session reclaimable |
 
+**Reconnecting within the TTL resumes the in-progress run seamlessly** — no scatter, no penalty (`01-vision.md` §6, "Ending a Run"). Only actual expiry counts as the run ending.
+
 ### Takeover policy: new session evicts old
 
 Rejecting the new session means a crash locks you out for the TTL. Evicting means someone holding your phrase can boot you — acceptable, since holding the phrase already means being you.
@@ -73,7 +75,9 @@ The collapse clock belongs to the **identity**, not the run (`01-vision.md` §6)
 
 **Losing the phrase and letting the universe collapse are now different losses.** Phrase loss costs vocabulary — everything. Collapse costs unlocks and the current run's items, but leaves you fluent. Worth distinguishing in first-run copy so players understand which warning is which.
 
-Schema note: `collapse_expires_at` is per-identity, set on first run, never extended by ratings (`10-time-and-progression.md` §5).
+Schema note: `collapse_expires_at` is per-identity, set on first run, never extended by ratings (`10-time-and-progression.md` §5). **First universe only:** duration is **~1.5× nominal** (`01-vision.md` §9) — exact base value still sim-tuned within its ~2–4 week bracket.
+
+**S-6 resolved: the same phrase opens the next universe.** Collapse ends the universe, not the identity — otherwise vocabulary tiers (above) couldn't survive it, since they're keyed to the phrase-derived token. `collapse_expires_at` resets for the new universe on the player's next run; the token itself never changes.
 
 ---
 
@@ -118,7 +122,8 @@ Entropy target: 8 words from a 256-word list = 64 bits. Ample against online gue
 | S-3 | Phrase file format — plain text? Does the client offer clipboard export? |
 | S-4 | Does the client keep a phrase after voluntary "start a new universe"? |
 | S-5 | Rate-limit policy on derivation attempts (anti-brute-force) |
-| S-6 | After collapse, does the same phrase open a new universe, or is a new phrase issued? |
+
+**Resolved:** S-6 — same phrase opens the next universe (§3a).
 
 ---
 
@@ -127,3 +132,7 @@ Entropy target: 8 words from a 256-word list = 64 bits. Ample against online gue
 | Date | Change | Author |
 |---|---|---|
 | 2026-08-01 | Initial | Claude (Opus 5), rev. @DennieSeth |
+| 2026-08-01 | Collapse cluster: S-6 resolved (same phrase persists across universes), first-universe grace multiplier noted (§3a) | Claude, rev. @DennieSeth |
+| 2026-08-01 | NEW-1 cross-ref: reconnect-within-TTL resumes run seamlessly (§3) | Claude, rev. @DennieSeth |
+| 2026-08-01 | First-universe grace multiplier set to ~1.5× nominal (§3a) | Claude, rev. @DennieSeth |
+| 2026-08-02 | v2: status line corrected | Claude, rev. pending |
