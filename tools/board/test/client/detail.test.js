@@ -39,9 +39,33 @@ describe("buildUpdateBody", () => {
     expect(patch).toEqual({ body: "## Context\nedited" });
   });
 
-  it("ignores fields not present in EDITABLE_FIELDS such as id or depends_on", () => {
+  it("ignores fields not present in EDITABLE_FIELDS such as id", () => {
     const orig = original();
-    const patch = buildUpdateBody(orig, { ...orig, id: "T-9999", depends_on: ["T-0002"] });
+    const patch = buildUpdateBody(orig, { ...orig, id: "T-9999" });
+    expect(patch).toEqual({});
+  });
+
+  it("includes agent when changed", () => {
+    const orig = original({ agent: null });
+    const patch = buildUpdateBody(orig, { ...orig, agent: "infra" });
+    expect(patch).toEqual({ agent: "infra" });
+  });
+
+  it("includes phase when changed", () => {
+    const orig = original({ phase: 1 });
+    const patch = buildUpdateBody(orig, { ...orig, phase: 2 });
+    expect(patch).toEqual({ phase: 2 });
+  });
+
+  it("includes depends_on when its contents change", () => {
+    const orig = original({ depends_on: ["T-0002"] });
+    const patch = buildUpdateBody(orig, { ...orig, depends_on: ["T-0002", "T-0003"] });
+    expect(patch).toEqual({ depends_on: ["T-0002", "T-0003"] });
+  });
+
+  it("does not include depends_on when it is unchanged, even as a new array instance", () => {
+    const orig = original({ depends_on: ["T-0002", "T-0003"] });
+    const patch = buildUpdateBody(orig, { ...orig, depends_on: ["T-0002", "T-0003"] });
     expect(patch).toEqual({});
   });
 

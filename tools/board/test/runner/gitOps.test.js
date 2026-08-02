@@ -10,7 +10,8 @@ import {
   diffNames,
   hasUncommittedChanges,
   commitAll,
-  push
+  push,
+  getHeadCommit
 } from "../../src/runner/gitOps.js";
 
 const execFileAsync = promisify(execFile);
@@ -123,6 +124,31 @@ describe("diffNames", () => {
     await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0105", baseBranch: "develop" });
 
     expect(await diffNames({ worktreeDir, baseBranch: "develop" })).toEqual([]);
+  });
+});
+
+describe("getHeadCommit", () => {
+  it("returns the full SHA of the worktree's current HEAD", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0107");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0107", baseBranch: "develop" });
+
+    const sha = await getHeadCommit({ worktreeDir });
+
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    const { stdout: expected } = await git(["rev-parse", "HEAD"], worktreeDir);
+    expect(sha).toBe(expected.trim());
+  });
+
+  it("reflects a new commit made in the worktree", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0108");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0108", baseBranch: "develop" });
+    const before = await getHeadCommit({ worktreeDir });
+
+    await fs.writeFile(path.join(worktreeDir, "new.txt"), "x\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: add new.txt" });
+
+    const after = await getHeadCommit({ worktreeDir });
+    expect(after).not.toBe(before);
   });
 });
 

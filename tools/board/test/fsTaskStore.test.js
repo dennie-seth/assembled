@@ -18,6 +18,8 @@ function makeTask(overrides = {}) {
     agent: "infra",
     depends_on: [],
     created: "2026-07-31",
+    branch: null,
+    commit: null,
     body: "## Context\n...\n## Acceptance\n- [ ] ...\n",
     ...overrides
   };
@@ -40,6 +42,7 @@ describe("TaskStore (abstract interface)", () => {
     await expect(base.create(makeTask())).rejects.toThrow(/not implemented/i);
     await expect(base.update("T-0001", {})).rejects.toThrow(/not implemented/i);
     await expect(base.move("T-0001", "ready")).rejects.toThrow(/not implemented/i);
+    await expect(base.remove("T-0001")).rejects.toThrow(/not implemented/i);
   });
 
   it("FsTaskStore is a TaskStore", () => {
@@ -94,6 +97,20 @@ describe("FsTaskStore CRUD", () => {
     await store.create(task);
     const moved = await store.move(task.id, "in-progress");
     expect(moved).toEqual({ ...task, status: "in-progress" });
+  });
+});
+
+describe("FsTaskStore remove", () => {
+  it("deletes the task's file", async () => {
+    const task = makeTask();
+    await store.create(task);
+    await store.remove(task.id);
+    expect(await store.get(task.id)).toBeNull();
+    expect(await fs.readdir(tmpDir)).not.toContain(`${task.id}.md`);
+  });
+
+  it("throws when removing a task that does not exist", async () => {
+    await expect(store.remove("T-9999")).rejects.toThrow(/not found/i);
   });
 });
 

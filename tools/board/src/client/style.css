@@ -204,3 +204,65 @@ body {
   font-size: 0.8rem;
   opacity: 0.8;
 }
+
+.detail-branch {
+  font-size: 0.8rem;
+  font-family: ui-monospace, monospace;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.375rem 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.detail-delete-wrap {
+  margin-top: 0.75rem;
+}
+
+.detail-delete {
+  color: color-mix(in srgb, red 55%, currentColor);
+  border: 1px solid color-mix(in srgb, red 40%, transparent);
+  background: color-mix(in srgb, red 8%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+
+.detail-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.detail-delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  margin-top: 0.375rem;
+}
+
+#toolbar {
+  margin-bottom: 0.75rem;
+}
+
+#new-card-btn {
+  padding: 0.4rem 0.75rem;
+  border-radius: 0.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.create-form {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  max-width: 32rem;
+}
+
+.create-error {
+  color: color-mix(in srgb, red 60%, currentColor);
+  font-size: 0.85rem;
+  min-height: 1rem;
+}

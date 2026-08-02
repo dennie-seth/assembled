@@ -1,22 +1,39 @@
-import { fetchTasks, patchTask, connectBoardSocket, runTask, cancelTask } from "./api.js";
+import {
+  fetchTasks,
+  fetchAgents,
+  patchTask,
+  connectBoardSocket,
+  runTask,
+  cancelTask,
+  createTask,
+  deleteTask
+} from "./api.js";
 import { applyTaskEvent, buildStatusPatch } from "./board.js";
 import { renderBoard } from "./boardView.js";
 import { renderDetailPanel } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
+import { renderCreateForm } from "./createForm.js";
 
 export function createApp({
   boardRoot,
   detailRoot,
   consoleRoot,
+  createFormRoot,
   fetchTasksImpl = fetchTasks,
+  fetchAgentsImpl = fetchAgents,
   patchTaskImpl = patchTask,
   connectSocketImpl = connectBoardSocket,
   runTaskImpl = runTask,
-  cancelTaskImpl = cancelTask
+  cancelTaskImpl = cancelTask,
+  createTaskImpl = createTask,
+  deleteTaskImpl = deleteTask
 }) {
   let tasks = [];
+  let agentOptions = [];
   let selectedId = null;
   let error = null;
+  let createFormOpen = false;
+  let createError = null;
   const runLogs = new Map();
 
   function render() {
@@ -29,12 +46,28 @@ export function createApp({
     });
     if (detailRoot) {
       const selected = tasks.find((task) => task.id === selectedId) ?? null;
-      renderDetailPanel(detailRoot, selected, { onSave: handleSave, onClose: handleClose });
+      renderDetailPanel(detailRoot, selected, {
+        onSave: handleSave,
+        onClose: handleClose,
+        onDelete: handleDelete,
+        agentOptions,
+        allTaskIds: tasks.map((task) => task.id)
+      });
     }
     if (consoleRoot) {
       renderConsolePanel(consoleRoot, {
         taskId: selectedId,
         entries: selectedId ? (runLogs.get(selectedId) ?? []) : []
+      });
+    }
+    if (createFormRoot) {
+      renderCreateForm(createFormRoot, {
+        visible: createFormOpen,
+        agentOptions,
+        existingTaskIds: tasks.map((task) => task.id),
+        onCreate: handleCreateSubmit,
+        onCancel: handleCancelCreate,
+        error: createError
       });
     }
   }
@@ -84,6 +117,46 @@ export function createApp({
     render();
   }
 
+  function handleToggleCreateForm() {
+    createFormOpen = !createFormOpen;
+    createError = null;
+    render();
+  }
+
+  function handleCancelCreate() {
+    createFormOpen = false;
+    createError = null;
+    render();
+  }
+
+  async function handleCreateSubmit(payload) {
+    try {
+      const created = await createTaskImpl(payload);
+      tasks = [...tasks, created];
+      createFormOpen = false;
+      createError = null;
+      error = null;
+    } catch (err) {
+      createError = err.message;
+      error = err.message;
+    }
+    render();
+  }
+
+  async function handleDelete(taskId) {
+    try {
+      await deleteTaskImpl(taskId);
+      tasks = tasks.filter((task) => task.id !== taskId);
+      if (selectedId === taskId) {
+        selectedId = null;
+      }
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
   async function handleCancel(taskId) {
     try {
       const updated = await cancelTaskImpl(taskId);
@@ -111,7 +184,12 @@ export function createApp({
   }
 
   async function init() {
-    tasks = await fetchTasksImpl();
+    const [fetchedTasks, fetchedAgents] = await Promise.all([
+      fetchTasksImpl(),
+      fetchAgentsImpl().catch(() => [])
+    ]);
+    tasks = fetchedTasks;
+    agentOptions = fetchedAgents;
     render();
     connectSocketImpl(handleSocketMessage);
   }
@@ -125,6 +203,10 @@ export function createApp({
     handleSave,
     handleRun,
     handleCancel,
+    handleDelete,
+    handleToggleCreateForm,
+    handleCancelCreate,
+    handleCreateSubmit,
     handleSocketMessage,
     getTasks: () => tasks,
     getSelectedId: () => selectedId,

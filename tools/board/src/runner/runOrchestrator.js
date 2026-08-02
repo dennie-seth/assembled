@@ -250,12 +250,14 @@ export class RunOrchestrator {
   }
 
   async _handlePass(taskId, task, worktreeDir, branch, verdict) {
+    let commit;
     try {
       await this.git.commitAll({
         worktreeDir,
         message: `feat: ${taskId} ${task.title}\n\nCo-authored-by: Claude <noreply@anthropic.com>`
       });
       await this.git.push({ worktreeDir, branch });
+      commit = await this.git.getHeadCommit({ worktreeDir });
     } catch (err) {
       await this._blocked(taskId, `push to review failed: ${err.message}`);
       return;
@@ -270,6 +272,8 @@ export class RunOrchestrator {
     const current = await this.store.get(taskId);
     await this.store.update(taskId, {
       status: "review",
+      branch,
+      commit,
       body: appendNote(current.body, "Validation: PASS", verdict.notes)
     });
   }

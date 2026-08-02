@@ -100,6 +100,7 @@ function makeGit(overrides = {}) {
     diffNames: vi.fn(async () => ["tools/board/src/thing.js"]),
     commitAll: vi.fn(async () => true),
     push: vi.fn(async () => {}),
+    getHeadCommit: vi.fn(async () => "abc1234def5678abc1234def5678abc1234def5"),
     ...overrides
   };
 }
@@ -146,6 +147,10 @@ describe("RunOrchestrator.runCard — happy path (PASS)", () => {
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
     expect(finalTask.body).toContain("all green");
+    expect(finalTask.branch).toBe("feature/T-0001");
+    expect(finalTask.commit).toBe("abc1234def5678abc1234def5678abc1234def5");
+
+    expect(git.getHeadCommit).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001" });
 
     expect(git.addWorktree).toHaveBeenCalledWith({
       repoRoot: "/repo",

@@ -7,14 +7,16 @@ import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
 
 let tmpDir;
+let agentsDir;
 let server;
 let baseUrl;
 
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-httpapi-"));
+  agentsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-httpapi-agents-"));
   const store = new FsTaskStore(tmpDir);
   const idAllocator = new IdAllocator(tmpDir);
-  server = await startHttpServer({ store, idAllocator, port: 0 });
+  server = await startHttpServer({ store, idAllocator, agentsDir, port: 0 });
   const { port } = server.address();
   baseUrl = `http://127.0.0.1:${port}`;
 });
@@ -22,6 +24,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
   await fs.rm(tmpDir, { recursive: true, force: true });
+  await fs.rm(agentsDir, { recursive: true, force: true });
 });
 
 function validTaskBody(overrides = {}) {
@@ -139,6 +142,104 @@ describe("GET /api/tasks/:id", () => {
   it("returns 404 when the task does not exist", async () => {
     const res = await fetch(`${baseUrl}/api/tasks/T-9999`);
     expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /api/agents", () => {
+  it("returns 200 with an empty array when the agents directory has no agents", async () => {
+    const res = await fetch(`${baseUrl}/api/agents`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("returns 200 with assignable agent names, excluding reviewer", async () => {
+    await fs.writeFile(path.join(agentsDir, "infra.md"), "---\nname: infra\n---\nbody", "utf8");
+    await fs.writeFile(path.join(agentsDir, "server.md"), "---\nname: server\n---\nbody", "utf8");
+    await fs.writeFile(path.join(agentsDir, "reviewer.md"), "---\nname: reviewer\n---\nbody", "utf8");
+
+    const res = await fetch(`${baseUrl}/api/agents`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(["infra", "server"]);
+  });
+
+  it("returns 200 with an empty array when no agentsDir is configured on the server", async () => {
+    const bareStore = new FsTaskStore(tmpDir);
+    const bareAllocator = new IdAllocator(tmpDir);
+    const bareServer = await startHttpServer({ store: bareStore, idAllocator: bareAllocator, port: 0 });
+    const { port } = bareServer.address();
+    const res = await fetch(`http://127.0.0.1:${port}/api/agents`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+    await new Promise((resolve) => bareServer.close(resolve));
+  });
+});
+
+describe("DELETE /api/tasks/:id", () => {
+  async function createTask(overrides = {}) {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody(overrides))
+    });
+    return res.json();
+  }
+
+  it("deletes an existing task and it is no longer retrievable", async () => {
+    const task = await createTask();
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+
+    const getRes = await fetch(`${baseUrl}/api/tasks/${task.id}`);
+    expect(getRes.status).toBe(404);
+  });
+
+  it("returns 404 when deleting a task that does not exist", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/T-9999`, { method: "DELETE" });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 409 and refuses to delete a task that is in-progress", async () => {
+    const task = await createTask();
+    await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "in-progress" })
+    });
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/in-progress/i);
+
+    const stillThere = await fetch(`${baseUrl}/api/tasks/${task.id}`);
+    expect(stillThere.status).toBe(200);
+  });
+
+  it("returns 409 and refuses to delete a task that is in validation", async () => {
+    const task = await createTask();
+    await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "validation" })
+    });
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/validation/i);
+  });
+
+  it("allows deleting a task in backlog, ready, review, done, or blocked", async () => {
+    for (const status of ["backlog", "ready", "review", "done", "blocked"]) {
+      const task = await createTask({ title: `task-${status}` });
+      await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      });
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+      expect(res.status).toBe(200);
+    }
   });
 });
 

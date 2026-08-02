@@ -48,3 +48,9 @@ export async function diffNames({ worktreeDir, baseBranch = "develop" }) {
 export async function push({ worktreeDir, branch }) {
   await git(["push", "-u", "origin", branch], worktreeDir);
 }
+
+/** Full SHA of the worktree's current HEAD, for persisting review metadata on a card. */
+export async function getHeadCommit({ worktreeDir }) {
+  const { stdout } = await git(["rev-parse", "HEAD"], worktreeDir);
+  return stdout.trim();
+}
