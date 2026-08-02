@@ -39,6 +39,19 @@ def test_assert_checkpoint_allowed_passes_for_approved_acestep_model():
     assert entry.filename == "ACE-Step-v1-3.5B"
 
 
+def test_load_allowlist_reads_the_stable_audio_open_entry():
+    allowlist = load_allowlist()
+    assert "stabilityai/stable-audio-open-1.0" in allowlist
+    entry = allowlist["stabilityai/stable-audio-open-1.0"]
+    assert entry.license == "Stability AI Community License"
+    assert entry.license_family == "Stability-Community"
+
+
+def test_assert_checkpoint_allowed_passes_for_approved_stable_audio_open_model():
+    entry = assert_checkpoint_allowed("stabilityai/stable-audio-open-1.0")
+    assert entry.filename == "stabilityai/stable-audio-open-1.0"
+
+
 def test_assert_checkpoint_allowed_rejects_unknown_checkpoint():
     with pytest.raises(CheckpointNotAllowedError, match="not on the approved allowlist"):
         assert_checkpoint_allowed("some_random_checkpoint.safetensors")
