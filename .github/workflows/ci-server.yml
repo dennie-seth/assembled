@@ -37,13 +37,27 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      # T-0040+ integration tests read this; the T-0032 skeleton doesn't use it yet.
+      # Read by MigrationRunner/Database and by the migration integration
+      # test (server/test/migration_test.cpp); the test is skipped, not
+      # failed, if this is ever unset.
       DATABASE_URL: postgresql://assembled:assembled@localhost:5432/assembled_test
     steps:
       - uses: actions/checkout@v4
 
-      # T-0034: caches CMake's FetchContent downloads (doctest today; a
-      # vcpkg/conan cache gets wired in once T-0040 picks one).
+      # T-0040: Drogon comes from Ubuntu's own package archive (noble
+      # universe), not vcpkg/Conan -- see server/README.md "Dependency
+      # manager" for the full rationale. This is the exact package set
+      # `find_package(Drogon CONFIG)` needs to resolve on this runner.
+      - name: Install Drogon + Postgres client + build deps (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libdrogon-dev libjsoncpp-dev libpq-dev uuid-dev zlib1g-dev \
+            libsqlite3-dev libmariadb-dev libbrotli-dev libhiredis-dev \
+            libyaml-cpp-dev
+
+      # T-0034: caches CMake's FetchContent downloads (doctest). No
+      # vcpkg/conan cache needed now that Drogon comes from apt (T-0040).
       - uses: actions/cache@v4
         with:
           path: server/build/_deps
@@ -59,10 +73,13 @@ jobs:
         working-directory: server/build
         run: ctest --output-on-failure
 
-      # T-0035: stands in for "server binary" until T-0040+ produces a real
-      # server executable — see docs/ci-notes.md.
+      # T-0035: server binary is now real (T-0040+); still uploading
+      # server_tests too since it's what a reviewer would rerun locally.
       - uses: actions/upload-artifact@v4
         with:
           name: server-binary
-          path: server/build/server_tests
+          path: |
+            server/build/server
+            server/build/migrate
+            server/build/server_tests
           if-no-files-found: error
