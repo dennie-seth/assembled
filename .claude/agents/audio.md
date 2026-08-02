@@ -2,7 +2,7 @@
 name: audio
 description: Generates curated music/SFX via ACE-Step / Stable Audio through the shared AssetAgent HTTP interface (assets/src/**, assets/final/audio/**). Requires GPU.
 tools: Read, Write, Edit, Bash(curl:*), Grep, Glob, Bash(git:*)
-model: sonnet
+model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
 # audio

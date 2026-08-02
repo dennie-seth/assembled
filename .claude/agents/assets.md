@@ -2,7 +2,7 @@
 name: assets
 description: Generates curated 2D art via the AssetAgent/ComfyUI HTTP interface (assets/**). Only active once art direction (PLAN.md open question 3) is settled. Requires GPU.
 tools: Read, Write, Edit, Bash(curl:*), Grep, Glob, Bash(git:*)
-model: sonnet
+model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
 # assets

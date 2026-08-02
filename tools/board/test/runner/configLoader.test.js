@@ -85,7 +85,7 @@ describe("loadRules", () => {
   it("loads every real rule file in .claude/rules/", () => {
     const rules = loadRules({ rulesDir: REAL_RULES_DIR });
     const names = rules.map((r) => r.name).sort();
-    expect(names).toEqual(["assets", "conduct", "cpp", "godot", "js", "sql"]);
+    expect(names).toEqual(["assets", "conduct", "cpp", "godot", "js", "python", "sql"]);
     const conduct = rules.find((r) => r.name === "conduct");
     expect(conduct.paths).toEqual(["**"]);
   });
