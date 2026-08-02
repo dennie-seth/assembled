@@ -5,13 +5,11 @@ on:
     branches: [develop, main]
     paths:
       - "client/**"
-      - ".github/ci-spike/**"
       - ".github/workflows/ci-client.yml"
   push:
     branches: [develop, main]
     paths:
       - "client/**"
-      - ".github/ci-spike/**"
       - ".github/workflows/ci-client.yml"
 
 concurrency:
@@ -19,16 +17,18 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GODOT_VERSION: "4.7.1"
-  # godot-cpp lags the engine's own release cadence - as of this pin there
-  # is no 4.6/4.7 branch or tag yet, only up to the 4.5 line (confirmed via
+  # T-0060: engine and godot-cpp are pinned to different lines on purpose.
+  # godot-cpp lags the engine's release cadence and, as of this pin, only
+  # publishes up to the 4.5 line (no 4.6/4.7 branch or tag — confirmed via
   # `git ls-remote --heads/--tags https://github.com/godotengine/godot-cpp`).
-  # This is a concrete, immutable tag, not a moving branch. Bump once
-  # godot-cpp cuts a ref that actually matches GODOT_VERSION's line.
+  # This is safe: Godot's GDExtension ABI has been forward-compatible across
+  # 4.x minor releases since 4.1 (`compatibility_minimum` in the
+  # .gdextension file), and this was verified directly, not assumed — see
+  # docs/ci-notes.md T-0060 for how. Bump GODOT_CPP_REF once godot-cpp cuts
+  # a ref matching GODOT_VERSION's line, and re-verify.
+  GODOT_VERSION: "4.7.1"
   GODOT_CPP_REF: "godot-4.5-stable"
-  # T-0030/T-0033: no real Phase 5 client exists yet (docs/PLAN.md T-0060).
-  # This is a disposable feasibility-only project — see docs/ci-notes.md.
-  SPIKE_PROJECT_DIR: .github/ci-spike/godot-client
+  CLIENT_DIR: client
 
 jobs:
   windows-export:
@@ -39,21 +39,16 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7
-
-      - name: Checkout godot-cpp
-        uses: actions/checkout@v7
         with:
-          repository: godotengine/godot-cpp
-          ref: ${{ env.GODOT_CPP_REF }}
           submodules: recursive
-          path: godot-cpp-spike
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
-      # T-0034: SCons content-addressed cache dir, so a source-identical
-      # rebuild reuses prior objects instead of recompiling godot-cpp.
+      # SCons content-addressed cache dir (T-0034), so a source-identical
+      # rebuild reuses prior objects instead of recompiling godot-cpp. This
+      # is the slow leg of the job (~10-15 min cold) — expected.
       - uses: actions/cache@v6
         with:
           path: ${{ env.SCONS_CACHE }}
@@ -63,12 +58,14 @@ jobs:
 
       - run: pip install scons
 
-      - name: Build godot-cpp (template_release, MSVC)
-        working-directory: godot-cpp-spike
+      - name: Build assembled_client GDExtension (template_debug, MSVC)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: scons platform=windows target=template_debug -j2
+
+      - name: Build assembled_client GDExtension (template_release, MSVC)
+        working-directory: ${{ env.CLIENT_DIR }}
         run: scons platform=windows target=template_release -j2
 
-      # T-0034: caches the editor download + export templates (cache: true
-      # is the action's default; set explicitly for clarity).
       - uses: chickensoft-games/setup-godot@v2
         with:
           version: ${{ env.GODOT_VERSION }}
@@ -78,28 +75,57 @@ jobs:
 
       - name: Import project (headless)
         shell: bash
-        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        working-directory: ${{ env.CLIENT_DIR }}
         run: godot --headless --import
+
+      - name: Smoke test — GDExtension loads and round-trips (headless)
+        shell: bash
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: godot --headless --script tests/smoke_test.gd
 
       - name: Export Windows Desktop
         shell: bash
-        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        working-directory: ${{ env.CLIENT_DIR }}
         run: |
           mkdir -p build/windows
-          godot --headless --export-release "Windows Desktop" build/windows/assembled-ci-spike.exe
+          godot --headless --export-release "Windows Desktop" build/windows/assembled.exe
 
-      # T-0035
       - uses: actions/upload-artifact@v7
         with:
           name: client-windows-export
-          path: ${{ env.SPIKE_PROJECT_DIR }}/build/windows
+          path: ${{ env.CLIENT_DIR }}/build/windows
           if-no-files-found: error
 
   linux-export:
-    name: "Linux: headless export"
+    name: "Linux: godot-cpp build + headless export"
     runs-on: ubuntu-latest
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons-cache
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: scons-cache-linux-godot-cpp-${{ env.GODOT_CPP_REF }}-${{ github.sha }}
+          restore-keys: |
+            scons-cache-linux-godot-cpp-${{ env.GODOT_CPP_REF }}-
+
+      - run: pip install scons
+
+      - name: Build assembled_client GDExtension (template_debug)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: scons platform=linux target=template_debug -j$(nproc)
+
+      - name: Build assembled_client GDExtension (template_release)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: scons platform=linux target=template_release -j$(nproc)
 
       - uses: chickensoft-games/setup-godot@v2
         with:
@@ -109,18 +135,21 @@ jobs:
           cache: true
 
       - name: Import project (headless)
-        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        working-directory: ${{ env.CLIENT_DIR }}
         run: godot --headless --import
 
+      - name: Smoke test — GDExtension loads and round-trips (headless)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: godot --headless --script tests/smoke_test.gd
+
       - name: Export Linux
-        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        working-directory: ${{ env.CLIENT_DIR }}
         run: |
           mkdir -p build/linux
-          godot --headless --export-release "Linux" build/linux/assembled-ci-spike.x86_64
+          godot --headless --export-release "Linux" build/linux/assembled.x86_64
 
-      # T-0035
       - uses: actions/upload-artifact@v7
         with:
           name: client-linux-export
-          path: ${{ env.SPIKE_PROJECT_DIR }}/build/linux
+          path: ${{ env.CLIENT_DIR }}/build/linux
           if-no-files-found: error
