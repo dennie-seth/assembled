@@ -73,4 +73,15 @@ export class FsTaskStore extends TaskStore {
   async move(id, status) {
     return this.update(id, { status });
   }
+
+  async remove(id) {
+    try {
+      await fs.unlink(taskPath(this.dir, id));
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        throw new Error(`Task ${id} not found`);
+      }
+      throw err;
+    }
+  }
 }

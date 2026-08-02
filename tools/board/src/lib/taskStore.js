@@ -18,4 +18,8 @@ export class TaskStore {
   async move(_id, _status) {
     throw new Error("TaskStore.move is not implemented");
   }
+
+  async remove(_id) {
+    throw new Error("TaskStore.remove is not implemented");
+  }
 }
