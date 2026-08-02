@@ -4,10 +4,13 @@ import {
   UnmetDependencyError,
   DependencyCycleError
 } from "../lib/dependencyGuard.js";
+import { listAssignableAgents } from "../lib/agentCatalog.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
 const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
+const AGENTS_PATH = "/api/agents";
+const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
 const DEFAULTS = {
   status: "backlog",
@@ -153,6 +156,23 @@ async function handleRunTask(orchestrator, id, res) {
   sendJson(res, 202, task);
 }
 
+async function handleListAgents(agentsDir, res) {
+  const agents = agentsDir ? await listAssignableAgents(agentsDir) : [];
+  sendJson(res, 200, agents);
+}
+
+async function handleDeleteTask(store, id, res) {
+  const task = await store.get(id);
+  if (!task) {
+    throw new HttpError(404, `Task ${id} not found`);
+  }
+  if (LIVE_RUN_STATUSES.has(task.status)) {
+    throw new HttpError(409, `Cannot delete ${id}: status is "${task.status}" (active run)`);
+  }
+  await store.remove(id);
+  sendJson(res, 200, { id, deleted: true });
+}
+
 async function handleCancelTask(orchestrator, id, res) {
   if (!orchestrator) {
     throw new HttpError(501, "Agent Runner is not configured on this server");
@@ -165,7 +185,7 @@ async function handleCancelTask(orchestrator, id, res) {
   sendJson(res, 200, task);
 }
 
-export function createRequestListener({ store, idAllocator, orchestrator }) {
+export function createRequestListener({ store, idAllocator, orchestrator, agentsDir }) {
   return async function requestListener(req, res) {
     try {
       const { pathname } = new URL(req.url, "http://localhost");
@@ -173,6 +193,9 @@ export function createRequestListener({ store, idAllocator, orchestrator }) {
       const runMatch = TASK_RUN_PATH_RE.exec(pathname);
       const cancelMatch = TASK_CANCEL_PATH_RE.exec(pathname);
 
+      if (pathname === AGENTS_PATH && req.method === "GET") {
+        return await handleListAgents(agentsDir, res);
+      }
       if (pathname === "/api/tasks" && req.method === "GET") {
         return await handleListTasks(store, res);
       }
@@ -185,13 +208,16 @@ export function createRequestListener({ store, idAllocator, orchestrator }) {
       if (idMatch && req.method === "PATCH") {
         return await handlePatchTask(store, idMatch[1], req, res);
       }
+      if (idMatch && req.method === "DELETE") {
+        return await handleDeleteTask(store, idMatch[1], res);
+      }
       if (runMatch && req.method === "POST") {
         return await handleRunTask(orchestrator, runMatch[1], res);
       }
       if (cancelMatch && req.method === "POST") {
         return await handleCancelTask(orchestrator, cancelMatch[1], res);
       }
-      if (pathname === "/api/tasks" || idMatch || runMatch || cancelMatch) {
+      if (pathname === AGENTS_PATH || pathname === "/api/tasks" || idMatch || runMatch || cancelMatch) {
         throw new HttpError(405, `Method ${req.method} not allowed on ${pathname}`);
       }
       throw new HttpError(404, "Not found");
@@ -205,11 +231,11 @@ export function createRequestListener({ store, idAllocator, orchestrator }) {
   };
 }
 
-export function startHttpServer({ store, idAllocator, orchestrator, port = 0, host = "127.0.0.1" }) {
+export function startHttpServer({ store, idAllocator, orchestrator, agentsDir, port = 0, host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") {
     throw new Error("HTTP API must bind to 127.0.0.1 only");
   }
-  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator }));
+  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir }));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));

@@ -25,6 +25,7 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
   const hub = new WsHub();
   const watcher = new TaskWatcher(tasksDir);
   const ptyBridge = new PtyBridge({ cwd: REPO_ROOT });
+  const agentsDir = path.join(REPO_ROOT, ".claude", "agents");
   const orchestrator = new RunOrchestrator({
     store,
     hub,
@@ -32,13 +33,13 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     repoRoot: REPO_ROOT,
     worktreesDir: path.join(REPO_ROOT, "worktrees"),
     runsDir: path.join(tasksDir, ".runs"),
-    agentsDir: path.join(REPO_ROOT, ".claude", "agents"),
+    agentsDir,
     rulesDir: path.join(REPO_ROOT, ".claude", "rules")
   });
 
   watcher.on("task-changed", (event) => hub.broadcast(event));
 
-  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator }));
+  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir }));
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = new URL(req.url, "http://localhost");
     if (pathname === WS_BOARD_PATH) {
