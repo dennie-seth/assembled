@@ -8,11 +8,19 @@ android/
 
 # CI-owned, not a personal dev artifact (T-0030/T-0033) — see docs/ci-notes.md
 !/.github/ci-spike/godot-client/export_presets.cfg
+# Same exception for the real client (T-0060) — see docs/ci-notes.md
+!/client/export_presets.cfg
+
+# GDExtension build output (client/bin) and the vendored godot-cpp build
+client/bin/
+client/godot-cpp/bin/
+.sconsign.dblite
 
 # C++
 build/
 cmake-build-*/
 *.o
+*.os
 *.obj
 *.so
 *.dll

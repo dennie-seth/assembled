@@ -1,0 +1,22 @@
+; assembled client GDExtension (T-0060/T-0061 proof-of-life).
+;
+; compatibility_minimum=4.1: godot-cpp's GDExtension ABI is forward-compatible
+; across 4.x minor releases (an extension built against an older API surface
+; loads fine in a newer engine, per Godot's own compatibility guarantee since
+; 4.1). Built against godot-cpp godot-4.5-stable (the newest ref godot-cpp
+; publishes as of this writing) and verified loading under the 4.7.1 engine
+; used everywhere else in this repo — see docs/ci-notes.md T-0060 for the
+; verification steps and why no engine downgrade was needed.
+
+[configuration]
+
+entry_symbol = "assembled_library_init"
+compatibility_minimum = "4.1"
+reloadable = true
+
+[libraries]
+
+linux.debug.x86_64 = "res://bin/libassembled_client.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://bin/libassembled_client.linux.template_release.x86_64.so"
+windows.debug.x86_64 = "res://bin/libassembled_client.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://bin/libassembled_client.windows.template_release.x86_64.dll"
