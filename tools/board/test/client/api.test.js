@@ -1,6 +1,15 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchTasks, patchTask, connectBoardSocket, runTask, cancelTask } from "../../src/client/api.js";
+import {
+  fetchTasks,
+  patchTask,
+  connectBoardSocket,
+  runTask,
+  cancelTask,
+  createTask,
+  deleteTask,
+  fetchAgents
+} from "../../src/client/api.js";
 
 const originalFetch = global.fetch;
 
@@ -95,6 +104,74 @@ describe("cancelTask", () => {
       json: async () => ({ error: "No active run for T-0001" })
     });
     await expect(cancelTask("T-0001")).rejects.toThrow("No active run for T-0001");
+  });
+});
+
+describe("createTask", () => {
+  it("POSTs to /api/tasks with a JSON body and returns the created task", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: "T-0001", title: "New task" })
+    });
+    const result = await createTask({ title: "New task", phase: 1 });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/tasks",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "New task", phase: 1 })
+      })
+    );
+    expect(result).toEqual({ id: "T-0001", title: "New task" });
+  });
+
+  it("throws the server-provided error message on failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "title is required" })
+    });
+    await expect(createTask({ phase: 1 })).rejects.toThrow("title is required");
+  });
+});
+
+describe("deleteTask", () => {
+  it("DELETEs the task's own endpoint", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "T-0001", deleted: true })
+    });
+    const result = await deleteTask("T-0001");
+    expect(global.fetch).toHaveBeenCalledWith("/api/tasks/T-0001", { method: "DELETE" });
+    expect(result).toEqual({ id: "T-0001", deleted: true });
+  });
+
+  it("throws the server-provided error message on failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: 'Cannot delete T-0001: status is "in-progress" (active run)' })
+    });
+    await expect(deleteTask("T-0001")).rejects.toThrow(/active run/);
+  });
+});
+
+describe("fetchAgents", () => {
+  it("GETs /api/agents and returns the parsed JSON array", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ["infra", "server"]
+    });
+    const agents = await fetchAgents();
+    expect(global.fetch).toHaveBeenCalledWith("/api/agents");
+    expect(agents).toEqual(["infra", "server"]);
+  });
+
+  it("throws when the response is not ok", async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    await expect(fetchAgents()).rejects.toThrow(/500/);
   });
 });
 
