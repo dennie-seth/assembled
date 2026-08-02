@@ -1,0 +1,38 @@
+[project]
+name = "asset-gate"
+version = "0.1.0"
+description = "Machine-checkable validation gate for generated art + audio assets (T-0102, docs/design/13-asset-pipeline.md)"
+requires-python = ">=3.12"
+dependencies = [
+  "pillow==12.3.0",
+  "numpy==2.5.1",
+  "scipy==1.18.0",
+  "soundfile==0.14.0",
+  "pyloudnorm==0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.14.4",
+]
+
+[project.scripts]
+asset-gate = "asset_gate.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
