@@ -25,7 +25,8 @@ _(none yet — Phase 4)_
 
 ## Client (`client`)
 
-_(none yet — Phase 5)_
+- Claude (Sonnet 5) — client dev-env: Godot 4 project, `godot-cpp`
+  GDExtension scaffold, SCons build, headless smoke test, CI (T-0060/T-0061).
 
 ## Assets (`assets`)
 

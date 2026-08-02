@@ -113,3 +113,83 @@ root cause, same fix — see above); re-run pending.
 ## T-0036 — pre-push hook
 
 See `docs/branching.md` for install/bypass instructions.
+
+## T-0060/T-0061 — real client dev-env, replacing the T-0030 spike
+
+**Status: built and verified locally in WSL (Linux leg); Windows leg
+delegated to `ci-client.yml`'s CI run.**
+
+The real Phase 5 client now lives at `client/` — a Godot 4 project plus a
+minimal GDExtension (`AssembledPing`, one method + one property) built via
+a `client/godot-cpp` submodule and SCons, per `docs/PLAN.md` T-0060/T-0061
+and the `new-gdextension-class` skill. `ci-client.yml` was repointed at it
+(see below); the disposable `.github/ci-spike/godot-client/` project and
+`spike-t0030-godot-windows.yml` are marked superseded in-place rather than
+deleted, since the latter is a harmless `workflow_dispatch`-only sanity
+check and not part of the regular gate.
+
+### The version-compatibility question, resolved
+
+T-0030's note above flagged that whoever built the real GDExtension would
+need to re-check whether `godot-cpp` had caught up to the `4.7.x` engine
+line. As of this pin it has not — `git ls-remote --heads/--tags
+https://github.com/godotengine/godot-cpp` still stops at `4.5`
+(`godot-4.5-stable`), same as when T-0030 checked.
+
+Rather than downgrade the engine to 4.5 to match, the pin used is:
+
+- **Engine:** `4.7.1` (unchanged — matches `GODOT_VERSION` used elsewhere).
+- **godot-cpp:** `godot-4.5-stable` (submodule at `client/godot-cpp`).
+
+This relies on Godot's GDExtension ABI forward-compatibility guarantee
+(stable since 4.1): an extension built against an older API surface loads
+fine in a newer 4.x engine, gated by `compatibility_minimum` in the
+`.gdextension` file (set to `"4.1"` here, matching godot-cpp's own example
+project). **This was verified empirically, not assumed** — the acceptance
+bar per the task was "the extension actually loads", not "it compiles":
+
+1. `scons platform=linux target=template_debug` in `client/` (against the
+   `godot-4.5-stable` submodule) produced
+   `libassembled_client.linux.template_debug.x86_64.so`.
+2. Downloaded the **Godot 4.7.1** headless Linux engine binary directly
+   (`Godot_v4.7.1-stable_linux.x86_64`, same version as `GODOT_VERSION`)
+   and ran `godot --headless --import` against `client/` — GDExtension
+   verification step in the import log raised no errors.
+3. Ran `godot --headless --script client/tests/smoke_test.gd`, which calls
+   `ClassDB.class_exists("AssembledPing")`, then instantiates it and calls
+   `ping()`, asserting both the return value and a property round-trip —
+   this fails loudly (exit 1) on any load/ABI problem, not just a silent
+   no-op. **Result: exit 0**, `SMOKE TEST PASS`.
+4. Built `template_release` and ran a full
+   `godot --headless --export-release "Linux"` — confirmed the exported
+   package correctly bundled
+   `libassembled_client.linux.template_release.x86_64.so` next to the
+   game binary, and that this is the artifact CI uploads.
+
+Conclusion: keep `GODOT_VERSION=4.7.1` / `GODOT_CPP_REF=godot-4.5-stable`.
+**Risk for the Windows CI leg:** the same godot-cpp ref will be compiled
+with MSVC instead of GCC on `windows-latest`, which is untested locally
+(WSL can't build the Windows DLL) — this is the one part of the version
+decision this session couldn't verify first-hand, and is what
+`ci-client.yml`'s `windows-export` job (~10-15 min, expected, mostly the
+godot-cpp SCons compile) exists to confirm on the actual PR. If it fails,
+the failure mode to check first is an MSVC-specific compile error in
+godot-cpp itself (unlikely — it's CI-tested upstream) rather than the ABI
+question, which is engine-side and platform-independent.
+
+Whoever picks up `T-0062`+ should re-run step 1-3 above (or just trust CI)
+before assuming this pin still holds, and should re-check
+`git ls-remote` for a `4.6`/`4.7` godot-cpp ref periodically — once one
+exists, bumping `GODOT_CPP_REF` to match `GODOT_VERSION` removes the need
+for this whole cross-version argument.
+
+### ci-client.yml changes
+
+Both jobs now build `client/`'s GDExtension (`template_debug` then
+`template_release`, mirroring local dev) via the vendored `godot-cpp`
+submodule (`submodules: recursive` on checkout, no separate external
+checkout step like the spike used), run the headless smoke test between
+import and export, then export. SCons caching (T-0034) is keyed the same
+way as the spike's was. Path triggers no longer include
+`.github/ci-spike/**` — that project is frozen/superseded, not touched by
+ongoing client work.
