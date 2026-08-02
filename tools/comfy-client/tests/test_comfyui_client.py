@@ -7,6 +7,7 @@ import json
 
 import pytest
 import responses
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.errors import ExecutionError, FetchError, PollTimeoutError, SubmitError
@@ -70,7 +71,7 @@ def test_submit_wraps_connection_failure(sample_graph, fake_clock):
     responses.add(
         responses.POST,
         f"{BASE_URL}/prompt",
-        body=ConnectionError("connection refused"),
+        body=RequestsConnectionError("connection refused"),
     )
     client = make_client(fake_clock)
     with pytest.raises(SubmitError, match="failed to connect"):
@@ -154,7 +155,8 @@ def test_fetch_output_downloads_the_first_image(fake_clock):
         content_type="image/png",
     )
     client = make_client(fake_clock)
-    job_result = {"outputs": {"9": {"images": [{"filename": "out.png", "subfolder": "", "type": "output"}]}}}
+    image = {"filename": "out.png", "subfolder": "", "type": "output"}
+    job_result = {"outputs": {"9": {"images": [image]}}}
     data = client.fetch_output(job_result)
     assert data == b"\x89PNGfakebytes"
 
@@ -184,7 +186,7 @@ def test_generate_end_to_end(sample_graph, fake_clock):
         json={
             "abc123": {
                 "status": {"status_str": "success", "completed": True},
-                "outputs": {"9": {"images": [{"filename": "out.png", "subfolder": "", "type": "output"}]}},
+                "outputs": {"9": {"images": [{"filename": "out.png", "type": "output"}]}},
             }
         },
         status=200,
