@@ -57,8 +57,12 @@ __pycache__/
 # Board tool runtime state (not source)
 tasks/.id-allocator.json
 
-# Assets (generated, reproducible from assets/src/)
-assets/out/
+# Assets (generated, reproducible from assets/src/). "assets/out/" alone
+# anchors to the repo root (a mid-pattern slash anchors in gitignore), so
+# it misses assets/out/ nested under a tool package (e.g.
+# tools/comfy-client/assets/out/, tools/asset-gate test scratch). "**/"
+# matches at any depth, root included.
+**/assets/out/
 
 # Env / secrets
 .env
