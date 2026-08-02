@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: assembled
+      POSTGRES_PASSWORD: assembled
+      POSTGRES_DB: assembled_dev
+    ports:
+      # 5433, not 5432: WSL2 mirrored networking shares the host's port
+      # namespace (docs/PLAN.md "Environment Notes"), so 5432 collides with
+      # whatever Postgres the Windows host side already has bound. ci-server's
+      # runner is isolated and keeps the default 5432.
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assembled"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - assembled_pg_data:/var/lib/postgresql/data
+
+volumes:
+  assembled_pg_data:
