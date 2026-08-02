@@ -1,7 +1,7 @@
 # 05 — Art Direction
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v2, direction + tile size locked · palette open
-> Related: `01-vision.md` §8, `PLAN.md` Phase 6
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v3, direction + tile size + palette process locked
+> Related: `01-vision.md` §8, `PLAN.md` Phase 6, `13-asset-pipeline.md` §6, `14-vertical-slice.md`
 
 ---
 
@@ -39,7 +39,7 @@ Derived from the reference, not invented:
 - Institutional green and ochre — interiors, corridors, the specific palette of a state that painted everything the same colour
 - Deep shadow — near-black, not black
 
-**Exact hex set is open (V-5).** The direction determines the family; the count and values still need fixing before Phase 6.
+**Exact hex set is resolved as a process, not a fixed list (V-5, `13-asset-pipeline.md` §6).** The direction determines the family (above); the count and exact values are *extracted* from the first approved concept sheet (T-0104/T-0105) rather than chosen abstractly.
 
 ### Foreign universes — chroma
 
@@ -71,13 +71,13 @@ The cost is a half-tile band — 216 ÷ 16 = 13.5. **Rooms are authored on a 24�
 
 | # | Question | Blocks |
 |---|---|---|
-| **V-5** | Palette: colour count + hex values | **Phase 6** |
+| ~~**V-5**~~ | ~~Palette: colour count + hex values~~ — resolved as a process, extracted from the first approved concept sheet (`13-asset-pipeline.md` §6) | — |
 | A-2 | Asset inventory estimate: tiles / props / characters / VFX / UI | Phase 6 scope |
 | A-3 | Variant authoring budget — how many hours is a second Hospital? | V-9 release schedule |
 | A-4 | Chroma-intensity shader ramp vs. collapse proximity (`01-vision.md` §8) | Phase 6 |
 | A-5 | Bleed-alpha shader ramp — held/world timer proximity, contour-only at expiry (`07-items-economy.md` §5, `11-moment-to-moment.md` §6) | Phase 6 |
 
-**V-5 is now the last blocker for the art pipeline.** Everything else in Phase 6 — LoRA training, the generation chain, the validation gate — can proceed without it (`13-asset-pipeline.md` §3.2).
+**The quantizer (T-0073) now unblocks per-archetype, on that archetype's concept approval** — not on a single global V-5 decision. The first archetype through is the Signal Tower (`14-vertical-slice.md`).
 
 ---
 
@@ -87,3 +87,4 @@ The cost is a half-tile band — 216 ÷ 16 = 13.5. **Rooms are authored on a 24�
 |---|---|---|
 | 2026-08-01 | Initial — direction locked, numbers open | Claude (Opus 5), rev. @DennieSeth |
 | 2026-08-02 | v2: **A-1 resolved — 16px tiles**, 24×14 authoring grid, 8px band; pipeline split out to `13-asset-pipeline.md` | Claude, rev. pending |
+| 2026-08-02 | v3: **V-5 resolved as a process** — palette extracted from the first approved concept sheet rather than chosen abstractly (`13-asset-pipeline.md` §6); quantizer now unblocks per-archetype | Claude, rev. pending |

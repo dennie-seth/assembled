@@ -1,16 +1,20 @@
 # 13 — Asset Pipeline
 
-> **Author:** Claude · **Reviewed:** pending · **Status:** v3, art + audio locked
-> Related: `05-art-direction.md` (direction), `01-vision.md` §8 (chroma), `PLAN.md` Phase 6/7
+> **Author:** Claude · **Reviewed:** pending · **Status:** v4, art + audio + concept locked
+> Related: `05-art-direction.md` (direction), `01-vision.md` §8 (chroma), `PLAN.md` Phase 6/7, `14-vertical-slice.md` (first concept subject)
 > **Purpose:** how generated assets get from a prompt to a shipped file. `05` decides what it looks like; this decides how it is made.
 
 ---
 
 ## 1. Common Structure
 
-Art and audio share the same skeleton. Only the middle differs.
+Art and audio share the same skeleton. Only the middle differs. For art,
+the chain now starts with **concept** (§6) — the home palette (V-5) is
+extracted from an approved concept sheet, not chosen in the abstract, so
+generation cannot begin until a concept exists and is approved.
 
 ```
+[art only] concept    full-colour SDXL sheet -> human approves direction (§6)
 kanban card (agent: assets|audio)
   -> recipe          workflow JSON + prompt + seed + model hash
   -> generate        ComfyUI /prompt -> poll /history -> fetch /view
@@ -267,12 +271,64 @@ generate (ACE-Step music | Stable Audio Open textures)
 
 ---
 
-## 5. Open
+## 6. Concept Art
+
+> Full Notion doc is canonical; this is a concise repo summary.
+
+**V-5 and P-A are RESOLVED, as a process rather than a fixed hex list.**
+The home palette is *extracted* from an approved concept sheet, not chosen
+in the abstract: cluster the sheet's colours to N, build a value ramp,
+emit a LUT (**T-0105**). This unblocks the quantizer (T-0073) without
+ever having debated a hex table directly — the palette is downstream of
+the art, which is the more defensible ordering anyway.
+
+**Concept art is a SOURCE, not output — the opposite of P-1/P-3 for every
+other asset in this pipeline:**
+
+| | Normal assets | Concept art |
+|---|---|---|
+| Colour | Indexed, locked palette | **Full-colour, never indexed/quantized** |
+| Resolution | Descended to native (16px tiles, etc.) | **Full-res, as SDXL generated it** |
+| Committed? | Only `assets/final/` (curated) | **Yes — `assets/src/concept/`, always** |
+
+It is committed *because* it is a source: the palette-extraction step
+(T-0105) and the archetype's LoRA/style conditioning both read back from
+it later, so it has to persist past generation time the way a recipe does.
+
+**Two human gates, not one:**
+1. **Concept review** — before any recipe is written against an
+   archetype, a human approves its concept sheet's direction (this is
+   the gate T-0104's first output goes through).
+2. **Set review** — the existing §2 gate, after descent, for conformance.
+
+**The chain, per archetype:**
+```
+concept prompt -> base SDXL (T-0104, no descent, no quantize)
+  -> human approves direction
+  -> palette extraction (T-0105): cluster -> value ramp -> LUT
+  -> [unblocks T-0073 quantizer for this archetype]
+recipe -> generate -> descend -> validate -> provenance   (§1, as usual)
+```
+
+**Archetype-first coherence guard:** the first approved concept sheet
+conditions the ones that follow (T-0106: IP-Adapter/img2img on the
+approved sheet, not a bare prompt) — so an archetype's second and third
+concept sheets stay visually coherent with the first instead of each
+independently drifting. `concept_hash` (sha256 of the approved sheet)
+rides in provenance for every downstream asset conditioned on it, the
+same way `workflow_hash` already does for recipes.
+
+**First subject: Signal Tower**, the vertical-slice archetype
+(`14-vertical-slice.md`).
+
+---
+
+## 7. Open
 
 | # | Question | Blocks |
 |---|---|---|
-| **V-5** | Palette: colour count + hex values | quantizer, T-0073 |
-| **P-A** | Slot count and value-ramp semantics for P-4 | follows V-5 |
+| ~~**V-5**~~ | ~~Palette: colour count + hex values~~ — resolved above, extracted via T-0105 | — |
+| ~~**P-A**~~ | ~~Slot count and value-ramp semantics for P-4~~ — resolved above, follows from the extracted ramp | — |
 | **A-2** | Full asset inventory *(owned by `05` §5)* | Phase 6 scope |
 | **A-3** | Variant authoring budget *(owned by `05` §5)* | V-9 |
 | **A-4** | Chroma-intensity shader ramp vs. collapse proximity | Phase 6 |
@@ -294,3 +350,4 @@ generate (ACE-Step music | Stable Audio Open textures)
 | 2026-08-02 | Initial — art pipeline locked; ships-as-is, indexed output, descent chain, character sheets, atlas as build artifact | Claude, rev. pending |
 | 2026-08-02 | v2 — audio pipeline: layer stack, P-5 no-duck rule, global collapse layer, procedural one-shots, loop-fold chain, audio gate | Claude, rev. pending |
 | 2026-08-02 | v3: tile size (A-1) recorded as resolved in `05` §5; ownership of A-2/A-3 clarified to avoid duplicate tracking | Claude, rev. pending |
+| 2026-08-02 | v4: **V-5/P-A resolved as a process** — palette extracted from an approved concept sheet (cluster -> value ramp -> LUT, T-0105), not a fixed hex list; new §6 Concept Art (concept is a committed full-colour source, P-1/P-3 inverted, two human gates, archetype-first coherence guard); §1 chain now starts with concept for art | Claude, rev. pending |
