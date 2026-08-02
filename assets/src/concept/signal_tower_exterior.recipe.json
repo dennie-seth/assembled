@@ -1,0 +1,13 @@
+{
+  "prompt": "detailed pixel art game concept, 16-bit, side view, abandoned Soviet brutalist broadcast and signal tower exterior, tall weathered concrete cylinder tower, external steel stairs and ladders zigzagging up the facade, rusted antenna array and dish at the top, oxide and rust streaks bleeding down concrete, institutional green painted railings and pipework, overcast fog, dark dense pine forest silhouette in background, muted oppressive desaturated palette, side-scroller game key art, crisp pixel clusters, limited colour palette, no text, no watermark",
+  "negative_prompt": "blurry, low quality, text, watermark, signature, cartoon, cheerful, bright saturated colors, people, characters, photorealistic, 3d render, smooth gradient, anti-aliased, modern architecture, sci-fi neon, fantasy",
+  "seed": 1041,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "sampler": "euler",
+  "scheduler": "normal",
+  "name": "signal_tower_exterior"
+}
