@@ -75,14 +75,46 @@ follows the same order, enforced by the `tdd` skill:
 
 | Agent | Path scope | Tools | Model | Role |
 |---|---|---|---|---|
-| `infra` | `tools/**`, `.github/**`, `.claude/**`, `docs/**` | Read, Write, Edit, Grep, Glob, Bash (node/npm/vitest, git) | see agent def | Board tooling, CI config, docs, agent/rule/skill authoring |
-| `server` | `server/**`, `shared/**` | Read, Write, Edit, Grep, Glob, Bash (cmake, doctest/ctest, clang-format, docker compose for a throwaway PG, git) | see agent def | Drogon/Postgres backend |
-| `client` | `client/**`, `shared/**` | Read, Write, Edit, Grep, Glob, Bash (scons, godot --headless, gdUnit4, git) | see agent def | Godot + GDExtension |
-| `assets` | `assets/**` | Read, Write, Edit, Bash (AssetAgent/ComfyUI HTTP), Grep, Glob | see agent def | Generated 2D art; license-allowlist hook gates every run; needs GPU; active only after art direction lands (PLAN.md open question 3) |
-| `audio` | `assets/src/**`, `assets/final/audio/**` | Read, Write, Edit, Bash (AssetAgent/ComfyUI HTTP, ACE-Step / Stable Audio), Grep, Glob | see agent def | Generated music/SFX; shares the `AssetAgent` interface with `assets` (DRY) |
-| `reviewer` | path-aware — loads rules for whatever paths a card actually touched | Read, Grep, Glob, Bash (subsystem tests/lint/build only) | see agent def | The `VALIDATION` gate. Read-only on source: no Write/Edit of production code. |
+| `infra` | `tools/**`, `.github/**`, `.claude/**`, `docs/**` | Read, Write, Edit, Grep, Glob, Bash (node/npm/vitest, git) | `sonnet` | Board tooling, CI config, docs, agent/rule/skill authoring |
+| `server` | `server/**`, `shared/**` | Read, Write, Edit, Grep, Glob, Bash (cmake, doctest/ctest, clang-format, docker compose for a throwaway PG, git) | `sonnet` | Drogon/Postgres backend |
+| `client` | `client/**`, `shared/**` | Read, Write, Edit, Grep, Glob, Bash (scons, godot --headless, gdUnit4, git) | `sonnet` | Godot + GDExtension |
+| `assets` | `assets/**` | Read, Write, Edit, Bash (AssetAgent/ComfyUI HTTP), Grep, Glob | `sonnet` | Generated 2D art; license-allowlist hook gates every run; needs GPU; active only after art direction lands (PLAN.md open question 3) |
+| `audio` | `assets/src/**`, `assets/final/audio/**` | Read, Write, Edit, Bash (AssetAgent/ComfyUI HTTP, ACE-Step / Stable Audio), Grep, Glob | `sonnet` | Generated music/SFX; shares the `AssetAgent` interface with `assets` (DRY) |
+| `reviewer` | path-aware — loads rules for whatever paths a card actually touched | Read, Grep, Glob, Bash (subsystem tests/lint/build only) | `opus` | The `VALIDATION` gate. Read-only on source: no Write/Edit of production code. |
 
 Full definitions: `.claude/agents/*.md`.
+
+### Model selection
+
+Each agent definition's frontmatter may set an optional `model:` field,
+e.g.:
+
+```yaml
+---
+name: reviewer
+tools: Read, Grep, Glob, ...
+model: opus
+---
+```
+
+`ConfigLoader.loadAgentDef` passes it through as `agentDef.model`, and
+`RunOrchestrator` forwards it to `AgentRunner#start` for that phase, so
+`ClaudeCliRunner.buildInvocation` appends `--model <value>` to the spawned
+`claude -p ...` invocation. Omit the field to inherit whatever the `claude`
+CLI defaults to (no `--model` flag emitted).
+
+Accepted values: a Claude Code model alias (`sonnet`, `opus`, `haiku`,
+`fable`) or a full model string (e.g. `claude-sonnet-5`,
+`claude-opus-4-1-20250805`, or a Bedrock-style
+`us.anthropic.claude-3-5-sonnet-...:0` id). `buildInvocation` does light
+validation — non-empty after trimming, no embedded whitespace, doesn't start
+with `-` — but deliberately does not hardcode an exhaustive allowlist, since
+new model names ship independently of this repo.
+
+Current defaults (easily changed per agent — just edit the frontmatter):
+`reviewer` runs on `opus` since it's the quality gate every card passes
+through before a human sees it; the five implementer agents (`infra`,
+`server`, `client`, `assets`, `audio`) run on `sonnet`.
 
 ## Rules
 

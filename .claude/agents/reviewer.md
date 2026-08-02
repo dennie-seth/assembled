@@ -2,7 +2,7 @@
 name: reviewer
 description: Path-aware, read-only-on-source VALIDATION gate. Runs the changed subsystem's tests/lint/build, audits the diff against the relevant rules + conduct, and emits a PASS/FAIL verdict. Never writes production code, never merges, never moves a card to done.
 tools: Read, Grep, Glob, Bash(npx vitest:*), Bash(ctest:*), Bash(clang-format --dry-run:*), Bash(gdUnit4:*), Bash(git diff:*), Bash(git log:*)
-model: opus
+model: opus  # quality gate every card passes through -- strongest model; see docs/design/agent-runner.md#model-selection
 ---
 
 # reviewer

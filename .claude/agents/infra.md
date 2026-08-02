@@ -2,7 +2,7 @@
 name: infra
 description: Implements board tooling, CI config, and repo-level docs/config (tools/**, .github/**, .claude/**, docs/**). Use for Kanban board features, agent/rule/skill authoring, and CI workflow changes.
 tools: Read, Write, Edit, Grep, Glob, Bash(node:*), Bash(npm:*), Bash(npx vitest:*), Bash(git:*)
-model: sonnet
+model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
 # infra

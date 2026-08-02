@@ -4,6 +4,37 @@ import { AgentRunner } from "./agentRunner.js";
 export const DEFAULT_ENV_ALLOWLIST = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TZ"];
 
 /**
+ * Validates a `--model` value before it reaches argv. Accepts Claude Code's
+ * short aliases (sonnet/opus/haiku/fable) and full model strings (e.g.
+ * "claude-sonnet-5", "claude-opus-4-1-20250805", or a Bedrock-style
+ * "us.anthropic.claude-3-5-sonnet-...:0" id) -- deliberately not an
+ * exhaustive allowlist, since new model names ship independently of this
+ * repo. Rejects non-strings (malformed frontmatter, e.g. a YAML mapping),
+ * blank/whitespace-only values, embedded whitespace, and anything starting
+ * with "-" (which argv would otherwise parse as a CLI flag). Returns
+ * `undefined` unchanged so "no model configured" stays silent.
+ */
+function validateModel(model) {
+  if (model === undefined || model === null) {
+    return undefined;
+  }
+  if (typeof model !== "string") {
+    throw new Error(`ClaudeCliRunner: model must be a string, got ${JSON.stringify(model)}`);
+  }
+  const trimmed = model.trim();
+  if (trimmed.length === 0) {
+    throw new Error("ClaudeCliRunner: model must not be blank");
+  }
+  if (/\s/.test(trimmed)) {
+    throw new Error(`ClaudeCliRunner: model "${trimmed}" must not contain whitespace`);
+  }
+  if (trimmed.startsWith("-")) {
+    throw new Error(`ClaudeCliRunner: model "${trimmed}" looks like a CLI flag, not a model name`);
+  }
+  return trimmed;
+}
+
+/**
  * Spawns the headless Claude CLI (`claude -p --output-format stream-json`)
  * per card run. Argv construction and env isolation are pure (buildInvocation);
  * start()/kill() are the only methods that touch the injected spawnFn.
@@ -58,7 +89,7 @@ export class ClaudeCliRunner extends AgentRunner {
       "--allowedTools",
       allowedTools.join(" ")
     ];
-    const resolvedModel = model ?? this.model;
+    const resolvedModel = validateModel(model ?? this.model);
     if (resolvedModel) {
       args.push("--model", resolvedModel);
     }
