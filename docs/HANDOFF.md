@@ -21,18 +21,23 @@
 
 | File | Status | Covers |
 |---|---|---|
-| `01-vision.md` | v3, locked | premise, pillars, loop, progression, completion, runs/death/collapse, world structure, presentation, non-goals |
-| `02-notes-system.md` | v2, locked | vocabulary, grammar, anchoring, truth, tiers, petition, rating, density |
-| `05-art-direction.md` | v1, locked | Soviet constructivism/brutalism, palette, asset strategy |
-| `07-items-economy.md` | v3, locked | instances, rarity=quantity, transfers, topology, bleed, workbench, escrow |
+| `01-vision.md` | v6, locked | premise, pillars, loop, progression, completion, runs/death/collapse, world structure, presentation, non-goals |
+| `02-notes-system.md` | v3, locked | vocabulary, grammar, anchoring, truth, tiers, petition, rating, density |
+| `05-art-direction.md` | v2, locked | Soviet constructivism/brutalism, palette family, tile size, asset strategy |
+| `07-items-economy.md` | v5, locked | instances, rarity=quantity, transfers, topology, bleed, workbench, escrow |
 | `08-invariants.md` | v3, locked | INV-1…14, simulation scope |
-| `09-identity.md` | v1, locked | seed phrase, session lease, sockpuppets |
-| `10-time-and-progression.md` | v1, locked | the four wall-clocks, unlock tiers, endgame |
-| `03-net-protocol.md` | **missing** | needs writing — see §4 |
-| `04-data-model.md` | **missing** | needs writing — see §5 |
-| `06-audio.md` | **missing** | Phase 7, not urgent |
+| `09-identity.md` | v2, locked | seed phrase, session lease, sockpuppets |
+| `10-time-and-progression.md` | v2, locked | the four wall-clocks, unlock tiers, endgame |
+| `11-moment-to-moment.md` | v2, locked | sensor kit, hiding, trap/lock, room vocabulary, puzzles |
+| `12-tears.md` | v1, locked | the core-loop verb — tear as anchor tag, crossing, traces |
+| `13-asset-pipeline.md` | v2, locked | **art + audio generation pipeline**, validation gate, P-1…P-5 |
+| `03-net-protocol.md` | **wrong in repo** | delete and rewrite — see §4/§5 |
+| `04-data-model.md` | **wrong in repo** | delete and rewrite — see §4/§5 |
+| `06-audio.md` | **superseded** | pipeline half is `13` §4. Only track/SFX counts would remain; may not be needed |
 
-`GDD-QUESTIONS.md` is superseded for Tiers 1–6. Tier 7 (risks) is still partly unanswered.
+`GDD-QUESTIONS.md` is superseded for Tiers 1–6 and archived. Tier 7 (risks) is partly answered in `GDD-OPEN.md` §5.
+
+**The repo's `03` and `04` are not merely stale — they describe cut systems.** `03` specifies `GET /v1/roll`; `04` has `secret_drops`, `drop_grants`, and `zone_id`. Secret drops were cut (`PLAN.md` v3) and coordinates were replaced by anchor tags. Delete, do not edit.
 
 ---
 
@@ -57,6 +62,11 @@ Condensed. Full reasoning is in the docs.
 | D-13 | Art: **pixel art, 384×216, 16:9, integer-scaled.** Soviet brutalism. | `05`, `01` §8 |
 | D-14 | Platforms **Windows + Linux**. itch confirmed, Steam cleared (Tier 1 disclosure, dev tooling exempt). | `01` §9 |
 | D-15 | Game is **runnable offline, not completable offline.** | `01` §5 |
+| D-16 | **Tiles are 16px**; rooms authored on a 24×14 grid (384×224) with an 8px non-gameplay band. Viewport is fixed and letterboxed — never widened, because extra sightline is a competitive advantage. | `05` §5, `13` §3.3 |
+| D-17 | **Assets ship as indexed PNGs + a separate 1D palette LUT.** Index `N` means palette slot `N` in *every* asset (**P-4**). The chroma swap is a LUT substitution, so non-uniform index semantics corrupt it silently. Build-time check. | `13` §3.0 |
+| D-18 | **Generated output ships as-is — no hand editing (P-1).** Rejection means regenerate with an adjusted recipe. Hand-edited files are unregenerable from seed and would break provenance and the gitignore policy. | `13` §1 |
+| D-19 | **Atlases are build artifacts, not committed.** Per-archetype atlases would be written by two different `art/*` branches, violating the strictly-additive rule. Commit individual sprites; pack in CI, deterministically. | `13` §3.6 |
+| D-20 | **Gameplay SFX are never ducked (P-5).** Music ducks ambience only. Entity telegraph is the sole warning for no-LOS entities, so masking it is a fairness bug. Requires a four-bus split. | `13` §4.1, `11` §1 |
 
 ---
 
@@ -71,8 +81,12 @@ Condensed. Full reasoning is in the docs.
 | **T-0046** | `GET /v1/notes` radius+ranking | **tag equality + ranking.** Much smaller. Drop the GiST index entirely |
 | **T-0066** | anon token: generate, persist, never PII | **seed-phrase derivation** (D-5). Server generates phrase → derives token → discards phrase. Client persists phrase to file |
 | **T-0067** | "game fully playable with server down" | **"fully *runnable* offline, not completable"** (D-15). Explore/survive/progress work; the ending is unreachable |
-| **T-0072** | style LoRA: curate 30–50 refs | **unblocked** — direction is locked. Corpus = abandoned Soviet constructivism/brutalism |
-| **T-0073** | post-process chain incl. palette quantize | **blocked on V-5** (palette hex set). Cutout + upscale steps are fine to build |
+| **T-0072** | style LoRA: curate 30–50 refs | **unblocked** — direction is locked, and the LoRA stays palette-agnostic so it does **not** wait on V-5 (`13` §3.2). Corpus = abandoned Soviet constructivism/brutalism |
+| **T-0073** | post-process chain incl. palette quantize | **blocked on V-5** (palette hex set) for the quantizer only. Box downscale, cutout, and cleanup are fine to build. Quantize in Oklab/CIELAB, **dithering off** — dithering breaks index semantics (D-17) |
+| **T-0074** | sprite-sheet packer → Godot `.tres` atlas | **moves from authoring tool to CI build step** (D-19). Adds a determinism requirement: same inputs → byte-identical layout. Also assert the packed atlas is still PIL mode `P` — Pillow silently converts to RGB |
+| **T-0081** | Stable Audio Open for SFX | **scope narrows to textures only** — entity vocalizations, room events, drones. Short one-shots move to T-0101; diffusion models are weak at 0.2 s percussive sounds |
+| **T-0083** | loudness normalize + Godot import presets | **add the loop-fold step and seam assertion** (`13` §4.7). Validate the *encoded* file — Ogg padding can break a seam that was clean in the source |
+| **T-0082** | `AudioAgent` mirroring `AssetAgent` | also carry **bus assignment** metadata per asset (Ambience / Music / World SFX / Gameplay SFX), since D-20 makes the bus a gameplay property, not a mix setting |
 
 ### PLAN.md open questions — resolved
 
@@ -100,6 +114,9 @@ Numbered from T-0090 to avoid collision with the existing backlog.
 | **T-0098** | 4 | Proof-of-play gate on rating (D-12) | rating without archetype in run → 403 |
 | **T-0099** | — | **Economy simulation harness** (`08` §4). Standalone, no engine, no server. Agents join/play/idle/quit; items spawn/bleed/transfer/scatter; four clocks modelled | assertions ARE INV-6…9, INV-14 |
 | **T-0100** | — | Name-collision check: "Assembled" on Steam + itch. 5 min | — |
+| **T-0101** | 7 | **Deterministic one-shot synthesis script** (`assets/src/`). Seeded numpy/scipy renders footsteps, switches, doors, pickups offline to WAV. Physically-inspired (noise burst → resonant filter → envelope), *not* sfxr chiptune | same seed → byte-identical WAV |
+| **T-0102** | 3 | **Asset validation gate** (`13` §2, §4.8). Palette membership, index semantics (P-4), tile seamlessness, transition adjacency, cell fit, orphan pixels, frame-silhouette delta; audio loop seam, LUFS, true peak, DC offset | **write these before the generation chain** — they turn generation into red→green |
+| **T-0103** | 5 | **Audio bus split** (D-20): Ambience (duckable), Music, World SFX (lightly duckable), Gameplay SFX (priority, never ducked) | ducking music never attenuates the gameplay bus |
 
 **T-0099 is the important one.** Build the harness now — its parameters are blocked (§6) but its structure is not. Its assertions are the same predicates as T-0096's, which is the point: one definition, three consumers.
 
@@ -184,13 +201,12 @@ Nothing in §3–5 is blocked on these. **Do not guess at them.**
 
 | # | Question | Blocks |
 |---|---|---|
-| **T-1** | Collapse duration. Fixed weeks? Varies with anything? | sim tuning, V-10 |
-| **T-2** | Unique-unlock decay duration — sets the endgame window | sim tuning |
-| **E-7** | Spawn model: Poisson per tag per tier, or tear-driven seeding? | sim parameterisation |
+| **T-1** | Exact collapse duration within ~2–4 weeks (~1.5× first universe) | sim tuning, V-10 |
+| **T-2** | Exact unique-unlock decay within ~1 week | sim tuning |
 | **V-5** | Home palette: colour count + hex values | T-0073, all of Phase 6 output |
 | **E-1** | Exact held/world bleed durations within the stated ranges | sim finds these |
 
-T-1, T-2 and E-7 block the *tuning sweep*, not the harness. Build T-0099 regardless.
+T-1 and T-2 block the *tuning sweep*, not the harness — and now have starting brackets to sweep within. Build T-0099 regardless. **E-7 (spawn model) is resolved** — ambient Poisson process per `(archetype_id, anchor_tag, tier)`; uniques are a one-time seed, never respawned. See `07-items-economy.md` §2/§4.
 
 ---
 
@@ -201,7 +217,9 @@ T-1, T-2 and E-7 block the *tuning sweep*, not the harness. Build T-0099 regardl
 3. **T-0099** — sim harness. Parallelisable, unblocked, and it may surface a design problem while changes are still free.
 4. **Phase 4** with the revised schema — T-0093/94 (identity, sessions) before items, since items depend on identity.
 5. **T-0096 before any item handler.** It is the smallest meaningful test of the whole economy and it should fail before it passes.
-6. **Phase 6 setup** — T-0070/71/72 are unblocked. Stop at T-0073 pending V-5.
+6. **T-0102 before any generation work.** The validation gate is the whole quality mechanism under D-18 — there is no manual repair step, so the tests are what make "ships as-is" viable.
+7. **Phase 6 setup** — T-0070/71/72 are unblocked (T-0072 no longer waits on V-5). Only the quantizer inside T-0073 is blocked.
+8. **Phase 7** — T-0101 is fully unblocked and needs no model at all.
 
 ---
 
@@ -220,3 +238,6 @@ T-1, T-2 and E-7 block the *tuning sweep*, not the harness. Build T-0099 regardl
 | Date | Change | Author |
 |---|---|---|
 | 2026-08-01 | Initial handoff, GDD → development | Claude (Opus 5) |
+| 2026-08-01 | E-7 resolved and removed from blocked list — sim tuning sweep now only waits on T-1/T-2 | Claude, rev. @DennieSeth |
+| 2026-08-01 | T-1/T-2 order-of-magnitude brackets set: collapse ~2–4 weeks, unique decay ~1 week | Claude, rev. @DennieSeth |
+| 2026-08-02 | pipeline decisions folded in: D-16…D-20, revised T-0072/73/74/81/82/83, new T-0101…T-0103, document index refreshed | Claude, rev. pending |

@@ -1,6 +1,6 @@
 # 02 — Notes System
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v2, locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v3, locked
 > Related: `01-vision.md`, `07-items-economy.md`, `08-invariants.md`, `09-identity.md`
 
 ---
@@ -111,7 +111,7 @@ You are not asking a room. You are asking the Universe, and the Universe is the 
 
 **This is the enforcement mechanism for INV-8** (`08-invariants.md`). Reachability was previously an arithmetic hope; the petition makes it an actual affordance a stuck player can reach for.
 
-Open: petition cost, cooldown, broadcast breadth, and whether a petition can name a *gating* item or only ordinary ones (N-5).
+**N-5 resolved: a petition may name a gating (unique) item.** This is what makes it the actual anti-lockout valve rather than a convenience feature — a player stuck on a third unique can ask for exactly that. Cost, cooldown, and broadcast breadth remain open tuning.
 
 ---
 
@@ -188,7 +188,7 @@ Corpus size and authorship: **open (V-8)**.
 | N-2 | Decay rate + `N` visible (§8) |
 | N-3 | Final template/word list — needs the archetype set to exist first |
 | N-4 | Do ghost notes rate? Can they be rated? |
-| N-5 | Petition cost, cooldown, breadth; may it name a gating item? |
+| N-5 | Petition cost, cooldown, breadth (may name a gating item — resolved, §6) |
 | N-6 | Unlock triggers per tier — runs survived? archetypes seen? notes rated well? |
 
 ---
@@ -199,3 +199,5 @@ Corpus size and authorship: **open (V-8)**.
 |---|---|---|
 | 2026-08-01 | Initial, from GDD session | Claude (Opus 5), rev. @DennieSeth |
 | 2026-08-01 | v2: anchor tags replace coordinates, vocabulary tiers, broadcast petition, proof-of-play rating | Claude (Opus 5), rev. @DennieSeth |
+| 2026-08-01 | N-5 resolved: petitions may name a gating/unique item | Claude, rev. @DennieSeth |
+| 2026-08-02 | v3: status line corrected; no content change | Claude, rev. pending |

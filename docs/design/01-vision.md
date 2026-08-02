@@ -1,6 +1,6 @@
 # 01 — Vision
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v3, locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v7, locked
 > Source: GDD sessions 2026-08-01. Supersedes `GDD-QUESTIONS.md` Tiers 1–6.
 
 ---
@@ -88,7 +88,7 @@ Three nested scopes. Conflating them was a real bug in v1–v2 of this document.
 
 ```
 identity   -> one universe, dying on a wall-clock. Weeks.
-  run      -> one waking. 30–45 min. Ends in death or logoff.
+  run      -> one waking. 30–45 min. Ends in death, quit, or unrecovered disconnect.
     room   -> one screen. ~15 per run.
 ```
 
@@ -102,16 +102,26 @@ Each run is you waking up in **another configuration of the same dying universe*
 >
 > Death ends a **run**. Only the clock ends the **universe**.
 
-### Death
+### Ending a Run
 
-Traps and foreign entities kill. Death ends the run.
+A run ends three ways:
+
+| Ending | Trigger |
+|---|---|
+| **Death** | Killed by a trap or foreign entity |
+| **Quit** | Explicit in-game action — the player voluntarily ends the run |
+| **Disconnect (unrecovered)** | Session lease (`09-identity.md` §3) expires without reconnect |
+
+All three carry the same consequence:
 
 - Held items scatter into the network — they surface in other players' worlds.
 - The next run seeds with items and notes from elsewhere.
 - **Unlocks survive.** They belong to the universe, not the run.
 - Notes and vocabulary persist.
 
-Death is **generative**, not punitive: it is the primary engine that circulates content through the network.
+**Disconnects get a grace window.** Reconnecting within the lease TTL resumes the run exactly where it was — nothing scatters. Only once the lease actually expires does it count as ended. A network hiccup is not punished; walking away and not coming back is.
+
+Ending a run this way is **generative, not punitive**: it is the primary engine that circulates content through the network.
 
 ### Collapse — the meta fail state
 
@@ -125,6 +135,17 @@ When the clock expires, your universe finishes dying. You did not get out. **Tha
 A returning player is fluent but genuinely starting over.
 
 Collapse also resolves the design's cruelest state. A solo player with every path known, standing at a door needing a third unique, does not stand there forever. Their universe ends. **Losing is kinder than waiting.**
+
+### The Ending
+
+Four beats, all built from systems that already exist — nothing new to author:
+
+1. **Chroma overwhelm.** The shader parameter already carrying collapse proximity (§8) runs to its maximum. The screen goes fully foreign.
+2. **Summary.** Vocabulary tier reached, count of notes left — both already tracked, nothing new. No free text, no new UI.
+3. **A beat.** No auto-continue. The player sits with it.
+4. **Player-initiated restart.** Same phrase, same identity (`09-identity.md` §3a) — a new universe, not a new person.
+
+First universe only: the collapse clock runs longer — **~1.5× nominal duration**, so a new player who hasn't yet learned the mechanic can't lose it before they understand what it is. Exact base duration is sim-tuned within the ~2–4 week bracket (`08-invariants.md` §4, V-10).
 
 ---
 
@@ -169,8 +190,8 @@ All content — items, vocabulary, variants — is **authored up front and relea
 
 ## 8. Presentation
 
-**Art:** pixel art, locked palette, side-on camera. **384×216**, integer-scaled.
-**Direction:** abandoned Soviet constructivism and brutalism. See `05-art-direction.md`.
+**Art:** pixel art, locked palette, side-on camera. **384×216**, integer-scaled, **16px tiles**.
+**Direction:** abandoned Soviet constructivism and brutalism. See `05-art-direction.md`; generation pipeline in `13-asset-pipeline.md`.
 
 ### Chroma = distance from home
 
@@ -197,7 +218,7 @@ The collapse clock is never shown as a number. **The screen is the clock.** A la
 |---|---|
 | **Run length** | 30–45 min |
 | **Session** | 45–90 min, 1–3 runs |
-| **Universe lifetime** | weeks — ~1 month worst case at low population |
+| **Universe lifetime** | **~2–4 weeks nominal** (T-1 order of magnitude); first universe ~1.5× that. Exact value is sim-tuned within this bracket. |
 | **Platforms v1** | Windows + Linux |
 | **Distribution** | itch.io confirmed. Steam probable — cleared, see below. |
 
@@ -230,10 +251,9 @@ The collapse clock is never shown as a number. **The screen is the clock.** A la
 | V-7 | Vertical slice definition | Phase 8 acceptance |
 | V-8 | Cold-start: size and authorship of the seeded-ghost corpus | launch |
 | V-9 | Variant release schedule — which population thresholds unlock what | balance |
-| V-10 | Collapse duration, and whether it varies with anything | **simulation** |
-| V-11 | What the losing ending actually shows | content |
+| V-10 | Exact collapse duration within the ~2–4 week bracket (§9) | **simulation** |
 
-**Resolved:** V-1 (§9) · V-2 (Windows + Linux) · V-3 (itch, Steam cleared) · V-4 (384×216)
+**Resolved:** V-1 (§9) · V-2 (Windows + Linux) · V-3 (itch, Steam cleared) · V-4 (384×216) · V-11 (§6, "The Ending")
 
 ---
 
@@ -244,3 +264,7 @@ The collapse clock is never shown as a number. **The screen is the clock.** A la
 | 2026-08-01 | Initial, from GDD session | Claude (Opus 5), rev. @DennieSeth |
 | 2026-08-01 | v2: archetype/variant/room model, anchor tags, population-scaled variety, art direction, platforms | Claude (Opus 5), rev. @DennieSeth |
 | 2026-08-01 | v3: **identity-scoped collapse clock replaces "new run = new universe"**; meta fail state; exit-never-persists rule; per-variant unlocks; chroma drives collapse readout; V-1/V-4 resolved | Claude (Opus 5), rev. @DennieSeth |
+| 2026-08-01 | v4: collapse cluster — ending sequence (V-11), first-universe grace (T-5), same-phrase restart confirmed | Claude, rev. @DennieSeth |
+| 2026-08-01 | v5: NEW-1/NEW-2 resolved — run ends via death/quit/unrecovered disconnect, reconnect-within-TTL grace window, explicit quit action added | Claude, rev. @DennieSeth |
+| 2026-08-01 | v6: T-1 order of magnitude set — collapse ~2–4 weeks nominal, ~1.5× for first universe | Claude, rev. @DennieSeth |
+| 2026-08-02 | v7: status line corrected (header said v3, changelog ran to v6); 16px tile + pipeline cross-refs | Claude, rev. pending |

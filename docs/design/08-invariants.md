@@ -1,6 +1,6 @@
 # 08 — Game Invariants
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v2, locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v3, locked
 > Related: `07-items-economy.md`, `09-identity.md`, `01-vision.md`
 > **Purpose:** properties that must hold at *every* population size. Stated without reference to `P`; only their parameters depend on it.
 
@@ -36,6 +36,8 @@ Deterministic. Hold at every instant. Unit-testable at P=2.
 | **INV-10** | Bleed termination | No instance is held longer than `T_max` without transfer. There is no permanent resting state. |
 | **INV-11** | Session uniqueness | At most one live session per identity. Enforced server-side by lease, not by client honesty. |
 | **INV-12** | Tag completeness | Every variant implements every anchor tag its archetype declares. **Build-time check** — a missing tag fails the build, never ships. |
+
+**INV-12 has an asset-side sibling.** `13-asset-pipeline.md` **P-4** requires uniform palette-index semantics across every shipped asset — index `N` means palette slot `N` everywhere. Both are build-time checks in the same CI stage, and both fail the build rather than surfacing at runtime. P-4 is not listed here because it constrains generated files, not game state, but it is enforced identically.
 
 **INV-1, INV-2 and INV-11 together are the anti-dupe law.** INV-11 stops the same identity acting from two clients; INV-2 stops the residual race within one. Both are cheap; neither is retrofittable once items are live.
 
@@ -76,13 +78,13 @@ Statistical. Cannot be unit-tested — require simulation.
 
 ## 4. Simulation Scope
 
-Blocked on **E-7** (spawn model). Deliberately small — a few hundred lines, no engine, no server.
+Deliberately small — a few hundred lines, no engine, no server.
 
 **Model:** discrete-time. Agents join, play, idle, quit. Items spawn, bleed, transfer, scatter on quit or death, fail to land under over-supply.
 
 **Four wall-clocks must be modelled together** (`10-time-and-progression.md` §2): held bleed, world/escrow, unlock decay, collapse. Tuning any one in isolation is how this breaks.
 
-**Free parameters:** held and world bleed durations (E-1), unlock decay per tier (T-2, T-3), collapse duration (T-1), spawn rates per tier, `k_c` / `k_r`, absolute unique count, join/quit rates, note-rating bleed modifier, landing-probability curve (E-8).
+**Free parameters:** held and world bleed durations (E-1), unlock decay per tier (T-2 — sweep within ~1 week, T-3), collapse duration (T-1 — sweep within ~2–4 weeks, ~1.5× for first universe), spawn rates per tier, `k_c` / `k_r`, absolute unique count, join/quit rates, note-rating bleed modifier, landing-probability curve (E-8).
 
 **Assertions:** INV-6…9, INV-14, checked continuously.
 
@@ -111,3 +113,6 @@ Blocked on **E-7** (spawn model). Deliberately small — a few hundred lines, no
 | 2026-08-01 | Initial | Claude (Opus 5) |
 | 2026-08-01 | v2: O-1/O-2/O-3 resolved; INV-11/12 added; INV-2 gains CAS; drought→over-supply reframing | Claude (Opus 5), rev. @DennieSeth |
 | 2026-08-01 | v3: INV-8 bounded below collapse time; INV-9 veteran clause; INV-13 exit non-persistence; INV-14 population monotonicity; sim covers four clocks | Claude (Opus 5), rev. @DennieSeth |
+| 2026-08-01 | E-7 resolved (`07-items-economy.md` §4) — simulation harness unblocked | Claude, rev. @DennieSeth |
+| 2026-08-01 | T-1/T-2 order-of-magnitude sweep brackets set (§4) | Claude, rev. @DennieSeth |
+| 2026-08-02 | v3: status line corrected; P-4 (asset index semantics) cross-referenced from INV-12 | Claude, rev. pending |
