@@ -1,0 +1,15 @@
+{
+  "model": "sd_xl_base_1.0.safetensors",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": null,
+  "prompt": "concept art, full-colour digital painting, abandoned Soviet brutalist comms and broadcast tower interior, vertical signal tower, heavy weathered concrete walls, dark oxide rust staining streaking down surfaces, institutional green painted pipework and railings, exposed relay racks and antenna equipment cables, tall vertical shaft with steel ladders and narrow stairwells ascending into shadow, muted oppressive desaturated lighting, single shaft of grey daylight from above, dust particles in the air, wide establishing shot, architectural concept art, painterly, moody atmospheric lighting, high detail",
+  "negative_prompt": "blurry, low quality, text, watermark, signature, cartoon, cheerful, bright saturated colors, people, characters, modern architecture, sci-fi neon, fantasy",
+  "seed": 104,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "fb02d418b465f17e20eea2eb55be45f639f15a347d427770d3323e1ee30d6542",
+  "prompt_id": "bc20fb72-217c-494a-9c98-531c72aa2b58",
+  "concept_hash": "e9aba12a5344830011a9a6ded13e76f0329e95acf3a2d48f55e3eb6ed54f983e"
+}
