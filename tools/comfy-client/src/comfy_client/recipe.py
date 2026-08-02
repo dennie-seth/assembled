@@ -1,0 +1,51 @@
+"""Recipe: the reproducible generation unit (13-asset-pipeline.md §1).
+
+`recipe -> generate -> descend -> validate -> provenance`. This module is
+the first arrow: a recipe is prompt + seed + steps + cfg + dimensions +
+checkpoint + model hash, and nothing else -- deliberately excludes anything
+that isn't needed to reproduce the exact same output byte-for-byte
+(P-1: output ships as-is, rejection means regenerate with an adjusted
+recipe, never hand-edit).
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Recipe:
+    prompt: str
+    seed: int
+    negative_prompt: str = ""
+    steps: int = 20
+    cfg: float = 7.0
+    width: int = 1024
+    height: int = 1024
+    checkpoint: str = "sd_xl_base_1.0.safetensors"
+    sampler: str = "euler"
+    scheduler: str = "normal"
+    name: str = "assembled"
+    # TODO(T-0075): populate from the checkpoint file once a hashing step
+    # exists on the Windows ComfyUI host (the .safetensors isn't reachable
+    # from WSL); the provenance writer records this alongside seed/prompt.
+    model_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.prompt.strip():
+            raise ValueError("recipe.prompt must not be empty")
+        if self.steps <= 0:
+            raise ValueError("recipe.steps must be positive")
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("recipe.width/height must be positive")
+
+
+def recipe_to_dict(recipe: Recipe) -> dict:
+    return asdict(recipe)
+
+
+def load_recipe(path: str | Path) -> Recipe:
+    data = json.loads(Path(path).read_text())
+    return Recipe(**data)
