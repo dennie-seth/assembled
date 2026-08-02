@@ -78,7 +78,7 @@ def resonant_bandpass(
     return sosfilt(sos, x)
 
 
-_CURVES = {"exponential", "linear"}
+ENVELOPE_CURVES = {"exponential", "linear"}
 
 
 def envelope(n: int, sample_rate: int, attack_s: float, decay_s: float, curve: str) -> np.ndarray:
@@ -89,8 +89,8 @@ def envelope(n: int, sample_rate: int, attack_s: float, decay_s: float, curve: s
     constant tuned so the tail reaches ~1% by the end of the decay
     portion -- audibly "done" without a hard cut).
     """
-    if curve not in _CURVES:
-        raise ValueError(f"unknown envelope curve {curve!r}, expected one of {_CURVES}")
+    if curve not in ENVELOPE_CURVES:
+        raise ValueError(f"unknown envelope curve {curve!r}, expected one of {ENVELOPE_CURVES}")
 
     attack_n = min(n, max(0, round(attack_s * sample_rate)))
     env = np.zeros(n, dtype=np.float64)
