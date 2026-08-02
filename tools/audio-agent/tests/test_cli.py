@@ -1,6 +1,7 @@
-"""CLI entrypoint: `comfy-client generate --recipe ...` -- what the assets
-agent (or a human, per the manual live-smoke instructions in README.md)
-actually invokes. Mocks `pipeline.generate`, no real ComfyUI/HTTP here."""
+"""CLI entrypoint: `audio-agent generate ...` -- what the `audio` agent (or a
+human, per the manual live-smoke instructions in README.md) actually
+invokes. Mocks `pipeline.generate`, no real ACE-Step/HTTP here. Mirrors
+tools/comfy-client/tests/test_cli.py."""
 
 from __future__ import annotations
 
@@ -9,31 +10,31 @@ import json
 import pytest
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
-from comfy_client import cli
-from comfy_client.pipeline import GenerationResult
-from comfy_client.provenance import build_provenance_record
-from comfy_client.recipe import Recipe
+from audio_agent import cli
+from audio_agent.pipeline import GenerationResult
+from audio_agent.provenance import build_provenance_record
+from audio_agent.recipe import MusicRecipe
 
 
 @pytest.fixture
 def recipe_path(tmp_path):
     path = tmp_path / "recipe.json"
-    path.write_text(json.dumps({"prompt": "a derelict signal tower", "seed": 42}))
+    path.write_text(json.dumps({"prompt": "a room-anchored music cue", "seed": 42}))
     return str(path)
 
 
 def test_generate_command_prints_json_result(monkeypatch, capsys, tmp_path, recipe_path):
-    recipe = Recipe(prompt="a derelict signal tower", seed=42)
-    out_path = tmp_path / "signal_tower_p1.png"
+    recipe = MusicRecipe(prompt="a room-anchored music cue", seed=42)
+    out_path = tmp_path / "assembled_j1.wav"
     out_path.write_bytes(b"data")
     fake_result = GenerationResult(
         path=out_path,
-        prompt_id="p1",
-        provenance=build_provenance_record(recipe, workflow_hash="hash1", prompt_id="p1"),
+        job_id="assembled_j1.wav",
+        provenance=build_provenance_record(recipe, request_hash="hash1", job_id="assembled_j1.wav"),
     )
 
-    def fake_generate(recipe_arg, out_dir, timeout, poll_interval):
-        assert recipe_arg.prompt == "a derelict signal tower"
+    def fake_generate(recipe_arg, out_dir, timeout, poll_interval, lock_timeout):
+        assert recipe_arg.prompt == "a room-anchored music cue"
         return fake_result
 
     monkeypatch.setattr(cli, "generate", fake_generate)
@@ -43,12 +44,13 @@ def test_generate_command_prints_json_result(monkeypatch, capsys, tmp_path, reci
 
     output = json.loads(capsys.readouterr().out)
     assert output["path"] == str(out_path)
-    assert output["prompt_id"] == "p1"
-    assert output["provenance"]["workflow_hash"] == "hash1"
+    assert output["job_id"] == "assembled_j1.wav"
+    assert output["provenance"]["request_hash"] == "hash1"
+    assert output["provenance"]["bus"] == "Music"
 
 
 def test_generate_command_reports_license_rejection(monkeypatch, capsys, recipe_path, tmp_path):
-    def fake_generate(recipe_arg, out_dir, timeout, poll_interval):
+    def fake_generate(recipe_arg, out_dir, timeout, poll_interval, lock_timeout):
         raise CheckpointNotAllowedError("checkpoint not approved")
 
     monkeypatch.setattr(cli, "generate", fake_generate)

@@ -1,8 +1,12 @@
-"""Enforced checkpoint license allowlist (T-0071 acceptance, .claude/rules/assets.md).
+"""Enforced generation-model license allowlist (.claude/rules/assets.md).
 
-Not a convention: `pipeline.generate` (comfy_client.pipeline) calls
-`assert_checkpoint_allowed` before ever constructing a workflow, so a
-disallowed checkpoint cannot reach ComfyUI regardless of caller.
+Extracted from `tools/comfy-client` (T-0071) so both `comfy_client.pipeline`
+(ComfyUI checkpoints) and `audio_agent.pipeline` (ACE-Step, T-0082) enforce
+the same guardrail from the same config file, `config/checkpoint_allowlist.json`
+in this package. Not a convention: each pipeline's `generate()` calls
+`assert_checkpoint_allowed` before ever constructing a request, so a
+disallowed checkpoint/model cannot reach a generation backend regardless of
+caller.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ DEFAULT_ALLOWLIST_PATH = (
 
 
 class CheckpointNotAllowedError(RuntimeError):
-    """A recipe's checkpoint isn't on the approved-license allowlist."""
+    """A recipe's checkpoint/model isn't on the approved-license allowlist."""
 
 
 @dataclass(frozen=True)

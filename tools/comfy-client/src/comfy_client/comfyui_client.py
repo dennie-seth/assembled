@@ -15,8 +15,8 @@ import uuid
 from typing import Any
 
 import requests
+from gen_client_base.client import GenerationClient
 
-from comfy_client.client import GenerationClient
 from comfy_client.errors import ExecutionError, FetchError, PollTimeoutError, SubmitError
 
 DEFAULT_TIMEOUT = 300.0

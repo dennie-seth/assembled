@@ -1,10 +1,12 @@
 """Generic submit -> poll -> fetch pattern shared by every generation backend.
 
-ComfyUI (`comfyui_client.ComfyUIClient`) is the only implementation today,
-but the shape is deliberately backend-agnostic so the audio pipeline's
-`AudioAgent` (T-0082, docs/PLAN.md Phase 7 DRY note) can subclass
-`GenerationClient` for its own backend (Stable Audio Open / ACE-Step)
-without duplicating the submit/poll/fetch/timeout scaffolding.
+Extracted from `tools/comfy-client` (T-0071) into its own package so the two
+concrete backends -- `comfy_client.comfyui_client.ComfyUIClient` (ComfyUI,
+driving `AssetAgent`) and `audio_agent.audio_client.AudioClient` (ACE-Step,
+driving `AudioAgent`, T-0082) -- share this scaffolding instead of each
+reimplementing submit/poll/fetch/timeout. Both packages depend on this one
+(`pip install -e ../gen-client-base`) rather than either depending on the
+other.
 """
 
 from __future__ import annotations
@@ -16,11 +18,16 @@ from typing import Any
 class GenerationClient(ABC):
     @abstractmethod
     def submit(self, workflow: dict[str, Any]) -> str:
-        """Submit a rendered workflow graph; return a backend job id."""
+        """Submit a rendered request payload; return a backend job id."""
 
     @abstractmethod
     def wait_for_completion(self, job_id: str, timeout: float, poll_interval: float) -> Any:
-        """Poll until `job_id` completes; return the backend's completed-job payload."""
+        """Wait until `job_id` completes; return the backend's completed-job payload.
+
+        Backends that complete synchronously inside `submit` (no separate
+        poll endpoint) may implement this as a pass-through -- see
+        `audio_agent.audio_client.AudioClient` for that case.
+        """
 
     @abstractmethod
     def fetch_output(self, job_result: Any) -> bytes:

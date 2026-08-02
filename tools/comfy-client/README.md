@@ -56,23 +56,26 @@ export COMFYUI_BASE_URL=http://172.18.192.1:8188
 export COMFYUI_PORT=8188
 ```
 
-## License allowlist (`license_allowlist.py`)
+## License allowlist (`gen_client_base.license_allowlist`)
 
 T-0071 acceptance: *"refuses to run a workflow whose checkpoint isn't on
 the approved-license allowlist (Apache-2.0/OpenRAIL/CC0-derived) — encoded
 as an enforced check, not just a convention."* `pipeline.generate()` calls
 `assert_checkpoint_allowed()` **before** rendering a workflow or
 constructing a client, so a disallowed checkpoint never reaches ComfyUI
-regardless of caller. The allowlist lives in
-`config/checkpoint_allowlist.json`; `sd_xl_base_1.0.safetensors`
-(CreativeML Open RAIL++-M, OpenRAIL family) is the one seeded entry.
+regardless of caller. As of the T-0082 refactor this lives in the shared
+`tools/gen-client-base` package (see "Shared foundation" below), reading
+`tools/gen-client-base/config/checkpoint_allowlist.json` --
+`sd_xl_base_1.0.safetensors` (CreativeML Open RAIL++-M, OpenRAIL family)
+is this package's entry; the same file also carries audio-agent's
+ACE-Step entry.
 
 ## Install
 
 ```sh
 cd tools/comfy-client
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e ../gen-client-base -e ".[dev]"
 ```
 
 ## Test / lint
@@ -129,18 +132,29 @@ the PNG, and writes it to `assets/out/live_smoke_<prompt_id>.png`
 (gitignored). It is a plain script, not a test — nothing in `tests/`
 depends on it, and it is not wired into CI.
 
-## Architecture notes (DRY with the future AudioAgent, T-0082)
+## Shared foundation (DRY with AudioAgent, T-0082)
 
-- `client.GenerationClient` is a small ABC (`submit` / `wait_for_completion`
-  / `fetch_output` + a concrete `generate()`) that `comfyui_client.ComfyUIClient`
-  implements. `docs/PLAN.md` Phase 7 wants `AudioAgent` to share this base
-  rather than reimplementing submit/poll/fetch/timeout/backoff for its own
-  backend (Stable Audio Open / ACE-Step) — subclass `GenerationClient`,
-  keep `pipeline.py`'s shape (license gate -\> generate -\> save -\> descend
-  seam -\> provenance) as the pattern to mirror.
-- `errors.py`'s three failure modes (`SubmitError`, `ExecutionError`,
-  `PollTimeoutError`) plus `FetchError` are generic enough to reuse
-  as-is; only the HTTP-shape details live in `comfyui_client.py`.
+`tools/gen-client-base` is a small sibling package holding the two pieces
+that used to live here and are now genuinely shared with
+`tools/audio-agent`:
+
+- **`gen_client_base.client.GenerationClient`** -- the ABC (`submit` /
+  `wait_for_completion` / `fetch_output` + a concrete `generate()`) that
+  `comfyui_client.ComfyUIClient` implements here and
+  `audio_agent.audio_client.AudioClient` implements for ACE-Step. Moved
+  out of this package (was `comfy_client.client`) when T-0082 needed it
+  too, rather than T-0082 reimplementing submit/poll/fetch/timeout or
+  depending on this package directly.
+- **`gen_client_base.license_allowlist`** -- see "License allowlist"
+  above.
+
+`errors.py`'s failure modes (`SubmitError`, `ExecutionError`,
+`PollTimeoutError`, `FetchError`) stayed here rather than moving --
+they're generic in shape but the class *names* are ComfyUI-flavored, and
+`audio-agent` defines its own equivalents rather than sharing this
+module. `pipeline.py`'s shape (license gate -\> generate -\> save ->
+descend seam -\> provenance) is the pattern `audio-agent` mirrors, not
+shared code.
 
 ## What's stubbed, pending other tasks
 

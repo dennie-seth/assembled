@@ -12,11 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from gen_client_base.client import GenerationClient
+from gen_client_base.license_allowlist import assert_checkpoint_allowed
+
 from comfy_client.base_url import resolve_base_url
-from comfy_client.client import GenerationClient
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.descend import descend_stub
-from comfy_client.license_allowlist import assert_checkpoint_allowed
 from comfy_client.provenance import ProvenanceRecord, build_provenance_record
 from comfy_client.recipe import Recipe
 from comfy_client.workflow import render_workflow

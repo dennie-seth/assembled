@@ -145,6 +145,113 @@ equivalent rule for whichever port T-0082 settles on, e.g.:
 New-NetFirewallRule -DisplayName "ACE-Step 7865 (WSL)" -Direction Inbound -Protocol TCP -LocalPort 7865 -RemoteAddress <wsl-subnet> -Action Allow
 ```
 
+## Persistent server (T-0082)
+
+`tools/audio-agent` (T-0082, in the game repo) needs a long-lived HTTP
+endpoint instead of the per-request `initialize_pipeline()` stock
+`infer-api.py` does. The patch lives **outside the game repo**, as a
+sibling file in this ACE-Step clone rather than an in-place edit, so the
+clone stays a clean upstream checkout: **`F:\ACE-Step\infer-api-persistent.py`**.
+
+Two changes from stock `infer-api.py`:
+
+1. **Pipeline loaded once at import time** with the verified `cpu_offload=True,
+   overlapped_decode=True, bf16` combo from this doc's VRAM section, reused
+   across every `POST /generate` instead of a fresh ~11s reload per call.
+2. **Added `GET /output/{filename}`** so a caller can fetch the WAV bytes
+   `/generate` wrote server-side — stock `infer-api.py` returns only a
+   server-local path, with no way to retrieve the file over HTTP.
+   `filename` is reduced to its basename on both write and read, so a
+   client can't escape `ACE_STEP_OUTPUT_DIR` via `../` segments.
+
+**A real integration bug was caught and fixed while building this, not
+just a mechanical "load once" change:** stock `infer-api.py` calls
+`ACEStepPipeline.__call__` **positionally**, but the version of `acestep`
+installed on this machine has drifted from the parameter order that
+positional call assumes — it gained a leading `format` parameter and
+renamed `actual_seeds` to `manual_seeds` (now a real list, not a
+`", ".join`-ed string), which silently shifted every later positional
+argument by one slot and broke generation (`object of type 'int' has no
+len()`, since the joined-seeds string was landing in an int-typed
+parameter and vice versa elsewhere). Confirmed via
+`inspect.signature(ACEStepPipeline.__call__)` and fixed by calling with
+**keyword arguments** matching the actual installed signature instead of
+mirroring the stock script's positional call.
+
+Environment variables (all optional):
+
+| Var | Default |
+|---|---|
+| `ACE_STEP_CHECKPOINT_DIR` | `F:/ACE-Step/checkpoints` |
+| `ACE_STEP_OUTPUT_DIR` | `F:/ACE-Step/outputs` |
+| `ACE_STEP_DEVICE_ID` | `0` |
+| `ACE_STEP_BF16` | `true` |
+| `ACE_STEP_PORT` | `8001` (not ACE-Step's stock 8000 — picked to avoid colliding with anything else that might claim 8000 on this host) |
+
+### Launch (detached, logging to a file)
+
+```powershell
+$proc = Start-Process -FilePath 'F:\ACE-Step\venv\Scripts\python.exe' `
+  -ArgumentList 'F:\ACE-Step\infer-api-persistent.py' `
+  -WorkingDirectory 'F:\ACE-Step' `
+  -RedirectStandardOutput 'F:\ACE-Step\infer-api-persistent.log' `
+  -RedirectStandardError 'F:\ACE-Step\infer-api-persistent.err.log' `
+  -PassThru -WindowStyle Hidden
+$proc.Id | Out-File -FilePath 'F:\ACE-Step\infer-api-persistent.pid' -Encoding ascii
+```
+
+Verify from Windows (loopback works regardless of the firewall rule
+below):
+
+```powershell
+Invoke-WebRequest -Uri 'http://127.0.0.1:8001/health' -UseBasicParsing
+```
+
+**Status as of this writing: running.** PID recorded in
+`F:\ACE-Step\infer-api-persistent.pid`, logs in the two files above.
+A local (loopback-only, no WSL involved) end-to-end smoke test — real
+`POST /generate` for a 6s clip, then `GET /output/{filename}` — was run
+directly against this instance and confirmed a valid RIFF/WAVE file
+round-trips correctly. That is a different, narrower check than the
+"live smoke" below: it validates this patch's own correctness on this
+machine, not the WSL → Windows path `tools/audio-agent` will use.
+
+### Firewall (flagged, not changed — same as T-0070)
+
+Same shape as the `ComfyUI 8188 (WSL)` rule in `docs/comfyui-setup.md`,
+for this server's port instead. **This is a system/security-setting
+change — not run by this agent.** The user needs to run, by hand:
+
+```powershell
+New-NetFirewallRule -DisplayName "ACE-Step 8001 (WSL)" -Direction Inbound -Protocol TCP -LocalPort 8001 -RemoteAddress 172.18.192.0/20 -Action Allow
+```
+
+(`172.18.192.0/20` is this host's current WSL NAT subnet, same one
+`docs/comfyui-setup.md` used — re-derive with `ip route show default`
+inside WSL if it ever changes.) Re-verify after applying with:
+
+```sh
+wsl -d Ubuntu-24.04 -u dennieseth -- bash -lc "curl -s http://172.18.192.1:8001/health"
+```
+
+### Manual live smoke (not run by this agent — WSL can't reach this port yet)
+
+Once the firewall rule above is applied, run **one** real generation from
+the WSL side, through `tools/audio-agent`, exactly as the AudioAgent will:
+
+```sh
+cd tools/audio-agent   # in the game repo
+.venv/bin/python scripts/live_smoke.py
+# or pin the base URL explicitly:
+ACESTEP_BASE_URL=http://172.18.192.1:8001 .venv/bin/python scripts/live_smoke.py
+```
+
+This is the first real exercise of the WSL → Windows path end to end
+(everything up to this point — the package's own test suite and this
+doc's local loopback smoke test — deliberately avoids it). See
+`tools/audio-agent/README.md`'s "Manual live smoke" section for what it
+does and where it writes output.
+
 ## Bottom line for T-0080 acceptance
 
 ACE-Step is installed, weights downloaded and verified (Apache-2.0,

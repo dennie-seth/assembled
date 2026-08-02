@@ -1,0 +1,32 @@
+[project]
+name = "gen-client-base"
+version = "0.1.0"
+description = "Shared generation-client foundation: the backend-agnostic submit->poll->fetch ABC and the checkpoint license allowlist, used by both comfy-client (T-0071) and audio-agent (T-0082)"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.14.4",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gen_client_base = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
