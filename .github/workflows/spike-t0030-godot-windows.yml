@@ -4,6 +4,12 @@ name: spike-t0030-godot-windows
 # Run workflow) to (re)confirm windows-latest can build godot-cpp via
 # SCons/MSVC and run `godot --headless --export-release`. See
 # docs/ci-notes.md for context and how to record the result.
+#
+# SUPERSEDED (T-0060, 2026-08-02): the real Phase 5 client now lives at
+# client/ and ci-client.yml builds/exports it on every push and PR. This
+# workflow is kept only as an on-demand, disposable-project sanity check —
+# it is not part of the regular gate. Prefer ci-client.yml for anything
+# that needs to reflect the real client.
 on:
   workflow_dispatch: {}
 

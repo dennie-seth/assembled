@@ -5,13 +5,11 @@ on:
     branches: [develop, main]
     paths:
       - "client/**"
-      - ".github/ci-spike/**"
       - ".github/workflows/ci-client.yml"
   push:
     branches: [develop, main]
     paths:
       - "client/**"
-      - ".github/ci-spike/**"
       - ".github/workflows/ci-client.yml"
 
 concurrency:
@@ -19,16 +17,18 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GODOT_VERSION: "4.7.1"
-  # godot-cpp lags the engine's own release cadence - as of this pin there
-  # is no 4.6/4.7 branch or tag yet, only up to the 4.5 line (confirmed via
+  # T-0060: engine and godot-cpp are pinned to different lines on purpose.
+  # godot-cpp lags the engine's release cadence and, as of this pin, only
+  # publishes up to the 4.5 line (no 4.6/4.7 branch or tag — confirmed via
   # `git ls-remote --heads/--tags https://github.com/godotengine/godot-cpp`).
-  # This is a concrete, immutable tag, not a moving branch. Bump once
-  # godot-cpp cuts a ref that actually matches GODOT_VERSION's line.
+  # This is safe: Godot's GDExtension ABI has been forward-compatible across
+  # 4.x minor releases since 4.1 (`compatibility_minimum` in the
+  # .gdextension file), and this was verified directly, not assumed — see
+  # docs/ci-notes.md T-0060 for how. Bump GODOT_CPP_REF once godot-cpp cuts
+  # a ref matching GODOT_VERSION's line, and re-verify.
+  GODOT_VERSION: "4.7.1"
   GODOT_CPP_REF: "godot-4.5-stable"
-  # T-0030/T-0033: no real Phase 5 client exists yet (docs/PLAN.md T-0060).
-  # This is a disposable feasibility-only project — see docs/ci-notes.md.
-  SPIKE_PROJECT_DIR: .github/ci-spike/godot-client
+  CLIENT_DIR: client
 
 jobs:
   windows-export:
@@ -39,21 +39,16 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7
-
-      - name: Checkout godot-cpp
-        uses: actions/checkout@v7
         with:
-          repository: godotengine/godot-cpp
-          ref: ${{ env.GODOT_CPP_REF }}
           submodules: recursive
-          path: godot-cpp-spike
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
-      # T-0034: SCons content-addressed cache dir, so a source-identical
-      # rebuild reuses prior objects instead of recompiling godot-cpp.
+      # SCons content-addressed cache dir (T-0034), so a source-identical
+      # rebuild reuses prior objects instead of recompiling godot-cpp. This
+      # is the slow leg of the job (~10-15 min cold) — expected.
       - uses: actions/cache@v6
         with:
           path: ${{ env.SCONS_CACHE }}
@@ -63,12 +58,14 @@ jobs:
 
       - run: pip install scons
 
-      - name: Build godot-cpp (template_release, MSVC)
-        working-directory: godot-cpp-spike
+      - name: Build assembled_client GDExtension (template_debug, MSVC)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: scons platform=windows target=template_debug -j2
+
+      - name: Build assembled_client GDExtension (template_release, MSVC)
+        working-directory: ${{ env.CLIENT_DIR }}
         run: scons platform=windows target=template_release -j2
 
-      # T-0034: caches the editor download + export templates (cache: true
-      # is the action's default; set explicitly for clarity).
       - uses: chickensoft-games/setup-godot@v2
         with:
           version: ${{ env.GODOT_VERSION }}
@@ -76,30 +73,125 @@ jobs:
           include-templates: true
           cache: true
 
+      # T-0060/T-0061: `godot --headless --import` has a known abort-on-exit
+      # (SIGABRT / exit 134) on some headless Linux/Windows CI runners —
+      # it fires *after* every real import stage has already completed and
+      # been written to disk. Root cause is believed to be in Godot's
+      # headless *editor*-teardown path (`--import` loads EditorNode
+      # internals even under `--headless`); not reproducible in an
+      # unconstrained WSL shell or a plain `ubuntu:24.04` Docker container
+      # with matching CPU/memory limits — see docs/ci-notes.md T-0060/T-0061
+      # for the repro attempts. Forgive it ONLY when the log proves every
+      # stage actually finished and no GDExtension/parse error was ever
+      # printed; anything else (including a signal abort that happens
+      # before completion) still fails the build.
       - name: Import project (headless)
         shell: bash
-        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
-        run: godot --headless --import
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          # Strip ANSI colour codes before writing the log: Godot's progress
+          # lines wrap "[ DONE ]"/stage names in SGR escapes even when not
+          # attached to a tty, which breaks a literal grep match on them
+          # (confirmed locally — see docs/ci-notes.md T-0060/T-0061).
+          if godot --headless --import 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee import.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$status" -gt 128 ] \
+             && grep -qF '[ DONE ] loading_editor_layout' import.log \
+             && ! grep -qE 'SCRIPT ERROR|Parser Error|Failed to load extension|Can.t open dynamic library|Unable to load GDExtension' import.log; then
+            echo "::warning::godot --headless --import exited $status (signal $((status - 128))) after every import stage completed — known headless editor-teardown abort-on-exit, not a real failure. See docs/ci-notes.md T-0060/T-0061."
+            exit 0
+          fi
+          echo "::error::godot --headless --import failed for real (exit $status)"
+          exit "$status"
 
+      # Gate on the script's own explicit verdict (tests/smoke_test.gd
+      # calls quit(0)/quit(1) itself after asserting AssembledPing loaded
+      # and round-tripped), not on Godot's raw process exit code, for the
+      # same abort-on-exit reason as the import step above — see
+      # docs/ci-notes.md.
+      - name: Smoke test — GDExtension loads and round-trips (headless)
+        shell: bash
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/smoke_test.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee smoke.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'SMOKE TEST PASS' smoke.log; then
+            echo "Smoke test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::smoke test did not print SMOKE TEST PASS (godot exit $status)"
+          exit 1
+
+      # Same abort-on-exit class can hit export (also editor-only
+      # machinery under headless) — gate on the exported artifacts
+      # actually existing and being non-empty, not on Godot's exit code.
       - name: Export Windows Desktop
         shell: bash
-        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        working-directory: ${{ env.CLIENT_DIR }}
         run: |
+          set -o pipefail
           mkdir -p build/windows
-          godot --headless --export-release "Windows Desktop" build/windows/assembled-ci-spike.exe
+          if godot --headless --export-release "Windows Desktop" build/windows/assembled.exe 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee export.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ -s build/windows/assembled.exe ] && [ -s build/windows/assembled.pck ]; then
+            if [ "$status" -ne 0 ]; then
+              echo "::warning::export exited $status but produced a complete Windows build — treating as the known headless abort-on-exit. See docs/ci-notes.md."
+            fi
+            exit 0
+          fi
+          echo "::error::export failed — Windows build artifacts missing or empty (exit $status)"
+          exit 1
 
-      # T-0035
       - uses: actions/upload-artifact@v7
         with:
           name: client-windows-export
-          path: ${{ env.SPIKE_PROJECT_DIR }}/build/windows
+          path: ${{ env.CLIENT_DIR }}/build/windows
           if-no-files-found: error
 
   linux-export:
-    name: "Linux: headless export"
+    name: "Linux: godot-cpp build + headless export"
     runs-on: ubuntu-latest
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons-cache
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: scons-cache-linux-godot-cpp-${{ env.GODOT_CPP_REF }}-${{ github.sha }}
+          restore-keys: |
+            scons-cache-linux-godot-cpp-${{ env.GODOT_CPP_REF }}-
+
+      - run: pip install scons
+
+      - name: Build assembled_client GDExtension (template_debug)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: scons platform=linux target=template_debug -j$(nproc)
+
+      - name: Build assembled_client GDExtension (template_release)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: scons platform=linux target=template_release -j$(nproc)
 
       - uses: chickensoft-games/setup-godot@v2
         with:
@@ -108,19 +200,71 @@ jobs:
           include-templates: true
           cache: true
 
+      # See the matching step in windows-export above for the full
+      # explanation of the headless abort-on-exit this forgives (and
+      # doesn't) — this is the exact failure PR #12 hit on this job.
       - name: Import project (headless)
-        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
-        run: godot --headless --import
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          # Strip ANSI colour codes before writing the log: Godot's progress
+          # lines wrap "[ DONE ]"/stage names in SGR escapes even when not
+          # attached to a tty, which breaks a literal grep match on them
+          # (confirmed locally — see docs/ci-notes.md T-0060/T-0061).
+          if godot --headless --import 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee import.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$status" -gt 128 ] \
+             && grep -qF '[ DONE ] loading_editor_layout' import.log \
+             && ! grep -qE 'SCRIPT ERROR|Parser Error|Failed to load extension|Can.t open dynamic library|Unable to load GDExtension' import.log; then
+            echo "::warning::godot --headless --import exited $status (signal $((status - 128))) after every import stage completed — known headless editor-teardown abort-on-exit, not a real failure. See docs/ci-notes.md T-0060/T-0061."
+            exit 0
+          fi
+          echo "::error::godot --headless --import failed for real (exit $status)"
+          exit "$status"
+
+      - name: Smoke test — GDExtension loads and round-trips (headless)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/smoke_test.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee smoke.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'SMOKE TEST PASS' smoke.log; then
+            echo "Smoke test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::smoke test did not print SMOKE TEST PASS (godot exit $status)"
+          exit 1
 
       - name: Export Linux
-        working-directory: ${{ env.SPIKE_PROJECT_DIR }}
+        working-directory: ${{ env.CLIENT_DIR }}
         run: |
+          set -o pipefail
           mkdir -p build/linux
-          godot --headless --export-release "Linux" build/linux/assembled-ci-spike.x86_64
+          if godot --headless --export-release "Linux" build/linux/assembled.x86_64 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee export.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ -s build/linux/assembled.x86_64 ] && [ -s build/linux/assembled.pck ]; then
+            if [ "$status" -ne 0 ]; then
+              echo "::warning::export exited $status but produced a complete Linux build — treating as the known headless abort-on-exit. See docs/ci-notes.md."
+            fi
+            exit 0
+          fi
+          echo "::error::export failed — Linux build artifacts missing or empty (exit $status)"
+          exit 1
 
-      # T-0035
       - uses: actions/upload-artifact@v7
         with:
           name: client-linux-export
-          path: ${{ env.SPIKE_PROJECT_DIR }}/build/linux
+          path: ${{ env.CLIENT_DIR }}/build/linux
           if-no-files-found: error

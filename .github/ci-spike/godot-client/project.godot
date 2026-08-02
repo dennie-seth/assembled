@@ -1,9 +1,10 @@
 ; T-0030/T-0033 CI feasibility spike project.
 ;
-; This is NOT the real Phase 5 client (docs/PLAN.md T-0060 owns that). It
-; exists only so ci-client.yml has something to run `godot --headless
-; --export-release` against while proving out the Windows/Linux export
-; pipeline ahead of real client code landing. See docs/ci-notes.md.
+; SUPERSEDED (T-0060, 2026-08-02): the real Phase 5 client now exists at
+; client/ (Godot project + godot-cpp GDExtension), and ci-client.yml has
+; been repointed at it. This spike project is kept only as a historical
+; record for the on-demand spike-t0030-godot-windows.yml workflow — it is
+; no longer wired into the regular push/PR CI. See docs/ci-notes.md T-0060.
 
 config_version=5
 

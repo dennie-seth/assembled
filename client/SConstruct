@@ -1,0 +1,16 @@
+#!/usr/bin/env python
+"""Builds the assembled client GDExtension against the vendored godot-cpp
+submodule (pinned to godot-4.5-stable — see docs/ci-notes.md for the
+version-compatibility rationale)."""
+
+env = SConscript("godot-cpp/SConstruct")
+
+env.Append(CPPPATH=["src/"])
+sources = Glob("src/*.cpp")
+
+library = env.SharedLibrary(
+    "bin/libassembled_client{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+    source=sources,
+)
+
+Default(library)
