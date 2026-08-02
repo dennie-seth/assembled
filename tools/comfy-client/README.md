@@ -1,9 +1,13 @@
 # comfy-client
 
 ComfyUI HTTP client + recipe-\>workflow layer driving the `AssetAgent`
-(**T-0071**, `tasks/T-0071.md`) per `docs/design/13-asset-pipeline.md` §1:
+(**T-0071**, `tasks/T-0071.md`) per `docs/design/13-asset-pipeline.md` §1,
+plus the concept-art path (**T-0104**, §6) that now precedes it per
+archetype:
 
 ```
+[per archetype, once] concept -> human approves direction   [concept.py -- T-0104, see below]
+
 kanban card (agent: assets)
   -> recipe          workflow JSON + prompt + seed + model hash   [recipe.py, workflow.py]
   -> generate         ComfyUI /prompt -> poll /history -> fetch /view   [comfyui_client.py, pipeline.py]
@@ -93,11 +97,12 @@ ComfyUI call is ever made in CI.
 
 ```sh
 comfy-client generate --recipe path/to/recipe.json [--out-dir assets/out] [--timeout 300] [--poll-interval 1.0]
+comfy-client concept  --recipe path/to/recipe.json [--out-dir assets/src/concept] [--timeout 300] [--poll-interval 1.0]
 ```
 
-Prints `{"path", "prompt_id", "provenance"}` as JSON on stdout on success;
-prints `error: ...` to stderr and exits `1` on a license rejection or any
-ComfyUI-side failure (`comfy_client.errors.ComfyClientError`).
+Both print `{"path", "prompt_id", "provenance"}` as JSON on stdout on
+success; both print `error: ...` to stderr and exit `1` on a license
+rejection or any ComfyUI-side failure (`comfy_client.errors.ComfyClientError`).
 
 A recipe JSON file matches `recipe.Recipe`'s fields (only `prompt` and
 `seed` are required):
@@ -114,6 +119,37 @@ A recipe JSON file matches `recipe.Recipe`'s fields (only `prompt` and
   "name": "signal_tower"
 }
 ```
+
+## Concept path (`concept.py`, T-0104)
+
+`docs/design/13-asset-pipeline.md` §6: the home palette (V-5) is now
+*extracted* from an approved concept sheet rather than chosen ahead of
+it, so art generation for an archetype starts with a concept step before
+any recipe exists. `concept.generate_concept()` reuses the same
+`ComfyUIClient` / `render_workflow` / license-gate plumbing as
+`pipeline.py`, but is a **narrower** arrow than `generate()`:
+
+```
+recipe -> generate -> commit          (concept.py, T-0104)
+recipe -> generate -> descend -> ...  (pipeline.py, full T-0071 chain)
+```
+
+No `descend_stub()` call — concept art is full-colour, full-res, and
+**never** downscaled or palette-quantized (there is no palette yet to
+quantize against; extracting one *from* an approved sheet is T-0105).
+Output goes to `assets/src/concept/` by default, which — unlike
+`assets/out/` — **is committed**: concept art is a source, not a
+regenerable intermediate (P-1/P-3 inverted for it, per §6). Because it's
+committed rather than gitignored-and-discarded, `generate_concept()`
+writes a `<name>.provenance.json` sidecar directly next to the image
+(model + license + prompt + seed + workflow_hash + **`concept_hash`**,
+the sha256 of the approved sheet) instead of waiting on the not-yet-built
+`ASSET_PROVENANCE.md` writer (T-0075) the way `pipeline.generate()`
+still does.
+
+`concept_hash` is what T-0106's archetype-first coherence guard will key
+conditioning on, once a second or third concept sheet for the same
+archetype needs to stay visually consistent with the first approved one.
 
 ## Manual live smoke (not run by this agent -- WSL can't reach ComfyUI yet)
 
@@ -160,8 +196,10 @@ shared code.
 
 - **`descend.descend_stub()`** is an identity passthrough. T-0073 (box
   downscale, Oklab/CIELAB palette quantize, cleanup) replaces its body
-  once V-5 (home palette hex set) unblocks the quantizer. `pipeline.generate()`
-  already calls through this seam, so wiring doesn't change when T-0073 lands.
+  once T-0105 (palette extraction from an approved concept sheet, per
+  the "Concept path" section above) unblocks the quantizer for an
+  archetype. `pipeline.generate()` already calls through this seam, so
+  wiring doesn't change when T-0073 lands.
 - **Validation gate hand-off**: `tools/asset-gate` (T-0102) already
   implements the machine-checkable gate; this package doesn't call it yet
   because there's nothing descended to validate until T-0073 exists. The
