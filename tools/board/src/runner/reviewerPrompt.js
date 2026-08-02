@@ -19,8 +19,8 @@ or
 
 This fenced block is the only channel your verdict is recorded through. If it is missing or not valid JSON, the run is treated as a runner failure, not a FAIL verdict.`;
 
-function buildRequiredVerificationSection(changedPaths) {
-  const routes = resolveVerifyRoutes(changedPaths);
+function buildRequiredVerificationSection(changedPaths, baseBranch) {
+  const routes = resolveVerifyRoutes(changedPaths, { baseBranch });
   if (routes.length === 0) {
     return null;
   }
@@ -33,10 +33,11 @@ function buildRequiredVerificationSection(changedPaths) {
  * task identity, the reviewer's own agent definition, whichever rules match
  * the diff's actually-changed paths, an explicit routed-verification section
  * when the diff matches a code-enforced route (tasks/** -> backlog
- * validator, tools/board/** -> board suite -- see verifyRouter.js), the task
- * body verbatim, and the required machine-readable verdict format.
+ * validator + planner diff guard, tools/board/** -> board suite -- see
+ * verifyRouter.js), the task body verbatim, and the required
+ * machine-readable verdict format.
  */
-export function buildReviewerPrompt({ task, agentDef, rules = [], changedPaths = [] }) {
+export function buildReviewerPrompt({ task, agentDef, rules = [], changedPaths = [], baseBranch = "develop" }) {
   if (!task || typeof task.body !== "string") {
     throw new Error("buildReviewerPrompt requires a task with a body");
   }
@@ -55,7 +56,7 @@ export function buildReviewerPrompt({ task, agentDef, rules = [], changedPaths =
     sections.push(`## Rule: ${rule.name}\n\n${rule.body.trim()}`);
   }
 
-  const requiredVerification = buildRequiredVerificationSection(changedPaths);
+  const requiredVerification = buildRequiredVerificationSection(changedPaths, baseBranch);
   if (requiredVerification) {
     sections.push(requiredVerification);
   }

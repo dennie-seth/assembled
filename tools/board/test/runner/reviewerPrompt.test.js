@@ -73,7 +73,7 @@ describe("buildReviewerPrompt", () => {
 });
 
 describe("buildReviewerPrompt -- routed verification section", () => {
-  it("tells the reviewer to run the backlog validator for a tasks/-only diff", () => {
+  it("tells the reviewer to run the backlog validator AND the planner diff guard for a tasks/-only diff", () => {
     const prompt = buildReviewerPrompt({
       task: TASK,
       agentDef: REVIEWER_AGENT_DEF,
@@ -81,10 +81,21 @@ describe("buildReviewerPrompt -- routed verification section", () => {
     });
     expect(prompt).toContain("Required verification for this diff");
     expect(prompt).toContain("node tools/board/scripts/validateBacklog.js");
+    expect(prompt).toContain("node tools/board/scripts/checkPlannerDiffGuard.js develop");
     expect(prompt).not.toContain("Board test/lint suite");
   });
 
-  it("tells the reviewer to run the board suite for a tools/board diff, not the backlog validator", () => {
+  it("threads a custom baseBranch into the planner diff guard's command", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tasks/T-0200.md"],
+      baseBranch: "main"
+    });
+    expect(prompt).toContain("node tools/board/scripts/checkPlannerDiffGuard.js main");
+  });
+
+  it("tells the reviewer to run the board suite for a tools/board diff, not the backlog validator or diff guard", () => {
     const prompt = buildReviewerPrompt({
       task: TASK,
       agentDef: REVIEWER_AGENT_DEF,
@@ -92,15 +103,17 @@ describe("buildReviewerPrompt -- routed verification section", () => {
     });
     expect(prompt).toContain("Board test/lint suite");
     expect(prompt).not.toContain("validateBacklog.js");
+    expect(prompt).not.toContain("checkPlannerDiffGuard.js");
   });
 
-  it("tells the reviewer to run both when a diff touches tasks/** and tools/board/**", () => {
+  it("tells the reviewer to run all three when a diff touches tasks/** and tools/board/**", () => {
     const prompt = buildReviewerPrompt({
       task: TASK,
       agentDef: REVIEWER_AGENT_DEF,
       changedPaths: ["tasks/T-0200.md", "tools/board/src/lib/fsTaskStore.js"]
     });
     expect(prompt).toContain("validateBacklog.js");
+    expect(prompt).toContain("checkPlannerDiffGuard.js");
     expect(prompt).toContain("Board test/lint suite");
   });
 

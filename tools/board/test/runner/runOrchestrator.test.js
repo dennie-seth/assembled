@@ -224,6 +224,27 @@ describe("RunOrchestrator.runCard — routes the reviewer's changed paths throug
       expect.objectContaining({ changedPaths: ["tools/board/src/lib/fsTaskStore.js"] })
     );
   });
+
+  it("passes its own baseBranch through to the reviewer prompt builder, for the diff guard's base ref", async () => {
+    const store = makeStore([baseTask({ agent: "planner" })]);
+    const git = makeGit({ diffNames: vi.fn(async () => ["tasks/T-0200.md"]) });
+    const runner = makeRunner();
+    const buildReviewerPromptFn = vi.fn(() => "reviewer prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildReviewerPromptFn, baseBranch: "develop" });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "backlog validates")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(buildReviewerPromptFn).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: "develop" }));
+  });
 });
 
 describe("RunOrchestrator.runCard — FAIL validation", () => {

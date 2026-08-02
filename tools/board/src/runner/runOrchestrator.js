@@ -136,7 +136,8 @@ export class RunOrchestrator {
       task,
       agentDef: reviewerAgentDef,
       rules: reviewerRules,
-      changedPaths
+      changedPaths,
+      baseBranch: this.baseBranch
     });
 
     const reviewerResult = await this._runPhase({
