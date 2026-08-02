@@ -17,7 +17,9 @@ const ID_RE = /^T-\d{4}$/;
 const CREATED_RE = /^\d{4}-\d{2}-\d{2}$/;
 const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked"];
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
-const AGENTS = ["infra", "server", "client", "assets", "audio", null];
+export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio"];
+const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
+const OPTIONAL_FIELDS = ["branch", "commit"];
 
 function validateTask(data) {
   for (const field of REQUIRED_FIELDS) {
@@ -58,6 +60,11 @@ function validateTask(data) {
   if (typeof data.created !== "string" || !CREATED_RE.test(data.created)) {
     throw new Error(`Invalid created date "${data.created}": expected YYYY-MM-DD`);
   }
+  for (const field of OPTIONAL_FIELDS) {
+    if (field in data && data[field] !== null && typeof data[field] !== "string") {
+      throw new Error(`Invalid ${field} "${data[field]}": expected a string or null`);
+    }
+  }
 }
 
 export function parseTask(raw) {
@@ -93,6 +100,8 @@ export function parseTask(raw) {
     agent: data.agent,
     depends_on: data.depends_on,
     created: data.created,
+    branch: data.branch ?? null,
+    commit: data.commit ?? null,
     body
   };
 }
@@ -103,8 +112,9 @@ export function serializeTask(task) {
     throw new Error("Invalid task body: expected a string");
   }
 
-  const frontmatter = REQUIRED_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field])}`).join(
-    "\n"
-  );
-  return `---\n${frontmatter}\n---\n${task.body}`;
+  const lines = [
+    ...REQUIRED_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field])}`),
+    ...OPTIONAL_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`)
+  ];
+  return `---\n${lines.join("\n")}\n---\n${task.body}`;
 }

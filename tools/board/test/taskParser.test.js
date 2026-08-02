@@ -10,6 +10,8 @@ const VALID_TASK = {
   agent: "infra",
   depends_on: ["T-0002"],
   created: "2026-07-31",
+  branch: null,
+  commit: null,
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
 };
 
@@ -89,6 +91,40 @@ describe("parseTask / serializeTask round-trip", () => {
       created: "2026-07-31"
     });
     expect(typeof parsed.created).toBe("string");
+  });
+});
+
+describe("branch / commit (review metadata)", () => {
+  it("round-trips a task with branch and commit set", () => {
+    const task = { ...VALID_TASK, branch: "feature/T-0011", commit: "abc1234def5678" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults branch and commit to null when absent from the frontmatter", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.branch).toBeNull();
+    expect(parsed.commit).toBeNull();
+  });
+
+  it("throws when branch is not a string or null", () => {
+    expect(() => parseTask(frontmatter({ branch: 42 }))).toThrow(/branch/i);
+  });
+
+  it("throws when commit is not a string or null", () => {
+    expect(() => parseTask(frontmatter({ commit: 42 }))).toThrow(/commit/i);
   });
 });
 
