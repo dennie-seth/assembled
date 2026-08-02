@@ -1,6 +1,6 @@
 # 13 — Asset Pipeline
 
-> **Author:** Claude · **Reviewed:** pending · **Status:** v4, art + audio + concept locked
+> **Author:** Claude · **Reviewed:** pending · **Status:** v5, art + audio + concept locked
 > Related: `05-art-direction.md` (direction), `01-vision.md` §8 (chroma), `PLAN.md` Phase 6/7, `14-vertical-slice.md` (first concept subject)
 > **Purpose:** how generated assets get from a prompt to a shipped file. `05` decides what it looks like; this decides how it is made.
 
@@ -321,6 +321,102 @@ same way `workflow_hash` already does for recipes.
 **First subject: Signal Tower**, the vertical-slice archetype
 (`14-vertical-slice.md`).
 
+### 6.8 Key art vs. concept sheet
+
+Two different things live under `assets/src/`, and conflating them stalls
+the pipeline — key art doesn't condition generation, and a concept sheet
+drawn in perspective doesn't produce a usable palette.
+
+| | Key art | Concept sheet |
+|---|---|---|
+| **Purpose** | Establishes mood/direction, for humans | Conditions generation for one asset set |
+| **Framing** | Composed scene, any angle | Flat side-on, matching the game camera |
+| **Scope** | A place or a feeling | One set — a tileset, prop pack, or character |
+| **Committed to** | `assets/src/keyart/` | `assets/src/concept/` |
+| **Feeds the pipeline?** | No | Yes — IP-Adapter/img2img conditioning, `concept_hash` in provenance |
+| **Feeds palette extraction (T-0105)?** | No | Yes — interior material sheets only, see §6.10 |
+
+Both are worth producing. Key art sells the direction before an archetype
+has any generation infrastructure behind it; a concept sheet is a poor
+substitute for that because it's deliberately flat and un-atmospheric.
+But only a concept sheet is a pipeline *input* — key art is reference for
+people, not for the model.
+
+### 6.9 Concept-sheet requirements
+
+**Framing.** Flat side-on elevation, matching the game's fixed camera
+(§3.3). No vanishing point, no receding walls, no three-quarter view — a
+sheet that reads as a scene has already committed to a camera the game
+doesn't have.
+
+**No atmospheric depth.** No haze, no depth-of-field, no sky gradient.
+Those sell mood in key art; in a concept sheet they're noise a value
+study then has to fight through.
+
+**Reference layout, not composition.** The sheet is panels of material
+and object, laid out to be *read*, not a scene to be looked at: wall
+surface, floor surface, a wall→floor transition, and 3–4 props.
+Composition is a key-art concern.
+
+**Legibility — the squint test.** What survives downscale to 16px is what
+the sheet has to get right; by ordinary illustration standards it will
+look underdetailed at full res, and that's correct. Downscaling the sheet
+to ~10% scale and checking it still reads is a fast manual proxy for this
+(automated proxy: T-0109).
+
+**Detail density targets the tile, not the canvas.** A control panel is
+~32×16px in the shipped game — three value blocks and a silhouette, not a
+hundred switches. Draw detail for the size it will actually render at,
+not the size it's generated at.
+
+**Deliberate value separation.** Push darks dark and lights light. Value
+study first, colour study second — palette extraction (§6.10) clusters
+value-separated regions far more cleanly than a sheet sitting in one
+narrow mid-value band.
+
+### 6.10 Palette extraction (T-0105) — interior only
+
+**Extract from interior material sheets only.** Exteriors introduce sky,
+cloud, and foliage values that consume LUT slots the home palette
+(concrete, oxide, institutional green, deep shadow) doesn't want. If an
+exterior sheet must be used, mask sky and vegetation out before
+clustering.
+
+**Round-1 assessment (2026-08-02).** The two Signal Tower images produced
+this round are **direction-approved** — the palette they imply lands in
+the `05-art-direction.md` §3 family — but they are **key art, not concept
+sheets**: perspective framing, detail density above what survives to
+16px, a narrow mid-value band on the interior, and a sky/treeline on the
+exterior that would skew clustering if fed to T-0105 as-is. They've been
+relocated to `assets/src/keyart/` (§6.8) and do not feed palette
+extraction.
+
+**Next round, for the Signal Tower tileset:** a flat side-on sheet of
+concrete wall surface, floor surface, a wall→floor transition, and 2–3
+props at real relative scale — squint-legible, value-separated, interior
+only.
+
+### 6.11 Stitching — when and why not
+
+Whether to stitch multiple references into one sheet depends on whether
+the *arrangement* carries information, not on convenience.
+
+| Use | Stitch? | Why |
+|---|---|---|
+| **Style conditioning** (IP-Adapter) | **No** — supply 2–4 curated references as separate weighted inputs | Stitching makes the model read grid seams and layout as content, not style |
+| **Layout base** (img2img/ControlNet) | **Yes** | The arrangement *is* the information — a 3×3 character sheet, a sliced transition sheet, a tileset reference sheet |
+| **LoRA training** | **Never** | Concept art doesn't train the LoRA at all — see below |
+
+**Rule of thumb: stitch when the arrangement carries information; don't
+when you only want style.**
+
+**Concept art does not train the style LoRA.** Generated output amplifies
+whatever artifacts are already in it, and a stitched collage would teach
+the model to produce grids. T-0072 trains on the real reference corpus
+(30–50 curated images), not on concept-art output. A later
+project-specific LoRA fine-tuned on 30–50 *approved* concept sheets is a
+documented escalation path, not something v1 does.
+
 ---
 
 ## 7. Open
@@ -351,3 +447,4 @@ same way `workflow_hash` already does for recipes.
 | 2026-08-02 | v2 — audio pipeline: layer stack, P-5 no-duck rule, global collapse layer, procedural one-shots, loop-fold chain, audio gate | Claude, rev. pending |
 | 2026-08-02 | v3: tile size (A-1) recorded as resolved in `05` §5; ownership of A-2/A-3 clarified to avoid duplicate tracking | Claude, rev. pending |
 | 2026-08-02 | v4: **V-5/P-A resolved as a process** — palette extracted from an approved concept sheet (cluster -> value ramp -> LUT, T-0105), not a fixed hex list; new §6 Concept Art (concept is a committed full-colour source, P-1/P-3 inverted, two human gates, archetype-first coherence guard); §1 chain now starts with concept for art | Claude, rev. pending |
+| 2026-08-02 | v5: §6.8–§6.11 added, synced from canonical Notion doc 13 — key art vs. concept sheet split (`assets/src/keyart/` vs. `assets/src/concept/`, only the latter feeds the pipeline/palette extraction); concept-sheet framing/legibility/value-separation requirements; palette extraction is interior-only (mask sky/veg on exteriors); round-1 assessment of the two 2026-08-02 Signal Tower sheets as key art, not concept sheets; stitching rules (stitch layout, never style, never LoRA training) | Claude, rev. pending |
