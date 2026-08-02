@@ -1,12 +1,14 @@
-"""Error types for AudioClient's submit -> wait -> fetch pipeline.
+"""Error types for AudioClient's and StableAudioClient's submit -> wait -> fetch pipeline.
 
-ACE-Step's patched `/generate` (docs/ace-step-setup.md) is a single
+Both ACE-Step's patched `/generate` (docs/ace-step-setup.md) and the Stable
+Audio Open wrapper's `/generate` (docs/stable-audio-setup.md) are a single
 **synchronous** HTTP call that blocks until generation finishes -- unlike
 ComfyUI's async submit/poll split, there is no separate job-status
-endpoint. `AudioClient.submit()` performs that blocking call, so a
+endpoint. Each client's `submit()` performs that blocking call, so a
 `requests` timeout during it means the job did not complete in time
 (`PollTimeoutError`, matching the semantics callers expect from that error
-elsewhere), not that submission itself was rejected.
+elsewhere), not that submission itself was rejected. One error hierarchy
+is shared between both clients since the failure semantics are identical.
 """
 
 from __future__ import annotations
