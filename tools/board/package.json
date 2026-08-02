@@ -12,7 +12,8 @@
     "dev:client": "vite",
     "test": "vitest run",
     "build": "vite build",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "validate:backlog": "node scripts/validateBacklog.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
