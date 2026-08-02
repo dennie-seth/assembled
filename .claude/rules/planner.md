@@ -58,3 +58,14 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
 - **Never mark anything `done`, never merge, never push.** Same invariant
   every other agent follows (`conduct.md`): `review` is the terminal state
   automation can reach.
+
+These two are no longer prose the planner or reviewer have to remember to
+check by eye: `tools/board/src/lib/plannerDiffGuard.js` machine-checks both,
+comparing each `tasks/*.md` card's old and new `status` (via `taskParser`)
+and flagging any card file that disappears from the diff. `reviewer` runs it
+(`node tools/board/scripts/checkPlannerDiffGuard.js <baseBranch>`) as part of
+the `tasks/**` VALIDATION route alongside the backlog validator
+(`verifyRouter.js`) — a violation is an automatic FAIL, not a judgment call.
+The planner itself can and should run the same command before handing off
+(`.claude/agents/planner.md` Workflow step 4) — it has narrow Bash access to
+exactly this and the backlog validator, nothing else.
