@@ -104,7 +104,17 @@ def check_integrated_loudness(
     target = targets[bus]
 
     duration_s = len(_to_mono(samples)) / sample_rate
-    block_size = min(0.4, duration_s) if duration_s > 0 else 0.4
+    if duration_s >= 0.4:
+        block_size = 0.4
+    else:
+        # `duration_s * rate` doesn't always round-trip back to exactly
+        # `len(samples)` in floating point (it can round *up* by ~1e-13
+        # relative), which flips pyloudnorm's `block_size * rate <=
+        # len(samples)` check and raises on a clip whose length
+        # legitimately *is* the block size. Back off by a margin far
+        # bigger than that rounding error, not by handling the boundary
+        # exactly.
+        block_size = duration_s * (1 - 1e-9) if duration_s > 0 else 0.4
     meter = pyln.Meter(sample_rate, block_size=block_size)
     measured = meter.integrated_loudness(samples.astype(np.float64))
 
