@@ -15,15 +15,12 @@ from __future__ import annotations
 
 from conftest import (
     FAR_FUTURE,
-    NUM_COMMON,
     NUM_GATING,
-    NUM_RARE,
     NUM_UNIQUE,
     RARE_BASE,
     UNIQUE_BASE,
     make_agent,
     make_cfg,
-    make_held_item,
     make_state,
     make_world_item,
 )
@@ -121,8 +118,11 @@ class TestInv7DensityFloor:
     def test_no_violation_when_gating_items_present(self):
         cfg = make_cfg(initial_population=10, num_gating_types=NUM_GATING)
         agents = [make_agent(i) for i in range(10)]
-        # One instance of each gating rare type
-        items = [make_world_item(i, RARE_BASE + i, Rarity.RARE) for i in range(NUM_GATING)]
+        # One instance of each gating rare type, plus the always-gating uniques
+        items = [make_world_item(i, RARE_BASE + i, Rarity.RARE) for i in range(NUM_GATING)] + [
+            make_world_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE)
+            for i in range(NUM_UNIQUE)
+        ]
         state = make_state(cfg, agents, items)
         assert check_inv7(state, cfg, TICK) == []
 
@@ -170,8 +170,15 @@ class TestInv8Reachability:
     def test_no_violation_with_ample_items_and_time(self):
         cfg = make_cfg(initial_population=5, num_anchors=5, encounter_rate_per_world_item=0.1)
         agents = [make_agent(i, collapse_at=10_000) for i in range(5)]
-        # Several gating items in world, collapse far away
-        items = [make_world_item(i, RARE_BASE + (i % NUM_GATING), Rarity.RARE) for i in range(5)]
+        # Several gating items in world, collapse far away — covers both the
+        # rare gating types and the always-gating uniques
+        rare_items = [
+            make_world_item(i, RARE_BASE + (i % NUM_GATING), Rarity.RARE) for i in range(5)
+        ]
+        unique_items = [
+            make_world_item(5 + i, UNIQUE_BASE + i, Rarity.UNIQUE) for i in range(NUM_UNIQUE)
+        ]
+        items = rare_items + unique_items
         state = make_state(cfg, agents, items)
         vs = check_inv8(state, cfg, TICK)
         assert vs == []

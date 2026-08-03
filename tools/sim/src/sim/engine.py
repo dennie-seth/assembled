@@ -3,13 +3,15 @@
 Advances the world one tick (= 1 minute) at a time. Each tick:
   1. Agent lifecycle (joins, transitions, quits, collapses)
   2. Bleed timers (held and world/escrow)
-  3. Poisson item spawning (respecting rarity caps)
-  4. Agent actions (pickup, transfer)
-  5. Throughput tracking for INV-9 / INV-14
-  6. Invariant checks — violations collected but never raised
+  3. Unlock decay (tiered: tactical / session / unique-keyed)
+  4. Rarity-cap enforcement (excess supply forced below cap on depopulation)
+  5. Poisson item spawning (respecting rarity caps)
+  6. Agent actions (pickup, transfer)
+  7. Throughput tracking for INV-9 / INV-14
+  8. Invariant checks — violations collected but never raised
 
 Four wall-clocks are modelled together (docs/design/10-time-and-progression.md §2):
-  held bleed · world/escrow bleed · unlock decay · collapse
+  held bleed · world/escrow bleed · unlock decay (tiered, §3) · collapse
 
 See docs/design/08-invariants.md §4.
 """
@@ -20,7 +22,16 @@ import random
 
 from .config import SimConfig
 from .invariants import InvariantViolation, check_all
-from .types import Agent, AgentState, ItemInstance, ItemType, Rarity, SimResult, SimState
+from .types import (
+    Agent,
+    AgentState,
+    ItemInstance,
+    ItemType,
+    Rarity,
+    SimResult,
+    SimState,
+    Unlock,
+)
 
 
 class SimEngine:
@@ -35,6 +46,7 @@ class SimEngine:
         self._rng = random.Random(seed)
         self._next_agent_id = 0
         self._next_instance_id = 0
+        self._next_unlock_id = 0
         # Rolling history for INV-14: (tick, population, per_player_items/hr)
         self._pop_throughput_history: list[tuple[int, int, float]] = []
 
@@ -59,6 +71,7 @@ class SimEngine:
             items={},
             item_types=item_types,
             population=0,
+            unlocks={},
         )
 
         # Seed initial population
@@ -86,6 +99,8 @@ class SimEngine:
 
         self._process_agent_lifecycle()
         self._process_bleeds()
+        self._process_unlock_decay()
+        self._enforce_rarity_cap()
         self._spawn_items()
         self._process_agent_actions()
         self._update_throughput()
@@ -170,6 +185,65 @@ class SimEngine:
 
         ratio = (count - cap) / cap
         return max(0.0, 1.0 - ratio * self.cfg.landing_curve_steepness)
+
+    def _grant_unlock(self, agent_id: int, tag: int, rarity: Rarity) -> None:
+        """Record a tiered unlock when an agent picks up an item (10 §2/§3).
+
+        Tier follows the granting item's rarity: common -> tactical
+        (minutes), rare -> session (hours-days), unique -> unique-keyed
+        (~1 week — the only tier that accumulates into progression).
+        """
+        cfg = self.cfg
+        if rarity == Rarity.COMMON:
+            tier, duration = "tactical", cfg.unlock_decay_tactical
+        elif rarity == Rarity.RARE:
+            tier, duration = "session", cfg.unlock_decay_session
+        else:
+            tier, duration = "unique_keyed", cfg.unlock_decay_unique_keyed
+
+        uid = self._next_unlock_id
+        self._next_unlock_id += 1
+        self._state.unlocks[uid] = Unlock(
+            unlock_id=uid,
+            agent_id=agent_id,
+            tag=tag,
+            tier=tier,
+            expires_at=self._state.tick + duration,
+        )
+
+    def _process_unlock_decay(self) -> None:
+        """Expire unlocks whose tiered wall-clock has elapsed (10 §2/§3)."""
+        tick = self._state.tick
+        expired = [uid for uid, u in self._state.unlocks.items() if u.expires_at <= tick]
+        for uid in expired:
+            del self._state.unlocks[uid]
+
+    def _enforce_rarity_cap(self) -> None:
+        """Force world-anchored excess above the hard rarity cap to bleed away now.
+
+        INV-6 is a hard instance-count ceiling (07-items-economy.md §2), not
+        a soft target — when population shrinkage drops the cap below
+        existing supply, the excess cannot simply wait out its natural
+        bleed timer while the invariant is checked every tick. Held items
+        are never touched (07 §4: "not by a reaper confiscating items from
+        players' hands"); only world-anchored instances are forced to fail
+        landing, same as an ordinary over-supply bleed.
+        """
+        cfg = self.cfg
+        P = self._state.population
+        caps = {
+            Rarity.COMMON: int(cfg.k_c * P),
+            Rarity.RARE: int(cfg.k_r * P),
+        }
+        for rarity, cap in caps.items():
+            all_items = [it for it in self._state.items.values() if it.rarity == rarity]
+            excess = len(all_items) - cap
+            if excess <= 0:
+                continue
+            world_items = [it for it in all_items if it.anchor is not None]
+            self._rng.shuffle(world_items)
+            for item in world_items[:excess]:
+                del self._state.items[item.instance_id]
 
     def _bleed_item(self, item: ItemInstance) -> None:
         """Execute a bleed event: item re-anchors or fails to land (is removed)."""
@@ -301,6 +375,7 @@ class SimEngine:
                     bleed_dur = int(bleed_dur * cfg.unique_held_bleed_multiplier)
                 item.bleed_at = self._state.tick + bleed_dur
                 agent.items_received += 1
+                self._grant_unlock(agent.agent_id, item.type_id, item.rarity)
 
     def _update_throughput(self) -> None:
         """Record per-player throughput snapshot for INV-9/INV-14 tracking."""

@@ -12,7 +12,6 @@ from conftest import make_cfg
 from sim.engine import SimEngine
 from sim.types import AgentState, Rarity
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -297,6 +296,168 @@ class TestLandingProbability:
         cfg = make_cfg(initial_population=5)
         engine = SimEngine(cfg, seed=0)
         assert engine._landing_probability(Rarity.UNIQUE) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Unlock decay — the third wall-clock (10 §2/§3)
+# ---------------------------------------------------------------------------
+
+
+class TestUnlockDecay:
+    def test_pickup_grants_a_tiered_unlock(self):
+        cfg = make_cfg(
+            initial_population=1,
+            join_rate=0.0,
+            quit_rate=0.0,
+            idle_probability=0.0,
+            transfer_probability=0.0,
+            pickup_probability=1.0,
+            spawn_rate_common=0.0,
+            spawn_rate_rare=0.0,
+            unique_count=0,
+        )
+        engine = SimEngine(cfg, seed=0)
+        agent_id = next(iter(engine.state.agents))
+        from sim.types import ItemInstance
+
+        engine.state.items[500] = ItemInstance(
+            instance_id=500,
+            type_id=0,
+            rarity=Rarity.COMMON,
+            holder=None,
+            anchor=0,
+            bleed_at=FAR_FUTURE,
+        )
+        engine.tick()
+
+        assert len(engine.state.unlocks) == 1
+        unlock = next(iter(engine.state.unlocks.values()))
+        assert unlock.agent_id == agent_id
+        assert unlock.tag == 0
+        assert unlock.tier == "tactical"
+        assert unlock.expires_at == engine.state.tick + cfg.unlock_decay_tactical
+
+    def test_unlock_tier_and_duration_matches_granting_rarity(self):
+        cfg = make_cfg(
+            initial_population=1,
+            unlock_decay_tactical=10,
+            unlock_decay_session=50,
+            unlock_decay_unique_keyed=200,
+        )
+        engine = SimEngine(cfg, seed=0)
+        agent_id = next(iter(engine.state.agents))
+
+        engine._grant_unlock(agent_id, tag=0, rarity=Rarity.COMMON)
+        engine._grant_unlock(agent_id, tag=1, rarity=Rarity.RARE)
+        engine._grant_unlock(agent_id, tag=2, rarity=Rarity.UNIQUE)
+
+        by_tag = {u.tag: u for u in engine.state.unlocks.values()}
+        assert by_tag[0].tier == "tactical"
+        assert by_tag[0].expires_at == cfg.unlock_decay_tactical
+        assert by_tag[1].tier == "session"
+        assert by_tag[1].expires_at == cfg.unlock_decay_session
+        assert by_tag[2].tier == "unique_keyed"
+        assert by_tag[2].expires_at == cfg.unlock_decay_unique_keyed
+
+    def test_unlock_decays_after_its_tier_duration(self):
+        cfg = make_cfg(initial_population=1, unlock_decay_tactical=3)
+        engine = SimEngine(cfg, seed=0)
+        agent_id = next(iter(engine.state.agents))
+        engine._grant_unlock(agent_id, tag=0, rarity=Rarity.COMMON)
+        assert len(engine.state.unlocks) == 1
+
+        engine._state.tick = 2
+        engine.tick()  # tick 3 — expires_at == 3, decay fires
+
+        assert len(engine.state.unlocks) == 0
+
+    def test_unlock_survives_before_its_expiry(self):
+        cfg = make_cfg(initial_population=1, unlock_decay_tactical=3)
+        engine = SimEngine(cfg, seed=0)
+        agent_id = next(iter(engine.state.agents))
+        engine._grant_unlock(agent_id, tag=0, rarity=Rarity.COMMON)
+
+        engine._state.tick = 1
+        engine.tick()  # tick 2 — still short of expires_at == 3
+
+        assert len(engine.state.unlocks) == 1
+
+
+# ---------------------------------------------------------------------------
+# Rarity-cap enforcement under population shrinkage (INV-6 hard ceiling)
+# ---------------------------------------------------------------------------
+
+
+class TestRarityCapEnforcement:
+    def test_population_crash_forces_common_supply_below_new_cap(self):
+        cfg = make_cfg(
+            initial_population=10,
+            k_c=2.0,
+            k_r=0.0,
+            join_rate=0.0,
+            quit_rate=0.0,
+            unique_count=0,
+            spawn_rate_common=0.0,
+            spawn_rate_rare=0.0,
+        )
+        engine = SimEngine(cfg, seed=0)
+        from sim.types import ItemInstance
+
+        # Inflate common supply to what P=10 allows (cap = 20)
+        for i in range(20):
+            engine.state.items[i] = ItemInstance(
+                instance_id=i,
+                type_id=0,
+                rarity=Rarity.COMMON,
+                holder=None,
+                anchor=0,
+                bleed_at=FAR_FUTURE,
+            )
+        # Every agent collapses on the very next tick — P crashes to 0
+        for agent in engine.state.agents.values():
+            agent.collapse_at = engine.state.tick + 1
+
+        engine.tick()
+
+        common_cap = int(cfg.k_c * engine.state.population)
+        assert _count(engine, Rarity.COMMON) <= common_cap
+
+    def test_enforcement_never_touches_held_items(self):
+        cfg = make_cfg(
+            initial_population=1,
+            k_c=1.0,  # cap = 1
+            k_r=0.0,
+            join_rate=0.0,
+            quit_rate=0.0,
+            unique_count=0,
+            spawn_rate_common=0.0,
+            spawn_rate_rare=0.0,
+            pickup_probability=0.0,
+            transfer_probability=0.0,
+        )
+        engine = SimEngine(cfg, seed=0)
+        from sim.types import ItemInstance
+
+        agent_id = next(iter(engine.state.agents))
+        # Agent alone holds 2 common items — already over the cap of 1, with
+        # no world-anchored instances to sacrifice instead. Design (07 §4)
+        # forbids confiscating from a player's hands, so enforcement must
+        # leave both held instances in place even though the cap stays
+        # violated — that is an over-supply finding, not a bug to paper over.
+        for iid in (100, 101):
+            engine.state.items[iid] = ItemInstance(
+                instance_id=iid,
+                type_id=0,
+                rarity=Rarity.COMMON,
+                holder=agent_id,
+                anchor=None,
+                bleed_at=FAR_FUTURE,
+            )
+        engine.tick()
+
+        for iid in (100, 101):
+            assert iid in engine.state.items
+            assert engine.state.items[iid].holder == agent_id
 
 
 # ---------------------------------------------------------------------------

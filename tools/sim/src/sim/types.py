@@ -10,7 +10,7 @@ See docs/design/07-items-economy.md §1, docs/design/08-invariants.md §4.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -53,6 +53,22 @@ class ItemInstance:
 
 
 @dataclass
+class Unlock:
+    """A live `(agent_id, tag)` unlock — the third wall-clock (10 §2/§3).
+
+    Tiered by what granted it: common pickups are tactical (minutes), rare
+    are session (hours-days), unique are unique-keyed (~1 week — the only
+    tier that accumulates into real progression).
+    """
+
+    unlock_id: int
+    agent_id: int
+    tag: int  # granting item's type_id — stands in for (variant_id, tag)
+    tier: str  # "tactical" | "session" | "unique_keyed"
+    expires_at: int
+
+
+@dataclass
 class Agent:
     """Live identity participating in the simulation."""
 
@@ -78,6 +94,7 @@ class SimState:
     items: dict[int, ItemInstance]
     item_types: dict[int, ItemType]
     population: int  # count of non-QUIT agents; maintained by engine
+    unlocks: dict[int, Unlock] = field(default_factory=dict)
 
 
 @dataclass

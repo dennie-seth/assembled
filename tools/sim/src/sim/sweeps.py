@@ -22,7 +22,6 @@ from .config import SimConfig
 from .engine import SimEngine
 from .types import SimResult
 
-
 # ---------------------------------------------------------------------------
 # Shared base for compressed-time CI runs
 # ---------------------------------------------------------------------------
@@ -209,7 +208,10 @@ def main() -> None:  # pragma: no cover
         r = fn()
         summary = r.violation_summary()
         vstr = ", ".join(f"{k}:{v}" for k, v in summary.items()) if summary else "—"
-        print(f"{name:<25} {r.ticks_run:>6} {r.final_population:>6} {r.final_item_count:>6} {vstr:>10}")
+        print(
+            f"{name:<25} {r.ticks_run:>6} {r.final_population:>6} "
+            f"{r.final_item_count:>6} {vstr:>10}"
+        )
 
     for name, fn in sweeps_dual:
         r1, r2 = fn()
