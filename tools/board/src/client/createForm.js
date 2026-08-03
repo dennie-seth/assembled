@@ -50,12 +50,28 @@ function prioritySelectFor() {
 }
 
 export function renderCreateForm(root, { visible, agentOptions = [], existingTaskIds = [], onCreate, onCancel, error = null }) {
-  root.replaceChildren();
-
   if (!visible) {
+    root.replaceChildren();
     root.hidden = true;
     return;
   }
+
+  // The form was already open with (possibly unsaved) user input. Board
+  // refresh events (socket task updates, unrelated to this form) call
+  // through here too - rebuilding from scratch on every one of those would
+  // wipe whatever the user was typing. Only a hidden -> visible transition
+  // (a fresh open) gets a clean slate; an already-open form just gets its
+  // error message patched in place.
+  const alreadyOpen = !root.hidden && root.querySelector(".create-form") !== null;
+  if (alreadyOpen) {
+    const errorEl = root.querySelector(".create-error");
+    if (errorEl) {
+      errorEl.textContent = error ?? "";
+    }
+    return;
+  }
+
+  root.replaceChildren();
   root.hidden = false;
 
   const form = document.createElement("div");

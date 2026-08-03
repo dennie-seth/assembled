@@ -444,6 +444,27 @@ describe("createApp create-card wiring", () => {
     expect(createFormRoot.hidden).toBe(true);
     expect(createTaskImpl).not.toHaveBeenCalled();
   });
+
+  it("does not wipe in-progress input when a refresh event arrives while the form is open (reset-on-refresh regression)", async () => {
+    const other = task({ id: "T-0001", title: "Unrelated task" });
+    const { app, createFormRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([other]) });
+    await app.init();
+    app.handleToggleCreateForm();
+
+    const titleInput = createFormRoot.querySelector(".create-title");
+    const bodyTextarea = createFormRoot.querySelector(".create-body");
+    titleInput.value = "In-progress title the user is still typing";
+    bodyTextarea.value = "## Context\nstill drafting this";
+
+    // A task-list refresh unrelated to the create form (e.g. someone
+    // dragging a card, or the tasks/*.md file watcher firing) must not
+    // clobber the open form's unsaved input.
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...other, status: "in-progress" } });
+
+    expect(createFormRoot.querySelector(".create-title").value).toBe("In-progress title the user is still typing");
+    expect(createFormRoot.querySelector(".create-body").value).toBe("## Context\nstill drafting this");
+    expect(createFormRoot.hidden).toBe(false);
+  });
 });
 
 describe("createApp delete-card wiring", () => {
