@@ -10,7 +10,13 @@ import responses
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from comfy_client.comfyui_client import ComfyUIClient
-from comfy_client.errors import ExecutionError, FetchError, PollTimeoutError, SubmitError
+from comfy_client.errors import (
+    ExecutionError,
+    FetchError,
+    PollTimeoutError,
+    SubmitError,
+    UploadError,
+)
 
 BASE_URL = "http://172.18.192.1:8188"
 
@@ -170,6 +176,48 @@ def test_fetch_output_raises_when_no_images(fake_clock):
     client = make_client(fake_clock)
     with pytest.raises(FetchError, match="no image outputs"):
         client.fetch_output({"outputs": {"9": {}}})
+
+
+@responses.activate
+def test_upload_image_returns_server_assigned_name(fake_clock):
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/upload/image",
+        json={"name": "template_00001.png", "subfolder": "", "type": "input"},
+        status=200,
+    )
+    client = make_client(fake_clock)
+    result = client.upload_image(b"\x89PNGtemplatebytes", filename="template.png")
+    assert result["name"] == "template_00001.png"
+
+    req = responses.calls[0].request
+    assert b"template.png" in req.body
+    assert b"\x89PNGtemplatebytes" in req.body
+
+
+@responses.activate
+def test_upload_image_wraps_connection_failure(fake_clock):
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/upload/image",
+        body=RequestsConnectionError("connection refused"),
+    )
+    client = make_client(fake_clock)
+    with pytest.raises(UploadError, match="failed for 'template.png'"):
+        client.upload_image(b"data", filename="template.png")
+
+
+@responses.activate
+def test_upload_image_raises_on_non_2xx(fake_clock):
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/upload/image",
+        json={"error": "bad request"},
+        status=400,
+    )
+    client = make_client(fake_clock)
+    with pytest.raises(UploadError):
+        client.upload_image(b"data", filename="template.png")
 
 
 @responses.activate

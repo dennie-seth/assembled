@@ -11,7 +11,7 @@ archetype:
 kanban card (agent: assets)
   -> recipe          workflow JSON + prompt + seed + model hash   [recipe.py, workflow.py]
   -> generate         ComfyUI /prompt -> poll /history -> fetch /view   [comfyui_client.py, pipeline.py]
-  -> descend          to native format (§3.1)                     [descend.py -- STUB, T-0073]
+  -> descend          to native format (§3.1)                     [descend.py -- T-0073]
   -> validate         machine-checkable gate (§2)                 [tools/asset-gate -- T-0102, already built]
   -> provenance       ASSET_PROVENANCE.md row                     [provenance.py -- seam, T-0075]
   -> art/* branch     -> review -> human accepts -> done
@@ -192,19 +192,44 @@ module. `pipeline.py`'s shape (license gate -\> generate -\> save ->
 descend seam -\> provenance) is the pattern `audio-agent` mirrors, not
 shared code.
 
+## Descent chain (`descend.py`, T-0073)
+
+`descend(raw_path, palette, target_size, out_path=None)` is the real
+chain: box/area downscale by an exact integer factor (`PIL.Image.Resampling.BOX`,
+raises if the source isn't an exact multiple of `target_size` in both
+dimensions) -> Oklab nearest-colour quantize against `palette` (no
+dithering -- each pixel gets one flat index, never a blended pair) ->
+single-pixel orphan cleanup (a pixel matching none of its 4-connected
+neighbours is reassigned to their majority index) -> indexed (`mode 'P'`)
+PNG whose embedded palette is `palette`, index-for-index. `palette.py`'s
+`load_palette_lut()` reads a T-0105 LUT JSON into the index-ordered RGB
+list `descend()` expects.
+
+`pipeline.generate()` still defaults to `descend_stub()` (identity) rather
+than calling `descend()` unconditionally -- concept art (`concept.py`)
+must never be descended/quantized (§6), and `generate()` is the shared
+seam both paths could in principle reach, so descent stays opt-in rather
+than forced. Callers producing a real indexed asset call `descend()`
+directly with the locked palette (see `scripts/e2e_wall_tile.py`), rather
+than threading palette/target_size through `generate()`'s signature.
+
+**Cleanup is single-pixel, not connected-component aware** -- a pixel is
+"orphaned" only if it disagrees with literally all of its neighbours. This
+matches the design doc's "orphan pixels" framing (isolated downscale
+noise) and is simple/fast at 16x16, but it means a genuinely tiny (1px)
+multi-pixel-wide *intentional* detail surrounded by a different colour on
+all sides would also get smoothed away. Untested at real tileset scale
+beyond the one live tile this branch generates -- worth revisiting
+(closer to `asset_gate.art.check_orphan_pixels`'s connected-component
+definition) if a future real set shows visible detail loss.
+
 ## What's stubbed, pending other tasks
 
-- **`descend.descend_stub()`** is an identity passthrough. T-0073 (box
-  downscale, Oklab/CIELAB palette quantize, cleanup) replaces its body
-  once T-0105 (palette extraction from an approved concept sheet, per
-  the "Concept path" section above) unblocks the quantizer for an
-  archetype. `pipeline.generate()` already calls through this seam, so
-  wiring doesn't change when T-0073 lands.
-- **Validation gate hand-off**: `tools/asset-gate` (T-0102) already
-  implements the machine-checkable gate; this package doesn't call it yet
-  because there's nothing descended to validate until T-0073 exists. The
-  natural integration point is right after `descend_stub()` in
-  `pipeline.generate()`.
+- **Validation gate hand-off**: `tools/asset-gate` (T-0102) implements the
+  machine-checkable gate as a separate CLI/package; `descend()`'s output
+  is validated by shelling out to `asset-gate art-*` after the fact
+  (see `scripts/e2e_wall_tile.py`), not by an in-process call from this
+  package -- each `tools/*` package stays self-contained with its own venv.
 - **`ASSET_PROVENANCE.md` writer** (T-0075) isn't built. `provenance.build_provenance_record()`
   captures everything the writer will need (model + license + prompt +
   seed + workflow hash + prompt_id) so nothing has to be reconstructed

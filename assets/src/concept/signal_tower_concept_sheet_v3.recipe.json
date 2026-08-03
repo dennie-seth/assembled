@@ -1,0 +1,13 @@
+{
+  "prompt": "flat 2d game art reference sheet, orthographic front elevation, no perspective, single plain background, separate panels arranged in a row: a section of weathered concrete wall, a section of concrete floor, a wall-to-floor trim strip, a rusted relay rack silhouette, an institutional green control panel with switches, a pipe conduit prop, Soviet brutalist industrial materials, muted concrete grey and rust orange and institutional green and near-black shadow, flat unlit shading, strong dark-light value contrast, blocky simplified forms, low surface detail meant for a small pixel tile, retro pixel art asset sheet, no perspective depth, no room, no ceiling, no sky, no plants, no people, no watermark, no text, no logo",
+  "negative_prompt": "perspective, vanishing point, receding lines, isometric, diorama, 3/4 view, room interior scene, atmospheric depth, haze, fog, depth of field, sky, clouds, foliage, trees, landscape, cinematic composition, painterly, photorealistic, 3d render, soft gradient, glow, bloom, people, characters, watermark, signature, text, blurry, low quality, oversaturated",
+  "seed": 2103,
+  "steps": 32,
+  "cfg": 6.5,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "sampler": "euler",
+  "scheduler": "normal",
+  "name": "signal_tower_concept_sheet_v3"
+}

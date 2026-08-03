@@ -1,0 +1,71 @@
+{
+  "meta": {
+    "name": "sdxl_img2img_v1",
+    "version": 1,
+    "description": "SDXL img2img graph for layout conditioning (T-0106, docs/design/13-asset-pipeline.md §6.11) -- CheckpointLoaderSimple -> LoadImage(init) -> VAEEncode -> KSampler (denoise<1.0 preserves the init image's layout while textures regenerate) -> VAEDecode -> SaveImage. CLIPTextEncode positive/negative unchanged from sdxl_txt2img_v1. No EmptyLatentImage: the latent comes from the encoded init image, so output dimensions follow the init image, not recipe.width/height. Node IDs are stable across renders; bump `version` and add a new template file for graph-shape changes, never edit node IDs in place."
+  },
+  "graph": {
+    "4": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "sd_xl_base_1.0.safetensors"
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": ["4", 1]
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": ["4", 1]
+      }
+    },
+    "10": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": ""
+      }
+    },
+    "11": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": ["10", 0],
+        "vae": ["4", 2]
+      }
+    },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 20,
+        "cfg": 7.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 0.65,
+        "model": ["4", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["11", 0]
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["3", 0],
+        "vae": ["4", 2]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "assembled",
+        "images": ["8", 0]
+      }
+    }
+  }
+}

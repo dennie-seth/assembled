@@ -12,7 +12,11 @@ import pytest
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
 from comfy_client import cli
-from comfy_client.concept import ConceptResult, build_concept_provenance_record
+from comfy_client.concept import (
+    ConceptResult,
+    build_concept_provenance_record,
+    build_conditioned_concept_provenance_record,
+)
 from comfy_client.pipeline import GenerationResult
 from comfy_client.provenance import build_provenance_record
 from comfy_client.recipe import Recipe
@@ -108,3 +112,49 @@ def test_concept_command_reports_license_rejection(monkeypatch, capsys, recipe_p
 def test_concept_requires_recipe_argument():
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["concept"])
+
+
+def test_concept_command_with_init_image_calls_conditioned_path(
+    monkeypatch, capsys, tmp_path, recipe_path
+):
+    recipe = Recipe(prompt="a derelict signal tower", seed=42, denoise=0.65)
+    out_path = tmp_path / "assembled.png"
+    out_path.write_bytes(b"data")
+    fake_result = ConceptResult(
+        path=out_path,
+        prompt_id="p1",
+        provenance=build_conditioned_concept_provenance_record(
+            recipe,
+            workflow_hash="hash1",
+            prompt_id="p1",
+            concept_hash="chash1",
+            conditioning_source="template.png",
+        ),
+    )
+
+    def fake_generate_concept_conditioned(
+        recipe_arg, init_image_path, out_dir, timeout, poll_interval
+    ):
+        assert recipe_arg.prompt == "a derelict signal tower"
+        assert init_image_path == "template.png"
+        return fake_result
+
+    monkeypatch.setattr(cli, "generate_concept_conditioned", fake_generate_concept_conditioned)
+
+    exit_code = cli.main(
+        [
+            "concept",
+            "--recipe",
+            recipe_path,
+            "--out-dir",
+            str(tmp_path),
+            "--init-image",
+            "template.png",
+        ]
+    )
+    assert exit_code == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["provenance"]["concept_hash"] == "chash1"
+    assert output["provenance"]["conditioning_source"] == "template.png"
+    assert output["provenance"]["denoise"] == 0.65

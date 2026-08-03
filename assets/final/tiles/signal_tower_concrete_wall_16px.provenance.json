@@ -1,0 +1,21 @@
+{
+  "model": "sd_xl_base_1.0.safetensors",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": null,
+  "prompt": "flat brutalist concrete wall texture, straight-on orthographic surface photograph, uniform tileable pattern, muted concrete grey with subtle oxide rust stains and institutional green patina, weathered stained surface detail, interior industrial concrete panel, even lighting, no border",
+  "negative_prompt": "perspective, three-quarter view, isometric, vanishing point, vignette, frame border, sky, floor, furniture, equipment, control panel, machinery, character, creature, text, watermark, blurry, low quality, gradient, depth of field",
+  "seed": 4201,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "b47053dfad15281012e00c488f206b8a5c9968b116ba23a871914b4564b49036",
+  "prompt_id": "5b6a9c8e-76f0-4d4f-bd17-97ca15396856",
+  "descend": {
+    "target_size": 16,
+    "raw_path": "assets/out/tiles/signal_tower_concrete_wall_5b6a9c8e-76f0-4d4f-bd17-97ca15396856.png",
+    "chain": "box_downscale -> oklab_quantize -> orphan_cleanup (T-0073)"
+  },
+  "palette_source": "assets/final/palette/home_palette.json (sha256:13ecb690e09c181074bffca361e7c9539baaae973acc5eaad6ebafc1d3e9d044)",
+  "palette_lineage": "assets/src/concept/signal_tower_material_sheet.png (sha256:9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460)"
+}

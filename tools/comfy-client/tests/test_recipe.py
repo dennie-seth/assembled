@@ -19,6 +19,7 @@ def test_recipe_defaults():
     assert r.checkpoint == "sd_xl_base_1.0.safetensors"
     assert r.sampler == "euler"
     assert r.scheduler == "normal"
+    assert r.denoise == 1.0
     assert r.model_hash is None
 
 
@@ -37,6 +38,13 @@ def test_recipe_rejects_non_positive_dimensions():
         Recipe(prompt="x", seed=1, width=0)
     with pytest.raises(ValueError, match="width/height"):
         Recipe(prompt="x", seed=1, height=-10)
+
+
+def test_recipe_rejects_out_of_range_denoise():
+    with pytest.raises(ValueError, match="denoise"):
+        Recipe(prompt="x", seed=1, denoise=0.0)
+    with pytest.raises(ValueError, match="denoise"):
+        Recipe(prompt="x", seed=1, denoise=1.5)
 
 
 def test_recipe_to_dict_round_trips():

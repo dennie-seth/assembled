@@ -1,23 +1,22 @@
 [project]
-name = "comfy-client"
+name = "palette-extract"
 version = "0.1.0"
-description = "ComfyUI HTTP client + recipe->workflow layer driving the AssetAgent (T-0071, docs/design/13-asset-pipeline.md)"
+description = "T-0105: cluster an approved concept sheet -> value ramp -> locked home-palette LUT (docs/design/13-asset-pipeline.md §6.10)"
 requires-python = ">=3.12"
 dependencies = [
-  "requests==2.32.3",
-  "Pillow==11.0.0",
+  "pillow==12.3.0",
   "numpy==2.5.1",
+  "scipy==1.18.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest==9.1.1",
-  "responses==0.25.3",
   "ruff==0.14.4",
 ]
 
 [project.scripts]
-comfy-client = "comfy_client.cli:main"
+palette-extract = "palette_extract.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -25,9 +24,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-comfy_client = ["templates/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
