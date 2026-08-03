@@ -125,4 +125,48 @@ describe("buildReviewerPrompt -- routed verification section", () => {
     });
     expect(prompt).not.toContain("Required verification for this diff");
   });
+
+  it("tells the reviewer to run venv+pip+pytest+ruff for a diff touching a Python package, and treat an unrun check as FAIL", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tools/asset-gate/src/asset_gate/checks/loudness.py"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("Python verify (tools/asset-gate)");
+    expect(prompt).toContain("python3 -m venv .venv");
+    expect(prompt).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(prompt).toContain(".venv/bin/pytest");
+    expect(prompt).toContain(".venv/bin/ruff check .");
+    expect(prompt).toContain("not read the diff and infer whether tests would pass");
+    expect(prompt).toContain("is a FAIL");
+    expect(prompt).not.toContain("validateBacklog.js");
+    expect(prompt).not.toContain("Board test/lint suite");
+  });
+
+  it("lists a python-verify step per package for a diff touching two Python packages", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: [
+        "tools/comfy-client/src/comfy_client/client.py",
+        "tools/audio-agent/src/audio_agent/client.py"
+      ]
+    });
+    expect(prompt).toContain("Python verify (tools/comfy-client)");
+    expect(prompt).toContain("Python verify (tools/audio-agent)");
+  });
+
+  it("tells the reviewer to run the board suite AND the python-verify step for a mixed board+python diff", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: [
+        "tools/board/src/lib/fsTaskStore.js",
+        "tools/palette-extract/src/palette_extract/extract.py"
+      ]
+    });
+    expect(prompt).toContain("Board test/lint suite");
+    expect(prompt).toContain("Python verify (tools/palette-extract)");
+  });
 });
