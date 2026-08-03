@@ -19,6 +19,7 @@ from typing import Any
 from comfy_client.recipe import Recipe
 
 DEFAULT_TEMPLATE_NAME = "sdxl_txt2img_v1"
+IMG2IMG_TEMPLATE_NAME = "sdxl_img2img_v1"
 
 
 def load_template(name: str = DEFAULT_TEMPLATE_NAME) -> dict[str, Any]:
@@ -44,6 +45,32 @@ def render_workflow(recipe: Recipe, template: dict[str, Any] | None = None) -> d
     graph["3"]["inputs"]["cfg"] = recipe.cfg
     graph["3"]["inputs"]["sampler_name"] = recipe.sampler
     graph["3"]["inputs"]["scheduler"] = recipe.scheduler
+    graph["9"]["inputs"]["filename_prefix"] = recipe.name
+
+    return graph
+
+
+def render_img2img_workflow(
+    recipe: Recipe, init_image_name: str, template: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Render `recipe` + an already-uploaded ComfyUI input filename into an
+    img2img `/prompt`-ready node graph (T-0106 layout conditioning). Unlike
+    `render_workflow`, output dimensions follow `init_image_name`, not
+    `recipe.width`/`height` -- there is no `EmptyLatentImage` node to size.
+    """
+    tmpl = load_template(IMG2IMG_TEMPLATE_NAME) if template is None else template
+    graph = copy.deepcopy(tmpl["graph"])
+
+    graph["4"]["inputs"]["ckpt_name"] = recipe.checkpoint
+    graph["6"]["inputs"]["text"] = recipe.prompt
+    graph["7"]["inputs"]["text"] = recipe.negative_prompt
+    graph["10"]["inputs"]["image"] = init_image_name
+    graph["3"]["inputs"]["seed"] = recipe.seed
+    graph["3"]["inputs"]["steps"] = recipe.steps
+    graph["3"]["inputs"]["cfg"] = recipe.cfg
+    graph["3"]["inputs"]["sampler_name"] = recipe.sampler
+    graph["3"]["inputs"]["scheduler"] = recipe.scheduler
+    graph["3"]["inputs"]["denoise"] = recipe.denoise
     graph["9"]["inputs"]["filename_prefix"] = recipe.name
 
     return graph

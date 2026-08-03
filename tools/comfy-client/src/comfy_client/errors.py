@@ -37,3 +37,7 @@ class PollTimeoutError(ComfyClientError):
 
 class FetchError(ComfyClientError):
     """GET /view failed, or the completed job had no fetchable output."""
+
+
+class UploadError(ComfyClientError):
+    """POST /upload/image failed -- used by the img2img conditioning path (T-0106)."""

@@ -28,6 +28,10 @@ class Recipe:
     sampler: str = "euler"
     scheduler: str = "normal"
     name: str = "assembled"
+    # img2img only (T-0106): KSampler denoise strength. 1.0 (txt2img default)
+    # discards the init image's latent entirely; lower values preserve more
+    # of its layout. Unused by the txt2img template.
+    denoise: float = 1.0
     # TODO(T-0075): populate from the checkpoint file once a hashing step
     # exists on the Windows ComfyUI host (the .safetensors isn't reachable
     # from WSL); the provenance writer records this alongside seed/prompt.
@@ -40,6 +44,8 @@ class Recipe:
             raise ValueError("recipe.steps must be positive")
         if self.width <= 0 or self.height <= 0:
             raise ValueError("recipe.width/height must be positive")
+        if not (0.0 < self.denoise <= 1.0):
+            raise ValueError("recipe.denoise must be in (0.0, 1.0]")
 
 
 def recipe_to_dict(recipe: Recipe) -> dict:

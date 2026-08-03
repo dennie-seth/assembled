@@ -17,7 +17,12 @@ import sys
 
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
-from comfy_client.concept import DEFAULT_CONCEPT_DIR, concept_provenance_to_dict, generate_concept
+from comfy_client.concept import (
+    DEFAULT_CONCEPT_DIR,
+    concept_provenance_to_dict,
+    generate_concept,
+    generate_concept_conditioned,
+)
 from comfy_client.errors import ComfyClientError
 from comfy_client.pipeline import DEFAULT_OUT_DIR, generate
 from comfy_client.provenance import provenance_to_dict
@@ -53,12 +58,21 @@ def _cmd_generate(args: argparse.Namespace) -> int:
 def _cmd_concept(args: argparse.Namespace) -> int:
     recipe = load_recipe(args.recipe)
     try:
-        result = generate_concept(
-            recipe,
-            out_dir=args.out_dir,
-            timeout=args.timeout,
-            poll_interval=args.poll_interval,
-        )
+        if args.init_image:
+            result = generate_concept_conditioned(
+                recipe,
+                init_image_path=args.init_image,
+                out_dir=args.out_dir,
+                timeout=args.timeout,
+                poll_interval=args.poll_interval,
+            )
+        else:
+            result = generate_concept(
+                recipe,
+                out_dir=args.out_dir,
+                timeout=args.timeout,
+                poll_interval=args.poll_interval,
+            )
     except (CheckpointNotAllowedError, ComfyClientError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -95,6 +109,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", default=str(DEFAULT_CONCEPT_DIR))
     p.add_argument("--timeout", type=float, default=300.0)
     p.add_argument("--poll-interval", type=float, default=1.0)
+    p.add_argument(
+        "--init-image",
+        default=None,
+        help="path to a layout-conditioning image for img2img (T-0106); "
+        "omit for plain txt2img. Denoise strength comes from the recipe's "
+        "`denoise` field.",
+    )
     p.set_defaults(func=_cmd_concept)
 
     return parser

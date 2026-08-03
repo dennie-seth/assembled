@@ -17,7 +17,13 @@ from typing import Any
 import requests
 from gen_client_base.client import GenerationClient
 
-from comfy_client.errors import ExecutionError, FetchError, PollTimeoutError, SubmitError
+from comfy_client.errors import (
+    ExecutionError,
+    FetchError,
+    PollTimeoutError,
+    SubmitError,
+    UploadError,
+)
 
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_POLL_INTERVAL = 1.0
@@ -116,6 +122,26 @@ class ComfyUIClient(GenerationClient):
                     image["filename"], image.get("subfolder", ""), image.get("type", "output")
                 )
         raise FetchError(f"no image outputs found in job result: {job_result!r}")
+
+    def upload_image(
+        self, image_bytes: bytes, filename: str, image_type: str = "input"
+    ) -> dict[str, Any]:
+        """POST /upload/image -- feeds a local file into ComfyUI's `input`
+        store so a `LoadImage` node can reference it by name (T-0106 img2img
+        conditioning path). `overwrite=true` so a re-uploaded template
+        doesn't accumulate `_00001`-suffixed duplicates across sweep runs.
+        """
+        try:
+            resp = self.session.post(
+                f"{self.base_url}/upload/image",
+                files={"image": (filename, image_bytes, "image/png")},
+                data={"type": image_type, "overwrite": "true"},
+                timeout=self.request_timeout,
+            )
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise UploadError(f"POST /upload/image failed for {filename!r}: {exc}") from exc
+        return resp.json()
 
     def _fetch_view(self, filename: str, subfolder: str, file_type: str) -> bytes:
         try:
