@@ -1,5 +1,5 @@
 ---
-paths: ["tools/asset-gate/**", "tools/comfy-client/**", "tools/gen-client-base/**", "tools/audio-agent/**", "assets/src/**"]
+paths: ["tools/asset-gate/**", "tools/comfy-client/**", "tools/gen-client-base/**", "tools/audio-agent/**", "tools/palette-extract/**", "tools/sim/**", "assets/src/**"]
 ---
 
 # Python conventions

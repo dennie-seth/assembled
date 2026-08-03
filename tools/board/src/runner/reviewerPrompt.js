@@ -25,7 +25,11 @@ function buildRequiredVerificationSection(changedPaths, baseBranch) {
     return null;
   }
   const lines = routes.map((route) => `- **${route.label}:** \`${route.command}\``);
-  return `## Required verification for this diff\n\nRun exactly the following, in addition to (not instead of) the \`verify\` skill's own table for any other paths this diff touches:\n\n${lines.join("\n")}`;
+  const hasPythonRoute = routes.some((route) => route.id.startsWith("python-verify:"));
+  const enforcement = hasPythonRoute
+    ? `Actually execute every command above yourself with Bash -- do not read the diff and infer whether tests would pass. A python-verify step you did not run is a FAIL ("tests unverified, no venv" is not a passing verdict), not an unverified pass; report the real \`pytest\`/\`ruff\` output, including any failures, in your notes.`
+    : `Actually execute every command above yourself with Bash -- do not infer the result from reading the diff. A check you did not run is a FAIL, not an unverified pass.`;
+  return `## Required verification for this diff\n\nRun exactly the following, in addition to (not instead of) the \`verify\` skill's own table for any other paths this diff touches:\n\n${lines.join("\n")}\n\n${enforcement}`;
 }
 
 /**
@@ -33,9 +37,12 @@ function buildRequiredVerificationSection(changedPaths, baseBranch) {
  * task identity, the reviewer's own agent definition, whichever rules match
  * the diff's actually-changed paths, an explicit routed-verification section
  * when the diff matches a code-enforced route (tasks/** -> backlog
- * validator + planner diff guard, tools/board/** -> board suite -- see
- * verifyRouter.js), the task body verbatim, and the required
- * machine-readable verdict format.
+ * validator + planner diff guard, tools/board/** -> board suite, a Python
+ * package root -> a per-package python-verify step (venv + pip install +
+ * pytest + ruff) -- see verifyRouter.js), the task body verbatim, and the
+ * required machine-readable verdict format. The routed section also spells
+ * out that these commands must actually be run, not inferred from reading
+ * the diff -- an unrun check is a FAIL, not an "unverified" pass.
  */
 export function buildReviewerPrompt({ task, agentDef, rules = [], changedPaths = [], baseBranch = "develop" }) {
   if (!task || typeof task.body !== "string") {
