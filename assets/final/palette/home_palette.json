@@ -1,0 +1,86 @@
+{
+  "_comment": "Locked home palette (V-5, P-A resolved), extracted by T-0105 from the approved interior concept sheet listed in `source`. Slot order is a value ramp, darkest (0) -> lightest (N-1), by Oklab lightness -- see palette_extract/extract.py docstring. Slot indices are load-bearing (P-4 / chroma swap): do not reorder or renumber if this file is regenerated, only re-extract and diff.",
+  "source": "assets/src/concept/signal_tower_material_sheet.png (sha256:9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460)",
+  "slots": [
+    {
+      "index": 0,
+      "hex": "#12110e",
+      "name": "ramp-00"
+    },
+    {
+      "index": 1,
+      "hex": "#1a1916",
+      "name": "ramp-01"
+    },
+    {
+      "index": 2,
+      "hex": "#0b2d18",
+      "name": "ramp-02"
+    },
+    {
+      "index": 3,
+      "hex": "#123c23",
+      "name": "ramp-03"
+    },
+    {
+      "index": 4,
+      "hex": "#3d3b31",
+      "name": "ramp-04"
+    },
+    {
+      "index": 5,
+      "hex": "#224d32",
+      "name": "ramp-05"
+    },
+    {
+      "index": 6,
+      "hex": "#49493b",
+      "name": "ramp-06"
+    },
+    {
+      "index": 7,
+      "hex": "#4c553a",
+      "name": "ramp-07"
+    },
+    {
+      "index": 8,
+      "hex": "#58554c",
+      "name": "ramp-08"
+    },
+    {
+      "index": 9,
+      "hex": "#5a6042",
+      "name": "ramp-09"
+    },
+    {
+      "index": 10,
+      "hex": "#646258",
+      "name": "ramp-10"
+    },
+    {
+      "index": 11,
+      "hex": "#616747",
+      "name": "ramp-11"
+    },
+    {
+      "index": 12,
+      "hex": "#716f66",
+      "name": "ramp-12"
+    },
+    {
+      "index": 13,
+      "hex": "#7e7c74",
+      "name": "ramp-13"
+    },
+    {
+      "index": 14,
+      "hex": "#8f8b86",
+      "name": "ramp-14"
+    },
+    {
+      "index": 15,
+      "hex": "#a8a4a0",
+      "name": "ramp-15"
+    }
+  ]
+}
