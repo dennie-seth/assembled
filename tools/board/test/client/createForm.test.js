@@ -55,6 +55,43 @@ describe("renderCreateForm visibility", () => {
   });
 });
 
+describe("renderCreateForm re-render while already open", () => {
+  it("does not rebuild the DOM or reset field values on a repeated visible:true render (refresh-while-editing)", () => {
+    const root = document.createElement("div");
+    renderCreateForm(root, baseOpts());
+
+    const titleInput = root.querySelector(".create-title");
+    titleInput.value = "Unsaved draft title";
+
+    renderCreateForm(root, baseOpts());
+
+    expect(root.querySelector(".create-title")).toBe(titleInput);
+    expect(root.querySelector(".create-title").value).toBe("Unsaved draft title");
+  });
+
+  it("still updates the error message on a repeated visible:true render", () => {
+    const root = document.createElement("div");
+    renderCreateForm(root, baseOpts());
+    root.querySelector(".create-title").value = "Unsaved draft title";
+
+    renderCreateForm(root, baseOpts({ error: "title is required and must be a non-empty string" }));
+
+    expect(root.querySelector(".create-error").textContent).toMatch(/title is required/i);
+    expect(root.querySelector(".create-title").value).toBe("Unsaved draft title");
+  });
+
+  it("rebuilds fresh blank fields on the next open after a close (hidden -> visible transition)", () => {
+    const root = document.createElement("div");
+    renderCreateForm(root, baseOpts());
+    root.querySelector(".create-title").value = "Leftover draft";
+
+    renderCreateForm(root, baseOpts({ visible: false }));
+    renderCreateForm(root, baseOpts({ visible: true }));
+
+    expect(root.querySelector(".create-title").value).toBe("");
+  });
+});
+
 describe("renderCreateForm submission", () => {
   it("calls onCreate with the form payload on submit", () => {
     const root = document.createElement("div");
