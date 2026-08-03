@@ -10,7 +10,7 @@ See docs/design/07-items-economy.md §1, docs/design/08-invariants.md §4.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 

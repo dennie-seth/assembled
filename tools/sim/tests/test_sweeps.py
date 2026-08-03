@@ -11,8 +11,6 @@ Sweeps use compressed time so CI completes in seconds.
 
 from __future__ import annotations
 
-import pytest
-
 from sim.sweeps import (
     sweep_collapse,
     sweep_collapse_race,

@@ -13,19 +13,6 @@ See docs/design/08-invariants.md §2.
 
 from __future__ import annotations
 
-import pytest
-
-from sim.invariants import (
-    InvariantViolation,
-    check_all,
-    check_inv6,
-    check_inv7,
-    check_inv8,
-    check_inv9,
-    check_inv14,
-)
-from sim.types import AgentState, Rarity
-
 from conftest import (
     FAR_FUTURE,
     NUM_COMMON,
@@ -40,6 +27,16 @@ from conftest import (
     make_state,
     make_world_item,
 )
+from sim.invariants import (
+    InvariantViolation,
+    check_all,
+    check_inv6,
+    check_inv7,
+    check_inv8,
+    check_inv9,
+    check_inv14,
+)
+from sim.types import AgentState, Rarity
 
 TICK = 0
 

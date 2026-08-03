@@ -17,7 +17,6 @@ See docs/design/08-invariants.md §4.
 from __future__ import annotations
 
 import random
-from collections import deque
 
 from .config import SimConfig
 from .invariants import InvariantViolation, check_all

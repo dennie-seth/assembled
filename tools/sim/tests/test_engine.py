@@ -8,12 +8,9 @@ See docs/design/08-invariants.md §4 and docs/design/07-items-economy.md.
 
 from __future__ import annotations
 
-import pytest
-
+from conftest import make_cfg
 from sim.engine import SimEngine
 from sim.types import AgentState, Rarity
-
-from conftest import make_cfg
 
 
 # ---------------------------------------------------------------------------
