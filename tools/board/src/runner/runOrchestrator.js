@@ -1,6 +1,6 @@
 import path from "node:path";
 import { NdjsonEventParser } from "./streamParser.js";
-import { buildPrompt, resolveRulesForPaths } from "./promptBuilder.js";
+import { buildPrompt, buildPlannerPrompt, resolveRulesForPaths } from "./promptBuilder.js";
 import { buildReviewerPrompt } from "./reviewerPrompt.js";
 import { extractVerdictFromEvents } from "./verdict.js";
 import { loadAgentDef, loadRules } from "./configLoader.js";
@@ -40,6 +40,7 @@ export class RunOrchestrator {
     loadRulesFn = loadRules,
     resolveAllowedToolsFn = resolveAllowedTools,
     buildPromptFn = buildPrompt,
+    buildPlannerPromptFn = buildPlannerPrompt,
     buildReviewerPromptFn = buildReviewerPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     createRunLogFn = createRunLog,
@@ -59,6 +60,7 @@ export class RunOrchestrator {
     this.loadRulesFn = loadRulesFn;
     this.resolveAllowedToolsFn = resolveAllowedToolsFn;
     this.buildPromptFn = buildPromptFn;
+    this.buildPlannerPromptFn = buildPlannerPromptFn;
     this.buildReviewerPromptFn = buildReviewerPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.createRunLogFn = createRunLogFn;
@@ -103,10 +105,17 @@ export class RunOrchestrator {
   }
 
   async _runCardInWorktree(taskId, task, worktreeDir, branch, runLog) {
-    const agentDef = this.loadAgentDefFn(task.agent, { agentsDir: this.agentsDir });
+    // Unassigned cards run planner first to expand the spec, then a generic implementer.
+    if (task.agent === null) {
+      const plannerOk = await this._planUnassignedCard(taskId, task, worktreeDir, runLog);
+      if (!plannerOk) return;
+    }
+
+    const effectiveAgent = task.agent ?? "generic";
+    const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
-    const allowedTools = this.resolveAllowedToolsFn(task.agent, { agentsDir: this.agentsDir });
-    const prompt = this.buildPromptFn({ task, agentDef, rules });
+    const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const prompt = this.buildPromptFn({ task: { ...task, agent: effectiveAgent }, agentDef, rules });
 
     const implementerResult = await this._runPhase({
       taskId,
@@ -169,6 +178,39 @@ export class RunOrchestrator {
     } else {
       await this._handleFailValidation(taskId, verdict);
     }
+  }
+
+  /** Runs the planner phase for an unassigned card. Returns true if planning succeeded, false if cancelled/failed (already blocked). */
+  async _planUnassignedCard(taskId, task, worktreeDir, runLog) {
+    this.hub.broadcast({
+      type: "run-status",
+      id: taskId,
+      phase: "planning",
+      message: "Card is unassigned — invoking planner to expand spec before implementation"
+    });
+
+    const plannerDef = this.loadAgentDefFn("planner", { agentsDir: this.agentsDir });
+    const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
+    const plannerAllowedTools = this.resolveAllowedToolsFn("planner", { agentsDir: this.agentsDir });
+    const plannerPrompt = this.buildPlannerPromptFn({ task, agentDef: plannerDef, rules });
+
+    const plannerResult = await this._runPhase({
+      taskId,
+      task,
+      phase: "planning",
+      prompt: plannerPrompt,
+      allowedTools: plannerAllowedTools,
+      worktreeDir,
+      model: plannerDef.model,
+      runLog
+    });
+
+    if (plannerResult.cancelled) return false;
+    if (plannerResult.exitCode !== 0) {
+      await this._blocked(taskId, this._crashReason("planner", plannerResult));
+      return false;
+    }
+    return true;
   }
 
   _crashReason(phase, result) {
