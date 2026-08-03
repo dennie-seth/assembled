@@ -1,0 +1,32 @@
+[project]
+name = "assembled-sim"
+version = "0.1.0"
+description = "Economy simulation harness for assembled (T-0099, docs/design/08-invariants.md §4)"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.14.4",
+]
+
+[project.scripts]
+sim = "sim.sweeps:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
