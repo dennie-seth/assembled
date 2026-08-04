@@ -15,6 +15,8 @@ export function buildStatusPatch(newStatus) {
   return { status: newStatus };
 }
 
+export const TASK_EVENT_TYPES = new Set(["added", "changed", "removed"]);
+
 export function applyTaskEvent(tasks, event) {
   const { type, id, task } = event;
   if (type === "removed") {

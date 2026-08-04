@@ -701,6 +701,117 @@ describe("RunOrchestrator.runCard — unassigned cards (agent: null) route throu
   });
 });
 
+describe("RunOrchestrator — broadcasts an authoritative status change immediately (board must not depend solely on the file watcher)", () => {
+  it("broadcasts a 'changed' event the moment the card moves ready -> in-progress", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "in-progress" })
+    });
+
+    implChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("broadcasts a 'changed' event when worktree creation fails and the card is blocked", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ addWorktree: vi.fn(async () => { throw new Error("disk full"); }) });
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    await orchestrator.runCard("T-0001");
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "blocked" })
+    });
+  });
+
+  it("broadcasts a 'changed' event the moment the card moves in-progress -> validation", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "validation" })
+    });
+
+    reviewChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("broadcasts a 'changed' event when the reviewer PASSes and the card reaches review", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "review" })
+    });
+  });
+
+  it("broadcasts a 'changed' event when a run is cancelled and the card is blocked", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await nthChild(runner, 1);
+
+    await orchestrator.cancelRun("T-0001");
+    await runPromise;
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "blocked" })
+    });
+  });
+});
+
 describe("appendNote", () => {
   it("appends a heading and text to the end of a task body", () => {
     const result = appendNote("## Context\nOriginal.\n", "Validation: PASS", "all good");
