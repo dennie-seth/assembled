@@ -31,6 +31,7 @@ function makeApp(overrides = {}) {
   const cancelTaskImpl = overrides.cancelTaskImpl ?? vi.fn().mockResolvedValue({});
   const createTaskImpl = overrides.createTaskImpl ?? vi.fn();
   const deleteTaskImpl = overrides.deleteTaskImpl ?? vi.fn();
+  const exportBacklogImpl = overrides.exportBacklogImpl ?? vi.fn();
   const app = createApp({
     boardRoot,
     detailRoot,
@@ -44,7 +45,8 @@ function makeApp(overrides = {}) {
     runTaskImpl,
     cancelTaskImpl,
     createTaskImpl,
-    deleteTaskImpl
+    deleteTaskImpl,
+    exportBacklogImpl
   });
   return {
     app,
@@ -60,7 +62,8 @@ function makeApp(overrides = {}) {
     runTaskImpl,
     cancelTaskImpl,
     createTaskImpl,
-    deleteTaskImpl
+    deleteTaskImpl,
+    exportBacklogImpl
   };
 }
 
@@ -569,5 +572,17 @@ describe("createApp delete-card wiring", () => {
     expect(deleteTaskImpl).toHaveBeenCalledWith("T-0001");
     expect(app.getError()).toMatch(/active run/);
     expect(app.getTasks()).toEqual([t]);
+  });
+});
+
+describe("createApp backlog export wiring", () => {
+  it("calls exportBacklogImpl when handleExportBacklog is invoked", async () => {
+    const exportBacklogImpl = vi.fn();
+    const { app } = makeApp({ exportBacklogImpl });
+    await app.init();
+
+    app.handleExportBacklog();
+
+    expect(exportBacklogImpl).toHaveBeenCalledTimes(1);
   });
 });

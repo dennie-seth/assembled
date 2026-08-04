@@ -8,7 +8,8 @@ import {
   cancelTask,
   createTask,
   deleteTask,
-  fetchAgents
+  fetchAgents,
+  exportBacklog
 } from "../../src/client/api.js";
 
 const originalFetch = global.fetch;
@@ -218,5 +219,24 @@ describe("connectBoardSocket", () => {
     const ws = connectBoardSocket(onMessage);
     expect(() => ws.listeners.message({ data: "{not json" })).not.toThrow();
     expect(onMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("exportBacklog", () => {
+  it("calls navigateTo with /api/tasks/export/backlog", () => {
+    const navigateTo = vi.fn();
+    exportBacklog(navigateTo);
+    expect(navigateTo).toHaveBeenCalledWith("/api/tasks/export/backlog");
+  });
+
+  it("uses window.location.assign as the default navigateTo", () => {
+    const originalAssign = window.location.assign;
+    window.location.assign = vi.fn();
+    try {
+      exportBacklog();
+      expect(window.location.assign).toHaveBeenCalledWith("/api/tasks/export/backlog");
+    } finally {
+      window.location.assign = originalAssign;
+    }
   });
 });
