@@ -83,6 +83,75 @@ describe("addWorktree / removeWorktree", () => {
   });
 });
 
+describe("addWorktree — stale branch/worktree recovery", () => {
+  it("auto-cleans a stale branch+worktree with no unique commits (dead attempt) and proceeds", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0100");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0100", baseBranch: "develop" });
+    // Simulate the run dying immediately -- worktree + branch left behind, nothing ever committed.
+
+    await expect(
+      addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0100", baseBranch: "develop" })
+    ).resolves.not.toThrow();
+
+    const stat = await fs.stat(worktreeDir);
+    expect(stat.isDirectory()).toBe(true);
+    const { stdout: branch } = await git(["rev-parse", "--abbrev-ref", "HEAD"], worktreeDir);
+    expect(branch.trim()).toBe("feature/T-0100");
+  });
+
+  it("auto-cleans a stale branch that has since been fully merged into develop", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0102b");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0102b", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "merged.txt"), "x\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: merged work" });
+    await removeWorktree({ repoRoot, worktreeDir });
+    await git(["checkout", "develop"], repoRoot);
+    await git(["merge", "--no-ff", "feature/T-0102b"], repoRoot);
+    // Branch is merged into develop but was never deleted -- also a "stale" leftover.
+
+    await expect(
+      addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0102b", baseBranch: "develop" })
+    ).resolves.not.toThrow();
+
+    const stat = await fs.stat(worktreeDir);
+    expect(stat.isDirectory()).toBe(true);
+  });
+
+  it("blocks with a clear, branch-naming message and preserves everything when the stale branch has unique unpushed commits", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0111");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "real-work.txt"), "important\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: real work" });
+    // Simulate the run dying after a real commit but before push -- must not be destroyed.
+
+    await expect(
+      addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" })
+    ).rejects.toThrow(/feature\/T-0111/);
+    await expect(
+      addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" })
+    ).rejects.toThrow(/unpushed/i);
+
+    const { stdout: branchSha } = await git(["rev-parse", "feature/T-0111"], repoRoot);
+    expect(branchSha.trim().length).toBe(40);
+    const stat = await fs.stat(worktreeDir);
+    expect(stat.isDirectory()).toBe(true);
+    const { stdout: log } = await git(["log", "-1", "--pretty=%s"], worktreeDir);
+    expect(log.trim()).toBe("feat: real work");
+    const { stdout: list } = await git(["worktree", "list"], repoRoot);
+    expect(list).toContain(worktreeDir);
+  });
+
+  it("leaves normal (non-stale) worktree creation unchanged", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0199");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0199", baseBranch: "develop" });
+
+    const stat = await fs.stat(worktreeDir);
+    expect(stat.isDirectory()).toBe(true);
+    const { stdout: branch } = await git(["rev-parse", "--abbrev-ref", "HEAD"], worktreeDir);
+    expect(branch.trim()).toBe("feature/T-0199");
+  });
+});
+
 describe("hasUncommittedChanges / commitAll", () => {
   it("reports false and skips committing when the worktree is clean", async () => {
     const worktreeDir = path.join(tmpDir, "worktrees", "T-0102");
