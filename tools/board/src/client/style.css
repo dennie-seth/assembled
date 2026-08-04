@@ -1,6 +1,8 @@
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
+  --terminal-height: 16rem;
+  --terminal-height-collapsed: 2.25rem;
 }
 
 body {
@@ -21,7 +23,7 @@ body:has(#side-panel:not([hidden])) {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 16rem;
+  height: var(--terminal-height);
   display: flex;
   flex-direction: column;
   background: #1e1e1e;
@@ -30,7 +32,7 @@ body:has(#side-panel:not([hidden])) {
 }
 
 #terminal-panel.collapsed {
-  height: 2.25rem;
+  height: var(--terminal-height-collapsed);
 }
 
 #terminal-panel.collapsed #terminal {
@@ -129,7 +131,7 @@ body:has(#side-panel:not([hidden])) {
   position: fixed;
   top: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--terminal-height);
   width: min(28rem, 100%);
   display: flex;
   flex-direction: column;
@@ -143,6 +145,15 @@ body:has(#side-panel:not([hidden])) {
    off behind a stray divider" bug. */
 #side-panel[hidden] {
   display: none;
+}
+
+/* #terminal-panel is a separate fixed element pinned to the viewport bottom.
+   Without this, #side-panel's own fixed box always extends to the viewport
+   edge and the terminal (painted later, so on top) draws over its lower
+   portion - hiding the tail of #detail and all of #console instead of the
+   layout making room for it. */
+body:has(#terminal-panel.collapsed) #side-panel {
+  bottom: var(--terminal-height-collapsed);
 }
 
 #detail {
@@ -272,6 +283,10 @@ body:has(#side-panel:not([hidden])) {
   gap: 0.5rem;
   font-size: 0.8rem;
   margin-top: 0.375rem;
+}
+
+.detail-delete-confirm[hidden] {
+  display: none;
 }
 
 #toolbar {
