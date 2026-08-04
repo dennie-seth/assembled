@@ -368,10 +368,10 @@ describe("createApp agent console wiring (T-0022)", () => {
       type: "run-event",
       id: "T-0001",
       phase: "implementer",
-      event: { type: "system", subtype: "init" }
+      event: { type: "assistant", message: { content: [{ type: "text", text: "Looking at the task." }] } }
     });
 
-    expect(consoleRoot.textContent).toContain("system: init");
+    expect(consoleRoot.textContent).toContain("Looking at the task.");
   });
 
   it("does not treat a run-event message as a task-changed event", async () => {
@@ -395,12 +395,12 @@ describe("createApp agent console wiring (T-0022)", () => {
     await app.init();
     app.handleCardClick("T-0001");
 
-    app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "system", subtype: "init" } });
+    app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "assistant", message: { content: [{ type: "text", text: "Starting." }] } } });
     app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "result", result: "Done." } });
 
     const lines = consoleRoot.querySelectorAll(".console-line");
     expect(lines).toHaveLength(2);
-    expect(lines[0].textContent).toContain("init");
+    expect(lines[0].textContent).toContain("Starting.");
     expect(lines[1].textContent).toContain("Done.");
   });
 
