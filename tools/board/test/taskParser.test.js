@@ -62,6 +62,11 @@ describe("parseTask / serializeTask round-trip", () => {
     expect(parseTask(serializeTask(task))).toEqual(task);
   });
 
+  it("accepts status: retired (cut/reissued cards leaving the active flow)", () => {
+    const task = { ...VALID_TASK, status: "retired" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
   it("parses the PLAN.md example format with unquoted YAML scalars", () => {
     const raw = [
       "---",

@@ -7,7 +7,8 @@ const STATUS_LABELS = {
   validation: "Validation",
   review: "Review",
   done: "Done",
-  blocked: "Blocked"
+  blocked: "Blocked",
+  retired: "Retired"
 };
 
 const SORT_LABELS = {

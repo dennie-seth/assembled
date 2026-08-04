@@ -467,6 +467,14 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
     expect(payload.error).toMatch(/ready/i);
   });
 
+  it("returns 409 when running a retired task", async () => {
+    const task = await createTask({ status: "retired" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/ready/i);
+  });
+
   it("accepts a run on a ready card and kicks off the orchestrator without blocking the response", async () => {
     const task = await createTask({ status: "ready" });
     const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
