@@ -184,6 +184,40 @@ describe("createApp handleSocketMessage", () => {
 
     expect(boardRoot.textContent).toContain("From elsewhere");
   });
+
+  it("applies a Run action's status transition immediately from a socket event, without a manual refresh", async () => {
+    const original = task({ id: "T-0001", title: "Runnable", status: "ready" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([original]) });
+    await app.init();
+    expect(boardRoot.querySelector('.column[data-status="ready"]').textContent).toContain("Runnable");
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...original, status: "in-progress" } });
+
+    const inProgressColumn = boardRoot.querySelector('.column[data-status="in-progress"]');
+    expect(inProgressColumn.textContent).toContain("Runnable");
+    expect(boardRoot.querySelector('.column[data-status="ready"]').textContent).not.toContain("Runnable");
+  });
+
+  it("ignores an unrecognized socket message type (e.g. run-status) instead of corrupting task state", async () => {
+    const original = task({ id: "T-0001", title: "Unassigned card", status: "ready" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([original]) });
+    await app.init();
+
+    app.handleSocketMessage({
+      type: "run-status",
+      id: "T-0001",
+      phase: "planning",
+      message: "Card is unassigned — invoking planner to expand spec before implementation"
+    });
+
+    expect(app.getTasks()).toEqual([original]);
+    expect(boardRoot.textContent).toContain("Unassigned card");
+
+    // A legitimate status update afterwards must still render correctly --
+    // a prior corrupting message must not leave the board permanently stuck.
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...original, status: "in-progress" } });
+    expect(boardRoot.querySelector('.column[data-status="in-progress"]').textContent).toContain("Unassigned card");
+  });
 });
 
 describe("createApp side panel visibility (Done column clipping regression)", () => {

@@ -72,6 +72,18 @@ export class RunOrchestrator {
     return this.activeRuns.has(taskId);
   }
 
+  /**
+   * Writes a task update and broadcasts it over the board socket in the same
+   * tick -- the board must not depend solely on the tasks/*.md file watcher
+   * (which is debounced by chokidar's atomic-write detection) to learn that
+   * a run changed a card's status.
+   */
+  async _updateAndBroadcast(taskId, patch) {
+    const updated = await this.store.update(taskId, patch);
+    this.hub.broadcast({ type: "changed", id: taskId, task: updated });
+    return updated;
+  }
+
   async runCard(taskId) {
     const task = await this.store.get(taskId);
     if (!task) {
@@ -94,7 +106,7 @@ export class RunOrchestrator {
       return;
     }
 
-    await this.store.update(taskId, { status: "in-progress" });
+    await this._updateAndBroadcast(taskId, { status: "in-progress" });
 
     const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
     try {
@@ -135,7 +147,7 @@ export class RunOrchestrator {
       return;
     }
 
-    await this.store.update(taskId, { status: "validation" });
+    await this._updateAndBroadcast(taskId, { status: "validation" });
 
     const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch }).catch(() => []);
     const reviewerAgentDef = this.loadAgentDefFn("reviewer", { agentsDir: this.agentsDir });
@@ -278,7 +290,7 @@ export class RunOrchestrator {
     }
 
     const current = await this.store.get(taskId);
-    await this.store.update(taskId, {
+    await this._updateAndBroadcast(taskId, {
       status: "blocked",
       body: appendNote(current.body, "Cancelled", "Run cancelled by user; worktree removed, branch left intact for investigation.")
     });
@@ -286,12 +298,12 @@ export class RunOrchestrator {
 
   async _blocked(taskId, reason) {
     const current = await this.store.get(taskId);
-    await this.store.update(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
+    await this._updateAndBroadcast(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
   }
 
   async _handleFailValidation(taskId, verdict) {
     const current = await this.store.get(taskId);
-    await this.store.update(taskId, {
+    await this._updateAndBroadcast(taskId, {
       status: "in-progress",
       body: appendNote(current.body, "Validation: FAIL", verdict.notes)
     });
@@ -318,7 +330,7 @@ export class RunOrchestrator {
     }
 
     const current = await this.store.get(taskId);
-    await this.store.update(taskId, {
+    await this._updateAndBroadcast(taskId, {
       status: "review",
       branch,
       commit,

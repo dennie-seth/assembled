@@ -8,7 +8,7 @@ import {
   createTask,
   deleteTask
 } from "./api.js";
-import { applyTaskEvent, buildStatusPatch, STATUSES } from "./board.js";
+import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard } from "./boardView.js";
 import { renderDetailPanel } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
@@ -189,6 +189,12 @@ export function createApp({
   function handleSocketMessage(event) {
     if (event.type === "run-event") {
       handleRunEvent(event);
+      return;
+    }
+    if (!TASK_EVENT_TYPES.has(event.type)) {
+      // Unrecognized message types (e.g. a run's phase notices) carry no
+      // `task` payload -- applying them here would clobber a real task with
+      // `undefined`. Ignore anything that isn't a known task mutation.
       return;
     }
     tasks = applyTaskEvent(tasks, event);
