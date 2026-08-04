@@ -290,7 +290,38 @@ body:has(#terminal-panel.collapsed) #side-panel {
 }
 
 #toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
   margin-bottom: 0.75rem;
+}
+
+.git-status-bar {
+  font-size: 0.8rem;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.git-status-branch {
+  font-family: monospace;
+}
+
+.git-status-updated {
+  color: color-mix(in srgb, orange 80%, currentColor);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.git-status-reload {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+  border-radius: 0.2rem;
+  border: 1px solid color-mix(in srgb, orange 50%, transparent);
+  background: color-mix(in srgb, orange 12%, transparent);
+  cursor: pointer;
 }
 
 #new-card-btn {

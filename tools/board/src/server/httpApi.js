@@ -13,6 +13,7 @@ const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
 const AGENTS_PATH = "/api/agents";
 const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const DONE_EXPORT_PATH = "/api/tasks/export/done";
+const GIT_STATUS_PATH = "/api/git/status";
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
 const DEFAULTS = {
@@ -199,6 +200,14 @@ function formatBacklogExport(tasks, date) {
   return lines.join("\n");
 }
 
+async function handleGitStatus(gitInfoImpl, res) {
+  if (!gitInfoImpl) {
+    return sendJson(res, 200, { branch: null, head: null, headTimestamp: null });
+  }
+  const info = await gitInfoImpl();
+  sendJson(res, 200, info);
+}
+
 async function handleExportBacklog(store, res) {
   const date = todayIso();
   const tasks = await store.list();
@@ -268,7 +277,7 @@ async function handleCancelTask(orchestrator, id, res) {
   sendJson(res, 200, task);
 }
 
-export function createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator }) {
+export function createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator, gitInfoImpl }) {
   return async function requestListener(req, res) {
     try {
       const { pathname } = new URL(req.url, "http://localhost");
@@ -276,6 +285,9 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
       const runMatch = TASK_RUN_PATH_RE.exec(pathname);
       const cancelMatch = TASK_CANCEL_PATH_RE.exec(pathname);
 
+      if (pathname === GIT_STATUS_PATH && req.method === "GET") {
+        return await handleGitStatus(gitInfoImpl, res);
+      }
       if (pathname === AGENTS_PATH && req.method === "GET") {
         return await handleListAgents(agentsDir, res);
       }
@@ -306,7 +318,7 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
       if (cancelMatch && req.method === "POST") {
         return await handleCancelTask(orchestrator, cancelMatch[1], res);
       }
-      if (pathname === AGENTS_PATH || pathname === "/api/tasks" || pathname === BACKLOG_EXPORT_PATH || pathname === DONE_EXPORT_PATH || idMatch || runMatch || cancelMatch) {
+      if (pathname === GIT_STATUS_PATH || pathname === AGENTS_PATH || pathname === "/api/tasks" || pathname === BACKLOG_EXPORT_PATH || pathname === DONE_EXPORT_PATH || idMatch || runMatch || cancelMatch) {
         throw new HttpError(405, `Method ${req.method} not allowed on ${pathname}`);
       }
       throw new HttpError(404, "Not found");
@@ -320,11 +332,11 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
   };
 }
 
-export function startHttpServer({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator, port = 0, host = "127.0.0.1" }) {
+export function startHttpServer({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator, gitInfoImpl, port = 0, host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") {
     throw new Error("HTTP API must bind to 127.0.0.1 only");
   }
-  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator }));
+  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator, gitInfoImpl }));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));

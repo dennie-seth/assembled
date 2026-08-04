@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { FsTaskStore } from "../lib/fsTaskStore.js";
 import { IdAllocator } from "../lib/idAllocator.js";
 import { TaskWatcher } from "../lib/taskWatcher.js";
+import { getGitStatus } from "../lib/gitInfo.js";
 import { createRequestListener } from "./httpApi.js";
 import { WsHub } from "./wsHub.js";
 import { PtyBridge } from "./ptyBridge.js";
@@ -42,8 +43,9 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
 
   watcher.on("task-changed", (event) => hub.broadcast(event));
 
+  const gitInfoImpl = () => getGitStatus(REPO_ROOT);
   const server = http.createServer(
-    createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot: REPO_ROOT, restartCoordinator })
+    createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot: REPO_ROOT, restartCoordinator, gitInfoImpl })
   );
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = new URL(req.url, "http://localhost");

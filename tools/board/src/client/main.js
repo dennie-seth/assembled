@@ -6,11 +6,12 @@ const detailRoot = document.getElementById("detail");
 const consoleRoot = document.getElementById("console");
 const createFormRoot = document.getElementById("create-form");
 const sidePanelRoot = document.getElementById("side-panel");
+const gitStatusRoot = document.getElementById("git-status");
 const newCardBtn = document.getElementById("new-card-btn");
 const terminalRoot = document.getElementById("terminal");
 const terminalToggle = document.getElementById("terminal-toggle");
 
-const app = createApp({ boardRoot, detailRoot, consoleRoot, createFormRoot, sidePanelRoot });
+const app = createApp({ boardRoot, detailRoot, consoleRoot, createFormRoot, sidePanelRoot, gitStatusRoot });
 app.init();
 
 if (newCardBtn) {
