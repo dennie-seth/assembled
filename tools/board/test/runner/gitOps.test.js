@@ -265,4 +265,33 @@ describe("pullDevelop", () => {
       /nonexistent-branch|git pull/i
     );
   });
+
+  it("reports advanced: true and the before/after SHAs when origin has new commits", async () => {
+    const cloneDir = path.join(tmpDir, "other-clone-advanced");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream2.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream2.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: another commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    const { stdout: expectedBefore } = await git(["rev-parse", "HEAD"], repoRoot);
+
+    const result = await pullDevelop({ repoRoot, branch: "develop" });
+
+    const { stdout: expectedAfter } = await git(["rev-parse", "HEAD"], repoRoot);
+    expect(result.advanced).toBe(true);
+    expect(result.before).toBe(expectedBefore.trim());
+    expect(result.after).toBe(expectedAfter.trim());
+    expect(result.after).not.toBe(result.before);
+  });
+
+  it("reports advanced: false when develop is already up to date", async () => {
+    const result = await pullDevelop({ repoRoot, branch: "develop" });
+    expect(result.advanced).toBe(false);
+    expect(result.before).toBe(result.after);
+  });
 });

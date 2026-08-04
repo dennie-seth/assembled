@@ -9,6 +9,7 @@ import { WsHub } from "./wsHub.js";
 import { PtyBridge } from "./ptyBridge.js";
 import { RunOrchestrator } from "../runner/runOrchestrator.js";
 import { ClaudeCliRunner } from "../runner/claudeCliRunner.js";
+import { createRestartCoordinator } from "../runner/serviceRestart.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -26,6 +27,7 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
   const watcher = new TaskWatcher(tasksDir);
   const ptyBridge = new PtyBridge({ cwd: REPO_ROOT });
   const agentsDir = path.join(REPO_ROOT, ".claude", "agents");
+  const restartCoordinator = createRestartCoordinator();
   const orchestrator = new RunOrchestrator({
     store,
     hub,
@@ -34,12 +36,15 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     worktreesDir: path.join(REPO_ROOT, "worktrees"),
     runsDir: path.join(tasksDir, ".runs"),
     agentsDir,
-    rulesDir: path.join(REPO_ROOT, ".claude", "rules")
+    rulesDir: path.join(REPO_ROOT, ".claude", "rules"),
+    onIdle: () => restartCoordinator.notifyIdle()
   });
 
   watcher.on("task-changed", (event) => hub.broadcast(event));
 
-  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot: REPO_ROOT }));
+  const server = http.createServer(
+    createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot: REPO_ROOT, restartCoordinator })
+  );
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = new URL(req.url, "http://localhost");
     if (pathname === WS_BOARD_PATH) {
@@ -65,6 +70,7 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     watcher,
     ptyBridge,
     orchestrator,
+    restartCoordinator,
     async close() {
       hub.close();
       ptyBridge.close();

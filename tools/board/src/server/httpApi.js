@@ -108,7 +108,7 @@ async function handleGetTask(store, id, res) {
   sendJson(res, 200, task);
 }
 
-async function handlePatchTask(store, id, req, res, repoRoot) {
+async function handlePatchTask(store, id, req, res, repoRoot, orchestrator, restartCoordinator) {
   const body = requireJsonObject(await readJsonBody(req));
   if ("id" in body && body.id !== id) {
     throw new HttpError(400, "Cannot change a task's id");
@@ -134,9 +134,16 @@ async function handlePatchTask(store, id, req, res, repoRoot) {
   }
 
   if (updated.status === "done" && repoRoot) {
-    pullDevelop({ repoRoot }).catch((err) => {
-      console.error("pullDevelop failed after card moved to done:", err);
-    });
+    // Fire-and-forget: pull (and any restart it triggers) must not block this response.
+    pullDevelop({ repoRoot })
+      .then((result) => {
+        if (restartCoordinator && result && result.advanced) {
+          restartCoordinator.notifyPulled({ hasActiveRuns: Boolean(orchestrator && orchestrator.hasActiveRuns()) });
+        }
+      })
+      .catch((err) => {
+        console.error("pullDevelop failed after card moved to done:", err);
+      });
   }
 
   sendJson(res, 200, updated);
@@ -261,7 +268,7 @@ async function handleCancelTask(orchestrator, id, res) {
   sendJson(res, 200, task);
 }
 
-export function createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot }) {
+export function createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator }) {
   return async function requestListener(req, res) {
     try {
       const { pathname } = new URL(req.url, "http://localhost");
@@ -288,7 +295,7 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
         return await handleGetTask(store, idMatch[1], res);
       }
       if (idMatch && req.method === "PATCH") {
-        return await handlePatchTask(store, idMatch[1], req, res, repoRoot);
+        return await handlePatchTask(store, idMatch[1], req, res, repoRoot, orchestrator, restartCoordinator);
       }
       if (idMatch && req.method === "DELETE") {
         return await handleDeleteTask(store, idMatch[1], res);
@@ -313,11 +320,11 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
   };
 }
 
-export function startHttpServer({ store, idAllocator, orchestrator, agentsDir, repoRoot, port = 0, host = "127.0.0.1" }) {
+export function startHttpServer({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator, port = 0, host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") {
     throw new Error("HTTP API must bind to 127.0.0.1 only");
   }
-  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot }));
+  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator }));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));

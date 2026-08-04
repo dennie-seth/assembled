@@ -7,10 +7,18 @@ import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
 
 vi.mock("../src/runner/gitOps.js", () => ({
-  pullDevelop: vi.fn().mockResolvedValue(undefined)
+  pullDevelop: vi.fn().mockResolvedValue({ advanced: false, before: "aaa", after: "aaa" })
 }));
 
 import { pullDevelop } from "../src/runner/gitOps.js";
+
+function makeRestartCoordinator() {
+  return { notifyPulled: vi.fn(), notifyIdle: vi.fn() };
+}
+
+function makeOrchestrator(hasActiveRuns) {
+  return { hasActiveRuns: vi.fn(() => hasActiveRuns) };
+}
 
 let tmpDir;
 let server;
@@ -108,5 +116,138 @@ describe("PATCH /api/tasks/:id — done triggers dev branch pull", () => {
     expect(pullDevelop).not.toHaveBeenCalled();
 
     await new Promise((resolve) => bareServer.close(resolve));
+  });
+});
+
+describe("PATCH /api/tasks/:id — done triggers restart-on-pull coordination", () => {
+  it("notifies the restart coordinator with hasActiveRuns: false when the pull advances code and no run is active", async () => {
+    pullDevelop.mockResolvedValueOnce({ advanced: true, before: "aaa", after: "bbb" });
+    const restartCoordinator = makeRestartCoordinator();
+    const orchestrator = makeOrchestrator(false);
+    const withOrchestrator = await startHttpServer({
+      store: new FsTaskStore(tmpDir),
+      idAllocator: new IdAllocator(tmpDir),
+      port: 0,
+      repoRoot: "/fake/repo",
+      orchestrator,
+      restartCoordinator
+    });
+    const { port } = withOrchestrator.address();
+    const url = `http://127.0.0.1:${port}`;
+
+    const createRes = await fetch(`${url}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Restart test", phase: 1 })
+    });
+    const task = await createRes.json();
+
+    await fetch(`${url}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" })
+    });
+
+    await vi.waitFor(() => expect(restartCoordinator.notifyPulled).toHaveBeenCalledWith({ hasActiveRuns: false }));
+
+    await new Promise((resolve) => withOrchestrator.close(resolve));
+  });
+
+  it("notifies the restart coordinator with hasActiveRuns: true when a card run is active — restart must be deferred", async () => {
+    pullDevelop.mockResolvedValueOnce({ advanced: true, before: "aaa", after: "bbb" });
+    const restartCoordinator = makeRestartCoordinator();
+    const orchestrator = makeOrchestrator(true);
+    const withOrchestrator = await startHttpServer({
+      store: new FsTaskStore(tmpDir),
+      idAllocator: new IdAllocator(tmpDir),
+      port: 0,
+      repoRoot: "/fake/repo",
+      orchestrator,
+      restartCoordinator
+    });
+    const { port } = withOrchestrator.address();
+    const url = `http://127.0.0.1:${port}`;
+
+    const createRes = await fetch(`${url}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Restart deferred test", phase: 1 })
+    });
+    const task = await createRes.json();
+
+    await fetch(`${url}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" })
+    });
+
+    await vi.waitFor(() => expect(restartCoordinator.notifyPulled).toHaveBeenCalledWith({ hasActiveRuns: true }));
+
+    await new Promise((resolve) => withOrchestrator.close(resolve));
+  });
+
+  it("does not notify the restart coordinator when the pull was a no-op (HEAD did not advance)", async () => {
+    pullDevelop.mockResolvedValueOnce({ advanced: false, before: "aaa", after: "aaa" });
+    const restartCoordinator = makeRestartCoordinator();
+    const orchestrator = makeOrchestrator(false);
+    const withOrchestrator = await startHttpServer({
+      store: new FsTaskStore(tmpDir),
+      idAllocator: new IdAllocator(tmpDir),
+      port: 0,
+      repoRoot: "/fake/repo",
+      orchestrator,
+      restartCoordinator
+    });
+    const { port } = withOrchestrator.address();
+    const url = `http://127.0.0.1:${port}`;
+
+    const createRes = await fetch(`${url}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "No-op pull test", phase: 1 })
+    });
+    const task = await createRes.json();
+
+    await fetch(`${url}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" })
+    });
+
+    await vi.waitFor(() => expect(pullDevelop).toHaveBeenCalled());
+    await new Promise((r) => setImmediate(r));
+    expect(restartCoordinator.notifyPulled).not.toHaveBeenCalled();
+
+    await new Promise((resolve) => withOrchestrator.close(resolve));
+  });
+
+  it("does not throw when the pull advances code but no restartCoordinator was configured on the server", async () => {
+    pullDevelop.mockResolvedValueOnce({ advanced: true, before: "aaa", after: "bbb" });
+    const noCoordinatorServer = await startHttpServer({
+      store: new FsTaskStore(tmpDir),
+      idAllocator: new IdAllocator(tmpDir),
+      port: 0,
+      repoRoot: "/fake/repo"
+    });
+    const { port } = noCoordinatorServer.address();
+    const url = `http://127.0.0.1:${port}`;
+
+    const createRes = await fetch(`${url}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "No coordinator test", phase: 1 })
+    });
+    const task = await createRes.json();
+
+    const res = await fetch(`${url}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" })
+    });
+
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(pullDevelop).toHaveBeenCalled());
+
+    await new Promise((resolve) => noCoordinatorServer.close(resolve));
   });
 });

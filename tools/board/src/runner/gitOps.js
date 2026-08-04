@@ -108,7 +108,12 @@ export async function getHeadCommit({ worktreeDir }) {
   return stdout.trim();
 }
 
-/** Pulls the latest commits for `branch` (default "develop") into repoRoot from origin. */
+/** Pulls the latest commits for `branch` (default "develop") into repoRoot from origin. Reports whether HEAD moved, so callers know whether there's new code to pick up. */
 export async function pullDevelop({ repoRoot, branch = "develop" }) {
+  const { stdout: beforeOut } = await git(["rev-parse", "HEAD"], repoRoot);
+  const before = beforeOut.trim();
   await git(["pull", "origin", branch], repoRoot);
+  const { stdout: afterOut } = await git(["rev-parse", "HEAD"], repoRoot);
+  const after = afterOut.trim();
+  return { advanced: before !== after, before, after };
 }
