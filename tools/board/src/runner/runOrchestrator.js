@@ -7,6 +7,15 @@ import { loadAgentDef, loadRules } from "./configLoader.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { createRunLog } from "./runLog.js";
 import * as gitOps from "./gitOps.js";
+import * as githubOps from "./githubOps.js";
+import { buildPrTitle, buildPrBody } from "./prBuilder.js";
+
+const AUTO_OPEN_PR_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
+
+/** AUTO_OPEN_PR env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable auto-PR on PASS. */
+function autoOpenPrFromEnv() {
+  return !AUTO_OPEN_PR_DISABLE_VALUES.has((process.env.AUTO_OPEN_PR ?? "").toLowerCase());
+}
 
 /** Appends a timestamped `## <heading>` note to a task body -- how validation results are recorded on the card. */
 export function appendNote(body, heading, text) {
@@ -30,6 +39,8 @@ export class RunOrchestrator {
     hub,
     runner,
     git = gitOps,
+    github = githubOps,
+    autoOpenPr = autoOpenPrFromEnv(),
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
@@ -50,6 +61,8 @@ export class RunOrchestrator {
     this.hub = hub;
     this.runner = runner;
     this.git = git;
+    this.github = github;
+    this.autoOpenPr = autoOpenPr;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
@@ -186,7 +199,7 @@ export class RunOrchestrator {
     }
 
     if (verdict.verdict === "PASS") {
-      await this._handlePass(taskId, task, worktreeDir, branch, verdict);
+      await this._handlePass(taskId, task, worktreeDir, branch, verdict, runLog);
     } else {
       await this._handleFailValidation(taskId, verdict);
     }
@@ -309,7 +322,7 @@ export class RunOrchestrator {
     });
   }
 
-  async _handlePass(taskId, task, worktreeDir, branch, verdict) {
+  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog) {
     let commit;
     try {
       await this.git.commitAll({
@@ -323,6 +336,8 @@ export class RunOrchestrator {
       return;
     }
 
+    const prUrl = await this._openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog });
+
     try {
       await this.git.removeWorktree({ repoRoot: this.repoRoot, worktreeDir });
     } catch {
@@ -330,11 +345,59 @@ export class RunOrchestrator {
     }
 
     const current = await this.store.get(taskId);
-    await this._updateAndBroadcast(taskId, {
-      status: "review",
-      branch,
-      commit,
-      body: appendNote(current.body, "Validation: PASS", verdict.notes)
-    });
+    let body = appendNote(current.body, "Validation: PASS", verdict.notes);
+    const patch = { status: "review", branch, commit, body };
+    if (prUrl) {
+      patch.pr = prUrl;
+      patch.body = appendNote(body, "PR", prUrl);
+    }
+    await this._updateAndBroadcast(taskId, patch);
+  }
+
+  /**
+   * Finalize step: opens (or reuses) a GitHub PR for the just-pushed branch
+   * via the `gh` CLI. Degrades gracefully -- gh missing/unauthenticated, a
+   * disabled autoOpenPr flag, or a `gh pr create` failure all just skip PR
+   * creation and log why; none of them fail the run or block the card.
+   * Returns the PR URL on success, or null when no PR was opened.
+   */
+  async _openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog }) {
+    if (!this.autoOpenPr) {
+      await this._logFinalize(taskId, runLog, "PR not opened: auto-open-pr disabled (AUTO_OPEN_PR)");
+      return null;
+    }
+
+    const availability = await this.github.checkAvailability({ worktreeDir });
+    if (!availability.available) {
+      const message =
+        availability.reason === "not-installed"
+          ? "PR not opened: gh CLI not installed -- install gh and run 'gh auth login' to enable auto-PR"
+          : "PR not opened: gh not authenticated -- run 'gh auth login' to enable auto-PR";
+      await this._logFinalize(taskId, runLog, message);
+      return null;
+    }
+
+    try {
+      const existing = await this.github.findExistingPr({ worktreeDir, branch });
+      if (existing) {
+        await this._logFinalize(taskId, runLog, `PR already exists, reusing: ${existing}`);
+        return existing;
+      }
+
+      const title = buildPrTitle({ task });
+      const body = buildPrBody({ task, verdict });
+      const url = await this.github.createPr({ worktreeDir, base: this.baseBranch, head: branch, title, body });
+      await this._logFinalize(taskId, runLog, `Opened PR: ${url}`);
+      return url;
+    } catch (err) {
+      await this._logFinalize(taskId, runLog, `PR not opened: gh pr create failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  async _logFinalize(taskId, runLog, message) {
+    const event = { type: "finalize", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "finalize", event });
   }
 }

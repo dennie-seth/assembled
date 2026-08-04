@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { buildPrTitle, buildPrBody } from "../../src/runner/prBuilder.js";
 import { EventEmitter } from "node:events";
 import { RunOrchestrator, appendNote } from "../../src/runner/runOrchestrator.js";
 
@@ -69,7 +70,16 @@ function baseTask(overrides = {}) {
   };
 }
 
-function makeOrchestrator({ store, git, runner, hub, runLogs = [], ...overrides } = {}) {
+function makeGithub(overrides = {}) {
+  return {
+    checkAvailability: vi.fn(async () => ({ available: false, reason: "not-installed" })),
+    findExistingPr: vi.fn(async () => null),
+    createPr: vi.fn(async () => "https://github.com/example/repo/pull/1"),
+    ...overrides
+  };
+}
+
+function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], ...overrides } = {}) {
   const createRunLogFn = vi.fn(async () => {
     const log = makeRunLog();
     runLogs.push(log);
@@ -81,6 +91,7 @@ function makeOrchestrator({ store, git, runner, hub, runLogs = [], ...overrides 
     hub: hub ?? { broadcast: vi.fn() },
     runner,
     git,
+    github: github ?? makeGithub(),
     repoRoot: "/repo",
     worktreesDir: "/repo/worktrees",
     runsDir: "/repo/tasks/.runs",
@@ -394,6 +405,166 @@ describe("RunOrchestrator.runCard — guardrails", () => {
     for (const task of store.tasks.values()) {
       expect(task.status).not.toBe("done");
     }
+  });
+});
+
+describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
+  it("(a) on PASS, opens a PR via gh with base=develop, head=feature/T-XXXX, and a non-empty title/body", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.createPr).toHaveBeenCalledTimes(1);
+    const call = github.createPr.mock.calls[0][0];
+    expect(call.base).toBe("develop");
+    expect(call.head).toBe("feature/T-0001");
+    expect(call.title).toBeTruthy();
+    expect(call.body).toBeTruthy();
+  });
+
+  it("(b) when gh is unavailable (not installed or not authenticated), the run still succeeds and logs a skip instead of throwing", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: false, reason: "not-authenticated" })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, hub, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await expect(runPromise).resolves.not.toThrow();
+
+    expect(github.createPr).not.toHaveBeenCalled();
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.pr).toBeFalsy();
+
+    const finalizeMessages = hub.broadcast.mock.calls
+      .map(([msg]) => msg)
+      .filter((m) => m.type === "run-event" && m.phase === "finalize");
+    expect(finalizeMessages.some((m) => /gh not authenticated/i.test(m.event.message))).toBe(true);
+  });
+
+  it("(c) when a PR already exists for the branch, reuses its URL instead of creating a duplicate", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      findExistingPr: vi.fn(async () => "https://github.com/example/repo/pull/55")
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.createPr).not.toHaveBeenCalled();
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/55");
+  });
+
+  it("(d) a FAIL verdict never opens a PR", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "missing test"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.checkAvailability).not.toHaveBeenCalled();
+    expect(github.createPr).not.toHaveBeenCalled();
+  });
+
+  it("(e) on success, the PR URL is recorded on the card: pr frontmatter field and a ## PR body note", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr: vi.fn(async () => "https://github.com/example/repo/pull/77")
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/77");
+    expect(finalTask.body).toContain("https://github.com/example/repo/pull/77");
+  });
+
+  it("composes the PR title/body from the card's own fields and the reviewer's verdict notes", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "npm test: 611 passed"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    const task = baseTask();
+    const verdict = { verdict: "PASS", notes: "npm test: 611 passed" };
+    const call = github.createPr.mock.calls[0][0];
+    expect(call.title).toBe(buildPrTitle({ task }));
+    expect(call.body).toBe(buildPrBody({ task, verdict }));
+  });
+
+  it("respects autoOpenPr: false (AUTO_OPEN_PR config flag) by never contacting gh", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github, autoOpenPr: false });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.checkAvailability).not.toHaveBeenCalled();
+    expect(github.createPr).not.toHaveBeenCalled();
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
   });
 });
 

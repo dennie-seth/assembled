@@ -20,6 +20,7 @@ function makeTask(overrides = {}) {
     created: "2026-07-31",
     branch: null,
     commit: null,
+    pr: null,
     body: "## Context\n...\n## Acceptance\n- [ ] ...\n",
     ...overrides
   };
