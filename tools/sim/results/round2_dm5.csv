@@ -1,0 +1,4 @@
+policy,seed,ticks_run,population,gini_items_received,min_items_received,max_items_received,mean_items_received,violation_summary
+fifo,42,6000,20,0.04185684125867084,440,557,497.35,"{""INV-7"": 6032, ""INV-8"": 474860, ""INV-9"": 22}"
+random,42,6000,20,0.03899940909986199,449,578,507.7,"{""INV-7"": 6001, ""INV-8"": 474940, ""INV-9"": 3}"
+need_weighted,42,6000,20,0.051121476776498476,446,598,503.8,"{""INV-7"": 6023, ""INV-8"": 473880, ""INV-9"": 24}"

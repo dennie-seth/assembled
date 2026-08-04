@@ -1,0 +1,227 @@
+[
+  {
+    "population": 2,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.9015769650399688,
+    "inv7_tick_fraction": 1.0,
+    "inv7_tick_fraction_min": 1.0,
+    "inv7_tick_fraction_max": 1.0,
+    "inv8_tick_fraction": 1.0,
+    "inv9_tick_fraction": 0.0
+  },
+  {
+    "population": 3,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.953279788999616,
+    "inv7_tick_fraction": 1.0,
+    "inv7_tick_fraction_min": 1.0,
+    "inv7_tick_fraction_max": 1.0,
+    "inv8_tick_fraction": 1.0,
+    "inv9_tick_fraction": 0.0
+  },
+  {
+    "population": 4,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.8906429378462994,
+    "inv7_tick_fraction": 1.0,
+    "inv7_tick_fraction_min": 1.0,
+    "inv7_tick_fraction_max": 1.0,
+    "inv8_tick_fraction": 1.0,
+    "inv9_tick_fraction": 0.0005833333333333334
+  },
+  {
+    "population": 5,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.9407443086578606,
+    "inv7_tick_fraction": 1.0,
+    "inv7_tick_fraction_min": 1.0,
+    "inv7_tick_fraction_max": 1.0,
+    "inv8_tick_fraction": 1.0,
+    "inv9_tick_fraction": 0.0008500000000000001
+  },
+  {
+    "population": 6,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.9534054389133275,
+    "inv7_tick_fraction": 1.0,
+    "inv7_tick_fraction_min": 1.0,
+    "inv7_tick_fraction_max": 1.0,
+    "inv8_tick_fraction": 1.0,
+    "inv9_tick_fraction": 0.0005666666666666666
+  },
+  {
+    "population": 8,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.945956856221485,
+    "inv7_tick_fraction": 1.0,
+    "inv7_tick_fraction_min": 1.0,
+    "inv7_tick_fraction_max": 1.0,
+    "inv8_tick_fraction": 1.0,
+    "inv9_tick_fraction": 0.0034166666666666664
+  },
+  {
+    "population": 10,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.921391701271046,
+    "inv7_tick_fraction": 1.0,
+    "inv7_tick_fraction_min": 1.0,
+    "inv7_tick_fraction_max": 1.0,
+    "inv8_tick_fraction": 1.0,
+    "inv9_tick_fraction": 0.00175
+  },
+  {
+    "population": 15,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.9507172993730983,
+    "inv7_tick_fraction": 1.0,
+    "inv7_tick_fraction_min": 1.0,
+    "inv7_tick_fraction_max": 1.0,
+    "inv8_tick_fraction": 1.0,
+    "inv9_tick_fraction": 0.002266666666666667
+  },
+  {
+    "population": 20,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.93151750944962,
+    "inv7_tick_fraction": 0.03241666666666667,
+    "inv7_tick_fraction_min": 0.0283,
+    "inv7_tick_fraction_max": 0.03655,
+    "inv8_tick_fraction": 0.9364833333333333,
+    "inv9_tick_fraction": 0.006933333333333333
+  },
+  {
+    "population": 30,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.9072272061684203,
+    "inv7_tick_fraction": 0.08011666666666667,
+    "inv7_tick_fraction_min": 0.0241,
+    "inv7_tick_fraction_max": 0.19175,
+    "inv8_tick_fraction": 0.9305833333333333,
+    "inv9_tick_fraction": 0.012983333333333333
+  },
+  {
+    "population": 50,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.8818538580211217,
+    "inv7_tick_fraction": 0.07858333333333332,
+    "inv7_tick_fraction_min": 0.04565,
+    "inv7_tick_fraction_max": 0.10385,
+    "inv8_tick_fraction": 0.9246166666666666,
+    "inv9_tick_fraction": 0.018183333333333333
+  },
+  {
+    "population": 75,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.8647760998717673,
+    "inv7_tick_fraction": 0.046033333333333336,
+    "inv7_tick_fraction_min": 0.0291,
+    "inv7_tick_fraction_max": 0.06145,
+    "inv8_tick_fraction": 0.9288,
+    "inv9_tick_fraction": 0.0257
+  },
+  {
+    "population": 100,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.8233918479296585,
+    "inv7_tick_fraction": 0.02835,
+    "inv7_tick_fraction_min": 0.0106,
+    "inv7_tick_fraction_max": 0.05565,
+    "inv8_tick_fraction": 0.9292833333333334,
+    "inv9_tick_fraction": 0.04135
+  },
+  {
+    "population": 150,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.787076461536794,
+    "inv7_tick_fraction": 0.07263333333333333,
+    "inv7_tick_fraction_min": 0.0656,
+    "inv7_tick_fraction_max": 0.0783,
+    "inv8_tick_fraction": 0.9309166666666666,
+    "inv9_tick_fraction": 0.057083333333333326
+  },
+  {
+    "population": 200,
+    "ticks_run": 20000,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "avg_steady_state_items_per_hour": 2.7076790857297204,
+    "inv7_tick_fraction": 0.04508333333333333,
+    "inv7_tick_fraction_min": 0.01985,
+    "inv7_tick_fraction_max": 0.0797,
+    "inv8_tick_fraction": 0.9494833333333332,
+    "inv9_tick_fraction": 0.08368333333333333
+  }
+]
