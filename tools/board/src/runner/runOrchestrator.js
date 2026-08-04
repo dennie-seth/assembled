@@ -55,7 +55,8 @@ export class RunOrchestrator {
     buildReviewerPromptFn = buildReviewerPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     createRunLogFn = createRunLog,
-    now = () => new Date()
+    now = () => new Date(),
+    onIdle = () => {}
   }) {
     this.store = store;
     this.hub = hub;
@@ -78,11 +79,23 @@ export class RunOrchestrator {
     this.extractVerdictFn = extractVerdictFn;
     this.createRunLogFn = createRunLogFn;
     this.now = now;
+    this.onIdle = onIdle;
     this.activeRuns = new Map();
+    // Tracks the full span of runCard() (worktree setup through cleanup), unlike
+    // activeRuns above which is only set while a phase's child process is actually
+    // alive -- it goes empty between phases (e.g. implementer exited, reviewer not
+    // yet spawned). Anything gating "is it safe to restart the service" needs the
+    // wider window: killing the process between phases would still orphan the run.
+    this.activeCardIds = new Set();
   }
 
   isRunning(taskId) {
     return this.activeRuns.has(taskId);
+  }
+
+  /** True while any card run (from worktree setup through final cleanup) is in flight. */
+  hasActiveRuns() {
+    return this.activeCardIds.size > 0;
   }
 
   /**
@@ -112,20 +125,28 @@ export class RunOrchestrator {
     const branch = `feature/${taskId}`;
     const worktreeDir = path.join(this.worktreesDir, taskId);
 
+    this.activeCardIds.add(taskId);
     try {
-      await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
-    } catch (err) {
-      await this._blocked(taskId, `worktree creation failed: ${err.message}`);
-      return;
-    }
+      try {
+        await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
+      } catch (err) {
+        await this._blocked(taskId, `worktree creation failed: ${err.message}`);
+        return;
+      }
 
-    await this._updateAndBroadcast(taskId, { status: "in-progress" });
+      await this._updateAndBroadcast(taskId, { status: "in-progress" });
 
-    const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
-    try {
-      await this._runCardInWorktree(taskId, task, worktreeDir, branch, runLog);
+      const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
+      try {
+        await this._runCardInWorktree(taskId, task, worktreeDir, branch, runLog);
+      } finally {
+        await runLog.close();
+      }
     } finally {
-      await runLog.close();
+      this.activeCardIds.delete(taskId);
+      if (this.activeCardIds.size === 0) {
+        this.onIdle();
+      }
     }
   }
 

@@ -983,6 +983,104 @@ describe("RunOrchestrator — broadcasts an authoritative status change immediat
   });
 });
 
+describe("RunOrchestrator.hasActiveRuns / onIdle -- restart-safety window", () => {
+  it("is false before a run starts, true once runCard begins, and false again only after runCard fully resolves", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const onIdle = vi.fn();
+    const orchestrator = makeOrchestrator({ store, git, runner, onIdle });
+
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    expect(orchestrator.hasActiveRuns()).toBe(true);
+    expect(onIdle).not.toHaveBeenCalled();
+
+    implChild.emit("exit", 0, null);
+
+    // Between the implementer exiting and the reviewer child being spawned, the
+    // phase-level activeRuns map is briefly empty -- but the card run is still
+    // in flight, so hasActiveRuns() (the restart-safety signal) must stay true.
+    const reviewChild = await nthChild(runner, 2);
+    expect(orchestrator.hasActiveRuns()).toBe(true);
+    expect(onIdle).not.toHaveBeenCalled();
+
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+    expect(onIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onIdle after a cancelled run finishes cleaning up", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const onIdle = vi.fn();
+    const orchestrator = makeOrchestrator({ store, git, runner, onIdle });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await nthChild(runner, 1);
+    expect(orchestrator.hasActiveRuns()).toBe(true);
+
+    await orchestrator.cancelRun("T-0001");
+    await runPromise;
+
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+    expect(onIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onIdle even when the run is blocked by a worktree creation failure", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ addWorktree: vi.fn(async () => { throw new Error("disk full"); }) });
+    const runner = makeRunner();
+    const onIdle = vi.fn();
+    const orchestrator = makeOrchestrator({ store, git, runner, onIdle });
+
+    await orchestrator.runCard("T-0001");
+
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+    expect(onIdle).toHaveBeenCalledTimes(1);
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+
+  it("keeps hasActiveRuns() true for one card while a second card is still running (no premature idle)", async () => {
+    const store = makeStore([baseTask({ id: "T-0001" }), baseTask({ id: "T-0002" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const onIdle = vi.fn();
+    const orchestrator = makeOrchestrator({ store, git, runner, onIdle });
+
+    const run1 = orchestrator.runCard("T-0001");
+    const child1Impl = await nthChild(runner, 1);
+    const run2 = orchestrator.runCard("T-0002");
+    const child2Impl = await nthChild(runner, 2);
+
+    child1Impl.emit("exit", 0, null);
+    const child1Review = await nthChild(runner, 3);
+    child1Review.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "green")}`)));
+    child1Review.emit("exit", 0, null);
+    await run1;
+
+    // T-0002's implementer is still running -- must not report idle yet.
+    expect(orchestrator.hasActiveRuns()).toBe(true);
+    expect(onIdle).not.toHaveBeenCalled();
+
+    child2Impl.emit("exit", 0, null);
+    const child2Review = await nthChild(runner, 4);
+    child2Review.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "green")}`)));
+    child2Review.emit("exit", 0, null);
+    await run2;
+
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+    expect(onIdle).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("appendNote", () => {
   it("appends a heading and text to the end of a task body", () => {
     const result = appendNote("## Context\nOriginal.\n", "Validation: PASS", "all good");
