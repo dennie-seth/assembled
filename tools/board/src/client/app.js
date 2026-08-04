@@ -55,7 +55,7 @@ export function createApp({
         onClose: handleClose,
         onDelete: handleDelete,
         agentOptions,
-        allTaskIds: tasks.map((task) => task.id)
+        allTasks: tasks.map((task) => ({ id: task.id, title: task.title }))
       });
     }
     if (consoleRoot) {
@@ -68,7 +68,7 @@ export function createApp({
       renderCreateForm(createFormRoot, {
         visible: createFormOpen,
         agentOptions,
-        existingTaskIds: tasks.map((task) => task.id),
+        availableTasks: tasks.map((task) => ({ id: task.id, title: task.title })),
         onCreate: handleCreateSubmit,
         onCancel: handleCancelCreate,
         error: createError
