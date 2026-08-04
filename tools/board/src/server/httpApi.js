@@ -10,6 +10,7 @@ const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
 const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
 const AGENTS_PATH = "/api/agents";
+const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
 const DEFAULTS = {
@@ -161,6 +162,38 @@ async function handleListAgents(agentsDir, res) {
   sendJson(res, 200, agents);
 }
 
+function formatBacklogExport(tasks, date) {
+  const backlog = tasks.filter((t) => t.status === "backlog");
+  const count = backlog.length;
+  const lines = [
+    `# Backlog Export — ${date}`,
+    ``,
+    `Total: ${count} task${count === 1 ? "" : "s"}`,
+    ``
+  ];
+  for (const t of backlog) {
+    lines.push(`## ${t.id}: ${t.title}`);
+    lines.push(`- Priority: ${t.priority}`);
+    lines.push(`- Agent: ${t.agent ?? "unassigned"}`);
+    lines.push(`- Phase: ${t.phase}`);
+    lines.push(``);
+  }
+  return lines.join("\n");
+}
+
+async function handleExportBacklog(store, res) {
+  const date = todayIso();
+  const tasks = await store.list();
+  const text = formatBacklogExport(tasks, date);
+  const filename = `backlog-${date}.txt`;
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${filename}"`,
+    "Content-Length": Buffer.byteLength(text)
+  });
+  res.end(text);
+}
+
 async function handleDeleteTask(store, id, res) {
   const task = await store.get(id);
   if (!task) {
@@ -196,6 +229,9 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
       if (pathname === AGENTS_PATH && req.method === "GET") {
         return await handleListAgents(agentsDir, res);
       }
+      if (pathname === BACKLOG_EXPORT_PATH && req.method === "GET") {
+        return await handleExportBacklog(store, res);
+      }
       if (pathname === "/api/tasks" && req.method === "GET") {
         return await handleListTasks(store, res);
       }
@@ -217,7 +253,7 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
       if (cancelMatch && req.method === "POST") {
         return await handleCancelTask(orchestrator, cancelMatch[1], res);
       }
-      if (pathname === AGENTS_PATH || pathname === "/api/tasks" || idMatch || runMatch || cancelMatch) {
+      if (pathname === AGENTS_PATH || pathname === "/api/tasks" || pathname === BACKLOG_EXPORT_PATH || idMatch || runMatch || cancelMatch) {
         throw new HttpError(405, `Method ${req.method} not allowed on ${pathname}`);
       }
       throw new HttpError(404, "Not found");
