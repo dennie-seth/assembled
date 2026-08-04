@@ -99,8 +99,25 @@ body:has(#side-panel:not([hidden])) {
   cursor: grab;
 }
 
+.card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
 .card-title {
   font-weight: 600;
+}
+
+.card-blocker-badge {
+  font-size: 0.75rem;
+  cursor: help;
+}
+
+.column-sort {
+  font-size: 0.75rem;
+  margin-bottom: 0.5rem;
+  width: 100%;
 }
 
 .card-meta {

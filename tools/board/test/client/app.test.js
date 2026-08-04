@@ -467,6 +467,42 @@ describe("createApp create-card wiring", () => {
   });
 });
 
+describe("createApp per-column sort wiring", () => {
+  it("re-renders the board with the newly chosen sort key for that column", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+
+    app.handleSortChange("backlog", "priority");
+
+    const select = boardRoot.querySelector('.column[data-status="backlog"] .column-sort');
+    expect(select.value).toBe("priority");
+  });
+
+  it("keeps a column's chosen sort key across a socket-triggered refresh", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleSortChange("ready", "agent");
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...t, title: "Renamed elsewhere" } });
+
+    const select = boardRoot.querySelector('.column[data-status="ready"] .column-sort');
+    expect(select.value).toBe("agent");
+  });
+
+  it("keeps each column's sort key independent", async () => {
+    const { app, boardRoot } = makeApp();
+    await app.init();
+
+    app.handleSortChange("backlog", "phase");
+    app.handleSortChange("ready", "agent");
+
+    expect(boardRoot.querySelector('.column[data-status="backlog"] .column-sort').value).toBe("phase");
+    expect(boardRoot.querySelector('.column[data-status="ready"] .column-sort').value).toBe("agent");
+  });
+});
+
 describe("createApp delete-card wiring", () => {
   it("deletes a task, removes it from the board, and closes the detail panel if it was open", async () => {
     const t = task({ id: "T-0001", title: "Doomed", status: "backlog" });
