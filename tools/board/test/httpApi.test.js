@@ -505,3 +505,58 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
     expect(res.status).toBe(405);
   });
 });
+
+describe("GET /api/tasks/export/backlog", () => {
+  async function createTask(overrides = {}) {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody(overrides))
+    });
+    return res.json();
+  }
+
+  it("returns 200 with text/plain content type", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/plain/);
+  });
+
+  it("returns a Content-Disposition attachment header referencing backlog", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const cd = res.headers.get("content-disposition");
+    expect(cd).toMatch(/attachment/);
+    expect(cd).toMatch(/backlog/);
+  });
+
+  it("includes only backlog task titles, not tasks of other statuses", async () => {
+    await createTask({ title: "Alpha task", status: "backlog" });
+    await createTask({ title: "Beta task", status: "ready" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    expect(text).toContain("Alpha task");
+    expect(text).not.toContain("Beta task");
+  });
+
+  it("includes task metadata (id, priority, agent, phase) in the export", async () => {
+    await createTask({ title: "Meta task", priority: "P0", agent: "infra", phase: 3, status: "backlog" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    expect(text).toContain("T-0001");
+    expect(text).toContain("P0");
+    expect(text).toContain("infra");
+    expect(text).toContain("3");
+  });
+
+  it("indicates zero tasks when there are no backlog tasks", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("0 tasks");
+  });
+
+  it("returns 405 for non-GET methods on the export route", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`, { method: "POST" });
+    expect(res.status).toBe(405);
+  });
+});

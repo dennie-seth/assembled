@@ -113,6 +113,10 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
   const sortKey = callbacks.columnSort?.get(status) ?? "id";
   column.appendChild(sortSelectFor(status, sortKey, callbacks.onSortChange ?? (() => {})));
 
+  if (status === "backlog" && callbacks.onExportBacklog) {
+    column.appendChild(actionButton("column-export-backlog", "Export", callbacks.onExportBacklog));
+  }
+
   const list = document.createElement("div");
   list.className = "column-cards";
   list.dataset.status = status;

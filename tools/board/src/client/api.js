@@ -70,6 +70,10 @@ export function cancelTask(id) {
   return postAction(`${TASKS_PATH}/${id}/cancel`);
 }
 
+export function exportBacklog(navigateTo = (url) => window.location.assign(url)) {
+  navigateTo("/api/tasks/export/backlog");
+}
+
 export function connectBoardSocket(onMessage) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${protocol}//${window.location.host}${WS_PATH}`);
