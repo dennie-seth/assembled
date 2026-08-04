@@ -8,13 +8,15 @@ import {
   createTask,
   deleteTask,
   exportBacklog,
-  exportDone
+  exportDone,
+  fetchGitStatus
 } from "./api.js";
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard } from "./boardView.js";
 import { renderDetailPanel } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
 import { renderCreateForm } from "./createForm.js";
+import { renderGitStatusBar } from "./gitStatusBar.js";
 
 export function createApp({
   boardRoot,
@@ -22,6 +24,7 @@ export function createApp({
   consoleRoot,
   createFormRoot,
   sidePanelRoot,
+  gitStatusRoot = null,
   fetchTasksImpl = fetchTasks,
   fetchAgentsImpl = fetchAgents,
   patchTaskImpl = patchTask,
@@ -31,7 +34,9 @@ export function createApp({
   createTaskImpl = createTask,
   deleteTaskImpl = deleteTask,
   exportBacklogImpl = exportBacklog,
-  exportDoneImpl = exportDone
+  exportDoneImpl = exportDone,
+  fetchGitStatusImpl = fetchGitStatus,
+  gitPollIntervalMs = 30000
 }) {
   let tasks = [];
   let agentOptions = [];
@@ -41,6 +46,8 @@ export function createApp({
   let createError = null;
   const runLogs = new Map();
   const columnSort = new Map(STATUSES.map((status) => [status, "id"]));
+  let gitStatus = null;
+  let knownGitHead = null;
 
   function render() {
     renderBoard(boardRoot, tasks, {
@@ -82,6 +89,9 @@ export function createApp({
         onCancel: handleCancelCreate,
         error: createError
       });
+    }
+    if (gitStatusRoot) {
+      renderGitStatusBar(gitStatusRoot, gitStatus);
     }
   }
 
@@ -215,6 +225,18 @@ export function createApp({
     render();
   }
 
+  async function pollGitStatus() {
+    if (!fetchGitStatusImpl) return;
+    try {
+      const info = await fetchGitStatusImpl();
+      const updated = knownGitHead !== null && info.head !== knownGitHead;
+      gitStatus = { ...info, updated, onReload: () => window.location.reload() };
+      render();
+    } catch {
+      // Non-fatal: git status is informational; don't surface fetch errors on the board.
+    }
+  }
+
   async function init() {
     const [fetchedTasks, fetchedAgents] = await Promise.all([
       fetchTasksImpl(),
@@ -224,6 +246,18 @@ export function createApp({
     agentOptions = fetchedAgents;
     render();
     connectSocketImpl(handleSocketMessage);
+
+    if (fetchGitStatusImpl) {
+      const info = await fetchGitStatusImpl().catch(() => null);
+      if (info) {
+        knownGitHead = info.head;
+        gitStatus = { ...info, updated: false, onReload: () => window.location.reload() };
+        render();
+        if (gitPollIntervalMs > 0) {
+          setInterval(pollGitStatus, gitPollIntervalMs);
+        }
+      }
+    }
   }
 
   return {
@@ -243,6 +277,7 @@ export function createApp({
     handleSocketMessage,
     handleExportBacklog,
     handleExportDone,
+    pollGitStatus,
     getTasks: () => tasks,
     getSelectedId: () => selectedId,
     getError: () => error

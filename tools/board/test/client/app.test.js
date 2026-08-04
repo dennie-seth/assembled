@@ -23,6 +23,7 @@ function makeApp(overrides = {}) {
   const consoleRoot = document.createElement("div");
   const createFormRoot = document.createElement("div");
   const sidePanelRoot = document.createElement("div");
+  const gitStatusRoot = overrides.gitStatusRoot ?? null;
   const fetchTasksImpl = overrides.fetchTasksImpl ?? vi.fn().mockResolvedValue([]);
   const fetchAgentsImpl = overrides.fetchAgentsImpl ?? vi.fn().mockResolvedValue(["infra", "server"]);
   const patchTaskImpl = overrides.patchTaskImpl ?? vi.fn();
@@ -33,12 +34,14 @@ function makeApp(overrides = {}) {
   const deleteTaskImpl = overrides.deleteTaskImpl ?? vi.fn();
   const exportBacklogImpl = overrides.exportBacklogImpl ?? vi.fn();
   const exportDoneImpl = overrides.exportDoneImpl ?? vi.fn();
+  const fetchGitStatusImpl = overrides.fetchGitStatusImpl ?? null;
   const app = createApp({
     boardRoot,
     detailRoot,
     consoleRoot,
     createFormRoot,
     sidePanelRoot,
+    gitStatusRoot,
     fetchTasksImpl,
     fetchAgentsImpl,
     patchTaskImpl,
@@ -48,7 +51,8 @@ function makeApp(overrides = {}) {
     createTaskImpl,
     deleteTaskImpl,
     exportBacklogImpl,
-    exportDoneImpl
+    exportDoneImpl,
+    fetchGitStatusImpl
   });
   return {
     app,
@@ -57,6 +61,7 @@ function makeApp(overrides = {}) {
     consoleRoot,
     createFormRoot,
     sidePanelRoot,
+    gitStatusRoot,
     fetchTasksImpl,
     fetchAgentsImpl,
     patchTaskImpl,
@@ -66,7 +71,8 @@ function makeApp(overrides = {}) {
     createTaskImpl,
     deleteTaskImpl,
     exportBacklogImpl,
-    exportDoneImpl
+    exportDoneImpl,
+    fetchGitStatusImpl
   };
 }
 
@@ -599,5 +605,60 @@ describe("createApp done export wiring", () => {
     app.handleExportDone();
 
     expect(exportDoneImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createApp git status wiring", () => {
+  it("calls fetchGitStatusImpl on init and renders branch in gitStatusRoot", async () => {
+    const gitStatusRoot = document.createElement("div");
+    const fetchGitStatusImpl = vi.fn().mockResolvedValue({
+      branch: "main",
+      head: "abc123def456abc123def456abc123def456abc1",
+      headTimestamp: "2026-08-04T10:00:00Z"
+    });
+    const { app } = makeApp({ fetchGitStatusImpl, gitStatusRoot });
+    await app.init();
+    expect(fetchGitStatusImpl).toHaveBeenCalled();
+    expect(gitStatusRoot.textContent).toContain("main");
+  });
+
+  it("shows an update banner in gitStatusRoot when pollGitStatus detects a new HEAD", async () => {
+    const gitStatusRoot = document.createElement("div");
+    let callCount = 0;
+    const fetchGitStatusImpl = vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ branch: "main", head: "aaa", headTimestamp: "2026-08-04T10:00:00Z" });
+      }
+      return Promise.resolve({ branch: "main", head: "bbb", headTimestamp: "2026-08-04T11:00:00Z" });
+    });
+    const { app } = makeApp({ fetchGitStatusImpl, gitStatusRoot });
+    await app.init();
+
+    await app.pollGitStatus();
+
+    expect(gitStatusRoot.querySelector(".git-status-updated")).not.toBeNull();
+  });
+
+  it("does not show update banner when HEAD is unchanged across polls", async () => {
+    const gitStatusRoot = document.createElement("div");
+    const fetchGitStatusImpl = vi.fn().mockResolvedValue({
+      branch: "main",
+      head: "abc123",
+      headTimestamp: "2026-08-04T10:00:00Z"
+    });
+    const { app } = makeApp({ fetchGitStatusImpl, gitStatusRoot });
+    await app.init();
+
+    await app.pollGitStatus();
+
+    expect(gitStatusRoot.querySelector(".git-status-updated")).toBeNull();
+  });
+
+  it("renders nothing in gitStatusRoot when fetchGitStatusImpl is not provided", async () => {
+    const gitStatusRoot = document.createElement("div");
+    const { app } = makeApp({ gitStatusRoot });
+    await app.init();
+    expect(gitStatusRoot.children.length).toBe(0);
   });
 });

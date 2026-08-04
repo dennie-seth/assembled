@@ -1,6 +1,7 @@
 const TASKS_PATH = "/api/tasks";
 const AGENTS_PATH = "/api/agents";
 const WS_PATH = "/ws/board";
+const GIT_STATUS_PATH = "/api/git/status";
 
 export async function fetchTasks() {
   const res = await fetch(TASKS_PATH);
@@ -76,6 +77,14 @@ export function exportBacklog(navigateTo = (url) => window.location.assign(url))
 
 export function exportDone(navigateTo = (url) => window.location.assign(url)) {
   navigateTo("/api/tasks/export/done");
+}
+
+export async function fetchGitStatus() {
+  const res = await fetch(GIT_STATUS_PATH);
+  if (!res.ok) {
+    throw new Error(`GET ${GIT_STATUS_PATH} failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 export function connectBoardSocket(onMessage) {
