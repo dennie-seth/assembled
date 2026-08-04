@@ -369,6 +369,16 @@ describe("RunOrchestrator.runCard — guardrails", () => {
     expect(git.addWorktree).not.toHaveBeenCalled();
   });
 
+  it("refuses to run a retired card", async () => {
+    const store = makeStore([baseTask({ status: "retired" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    await expect(orchestrator.runCard("T-0001")).rejects.toThrow(/ready/i);
+    expect(git.addWorktree).not.toHaveBeenCalled();
+  });
+
   it("refuses a second concurrent run of the same card", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();

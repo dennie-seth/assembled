@@ -1,4 +1,4 @@
-export const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked"];
+export const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked", "retired"];
 
 export function groupTasksByStatus(tasks, statuses = STATUSES) {
   const grouped = new Map(statuses.map((status) => [status, []]));

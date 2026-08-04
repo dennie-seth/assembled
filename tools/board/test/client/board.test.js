@@ -45,6 +45,13 @@ describe("groupTasksByStatus", () => {
     const grouped = groupTasksByStatus(tasks);
     expect(grouped.get("weird")).toEqual([tasks[0]]);
   });
+
+  it("buckets retired tasks into their own column, last in status order", () => {
+    const tasks = [task({ id: "T-0001", status: "retired" })];
+    const grouped = groupTasksByStatus(tasks);
+    expect(grouped.get("retired")).toEqual([tasks[0]]);
+    expect(STATUSES[STATUSES.length - 1]).toBe("retired");
+  });
 });
 
 describe("buildStatusPatch", () => {

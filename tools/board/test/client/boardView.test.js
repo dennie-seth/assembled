@@ -115,6 +115,18 @@ describe("renderBoard", () => {
     expect(onCardClick).not.toHaveBeenCalled();
   });
 
+  it("renders a retired column, last, and does not show a Run control on a retired card", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [task({ id: "T-0099", status: "retired" })], { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() });
+
+    const columns = root.querySelectorAll(".column");
+    expect(columns[columns.length - 1].dataset.status).toBe("retired");
+
+    const column = root.querySelector('.column[data-status="retired"]');
+    expect(column.querySelector(".column-header").textContent).toContain("Retired");
+    expect(column.querySelector('.card[data-id="T-0099"] .card-run')).toBeNull();
+  });
+
   it("does not show a Run control on a card that isn't ready", () => {
     const root = document.createElement("div");
     renderBoard(root, [task({ id: "T-0007", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() });
