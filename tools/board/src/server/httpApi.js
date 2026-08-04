@@ -176,6 +176,8 @@ function formatBacklogExport(tasks, date) {
     lines.push(`- Priority: ${t.priority}`);
     lines.push(`- Agent: ${t.agent ?? "unassigned"}`);
     lines.push(`- Phase: ${t.phase}`);
+    lines.push(`- Status: ${t.status}`);
+    lines.push(`- Depends on: ${t.depends_on.length > 0 ? t.depends_on.join(", ") : "none"}`);
     lines.push(``);
   }
   return lines.join("\n");

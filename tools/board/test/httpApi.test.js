@@ -548,6 +548,29 @@ describe("GET /api/tasks/export/backlog", () => {
     expect(text).toContain("3");
   });
 
+  it("includes status in the export for each backlog task", async () => {
+    await createTask({ title: "Status task", status: "backlog" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    expect(text).toContain("Status: backlog");
+  });
+
+  it("includes depends_on in the export listing dependency ids when present", async () => {
+    const dep = await createTask({ title: "Dep task" });
+    await createTask({ title: "Dependent task", depends_on: [dep.id] });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    // The dependent task's section should list the dependency id
+    expect(text).toMatch(/Depends on:.*T-0001/);
+  });
+
+  it("includes depends_on showing none when the task has no dependencies", async () => {
+    await createTask({ title: "Solo task" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    expect(text).toContain("Depends on: none");
+  });
+
   it("indicates zero tasks when there are no backlog tasks", async () => {
     const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
     expect(res.status).toBe(200);
