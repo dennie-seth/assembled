@@ -140,7 +140,7 @@ would be unusable, since exchange is a multi-session social process while
 held bleed is anti-hoarding pressure within a session
 (`07-items-economy.md` §5, `10-time-and-progression.md` §2). Both exact
 values within their ranges are open pending **E-1**
-(`docs/design/OPEN-QUESTIONS.md`) — the simulation harness (T-0099) finds
+(`docs/archive/OPEN-QUESTIONS.md`) — the simulation harness (T-0099) finds
 the precise numbers. INV-10 (bleed termination) requires that no instance
 sits past `bleed_at` without a transfer attempt being made. A well-rated
 note slows its author's held bleed only, never the collapse clock

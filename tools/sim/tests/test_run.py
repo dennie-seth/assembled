@@ -1,6 +1,6 @@
 """Tests for the tuning-sweep runner (T-1/T-2/E-1 parameter grids).
 
-See docs/design/OPEN-QUESTIONS.md, docs/design/10-time-and-progression.md §2/§3/§7.
+See docs/archive/OPEN-QUESTIONS.md, docs/design/10-time-and-progression.md §2/§3/§7.
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@
 **Reproduce:** `cd tools/sim && .venv/bin/python -m sim.run` (writes `tuning_sweep.json` / `tuning_sweep.csv` in this directory; ~2 minutes)
 
 This sweeps the three still-open tuning questions from
-[`docs/design/OPEN-QUESTIONS.md`](../../../docs/design/OPEN-QUESTIONS.md) and
+[`docs/archive/OPEN-QUESTIONS.md`](../../../docs/archive/OPEN-QUESTIONS.md) and
 [`10-time-and-progression.md`](../../../docs/design/10-time-and-progression.md) §2/§3/§7:
 
 - **E-1** — exact held-bleed (60–90 min) / world-escrow-bleed (48–72h) durations within their stated ranges

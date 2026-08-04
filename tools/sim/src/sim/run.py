@@ -9,7 +9,7 @@ can pick exact numbers within the documented brackets:
   T-1  collapse duration (~2-4 week bracket)                  — §7
   T-2  unique-unlock decay (~1 week bracket)                  — §7
 
-See docs/design/OPEN-QUESTIONS.md and docs/design/10-time-and-progression.md.
+See docs/archive/OPEN-QUESTIONS.md and docs/design/10-time-and-progression.md.
 
 Run via `python -m sim.run` (writes tools/sim/results/*).
 """
