@@ -316,7 +316,16 @@ body:has(#terminal-panel.collapsed) #side-panel {
   min-height: 1rem;
 }
 
+.deps-picker {
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
 .deps-picker-select {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   margin-bottom: 0.375rem;
 }
 
