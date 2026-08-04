@@ -23,9 +23,19 @@ function baseOpts(overrides = {}) {
     onClose: vi.fn(),
     onDelete: vi.fn(),
     agentOptions: ["infra", "server", "client", "assets", "audio"],
-    allTaskIds: ["T-0001", "T-0002", "T-0003"],
+    allTasks: [
+      { id: "T-0001", title: "Sample task" },
+      { id: "T-0002", title: "Second task" },
+      { id: "T-0003", title: "Third task" }
+    ],
     ...overrides
   };
+}
+
+function selectDep(root, taskId) {
+  const select = root.querySelector(".detail-deps-edit .deps-picker-select");
+  select.value = taskId;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 describe("renderDetailPanel", () => {
@@ -136,15 +146,18 @@ describe("renderDetailPanel editable agent/phase/depends_on", () => {
     expect(root.querySelector(".detail-phase").value).toBe("3");
   });
 
-  it("renders a dependencies multi-select excluding the task itself, pre-selected to depends_on", () => {
+  it("renders a dependency picker excluding the task itself, with depends_on shown as removable chips", () => {
     const root = document.createElement("div");
     renderDetailPanel(root, task({ id: "T-0001", depends_on: ["T-0002"] }), baseOpts());
-    const select = root.querySelector(".detail-deps-edit");
-    const optionValues = Array.from(select.options).map((o) => o.value);
+
+    const select = root.querySelector(".detail-deps-edit .deps-picker-select");
+    const optionValues = Array.from(select.options).map((o) => o.value).filter(Boolean);
     expect(optionValues).not.toContain("T-0001");
-    expect(optionValues).toEqual(expect.arrayContaining(["T-0002", "T-0003"]));
-    const selected = Array.from(select.selectedOptions).map((o) => o.value);
-    expect(selected).toEqual(["T-0002"]);
+    expect(optionValues).toEqual(["T-0003"]);
+
+    const chips = root.querySelectorAll(".detail-deps-edit .deps-chip");
+    expect(chips.length).toBe(1);
+    expect(chips[0].dataset.id).toBe("T-0002");
   });
 
   it("includes agent, phase, and depends_on in the Save patch when changed", () => {
@@ -154,10 +167,10 @@ describe("renderDetailPanel editable agent/phase/depends_on", () => {
 
     root.querySelector(".detail-agent").value = "server";
     root.querySelector(".detail-phase").value = "5";
-    const depsSelect = root.querySelector(".detail-deps-edit");
-    Array.from(depsSelect.options).forEach((opt) => {
-      opt.selected = opt.value === "T-0003";
-    });
+    root.querySelector('.detail-deps-edit .deps-chip[data-id="T-0002"] .deps-chip-remove').dispatchEvent(
+      new Event("click", { bubbles: true })
+    );
+    selectDep(root, "T-0003");
     root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
 
     expect(onSave).toHaveBeenCalledWith("T-0001", { agent: "server", phase: 5, depends_on: ["T-0003"] });

@@ -167,3 +167,104 @@ describe("renderBoard", () => {
     expect(root.querySelector(".board-error")).toBeNull();
   });
 });
+
+describe("renderBoard blocker badges", () => {
+  it("renders an accessible blocker badge on a task that another task depends on", () => {
+    const root = document.createElement("div");
+    const blocker = task({ id: "T-0001", status: "backlog" });
+    const dependent = task({ id: "T-0002", status: "backlog", depends_on: ["T-0001"] });
+    renderBoard(root, [blocker, dependent], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-blocker-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.title || badge.getAttribute("aria-label")).toMatch(/blocks 1 task/i);
+  });
+
+  it("counts every dependent task in the badge label", () => {
+    const root = document.createElement("div");
+    const blocker = task({ id: "T-0001", status: "backlog" });
+    const dep1 = task({ id: "T-0002", status: "backlog", depends_on: ["T-0001"] });
+    const dep2 = task({ id: "T-0003", status: "backlog", depends_on: ["T-0001"] });
+    renderBoard(root, [blocker, dep1, dep2], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-blocker-badge');
+    expect(badge.title || badge.getAttribute("aria-label")).toMatch(/blocks 2 tasks/i);
+  });
+
+  it("does not render a blocker badge on a task nobody depends on", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "backlog" });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    expect(root.querySelector('.card[data-id="T-0001"] .card-blocker-badge')).toBeNull();
+  });
+
+  it("does not render a blocker badge on the dependent task itself", () => {
+    const root = document.createElement("div");
+    const blocker = task({ id: "T-0001", status: "backlog" });
+    const dependent = task({ id: "T-0002", status: "backlog", depends_on: ["T-0001"] });
+    renderBoard(root, [blocker, dependent], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    expect(root.querySelector('.card[data-id="T-0002"] .card-blocker-badge')).toBeNull();
+  });
+});
+
+describe("renderBoard per-column sort control", () => {
+  it("renders a sort select per column defaulting to id", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const column = root.querySelector('.column[data-status="backlog"]');
+    const sortSelect = column.querySelector(".column-sort");
+    expect(sortSelect).not.toBeNull();
+    expect(sortSelect.value).toBe("id");
+    const values = Array.from(sortSelect.options).map((o) => o.value);
+    expect(values).toEqual(["id", "priority", "agent", "phase"]);
+  });
+
+  it("orders cards within a column by the current sort key for that column", () => {
+    const root = document.createElement("div");
+    const tasks = [
+      task({ id: "T-0003", status: "backlog", priority: "P3" }),
+      task({ id: "T-0001", status: "backlog", priority: "P0" }),
+      task({ id: "T-0002", status: "backlog", priority: "P1" })
+    ];
+    const columnSort = new Map([["backlog", "priority"]]);
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), columnSort });
+
+    const ids = Array.from(root.querySelectorAll('.column[data-status="backlog"] .card')).map((c) => c.dataset.id);
+    expect(ids).toEqual(["T-0001", "T-0002", "T-0003"]);
+  });
+
+  it("sorts each column independently using its own entry in columnSort", () => {
+    const root = document.createElement("div");
+    const tasks = [
+      task({ id: "T-0003", status: "backlog", phase: 3 }),
+      task({ id: "T-0001", status: "backlog", phase: 1 }),
+      task({ id: "T-0004", status: "ready", phase: 3 }),
+      task({ id: "T-0002", status: "ready", phase: 1 })
+    ];
+    const columnSort = new Map([
+      ["backlog", "id"],
+      ["ready", "phase"]
+    ]);
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), columnSort });
+
+    const backlogIds = Array.from(root.querySelectorAll('.column[data-status="backlog"] .card')).map((c) => c.dataset.id);
+    expect(backlogIds).toEqual(["T-0001", "T-0003"]);
+    const readyIds = Array.from(root.querySelectorAll('.column[data-status="ready"] .card')).map((c) => c.dataset.id);
+    expect(readyIds).toEqual(["T-0002", "T-0004"]);
+  });
+
+  it("calls onSortChange with the column status and new sort key when the sort select changes", () => {
+    const root = document.createElement("div");
+    const onSortChange = vi.fn();
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), onSortChange });
+
+    const select = root.querySelector('.column[data-status="ready"] .column-sort');
+    select.value = "agent";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(onSortChange).toHaveBeenCalledWith("ready", "agent");
+  });
+});

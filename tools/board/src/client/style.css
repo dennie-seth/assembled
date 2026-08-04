@@ -99,8 +99,25 @@ body:has(#side-panel:not([hidden])) {
   cursor: grab;
 }
 
+.card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
 .card-title {
   font-weight: 600;
+}
+
+.card-blocker-badge {
+  font-size: 0.75rem;
+  cursor: help;
+}
+
+.column-sort {
+  font-size: 0.75rem;
+  margin-bottom: 0.5rem;
+  width: 100%;
 }
 
 .card-meta {
@@ -282,4 +299,40 @@ body:has(#side-panel:not([hidden])) {
   color: color-mix(in srgb, red 60%, currentColor);
   font-size: 0.85rem;
   min-height: 1rem;
+}
+
+.deps-picker-select {
+  margin-bottom: 0.375rem;
+}
+
+.deps-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.deps-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.deps-chip-remove {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.deps-chip-remove:hover {
+  opacity: 1;
 }

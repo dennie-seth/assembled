@@ -8,7 +8,7 @@ import {
   createTask,
   deleteTask
 } from "./api.js";
-import { applyTaskEvent, buildStatusPatch } from "./board.js";
+import { applyTaskEvent, buildStatusPatch, STATUSES } from "./board.js";
 import { renderBoard } from "./boardView.js";
 import { renderDetailPanel } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
@@ -36,6 +36,7 @@ export function createApp({
   let createFormOpen = false;
   let createError = null;
   const runLogs = new Map();
+  const columnSort = new Map(STATUSES.map((status) => [status, "id"]));
 
   function render() {
     renderBoard(boardRoot, tasks, {
@@ -43,7 +44,9 @@ export function createApp({
       onCardClick: handleCardClick,
       onRun: handleRun,
       onCancel: handleCancel,
-      error
+      error,
+      columnSort,
+      onSortChange: handleSortChange
     });
     if (sidePanelRoot) {
       sidePanelRoot.hidden = selectedId === null;
@@ -55,7 +58,7 @@ export function createApp({
         onClose: handleClose,
         onDelete: handleDelete,
         agentOptions,
-        allTaskIds: tasks.map((task) => task.id)
+        allTasks: tasks.map((task) => ({ id: task.id, title: task.title }))
       });
     }
     if (consoleRoot) {
@@ -68,7 +71,7 @@ export function createApp({
       renderCreateForm(createFormRoot, {
         visible: createFormOpen,
         agentOptions,
-        existingTaskIds: tasks.map((task) => task.id),
+        availableTasks: tasks.map((task) => ({ id: task.id, title: task.title })),
         onCreate: handleCreateSubmit,
         onCancel: handleCancelCreate,
         error: createError
@@ -90,6 +93,11 @@ export function createApp({
       error = err.message;
       render();
     }
+  }
+
+  function handleSortChange(status, sortKey) {
+    columnSort.set(status, sortKey);
+    render();
   }
 
   function handleCardClick(taskId) {
@@ -208,6 +216,7 @@ export function createApp({
     handleRun,
     handleCancel,
     handleDelete,
+    handleSortChange,
     handleToggleCreateForm,
     handleCancelCreate,
     handleCreateSubmit,
