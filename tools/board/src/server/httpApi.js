@@ -1,3 +1,4 @@
+import path from "node:path";
 import http from "node:http";
 import {
   assertCanMoveToInProgress,
@@ -5,7 +6,7 @@ import {
   DependencyCycleError
 } from "../lib/dependencyGuard.js";
 import { listAssignableAgents } from "../lib/agentCatalog.js";
-import { pullDevelop } from "../runner/gitOps.js";
+import { pullDevelop, commitTaskFile, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
@@ -70,7 +71,7 @@ async function handleListTasks(store, res) {
   sendJson(res, 200, tasks);
 }
 
-async function handleCreateTask(store, idAllocator, req, res) {
+async function handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir) {
   const body = requireJsonObject(await readJsonBody(req));
   if (typeof body.title !== "string" || body.title.length === 0) {
     throw new HttpError(400, "title is required and must be a non-empty string");
@@ -98,6 +99,21 @@ async function handleCreateTask(store, idAllocator, req, res) {
   } catch (err) {
     throw new HttpError(400, err.message);
   }
+
+  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+    try {
+      const relativePath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
+      await commitTaskFile({ repoRoot, filePath: relativePath, message: `chore(board): add card ${id}` });
+    } catch (err) {
+      // Card creation must never fail because git couldn't commit it -- the id allocator's
+      // git-history scan is what actually prevents id reuse; this commit is a fast-follow so
+      // sibling worktrees/branches see it sooner. Leaving it untracked here just means the old
+      // failure mode (until the next `git log --all` picks it up post-commit elsewhere) persists
+      // for this one card.
+      console.warn(`Board: failed to commit card file for ${id} (leaving it untracked):`, err.message);
+    }
+  }
+
   sendJson(res, 201, created);
 }
 
@@ -277,7 +293,7 @@ async function handleCancelTask(orchestrator, id, res) {
   sendJson(res, 200, task);
 }
 
-export function createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator, gitInfoImpl }) {
+export function createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, tasksDir, restartCoordinator, gitInfoImpl }) {
   return async function requestListener(req, res) {
     try {
       const { pathname } = new URL(req.url, "http://localhost");
@@ -301,7 +317,7 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
         return await handleListTasks(store, res);
       }
       if (pathname === "/api/tasks" && req.method === "POST") {
-        return await handleCreateTask(store, idAllocator, req, res);
+        return await handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir);
       }
       if (idMatch && req.method === "GET") {
         return await handleGetTask(store, idMatch[1], res);
@@ -332,11 +348,11 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
   };
 }
 
-export function startHttpServer({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator, gitInfoImpl, port = 0, host = "127.0.0.1" }) {
+export function startHttpServer({ store, idAllocator, orchestrator, agentsDir, repoRoot, tasksDir, restartCoordinator, gitInfoImpl, port = 0, host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") {
     throw new Error("HTTP API must bind to 127.0.0.1 only");
   }
-  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, restartCoordinator, gitInfoImpl }));
+  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, tasksDir, restartCoordinator, gitInfoImpl }));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));

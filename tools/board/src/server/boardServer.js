@@ -45,7 +45,16 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
 
   const gitInfoImpl = () => getGitStatus(REPO_ROOT);
   const server = http.createServer(
-    createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot: REPO_ROOT, restartCoordinator, gitInfoImpl })
+    createRequestListener({
+      store,
+      idAllocator,
+      orchestrator,
+      agentsDir,
+      repoRoot: REPO_ROOT,
+      tasksDir,
+      restartCoordinator,
+      gitInfoImpl
+    })
   );
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = new URL(req.url, "http://localhost");
