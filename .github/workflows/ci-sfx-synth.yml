@@ -1,0 +1,43 @@
+name: ci-sfx-synth
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "assets/src/audio/**"
+      - "tools/asset-gate/**"
+      - ".github/workflows/ci-sfx-synth.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "assets/src/audio/**"
+      - "tools/asset-gate/**"
+      - ".github/workflows/ci-sfx-synth.yml"
+
+concurrency:
+  group: ci-sfx-synth-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: assets/src/audio
+
+jobs:
+  lint-test:
+    name: lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # asset-gate too: the gate-integration test dogfoods the real
+      # tools/asset-gate checks against real rendered output, not a
+      # reimplementation -- it needs the package importable.
+      - run: pip install -e ".[dev]" -e ../../../tools/asset-gate
+
+      - run: ruff check .
+
+      - run: pytest -q

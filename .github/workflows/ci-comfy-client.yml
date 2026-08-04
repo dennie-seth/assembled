@@ -1,0 +1,42 @@
+name: ci-comfy-client
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "tools/comfy-client/**"
+      - "tools/gen-client-base/**"
+      - ".github/workflows/ci-comfy-client.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "tools/comfy-client/**"
+      - "tools/gen-client-base/**"
+      - ".github/workflows/ci-comfy-client.yml"
+
+concurrency:
+  group: ci-comfy-client-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/comfy-client
+
+jobs:
+  lint-test:
+    name: lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ../gen-client-base -e ".[dev]"
+
+      - run: ruff check .
+
+      # No live ComfyUI in CI -- every HTTP call in the suite is mocked via
+      # `responses`. See README.md for the manual live-smoke script.
+      - run: pytest -q

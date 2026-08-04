@@ -1,0 +1,42 @@
+name: ci-audio-agent
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "tools/audio-agent/**"
+      - "tools/gen-client-base/**"
+      - ".github/workflows/ci-audio-agent.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "tools/audio-agent/**"
+      - "tools/gen-client-base/**"
+      - ".github/workflows/ci-audio-agent.yml"
+
+concurrency:
+  group: ci-audio-agent-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/audio-agent
+
+jobs:
+  lint-test:
+    name: lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ../gen-client-base -e ".[dev]"
+
+      - run: ruff check .
+
+      # No live ACE-Step in CI -- every HTTP call in the suite is mocked via
+      # `responses`. See README.md for the manual live-smoke script.
+      - run: pytest -q

@@ -1,0 +1,38 @@
+name: ci-asset-gate
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "tools/asset-gate/**"
+      - ".github/workflows/ci-asset-gate.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "tools/asset-gate/**"
+      - ".github/workflows/ci-asset-gate.yml"
+
+concurrency:
+  group: ci-asset-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/asset-gate
+
+jobs:
+  lint-test:
+    name: lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      - run: ruff check .
+
+      - run: pytest -q

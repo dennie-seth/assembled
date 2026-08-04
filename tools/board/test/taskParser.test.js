@@ -12,6 +12,7 @@ const VALID_TASK = {
   created: "2026-07-31",
   branch: null,
   commit: null,
+  pr: null,
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
 };
 
@@ -128,6 +129,35 @@ describe("branch / commit (review metadata)", () => {
   });
 });
 
+describe("pr (auto-opened PR url)", () => {
+  it("round-trips a task with pr set", () => {
+    const task = { ...VALID_TASK, pr: "https://github.com/example/repo/pull/42" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults pr to null when absent from the frontmatter", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.pr).toBeNull();
+  });
+
+  it("throws when pr is not a string or null", () => {
+    expect(() => parseTask(frontmatter({ pr: 42 }))).toThrow(/pr/i);
+  });
+});
+
 describe("parseTask malformed input", () => {
   it("throws when there is no frontmatter at all", () => {
     expect(() => parseTask("just a plain markdown file\n")).toThrow(/frontmatter/i);
@@ -185,6 +215,11 @@ describe("parseTask missing/invalid fields", () => {
 
   it("throws on invalid agent", () => {
     expect(() => parseTask(frontmatter({ agent: "designer" }))).toThrow(/agent/i);
+  });
+
+  it("accepts agent: planner (backlog-audit agent, distinct from the implementer agents)", () => {
+    const task = { ...VALID_TASK, agent: "planner" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
   });
 
   it("throws on non-integer phase", () => {

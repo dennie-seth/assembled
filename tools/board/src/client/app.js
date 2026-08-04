@@ -6,9 +6,10 @@ import {
   runTask,
   cancelTask,
   createTask,
-  deleteTask
+  deleteTask,
+  exportBacklog
 } from "./api.js";
-import { applyTaskEvent, buildStatusPatch } from "./board.js";
+import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard } from "./boardView.js";
 import { renderDetailPanel } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
@@ -27,7 +28,8 @@ export function createApp({
   runTaskImpl = runTask,
   cancelTaskImpl = cancelTask,
   createTaskImpl = createTask,
-  deleteTaskImpl = deleteTask
+  deleteTaskImpl = deleteTask,
+  exportBacklogImpl = exportBacklog
 }) {
   let tasks = [];
   let agentOptions = [];
@@ -36,6 +38,7 @@ export function createApp({
   let createFormOpen = false;
   let createError = null;
   const runLogs = new Map();
+  const columnSort = new Map(STATUSES.map((status) => [status, "id"]));
 
   function render() {
     renderBoard(boardRoot, tasks, {
@@ -43,7 +46,10 @@ export function createApp({
       onCardClick: handleCardClick,
       onRun: handleRun,
       onCancel: handleCancel,
-      error
+      onExportBacklog: handleExportBacklog,
+      error,
+      columnSort,
+      onSortChange: handleSortChange
     });
     if (sidePanelRoot) {
       sidePanelRoot.hidden = selectedId === null;
@@ -55,7 +61,7 @@ export function createApp({
         onClose: handleClose,
         onDelete: handleDelete,
         agentOptions,
-        allTaskIds: tasks.map((task) => task.id)
+        allTasks: tasks.map((task) => ({ id: task.id, title: task.title }))
       });
     }
     if (consoleRoot) {
@@ -68,7 +74,7 @@ export function createApp({
       renderCreateForm(createFormRoot, {
         visible: createFormOpen,
         agentOptions,
-        existingTaskIds: tasks.map((task) => task.id),
+        availableTasks: tasks.map((task) => ({ id: task.id, title: task.title })),
         onCreate: handleCreateSubmit,
         onCancel: handleCancelCreate,
         error: createError
@@ -90,6 +96,11 @@ export function createApp({
       error = err.message;
       render();
     }
+  }
+
+  function handleSortChange(status, sortKey) {
+    columnSort.set(status, sortKey);
+    render();
   }
 
   function handleCardClick(taskId) {
@@ -119,6 +130,10 @@ export function createApp({
       error = err.message;
     }
     render();
+  }
+
+  function handleExportBacklog() {
+    exportBacklogImpl();
   }
 
   function handleToggleCreateForm() {
@@ -183,6 +198,12 @@ export function createApp({
       handleRunEvent(event);
       return;
     }
+    if (!TASK_EVENT_TYPES.has(event.type)) {
+      // Unrecognized message types (e.g. a run's phase notices) carry no
+      // `task` payload -- applying them here would clobber a real task with
+      // `undefined`. Ignore anything that isn't a known task mutation.
+      return;
+    }
     tasks = applyTaskEvent(tasks, event);
     render();
   }
@@ -208,10 +229,12 @@ export function createApp({
     handleRun,
     handleCancel,
     handleDelete,
+    handleSortChange,
     handleToggleCreateForm,
     handleCancelCreate,
     handleCreateSubmit,
     handleSocketMessage,
+    handleExportBacklog,
     getTasks: () => tasks,
     getSelectedId: () => selectedId,
     getError: () => error

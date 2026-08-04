@@ -5,6 +5,7 @@ import { connectPtySocket, sendPtyInput, sendPtyResize } from "./ptySocket.js";
 
 export function createTerminalPanel({
   root,
+  panelRoot = root,
   TerminalCtor = Terminal,
   FitAddonCtor = FitAddon,
   connect = connectPtySocket,
@@ -21,6 +22,14 @@ export function createTerminalPanel({
   // time this runs, which locks xterm into a near-zero-column fit. Re-fit on the
   // next frame once layout has actually settled.
   requestFrame(() => fitAddon.fit());
+
+  function focus() {
+    term.focus();
+  }
+  // Without this, keystrokes typed before the user explicitly clicks into the
+  // terminal go nowhere -- indistinguishable from the terminal being broken.
+  // The panel is visible by default, so focus it as soon as it mounts.
+  focus();
 
   const ws = connect((msg) => {
     if (msg.type === "data") {
@@ -39,11 +48,18 @@ export function createTerminalPanel({
   }
   window.addEventListener("resize", handleWindowResize);
 
+  // Clicking anywhere in the panel (header, padding -- not just xterm's own
+  // cursor/selection area) refocuses the terminal. Scoped to panelRoot only,
+  // so it never steals focus from card editing or other form inputs on the
+  // rest of the page.
+  panelRoot.addEventListener("click", focus);
+
   function dispose() {
     window.removeEventListener("resize", handleWindowResize);
+    panelRoot.removeEventListener("click", focus);
     ws.close();
     term.dispose();
   }
 
-  return { term, ws, fitAddon, dispose };
+  return { term, ws, fitAddon, focus, dispose };
 }

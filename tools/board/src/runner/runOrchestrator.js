@@ -1,12 +1,21 @@
 import path from "node:path";
 import { NdjsonEventParser } from "./streamParser.js";
-import { buildPrompt, resolveRulesForPaths } from "./promptBuilder.js";
+import { buildPrompt, buildPlannerPrompt, resolveRulesForPaths } from "./promptBuilder.js";
 import { buildReviewerPrompt } from "./reviewerPrompt.js";
 import { extractVerdictFromEvents } from "./verdict.js";
 import { loadAgentDef, loadRules } from "./configLoader.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { createRunLog } from "./runLog.js";
 import * as gitOps from "./gitOps.js";
+import * as githubOps from "./githubOps.js";
+import { buildPrTitle, buildPrBody } from "./prBuilder.js";
+
+const AUTO_OPEN_PR_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
+
+/** AUTO_OPEN_PR env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable auto-PR on PASS. */
+function autoOpenPrFromEnv() {
+  return !AUTO_OPEN_PR_DISABLE_VALUES.has((process.env.AUTO_OPEN_PR ?? "").toLowerCase());
+}
 
 /** Appends a timestamped `## <heading>` note to a task body -- how validation results are recorded on the card. */
 export function appendNote(body, heading, text) {
@@ -30,6 +39,8 @@ export class RunOrchestrator {
     hub,
     runner,
     git = gitOps,
+    github = githubOps,
+    autoOpenPr = autoOpenPrFromEnv(),
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
@@ -40,6 +51,7 @@ export class RunOrchestrator {
     loadRulesFn = loadRules,
     resolveAllowedToolsFn = resolveAllowedTools,
     buildPromptFn = buildPrompt,
+    buildPlannerPromptFn = buildPlannerPrompt,
     buildReviewerPromptFn = buildReviewerPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     createRunLogFn = createRunLog,
@@ -49,6 +61,8 @@ export class RunOrchestrator {
     this.hub = hub;
     this.runner = runner;
     this.git = git;
+    this.github = github;
+    this.autoOpenPr = autoOpenPr;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
@@ -59,6 +73,7 @@ export class RunOrchestrator {
     this.loadRulesFn = loadRulesFn;
     this.resolveAllowedToolsFn = resolveAllowedToolsFn;
     this.buildPromptFn = buildPromptFn;
+    this.buildPlannerPromptFn = buildPlannerPromptFn;
     this.buildReviewerPromptFn = buildReviewerPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.createRunLogFn = createRunLogFn;
@@ -68,6 +83,18 @@ export class RunOrchestrator {
 
   isRunning(taskId) {
     return this.activeRuns.has(taskId);
+  }
+
+  /**
+   * Writes a task update and broadcasts it over the board socket in the same
+   * tick -- the board must not depend solely on the tasks/*.md file watcher
+   * (which is debounced by chokidar's atomic-write detection) to learn that
+   * a run changed a card's status.
+   */
+  async _updateAndBroadcast(taskId, patch) {
+    const updated = await this.store.update(taskId, patch);
+    this.hub.broadcast({ type: "changed", id: taskId, task: updated });
+    return updated;
   }
 
   async runCard(taskId) {
@@ -92,7 +119,7 @@ export class RunOrchestrator {
       return;
     }
 
-    await this.store.update(taskId, { status: "in-progress" });
+    await this._updateAndBroadcast(taskId, { status: "in-progress" });
 
     const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
     try {
@@ -103,10 +130,17 @@ export class RunOrchestrator {
   }
 
   async _runCardInWorktree(taskId, task, worktreeDir, branch, runLog) {
-    const agentDef = this.loadAgentDefFn(task.agent, { agentsDir: this.agentsDir });
+    // Unassigned cards run planner first to expand the spec, then a generic implementer.
+    if (task.agent === null) {
+      const plannerOk = await this._planUnassignedCard(taskId, task, worktreeDir, runLog);
+      if (!plannerOk) return;
+    }
+
+    const effectiveAgent = task.agent ?? "generic";
+    const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
-    const allowedTools = this.resolveAllowedToolsFn(task.agent, { agentsDir: this.agentsDir });
-    const prompt = this.buildPromptFn({ task, agentDef, rules });
+    const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const prompt = this.buildPromptFn({ task: { ...task, agent: effectiveAgent }, agentDef, rules });
 
     const implementerResult = await this._runPhase({
       taskId,
@@ -126,13 +160,19 @@ export class RunOrchestrator {
       return;
     }
 
-    await this.store.update(taskId, { status: "validation" });
+    await this._updateAndBroadcast(taskId, { status: "validation" });
 
     const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch }).catch(() => []);
     const reviewerAgentDef = this.loadAgentDefFn("reviewer", { agentsDir: this.agentsDir });
     const reviewerRules = resolveRulesForPaths(changedPaths, this.loadRulesFn({ rulesDir: this.rulesDir }));
     const reviewerAllowedTools = this.resolveAllowedToolsFn("reviewer", { agentsDir: this.agentsDir });
-    const reviewerPrompt = this.buildReviewerPromptFn({ task, agentDef: reviewerAgentDef, rules: reviewerRules });
+    const reviewerPrompt = this.buildReviewerPromptFn({
+      task,
+      agentDef: reviewerAgentDef,
+      rules: reviewerRules,
+      changedPaths,
+      baseBranch: this.baseBranch
+    });
 
     const reviewerResult = await this._runPhase({
       taskId,
@@ -159,10 +199,43 @@ export class RunOrchestrator {
     }
 
     if (verdict.verdict === "PASS") {
-      await this._handlePass(taskId, task, worktreeDir, branch, verdict);
+      await this._handlePass(taskId, task, worktreeDir, branch, verdict, runLog);
     } else {
       await this._handleFailValidation(taskId, verdict);
     }
+  }
+
+  /** Runs the planner phase for an unassigned card. Returns true if planning succeeded, false if cancelled/failed (already blocked). */
+  async _planUnassignedCard(taskId, task, worktreeDir, runLog) {
+    this.hub.broadcast({
+      type: "run-status",
+      id: taskId,
+      phase: "planning",
+      message: "Card is unassigned — invoking planner to expand spec before implementation"
+    });
+
+    const plannerDef = this.loadAgentDefFn("planner", { agentsDir: this.agentsDir });
+    const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
+    const plannerAllowedTools = this.resolveAllowedToolsFn("planner", { agentsDir: this.agentsDir });
+    const plannerPrompt = this.buildPlannerPromptFn({ task, agentDef: plannerDef, rules });
+
+    const plannerResult = await this._runPhase({
+      taskId,
+      task,
+      phase: "planning",
+      prompt: plannerPrompt,
+      allowedTools: plannerAllowedTools,
+      worktreeDir,
+      model: plannerDef.model,
+      runLog
+    });
+
+    if (plannerResult.cancelled) return false;
+    if (plannerResult.exitCode !== 0) {
+      await this._blocked(taskId, this._crashReason("planner", plannerResult));
+      return false;
+    }
+    return true;
   }
 
   _crashReason(phase, result) {
@@ -230,7 +303,7 @@ export class RunOrchestrator {
     }
 
     const current = await this.store.get(taskId);
-    await this.store.update(taskId, {
+    await this._updateAndBroadcast(taskId, {
       status: "blocked",
       body: appendNote(current.body, "Cancelled", "Run cancelled by user; worktree removed, branch left intact for investigation.")
     });
@@ -238,18 +311,18 @@ export class RunOrchestrator {
 
   async _blocked(taskId, reason) {
     const current = await this.store.get(taskId);
-    await this.store.update(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
+    await this._updateAndBroadcast(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
   }
 
   async _handleFailValidation(taskId, verdict) {
     const current = await this.store.get(taskId);
-    await this.store.update(taskId, {
+    await this._updateAndBroadcast(taskId, {
       status: "in-progress",
       body: appendNote(current.body, "Validation: FAIL", verdict.notes)
     });
   }
 
-  async _handlePass(taskId, task, worktreeDir, branch, verdict) {
+  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog) {
     let commit;
     try {
       await this.git.commitAll({
@@ -263,6 +336,8 @@ export class RunOrchestrator {
       return;
     }
 
+    const prUrl = await this._openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog });
+
     try {
       await this.git.removeWorktree({ repoRoot: this.repoRoot, worktreeDir });
     } catch {
@@ -270,11 +345,59 @@ export class RunOrchestrator {
     }
 
     const current = await this.store.get(taskId);
-    await this.store.update(taskId, {
-      status: "review",
-      branch,
-      commit,
-      body: appendNote(current.body, "Validation: PASS", verdict.notes)
-    });
+    let body = appendNote(current.body, "Validation: PASS", verdict.notes);
+    const patch = { status: "review", branch, commit, body };
+    if (prUrl) {
+      patch.pr = prUrl;
+      patch.body = appendNote(body, "PR", prUrl);
+    }
+    await this._updateAndBroadcast(taskId, patch);
+  }
+
+  /**
+   * Finalize step: opens (or reuses) a GitHub PR for the just-pushed branch
+   * via the `gh` CLI. Degrades gracefully -- gh missing/unauthenticated, a
+   * disabled autoOpenPr flag, or a `gh pr create` failure all just skip PR
+   * creation and log why; none of them fail the run or block the card.
+   * Returns the PR URL on success, or null when no PR was opened.
+   */
+  async _openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog }) {
+    if (!this.autoOpenPr) {
+      await this._logFinalize(taskId, runLog, "PR not opened: auto-open-pr disabled (AUTO_OPEN_PR)");
+      return null;
+    }
+
+    const availability = await this.github.checkAvailability({ worktreeDir });
+    if (!availability.available) {
+      const message =
+        availability.reason === "not-installed"
+          ? "PR not opened: gh CLI not installed -- install gh and run 'gh auth login' to enable auto-PR"
+          : "PR not opened: gh not authenticated -- run 'gh auth login' to enable auto-PR";
+      await this._logFinalize(taskId, runLog, message);
+      return null;
+    }
+
+    try {
+      const existing = await this.github.findExistingPr({ worktreeDir, branch });
+      if (existing) {
+        await this._logFinalize(taskId, runLog, `PR already exists, reusing: ${existing}`);
+        return existing;
+      }
+
+      const title = buildPrTitle({ task });
+      const body = buildPrBody({ task, verdict });
+      const url = await this.github.createPr({ worktreeDir, base: this.baseBranch, head: branch, title, body });
+      await this._logFinalize(taskId, runLog, `Opened PR: ${url}`);
+      return url;
+    } catch (err) {
+      await this._logFinalize(taskId, runLog, `PR not opened: gh pr create failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  async _logFinalize(taskId, runLog, message) {
+    const event = { type: "finalize", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "finalize", event });
   }
 }

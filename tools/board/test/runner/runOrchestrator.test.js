@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { buildPrTitle, buildPrBody } from "../../src/runner/prBuilder.js";
 import { EventEmitter } from "node:events";
 import { RunOrchestrator, appendNote } from "../../src/runner/runOrchestrator.js";
 
@@ -69,7 +70,16 @@ function baseTask(overrides = {}) {
   };
 }
 
-function makeOrchestrator({ store, git, runner, hub, runLogs = [] } = {}) {
+function makeGithub(overrides = {}) {
+  return {
+    checkAvailability: vi.fn(async () => ({ available: false, reason: "not-installed" })),
+    findExistingPr: vi.fn(async () => null),
+    createPr: vi.fn(async () => "https://github.com/example/repo/pull/1"),
+    ...overrides
+  };
+}
+
+function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], ...overrides } = {}) {
   const createRunLogFn = vi.fn(async () => {
     const log = makeRunLog();
     runLogs.push(log);
@@ -81,6 +91,7 @@ function makeOrchestrator({ store, git, runner, hub, runLogs = [] } = {}) {
     hub: hub ?? { broadcast: vi.fn() },
     runner,
     git,
+    github: github ?? makeGithub(),
     repoRoot: "/repo",
     worktreesDir: "/repo/worktrees",
     runsDir: "/repo/tasks/.runs",
@@ -89,7 +100,8 @@ function makeOrchestrator({ store, git, runner, hub, runLogs = [] } = {}) {
     loadAgentDefFn: (name) => (name === "reviewer" ? REVIEWER_DEF : IMPLEMENTER_DEF),
     loadRulesFn: () => [{ name: "conduct", paths: ["**"], body: "TDD." }],
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
-    createRunLogFn
+    createRunLogFn,
+    ...overrides
   });
 }
 
@@ -174,6 +186,75 @@ describe("RunOrchestrator.runCard — happy path (PASS)", () => {
     expect(runEventMessages.every((m) => m.id === "T-0001")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "implementer")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "reviewer")).toBe(true);
+  });
+});
+
+describe("RunOrchestrator.runCard — routes the reviewer's changed paths through to the validation gate", () => {
+  it("passes the diff's changed paths (from git.diffNames) into the reviewer prompt builder -- a planner diff", async () => {
+    const store = makeStore([baseTask({ agent: "planner" })]);
+    const git = makeGit({ diffNames: vi.fn(async () => ["tasks/T-0200.md"]) });
+    const runner = makeRunner();
+    const buildReviewerPromptFn = vi.fn(() => "reviewer prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildReviewerPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "backlog validates")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(buildReviewerPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ changedPaths: ["tasks/T-0200.md"] })
+    );
+  });
+
+  it("passes a code diff's changed paths through unchanged -- code work keeps its own tests/lint/build routing", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ diffNames: vi.fn(async () => ["tools/board/src/lib/fsTaskStore.js"]) });
+    const runner = makeRunner();
+    const buildReviewerPromptFn = vi.fn(() => "reviewer prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildReviewerPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "suite green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(buildReviewerPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ changedPaths: ["tools/board/src/lib/fsTaskStore.js"] })
+    );
+  });
+
+  it("passes its own baseBranch through to the reviewer prompt builder, for the diff guard's base ref", async () => {
+    const store = makeStore([baseTask({ agent: "planner" })]);
+    const git = makeGit({ diffNames: vi.fn(async () => ["tasks/T-0200.md"]) });
+    const runner = makeRunner();
+    const buildReviewerPromptFn = vi.fn(() => "reviewer prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildReviewerPromptFn, baseBranch: "develop" });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "backlog validates")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(buildReviewerPromptFn).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: "develop" }));
   });
 });
 
@@ -327,6 +408,166 @@ describe("RunOrchestrator.runCard — guardrails", () => {
   });
 });
 
+describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
+  it("(a) on PASS, opens a PR via gh with base=develop, head=feature/T-XXXX, and a non-empty title/body", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.createPr).toHaveBeenCalledTimes(1);
+    const call = github.createPr.mock.calls[0][0];
+    expect(call.base).toBe("develop");
+    expect(call.head).toBe("feature/T-0001");
+    expect(call.title).toBeTruthy();
+    expect(call.body).toBeTruthy();
+  });
+
+  it("(b) when gh is unavailable (not installed or not authenticated), the run still succeeds and logs a skip instead of throwing", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: false, reason: "not-authenticated" })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, hub, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await expect(runPromise).resolves.not.toThrow();
+
+    expect(github.createPr).not.toHaveBeenCalled();
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.pr).toBeFalsy();
+
+    const finalizeMessages = hub.broadcast.mock.calls
+      .map(([msg]) => msg)
+      .filter((m) => m.type === "run-event" && m.phase === "finalize");
+    expect(finalizeMessages.some((m) => /gh not authenticated/i.test(m.event.message))).toBe(true);
+  });
+
+  it("(c) when a PR already exists for the branch, reuses its URL instead of creating a duplicate", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      findExistingPr: vi.fn(async () => "https://github.com/example/repo/pull/55")
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.createPr).not.toHaveBeenCalled();
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/55");
+  });
+
+  it("(d) a FAIL verdict never opens a PR", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "missing test"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.checkAvailability).not.toHaveBeenCalled();
+    expect(github.createPr).not.toHaveBeenCalled();
+  });
+
+  it("(e) on success, the PR URL is recorded on the card: pr frontmatter field and a ## PR body note", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr: vi.fn(async () => "https://github.com/example/repo/pull/77")
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/77");
+    expect(finalTask.body).toContain("https://github.com/example/repo/pull/77");
+  });
+
+  it("composes the PR title/body from the card's own fields and the reviewer's verdict notes", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "npm test: 611 passed"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    const task = baseTask();
+    const verdict = { verdict: "PASS", notes: "npm test: 611 passed" };
+    const call = github.createPr.mock.calls[0][0];
+    expect(call.title).toBe(buildPrTitle({ task }));
+    expect(call.body).toBe(buildPrBody({ task, verdict }));
+  });
+
+  it("respects autoOpenPr: false (AUTO_OPEN_PR config flag) by never contacting gh", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github, autoOpenPr: false });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.checkAvailability).not.toHaveBeenCalled();
+    expect(github.createPr).not.toHaveBeenCalled();
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+});
+
 describe("RunOrchestrator.cancelRun", () => {
   it("throws when there is no active run for the card", async () => {
     const store = makeStore([baseTask()]);
@@ -370,6 +611,375 @@ describe("RunOrchestrator.cancelRun", () => {
     expect(runner.start).toHaveBeenCalledTimes(1);
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("blocked");
+  });
+});
+
+describe("RunOrchestrator.runCard — unassigned cards (agent: null) route through planner then generic agent", () => {
+  const PLANNER_DEF = { name: "planner", model: "opus", body: "# planner\nAudits and expands the backlog." };
+  const GENERIC_DEF = { name: "generic", model: "sonnet", body: "# generic\nGeneral-purpose implementer." };
+
+  function makeUnassignedTask(overrides = {}) {
+    return baseTask({ agent: null, ...overrides });
+  }
+
+  function makeAgentDefFn() {
+    return vi.fn((name) => {
+      if (name === "reviewer") return REVIEWER_DEF;
+      if (name === "planner") return PLANNER_DEF;
+      if (name === "generic") return GENERIC_DEF;
+      return IMPLEMENTER_DEF;
+    });
+  }
+
+  it("broadcasts visible feedback before any agent runs — never silently no-ops for unassigned cards", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({
+      store, git, runner, hub,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    // Feedback must arrive before (or as soon as) the planning phase runner starts
+    const plannerChild = await nthChild(runner, 1);
+
+    const broadcasts = hub.broadcast.mock.calls.map(([msg]) => msg);
+    const planningBroadcast = broadcasts.find((m) => m.phase === "planning");
+    expect(planningBroadcast).toBeDefined();
+    expect(planningBroadcast.id).toBe("T-0001");
+
+    // clean up
+    plannerChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("runs planner first, then generic implementer, then reviewer — three phases total", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    // Phase 1: planner
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.emit("exit", 0, null);
+
+    // Phase 2: generic implementer
+    const implChild = await nthChild(runner, 2);
+    implChild.emit("exit", 0, null);
+
+    // Phase 3: reviewer
+    const reviewChild = await nthChild(runner, 3);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Done. ${verdictBlock("PASS", "looks good")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(3);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("uses the planner agent def and model for the planning phase", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const loadAgentDefFn = makeAgentDefFn();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    // planner agent model must be used for the first runner.start call
+    expect(runner.start).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ model: PLANNER_DEF.model })
+    );
+    expect(loadAgentDefFn).toHaveBeenCalledWith("planner", expect.anything());
+
+    plannerChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("uses the generic agent def and model for the implementation phase", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const loadAgentDefFn = makeAgentDefFn();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.emit("exit", 0, null);
+
+    const implChild = await nthChild(runner, 2);
+    expect(runner.start).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ model: GENERIC_DEF.model })
+    );
+    expect(loadAgentDefFn).toHaveBeenCalledWith("generic", expect.anything());
+
+    implChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("blocks the card if the planner phase exits with a non-zero code; generic agent never starts", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.emit("exit", 1, null);
+
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/planner/i);
+    // only the planner ran — generic and reviewer were not started
+    expect(runner.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks the card if the generic implementer phase fails; reviewer never starts", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.emit("exit", 0, null);
+
+    const implChild = await nthChild(runner, 2);
+    implChild.emit("exit", 1, null);
+
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(runner.start).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses buildPlannerPromptFn for the planning phase, not the standard buildPromptFn", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "implementer prompt");
+    const buildPlannerPromptFn = vi.fn(() => "planner prompt");
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn(),
+      buildPromptFn,
+      buildPlannerPromptFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    // planner prompt builder must have been called, not the standard one
+    expect(buildPlannerPromptFn).toHaveBeenCalledOnce();
+    expect(buildPlannerPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: expect.objectContaining({ id: "T-0001" }) })
+    );
+
+    plannerChild.emit("exit", 1, null);
+    await runPromise;
+
+    // standard buildPromptFn must NOT have been called for the planning phase
+    // (it may be called for the generic implementer phase, which did not run here)
+    expect(buildPromptFn).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts run-event with phase='planning' for events from the planner", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({
+      store, git, runner, hub,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.stdout.emit("data", ndjson(assistantEvent("expanding spec...")));
+    plannerChild.emit("exit", 0, null);
+
+    const implChild = await nthChild(runner, 2);
+    implChild.emit("exit", 1, null);
+    await runPromise;
+
+    const runEvents = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "run-event");
+    const planningRunEvents = runEvents.filter((m) => m.phase === "planning");
+    expect(planningRunEvents.length).toBeGreaterThan(0);
+    expect(planningRunEvents.every((m) => m.id === "T-0001")).toBe(true);
+  });
+
+  it("full PASS lifecycle for an unassigned card: planning → implementer → validation → review", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+    plannerChild.emit("exit", 0, null);
+
+    const implChild = await nthChild(runner, 2);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 3);
+    expect((await store.get("T-0001")).status).toBe("validation");
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`All done. ${verdictBlock("PASS", "generic agent delivered")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toContain("generic agent delivered");
+    expect(git.push).toHaveBeenCalled();
+  });
+});
+
+describe("RunOrchestrator — broadcasts an authoritative status change immediately (board must not depend solely on the file watcher)", () => {
+  it("broadcasts a 'changed' event the moment the card moves ready -> in-progress", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "in-progress" })
+    });
+
+    implChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("broadcasts a 'changed' event when worktree creation fails and the card is blocked", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ addWorktree: vi.fn(async () => { throw new Error("disk full"); }) });
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    await orchestrator.runCard("T-0001");
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "blocked" })
+    });
+  });
+
+  it("broadcasts a 'changed' event the moment the card moves in-progress -> validation", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "validation" })
+    });
+
+    reviewChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("broadcasts a 'changed' event when the reviewer PASSes and the card reaches review", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "review" })
+    });
+  });
+
+  it("broadcasts a 'changed' event when a run is cancelled and the card is blocked", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await nthChild(runner, 1);
+
+    await orchestrator.cancelRun("T-0001");
+    await runPromise;
+
+    const changedBroadcasts = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "changed");
+    expect(changedBroadcasts).toContainEqual({
+      type: "changed",
+      id: "T-0001",
+      task: expect.objectContaining({ id: "T-0001", status: "blocked" })
+    });
   });
 });
 

@@ -31,6 +31,11 @@ describe("listAssignableAgents", () => {
     expect(await listAssignableAgents(tmpDir)).toEqual(["infra"]);
   });
 
+  it("includes planner as an assignable agent (runnable implementer-style, unlike reviewer)", async () => {
+    await writeAgentFiles(["infra", "reviewer", "planner"]);
+    expect(await listAssignableAgents(tmpDir)).toEqual(["infra", "planner"]);
+  });
+
   it("excludes any file whose name is not a recognized assignable agent", async () => {
     await writeAgentFiles(["infra", "designer"]);
     expect(await listAssignableAgents(tmpDir)).toEqual(["infra"]);

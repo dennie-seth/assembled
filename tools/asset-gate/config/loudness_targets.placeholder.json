@@ -1,0 +1,10 @@
+{
+  "TODO": "AU-2",
+  "_comment": "PLACEHOLDER integrated-loudness targets per bus class. AU-2 (docs/design/13-asset-pipeline.md §5) has not set real LUFS targets yet. Values below are conservative EBU R128 defaults (-23 LUFS broadcast reference, wider tolerance for gameplay-critical busses) so the loudness check is exercisable now. Replace once AU-2 resolves.",
+  "buses": {
+    "ambience": { "target_lufs": -23.0, "tolerance_db": 2.0 },
+    "music": { "target_lufs": -23.0, "tolerance_db": 2.0 },
+    "world_sfx": { "target_lufs": -18.0, "tolerance_db": 3.0 },
+    "gameplay_sfx": { "target_lufs": -16.0, "tolerance_db": 3.0 }
+  }
+}

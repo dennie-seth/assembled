@@ -1,0 +1,15 @@
+{
+  "model": "sd_xl_base_1.0.safetensors",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": null,
+  "prompt": "detailed pixel art game concept, 16-bit, side view side-scroller, interior of an abandoned Soviet brutalist broadcast tower control room, the broadcast deck, exposed weathered concrete walls, rusted relay racks and radio equipment lining the walls, tangled hanging cables, institutional green control panels with rows of dials and switches, dim oppressive shaft of grey light, dust motes, side-scroller game key art, crisp pixel clusters, limited colour palette, no text, no watermark, no people",
+  "negative_prompt": "blurry, low quality, text, watermark, signature, cartoon, cheerful, bright saturated colors, people, characters, photorealistic, 3d render, smooth gradient, anti-aliased, modern architecture, sci-fi neon, fantasy",
+  "seed": 1042,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "41c6cf03484f32706c49fa19a03b8ca5119666b93ae590638cb3e1ae0b96075a",
+  "prompt_id": "dba7a8ba-726a-4cbb-9143-65b48a6e0266",
+  "concept_hash": "150fad3995cbb7fd196494221af4a982a6f85ac3fee9045635c8ddaed6b88dfc"
+}

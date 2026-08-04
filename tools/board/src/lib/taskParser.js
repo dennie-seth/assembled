@@ -17,9 +17,9 @@ const ID_RE = /^T-\d{4}$/;
 const CREATED_RE = /^\d{4}-\d{2}-\d{2}$/;
 const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked"];
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
-export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio"];
+export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio", "planner"];
 const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
-const OPTIONAL_FIELDS = ["branch", "commit"];
+const OPTIONAL_FIELDS = ["branch", "commit", "pr"];
 
 function validateTask(data) {
   for (const field of REQUIRED_FIELDS) {
@@ -102,6 +102,7 @@ export function parseTask(raw) {
     created: data.created,
     branch: data.branch ?? null,
     commit: data.commit ?? null,
+    pr: data.pr ?? null,
     body
   };
 }

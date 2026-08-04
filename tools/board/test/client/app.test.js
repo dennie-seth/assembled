@@ -31,6 +31,7 @@ function makeApp(overrides = {}) {
   const cancelTaskImpl = overrides.cancelTaskImpl ?? vi.fn().mockResolvedValue({});
   const createTaskImpl = overrides.createTaskImpl ?? vi.fn();
   const deleteTaskImpl = overrides.deleteTaskImpl ?? vi.fn();
+  const exportBacklogImpl = overrides.exportBacklogImpl ?? vi.fn();
   const app = createApp({
     boardRoot,
     detailRoot,
@@ -44,7 +45,8 @@ function makeApp(overrides = {}) {
     runTaskImpl,
     cancelTaskImpl,
     createTaskImpl,
-    deleteTaskImpl
+    deleteTaskImpl,
+    exportBacklogImpl
   });
   return {
     app,
@@ -60,7 +62,8 @@ function makeApp(overrides = {}) {
     runTaskImpl,
     cancelTaskImpl,
     createTaskImpl,
-    deleteTaskImpl
+    deleteTaskImpl,
+    exportBacklogImpl
   };
 }
 
@@ -183,6 +186,40 @@ describe("createApp handleSocketMessage", () => {
     app.handleSocketMessage({ type: "added", id: "T-0002", task: task({ id: "T-0002", title: "From elsewhere" }) });
 
     expect(boardRoot.textContent).toContain("From elsewhere");
+  });
+
+  it("applies a Run action's status transition immediately from a socket event, without a manual refresh", async () => {
+    const original = task({ id: "T-0001", title: "Runnable", status: "ready" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([original]) });
+    await app.init();
+    expect(boardRoot.querySelector('.column[data-status="ready"]').textContent).toContain("Runnable");
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...original, status: "in-progress" } });
+
+    const inProgressColumn = boardRoot.querySelector('.column[data-status="in-progress"]');
+    expect(inProgressColumn.textContent).toContain("Runnable");
+    expect(boardRoot.querySelector('.column[data-status="ready"]').textContent).not.toContain("Runnable");
+  });
+
+  it("ignores an unrecognized socket message type (e.g. run-status) instead of corrupting task state", async () => {
+    const original = task({ id: "T-0001", title: "Unassigned card", status: "ready" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([original]) });
+    await app.init();
+
+    app.handleSocketMessage({
+      type: "run-status",
+      id: "T-0001",
+      phase: "planning",
+      message: "Card is unassigned — invoking planner to expand spec before implementation"
+    });
+
+    expect(app.getTasks()).toEqual([original]);
+    expect(boardRoot.textContent).toContain("Unassigned card");
+
+    // A legitimate status update afterwards must still render correctly --
+    // a prior corrupting message must not leave the board permanently stuck.
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...original, status: "in-progress" } });
+    expect(boardRoot.querySelector('.column[data-status="in-progress"]').textContent).toContain("Unassigned card");
   });
 });
 
@@ -334,10 +371,10 @@ describe("createApp agent console wiring (T-0022)", () => {
       type: "run-event",
       id: "T-0001",
       phase: "implementer",
-      event: { type: "system", subtype: "init" }
+      event: { type: "assistant", message: { content: [{ type: "text", text: "Looking at the task." }] } }
     });
 
-    expect(consoleRoot.textContent).toContain("system: init");
+    expect(consoleRoot.textContent).toContain("Looking at the task.");
   });
 
   it("does not treat a run-event message as a task-changed event", async () => {
@@ -361,12 +398,12 @@ describe("createApp agent console wiring (T-0022)", () => {
     await app.init();
     app.handleCardClick("T-0001");
 
-    app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "system", subtype: "init" } });
+    app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "assistant", message: { content: [{ type: "text", text: "Starting." }] } } });
     app.handleSocketMessage({ type: "run-event", id: "T-0001", phase: "implementer", event: { type: "result", result: "Done." } });
 
     const lines = consoleRoot.querySelectorAll(".console-line");
     expect(lines).toHaveLength(2);
-    expect(lines[0].textContent).toContain("init");
+    expect(lines[0].textContent).toContain("Starting.");
     expect(lines[1].textContent).toContain("Done.");
   });
 
@@ -444,6 +481,63 @@ describe("createApp create-card wiring", () => {
     expect(createFormRoot.hidden).toBe(true);
     expect(createTaskImpl).not.toHaveBeenCalled();
   });
+
+  it("does not wipe in-progress input when a refresh event arrives while the form is open (reset-on-refresh regression)", async () => {
+    const other = task({ id: "T-0001", title: "Unrelated task" });
+    const { app, createFormRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([other]) });
+    await app.init();
+    app.handleToggleCreateForm();
+
+    const titleInput = createFormRoot.querySelector(".create-title");
+    const bodyTextarea = createFormRoot.querySelector(".create-body");
+    titleInput.value = "In-progress title the user is still typing";
+    bodyTextarea.value = "## Context\nstill drafting this";
+
+    // A task-list refresh unrelated to the create form (e.g. someone
+    // dragging a card, or the tasks/*.md file watcher firing) must not
+    // clobber the open form's unsaved input.
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...other, status: "in-progress" } });
+
+    expect(createFormRoot.querySelector(".create-title").value).toBe("In-progress title the user is still typing");
+    expect(createFormRoot.querySelector(".create-body").value).toBe("## Context\nstill drafting this");
+    expect(createFormRoot.hidden).toBe(false);
+  });
+});
+
+describe("createApp per-column sort wiring", () => {
+  it("re-renders the board with the newly chosen sort key for that column", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+
+    app.handleSortChange("backlog", "priority");
+
+    const select = boardRoot.querySelector('.column[data-status="backlog"] .column-sort');
+    expect(select.value).toBe("priority");
+  });
+
+  it("keeps a column's chosen sort key across a socket-triggered refresh", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleSortChange("ready", "agent");
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...t, title: "Renamed elsewhere" } });
+
+    const select = boardRoot.querySelector('.column[data-status="ready"] .column-sort');
+    expect(select.value).toBe("agent");
+  });
+
+  it("keeps each column's sort key independent", async () => {
+    const { app, boardRoot } = makeApp();
+    await app.init();
+
+    app.handleSortChange("backlog", "phase");
+    app.handleSortChange("ready", "agent");
+
+    expect(boardRoot.querySelector('.column[data-status="backlog"] .column-sort').value).toBe("phase");
+    expect(boardRoot.querySelector('.column[data-status="ready"] .column-sort').value).toBe("agent");
+  });
 });
 
 describe("createApp delete-card wiring", () => {
@@ -478,5 +572,17 @@ describe("createApp delete-card wiring", () => {
     expect(deleteTaskImpl).toHaveBeenCalledWith("T-0001");
     expect(app.getError()).toMatch(/active run/);
     expect(app.getTasks()).toEqual([t]);
+  });
+});
+
+describe("createApp backlog export wiring", () => {
+  it("calls exportBacklogImpl when handleExportBacklog is invoked", async () => {
+    const exportBacklogImpl = vi.fn();
+    const { app } = makeApp({ exportBacklogImpl });
+    await app.init();
+
+    app.handleExportBacklog();
+
+    expect(exportBacklogImpl).toHaveBeenCalledTimes(1);
   });
 });

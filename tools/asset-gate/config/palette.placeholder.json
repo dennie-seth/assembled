@@ -1,0 +1,22 @@
+{
+  "TODO": "V-5",
+  "_comment": "PLACEHOLDER home palette. V-5 (docs/design/13-asset-pipeline.md §5) has not decided the real colour count or hex values yet. This lets the palette-membership and index-semantics (P-4) checks be exercised now; swap `slots` for the locked set once V-5 resolves. Slot indices are load-bearing (P-4) -- do not reorder existing slots when V-5 lands, only append/replace values.",
+  "slots": [
+    { "index": 0, "hex": "#000000", "name": "placeholder-transparent" },
+    { "index": 1, "hex": "#1a1a1a", "name": "placeholder-shadow-dark" },
+    { "index": 2, "hex": "#333333", "name": "placeholder-shadow" },
+    { "index": 3, "hex": "#4d4d4d", "name": "placeholder-mid-dark" },
+    { "index": 4, "hex": "#666666", "name": "placeholder-mid" },
+    { "index": 5, "hex": "#808080", "name": "placeholder-mid-light" },
+    { "index": 6, "hex": "#999999", "name": "placeholder-light" },
+    { "index": 7, "hex": "#b3b3b3", "name": "placeholder-highlight" },
+    { "index": 8, "hex": "#cccccc", "name": "placeholder-highlight-bright" },
+    { "index": 9, "hex": "#2f4f2f", "name": "placeholder-oxide-green-dark" },
+    { "index": 10, "hex": "#4a6b4a", "name": "placeholder-oxide-green" },
+    { "index": 11, "hex": "#5c3a2e", "name": "placeholder-concrete-shadow" },
+    { "index": 12, "hex": "#8a7461", "name": "placeholder-concrete" },
+    { "index": 13, "hex": "#b0a08c", "name": "placeholder-concrete-light" },
+    { "index": 14, "hex": "#c23b22", "name": "placeholder-institutional-red" },
+    { "index": 15, "hex": "#ffffff", "name": "placeholder-white" }
+  ]
+}

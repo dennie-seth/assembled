@@ -15,7 +15,8 @@ export class DependencyCycleError extends Error {
   }
 }
 
-async function assertNoCycle(store, startId) {
+/** Exported for reuse by the backlog validator, which checks acyclicity across the whole set. */
+export async function assertNoCycle(store, startId) {
   const visited = new Set();
   const stack = [];
 

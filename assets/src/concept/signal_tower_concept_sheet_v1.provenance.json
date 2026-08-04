@@ -1,0 +1,15 @@
+{
+  "model": "sd_xl_base_1.0.safetensors",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": null,
+  "prompt": "orthographic game asset reference sheet, flat front elevation, no perspective, no vanishing point, technical texture reference sheet laid out in panels: concrete wall surface panel, floor surface panel, wall-to-floor trim panel, industrial relay rack prop, control panel prop with rows of dials, Soviet brutalist interior materials, concrete grey, oxide rust stains, institutional green paint, deep near-black shadow accents, muted desaturated palette, flat even lighting, hard value separation, dark darks and light lights, simple flat shapes, low detail density, pixel art game reference sheet, tileset reference, no scene, no room, no sky, no people, no text, no watermark",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, landscape, scene, composition, narrative illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, concept art scene, people, characters, text, watermark, signature, blurry, low quality, bright saturated colors, cartoon, cheerful",
+  "seed": 2101,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "17641e4c4d422d796f56571502bbb2663517a7efa4a981768bd5c08eac6e7b63",
+  "prompt_id": "bdc6df59-917e-4c02-9c56-70858d793255",
+  "concept_hash": "46f121ebfea0c9241774e347924e5868b8cd64c57bf695fed46d8b41fc9a2f4a"
+}

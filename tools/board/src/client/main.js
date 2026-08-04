@@ -17,14 +17,19 @@ if (newCardBtn) {
   newCardBtn.addEventListener("click", () => app.handleToggleCreateForm());
 }
 
+const terminalPanelRoot = document.getElementById("terminal-panel");
+let terminal = null;
+
 if (terminalRoot) {
-  createTerminalPanel({ root: terminalRoot });
+  terminal = createTerminalPanel({ root: terminalRoot, panelRoot: terminalPanelRoot ?? terminalRoot });
 }
 
-if (terminalToggle) {
+if (terminalToggle && terminalPanelRoot) {
   terminalToggle.addEventListener("click", () => {
-    const panel = document.getElementById("terminal-panel");
-    const collapsed = panel.classList.toggle("collapsed");
+    const collapsed = terminalPanelRoot.classList.toggle("collapsed");
     terminalToggle.textContent = collapsed ? "Show" : "Hide";
+    if (!collapsed) {
+      terminal?.focus();
+    }
   });
 }

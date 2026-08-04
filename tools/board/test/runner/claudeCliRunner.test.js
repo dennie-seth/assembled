@@ -90,6 +90,84 @@ describe("ClaudeCliRunner argv construction", () => {
     expect(invocation.args[invocation.args.indexOf("--model") + 1]).toBe("sonnet");
   });
 
+  it("accepts Claude Code model aliases and full model strings", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    for (const model of [
+      "sonnet",
+      "opus",
+      "haiku",
+      "fable",
+      "claude-sonnet-5",
+      "claude-opus-4-1-20250805",
+      "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+    ]) {
+      const invocation = runner.buildInvocation({
+        task: TASK,
+        prompt: "x",
+        allowedTools: ["Read"],
+        worktreeDir: "/wt",
+        model
+      });
+      expect(invocation.args[invocation.args.indexOf("--model") + 1]).toBe(model);
+    }
+  });
+
+  it("trims incidental whitespace around an otherwise-valid model value", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    const invocation = runner.buildInvocation({
+      task: TASK,
+      prompt: "x",
+      allowedTools: ["Read"],
+      worktreeDir: "/wt",
+      model: "  opus  "
+    });
+    expect(invocation.args[invocation.args.indexOf("--model") + 1]).toBe("opus");
+  });
+
+  it("rejects a whitespace-only model instead of silently omitting --model", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    expect(() =>
+      runner.buildInvocation({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt", model: "   " })
+    ).toThrow(/model/i);
+  });
+
+  it("rejects a non-string model (malformed frontmatter, e.g. a YAML mapping)", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    for (const badModel of [{ foo: "bar" }, ["opus"], 42, true]) {
+      expect(() =>
+        runner.buildInvocation({
+          task: TASK,
+          prompt: "x",
+          allowedTools: ["Read"],
+          worktreeDir: "/wt",
+          model: badModel
+        })
+      ).toThrow(/model/i);
+    }
+  });
+
+  it("rejects a model value containing internal whitespace or newlines", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    for (const badModel of ["opus sonnet", "claude\nopus", "claude\topus"]) {
+      expect(() =>
+        runner.buildInvocation({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt", model: badModel })
+      ).toThrow(/model/i);
+    }
+  });
+
+  it("rejects a model value that looks like a CLI flag", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    expect(() =>
+      runner.buildInvocation({
+        task: TASK,
+        prompt: "x",
+        allowedTools: ["Read"],
+        worktreeDir: "/wt",
+        model: "--dangerously-skip-permissions"
+      })
+    ).toThrow(/model/i);
+  });
+
   it("never includes a dangerous-skip-permissions flag", () => {
     const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
     const invocation = runner.buildInvocation({

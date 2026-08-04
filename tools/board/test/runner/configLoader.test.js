@@ -56,7 +56,7 @@ describe("loadAgentDef", () => {
   });
 
   it("resolves every real agent definition in .claude/agents/", () => {
-    for (const name of ["infra", "server", "client", "assets", "audio", "reviewer"]) {
+    for (const name of ["infra", "server", "client", "assets", "audio", "planner", "reviewer"]) {
       const def = loadAgentDef(name, { agentsDir: REAL_AGENTS_DIR });
       expect(def.name).toBe(name);
       expect(typeof def.body).toBe("string");
@@ -85,7 +85,7 @@ describe("loadRules", () => {
   it("loads every real rule file in .claude/rules/", () => {
     const rules = loadRules({ rulesDir: REAL_RULES_DIR });
     const names = rules.map((r) => r.name).sort();
-    expect(names).toEqual(["assets", "conduct", "cpp", "godot", "js", "sql"]);
+    expect(names).toEqual(["assets", "conduct", "cpp", "godot", "js", "planner", "python", "sql"]);
     const conduct = rules.find((r) => r.name === "conduct");
     expect(conduct.paths).toEqual(["**"]);
   });

@@ -1,3 +1,5 @@
+import { createDepsPicker } from "./depsPicker.js";
+
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
 const UNASSIGNED_AGENT_VALUE = "";
 
@@ -25,18 +27,6 @@ function agentSelectFor(agentOptions) {
   return select;
 }
 
-function depsSelectFor(existingTaskIds) {
-  const select = document.createElement("select");
-  select.multiple = true;
-  for (const id of existingTaskIds) {
-    const opt = document.createElement("option");
-    opt.value = id;
-    opt.textContent = id;
-    select.appendChild(opt);
-  }
-  return select;
-}
-
 function prioritySelectFor() {
   const select = document.createElement("select");
   for (const value of PRIORITIES) {
@@ -49,13 +39,31 @@ function prioritySelectFor() {
   return select;
 }
 
-export function renderCreateForm(root, { visible, agentOptions = [], existingTaskIds = [], onCreate, onCancel, error = null }) {
-  root.replaceChildren();
-
+export function renderCreateForm(
+  root,
+  { visible, agentOptions = [], availableTasks = [], onCreate, onCancel, error = null }
+) {
   if (!visible) {
+    root.replaceChildren();
     root.hidden = true;
     return;
   }
+
+  // Board refresh events (socket task updates, unrelated to this form) call
+  // through here too - rebuilding from scratch on every one of those would
+  // wipe whatever the user was typing or had picked as a dependency. Only a
+  // hidden -> visible transition (a fresh open) gets a clean slate; an
+  // already-open form just gets its error message patched in place.
+  const alreadyOpen = !root.hidden && root.querySelector(".create-form") !== null;
+  if (alreadyOpen) {
+    const errorEl = root.querySelector(".create-error");
+    if (errorEl) {
+      errorEl.textContent = error ?? "";
+    }
+    return;
+  }
+
+  root.replaceChildren();
   root.hidden = false;
 
   const form = document.createElement("div");
@@ -79,8 +87,8 @@ export function renderCreateForm(root, { visible, agentOptions = [], existingTas
   const prioritySelect = prioritySelectFor();
   prioritySelect.className = "create-priority";
 
-  const depsSelect = depsSelectFor(existingTaskIds);
-  depsSelect.className = "create-deps";
+  const depsPicker = createDepsPicker({ availableTasks });
+  depsPicker.element.classList.add("create-deps");
 
   const bodyTextarea = document.createElement("textarea");
   bodyTextarea.className = "create-body";
@@ -106,7 +114,7 @@ export function renderCreateForm(root, { visible, agentOptions = [], existingTas
       phase,
       agent: agentSelect.value === UNASSIGNED_AGENT_VALUE ? null : agentSelect.value,
       priority: prioritySelect.value,
-      depends_on: Array.from(depsSelect.selectedOptions).map((opt) => opt.value),
+      depends_on: depsPicker.getSelected(),
       body: bodyTextarea.value
     });
   });
@@ -123,7 +131,7 @@ export function renderCreateForm(root, { visible, agentOptions = [], existingTas
     labeledField("Phase", phaseInput),
     labeledField("Agent", agentSelect),
     labeledField("Priority", prioritySelect),
-    labeledField("Depends on", depsSelect),
+    labeledField("Depends on", depsPicker.element),
     labeledField("Body (markdown)", bodyTextarea),
     submitBtn,
     cancelBtn

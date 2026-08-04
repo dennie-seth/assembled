@@ -2,7 +2,7 @@
 name: client
 description: Implements the Godot 4.x client and GDExtension (client/**, shared/**). Use for game-side features, GDExtension bindings, and scene/UI work.
 tools: Read, Write, Edit, Grep, Glob, Bash(scons:*), Bash(godot --headless:*), Bash(git:*)
-model: sonnet
+model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
 # client

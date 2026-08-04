@@ -1,0 +1,35 @@
+[project]
+name = "audio-agent"
+version = "0.1.0"
+description = "ACE-Step HTTP client + recipe->request layer driving the AudioAgent (T-0082, docs/design/13-asset-pipeline.md)"
+requires-python = ">=3.12"
+dependencies = [
+  "requests==2.32.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "responses==0.25.3",
+  "ruff==0.14.4",
+]
+
+[project.scripts]
+audio-agent = "audio_agent.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

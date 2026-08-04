@@ -1,6 +1,7 @@
 import { renderMarkdown } from "./markdown.js";
 import { buildUpdateBody } from "./detail.js";
 import { STATUSES } from "./board.js";
+import { createDepsPicker } from "./depsPicker.js";
 
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
 const UNASSIGNED_AGENT_VALUE = "";
@@ -46,21 +47,6 @@ function agentSelectFor(agentOptions, currentAgent) {
     select.appendChild(opt);
   }
   select.value = currentAgent ?? UNASSIGNED_AGENT_VALUE;
-  return select;
-}
-
-function depsEditSelectFor(allTaskIds, taskId, dependsOn) {
-  const select = document.createElement("select");
-  select.multiple = true;
-  const dependsSet = new Set(dependsOn);
-  for (const id of allTaskIds) {
-    if (id === taskId) continue;
-    const opt = document.createElement("option");
-    opt.value = id;
-    opt.textContent = id;
-    opt.selected = dependsSet.has(id);
-    select.appendChild(opt);
-  }
   return select;
 }
 
@@ -118,7 +104,7 @@ function deleteControlsFor(task, onDelete) {
 export function renderDetailPanel(
   root,
   task,
-  { onSave, onClose, onDelete, agentOptions = [], allTaskIds = [] }
+  { onSave, onClose, onDelete, agentOptions = [], allTasks = [] }
 ) {
   root.replaceChildren();
 
@@ -161,8 +147,12 @@ export function renderDetailPanel(
   depsEl.textContent =
     task.depends_on.length > 0 ? `Depends on: ${task.depends_on.join(", ")}` : "No dependencies";
 
-  const depsEditSelect = depsEditSelectFor(allTaskIds, task.id, task.depends_on);
-  depsEditSelect.className = "detail-deps-edit";
+  const depsPicker = createDepsPicker({
+    availableTasks: allTasks,
+    selectedIds: task.depends_on,
+    excludeId: task.id
+  });
+  depsPicker.element.classList.add("detail-deps-edit");
 
   const branchInfo = branchInfoFor(task);
 
@@ -186,7 +176,7 @@ export function renderDetailPanel(
       body: bodyTextarea.value,
       agent: agentSelect.value === UNASSIGNED_AGENT_VALUE ? null : agentSelect.value,
       phase: Number(phaseInput.value),
-      depends_on: Array.from(depsEditSelect.selectedOptions).map((opt) => opt.value)
+      depends_on: depsPicker.getSelected()
     };
     const patch = buildUpdateBody(task, edited);
     if (Object.keys(patch).length > 0) {
@@ -202,7 +192,7 @@ export function renderDetailPanel(
     labeledField("Agent", agentSelect),
     labeledField("Phase", phaseInput),
     depsEl,
-    labeledField("Depends on (edit)", depsEditSelect)
+    labeledField("Depends on (edit)", depsPicker.element)
   );
 
   if (branchInfo) {

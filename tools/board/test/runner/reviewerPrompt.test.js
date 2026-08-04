@@ -65,4 +65,108 @@ describe("buildReviewerPrompt", () => {
     expect(() => buildReviewerPrompt({})).toThrow();
     expect(() => buildReviewerPrompt({ task: { id: "T-0001" } })).toThrow();
   });
+
+  it("works with no changedPaths at all (defaults to no explicit routed verification section)", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).not.toContain("Required verification for this diff");
+  });
+});
+
+describe("buildReviewerPrompt -- routed verification section", () => {
+  it("tells the reviewer to run the backlog validator AND the planner diff guard for a tasks/-only diff", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tasks/T-0200.md"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("node tools/board/scripts/validateBacklog.js");
+    expect(prompt).toContain("node tools/board/scripts/checkPlannerDiffGuard.js develop");
+    expect(prompt).not.toContain("Board test/lint suite");
+  });
+
+  it("threads a custom baseBranch into the planner diff guard's command", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tasks/T-0200.md"],
+      baseBranch: "main"
+    });
+    expect(prompt).toContain("node tools/board/scripts/checkPlannerDiffGuard.js main");
+  });
+
+  it("tells the reviewer to run the board suite for a tools/board diff, not the backlog validator or diff guard", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tools/board/src/lib/fsTaskStore.js"]
+    });
+    expect(prompt).toContain("Board test/lint suite");
+    expect(prompt).not.toContain("validateBacklog.js");
+    expect(prompt).not.toContain("checkPlannerDiffGuard.js");
+  });
+
+  it("tells the reviewer to run all three when a diff touches tasks/** and tools/board/**", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tasks/T-0200.md", "tools/board/src/lib/fsTaskStore.js"]
+    });
+    expect(prompt).toContain("validateBacklog.js");
+    expect(prompt).toContain("checkPlannerDiffGuard.js");
+    expect(prompt).toContain("Board test/lint suite");
+  });
+
+  it("omits the routed section entirely for a diff outside tasks/** and tools/board/** -- falls back to the verify skill's own table", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["server/src/main.cpp"]
+    });
+    expect(prompt).not.toContain("Required verification for this diff");
+  });
+
+  it("tells the reviewer to run venv+pip+pytest+ruff for a diff touching a Python package, and treat an unrun check as FAIL", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tools/asset-gate/src/asset_gate/checks/loudness.py"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("Python verify (tools/asset-gate)");
+    expect(prompt).toContain("python3 -m venv .venv");
+    expect(prompt).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(prompt).toContain(".venv/bin/pytest");
+    expect(prompt).toContain(".venv/bin/ruff check .");
+    expect(prompt).toContain("not read the diff and infer whether tests would pass");
+    expect(prompt).toContain("is a FAIL");
+    expect(prompt).not.toContain("validateBacklog.js");
+    expect(prompt).not.toContain("Board test/lint suite");
+  });
+
+  it("lists a python-verify step per package for a diff touching two Python packages", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: [
+        "tools/comfy-client/src/comfy_client/client.py",
+        "tools/audio-agent/src/audio_agent/client.py"
+      ]
+    });
+    expect(prompt).toContain("Python verify (tools/comfy-client)");
+    expect(prompt).toContain("Python verify (tools/audio-agent)");
+  });
+
+  it("tells the reviewer to run the board suite AND the python-verify step for a mixed board+python diff", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: [
+        "tools/board/src/lib/fsTaskStore.js",
+        "tools/palette-extract/src/palette_extract/extract.py"
+      ]
+    });
+    expect(prompt).toContain("Board test/lint suite");
+    expect(prompt).toContain("Python verify (tools/palette-extract)");
+  });
 });

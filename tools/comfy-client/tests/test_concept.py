@@ -1,0 +1,200 @@
+"""Concept-generation path (T-0104, `docs/design/13-asset-pipeline.md` §6):
+recipe -> generate -> commit, deliberately skipping the descend/validate
+arm -- concept art is a full-colour, never-indexed SOURCE, not a
+shippable asset. Mirrors `test_pipeline.py`'s shape; the differences are
+the point (no descend, a concept_hash, and a provenance sidecar written
+alongside the image since the output is committed, not gitignored)."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+from gen_client_base.client import GenerationClient
+from gen_client_base.license_allowlist import CheckpointNotAllowedError
+
+from comfy_client.concept import generate_concept, generate_concept_conditioned
+from comfy_client.recipe import Recipe
+
+
+class FakeClient(GenerationClient):
+    def __init__(self, prompt_id: str = "fake123", image_bytes: bytes = b"PNGDATA") -> None:
+        self.prompt_id = prompt_id
+        self.image_bytes = image_bytes
+        self.calls: list[tuple] = []
+
+    def submit(self, workflow):
+        self.calls.append(("submit", workflow))
+        return self.prompt_id
+
+    def wait_for_completion(self, job_id, timeout, poll_interval):
+        self.calls.append(("wait", job_id, timeout, poll_interval))
+        return {"job_id": job_id}
+
+    def fetch_output(self, job_result):
+        self.calls.append(("fetch", job_result))
+        return self.image_bytes
+
+
+class FakeConditionedClient(FakeClient):
+    """Adds `upload_image` -- not part of the `GenerationClient` ABC, only
+    `ComfyUIClient` (and this test double) implement it."""
+
+    def __init__(
+        self,
+        prompt_id: str = "fake123",
+        image_bytes: bytes = b"PNGDATA",
+        uploaded_name: str = "template_00001.png",
+    ) -> None:
+        super().__init__(prompt_id=prompt_id, image_bytes=image_bytes)
+        self.uploaded_name = uploaded_name
+
+    def upload_image(self, image_bytes, filename, image_type="input"):
+        self.calls.append(("upload", image_bytes, filename, image_type))
+        return {"name": self.uploaded_name, "subfolder": "", "type": image_type}
+
+
+def test_generate_concept_writes_full_colour_image_and_returns_result(tmp_path, sample_recipe):
+    client = FakeClient()
+    result = generate_concept(sample_recipe, out_dir=tmp_path, client=client)
+
+    assert result.path.exists()
+    assert result.path.read_bytes() == b"PNGDATA"
+    assert result.path == tmp_path / f"{sample_recipe.name}.png"
+    assert result.prompt_id == "fake123"
+    assert [c[0] for c in client.calls] == ["submit", "wait", "fetch"]
+
+
+def test_generate_concept_does_not_descend(tmp_path, sample_recipe):
+    """No downscale/quantize -- the file on disk is exactly the raw SDXL
+    output, byte for byte (contrast with `pipeline.generate()`'s descend
+    seam)."""
+    client = FakeClient(image_bytes=b"RAWFULLCOLOURPNG")
+    result = generate_concept(sample_recipe, out_dir=tmp_path, client=client)
+    assert result.path.read_bytes() == b"RAWFULLCOLOURPNG"
+
+
+def test_generate_concept_writes_provenance_sidecar_with_concept_hash(tmp_path, sample_recipe):
+    client = FakeClient(image_bytes=b"PNGDATA")
+    result = generate_concept(sample_recipe, out_dir=tmp_path, client=client)
+
+    sidecar = tmp_path / f"{sample_recipe.name}.provenance.json"
+    assert sidecar.exists()
+    on_disk = json.loads(sidecar.read_text())
+
+    import hashlib
+
+    expected_hash = hashlib.sha256(b"PNGDATA").hexdigest()
+    assert on_disk["concept_hash"] == expected_hash
+    assert result.provenance.concept_hash == expected_hash
+
+
+def test_generate_concept_provenance_matches_recipe(tmp_path, sample_recipe):
+    client = FakeClient(prompt_id="p42")
+    result = generate_concept(sample_recipe, out_dir=tmp_path, client=client)
+
+    prov = result.provenance
+    assert prov.model == sample_recipe.checkpoint
+    assert prov.prompt == sample_recipe.prompt
+    assert prov.seed == sample_recipe.seed
+    assert prov.prompt_id == "p42"
+    assert prov.workflow_hash
+
+
+def test_generate_concept_creates_out_dir_if_missing(tmp_path, sample_recipe):
+    out_dir = tmp_path / "nested" / "concept"
+    result = generate_concept(sample_recipe, out_dir=out_dir, client=FakeClient())
+    assert result.path.exists()
+    assert result.path.parent == out_dir
+
+
+def test_generate_concept_refuses_disallowed_checkpoint_before_any_client_call(tmp_path):
+    recipe = Recipe(prompt="x", seed=1, checkpoint="not_on_allowlist.safetensors")
+    client = FakeClient()
+    with pytest.raises(CheckpointNotAllowedError):
+        generate_concept(recipe, out_dir=tmp_path, client=client)
+    assert client.calls == []
+
+
+@pytest.fixture
+def init_image_path(tmp_path):
+    path = tmp_path / "template.png"
+    path.write_bytes(b"TEMPLATEBYTES")
+    return path
+
+
+def test_generate_concept_conditioned_uploads_then_generates(
+    tmp_path, sample_recipe, init_image_path
+):
+    client = FakeConditionedClient()
+    result = generate_concept_conditioned(
+        sample_recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
+    )
+
+    assert result.path.exists()
+    assert result.path.read_bytes() == b"PNGDATA"
+    assert [c[0] for c in client.calls] == ["upload", "submit", "wait", "fetch"]
+
+    upload_call = client.calls[0]
+    assert upload_call[1] == b"TEMPLATEBYTES"
+    assert upload_call[2] == "template.png"
+
+
+def test_generate_concept_conditioned_wires_uploaded_name_into_workflow(
+    tmp_path, sample_recipe, init_image_path
+):
+    client = FakeConditionedClient(uploaded_name="template_00007.png")
+    generate_concept_conditioned(
+        sample_recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
+    )
+
+    submitted_graph = client.calls[1][1]
+    assert submitted_graph["10"]["inputs"]["image"] == "template_00007.png"
+
+
+def test_generate_concept_conditioned_concept_hash_is_the_init_image_hash(
+    tmp_path, sample_recipe, init_image_path
+):
+    client = FakeConditionedClient()
+    result = generate_concept_conditioned(
+        sample_recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
+    )
+
+    import hashlib
+
+    expected_hash = hashlib.sha256(b"TEMPLATEBYTES").hexdigest()
+    assert result.provenance.concept_hash == expected_hash
+    # Not the output's hash -- the output is different bytes ("PNGDATA").
+    assert result.provenance.concept_hash != hashlib.sha256(b"PNGDATA").hexdigest()
+
+    sidecar = tmp_path / f"{sample_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["concept_hash"] == expected_hash
+    assert on_disk["conditioning_source"] == str(init_image_path)
+    assert on_disk["denoise"] == sample_recipe.denoise
+
+
+def test_generate_concept_conditioned_records_denoise_from_recipe(tmp_path, init_image_path):
+    recipe = Recipe(
+        prompt="brutalist concrete wall texture", seed=99, denoise=0.65, name="material_sheet"
+    )
+    client = FakeConditionedClient()
+    result = generate_concept_conditioned(
+        recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
+    )
+    assert result.provenance.denoise == 0.65
+
+    submitted_graph = client.calls[1][1]
+    assert submitted_graph["3"]["inputs"]["denoise"] == 0.65
+
+
+def test_generate_concept_conditioned_refuses_disallowed_checkpoint_before_any_client_call(
+    tmp_path, init_image_path
+):
+    recipe = Recipe(prompt="x", seed=1, checkpoint="not_on_allowlist.safetensors")
+    client = FakeConditionedClient()
+    with pytest.raises(CheckpointNotAllowedError):
+        generate_concept_conditioned(
+            recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
+        )
+    assert client.calls == []
