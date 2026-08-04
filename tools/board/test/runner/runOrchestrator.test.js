@@ -443,6 +443,264 @@ describe("RunOrchestrator.cancelRun", () => {
   });
 });
 
+describe("RunOrchestrator.runCard — unassigned cards (agent: null) route through planner then generic agent", () => {
+  const PLANNER_DEF = { name: "planner", model: "opus", body: "# planner\nAudits and expands the backlog." };
+  const GENERIC_DEF = { name: "generic", model: "sonnet", body: "# generic\nGeneral-purpose implementer." };
+
+  function makeUnassignedTask(overrides = {}) {
+    return baseTask({ agent: null, ...overrides });
+  }
+
+  function makeAgentDefFn() {
+    return vi.fn((name) => {
+      if (name === "reviewer") return REVIEWER_DEF;
+      if (name === "planner") return PLANNER_DEF;
+      if (name === "generic") return GENERIC_DEF;
+      return IMPLEMENTER_DEF;
+    });
+  }
+
+  it("broadcasts visible feedback before any agent runs — never silently no-ops for unassigned cards", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({
+      store, git, runner, hub,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    // Feedback must arrive before (or as soon as) the planning phase runner starts
+    const plannerChild = await nthChild(runner, 1);
+
+    const broadcasts = hub.broadcast.mock.calls.map(([msg]) => msg);
+    const planningBroadcast = broadcasts.find((m) => m.phase === "planning");
+    expect(planningBroadcast).toBeDefined();
+    expect(planningBroadcast.id).toBe("T-0001");
+
+    // clean up
+    plannerChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("runs planner first, then generic implementer, then reviewer — three phases total", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    // Phase 1: planner
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.emit("exit", 0, null);
+
+    // Phase 2: generic implementer
+    const implChild = await nthChild(runner, 2);
+    implChild.emit("exit", 0, null);
+
+    // Phase 3: reviewer
+    const reviewChild = await nthChild(runner, 3);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Done. ${verdictBlock("PASS", "looks good")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(3);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("uses the planner agent def and model for the planning phase", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const loadAgentDefFn = makeAgentDefFn();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    // planner agent model must be used for the first runner.start call
+    expect(runner.start).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ model: PLANNER_DEF.model })
+    );
+    expect(loadAgentDefFn).toHaveBeenCalledWith("planner", expect.anything());
+
+    plannerChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("uses the generic agent def and model for the implementation phase", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const loadAgentDefFn = makeAgentDefFn();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.emit("exit", 0, null);
+
+    const implChild = await nthChild(runner, 2);
+    expect(runner.start).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ model: GENERIC_DEF.model })
+    );
+    expect(loadAgentDefFn).toHaveBeenCalledWith("generic", expect.anything());
+
+    implChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("blocks the card if the planner phase exits with a non-zero code; generic agent never starts", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.emit("exit", 1, null);
+
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/planner/i);
+    // only the planner ran — generic and reviewer were not started
+    expect(runner.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks the card if the generic implementer phase fails; reviewer never starts", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.emit("exit", 0, null);
+
+    const implChild = await nthChild(runner, 2);
+    implChild.emit("exit", 1, null);
+
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(runner.start).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses buildPlannerPromptFn for the planning phase, not the standard buildPromptFn", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "implementer prompt");
+    const buildPlannerPromptFn = vi.fn(() => "planner prompt");
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn(),
+      buildPromptFn,
+      buildPlannerPromptFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    // planner prompt builder must have been called, not the standard one
+    expect(buildPlannerPromptFn).toHaveBeenCalledOnce();
+    expect(buildPlannerPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: expect.objectContaining({ id: "T-0001" }) })
+    );
+
+    plannerChild.emit("exit", 1, null);
+    await runPromise;
+
+    // standard buildPromptFn must NOT have been called for the planning phase
+    // (it may be called for the generic implementer phase, which did not run here)
+    expect(buildPromptFn).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts run-event with phase='planning' for events from the planner", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({
+      store, git, runner, hub,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    plannerChild.stdout.emit("data", ndjson(assistantEvent("expanding spec...")));
+    plannerChild.emit("exit", 0, null);
+
+    const implChild = await nthChild(runner, 2);
+    implChild.emit("exit", 1, null);
+    await runPromise;
+
+    const runEvents = hub.broadcast.mock.calls.map(([m]) => m).filter((m) => m.type === "run-event");
+    const planningRunEvents = runEvents.filter((m) => m.phase === "planning");
+    expect(planningRunEvents.length).toBeGreaterThan(0);
+    expect(planningRunEvents.every((m) => m.id === "T-0001")).toBe(true);
+  });
+
+  it("full PASS lifecycle for an unassigned card: planning → implementer → validation → review", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+    plannerChild.emit("exit", 0, null);
+
+    const implChild = await nthChild(runner, 2);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 3);
+    expect((await store.get("T-0001")).status).toBe("validation");
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`All done. ${verdictBlock("PASS", "generic agent delivered")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toContain("generic agent delivered");
+    expect(git.push).toHaveBeenCalled();
+  });
+});
+
 describe("appendNote", () => {
   it("appends a heading and text to the end of a task body", () => {
     const result = appendNote("## Context\nOriginal.\n", "Validation: PASS", "all good");
