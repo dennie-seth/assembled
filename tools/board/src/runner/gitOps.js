@@ -108,12 +108,63 @@ export async function getHeadCommit({ worktreeDir }) {
   return stdout.trim();
 }
 
-/** Pulls the latest commits for `branch` (default "develop") into repoRoot from origin. Reports whether HEAD moved, so callers know whether there's new code to pick up. */
+/**
+ * Pulls the latest commits for `branch` (default "develop") into repoRoot from origin. Reports
+ * whether HEAD moved, so callers know whether there's new code to pick up.
+ *
+ * `--no-rebase --no-edit` are explicit rather than relying on ambient git config: card-on-create
+ * commits (see `commitTaskFile`) can leave repoRoot's local branch with commits origin doesn't
+ * have yet, and a `pull.ff=only` or `pull.rebase=true` global default would otherwise turn a
+ * perfectly normal divergence into a failed/rewritten pull. A plain three-way merge is what we
+ * want here: it's predictable and, since card files are new/unique paths, essentially
+ * conflict-free in practice.
+ */
 export async function pullDevelop({ repoRoot, branch = "develop" }) {
   const { stdout: beforeOut } = await git(["rev-parse", "HEAD"], repoRoot);
   const before = beforeOut.trim();
-  await git(["pull", "origin", branch], repoRoot);
+  await git(["pull", "--no-rebase", "--no-edit", "origin", branch], repoRoot);
   const { stdout: afterOut } = await git(["rev-parse", "HEAD"], repoRoot);
   const after = afterOut.trim();
   return { advanced: before !== after, before, after };
+}
+
+const CARD_COMMIT_AUTHOR = { name: "assembled-board", email: "board@localhost" };
+const AUTO_COMMIT_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
+
+/** AUTO_COMMIT_CARDS_ON_CREATE env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable committing card files as they're written. */
+export function autoCommitCardsOnCreateFromEnv() {
+  return !AUTO_COMMIT_DISABLE_VALUES.has((process.env.AUTO_COMMIT_CARDS_ON_CREATE ?? "").toLowerCase());
+}
+
+/**
+ * Stages and commits a single card file (relative to repoRoot) so it becomes part of tracked
+ * history immediately, instead of sitting as untracked local state that a branch cut from
+ * origin (or a sibling worktree started before this moment) can never see -- the root cause of
+ * card-ID reuse this pairs with the git-aware `IdAllocator`. Scoped to `filePath` via `commit
+ * --` pathspec so it can never accidentally sweep up unrelated staged changes in repoRoot.
+ * Returns false (no-op) if nothing actually changed for that path.
+ */
+export async function commitTaskFile({ repoRoot, filePath, message, author = CARD_COMMIT_AUTHOR }) {
+  await git(["add", "--", filePath], repoRoot);
+  try {
+    await git(["diff", "--cached", "--quiet", "--", filePath], repoRoot);
+    return false;
+  } catch {
+    // non-zero exit from `diff --quiet` means there IS a staged change -- fall through to commit.
+  }
+  await git(
+    [
+      "-c",
+      `user.name=${author.name}`,
+      "-c",
+      `user.email=${author.email}`,
+      "commit",
+      "-m",
+      message,
+      "--",
+      filePath
+    ],
+    repoRoot
+  );
+  return true;
 }

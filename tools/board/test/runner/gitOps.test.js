@@ -12,7 +12,9 @@ import {
   commitAll,
   push,
   getHeadCommit,
-  pullDevelop
+  pullDevelop,
+  commitTaskFile,
+  autoCommitCardsOnCreateFromEnv
 } from "../../src/runner/gitOps.js";
 
 const execFileAsync = promisify(execFile);
@@ -293,5 +295,139 @@ describe("pullDevelop", () => {
     const result = await pullDevelop({ repoRoot, branch: "develop" });
     expect(result.advanced).toBe(false);
     expect(result.before).toBe(result.after);
+  });
+
+  it("merges cleanly when repoRoot has local unpushed commits AND origin has new commits (divergent histories)", async () => {
+    // This is the exact shape a card-on-create commit produces: repoRoot's local `develop`
+    // gets a commit origin doesn't have, then a card moves to Done and triggers pullDevelop
+    // while origin has *also* moved on (another PR merged). Must not fail or wedge the pull.
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0001.md"), "local card\n", "utf8");
+    await git(["add", "-A"], repoRoot);
+    await git(["commit", "-m", "chore(board): add card T-0001"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-divergent");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream3.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream3.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: unrelated commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(pullDevelop({ repoRoot, branch: "develop" })).resolves.toMatchObject({ advanced: true });
+
+    // Both the local card commit and the upstream commit must survive the merge.
+    const { stdout: log } = await git(["log", "--oneline", "develop"], repoRoot);
+    expect(log).toContain("chore(board): add card T-0001");
+    expect(log).toContain("upstream: unrelated commit");
+    const cardFile = await fs.readFile(path.join(repoRoot, "tasks", "T-0001.md"), "utf8");
+    expect(cardFile).toBe("local card\n");
+  });
+
+  it("does not fail under a pull.ff=only global-style config, since --no-rebase forces a real merge", async () => {
+    await git(["config", "pull.ff", "only"], repoRoot);
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0002.md"), "local card\n", "utf8");
+    await git(["add", "-A"], repoRoot);
+    await git(["commit", "-m", "chore(board): add card T-0002"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-ffonly");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream4.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream4.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: another unrelated commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(pullDevelop({ repoRoot, branch: "develop" })).resolves.toMatchObject({ advanced: true });
+  });
+});
+
+describe("commitTaskFile", () => {
+  it("stages and commits only the given card file, leaving other staged changes untouched", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0010.md"), "card body\n", "utf8");
+    await fs.writeFile(path.join(repoRoot, "unrelated.txt"), "unrelated\n", "utf8");
+    await git(["add", "unrelated.txt"], repoRoot);
+
+    const committed = await commitTaskFile({
+      repoRoot,
+      filePath: "tasks/T-0010.md",
+      message: "chore(board): add card T-0010"
+    });
+
+    expect(committed).toBe(true);
+    const { stdout: log } = await git(["log", "-1", "--pretty=%s"], repoRoot);
+    expect(log.trim()).toBe("chore(board): add card T-0010");
+    const { stdout: statusAfter } = await git(["status", "--porcelain"], repoRoot);
+    expect(statusAfter).toContain("A  unrelated.txt");
+    expect(statusAfter).not.toContain("tasks/T-0010.md");
+  });
+
+  it("commits with the configured board author, independent of the ambient git identity", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0011.md"), "card body\n", "utf8");
+
+    await commitTaskFile({ repoRoot, filePath: "tasks/T-0011.md", message: "chore(board): add card T-0011" });
+
+    const { stdout: authorName } = await git(["log", "-1", "--pretty=%an"], repoRoot);
+    const { stdout: authorEmail } = await git(["log", "-1", "--pretty=%ae"], repoRoot);
+    expect(authorName.trim()).toBe("assembled-board");
+    expect(authorEmail.trim()).toBe("board@localhost");
+  });
+
+  it("is a no-op and returns false when the file has no staged changes", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0012.md"), "card body\n", "utf8");
+    await commitTaskFile({ repoRoot, filePath: "tasks/T-0012.md", message: "chore(board): add card T-0012" });
+
+    const { stdout: before } = await git(["rev-parse", "HEAD"], repoRoot);
+    const committed = await commitTaskFile({
+      repoRoot,
+      filePath: "tasks/T-0012.md",
+      message: "chore(board): add card T-0012 (again)"
+    });
+    const { stdout: after } = await git(["rev-parse", "HEAD"], repoRoot);
+
+    expect(committed).toBe(false);
+    expect(after).toBe(before);
+  });
+
+  it("leaves the file tracked by git after commit", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0013.md"), "card body\n", "utf8");
+
+    await commitTaskFile({ repoRoot, filePath: "tasks/T-0013.md", message: "chore(board): add card T-0013" });
+
+    const { stdout: lsFiles } = await git(["ls-files", "tasks/T-0013.md"], repoRoot);
+    expect(lsFiles.trim()).toBe("tasks/T-0013.md");
+  });
+});
+
+describe("autoCommitCardsOnCreateFromEnv", () => {
+  const original = process.env.AUTO_COMMIT_CARDS_ON_CREATE;
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env.AUTO_COMMIT_CARDS_ON_CREATE;
+    } else {
+      process.env.AUTO_COMMIT_CARDS_ON_CREATE = original;
+    }
+  });
+
+  it("defaults to true when unset", () => {
+    delete process.env.AUTO_COMMIT_CARDS_ON_CREATE;
+    expect(autoCommitCardsOnCreateFromEnv()).toBe(true);
+  });
+
+  it.each(["0", "false", "off", "no", "FALSE", "Off"])("is false when set to %s", (value) => {
+    process.env.AUTO_COMMIT_CARDS_ON_CREATE = value;
+    expect(autoCommitCardsOnCreateFromEnv()).toBe(false);
   });
 });
