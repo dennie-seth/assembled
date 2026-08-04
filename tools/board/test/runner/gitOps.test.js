@@ -11,7 +11,8 @@ import {
   hasUncommittedChanges,
   commitAll,
   push,
-  getHeadCommit
+  getHeadCommit,
+  pullDevelop
 } from "../../src/runner/gitOps.js";
 
 const execFileAsync = promisify(execFile);
@@ -232,5 +233,36 @@ describe("push", () => {
 
     const { stdout: branches } = await git(["branch", "-r"], repoRoot);
     expect(branches).toContain("origin/feature/T-0106");
+  });
+});
+
+describe("pullDevelop", () => {
+  it("fast-forwards develop when origin has new commits", async () => {
+    // Push a new commit to origin's develop from a separate clone
+    const cloneDir = path.join(tmpDir, "other-clone");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: new commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await pullDevelop({ repoRoot, branch: "develop" });
+
+    const { stdout: log } = await git(["log", "--oneline", "develop"], repoRoot);
+    expect(log).toContain("upstream: new commit");
+  });
+
+  it("resolves without error when develop is already up to date", async () => {
+    await expect(pullDevelop({ repoRoot, branch: "develop" })).resolves.not.toThrow();
+  });
+
+  it("rejects with a descriptive error when the branch does not exist on origin", async () => {
+    await expect(pullDevelop({ repoRoot, branch: "nonexistent-branch" })).rejects.toThrow(
+      /nonexistent-branch|git pull/i
+    );
   });
 });
