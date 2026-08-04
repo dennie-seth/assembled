@@ -506,6 +506,67 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
   });
 });
 
+describe("GET /api/git/status", () => {
+  let gitServer;
+  let gitBaseUrl;
+  let gitTmpDir;
+  let gitInfoImpl;
+
+  beforeEach(async () => {
+    gitTmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-httpapi-git-"));
+    const store = new FsTaskStore(gitTmpDir);
+    const idAllocator = new IdAllocator(gitTmpDir);
+    gitInfoImpl = vi.fn().mockResolvedValue({
+      branch: "feature/T-0116",
+      head: "abc1234567890abcdef1234567890abcdef123456",
+      headTimestamp: "2026-08-04T10:00:00+00:00"
+    });
+    gitServer = await startHttpServer({ store, idAllocator, gitInfoImpl, port: 0 });
+    const { port } = gitServer.address();
+    gitBaseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise((resolve) => gitServer.close(resolve));
+    await fs.rm(gitTmpDir, { recursive: true, force: true });
+  });
+
+  it("returns 200 with branch, head, and headTimestamp", async () => {
+    const res = await fetch(`${gitBaseUrl}/api/git/status`);
+    expect(res.status).toBe(200);
+    const payload = await res.json();
+    expect(payload.branch).toBe("feature/T-0116");
+    expect(payload.head).toBe("abc1234567890abcdef1234567890abcdef123456");
+    expect(payload.headTimestamp).toBe("2026-08-04T10:00:00+00:00");
+  });
+
+  it("calls gitInfoImpl exactly once per request", async () => {
+    await fetch(`${gitBaseUrl}/api/git/status`);
+    expect(gitInfoImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 200 with null fields when no gitInfoImpl is configured", async () => {
+    const bareDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-httpapi-noGit-"));
+    const bareStore = new FsTaskStore(bareDir);
+    const bareAllocator = new IdAllocator(bareDir);
+    const bareServer = await startHttpServer({ store: bareStore, idAllocator: bareAllocator, port: 0 });
+    const { port } = bareServer.address();
+    const res = await fetch(`http://127.0.0.1:${port}/api/git/status`);
+    expect(res.status).toBe(200);
+    const payload = await res.json();
+    expect(payload.branch).toBeNull();
+    expect(payload.head).toBeNull();
+    expect(payload.headTimestamp).toBeNull();
+    await new Promise((resolve) => bareServer.close(resolve));
+    await fs.rm(bareDir, { recursive: true, force: true });
+  });
+
+  it("returns 405 for non-GET methods on /api/git/status", async () => {
+    const res = await fetch(`${gitBaseUrl}/api/git/status`, { method: "POST" });
+    expect(res.status).toBe(405);
+  });
+});
+
 describe("GET /api/tasks/export/backlog", () => {
   async function createTask(overrides = {}) {
     const res = await fetch(`${baseUrl}/api/tasks`, {
