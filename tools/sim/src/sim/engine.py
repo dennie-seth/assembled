@@ -344,10 +344,27 @@ class SimEngine:
                 self._place_item_at_anchor(type_id, Rarity.RARE)
                 rare_count += 1
 
+    def _ordered_playing_agents(self) -> list[Agent]:
+        """Order PLAYING agents for this tick's pickup attempts (DM-5).
+
+        When several agents roll a successful pickup in the same tick and
+        compete for the same scarce world_items pool, this order decides
+        who wins — see config.py's recipient_policy docstring.
+        """
+        playing = [a for a in self._state.agents.values() if a.state == AgentState.PLAYING]
+        policy = self.cfg.recipient_policy
+        if policy == "random":
+            self._rng.shuffle(playing)
+        elif policy == "need_weighted":
+            playing.sort(key=lambda a: a.items_received)
+        elif policy != "fifo":
+            raise ValueError(f"unknown recipient_policy {policy!r}")
+        return playing
+
     def _process_agent_actions(self) -> None:
         """Playing agents pick up from and deposit items into the world."""
         cfg = self.cfg
-        playing = [a for a in self._state.agents.values() if a.state == AgentState.PLAYING]
+        playing = self._ordered_playing_agents()
         world_items = [it for it in self._state.items.values() if it.anchor is not None]
 
         for agent in playing:
@@ -370,12 +387,45 @@ class SimEngine:
                 world_items.remove(item)
                 item.anchor = None
                 item.holder = agent.agent_id
-                bleed_dur = self._rng.randint(cfg.held_bleed_min, cfg.held_bleed_max)
-                if item.rarity == Rarity.UNIQUE:
-                    bleed_dur = int(bleed_dur * cfg.unique_held_bleed_multiplier)
-                item.bleed_at = self._state.tick + bleed_dur
                 agent.items_received += 1
                 self._grant_unlock(agent.agent_id, item.type_id, item.rarity)
+
+                if (
+                    cfg.chain_key_enabled
+                    and item.rarity == Rarity.UNIQUE
+                    and agent.chain_progress < cfg.chain_key_crossings_required
+                ):
+                    self._consume_chain_key(agent, item, world_items)
+                else:
+                    bleed_dur = self._rng.randint(cfg.held_bleed_min, cfg.held_bleed_max)
+                    if item.rarity == Rarity.UNIQUE:
+                        bleed_dur = int(bleed_dur * cfg.unique_held_bleed_multiplier)
+                    item.bleed_at = self._state.tick + bleed_dur
+
+    def _consume_chain_key(
+        self, agent: Agent, item: ItemInstance, world_items: list[ItemInstance]
+    ) -> None:
+        """Spend a held unique to cross a chain tear (12 §3a, 07 §2 — Q4).
+
+        "destroy": the instance is permanently removed — literally the
+        "pool that never respawns." "transfer": it is sent onward
+        immediately, same as the door-key semantics in 12 §3a — it stays
+        in circulation rather than being destroyed.
+        """
+        cfg = self.cfg
+        agent.chain_progress += 1
+        if cfg.chain_key_mode == "destroy":
+            del self._state.items[item.instance_id]
+        elif cfg.chain_key_mode == "transfer":
+            anchor = self._rng.randrange(cfg.num_anchors)
+            bleed_dur = self._rng.randint(cfg.world_bleed_min, cfg.world_bleed_max)
+            item.holder = None
+            item.anchor = anchor
+            item.bleed_at = self._state.tick + bleed_dur
+            item.custody_depth += 1
+            world_items.append(item)
+        else:
+            raise ValueError(f"unknown chain_key_mode {cfg.chain_key_mode!r}")
 
     def _update_throughput(self) -> None:
         """Record per-player throughput snapshot for INV-9/INV-14 tracking."""

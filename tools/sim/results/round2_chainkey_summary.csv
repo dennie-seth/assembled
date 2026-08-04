@@ -1,0 +1,3 @@
+mode,seed,ticks_run,unique_count_initial,unique_count_final,exhausted_at_tick,exhausted_at_week,fraction_of_run_at_zero,total_chain_crossings_completed,final_population
+destroy,42,30240,5,0,60,0.005952380952380952,1.0,5,51
+transfer,42,30240,5,5,,,0.0,2032,55

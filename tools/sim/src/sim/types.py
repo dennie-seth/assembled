@@ -79,6 +79,7 @@ class Agent:
     is_hoarder: bool = False  # never voluntarily transfers (hoarder cohort sweep)
     items_received: int = 0   # cumulative pickups; used by INV-9
     ticks_active: int = 0     # ticks in PLAYING or IDLE; denominator for INV-9
+    chain_progress: int = 0   # uniques consumed to cross chain tears (12 §3a)
 
 
 @dataclass
