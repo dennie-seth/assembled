@@ -13,6 +13,7 @@ dev = [
 
 [project.scripts]
 sim = "sim.sweeps:main"
+sim-tuning-sweep = "sim.run:main"
 
 [build-system]
 requires = ["setuptools>=68"]

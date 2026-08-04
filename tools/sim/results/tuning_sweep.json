@@ -1,0 +1,618 @@
+[
+  {
+    "sweep": "E-1",
+    "variant": "held(60,90)_world(2880,4320)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 90,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 4320
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 2006338,
+    "violation_summary": {
+      "INV-7": 17425,
+      "INV-8": 1987040,
+      "INV-9": 1873
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,90)_world(2880,4320)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 90,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 4320
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1021182,
+    "violation_summary": {
+      "INV-7": 319,
+      "INV-8": 1020735,
+      "INV-9": 128
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,90)_world(2880,3600)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 90,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 3600
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 2031973,
+    "violation_summary": {
+      "INV-7": 17730,
+      "INV-8": 2012900,
+      "INV-9": 1343
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,90)_world(2880,3600)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 90,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 3600
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1020552,
+    "violation_summary": {
+      "INV-7": 319,
+      "INV-8": 1020105,
+      "INV-9": 128
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,90)_world(3600,4320)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 90,
+      "world_bleed_min": 3600,
+      "world_bleed_max": 4320
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 2031973,
+    "violation_summary": {
+      "INV-7": 17730,
+      "INV-8": 2012900,
+      "INV-9": 1343
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,90)_world(3600,4320)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 90,
+      "world_bleed_min": 3600,
+      "world_bleed_max": 4320
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1020552,
+    "violation_summary": {
+      "INV-7": 319,
+      "INV-8": 1020105,
+      "INV-9": 128
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,75)_world(2880,4320)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 75,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 4320
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 1842967,
+    "violation_summary": {
+      "INV-7": 1586,
+      "INV-8": 1839860,
+      "INV-9": 1521
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,75)_world(2880,4320)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 75,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 4320
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1016225,
+    "violation_summary": {
+      "INV-7": 779,
+      "INV-8": 1015230,
+      "INV-9": 216
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,75)_world(2880,3600)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 75,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 3600
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 1822057,
+    "violation_summary": {
+      "INV-7": 1016,
+      "INV-8": 1819520,
+      "INV-9": 1521
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,75)_world(2880,3600)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 75,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 3600
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1017845,
+    "violation_summary": {
+      "INV-7": 779,
+      "INV-8": 1016850,
+      "INV-9": 216
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,75)_world(3600,4320)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 75,
+      "world_bleed_min": 3600,
+      "world_bleed_max": 4320
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 1822057,
+    "violation_summary": {
+      "INV-7": 1016,
+      "INV-8": 1819520,
+      "INV-9": 1521
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(60,75)_world(3600,4320)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 60,
+      "held_bleed_max": 75,
+      "world_bleed_min": 3600,
+      "world_bleed_max": 4320
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1017845,
+    "violation_summary": {
+      "INV-7": 779,
+      "INV-8": 1016850,
+      "INV-9": 216
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(75,90)_world(2880,4320)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 75,
+      "held_bleed_max": 90,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 4320
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 2173307,
+    "violation_summary": {
+      "INV-7": 18253,
+      "INV-8": 2153120,
+      "INV-9": 1934
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(75,90)_world(2880,4320)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 75,
+      "held_bleed_max": 90,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 4320
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1021837,
+    "violation_summary": {
+      "INV-7": 1261,
+      "INV-8": 1020360,
+      "INV-9": 216
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(75,90)_world(2880,3600)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 75,
+      "held_bleed_max": 90,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 3600
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 2172707,
+    "violation_summary": {
+      "INV-7": 18253,
+      "INV-8": 2152520,
+      "INV-9": 1934
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(75,90)_world(2880,3600)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 75,
+      "held_bleed_max": 90,
+      "world_bleed_min": 2880,
+      "world_bleed_max": 3600
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1022677,
+    "violation_summary": {
+      "INV-7": 1261,
+      "INV-8": 1021200,
+      "INV-9": 216
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(75,90)_world(3600,4320)",
+    "scenario": "hoarder_cohort",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 75,
+      "held_bleed_max": 90,
+      "world_bleed_min": 3600,
+      "world_bleed_max": 4320
+    },
+    "final_population": 20,
+    "final_item_count": 49,
+    "violations_total": 2172707,
+    "violation_summary": {
+      "INV-7": 18253,
+      "INV-8": 2152520,
+      "INV-9": 1934
+    },
+    "ok": false
+  },
+  {
+    "sweep": "E-1",
+    "variant": "held(75,90)_world(3600,4320)",
+    "scenario": "unique_circulation",
+    "seed": 42,
+    "ticks_run": 17280,
+    "params": {
+      "held_bleed_min": 75,
+      "held_bleed_max": 90,
+      "world_bleed_min": 3600,
+      "world_bleed_max": 4320
+    },
+    "final_population": 15,
+    "final_item_count": 35,
+    "violations_total": 1022677,
+    "violation_summary": {
+      "INV-7": 1261,
+      "INV-8": 1021200,
+      "INV-9": 216
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=20160_T2=nominal",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 20160,
+    "params": {
+      "collapse_duration": 20160,
+      "unlock_decay_unique_keyed": 10080
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1079231,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1077640,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=25200_T2=nominal",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 25200,
+    "params": {
+      "collapse_duration": 25200,
+      "unlock_decay_unique_keyed": 10080
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1312231,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1310640,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=30240_T2=nominal",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 30240,
+    "params": {
+      "collapse_duration": 30240,
+      "unlock_decay_unique_keyed": 10080
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1554611,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1553020,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=35280_T2=nominal",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 35280,
+    "params": {
+      "collapse_duration": 35280,
+      "unlock_decay_unique_keyed": 10080
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1817651,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1816060,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=40320_T2=nominal",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 40320,
+    "params": {
+      "collapse_duration": 40320,
+      "unlock_decay_unique_keyed": 10080
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 2084831,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 2083240,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=nominal_T2=7200",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 30240,
+    "params": {
+      "collapse_duration": 30240,
+      "unlock_decay_unique_keyed": 7200
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1554611,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1553020,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=nominal_T2=8640",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 30240,
+    "params": {
+      "collapse_duration": 30240,
+      "unlock_decay_unique_keyed": 8640
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1554611,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1553020,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=nominal_T2=11520",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 30240,
+    "params": {
+      "collapse_duration": 30240,
+      "unlock_decay_unique_keyed": 11520
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1554611,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1553020,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "T1=nominal_T2=12960",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 30240,
+    "params": {
+      "collapse_duration": 30240,
+      "unlock_decay_unique_keyed": 12960
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1554611,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1553020,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "paired_short",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 20160,
+    "params": {
+      "collapse_duration": 20160,
+      "unlock_decay_unique_keyed": 7200
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 1079231,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 1077640,
+      "INV-9": 572
+    },
+    "ok": false
+  },
+  {
+    "sweep": "T-1/T-2",
+    "variant": "paired_long",
+    "scenario": "p2_stability",
+    "seed": 42,
+    "ticks_run": 40320,
+    "params": {
+      "collapse_duration": 40320,
+      "unlock_decay_unique_keyed": 12960
+    },
+    "final_population": 0,
+    "final_item_count": 5,
+    "violations_total": 2084831,
+    "violation_summary": {
+      "INV-7": 1019,
+      "INV-8": 2083240,
+      "INV-9": 572
+    },
+    "ok": false
+  }
+]
