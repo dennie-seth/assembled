@@ -1,6 +1,6 @@
 # T-0099 tuning sweep — results
 
-**Generated:** 2026-08-04 · **Seed:** 42 (fixed, deterministic) · **Sim base:** commit `be6375b` (`origin/develop`) + this branch's `sim.run` module
+**Generated:** 2026-08-04 · **Seed:** 42 (fixed, deterministic) · **Sim base:** `feature/T-0099-sim-results` @ `9dbdfc0` (branched from `origin/develop` @ `be6375b`)
 **Reproduce:** `cd tools/sim && .venv/bin/python -m sim.run` (writes `tuning_sweep.json` / `tuning_sweep.csv` in this directory; ~2 minutes)
 
 This sweeps the three still-open tuning questions from
