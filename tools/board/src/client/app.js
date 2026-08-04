@@ -7,7 +7,8 @@ import {
   cancelTask,
   createTask,
   deleteTask,
-  exportBacklog
+  exportBacklog,
+  exportDone
 } from "./api.js";
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard } from "./boardView.js";
@@ -29,7 +30,8 @@ export function createApp({
   cancelTaskImpl = cancelTask,
   createTaskImpl = createTask,
   deleteTaskImpl = deleteTask,
-  exportBacklogImpl = exportBacklog
+  exportBacklogImpl = exportBacklog,
+  exportDoneImpl = exportDone
 }) {
   let tasks = [];
   let agentOptions = [];
@@ -47,6 +49,7 @@ export function createApp({
       onRun: handleRun,
       onCancel: handleCancel,
       onExportBacklog: handleExportBacklog,
+      onExportDone: handleExportDone,
       error,
       columnSort,
       onSortChange: handleSortChange
@@ -134,6 +137,10 @@ export function createApp({
 
   function handleExportBacklog() {
     exportBacklogImpl();
+  }
+
+  function handleExportDone() {
+    exportDoneImpl();
   }
 
   function handleToggleCreateForm() {
@@ -235,6 +242,7 @@ export function createApp({
     handleCreateSubmit,
     handleSocketMessage,
     handleExportBacklog,
+    handleExportDone,
     getTasks: () => tasks,
     getSelectedId: () => selectedId,
     getError: () => error

@@ -116,6 +116,9 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
   if (status === "backlog" && callbacks.onExportBacklog) {
     column.appendChild(actionButton("column-export-backlog", "Export", callbacks.onExportBacklog));
   }
+  if (status === "done" && callbacks.onExportDone) {
+    column.appendChild(actionButton("column-export-done", "Export", callbacks.onExportDone));
+  }
 
   const list = document.createElement("div");
   list.className = "column-cards";
