@@ -107,3 +107,8 @@ export async function getHeadCommit({ worktreeDir }) {
   const { stdout } = await git(["rev-parse", "HEAD"], worktreeDir);
   return stdout.trim();
 }
+
+/** Pulls the latest commits for `branch` (default "develop") into repoRoot from origin. */
+export async function pullDevelop({ repoRoot, branch = "develop" }) {
+  await git(["pull", "origin", branch], repoRoot);
+}

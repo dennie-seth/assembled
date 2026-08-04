@@ -39,7 +39,7 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
 
   watcher.on("task-changed", (event) => hub.broadcast(event));
 
-  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir }));
+  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot: REPO_ROOT }));
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = new URL(req.url, "http://localhost");
     if (pathname === WS_BOARD_PATH) {
