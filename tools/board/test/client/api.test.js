@@ -9,7 +9,8 @@ import {
   createTask,
   deleteTask,
   fetchAgents,
-  exportBacklog
+  exportBacklog,
+  exportDone
 } from "../../src/client/api.js";
 
 const originalFetch = global.fetch;
@@ -235,6 +236,25 @@ describe("exportBacklog", () => {
     try {
       exportBacklog();
       expect(window.location.assign).toHaveBeenCalledWith("/api/tasks/export/backlog");
+    } finally {
+      window.location.assign = originalAssign;
+    }
+  });
+});
+
+describe("exportDone", () => {
+  it("calls navigateTo with /api/tasks/export/done", () => {
+    const navigateTo = vi.fn();
+    exportDone(navigateTo);
+    expect(navigateTo).toHaveBeenCalledWith("/api/tasks/export/done");
+  });
+
+  it("uses window.location.assign as the default navigateTo", () => {
+    const originalAssign = window.location.assign;
+    window.location.assign = vi.fn();
+    try {
+      exportDone();
+      expect(window.location.assign).toHaveBeenCalledWith("/api/tasks/export/done");
     } finally {
       window.location.assign = originalAssign;
     }

@@ -32,6 +32,7 @@ function makeApp(overrides = {}) {
   const createTaskImpl = overrides.createTaskImpl ?? vi.fn();
   const deleteTaskImpl = overrides.deleteTaskImpl ?? vi.fn();
   const exportBacklogImpl = overrides.exportBacklogImpl ?? vi.fn();
+  const exportDoneImpl = overrides.exportDoneImpl ?? vi.fn();
   const app = createApp({
     boardRoot,
     detailRoot,
@@ -46,7 +47,8 @@ function makeApp(overrides = {}) {
     cancelTaskImpl,
     createTaskImpl,
     deleteTaskImpl,
-    exportBacklogImpl
+    exportBacklogImpl,
+    exportDoneImpl
   });
   return {
     app,
@@ -63,7 +65,8 @@ function makeApp(overrides = {}) {
     cancelTaskImpl,
     createTaskImpl,
     deleteTaskImpl,
-    exportBacklogImpl
+    exportBacklogImpl,
+    exportDoneImpl
   };
 }
 
@@ -584,5 +587,17 @@ describe("createApp backlog export wiring", () => {
     app.handleExportBacklog();
 
     expect(exportBacklogImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createApp done export wiring", () => {
+  it("calls exportDoneImpl when handleExportDone is invoked", async () => {
+    const exportDoneImpl = vi.fn();
+    const { app } = makeApp({ exportDoneImpl });
+    await app.init();
+
+    app.handleExportDone();
+
+    expect(exportDoneImpl).toHaveBeenCalledTimes(1);
   });
 });

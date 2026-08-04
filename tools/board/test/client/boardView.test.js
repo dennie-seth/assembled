@@ -242,6 +242,39 @@ describe("renderBoard backlog export button", () => {
   });
 });
 
+describe("renderBoard done export button", () => {
+  it("renders an export button in the done column when onExportDone is provided", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), onExportDone: vi.fn() });
+    const exportBtn = root.querySelector('.column[data-status="done"] .column-export-done');
+    expect(exportBtn).not.toBeNull();
+    expect(exportBtn.textContent).toMatch(/export/i);
+  });
+
+  it("does not render the done export button in non-done columns", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), onExportDone: vi.fn() });
+    for (const status of ["backlog", "ready", "in-progress", "review", "blocked", "validation"]) {
+      expect(root.querySelector(`.column[data-status="${status}"] .column-export-done`)).toBeNull();
+    }
+  });
+
+  it("calls onExportDone when the done export button is clicked", () => {
+    const root = document.createElement("div");
+    const onExportDone = vi.fn();
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), onExportDone });
+    const exportBtn = root.querySelector('.column[data-status="done"] .column-export-done');
+    exportBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+    expect(onExportDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render the done export button when onExportDone is not provided", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn() });
+    expect(root.querySelector(".column-export-done")).toBeNull();
+  });
+});
+
 describe("renderBoard per-column sort control", () => {
   it("renders a sort select per column defaulting to id", () => {
     const root = document.createElement("div");
