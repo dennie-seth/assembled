@@ -26,9 +26,15 @@ function buildRequiredVerificationSection(changedPaths, baseBranch) {
   }
   const lines = routes.map((route) => `- **${route.label}:** \`${route.command}\``);
   const hasPythonRoute = routes.some((route) => route.id.startsWith("python-verify:"));
-  const enforcement = hasPythonRoute
-    ? `Actually execute every command above yourself with Bash -- do not read the diff and infer whether tests would pass. A python-verify step you did not run is a FAIL ("tests unverified, no venv" is not a passing verdict), not an unverified pass; report the real \`pytest\`/\`ruff\` output, including any failures, in your notes.`
-    : `Actually execute every command above yourself with Bash -- do not infer the result from reading the diff. A check you did not run is a FAIL, not an unverified pass.`;
+  const hasServerRoute = routes.some((route) => route.id === "server-db-verify");
+
+  let enforcement = `Actually execute every command above yourself with Bash -- do not read the diff and infer whether tests would pass. A check you did not run is a FAIL, not an unverified pass.`;
+  if (hasPythonRoute) {
+    enforcement += ` A python-verify step you did not run is a FAIL ("tests unverified, no venv" is not a passing verdict), not an unverified pass; report the real \`pytest\`/\`ruff\` output, including any failures, in your notes.`;
+  }
+  if (hasServerRoute) {
+    enforcement += ` The server-db-verify route must actually bring up Postgres and run the DB-gated ctest cases against it, not skip them -- this is the exact T-0043 gap: those tests skipped locally with no DATABASE_URL, the reviewer passed the card anyway, and CI then found 10/22 failures against live Postgres. A DB-gated test that is skipped, or missing entirely from \`ctest -N\`'s registered list (which happens silently if DATABASE_URL wasn't set when the build last ran -- no "skipped" line, no nonzero exit), is a FAIL ("N DB-gated tests skipped: no DATABASE_URL/Postgres in reviewer env -- relying on CI is not a pass" is not a passing verdict). If you genuinely cannot bring up Postgres in this environment, that is also a FAIL, not grounds to pass on the strength of the rest of the suite going green.`;
+  }
   return `## Required verification for this diff\n\nRun exactly the following, in addition to (not instead of) the \`verify\` skill's own table for any other paths this diff touches:\n\n${lines.join("\n")}\n\n${enforcement}`;
 }
 
@@ -39,7 +45,9 @@ function buildRequiredVerificationSection(changedPaths, baseBranch) {
  * when the diff matches a code-enforced route (tasks/** -> backlog
  * validator + planner diff guard, tools/board/** -> board suite, a Python
  * package root -> a per-package python-verify step (venv + pip install +
- * pytest + ruff) -- see verifyRouter.js), the task body verbatim, and the
+ * pytest + ruff), server/** or shared/** -> server-db-verify (live-Postgres
+ * ctest run, fail-closed if the DB-gated tests skip or never register --
+ * see verifyRouter.js), the task body verbatim, and the
  * required machine-readable verdict format. The routed section also spells
  * out that these commands must actually be run, not inferred from reading
  * the diff -- an unrun check is a FAIL, not an "unverified" pass.

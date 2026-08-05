@@ -31,8 +31,8 @@ describe("resolveVerifyRoutes", () => {
     expect(routes.map((r) => r.id).sort()).toEqual(["backlog-validate", "board-suite", "planner-diff-guard"]);
   });
 
-  it("routes a diff outside both tasks/** and tools/board/** to neither -- other subsystems keep their own verify-skill routing", () => {
-    const routes = resolveVerifyRoutes(["server/src/main.cpp"]);
+  it("routes a diff outside tasks/**, tools/board/**, a Python package root, and server/**/shared/** to neither -- other subsystems keep their own verify-skill routing", () => {
+    const routes = resolveVerifyRoutes(["client/src/main.cpp"]);
     expect(routes).toEqual([]);
   });
 
@@ -114,8 +114,73 @@ describe("resolveVerifyRoutes", () => {
     expect(routes).toEqual([]);
   });
 
-  it("leaves a non-Python diff (e.g. server/**) unaffected -- no routes returned", () => {
+  it("leaves a non-Python diff (e.g. server/**) unaffected by python-verify routing -- routes to server-db-verify only", () => {
     const routes = resolveVerifyRoutes(["server/src/main.cpp"]);
+    expect(routes.map((r) => r.id)).toEqual(["server-db-verify"]);
+  });
+});
+
+describe("resolveVerifyRoutes -- server-db-verify", () => {
+  it("routes a server/** diff to server-db-verify", () => {
+    const routes = resolveVerifyRoutes(["server/src/main.cpp"]);
+    expect(routes.map((r) => r.id)).toEqual(["server-db-verify"]);
+  });
+
+  it("routes a shared/** diff to server-db-verify too -- shared/ is co-owned wire structs server/** depends on", () => {
+    const routes = resolveVerifyRoutes(["shared/protocol.h"]);
+    expect(routes.map((r) => r.id)).toEqual(["server-db-verify"]);
+  });
+
+  it("does not route a client/** diff to server-db-verify", () => {
+    const routes = resolveVerifyRoutes(["client/src/main.cpp"]);
     expect(routes).toEqual([]);
+  });
+
+  it("does not mistake a server-prefixed-but-different path (e.g. serverless/) for server/**", () => {
+    const routes = resolveVerifyRoutes(["serverless/whatever.cpp"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("routes each of server/** and shared/** to the same single server-db-verify step, not one per prefix", () => {
+    const routes = resolveVerifyRoutes(["server/src/main.cpp", "shared/protocol.h"]);
+    expect(routes.map((r) => r.id)).toEqual(["server-db-verify"]);
+  });
+
+  it("brings up the compose Postgres, exports the documented dev DATABASE_URL, forces a from-scratch build, and runs ctest", () => {
+    const routes = resolveVerifyRoutes(["server/src/MigrationRunner.cpp"]);
+    const route = routes.find((r) => r.id === "server-db-verify");
+    expect(route.command).toContain("cd server");
+    expect(route.command).toContain("docker compose up -d");
+    expect(route.command).toContain(
+      "export DATABASE_URL=postgresql://assembled:assembled@localhost:5433/assembled_dev"
+    );
+    expect(route.command).toContain("rm -rf build");
+    expect(route.command).toContain("cmake -S . -B build -DCMAKE_BUILD_TYPE=Release");
+    expect(route.command).toContain("cmake --build build --parallel");
+    expect(route.command).toContain("ctest --test-dir build --output-on-failure");
+  });
+
+  it("checks ctest's registered test list for all three DB-gated test names before trusting the real run -- the fail-closed guard", () => {
+    const routes = resolveVerifyRoutes(["server/migrations/002_identity.sql"]);
+    const route = routes.find((r) => r.id === "server-db-verify");
+    expect(route.command).toContain("ctest --test-dir build -N");
+    expect(route.command).toContain("migrations apply against a live Postgres");
+    expect(route.command).toContain("identity table has no phrase column");
+    expect(route.command).toContain("POST /v1/identity HTTP integration");
+    // the count check -- exactly 3 known DB-gated tests must be registered
+    expect(route.command).toMatch(/=\s*3\b/);
+  });
+
+  it("routes a diff touching server/** and a Python package to both server-db-verify and python-verify", () => {
+    const routes = resolveVerifyRoutes([
+      "server/src/main.cpp",
+      "tools/comfy-client/src/comfy_client/client.py"
+    ]);
+    expect(routes.map((r) => r.id).sort()).toEqual(["python-verify:tools/comfy-client", "server-db-verify"]);
+  });
+
+  it("routes a diff touching server/** and tools/board/** to both server-db-verify and board-suite", () => {
+    const routes = resolveVerifyRoutes(["server/src/main.cpp", "tools/board/src/lib/fsTaskStore.js"]);
+    expect(routes.map((r) => r.id).sort()).toEqual(["board-suite", "server-db-verify"]);
   });
 });
