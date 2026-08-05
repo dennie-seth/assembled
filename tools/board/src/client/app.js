@@ -105,18 +105,19 @@ export function createApp({
     render();
   }
 
-  // A card in `review` moving to `in-progress` (dragged there, or via the detail panel's
-  // status dropdown) means "continue and fix this", not "relabel it" -- route it through
-  // the same /run call the Run/Re-run button uses (Feature B: gitOps.addWorktree reuses
-  // the existing branch instead of wiping it) rather than a plain PATCH.
-  function isReviewRerunTrigger(taskId, patch) {
+  // A card in `review` or `blocked` moving to `in-progress` (dragged there, or via the
+  // detail panel's status dropdown) means "continue and fix this", not "relabel it" --
+  // route it through the same /run call the Run/Re-run button uses (Feature B, extended
+  // to blocked cards: gitOps.addWorktree reuses the existing branch instead of wiping it)
+  // rather than a plain PATCH.
+  function isRerunTrigger(taskId, patch) {
     if (patch.status !== "in-progress") return false;
     const current = tasks.find((task) => task.id === taskId);
-    return Boolean(current && current.status === "review");
+    return Boolean(current && (current.status === "review" || current.status === "blocked"));
   }
 
   async function handleDrop(taskId, newStatus) {
-    if (isReviewRerunTrigger(taskId, { status: newStatus })) {
+    if (isRerunTrigger(taskId, { status: newStatus })) {
       return handleRun(taskId);
     }
     try {
@@ -143,7 +144,7 @@ export function createApp({
   }
 
   async function handleSave(taskId, patch) {
-    if (isReviewRerunTrigger(taskId, patch)) {
+    if (isRerunTrigger(taskId, patch)) {
       return handleRun(taskId);
     }
     try {

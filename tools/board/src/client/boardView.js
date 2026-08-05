@@ -74,7 +74,7 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
   if (task.status === "ready" && onRun) {
     card.appendChild(actionButton("card-run", "Run", () => onRun(task.id)));
   }
-  if (task.status === "review" && onRun) {
+  if ((task.status === "review" || task.status === "blocked") && onRun) {
     card.appendChild(actionButton("card-rerun", "Re-run", () => onRun(task.id)));
   }
   if ((task.status === "in-progress" || task.status === "validation") && onCancel) {

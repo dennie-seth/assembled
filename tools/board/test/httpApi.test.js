@@ -489,6 +489,13 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
     await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
   });
 
+  it("accepts a run on a blocked card -- re-running to continue existing work instead of leaving it stuck", async () => {
+    const task = await createTask({ status: "blocked" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(202);
+    await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
+  });
+
   it("returns 409 when running a card that already has an active run", async () => {
     const task = await createTask({ status: "ready" });
     await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
