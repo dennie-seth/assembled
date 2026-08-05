@@ -14,6 +14,7 @@ const VALID_TASK = {
   commit: null,
   pr: null,
   comments: [],
+  attachments: [],
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
 };
 
@@ -220,6 +221,105 @@ describe("comments (human feedback for iterative re-runs)", () => {
         frontmatter({ comments: [{ author: "Dennie", text: "note", timestamp: 42 }] })
       )
     ).toThrow(/comments/i);
+  });
+});
+
+describe("attachments (files uploaded to a card)", () => {
+  it("round-trips a task with attachments set", () => {
+    const task = {
+      ...VALID_TASK,
+      attachments: [
+        {
+          filename: "reference.png",
+          size: 1024,
+          mimetype: "image/png",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T12:00:00.000Z"
+        }
+      ]
+    };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("round-trips multiple attachments in order", () => {
+    const task = {
+      ...VALID_TASK,
+      attachments: [
+        {
+          filename: "a.png",
+          size: 10,
+          mimetype: "image/png",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T12:00:00.000Z"
+        },
+        {
+          filename: "b.bin",
+          size: 20,
+          mimetype: "application/octet-stream",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T13:00:00.000Z"
+        }
+      ]
+    };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults attachments to [] when absent from the frontmatter", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.attachments).toEqual([]);
+  });
+
+  it("throws when attachments is not an array", () => {
+    expect(() => parseTask(frontmatter({ attachments: "not an array" }))).toThrow(/attachments/i);
+  });
+
+  it("throws when an attachment entry is missing a required field", () => {
+    expect(() =>
+      parseTask(frontmatter({ attachments: [{ filename: "a.png", size: 10 }] }))
+    ).toThrow(/attachments/i);
+  });
+
+  it("throws when an attachment entry has a non-string field", () => {
+    expect(() =>
+      parseTask(
+        frontmatter({
+          attachments: [
+            { filename: "a.png", size: 10, mimetype: "image/png", uploaded_by: "Dennie", uploaded_at: 42 }
+          ]
+        })
+      )
+    ).toThrow(/attachments/i);
+  });
+
+  it("throws when an attachment entry's size is not a non-negative number", () => {
+    expect(() =>
+      parseTask(
+        frontmatter({
+          attachments: [
+            {
+              filename: "a.png",
+              size: -1,
+              mimetype: "image/png",
+              uploaded_by: "Dennie",
+              uploaded_at: "2026-08-05T12:00:00.000Z"
+            }
+          ]
+        })
+      )
+    ).toThrow(/attachments/i);
   });
 });
 

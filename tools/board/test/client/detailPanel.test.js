@@ -273,6 +273,129 @@ describe("renderDetailPanel comments (Feature A: human feedback for iterative re
   });
 });
 
+describe("renderDetailPanel attachments", () => {
+  it("does not render the attachments section when onUploadAttachment is not provided", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    expect(root.querySelector(".detail-attachments")).toBeNull();
+  });
+
+  it("shows a no-attachments message when the task has none", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ attachments: [] }), baseOpts({ onUploadAttachment: vi.fn() }));
+    expect(root.querySelector(".detail-attachments-empty")).not.toBeNull();
+  });
+
+  it("defaults to an empty attachments list when task.attachments is absent", () => {
+    const root = document.createElement("div");
+    const taskWithoutAttachments = task();
+    delete taskWithoutAttachments.attachments;
+    renderDetailPanel(root, taskWithoutAttachments, baseOpts({ onUploadAttachment: vi.fn() }));
+    expect(root.querySelector(".detail-attachments-empty")).not.toBeNull();
+  });
+
+  it("renders each attachment with a filename/size download link", () => {
+    const root = document.createElement("div");
+    const t = task({
+      id: "T-0009",
+      attachments: [
+        {
+          filename: "reference.png",
+          size: 2048,
+          mimetype: "image/png",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T12:00:00.000Z"
+        },
+        {
+          filename: "weights.bin",
+          size: 10,
+          mimetype: "application/octet-stream",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T13:00:00.000Z"
+        }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onUploadAttachment: vi.fn() }));
+
+    const items = root.querySelectorAll(".detail-attachment");
+    expect(items.length).toBe(2);
+    const links = root.querySelectorAll(".detail-attachment-link");
+    expect(links[0].getAttribute("href")).toBe("/api/tasks/T-0009/attachments/reference.png");
+    expect(links[0].textContent).toContain("reference.png");
+    expect(links[0].textContent).toContain("2.0 KB");
+    expect(links[1].getAttribute("href")).toBe("/api/tasks/T-0009/attachments/weights.bin");
+  });
+
+  it("renders an inline image thumbnail only for image mimetypes", () => {
+    const root = document.createElement("div");
+    const t = task({
+      id: "T-0009",
+      attachments: [
+        {
+          filename: "reference.png",
+          size: 10,
+          mimetype: "image/png",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T12:00:00.000Z"
+        },
+        {
+          filename: "weights.bin",
+          size: 10,
+          mimetype: "application/octet-stream",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T13:00:00.000Z"
+        }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onUploadAttachment: vi.fn() }));
+
+    const thumbs = root.querySelectorAll(".detail-attachment-thumb");
+    expect(thumbs.length).toBe(1);
+    expect(thumbs[0].getAttribute("src")).toBe("/api/tasks/T-0009/attachments/reference.png");
+  });
+
+  it("calls onUploadAttachment with the task id and selected file, then clears the input", () => {
+    const root = document.createElement("div");
+    const onUploadAttachment = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0009" }), baseOpts({ onUploadAttachment }));
+
+    const fileInput = root.querySelector(".detail-attachment-input");
+    const file = new File(["hello"], "a.png", { type: "image/png" });
+    Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(onUploadAttachment).toHaveBeenCalledWith("T-0009", file);
+    expect(fileInput.value).toBe("");
+  });
+
+  it("does not render a remove control when onRemoveAttachment is not provided", () => {
+    const root = document.createElement("div");
+    const t = task({
+      attachments: [
+        { filename: "a.png", size: 1, mimetype: "image/png", uploaded_by: "D", uploaded_at: "2026-08-05T12:00:00.000Z" }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onUploadAttachment: vi.fn() }));
+    expect(root.querySelector(".detail-attachment-remove")).toBeNull();
+  });
+
+  it("calls onRemoveAttachment with the task id and filename", () => {
+    const root = document.createElement("div");
+    const onRemoveAttachment = vi.fn();
+    const t = task({
+      id: "T-0009",
+      attachments: [
+        { filename: "a.png", size: 1, mimetype: "image/png", uploaded_by: "D", uploaded_at: "2026-08-05T12:00:00.000Z" }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onUploadAttachment: vi.fn(), onRemoveAttachment }));
+
+    root.querySelector(".detail-attachment-remove").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onRemoveAttachment).toHaveBeenCalledWith("T-0009", "a.png");
+  });
+});
+
 describe("renderDetailPanel delete", () => {
   it("shows a delete button that reveals a confirmation step instead of deleting immediately", () => {
     const root = document.createElement("div");

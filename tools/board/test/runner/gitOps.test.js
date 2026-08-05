@@ -14,6 +14,7 @@ import {
   getHeadCommit,
   pullDevelop,
   commitTaskFile,
+  commitPaths,
   autoCommitCardsOnCreateFromEnv,
   BOARD_COMMIT_AUTHOR
 } from "../../src/runner/gitOps.js";
@@ -481,6 +482,72 @@ describe("commitTaskFile", () => {
 
     const { stdout: lsFiles } = await git(["ls-files", "tasks/T-0013.md"], repoRoot);
     expect(lsFiles.trim()).toBe("tasks/T-0013.md");
+  });
+});
+
+describe("commitPaths", () => {
+  it("stages and commits multiple paths in a single commit, leaving other staged changes untouched", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks", "attachments", "T-0020"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0020.md"), "card body\n", "utf8");
+    await fs.writeFile(path.join(repoRoot, "tasks", "attachments", "T-0020", "a.png"), "binary\n", "utf8");
+    await fs.writeFile(path.join(repoRoot, "unrelated.txt"), "unrelated\n", "utf8");
+    await git(["add", "unrelated.txt"], repoRoot);
+
+    const committed = await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0020.md", "tasks/attachments/T-0020/a.png"],
+      message: "chore(board): attach a.png to card T-0020"
+    });
+
+    expect(committed).toBe(true);
+    const { stdout: log } = await git(["log", "-1", "--pretty=%s"], repoRoot);
+    expect(log.trim()).toBe("chore(board): attach a.png to card T-0020");
+    const { stdout: lsFiles } = await git(["ls-files", "tasks/T-0020.md", "tasks/attachments/T-0020/a.png"], repoRoot);
+    expect(lsFiles.trim().split("\n").sort()).toEqual(
+      ["tasks/T-0020.md", "tasks/attachments/T-0020/a.png"].sort()
+    );
+    const { stdout: statusAfter } = await git(["status", "--porcelain"], repoRoot);
+    expect(statusAfter).toContain("A  unrelated.txt");
+  });
+
+  it("stages a deleted path as a removal (git add -A), not silently ignoring it", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks", "attachments", "T-0021"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0021.md"), "card body\n", "utf8");
+    const attachmentPath = path.join(repoRoot, "tasks", "attachments", "T-0021", "a.png");
+    await fs.writeFile(attachmentPath, "binary\n", "utf8");
+    await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0021.md", "tasks/attachments/T-0021/a.png"],
+      message: "chore(board): attach a.png to card T-0021"
+    });
+
+    await fs.rm(attachmentPath);
+    const committed = await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0021.md", "tasks/attachments/T-0021/a.png"],
+      message: "chore(board): remove a.png from card T-0021"
+    });
+
+    expect(committed).toBe(true);
+    const { stdout: lsFiles } = await git(["ls-files", "tasks/attachments/T-0021/a.png"], repoRoot);
+    expect(lsFiles.trim()).toBe("");
+  });
+
+  it("is a no-op and returns false when none of the paths have staged changes", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0022.md"), "card body\n", "utf8");
+    await commitPaths({ repoRoot, filePaths: ["tasks/T-0022.md"], message: "chore(board): add card T-0022" });
+
+    const { stdout: before } = await git(["rev-parse", "HEAD"], repoRoot);
+    const committed = await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0022.md"],
+      message: "chore(board): add card T-0022 (again)"
+    });
+    const { stdout: after } = await git(["rev-parse", "HEAD"], repoRoot);
+
+    expect(committed).toBe(false);
+    expect(after).toBe(before);
   });
 });
 

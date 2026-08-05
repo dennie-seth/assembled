@@ -2,10 +2,24 @@ import { renderMarkdown } from "./markdown.js";
 import { buildUpdateBody } from "./detail.js";
 import { STATUSES } from "./board.js";
 import { createDepsPicker } from "./depsPicker.js";
+import { attachmentDownloadUrl } from "./api.js";
 
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
 const UNASSIGNED_AGENT_VALUE = "";
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
+
+function formatBytes(bytes) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
 
 function labeledField(labelText, input) {
   const wrapper = document.createElement("label");
@@ -113,6 +127,73 @@ function commentsSectionFor(task, onAddComment) {
   return wrap;
 }
 
+function attachmentsSectionFor(task, onUploadAttachment, onRemoveAttachment) {
+  const wrap = document.createElement("div");
+  wrap.className = "detail-attachments";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Attachments";
+  wrap.appendChild(heading);
+
+  const list = document.createElement("div");
+  list.className = "detail-attachments-list";
+  const attachments = task.attachments ?? [];
+  if (attachments.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "detail-attachments-empty";
+    empty.textContent = "No attachments yet.";
+    list.appendChild(empty);
+  } else {
+    for (const attachment of attachments) {
+      const item = document.createElement("div");
+      item.className = "detail-attachment";
+
+      const url = attachmentDownloadUrl(task.id, attachment.filename);
+
+      if (typeof attachment.mimetype === "string" && attachment.mimetype.startsWith("image/")) {
+        const thumb = document.createElement("img");
+        thumb.className = "detail-attachment-thumb";
+        thumb.src = url;
+        thumb.alt = attachment.filename;
+        item.appendChild(thumb);
+      }
+
+      const link = document.createElement("a");
+      link.className = "detail-attachment-link";
+      link.href = url;
+      link.textContent = `${attachment.filename} (${formatBytes(attachment.size)})`;
+      item.appendChild(link);
+
+      if (onRemoveAttachment) {
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "detail-attachment-remove";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", () => onRemoveAttachment(task.id, attachment.filename));
+        item.appendChild(removeBtn);
+      }
+
+      list.appendChild(item);
+    }
+  }
+  wrap.appendChild(list);
+
+  if (onUploadAttachment) {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.className = "detail-attachment-input";
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      onUploadAttachment(task.id, file);
+      fileInput.value = "";
+    });
+    wrap.appendChild(fileInput);
+  }
+
+  return wrap;
+}
+
 function deleteControlsFor(task, onDelete) {
   const wrap = document.createElement("div");
   wrap.className = "detail-delete-wrap";
@@ -158,7 +239,16 @@ function deleteControlsFor(task, onDelete) {
 export function renderDetailPanel(
   root,
   task,
-  { onSave, onClose, onDelete, onAddComment, agentOptions = [], allTasks = [] }
+  {
+    onSave,
+    onClose,
+    onDelete,
+    onAddComment,
+    onUploadAttachment,
+    onRemoveAttachment,
+    agentOptions = [],
+    allTasks = []
+  }
 ) {
   root.replaceChildren();
 
@@ -255,6 +345,10 @@ export function renderDetailPanel(
 
   if (onAddComment) {
     panel.appendChild(commentsSectionFor(task, onAddComment));
+  }
+
+  if (onUploadAttachment) {
+    panel.appendChild(attachmentsSectionFor(task, onUploadAttachment, onRemoveAttachment));
   }
 
   panel.append(preview, labeledField("Body (markdown)", bodyTextarea), saveBtn, deleteControlsFor(task, onDelete));
