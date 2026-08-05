@@ -1,4 +1,4 @@
--- Reverts 002_seed_vocab.sql.
+-- Reverts 003_seed_vocab.sql.
 -- Drop order respects FK dependencies: anchor_tag before archetype,
 -- all four tables before any table that references them (none yet, but
 -- ordered defensively for future migrations).

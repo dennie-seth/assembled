@@ -4,7 +4,7 @@
 /// @brief Single source of truth for note vocabulary and world anchor IDs.
 ///
 /// Included by both server (Drogon/C++) and client (Godot/GDExtension).
-/// The SQL seed migration (server/migrations/002_seed_vocab.sql) must stay
+/// The SQL seed migration (server/migrations/003_seed_vocab.sql) must stay
 /// in parity with these arrays — enforced by seed_parity_test.cpp (T-0043).
 ///
 /// Design references:
