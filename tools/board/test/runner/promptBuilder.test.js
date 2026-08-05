@@ -322,3 +322,24 @@ describe("buildPlannerPrompt — card-expansion prompt for unassigned cards", ()
     expect(prompt.split("<<<TASK_BODY:END>>>").length - 1).toBe(1);
   });
 });
+
+describe("buildPlannerPrompt -- deliverable_type and hardened acceptance criteria (T-0136 lesson)", () => {
+  it("instructs the planner to set deliverable_type: artifact when the card's real output is a produced file, not code", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toContain("deliverable_type: artifact");
+    expect(prompt.toLowerCase()).toContain("produced artifact");
+  });
+
+  it("tells the planner an artifact card's Acceptance criteria must state the artifact itself, not the mechanism that could produce it", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("not the mechanism");
+    expect(prompt).toContain("T-0136");
+  });
+
+  it("tells the planner acceptance criteria must be concrete and checkable, not a restatement of the title", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("concrete");
+    expect(prompt.toLowerCase()).toContain("checkable");
+    expect(prompt.toLowerCase()).toContain("not a restatement of the title");
+  });
+});
