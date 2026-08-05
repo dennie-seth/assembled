@@ -168,6 +168,8 @@ export class RunOrchestrator {
         return;
       }
 
+      await this.git.linkBoardNodeModules({ worktreeDir, repoRoot: this.repoRoot });
+
       await this._updateAndBroadcast(taskId, { status: "in-progress" });
 
       const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
