@@ -91,10 +91,15 @@ def check_inv7(state: SimState, cfg: SimConfig, tick: int) -> list[InvariantViol
 
 
 def check_inv8(state: SimState, cfg: SimConfig, tick: int) -> list[InvariantViolation]:
-    """INV-8: expected time-to-encounter(T) < remaining collapse time for all active players.
+    """INV-8: expected time-to-delivery(T) < remaining collapse time for all active players.
 
-    Uses a simple encounter-rate heuristic: each world item of type T
-    contributes encounter_rate_per_world_item encounters per player per tick.
+    Estimates expected delivery ticks as the minimum of two paths:
+      - World path: 1 / (world_count * encounter_rate_per_world_item)
+      - Held path: max(0, bleed_at - tick) + 1 / encounter_rate_per_world_item
+        for the soonest-returning held instance of this type
+
+    Held-but-circulating items are not counted as unreachable; they contribute
+    a delivery estimate via their bleed timer instead.
     """
     active = [a for a in state.agents.values() if a.state != AgentState.QUIT]
     if not active:
@@ -102,27 +107,38 @@ def check_inv8(state: SimState, cfg: SimConfig, tick: int) -> list[InvariantViol
 
     gating = [t for t in state.item_types.values() if t.is_gating]
     violations: list[InvariantViolation] = []
+    rate = cfg.encounter_rate_per_world_item
 
     for itype in gating:
         world_count = sum(
-            1
-            for it in state.items.values()
-            if it.type_id == itype.type_id and it.anchor is not None
+            1 for it in state.items.values() if it.type_id == itype.type_id and it.anchor is not None
         )
-        rate = world_count * cfg.encounter_rate_per_world_item
-        expected_ticks = (1.0 / rate) if rate > 0 else float("inf")
+        world_expected = (1.0 / (world_count * rate)) if world_count > 0 else float("inf")
+
+        held_instances = [
+            it
+            for it in state.items.values()
+            if it.type_id == itype.type_id and it.holder is not None
+        ]
+        if held_instances:
+            soonest_return = min(max(0, it.bleed_at - tick) for it in held_instances)
+            held_expected = soonest_return + (1.0 / rate)
+        else:
+            held_expected = float("inf")
+
+        effective_expected = min(world_expected, held_expected)
 
         for agent in active:
             remaining = agent.collapse_at - tick
             if remaining <= 0:
                 continue
-            if expected_ticks >= remaining:
+            if effective_expected >= remaining:
                 violations.append(
                     InvariantViolation(
                         tick,
                         "INV-8",
-                        f"agent {agent.agent_id}: expected encounter "
-                        f"{expected_ticks:.0f} >= remaining collapse {remaining} "
+                        f"agent {agent.agent_id}: expected delivery "
+                        f"{effective_expected:.0f} >= remaining collapse {remaining} "
                         f"for type {itype.type_id}",
                     )
                 )

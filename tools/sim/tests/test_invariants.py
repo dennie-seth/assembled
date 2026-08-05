@@ -227,7 +227,9 @@ class TestInv8ReachabilityWithHeldItems:
             for i in range(NUM_GATING)
         ]
         held_uniques = [
-            make_held_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=0, bleed_at=TICK + 20)
+            make_held_item(
+                NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=0, bleed_at=TICK + 20
+            )
             for i in range(NUM_UNIQUE)
         ]
         state = make_state(cfg, agents, held_rares + held_uniques)
@@ -246,7 +248,9 @@ class TestInv8ReachabilityWithHeldItems:
             for i in range(NUM_GATING)
         ]
         held_uniques = [
-            make_held_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=0, bleed_at=TICK + 10000)
+            make_held_item(
+                NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=0, bleed_at=TICK + 10000
+            )
             for i in range(NUM_UNIQUE)
         ]
         state = make_state(cfg, agents, held_rares + held_uniques)
@@ -265,7 +269,9 @@ class TestInv8ReachabilityWithHeldItems:
             make_world_item(i, RARE_BASE + i, Rarity.RARE) for i in range(NUM_GATING)
         ]
         held_uniques = [
-            make_held_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=i % 5, bleed_at=TICK + 30)
+            make_held_item(
+                NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=i % 5, bleed_at=TICK + 30
+            )
             for i in range(NUM_UNIQUE)
         ]
         state = make_state(cfg, agents, world_rares + held_uniques)
@@ -285,7 +291,8 @@ class TestInv8ReachabilityWithHeldItems:
             make_world_item(i, RARE_BASE + i, Rarity.RARE) for i in range(NUM_GATING)
         ]
         world_uniques = [
-            make_world_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE) for i in range(NUM_UNIQUE)
+            make_world_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE)
+            for i in range(NUM_UNIQUE)
         ]
         state = make_state(cfg, agents, world_rares + world_uniques)
         vs = check_inv8(state, cfg, TICK)
