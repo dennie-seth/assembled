@@ -404,6 +404,38 @@ describe("createApp handleSocketMessage", () => {
   });
 });
 
+describe("createApp stale state when selected task is removed externally", () => {
+  it("hides the side panel when the selected task is removed via a socket removed event", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, sidePanelRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+    expect(sidePanelRoot.hidden).toBe(false);
+
+    app.handleSocketMessage({ type: "removed", id: "T-0001", task: null });
+
+    expect(sidePanelRoot.hidden).toBe(true);
+  });
+
+  it("hides the console panel when the selected task is removed via a socket removed event", async () => {
+    const t = task({ id: "T-0001", status: "in-progress" });
+    const { app, consoleRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+    app.handleSocketMessage({
+      type: "run-event",
+      id: "T-0001",
+      phase: "implementer",
+      event: { type: "result", result: "done" }
+    });
+    expect(consoleRoot.hidden).toBe(false);
+
+    app.handleSocketMessage({ type: "removed", id: "T-0001", task: null });
+
+    expect(consoleRoot.hidden).toBe(true);
+  });
+});
+
 describe("createApp side panel visibility (Done column clipping regression)", () => {
   it("keeps the side panel hidden after init when no card is selected", async () => {
     const t = task({ id: "T-0001" });
