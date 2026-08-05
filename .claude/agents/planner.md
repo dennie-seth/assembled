@@ -64,6 +64,15 @@ any change. Key points, in priority order:
   parse under `tools/board/src/lib/taskParser.js`'s schema — required
   frontmatter fields, `T-NNNN` id format, valid `status`/`priority`/`phase`/
   `agent` enums, well-formed `depends_on`.
+- **Concrete, checkable Acceptance criteria; explicit `deliverable_type`.**
+  Every criterion in a card's `## Acceptance` section must be verifiable by
+  the reviewer without guessing — no restatements of the title, no "it
+  works." When the card's real output is a produced artifact rather than
+  code (an asset, a doc, a fetched/generated file attached to the ticket),
+  set `deliverable_type: artifact` and write the criteria to name the
+  artifact itself, not the code that could produce it — see
+  `.claude/rules/planner.md`'s Card-authoring quality section for the
+  T-0136 case this closes.
 - **ID allocation is gap-tolerant, never reused.** New cards get the next
   `T-NNNN` after the highest id currently present in `tasks/` — mirrors
   `tools/board/src/lib/idAllocator.js`'s algorithm. Never renumber or reuse

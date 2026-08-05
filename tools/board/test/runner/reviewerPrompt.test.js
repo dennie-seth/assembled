@@ -252,3 +252,73 @@ describe("buildReviewerPrompt -- routed verification section", () => {
     expect(prompt).toContain("server-db-verify route must actually bring up Postgres");
   });
 });
+
+describe("buildReviewerPrompt -- acceptance criteria audit (green tests != acceptance met)", () => {
+  it("lists each acceptance criterion parsed from the task body", () => {
+    const task = {
+      ...TASK,
+      body: "## Context\nBuild the thing.\n\n## Acceptance\n- [ ] first criterion\n- [ ] second criterion\n"
+    };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("Acceptance criteria -- verify each one explicitly");
+    expect(prompt).toContain("first criterion");
+    expect(prompt).toContain("second criterion");
+  });
+
+  it("makes explicit that green tests are not the same claim as acceptance met", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain('"Green tests" is not the same claim as "acceptance met."');
+  });
+
+  it("instructs the reviewer to distrust tests that mock away the side effect a criterion requires", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("mocks away");
+    expect(prompt).toContain("urllib");
+  });
+
+  it("says an unmet criterion is a FAIL for the whole card, no partial credit", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("is a FAIL for the whole card");
+  });
+
+  it("treats a card with no parseable Acceptance section as a FAIL, not silently skipped", () => {
+    const task = { ...TASK, body: "## Context\nNo acceptance section at all.\n" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("No parseable");
+    expect(prompt).toContain("that is itself a FAIL");
+  });
+});
+
+describe("buildReviewerPrompt -- deliverable artifact check (deliverable_type: 'artifact', T-0136 gap)", () => {
+  it("adds the deliverable check route when the card's deliverable_type is 'artifact'", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("Deliverable artifact check");
+    expect(prompt).toContain(`node tools/board/scripts/checkDeliverable.js ${task.id}`);
+    expect(prompt).toContain("T-0136");
+  });
+
+  it("does not mention the deliverable check for a code-deliverable card (the default)", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).not.toContain("Deliverable artifact check");
+    expect(prompt).not.toContain("checkDeliverable.js");
+  });
+
+  it("adds the deliverable check route even with no changedPaths at all (task-driven, not diff-driven)", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("Required verification for this diff");
+  });
+
+  it("combines the deliverable check with a path-routed check when both apply", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({
+      task,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["tools/asset-gate/src/asset_gate/fetch.py"]
+    });
+    expect(prompt).toContain("Deliverable artifact check");
+    expect(prompt).toContain("Python verify (tools/asset-gate)");
+  });
+});
