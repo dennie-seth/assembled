@@ -90,13 +90,22 @@ export async function hasUncommittedChanges({ worktreeDir }) {
   return stdout.trim().length > 0;
 }
 
-/** Stages and commits every change in the worktree. Returns false (no-op) if there's nothing to commit. */
-export async function commitAll({ worktreeDir, message }) {
+/**
+ * Stages and commits every change in the worktree. Returns false (no-op) if there's nothing to
+ * commit -- the empty-worktree guard that keeps callers (e.g. the orchestrator's post-implementer
+ * capture safety net) from ever creating an empty commit. `author`, when given, commits with that
+ * identity (via `-c user.name=/-c user.email=`) instead of the ambient git config -- for commits
+ * the board tool makes on an agent's behalf, not authored by the agent itself.
+ */
+export async function commitAll({ worktreeDir, message, author }) {
   if (!(await hasUncommittedChanges({ worktreeDir }))) {
     return false;
   }
   await git(["add", "-A"], worktreeDir);
-  await git(["commit", "-m", message], worktreeDir);
+  const commitArgs = author
+    ? ["-c", `user.name=${author.name}`, "-c", `user.email=${author.email}`, "commit", "-m", message]
+    : ["commit", "-m", message];
+  await git(commitArgs, worktreeDir);
   return true;
 }
 
@@ -147,7 +156,8 @@ export async function pullDevelop({ repoRoot, branch = "develop" }) {
   return { advanced: before !== after, before, after };
 }
 
-const CARD_COMMIT_AUTHOR = { name: "assembled-board", email: "board@localhost" };
+/** Identity for commits the board tool makes on an agent's behalf rather than authored by the agent (see `commitAll`'s `author` param and `commitTaskFile`). */
+export const BOARD_COMMIT_AUTHOR = { name: "assembled-board", email: "board@localhost" };
 const AUTO_COMMIT_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
 
 /** AUTO_COMMIT_CARDS_ON_CREATE env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable committing card files as they're written. */
@@ -163,7 +173,7 @@ export function autoCommitCardsOnCreateFromEnv() {
  * --` pathspec so it can never accidentally sweep up unrelated staged changes in repoRoot.
  * Returns false (no-op) if nothing actually changed for that path.
  */
-export async function commitTaskFile({ repoRoot, filePath, message, author = CARD_COMMIT_AUTHOR }) {
+export async function commitTaskFile({ repoRoot, filePath, message, author = BOARD_COMMIT_AUTHOR }) {
   await git(["add", "--", filePath], repoRoot);
   try {
     await git(["diff", "--cached", "--quiet", "--", filePath], repoRoot);

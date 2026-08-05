@@ -14,7 +14,8 @@ import {
   getHeadCommit,
   pullDevelop,
   commitTaskFile,
-  autoCommitCardsOnCreateFromEnv
+  autoCommitCardsOnCreateFromEnv,
+  BOARD_COMMIT_AUTHOR
 } from "../../src/runner/gitOps.js";
 
 const execFileAsync = promisify(execFile);
@@ -200,6 +201,35 @@ describe("hasUncommittedChanges / commitAll", () => {
 
     const { stdout: log } = await git(["log", "-1", "--pretty=%s"], worktreeDir);
     expect(log.trim()).toBe("feat: add new-file");
+  });
+
+  it("commits with the given author identity instead of the ambient git config when `author` is passed", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0114");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0114", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "captured.txt"), "content\n", "utf8");
+
+    const committed = await commitAll({
+      worktreeDir,
+      message: "chore(T-0114): capture uncommitted implementer changes",
+      author: BOARD_COMMIT_AUTHOR
+    });
+
+    expect(committed).toBe(true);
+    const { stdout: authorName } = await git(["log", "-1", "--pretty=%an"], worktreeDir);
+    const { stdout: authorEmail } = await git(["log", "-1", "--pretty=%ae"], worktreeDir);
+    expect(authorName.trim()).toBe("assembled-board");
+    expect(authorEmail.trim()).toBe("board@localhost");
+  });
+
+  it("commits with the ambient git identity when no `author` is passed (unchanged default behavior)", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0115");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0115", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "normal.txt"), "content\n", "utf8");
+
+    await commitAll({ worktreeDir, message: "feat: normal commit" });
+
+    const { stdout: authorName } = await git(["log", "-1", "--pretty=%an"], worktreeDir);
+    expect(authorName.trim()).toBe("Test");
   });
 });
 
