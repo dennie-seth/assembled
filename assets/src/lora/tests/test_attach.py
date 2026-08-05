@@ -9,11 +9,9 @@ Checked against: 13-asset-pipeline.md §3.2
 
 from __future__ import annotations
 
-import io
-import pathlib
 import urllib.error
 import urllib.request
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

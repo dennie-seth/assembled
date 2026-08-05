@@ -45,21 +45,21 @@ def _build_multipart(
             f'Content-Disposition: form-data; name="{name}"\r\n'
             f"\r\n"
             f"{value}\r\n"
-        ).encode("utf-8")
+        ).encode()
 
     file_header = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
         f"Content-Type: {content_type}\r\n"
         f"\r\n"
-    ).encode("utf-8")
+    ).encode()
 
     body = (
         field("uploaded_by", uploaded_by)
         + file_header
         + data
         + crlf
-        + f"--{boundary}--\r\n".encode("utf-8")
+        + f"--{boundary}--\r\n".encode()
     )
     return body, f"multipart/form-data; boundary={boundary}"
 
