@@ -21,6 +21,7 @@ from conftest import (
     UNIQUE_BASE,
     make_agent,
     make_cfg,
+    make_held_item,
     make_state,
     make_world_item,
 )
@@ -203,6 +204,92 @@ class TestInv8Reachability:
         state = make_state(cfg, agents, [])
         vs = check_inv8(state, cfg, TICK)
         assert all(v.invariant == "INV-8" for v in vs)
+
+
+class TestInv8ReachabilityWithHeldItems:
+    """Held/circulating items must not be flagged unreachable solely for being held.
+
+    The fix estimates expected time-to-delivery for a held item as:
+        max(0, bleed_at - tick) + 1 / encounter_rate_per_world_item
+    and uses min(world_path, held_path) as the effective expected delivery ticks.
+    """
+
+    def test_held_gating_item_not_flagged_when_bleed_within_runway(self):
+        """All gating instances held with short bleed time, far-future collapse → no violation.
+
+        encounter_rate=0.1; bleed in 20 ticks → held_expected ≈ 20+10=30 << 1000 remaining.
+        Current code (world_count=0 → inf) fires a false-positive here.
+        """
+        cfg = make_cfg(initial_population=1, encounter_rate_per_world_item=0.1)
+        agents = [make_agent(0, collapse_at=TICK + 1000)]
+        held_rares = [
+            make_held_item(i, RARE_BASE + i, Rarity.RARE, holder=0, bleed_at=TICK + 20)
+            for i in range(NUM_GATING)
+        ]
+        held_uniques = [
+            make_held_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=0, bleed_at=TICK + 20)
+            for i in range(NUM_UNIQUE)
+        ]
+        state = make_state(cfg, agents, held_rares + held_uniques)
+        vs = check_inv8(state, cfg, TICK)
+        assert vs == []
+
+    def test_held_gating_item_flagged_when_delivery_exceeds_remaining_collapse(self):
+        """Held item that cannot possibly be delivered before collapse is a real violation.
+
+        bleed_at=TICK+10000, remaining=5; held_expected=10000+10 >> 5 → violation.
+        """
+        cfg = make_cfg(initial_population=1, encounter_rate_per_world_item=0.1)
+        agents = [make_agent(0, collapse_at=TICK + 5)]
+        held_rares = [
+            make_held_item(i, RARE_BASE + i, Rarity.RARE, holder=0, bleed_at=TICK + 10000)
+            for i in range(NUM_GATING)
+        ]
+        held_uniques = [
+            make_held_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=0, bleed_at=TICK + 10000)
+            for i in range(NUM_UNIQUE)
+        ]
+        state = make_state(cfg, agents, held_rares + held_uniques)
+        vs = check_inv8(state, cfg, TICK)
+        assert any(v.invariant == "INV-8" for v in vs)
+
+    def test_healthy_pool_long_runway_no_violations(self):
+        """Rare gating in world + uniques held with near-term bleed, far-future collapse → clean.
+
+        Simulates the typical in-play scenario that was producing ~93% false-positive rate.
+        Current code fires because uniques are held (world_count=0 for unique type).
+        """
+        cfg = make_cfg(initial_population=5, encounter_rate_per_world_item=0.1)
+        agents = [make_agent(i, collapse_at=FAR_FUTURE) for i in range(5)]
+        world_rares = [
+            make_world_item(i, RARE_BASE + i, Rarity.RARE) for i in range(NUM_GATING)
+        ]
+        held_uniques = [
+            make_held_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE, holder=i % 5, bleed_at=TICK + 30)
+            for i in range(NUM_UNIQUE)
+        ]
+        state = make_state(cfg, agents, world_rares + held_uniques)
+        vs = check_inv8(state, cfg, TICK)
+        assert vs == []
+
+    def test_min_delivery_path_wins_world_faster_than_held(self):
+        """When world encounter is faster than held delivery, min is taken from world path.
+
+        world_count=3, rate=0.3 → world_expected≈3 ticks.
+        One unique held with bleed=100 → held_expected=110 ticks.
+        Agent remaining=50: world path (3 < 50) wins → no violation.
+        """
+        cfg = make_cfg(initial_population=1, encounter_rate_per_world_item=0.1)
+        agents = [make_agent(0, collapse_at=TICK + 50)]
+        world_rares = [
+            make_world_item(i, RARE_BASE + i, Rarity.RARE) for i in range(NUM_GATING)
+        ]
+        world_uniques = [
+            make_world_item(NUM_GATING + i, UNIQUE_BASE + i, Rarity.UNIQUE) for i in range(NUM_UNIQUE)
+        ]
+        state = make_state(cfg, agents, world_rares + world_uniques)
+        vs = check_inv8(state, cfg, TICK)
+        assert vs == []
 
 
 # ---------------------------------------------------------------------------
