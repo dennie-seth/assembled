@@ -63,11 +63,11 @@ export function createApp({
       columnSort,
       onSortChange: handleSortChange
     });
+    const selected = selectedId !== null ? (tasks.find((task) => task.id === selectedId) ?? null) : null;
     if (sidePanelRoot) {
-      sidePanelRoot.hidden = selectedId === null;
+      sidePanelRoot.hidden = selected === null;
     }
     if (detailRoot) {
-      const selected = tasks.find((task) => task.id === selectedId) ?? null;
       renderDetailPanel(detailRoot, selected, {
         onSave: handleSave,
         onClose: handleClose,
@@ -79,8 +79,8 @@ export function createApp({
     }
     if (consoleRoot) {
       renderConsolePanel(consoleRoot, {
-        taskId: selectedId,
-        entries: selectedId ? (runLogs.get(selectedId) ?? []) : []
+        taskId: selected ? selectedId : null,
+        entries: selected ? (runLogs.get(selectedId) ?? []) : []
       });
     }
     if (createFormRoot) {
