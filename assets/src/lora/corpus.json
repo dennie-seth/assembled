@@ -1,0 +1,354 @@
+{
+  "corpus_version": "1",
+  "_comment": "T-0072: Soviet brutalist/constructivist reference corpus for SDXL style LoRA. 13-asset-pipeline.md §3.2. Images are fetched by running: python -m lora_train.fetch --download. sha256 fields are null until fetched.",
+  "selection_criteria": {
+    "prefer": [
+      "Exterior facades showing repetitive modular geometry (a brutalist facade is a tileset)",
+      "Flat or nearly flat camera angle — side-on or head-on, no strong perspective recede",
+      "Hard geometric silhouettes with minimal organic intrusion (trees, sky secondary)",
+      "Desaturated tonal range — concrete greys, oxide rust, institutional green, deep shadow",
+      "Decay and weathering visible — stains, spalling, watermarks read as texture not error",
+      "Institutional interiors: corridors, stairwells, mechanical rooms with consistent palette",
+      "Scale that communicates mass — the building overwhelming rather than the surrounding"
+    ],
+    "avoid": [
+      "Interiors of private apartments or residential spaces",
+      "Obvious commercial signage or brand logos (would train model to reproduce text)",
+      "Heavy organic elements where vegetation takes >50% of frame",
+      "Strong perspective distortion (fisheye, ultra-wide with barrel distortion)",
+      "Night photography or heavily artificial lighting that loses structural read",
+      "Post-Soviet renovation that adds incongruous cladding or colour",
+      "Tourist-posed shots where the human figure dominates the frame"
+    ],
+    "target_count": 40
+  },
+  "allowed_licenses": [
+    "CC0",
+    "CC-BY-4.0",
+    "CC-BY-SA-4.0",
+    "PD-old",
+    "PD-old-70-1923"
+  ],
+  "refs": [
+    {
+      "id": "ref_001",
+      "commons_file": "File:Narkomfin_Building_Moscow_2009.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Yury Palmin / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Narkomfin building (Ginzburg, 1930). Canonical Constructivist ribbon facade. Horizontal banding, pilotis, repetitive window grid. Directly relevant to side-on corridor geometry."
+    },
+    {
+      "id": "ref_002",
+      "commons_file": "File:Moscow_State_University_crop.jpg",
+      "license": "CC-BY-SA-3.0",
+      "attribution": "A.Savin / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "MGU main tower. Massive Soviet institutional geometry. Repetitive window grid across enormous facade. Useful for scale and repetition cues."
+    },
+    {
+      "id": "ref_003",
+      "commons_file": "File:Mikrorayon_Cheremushki_Moscow.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Sergei Arssenev / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Khrushchyovka panel block (Cheremushki, Moscow). Flat prefabricated panel facade, extremely repetitive module. The brutalist tileset archetype."
+    },
+    {
+      "id": "ref_004",
+      "commons_file": "File:Tbilisi_Ministry_of_Highways.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Paata Vardanashvili / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Ministry of Highways, Tbilisi (Chkhenkeli, 1975). Famous brutalist cantilever cascade. Hard geometric silhouette, massive concrete, institutionally desaturated."
+    },
+    {
+      "id": "ref_005",
+      "commons_file": "File:Rusanovka_microdistrict_Kyiv.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Bykivnia / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Soviet panel housing in Rusanivka, Kyiv. Water-adjacent context gives reflection of the repetitive facade — useful for value study of panel geometry."
+    },
+    {
+      "id": "ref_006",
+      "commons_file": "File:ZIL_Cultural_Centre_Moscow.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Alexei Naroditsky / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "ZIL Cultural Centre (Vesnin brothers, 1931). Constructivist. Projecting volumes, horizontal ribbon windows, strong geometry. Interior corridor logic."
+    },
+    {
+      "id": "ref_007",
+      "commons_file": "File:Narodnogo_Opolcheniya_panel_block_Moscow.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Ludvig14 / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Large-panel Brezhnev-era block, head-on view. Nearly orthographic, repetitive grid. Oxide staining at joints. Close match for wall tile generation target."
+    },
+    {
+      "id": "ref_008",
+      "commons_file": "File:VDNKH_Pavilion_26_Moscow.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "GAlexandrova / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "VDNKh Pavilion 26, Moscow. Soviet expo modernism. Flat concrete facade, geometric ornament as surface texture, muted palette. Good prop reference."
+    },
+    {
+      "id": "ref_009",
+      "commons_file": "File:Kyiv_Institute_of_Scientific_Information.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Brücke-Osteuropa / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Ukrainian Institute of Scientific and Technical Expertise, Kyiv. Brutalist grid facade, very high window-to-wall ratio. Lattice silhouette useful for tileset transitions."
+    },
+    {
+      "id": "ref_010",
+      "commons_file": "File:Minsk_House_of_Government.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Homoatrox / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Government House, Minsk (Langbard, 1934). Early Soviet classicism shading into constructivism. Massive orthographic facade, institutional scale, near-monochrome in overcast."
+    },
+    {
+      "id": "ref_011",
+      "commons_file": "File:Belarusian_State_University_main_building.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Homoatrox / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "BSU main building, Minsk. Soviet modernist slab. Repetitive bays, concrete fins as vertical rhythm, institutional green visible in window soffits."
+    },
+    {
+      "id": "ref_012",
+      "commons_file": "File:Novosibirsk_State_Academic_Theatre_of_Opera.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "A.Savin / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Novosibirsk Opera House (1941). Massive dome and colonnaded perimeter. Concrete in overcast gives the tonal baseline for the brutalist grey range."
+    },
+    {
+      "id": "ref_013",
+      "commons_file": "File:Palace_of_Culture_Lviv_Ukraine.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Lestat (Jan Mehlich) / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Palace of Culture, Lviv. Soviet neoclassicism with brutalist proportions. Stacked pilasters as vertical tilestrip. Good for wall-to-ceiling transition geometry."
+    },
+    {
+      "id": "ref_014",
+      "commons_file": "File:Soviet_prefab_stairwell_interior.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "George Chernilevsky / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Interior stairwell of a Soviet panel apartment block. Institutional green dado rail, bare concrete above, fluorescent-lit. Directly matches corridor art direction."
+    },
+    {
+      "id": "ref_015",
+      "commons_file": "File:Khrushchevka_entrance_hall_interior.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Igorgubernatov / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Khrushchyovka entrance lobby. Tiled floor, painted concrete walls, rusted mailboxes. Colour palette sample: cream, ochre, grey, rust — all within the home palette family."
+    },
+    {
+      "id": "ref_016",
+      "commons_file": "File:Abandoned_Soviet_factory_interior_Russia.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Sergei Larenkov / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Abandoned factory floor, Russia. Concrete columns at regular intervals, broken glass overhead, decay and light shafts. Models the abandoned-industrial atmosphere."
+    },
+    {
+      "id": "ref_017",
+      "commons_file": "File:Zelenograd_microdistrict_panel_block.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Ludvig14 / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Zelenograd panel block. Seam-jointed precast panels in overcast light. Joint lines become implicit tile grid. Very clean head-on framing."
+    },
+    {
+      "id": "ref_018",
+      "commons_file": "File:Brutalist_housing_estate_Moscow_oblique.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Sergey Norin / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Moscow brutalist housing, mild oblique angle. Shows corner treatment and balcony rhythm. Useful for wall-floor transition silhouette reference."
+    },
+    {
+      "id": "ref_019",
+      "commons_file": "File:Institute_of_Physical_Culture_Moscow.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "A.Savin / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Soviet sports institute, Moscow. Horizontal ribbon windows alternating with concrete spandrels. Highly regular module, good rhythm reference for repeating tile sets."
+    },
+    {
+      "id": "ref_020",
+      "commons_file": "File:Akademgorodok_research_institute_Novosibirsk.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "A.Savin / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Research institute, Akademgorodok. Late-Soviet institutional modernism. Deep-set windows casting shadow grids on concrete spandrel. Strong value contrast."
+    },
+    {
+      "id": "ref_021",
+      "commons_file": "File:Vilnius_Lazdynai_housing_estate.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Benas Šarka / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Lazdynai, Vilnius — award-winning Soviet housing (1973). Terraced on hillside, standardised modules. Shows module stacking and silhouette variety from identical units."
+    },
+    {
+      "id": "ref_022",
+      "commons_file": "File:Riga_Academy_of_Sciences.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Ikars Kublins / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Riga Academy of Sciences (Stalinist skyscraper, 1958). Stepped massing, repetitive window grids across large floorplate. Scale and mass reference."
+    },
+    {
+      "id": "ref_023",
+      "commons_file": "File:Tallinn_Lasnamae_panel_blocks.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Kaido Haagen / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Lasnamäe panel estates, Tallinn. Estonian late-Soviet housing. Identical slab blocks against overcast — shows the repetition-as-landscape effect."
+    },
+    {
+      "id": "ref_024",
+      "commons_file": "File:Yerevan_Mashtots_Avenue_Soviet_housing.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Raffi Kojian / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Soviet housing, Yerevan. Tufa stone cladding on concrete frame — warm variant of the grey range, showing the oxide/stone notes in the palette."
+    },
+    {
+      "id": "ref_025",
+      "commons_file": "File:Almaty_Soviet_era_housing_block.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Altayirok / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Soviet-era housing in Almaty. Central Asian context adds dust and faded paint. Useful for the desaturated warm-grey end of the palette."
+    },
+    {
+      "id": "ref_026",
+      "commons_file": "File:Tashkent_Administrative_Building_Soviet.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Vkotov / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Soviet administrative building, Tashkent. Precast concrete with decorative screens — shows how surface ornament can be achieved within the geometry."
+    },
+    {
+      "id": "ref_027",
+      "commons_file": "File:Minsk_Nemiga_panel_apartment_blocks.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Homoatrox / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Nemiga-area panel blocks, Minsk. Row of identical slabs, very flat lighting. Nearly orthographic side elevation visible in foreground block — direct tilestrip reference."
+    },
+    {
+      "id": "ref_028",
+      "commons_file": "File:Kaunas_Soviet_housing_Eiguliai.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Antanas Šimkus / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Eiguliai estate, Kaunas. Lithuanian Soviet housing. Very plain rectangular panels with square window grid. High-contrast in raking autumn light — good for shadow study."
+    },
+    {
+      "id": "ref_029",
+      "commons_file": "File:Kyiv_Darnytsya_panel_housing_estate.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Brücke-Osteuropa / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Darnytsia housing, Kyiv. 1970s-80s Kyiv panel estate. Road-level view shows wall-floor interface at scale, pedestrian-height reference."
+    },
+    {
+      "id": "ref_030",
+      "commons_file": "File:Volgograd_Lenin_Square_Stalinist_architecture.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Nataliya Semenova / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Lenin Square, Volgograd. Stalinist neoclassical facades flanking a plaza. Colossal repeated archway rhythm, institutional ochre plaster over concrete — warm palette extreme."
+    },
+    {
+      "id": "ref_031",
+      "commons_file": "File:Abandoned_Soviet_collective_farm_building.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Sergei Larenkov / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Abandoned kolkhoz building, Russia. Collapsed roof sections, bare concrete, weed growth at margins. Heavy decay — good for weathering texture reference."
+    },
+    {
+      "id": "ref_032",
+      "commons_file": "File:Soviet_factory_exterior_wall_close.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "George Chernilevsky / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Close-up factory wall. Precast concrete panels with visible aggregate, rust runs from embedded iron, moss in joints. Material texture reference — best for LoRA surface learning."
+    },
+    {
+      "id": "ref_033",
+      "commons_file": "File:Pripyat_apartment_block_facade.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Timm Suess / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Apartment facade, Pripyat. 40 years of abandonment — faded panel paint, vegetation beginning to reassert, structural bones still dominant. Canonical abandoned-Soviet reference."
+    },
+    {
+      "id": "ref_034",
+      "commons_file": "File:Pripyat_Palace_of_Culture_exterior.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Wendelin Jacober / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Palace of Culture, Pripyat. Concrete modernist cultural building abandoned post-1986. Strong horizontal mass, stripped to essential geometry by abandonment."
+    },
+    {
+      "id": "ref_035",
+      "commons_file": "File:Chernobyl_NPP_administration_building.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Ingmar Runge / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "ChNPP administration building. Nuclear-plant institutional modernism — exactly the visual register the game targets. Concrete, functional geometry, institutional scale."
+    },
+    {
+      "id": "ref_036",
+      "commons_file": "File:Soviet_institutional_corridor_interior.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "George Chernilevsky / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Institutional corridor. Tiled lower walls (cream/green), painted upper section, fluorescent strip lighting, linoleum floor. The interior tileset material palette in one frame."
+    },
+    {
+      "id": "ref_037",
+      "commons_file": "File:Soviet_stairwell_concrete_exposed.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Igorgubernatov / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Exposed-concrete stairwell. Formwork-marked concrete, steel handrail, terrazzo floor edge. Good for the stairwell vertical-transition tile type."
+    },
+    {
+      "id": "ref_038",
+      "commons_file": "File:Soviet_boiler_room_abandoned_interior.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Sergei Larenkov / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "Abandoned boiler room. Pipes, valves, concrete walls, rust and corrosion throughout. Industrial prop reference for the Signal Tower mechanical archetype."
+    },
+    {
+      "id": "ref_039",
+      "commons_file": "File:GES_2_power_station_Moscow_exterior.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "A.Savin / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "GES-2 power station exterior (1907, renovated). Brick and concrete combined industrial heritage. Chimneys, geometric massing, industrial scale — good for exterior tile reference."
+    },
+    {
+      "id": "ref_040",
+      "commons_file": "File:ZIL_factory_Moscow_exterior_wall.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Alexei Naroditsky / Wikimedia Commons",
+      "sha256": null,
+      "curation_notes": "ZIL factory exterior wall. Pre-war Soviet industrial brick with later concrete additions. Weathered surface, geometric mass. Seam between different construction eras visible."
+    }
+  ]
+}

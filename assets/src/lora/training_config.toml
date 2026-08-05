@@ -1,0 +1,66 @@
+# T-0072 — SDXL style LoRA training configuration
+#
+# Committed for reproducibility (acceptance criterion 3).
+# Implements 13-asset-pipeline.md §3.2:
+#   "The style LoRA (T-0072) trains on the reference corpus in its natural
+#    colour. Brutalist reference is already concrete, oxide, and institutional
+#    green, so output lands near the home palette without being instructed to."
+#
+# Run: python -m lora_train.fetch --download          # populate refs/
+#      python -m lora_train.caption                   # write per-image captions
+#      accelerate launch train_network.py --config training_config.toml
+#
+# IMPORTANT: concept art does NOT train this LoRA (13-asset-pipeline.md §6.11).
+# Training data is assets/src/lora/refs/ (external reference corpus), not
+# anything under assets/src/concept/.
+
+[model]
+# SD XL 1.0 base; CreativeML Open RAIL++-M is on the assets.md allowlist.
+# No CC-BY-NC weights permitted — this repo is public and NC poisons forks.
+base_checkpoint = "sd_xl_base_1.0.safetensors"
+checkpoint_license = "CreativeML Open RAIL++-M"
+
+[output]
+name = "soviet_brutalism_style_v1"
+dir = "assets/final/lora"
+format = "safetensors"   # only safetensors; ckpt/pt carry pickle-execution risk
+
+[train]
+# 1024 is SDXL's native resolution. Off-bucket sizes degrade output quality.
+resolution = 1024
+batch_size = 1
+mixed_precision = "fp16"
+# 10 epochs × 40 refs × ~1 grad step per image ≈ 400 steps.
+# Style LoRA for a corpus this size converges well at 300–600 steps.
+num_epochs = 10
+learning_rate = 1.0e-4
+optimizer = "AdamW8bit"   # 8-bit Adam reduces VRAM without quality loss
+
+[network]
+# rank=16 gives style fidelity without overfitting at 40 refs.
+# Escalation path (if first evaluation needs tighter style): bump to 32.
+rank = 16
+# alpha < rank: effective learning rate scale = alpha / rank = 0.5.
+# Stable training, avoids over-expression of the LoRA at inference.
+alpha = 8
+type = "lora"
+# SDXL attention targets: query, key, value, output projection in
+# both text encoders and the UNet cross-attention layers.
+target_modules = [
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+]
+
+[dataset]
+dir = "assets/src/lora/refs"
+# Caption extension: each ref_NNN.jpg has a sibling ref_NNN.txt
+# containing a short description to guide concept separation during
+# inference (e.g. "abandoned Soviet brutalist concrete building exterior,
+# institutional geometry, decay, desaturated").
+caption_ext = ".txt"
+shuffle = true
+# Cache VAE latents to disk to avoid re-encoding every epoch.
+# Requires ~2 MB per 1024×1024 image; negligible for 40 refs.
+cache_latents = true
