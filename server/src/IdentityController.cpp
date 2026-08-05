@@ -23,8 +23,7 @@ RateLimiter &IdentityController::rateLimiter() {
     return *rateLimiter_;
 }
 
-void IdentityController::setRateLimiterForTesting(size_t maxRequests,
-                                                   std::chrono::seconds window) {
+void IdentityController::setRateLimiterForTesting(size_t maxRequests, std::chrono::seconds window) {
     rateLimiter_ = std::make_unique<RateLimiter>(maxRequests, window);
 }
 
@@ -62,8 +61,7 @@ void IdentityController::mintIdentity(
     const std::string phrase = SeedPhrase::generate();
 
     const char *secretEnv = std::getenv("IDENTITY_SECRET");
-    const std::string secret =
-        (secretEnv && *secretEnv) ? secretEnv : "dev-secret-change-in-prod";
+    const std::string secret = (secretEnv && *secretEnv) ? secretEnv : "dev-secret-change-in-prod";
     const std::string token = SeedPhrase::deriveToken(secret, phrase);
 
     // 4. Persist the derived token; the phrase is NOT stored -- design §1.

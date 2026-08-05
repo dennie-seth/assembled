@@ -80,8 +80,7 @@ TEST_CASE("SeedPhrase::deriveToken differs for different phrases") {
 
 TEST_CASE("SeedPhrase::deriveToken output is not the phrase itself") {
     const std::string phrase = "abandon ability able about above absent absorb abstract";
-    const std::string token =
-        assembled_server::SeedPhrase::deriveToken("test-secret", phrase);
+    const std::string token = assembled_server::SeedPhrase::deriveToken("test-secret", phrase);
     CHECK(token != phrase);
 }
 
@@ -112,8 +111,7 @@ TEST_CASE("RateLimiter tracks limits per-IP independently") {
 
 // ── Integration: identity table schema check (DB, no HTTP) ───────────────────
 
-TEST_CASE("identity table has no phrase column" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("identity table has no phrase column" * doctest::skip(!std::getenv("DATABASE_URL"))) {
     auto db = assembled_server::Database::fromEnv();
     REQUIRE(db.has_value());
 
@@ -135,12 +133,10 @@ namespace {
 constexpr uint16_t kIdentityTestPort = 18082;
 } // namespace
 
-TEST_CASE("POST /v1/identity HTTP integration" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("POST /v1/identity HTTP integration" * doctest::skip(!std::getenv("DATABASE_URL"))) {
     // Rate limit = 3 so we can confirm three successes then a 429.
     // Must be configured BEFORE the server thread starts.
-    assembled_server::IdentityController::setRateLimiterForTesting(
-        3, std::chrono::seconds(60));
+    assembled_server::IdentityController::setRateLimiterForTesting(3, std::chrono::seconds(60));
 
     std::thread serverThread([]() {
         drogon::app().addListener("127.0.0.1", kIdentityTestPort);
@@ -150,8 +146,8 @@ TEST_CASE("POST /v1/identity HTTP integration" *
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    auto client = drogon::HttpClient::newHttpClient(
-        "http://127.0.0.1:" + std::to_string(kIdentityTestPort));
+    auto client =
+        drogon::HttpClient::newHttpClient("http://127.0.0.1:" + std::to_string(kIdentityTestPort));
 
     // Returns {status_code, phrase_field_value}.
     auto sendPost = [&]() -> std::pair<drogon::HttpStatusCode, std::string> {
@@ -160,20 +156,18 @@ TEST_CASE("POST /v1/identity HTTP integration" *
         req->setPath("/v1/identity");
 
         std::promise<std::pair<drogon::HttpStatusCode, std::string>> p;
-        client->sendRequest(
-            req,
-            [&p](drogon::ReqResult res, const drogon::HttpResponsePtr &resp) {
-                if (res == drogon::ReqResult::Ok && resp) {
-                    std::string phrase;
-                    auto json = resp->getJsonObject();
-                    if (json && json->isMember("phrase")) {
-                        phrase = (*json)["phrase"].asString();
-                    }
-                    p.set_value({resp->statusCode(), phrase});
-                } else {
-                    p.set_value({drogon::k500InternalServerError, ""});
+        client->sendRequest(req, [&p](drogon::ReqResult res, const drogon::HttpResponsePtr &resp) {
+            if (res == drogon::ReqResult::Ok && resp) {
+                std::string phrase;
+                auto json = resp->getJsonObject();
+                if (json && json->isMember("phrase")) {
+                    phrase = (*json)["phrase"].asString();
                 }
-            });
+                p.set_value({resp->statusCode(), phrase});
+            } else {
+                p.set_value({drogon::k500InternalServerError, ""});
+            }
+        });
         auto fut = p.get_future();
         REQUIRE(fut.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
         return fut.get();

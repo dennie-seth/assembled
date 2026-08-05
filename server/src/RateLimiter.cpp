@@ -16,10 +16,9 @@ bool RateLimiter::allow(const std::string &ip) {
     auto &timestamps = buckets_[ip];
 
     // Prune timestamps outside the sliding window.
-    timestamps.erase(
-        std::remove_if(timestamps.begin(), timestamps.end(),
-                       [&cutoff](const TimePoint &tp) { return tp < cutoff; }),
-        timestamps.end());
+    timestamps.erase(std::remove_if(timestamps.begin(), timestamps.end(),
+                                    [&cutoff](const TimePoint &tp) { return tp < cutoff; }),
+                     timestamps.end());
 
     if (timestamps.size() >= maxRequests_) {
         return false;
