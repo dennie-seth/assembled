@@ -136,6 +136,45 @@ describe("resolveAllowedTools", () => {
     const withoutLoraCdGrant = resolved.filter((t) => !t.startsWith("Bash(cd assets/src/lora"));
     expect(isToolAllowed("Bash(.venv/bin/pytest:-v)", withoutLoraCdGrant)).toBe(true);
   });
+
+  it("grants the reviewer a wildcarded pip install so python-verify's exact command string isn't required verbatim", () => {
+    const resolved = resolveAllowedTools("reviewer", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0132: the reviewer's own grant was `Bash(.venv/bin/pip install -e ".[dev]")` with no
+    // `:*` -- an exact-match string, same bug class as the #63 fix (missing wildcard). Every
+    // form the reviewer actually tried (chained after `cd tools/sim`, relative, absolute) was
+    // denied because none of them are byte-for-byte identical to that one exact string.
+    expect(resolved).toContain('Bash(.venv/bin/pip install -e ".[dev]":*)');
+    expect(resolved).not.toContain('Bash(.venv/bin/pip install -e ".[dev]")');
+
+    expect(isToolAllowed('Bash(.venv/bin/pip install -e ".[dev]":extra-index-url=x)', resolved)).toBe(
+      true
+    );
+  });
+
+  it("grants the reviewer permission to set DATABASE_URL for server-db-verify", () => {
+    const resolved = resolveAllowedTools("reviewer", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0043: cmake:* and ctest:* were already granted, but the reviewer also needs to set
+    // DATABASE_URL (port 5433) ahead of them per the server-db-verify recipe in this file --
+    // `export DATABASE_URL=...`, `DATABASE_URL=... ctest`, and `env DATABASE_URL=... ctest`
+    // were all denied because none of those forms had a matching grant; `cd server:*` only
+    // covers a command that itself starts with "cd server", and each `&&`-joined segment of a
+    // compound command is matched independently, so it never covered the DATABASE_URL segment.
+    expect(resolved).toContain("Bash(export DATABASE_URL=:*)");
+    expect(resolved).toContain("Bash(DATABASE_URL=:*)");
+    expect(resolved).toContain("Bash(env DATABASE_URL=:*)");
+
+    expect(isToolAllowed("Bash(export DATABASE_URL=:postgresql://postgres@localhost:5433/dev)", resolved)).toBe(
+      true
+    );
+    expect(
+      isToolAllowed(
+        "Bash(DATABASE_URL=:postgresql://postgres@localhost:5433/dev ctest --test-dir build)",
+        resolved
+      )
+    ).toBe(true);
+  });
 });
 
 describe("isToolAllowed", () => {
