@@ -103,16 +103,18 @@ static drogon::orm::DbClientPtr requireDb() {
     return db->getClient();
 }
 
-TEST_CASE("T-0043 DB parity: note_templates row count" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: note_templates row count") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT COUNT(*) AS n FROM note_templates");
     CHECK(res[0]["n"].as<int64_t>() == static_cast<int64_t>(assembled::kTemplates.size()));
 }
 
-TEST_CASE("T-0043 DB parity: note_templates IDs match shared header" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: note_templates IDs match shared header") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT id FROM note_templates ORDER BY id");
@@ -131,15 +133,18 @@ TEST_CASE("T-0043 DB parity: note_templates IDs match shared header" *
     CHECK(db_ids == hdr_ids);
 }
 
-TEST_CASE("T-0043 DB parity: note_words row count" * doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: note_words row count") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT COUNT(*) AS n FROM note_words");
     CHECK(res[0]["n"].as<int64_t>() == static_cast<int64_t>(assembled::kWords.size()));
 }
 
-TEST_CASE("T-0043 DB parity: note_words IDs match shared header" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: note_words IDs match shared header") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT id FROM note_words ORDER BY id");
@@ -158,8 +163,9 @@ TEST_CASE("T-0043 DB parity: note_words IDs match shared header" *
     CHECK(db_ids == hdr_ids);
 }
 
-TEST_CASE("T-0043 DB parity: note_words categories match shared header" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: note_words categories match shared header") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT id, category FROM note_words ORDER BY id");
@@ -175,15 +181,18 @@ TEST_CASE("T-0043 DB parity: note_words categories match shared header" *
     }
 }
 
-TEST_CASE("T-0043 DB parity: archetype row count" * doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: archetype row count") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT COUNT(*) AS n FROM archetype");
     CHECK(res[0]["n"].as<int64_t>() == static_cast<int64_t>(assembled::kArchetypeIds.size()));
 }
 
-TEST_CASE("T-0043 DB parity: archetype IDs match shared header" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: archetype IDs match shared header") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT id FROM archetype ORDER BY id");
@@ -199,15 +208,18 @@ TEST_CASE("T-0043 DB parity: archetype IDs match shared header" *
     CHECK(db_ids == hdr_ids);
 }
 
-TEST_CASE("T-0043 DB parity: anchor_tag row count" * doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: anchor_tag row count") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT COUNT(*) AS n FROM anchor_tag");
     CHECK(res[0]["n"].as<int64_t>() == static_cast<int64_t>(assembled::kAnchorTags.size()));
 }
 
-TEST_CASE("T-0043 DB parity: anchor_tag pairs match shared header" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: anchor_tag pairs match shared header") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res =

@@ -19,6 +19,55 @@ struct PendingMigration {
     fs::path upFile;
 };
 
+/// Split a SQL script on `;` delimiters and return one statement per element.
+/// Leading/trailing whitespace is stripped from each segment.  Segments that
+/// consist only of whitespace or `--` line comments are omitted so that a
+/// trailing newline after the last `;` never produces a spurious empty exec.
+///
+/// Postgres (via libpq prepared-statement path) rejects multi-command strings,
+/// so migration files must be split and executed one statement at a time.
+static std::vector<std::string> splitStatements(const std::string &sql) {
+    std::vector<std::string> stmts;
+    std::string::size_type pos = 0;
+    while (pos <= sql.size()) {
+        const auto semi = sql.find(';', pos);
+        std::string seg;
+        if (semi == std::string::npos) {
+            seg = sql.substr(pos);
+            pos = sql.size() + 1; // ensure loop exits
+        } else {
+            seg = sql.substr(pos, semi - pos); // exclude the semicolon itself
+            pos = semi + 1;
+        }
+
+        // Strip leading/trailing whitespace.
+        const auto first = seg.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) {
+            continue; // blank segment
+        }
+        const auto last = seg.find_last_not_of(" \t\r\n");
+        seg = seg.substr(first, last - first + 1);
+
+        // Skip segments whose non-blank lines are all `--` comments.
+        bool hasSql = false;
+        std::istringstream ss(seg);
+        for (std::string line; std::getline(ss, line);) {
+            const auto lf = line.find_first_not_of(" \t");
+            if (lf == std::string::npos) {
+                continue; // blank line
+            }
+            if (line.compare(lf, 2, "--") != 0) {
+                hasSql = true;
+                break;
+            }
+        }
+        if (hasSql) {
+            stmts.push_back(std::move(seg));
+        }
+    }
+    return stmts;
+}
+
 } // namespace
 
 MigrationRunner::MigrationRunner(std::string migrationsDir)
@@ -86,7 +135,11 @@ int MigrationRunner::applyPending(const drogon::orm::DbClientPtr &client) const 
         std::stringstream buffer;
         buffer << in.rdbuf();
 
-        client->execSqlSync(buffer.str());
+        // Execute each statement individually: Postgres rejects multi-command
+        // strings when libpq uses the prepared-statement protocol (PQexecParams).
+        for (const auto &stmt : splitStatements(buffer.str())) {
+            client->execSqlSync(stmt);
+        }
         client->execSqlSync("INSERT INTO schema_migrations (version) VALUES (" +
                             std::to_string(migration.version) + ")");
         ++applied;
