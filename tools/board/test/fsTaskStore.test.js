@@ -22,6 +22,7 @@ function makeTask(overrides = {}) {
     commit: null,
     pr: null,
     comments: [],
+    attachments: [],
     body: "## Context\n...\n## Acceptance\n- [ ] ...\n",
     ...overrides
   };
@@ -122,6 +123,41 @@ describe("FsTaskStore comments", () => {
 
     expect(updated.comments).toEqual([comment]);
     expect(await store.get(task.id)).toMatchObject({ comments: [comment], status: "in-progress" });
+  });
+});
+
+describe("FsTaskStore attachments", () => {
+  it("persists an appended attachment and reads it back", async () => {
+    const task = makeTask();
+    await store.create(task);
+    const attachment = {
+      filename: "reference.png",
+      size: 1024,
+      mimetype: "image/png",
+      uploaded_by: "Dennie",
+      uploaded_at: "2026-08-05T12:00:00.000Z"
+    };
+    const updated = await store.update(task.id, { attachments: [attachment] });
+    expect(updated.attachments).toEqual([attachment]);
+    expect(await store.get(task.id)).toEqual(updated);
+  });
+
+  it("survives an unrelated update -- a status/body write never clobbers existing attachments", async () => {
+    const task = makeTask();
+    await store.create(task);
+    const attachment = {
+      filename: "reference.png",
+      size: 1024,
+      mimetype: "image/png",
+      uploaded_by: "Dennie",
+      uploaded_at: "2026-08-05T12:00:00.000Z"
+    };
+    await store.update(task.id, { attachments: [attachment] });
+
+    const updated = await store.update(task.id, { status: "in-progress", body: "## Notes\nre-run" });
+
+    expect(updated.attachments).toEqual([attachment]);
+    expect(await store.get(task.id)).toMatchObject({ attachments: [attachment], status: "in-progress" });
   });
 });
 

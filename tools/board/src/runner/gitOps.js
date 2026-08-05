@@ -166,17 +166,19 @@ export function autoCommitCardsOnCreateFromEnv() {
 }
 
 /**
- * Stages and commits a single card file (relative to repoRoot) so it becomes part of tracked
+ * Stages and commits one or more paths (relative to repoRoot) so they become part of tracked
  * history immediately, instead of sitting as untracked local state that a branch cut from
  * origin (or a sibling worktree started before this moment) can never see -- the root cause of
- * card-ID reuse this pairs with the git-aware `IdAllocator`. Scoped to `filePath` via `commit
+ * card-ID reuse this pairs with the git-aware `IdAllocator`. Scoped to `filePaths` via `commit
  * --` pathspec so it can never accidentally sweep up unrelated staged changes in repoRoot.
- * Returns false (no-op) if nothing actually changed for that path.
+ * Uses `add -A` (not plain `add`) so a path that was deleted from the working tree -- e.g. an
+ * attachment removed from disk -- is staged as a deletion rather than silently ignored. Returns
+ * false (no-op) if nothing actually changed across those paths.
  */
-export async function commitTaskFile({ repoRoot, filePath, message, author = BOARD_COMMIT_AUTHOR }) {
-  await git(["add", "--", filePath], repoRoot);
+export async function commitPaths({ repoRoot, filePaths, message, author = BOARD_COMMIT_AUTHOR }) {
+  await git(["add", "-A", "--", ...filePaths], repoRoot);
   try {
-    await git(["diff", "--cached", "--quiet", "--", filePath], repoRoot);
+    await git(["diff", "--cached", "--quiet", "--", ...filePaths], repoRoot);
     return false;
   } catch {
     // non-zero exit from `diff --quiet` means there IS a staged change -- fall through to commit.
@@ -191,9 +193,14 @@ export async function commitTaskFile({ repoRoot, filePath, message, author = BOA
       "-m",
       message,
       "--",
-      filePath
+      ...filePaths
     ],
     repoRoot
   );
   return true;
+}
+
+/** Single-path convenience wrapper around `commitPaths` (see its docstring). */
+export async function commitTaskFile({ repoRoot, filePath, message, author = BOARD_COMMIT_AUTHOR }) {
+  return commitPaths({ repoRoot, filePaths: [filePath], message, author });
 }
