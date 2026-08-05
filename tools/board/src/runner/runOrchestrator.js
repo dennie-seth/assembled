@@ -17,6 +17,16 @@ function autoOpenPrFromEnv() {
   return !AUTO_OPEN_PR_DISABLE_VALUES.has((process.env.AUTO_OPEN_PR ?? "").toLowerCase());
 }
 
+const AUTO_CAPTURE_UNCOMMITTED_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
+
+/**
+ * AUTO_CAPTURE_UNCOMMITTED_WORK env var: default ON; set to "0"/"false"/"off"/"no" (any case) to
+ * disable the post-implementer capture safety net (see `_captureUncommittedImplementerWork`).
+ */
+function autoCaptureUncommittedFromEnv() {
+  return !AUTO_CAPTURE_UNCOMMITTED_DISABLE_VALUES.has((process.env.AUTO_CAPTURE_UNCOMMITTED_WORK ?? "").toLowerCase());
+}
+
 /** Appends a timestamped `## <heading>` note to a task body -- how validation results are recorded on the card. */
 export function appendNote(body, heading, text) {
   const timestamp = new Date().toISOString();
@@ -42,6 +52,7 @@ export class RunOrchestrator {
     git = gitOps,
     github = githubOps,
     autoOpenPr = autoOpenPrFromEnv(),
+    autoCaptureUncommitted = autoCaptureUncommittedFromEnv(),
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
@@ -65,6 +76,7 @@ export class RunOrchestrator {
     this.git = git;
     this.github = github;
     this.autoOpenPr = autoOpenPr;
+    this.autoCaptureUncommitted = autoCaptureUncommitted;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
@@ -190,6 +202,10 @@ export class RunOrchestrator {
       return;
     }
 
+    if (this.autoCaptureUncommitted) {
+      await this._captureUncommittedImplementerWork(taskId, worktreeDir, runLog);
+    }
+
     await this._updateAndBroadcast(taskId, { status: "validation" });
 
     const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch }).catch(() => []);
@@ -266,6 +282,52 @@ export class RunOrchestrator {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Safety net for the implementer's own workflow ("implement to green, self-verify, commit your
+   * work locally, then stop"): an agent that gets absorbed in self-verification -- or hits a
+   * denied/unavailable tool mid-check -- can reach `end_turn` without ever running that final
+   * commit. The work is real and tested, but it sits as unstaged/untracked changes that the
+   * reviewer's git-history-based checks (`git diff base...HEAD`, `git log`) can't see, so it
+   * FAILs on "implementation not committed" even though the implementation is done (observed live
+   * on T-0129, T-0131, T-0132 -- config.py/engine.py/types.py, invariants.py, and run_round3.py
+   * respectively, all uncommitted after the implementer phase ended cleanly).
+   *
+   * Runs after the implementer phase and before the reviewer is ever spawned, so the reviewer's
+   * diff reflects the complete work. Attributed to the board, not the agent, since the agent
+   * never authored a commit for it. `commitAll` no-ops (returns false) on an already-clean
+   * worktree, so this never creates an empty commit.
+   */
+  async _captureUncommittedImplementerWork(taskId, worktreeDir, runLog) {
+    const message = [
+      `chore(${taskId}): capture uncommitted implementer changes`,
+      "",
+      "Auto-captured by the Agent Runner orchestrator: the implementer phase ended with " +
+        "changes still uncommitted in the worktree. The content originates from that phase, " +
+        "not from this commit's author.",
+      "",
+      "Co-authored-by: Claude <noreply@anthropic.com>"
+    ].join("\n");
+    const captured = await this.git.commitAll({
+      worktreeDir,
+      message,
+      author: gitOps.BOARD_COMMIT_AUTHOR
+    });
+    if (captured) {
+      await this._logCapture(
+        taskId,
+        runLog,
+        "Captured uncommitted implementer changes before review -- the worktree was not clean after the implementer phase finished."
+      );
+    }
+    return captured;
+  }
+
+  async _logCapture(taskId, runLog, message) {
+    const event = { type: "capture", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "capture", event });
   }
 
   _crashReason(phase, result) {

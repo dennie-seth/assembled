@@ -861,6 +861,144 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
   });
 });
 
+describe("RunOrchestrator.runCard — auto-capture uncommitted implementer work before review (safety net)", () => {
+  it("commits leftover uncommitted/untracked changes from the implementer phase before the reviewer runs", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    // The reviewer phase must not start until the capture commit has been attempted.
+    await nthChild(runner, 2);
+
+    expect(git.commitAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreeDir: "/repo/worktrees/T-0001",
+        message: expect.stringContaining("chore(T-0001): capture uncommitted implementer changes"),
+        author: expect.objectContaining({ name: "assembled-board", email: "board@localhost" })
+      })
+    );
+
+    const reviewChild = runner.spawnedChildren[1];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "ok"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+  });
+
+  it("captures before computing the reviewer's diff, so the reviewer sees the captured commit", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const callOrder = [];
+    git.commitAll.mockImplementation(async (args) => {
+      callOrder.push("commitAll");
+      return args.message.includes("capture") ? true : true;
+    });
+    git.diffNames.mockImplementation(async () => {
+      callOrder.push("diffNames");
+      return ["tools/board/src/thing.js"];
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "ok"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(callOrder[0]).toBe("commitAll");
+    expect(callOrder).toContain("diffNames");
+    expect(callOrder.indexOf("commitAll")).toBeLessThan(callOrder.indexOf("diffNames"));
+  });
+
+  it("does not create an empty commit when the worktree is already clean after the implementer phase (no-op guard)", async () => {
+    const store = makeStore([baseTask()]);
+    // commitAll mirrors the real gitOps behavior: false when there's nothing to commit.
+    const git = makeGit({ commitAll: vi.fn(async () => false) });
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "ok"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    const captureMessages = hub.broadcast.mock.calls
+      .map(([m]) => m)
+      .filter((m) => m.type === "run-event" && m.phase === "capture");
+    expect(captureMessages).toHaveLength(0);
+  });
+
+  it("logs and broadcasts when it captures leftover work", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ commitAll: vi.fn(async () => true) });
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const orchestrator = makeOrchestrator({ store, git, runner, hub });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "ok"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    const captureMessages = hub.broadcast.mock.calls
+      .map(([m]) => m)
+      .filter((m) => m.type === "run-event" && m.phase === "capture");
+    expect(captureMessages.length).toBeGreaterThanOrEqual(1);
+    expect(captureMessages[0].id).toBe("T-0001");
+    expect(captureMessages[0].event.message).toMatch(/captured uncommitted implementer changes/i);
+  });
+
+  it("does not run the capture step when a card fails the implementer phase (never reaches review)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 1, null);
+    await runPromise;
+
+    expect(git.commitAll).not.toHaveBeenCalled();
+  });
+
+  it("respects autoCaptureUncommitted: false (config flag) by skipping the capture step entirely", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, autoCaptureUncommitted: false });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "ok"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    // commitAll is still called once from _handlePass's own final commit -- but never with
+    // the capture-specific message, since the capture step itself was skipped.
+    const captureCalls = git.commitAll.mock.calls.filter(([args]) =>
+      args.message.includes("capture uncommitted implementer changes")
+    );
+    expect(captureCalls).toHaveLength(0);
+  });
+});
+
 describe("RunOrchestrator.cancelRun", () => {
   it("throws when there is no active run for the card", async () => {
     const store = makeStore([baseTask()]);
