@@ -35,13 +35,9 @@ TEST_CASE("T-0043 header: template count matches design spec") {
     CHECK(assembled::kTemplates.size() == 20u);
 }
 
-TEST_CASE("T-0043 header: archetype count") {
-    CHECK(assembled::kArchetypeIds.size() == 5u);
-}
+TEST_CASE("T-0043 header: archetype count") { CHECK(assembled::kArchetypeIds.size() == 5u); }
 
-TEST_CASE("T-0043 header: anchor_tag count") {
-    CHECK(assembled::kAnchorTags.size() == 24u);
-}
+TEST_CASE("T-0043 header: anchor_tag count") { CHECK(assembled::kAnchorTags.size() == 24u); }
 
 TEST_CASE("T-0043 header: word category distribution (02-notes-system.md §2)") {
     int counts[6] = {};
@@ -135,8 +131,7 @@ TEST_CASE("T-0043 DB parity: note_templates IDs match shared header" *
     CHECK(db_ids == hdr_ids);
 }
 
-TEST_CASE("T-0043 DB parity: note_words row count" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: note_words row count" * doctest::skip(!std::getenv("DATABASE_URL"))) {
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT COUNT(*) AS n FROM note_words");
@@ -180,8 +175,7 @@ TEST_CASE("T-0043 DB parity: note_words categories match shared header" *
     }
 }
 
-TEST_CASE("T-0043 DB parity: archetype row count" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: archetype row count" * doctest::skip(!std::getenv("DATABASE_URL"))) {
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT COUNT(*) AS n FROM archetype");
@@ -205,8 +199,7 @@ TEST_CASE("T-0043 DB parity: archetype IDs match shared header" *
     CHECK(db_ids == hdr_ids);
 }
 
-TEST_CASE("T-0043 DB parity: anchor_tag row count" *
-          doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("T-0043 DB parity: anchor_tag row count" * doctest::skip(!std::getenv("DATABASE_URL"))) {
     auto client = requireDb();
     REQUIRE(client != nullptr);
     auto res = client->execSqlSync("SELECT COUNT(*) AS n FROM anchor_tag");
@@ -217,8 +210,8 @@ TEST_CASE("T-0043 DB parity: anchor_tag pairs match shared header" *
           doctest::skip(!std::getenv("DATABASE_URL"))) {
     auto client = requireDb();
     REQUIRE(client != nullptr);
-    auto res = client->execSqlSync(
-        "SELECT archetype_id, tag FROM anchor_tag ORDER BY archetype_id, tag");
+    auto res =
+        client->execSqlSync("SELECT archetype_id, tag FROM anchor_tag ORDER BY archetype_id, tag");
 
     using Pair = std::pair<int16_t, int16_t>;
     std::vector<Pair> db_pairs;
