@@ -111,7 +111,9 @@ def check_inv8(state: SimState, cfg: SimConfig, tick: int) -> list[InvariantViol
 
     for itype in gating:
         world_count = sum(
-            1 for it in state.items.values() if it.type_id == itype.type_id and it.anchor is not None
+            1
+            for it in state.items.values()
+            if it.type_id == itype.type_id and it.anchor is not None
         )
         world_expected = (1.0 / (world_count * rate)) if world_count > 0 else float("inf")
 
