@@ -259,7 +259,7 @@ describe("RunOrchestrator.runCard — routes the reviewer's changed paths throug
 });
 
 describe("RunOrchestrator.runCard — FAIL validation", () => {
-  it("sends the card back to in-progress with the reviewer's reasons, and keeps the worktree", async () => {
+  it("moves the card to blocked (a re-runnable terminal state) with the reviewer's reasons, and keeps the worktree", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
     const runner = makeRunner();
@@ -280,10 +280,38 @@ describe("RunOrchestrator.runCard — FAIL validation", () => {
     await runPromise;
 
     const finalTask = await store.get("T-0001");
-    expect(finalTask.status).toBe("in-progress");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.status).not.toBe("in-progress");
+    expect(finalTask.body).toContain("## Validation: FAIL");
     expect(finalTask.body).toContain("missing test at src/foo.js:12");
     expect(git.removeWorktree).not.toHaveBeenCalled();
     expect(git.push).not.toHaveBeenCalled();
+  });
+
+  it("a blocked-by-FAIL card can immediately be re-run (status accepted by runCard's own guard)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const firstRun = orchestrator.runCard("T-0001");
+    const implChild1 = await nthChild(runner, 1);
+    implChild1.emit("exit", 0, null);
+    const reviewChild1 = await nthChild(runner, 2);
+    reviewChild1.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "lint errors"))));
+    reviewChild1.emit("exit", 0, null);
+    await firstRun;
+
+    expect((await store.get("T-0001")).status).toBe("blocked");
+
+    // The old dead-end bug left the card stuck at "in-progress", which runCard's
+    // guard (line ~118) rejects -- re-running would 409. "blocked" is accepted.
+    const secondRun = orchestrator.runCard("T-0001");
+    const implChild2 = await nthChild(runner, 3);
+    implChild2.emit("exit", 1, null);
+    await secondRun;
+
+    expect((await store.get("T-0001")).status).toBe("blocked");
   });
 });
 
