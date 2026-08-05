@@ -140,7 +140,7 @@ class TestE4Sweep:
         # The two rates should be broadly similar — k_c only indirectly gates INV-7
         # (via pickup dilution), not directly. Tolerance 0.30 accounts for this coupling.
         delta = abs(by_kc[0.5] - by_kc[4.0])
-        assert delta < 0.30, f"INV-7 rates diverge by {delta:.3f} (indirect k_c coupling via pickup dilution)"
+        assert delta < 0.30, f"k_c affects INV-7 indirectly; delta={delta:.3f} > 0.30"
 
     def test_seeds_per_point_averages_across_seeds(self):
         """seeds_per_point > 1 averages results; min/max track the per-seed spread."""
