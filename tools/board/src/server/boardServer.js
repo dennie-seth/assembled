@@ -11,6 +11,7 @@ import { PtyBridge } from "./ptyBridge.js";
 import { RunOrchestrator } from "../runner/runOrchestrator.js";
 import { ClaudeCliRunner } from "../runner/claudeCliRunner.js";
 import { createRestartCoordinator } from "../runner/serviceRestart.js";
+import { createOrphanReaper } from "../runner/orphanReaper.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -40,6 +41,11 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     rulesDir: path.join(REPO_ROOT, ".claude", "rules"),
     onIdle: () => restartCoordinator.notifyIdle()
   });
+  const orphanReaper = createOrphanReaper({
+    store,
+    hub,
+    activeCardIds: orchestrator.activeCardIds
+  });
 
   watcher.on("task-changed", (event) => hub.broadcast(event));
 
@@ -67,6 +73,12 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     }
   });
 
+  // A fresh process has zero active runs by definition, so any card still sitting at
+  // in-progress/validation here belongs to a run that died with the previous process --
+  // reap those before anything else touches the store.
+  await orphanReaper.reapOnStartup();
+  orphanReaper.start();
+
   await watcher.start();
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -82,7 +94,9 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     ptyBridge,
     orchestrator,
     restartCoordinator,
+    orphanReaper,
     async close() {
+      orphanReaper.stop();
       hub.close();
       ptyBridge.close();
       await watcher.close();
