@@ -29,9 +29,10 @@ export function appendNote(body, heading, text) {
  * Ties the slice-B runner engine to the board: on runCard, cuts a worktree
  * for the card, runs the implementer, hands off to the read-only reviewer,
  * and applies the reviewer's verdict -- PASS pushes the branch and moves the
- * card to `review`, FAIL sends it back to `in-progress` with reasons, and
- * any runner failure (crash, missing verdict) blocks it instead of guessing.
- * Never issues a transition that reaches `done`.
+ * card to `review`, FAIL moves it to `blocked` (a re-runnable terminal
+ * state) with the verdict notes, and any runner failure (crash, missing
+ * verdict) also blocks it instead of guessing. Never issues a transition
+ * that reaches `done`.
  */
 export class RunOrchestrator {
   constructor({
@@ -346,7 +347,7 @@ export class RunOrchestrator {
   async _handleFailValidation(taskId, verdict) {
     const current = await this.store.get(taskId);
     await this._updateAndBroadcast(taskId, {
-      status: "in-progress",
+      status: "blocked",
       body: appendNote(current.body, "Validation: FAIL", verdict.notes)
     });
   }
