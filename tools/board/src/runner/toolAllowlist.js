@@ -80,7 +80,11 @@ export function isToolAllowed(requestedTool, allowedTools) {
     if (requested.arg === null) {
       return false;
     }
-    if (allowed.arg.endsWith(":*")) {
+    // `cmd:*` and a bare `cmd*` both mean "prefix wildcard" -- strip only the trailing `*`.
+    // A bare trailing `*` (no colon) is required for prefixes that end by gluing a value
+    // directly on with no word boundary, e.g. inline env-var assignment (`DATABASE_URL=*`):
+    // the live Claude Code CLI does not honor `:*` for that shape (verified v2.1.78).
+    if (allowed.arg.endsWith("*")) {
       return requested.arg.startsWith(allowed.arg.slice(0, -1));
     }
     return requested.arg === allowed.arg;
