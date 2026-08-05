@@ -13,6 +13,7 @@ const VALID_TASK = {
   branch: null,
   commit: null,
   pr: null,
+  attempts: 0,
   comments: [],
   attachments: [],
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
@@ -162,6 +163,43 @@ describe("pr (auto-opened PR url)", () => {
 
   it("throws when pr is not a string or null", () => {
     expect(() => parseTask(frontmatter({ pr: 42 }))).toThrow(/pr/i);
+  });
+});
+
+describe("attempts (auto-retry counter for the bounded FAIL->auto-retry loop)", () => {
+  it("round-trips a task with attempts set", () => {
+    const task = { ...VALID_TASK, attempts: 3 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults attempts to 0 when absent from the frontmatter", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.attempts).toBe(0);
+  });
+
+  it("throws when attempts is not an integer", () => {
+    expect(() => parseTask(frontmatter({ attempts: "three" }))).toThrow(/attempts/i);
+  });
+
+  it("throws when attempts is negative", () => {
+    expect(() => parseTask(frontmatter({ attempts: -1 }))).toThrow(/attempts/i);
+  });
+
+  it("throws when attempts is a non-integer number", () => {
+    expect(() => parseTask(frontmatter({ attempts: 1.5 }))).toThrow(/attempts/i);
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { buildPrTitle, buildPrBody } from "../../src/runner/prBuilder.js";
 import { EventEmitter } from "node:events";
-import { RunOrchestrator, appendNote } from "../../src/runner/runOrchestrator.js";
+import { RunOrchestrator, appendNote, MAX_AUTO_RETRY_ATTEMPTS } from "../../src/runner/runOrchestrator.js";
 
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
@@ -258,8 +258,8 @@ describe("RunOrchestrator.runCard — routes the reviewer's changed paths throug
   });
 });
 
-describe("RunOrchestrator.runCard — FAIL validation", () => {
-  it("moves the card to blocked (a re-runnable terminal state) with the reviewer's reasons, and keeps the worktree", async () => {
+describe("RunOrchestrator.runCard — FAIL validation triggers a bounded auto-retry, not a dead end", () => {
+  it("on FAIL, appends the reviewer's reasons to the body but keeps the card running (not blocked) while it auto-retries the implementer", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
     const runner = makeRunner();
@@ -277,41 +277,178 @@ describe("RunOrchestrator.runCard — FAIL validation", () => {
     );
     reviewChild.emit("exit", 0, null);
 
+    // A second implementer attempt starts on its own -- no second runCard() call, no click.
+    await nthChild(runner, 3);
+
+    const midRetryTask = await store.get("T-0001");
+    expect(midRetryTask.status).toBe("in-progress");
+    expect(midRetryTask.status).not.toBe("blocked");
+    expect(midRetryTask.body).toContain("## Validation: FAIL");
+    expect(midRetryTask.body).toContain("missing test at src/foo.js:12");
+    expect(midRetryTask.body).toContain("run 1 of 5");
+    expect(git.removeWorktree).not.toHaveBeenCalled();
+    expect(git.push).not.toHaveBeenCalled();
+
+    // Let the retry finish (as a crash, for simplicity) so runPromise resolves.
+    runner.spawnedChildren[2].emit("exit", 1, null);
+    await runPromise;
+  });
+});
+
+describe("RunOrchestrator.runCard — auto-retry loop on reviewer FAIL (bounded)", () => {
+  /** Drives the nth implementer+reviewer cycle to a FAIL verdict; assumes the implementer has already been spawned or is about to be. */
+  async function driveFailCycle(runner, n) {
+    const implChild = await nthChild(runner, n * 2 - 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, n * 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", `issue round ${n}`))));
+    reviewChild.emit("exit", 0, null);
+    return { implChild, reviewChild };
+  }
+
+  it("automatically re-runs the implementer on the same worktree/branch after a FAIL -- an in-process call, not a status a human has to click", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: false })) });
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveFailCycle(runner, 1);
+
+    const implChild2 = await nthChild(runner, 3);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+    expect(git.addWorktree).toHaveBeenCalledTimes(1);
+
+    implChild2.emit("exit", 0, null);
+    const reviewChild2 = await nthChild(runner, 4);
+    reviewChild2.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild2.emit("exit", 0, null);
     await runPromise;
 
     const finalTask = await store.get("T-0001");
-    expect(finalTask.status).toBe("blocked");
-    expect(finalTask.status).not.toBe("in-progress");
-    expect(finalTask.body).toContain("## Validation: FAIL");
-    expect(finalTask.body).toContain("missing test at src/foo.js:12");
-    expect(git.removeWorktree).not.toHaveBeenCalled();
-    expect(git.push).not.toHaveBeenCalled();
+    expect(finalTask.status).toBe("review");
+    // The retry resumes the same branch with the FAIL note (now in the body) injected.
+    expect(buildPromptFn.mock.calls[1][0]).toMatchObject({ continuing: true });
+    expect(buildPromptFn.mock.calls[1][0].task.body).toContain("issue round 1");
   });
 
-  it("a blocked-by-FAIL card can immediately be re-run (status accepted by runCard's own guard)", async () => {
+  it(`caps auto-retry at ${MAX_AUTO_RETRY_ATTEMPTS} total runs -- the final consecutive FAIL blocks the card and stops retrying`, async () => {
     const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= MAX_AUTO_RETRY_ATTEMPTS; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    // 5 implementer + 5 reviewer runs, and never a 6th implementer attempt.
+    expect(runner.start).toHaveBeenCalledTimes(MAX_AUTO_RETRY_ATTEMPTS * 2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.attempts).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+    expect(finalTask.body).toContain(`run ${MAX_AUTO_RETRY_ATTEMPTS} of ${MAX_AUTO_RETRY_ATTEMPTS}`);
+    expect(finalTask.body).toMatch(/auto-retry limit reached/i);
+    expect(finalTask.body).toContain("issue round 1");
+    expect(finalTask.body).toContain(`issue round ${MAX_AUTO_RETRY_ATTEMPTS}`);
+  });
+
+  it('includes the attempt count ("run N of 5") in every FAIL note', async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveFailCycle(runner, 1);
+    const implChild2 = await nthChild(runner, 3);
+    implChild2.emit("exit", 0, null);
+    const reviewChild2 = await nthChild(runner, 4);
+    reviewChild2.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild2.emit("exit", 0, null);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.body).toContain("run 1 of 5");
+  });
+
+  it("persists the attempts counter on the task after each attempt (visible in the task JSON for the UI)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild1 = await nthChild(runner, 1);
+    expect((await store.get("T-0001")).attempts).toBe(1);
+    implChild1.emit("exit", 0, null);
+
+    const reviewChild1 = await nthChild(runner, 2);
+    reviewChild1.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "x"))));
+    reviewChild1.emit("exit", 0, null);
+
+    const implChild2 = await nthChild(runner, 3);
+    expect((await store.get("T-0001")).attempts).toBe(2);
+    implChild2.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("resets the attempts counter to 0 on PASS, even after prior FAILs", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveFailCycle(runner, 1);
+    const implChild2 = await nthChild(runner, 3);
+    implChild2.emit("exit", 0, null);
+    const reviewChild2 = await nthChild(runner, 4);
+    reviewChild2.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild2.emit("exit", 0, null);
+    await runPromise;
+
+    expect((await store.get("T-0001")).attempts).toBe(0);
+  });
+
+  it("gives a card a fresh auto-retry allowance on a human-initiated run, even if it previously exhausted all 5 attempts", async () => {
+    const store = makeStore([baseTask({ status: "blocked", attempts: MAX_AUTO_RETRY_ATTEMPTS, branch: "feature/T-0001" })]);
     const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
     const runner = makeRunner();
     const orchestrator = makeOrchestrator({ store, git, runner });
 
-    const firstRun = orchestrator.runCard("T-0001");
-    const implChild1 = await nthChild(runner, 1);
-    implChild1.emit("exit", 0, null);
-    const reviewChild1 = await nthChild(runner, 2);
-    reviewChild1.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "lint errors"))));
-    reviewChild1.emit("exit", 0, null);
-    await firstRun;
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    // Reset to 0, then this attempt bumps it to 1 -- not left at (or incremented past) 5.
+    expect((await store.get("T-0001")).attempts).toBe(1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
 
-    expect((await store.get("T-0001")).status).toBe("blocked");
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
 
-    // The old dead-end bug left the card stuck at "in-progress", which runCard's
-    // guard (line ~118) rejects -- re-running would 409. "blocked" is accepted.
-    const secondRun = orchestrator.runCard("T-0001");
+  it("refuses a concurrent run while an auto-retry cycle is between the reviewer's FAIL and the next implementer attempt (re-entrancy guard)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveFailCycle(runner, 1);
+
+    // Mid-retry-cycle: the next implementer attempt hasn't spawned yet (activeRuns is
+    // momentarily empty here), but activeCardIds still holds the card -- must still reject.
+    await expect(orchestrator.runCard("T-0001")).rejects.toThrow(/active run|status is "/i);
+
     const implChild2 = await nthChild(runner, 3);
     implChild2.emit("exit", 1, null);
-    await secondRun;
-
-    expect((await store.get("T-0001")).status).toBe("blocked");
+    await runPromise;
   });
 });
 
@@ -775,7 +912,7 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
     expect(finalTask.pr).toBe("https://github.com/example/repo/pull/55");
   });
 
-  it("(d) a FAIL verdict never opens a PR", async () => {
+  it("(d) a FAIL verdict never opens a PR, even after the auto-retry loop exhausts its attempts and blocks the card", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
     const runner = makeRunner();
@@ -783,13 +920,16 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
     const orchestrator = makeOrchestrator({ store, git, runner, github });
 
     const runPromise = orchestrator.runCard("T-0001");
-    const implChild = await nthChild(runner, 1);
-    implChild.emit("exit", 0, null);
-    const reviewChild = await nthChild(runner, 2);
-    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "missing test"))));
-    reviewChild.emit("exit", 0, null);
+    for (let n = 1; n <= MAX_AUTO_RETRY_ATTEMPTS; n++) {
+      const implChild = await nthChild(runner, n * 2 - 1);
+      implChild.emit("exit", 0, null);
+      const reviewChild = await nthChild(runner, n * 2);
+      reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "missing test"))));
+      reviewChild.emit("exit", 0, null);
+    }
     await runPromise;
 
+    expect((await store.get("T-0001")).status).toBe("blocked");
     expect(github.checkAvailability).not.toHaveBeenCalled();
     expect(github.createPr).not.toHaveBeenCalled();
   });

@@ -41,6 +41,21 @@ function blockerBadgeFor(blockCount) {
   return badge;
 }
 
+// Mirrors MAX_AUTO_RETRY_ATTEMPTS in src/runner/runOrchestrator.js (server-only module, not
+// importable from the client bundle) -- the bounded FAIL -> auto-retry loop's cap.
+const MAX_AUTO_RETRY_ATTEMPTS = 5;
+
+function attemptsBadgeFor(task) {
+  if (!task.attempts) return null;
+  const badge = document.createElement("span");
+  badge.className = "card-attempts-badge";
+  const label = `Auto-retry: run ${task.attempts} of ${MAX_AUTO_RETRY_ATTEMPTS}`;
+  badge.textContent = `↻ ${task.attempts}/${MAX_AUTO_RETRY_ATTEMPTS}`;
+  badge.title = label;
+  badge.setAttribute("aria-label", label);
+  return badge;
+}
+
 function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
   const card = document.createElement("div");
   card.className = "card";
@@ -63,6 +78,11 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
   const badge = blockerBadgeFor(blockerCounts?.get(task.id) ?? 0);
   if (badge) {
     titleRow.appendChild(badge);
+  }
+
+  const attemptsBadge = attemptsBadgeFor(task);
+  if (attemptsBadge) {
+    titleRow.appendChild(attemptsBadge);
   }
 
   const meta = document.createElement("div");

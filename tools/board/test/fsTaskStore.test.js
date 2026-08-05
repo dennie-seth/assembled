@@ -21,6 +21,7 @@ function makeTask(overrides = {}) {
     branch: null,
     commit: null,
     pr: null,
+    attempts: 0,
     comments: [],
     attachments: [],
     body: "## Context\n...\n## Acceptance\n- [ ] ...\n",

@@ -73,6 +73,18 @@ function branchInfoFor(task) {
   return info;
 }
 
+// Mirrors MAX_AUTO_RETRY_ATTEMPTS in src/runner/runOrchestrator.js (server-only module, not
+// importable from the client bundle) -- the bounded FAIL -> auto-retry loop's cap.
+const MAX_AUTO_RETRY_ATTEMPTS = 5;
+
+function attemptsInfoFor(task) {
+  if (!task.attempts) return null;
+  const info = document.createElement("div");
+  info.className = "detail-attempts";
+  info.textContent = `Auto-retry: run ${task.attempts} of ${MAX_AUTO_RETRY_ATTEMPTS}`;
+  return info;
+}
+
 function commentsSectionFor(task, onAddComment) {
   const wrap = document.createElement("div");
   wrap.className = "detail-comments";
@@ -341,6 +353,11 @@ export function renderDetailPanel(
 
   if (branchInfo) {
     panel.appendChild(branchInfo);
+  }
+
+  const attemptsInfo = attemptsInfoFor(task);
+  if (attemptsInfo) {
+    panel.appendChild(attemptsInfo);
   }
 
   if (onAddComment) {
