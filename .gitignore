@@ -40,7 +40,7 @@ Makefile
 compile_commands.json
 
 # Node
-node_modules/
+node_modules
 dist/
 .vite/
 coverage/
