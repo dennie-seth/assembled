@@ -28,6 +28,15 @@ export function renderGitStatusBar(root, status) {
     bar.appendChild(ts);
   }
 
+  if (status.commitSubject) {
+    const commit = document.createElement("span");
+    commit.className = "git-status-commit";
+    const words = status.commitSubject.split(/\s+/).slice(0, 5).join(" ");
+    commit.textContent = `  ${words}`;
+    commit.title = status.commitSubject;
+    bar.appendChild(commit);
+  }
+
   if (status.updated) {
     const banner = document.createElement("span");
     banner.className = "git-status-updated";

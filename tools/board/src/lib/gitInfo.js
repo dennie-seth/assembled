@@ -15,11 +15,12 @@ export async function getCurrentBranch(repoRoot) {
 export async function getHeadInfo(repoRoot) {
   const sha = await git(["rev-parse", "HEAD"], repoRoot);
   const isoDate = await git(["log", "-1", "--format=%cI"], repoRoot);
-  return { sha, isoDate };
+  const commitSubject = await git(["log", "-1", "--format=%s"], repoRoot);
+  return { sha, isoDate, commitSubject };
 }
 
 export async function getGitStatus(repoRoot) {
   const branch = await getCurrentBranch(repoRoot);
-  const { sha, isoDate } = await getHeadInfo(repoRoot);
-  return { branch, head: sha, headTimestamp: isoDate };
+  const { sha, isoDate, commitSubject } = await getHeadInfo(repoRoot);
+  return { branch, head: sha, headTimestamp: isoDate, commitSubject };
 }

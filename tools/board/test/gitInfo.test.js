@@ -65,6 +65,25 @@ describe("getHeadInfo", () => {
     const after = await getHeadInfo(repoRoot);
     expect(after.sha).not.toBe(before.sha);
   });
+
+  it("returns a commitSubject string", async () => {
+    const { commitSubject } = await getHeadInfo(repoRoot);
+    expect(typeof commitSubject).toBe("string");
+    expect(commitSubject.length).toBeGreaterThan(0);
+  });
+
+  it("commitSubject matches the commit message subject line", async () => {
+    const { commitSubject } = await getHeadInfo(repoRoot);
+    expect(commitSubject).toBe("initial");
+  });
+
+  it("commitSubject updates after a new commit", async () => {
+    await fs.writeFile(path.join(repoRoot, "new.txt"), "x\n", "utf8");
+    await git(["add", "new.txt"], repoRoot);
+    await git(["commit", "-m", "feat: add new feature for testing"], repoRoot);
+    const { commitSubject } = await getHeadInfo(repoRoot);
+    expect(commitSubject).toBe("feat: add new feature for testing");
+  });
 });
 
 describe("getGitStatus", () => {
@@ -79,5 +98,18 @@ describe("getGitStatus", () => {
     await git(["checkout", "-b", "feature/T-0116"], repoRoot);
     const status = await getGitStatus(repoRoot);
     expect(status.branch).toBe("feature/T-0116");
+  });
+
+  it("returns commitSubject with the commit message subject", async () => {
+    const status = await getGitStatus(repoRoot);
+    expect(status.commitSubject).toBe("initial");
+  });
+
+  it("commitSubject reflects a new commit message", async () => {
+    await fs.writeFile(path.join(repoRoot, "new.txt"), "y\n", "utf8");
+    await git(["add", "new.txt"], repoRoot);
+    await git(["commit", "-m", "chore: update readme with details"], repoRoot);
+    const status = await getGitStatus(repoRoot);
+    expect(status.commitSubject).toBe("chore: update readme with details");
   });
 });
