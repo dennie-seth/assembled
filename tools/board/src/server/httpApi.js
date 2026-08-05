@@ -12,7 +12,7 @@ const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
 const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
 const TASK_COMMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/comments$/;
-const RUNNABLE_STATUSES = new Set(["ready", "review"]);
+const RUNNABLE_STATUSES = new Set(["ready", "review", "blocked"]);
 const AGENTS_PATH = "/api/agents";
 const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const DONE_EXPORT_PATH = "/api/tasks/export/done";
@@ -177,7 +177,7 @@ async function handleRunTask(orchestrator, id, res) {
     throw new HttpError(404, `Task ${id} not found`);
   }
   if (!RUNNABLE_STATUSES.has(task.status)) {
-    throw new HttpError(409, `Cannot run ${id}: status is "${task.status}", expected "ready" or "review"`);
+    throw new HttpError(409, `Cannot run ${id}: status is "${task.status}", expected "ready", "review", or "blocked"`);
   }
   if (orchestrator.isRunning(id)) {
     throw new HttpError(409, `Task ${id} already has an active run`);

@@ -558,6 +558,121 @@ describe("RunOrchestrator.runCard — re-run continues existing work instead of 
   });
 });
 
+describe("RunOrchestrator.runCard — blocked cards re-run continues existing work instead of wiping", () => {
+  it("accepts a run on a blocked-status card with an existing branch, reusing it rather than starting over", async () => {
+    const store = makeStore([
+      baseTask({ status: "blocked", branch: "feature/T-0001", body: "## Context\nDo it.\n\n## Blocked (2026-08-04T00:00:00.000Z)\n\nworktree creation failed: boom\n" })
+    ]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed the blocker"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.addWorktree).toHaveBeenCalledWith({
+      repoRoot: "/repo",
+      worktreeDir: "/repo/worktrees/T-0001",
+      branch: "feature/T-0001",
+      baseBranch: "develop"
+    });
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("passes continuing: true, the block reason (in the task body), and the card's comments to the implementer prompt on a reused blocked re-run", async () => {
+    const comments = [{ author: "Dennie", text: "the worktree issue is fixed now, retry", timestamp: "2026-08-05T12:00:00.000Z" }];
+    const blockedBody = "## Context\nDo it.\n\n## Blocked (2026-08-04T00:00:00.000Z)\n\nreviewer did not produce a machine-readable verdict\n";
+    const store = makeStore([baseTask({ status: "blocked", body: blockedBody, comments })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "continue prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 1, null);
+    await runPromise;
+
+    expect(buildPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        continuing: true,
+        comments,
+        task: expect.objectContaining({ body: blockedBody })
+      })
+    );
+  });
+
+  it("re-runs a blocked card with no existing branch/work cleanly as a fresh start, not an error", async () => {
+    const store = makeStore([baseTask({ status: "blocked", branch: undefined, body: "## Context\nDo it.\n\n## Blocked (2026-08-04T00:00:00.000Z)\n\nworktree creation failed before any commit\n" })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: false })) });
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "fresh prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "clean start"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(buildPromptFn).toHaveBeenCalledWith(expect.objectContaining({ continuing: false, comments: [] }));
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("force-pushes on PASS when a blocked re-run continued an existing (reused) branch", async () => {
+    const store = makeStore([baseTask({ status: "blocked" })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledWith({
+      worktreeDir: "/repo/worktrees/T-0001",
+      branch: "feature/T-0001",
+      force: true
+    });
+  });
+
+  it("reuses an existing PR (findExistingPr) rather than opening a new one when a blocked re-run passes", async () => {
+    const store = makeStore([baseTask({ status: "blocked", pr: "https://github.com/example/repo/pull/55" })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      findExistingPr: vi.fn(async () => "https://github.com/example/repo/pull/55")
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.createPr).not.toHaveBeenCalled();
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/55");
+  });
+});
+
 describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
   it("(a) on PASS, opens a PR via gh with base=develop, head=feature/T-XXXX, and a non-empty title/body", async () => {
     const store = makeStore([baseTask()]);
