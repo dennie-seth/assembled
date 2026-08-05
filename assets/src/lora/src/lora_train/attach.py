@@ -19,7 +19,6 @@ import urllib.error
 import urllib.request
 import uuid
 
-
 # File extensions that are image data and should be uploaded.
 # .txt caption files that live alongside images are excluded.
 _SKIP_SUFFIXES = frozenset({".txt"})
