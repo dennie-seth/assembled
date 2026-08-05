@@ -104,6 +104,51 @@ describe("board server integration", () => {
   });
 });
 
+describe("orphaned run recovery", () => {
+  it("resets a card stranded at in-progress by a previous process on the next startup", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-reaper-"));
+    await fs.writeFile(
+      path.join(dir, "T-0050.md"),
+      makeTaskRaw({ id: "T-0050", status: "in-progress", title: "Stranded card" }),
+      "utf8"
+    );
+
+    const reaperBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+    try {
+      const res = await fetch(`http://127.0.0.1:${reaperBoard.server.address().port}/api/tasks`);
+      const tasks = await res.json();
+      const task = tasks.find((t) => t.id === "T-0050");
+
+      expect(task.status).toBe("blocked");
+      expect(task.body).toMatch(/## Recovered \(.+\)/);
+    } finally {
+      await reaperBoard.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a card at review/done/backlog untouched on startup", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-reaper-"));
+    await fs.writeFile(
+      path.join(dir, "T-0051.md"),
+      makeTaskRaw({ id: "T-0051", status: "review", title: "Awaiting review" }),
+      "utf8"
+    );
+
+    const reaperBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+    try {
+      const res = await fetch(`http://127.0.0.1:${reaperBoard.server.address().port}/api/tasks`);
+      const tasks = await res.json();
+      const task = tasks.find((t) => t.id === "T-0051");
+
+      expect(task.status).toBe("review");
+    } finally {
+      await reaperBoard.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("pty terminal integration", () => {
   it("serves a working shell over /ws/pty on the same server", async () => {
     const { port } = board.server.address();
