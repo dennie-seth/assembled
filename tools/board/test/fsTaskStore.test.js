@@ -21,6 +21,7 @@ function makeTask(overrides = {}) {
     branch: null,
     commit: null,
     pr: null,
+    deliverable_type: "code",
     attempts: 0,
     comments: [],
     attachments: [],

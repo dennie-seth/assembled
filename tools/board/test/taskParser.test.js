@@ -13,6 +13,7 @@ const VALID_TASK = {
   branch: null,
   commit: null,
   pr: null,
+  deliverable_type: "code",
   attempts: 0,
   comments: [],
   attachments: [],
@@ -358,6 +359,40 @@ describe("attachments (files uploaded to a card)", () => {
         })
       )
     ).toThrow(/attachments/i);
+  });
+});
+
+describe("deliverable_type (code vs. produced-artifact cards)", () => {
+  it("defaults deliverable_type to 'code' when absent from the frontmatter", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.deliverable_type).toBe("code");
+  });
+
+  it("round-trips deliverable_type: 'artifact'", () => {
+    const task = { ...VALID_TASK, deliverable_type: "artifact" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("round-trips deliverable_type: 'code' explicitly", () => {
+    const task = { ...VALID_TASK, deliverable_type: "code" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("throws on an invalid deliverable_type", () => {
+    expect(() => parseTask(frontmatter({ deliverable_type: "vibes" }))).toThrow(/deliverable_type/i);
   });
 });
 
