@@ -117,6 +117,25 @@ describe("resolveAllowedTools", () => {
     expect(resolved).not.toContain("Edit");
     expect(resolved).toContain("Read");
   });
+
+  it("grants the reviewer a wildcarded .venv/bin/pytest and .venv/bin/ruff so a python-verify package's tests/lint actually run", () => {
+    const resolved = resolveAllowedTools("reviewer", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0072: the reviewer's own Bash call is `.venv/bin/pytest -v` / `.venv/bin/ruff check .`,
+    // run once its shell is already cd'd into the package (assets/src/lora) -- not chained
+    // after a `cd assets/src/lora && ...`. A `cd assets/src/lora:*` prefix grant never matches
+    // that command string, so pytest/ruff need their own generic (non-cwd-scoped) grants.
+    expect(resolved).toContain("Bash(.venv/bin/pytest:*)");
+    expect(resolved).toContain("Bash(.venv/bin/ruff:*)");
+
+    expect(isToolAllowed("Bash(.venv/bin/pytest:-v)", resolved)).toBe(true);
+    expect(isToolAllowed("Bash(.venv/bin/ruff:check .)", resolved)).toBe(true);
+
+    // Not just for lora -- the grant is generic, so it covers every python-verify root
+    // (tools/asset-gate, tools/comfy-client, etc.) regardless of which package cwd it runs from.
+    const withoutLoraCdGrant = resolved.filter((t) => !t.startsWith("Bash(cd assets/src/lora"));
+    expect(isToolAllowed("Bash(.venv/bin/pytest:-v)", withoutLoraCdGrant)).toBe(true);
+  });
 });
 
 describe("isToolAllowed", () => {
