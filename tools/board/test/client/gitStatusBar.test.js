@@ -66,4 +66,44 @@ describe("renderGitStatusBar", () => {
     renderGitStatusBar(root, { branch: "feature/T-0116", headTimestamp: "2026-08-04T12:00:00Z", updated: false });
     expect(root.textContent).toContain("feature/T-0116");
   });
+
+  it("renders first 5 words of commitSubject when provided", () => {
+    const root = document.createElement("div");
+    renderGitStatusBar(root, {
+      branch: "main",
+      headTimestamp: "2026-08-04T10:00:00Z",
+      commitSubject: "feat: add new feature for testing purposes",
+      updated: false
+    });
+    expect(root.textContent).toContain("feat: add new feature for");
+    expect(root.textContent).not.toContain("testing purposes");
+  });
+
+  it("renders all words when commitSubject has fewer than 5 words", () => {
+    const root = document.createElement("div");
+    renderGitStatusBar(root, {
+      branch: "main",
+      headTimestamp: "2026-08-04T10:00:00Z",
+      commitSubject: "initial commit",
+      updated: false
+    });
+    expect(root.textContent).toContain("initial commit");
+  });
+
+  it("renders commit snippet in an element with class git-status-commit", () => {
+    const root = document.createElement("div");
+    renderGitStatusBar(root, {
+      branch: "main",
+      headTimestamp: "2026-08-04T10:00:00Z",
+      commitSubject: "chore: update readme",
+      updated: false
+    });
+    expect(root.querySelector(".git-status-commit")).not.toBeNull();
+  });
+
+  it("omits commit element when commitSubject is absent", () => {
+    const root = document.createElement("div");
+    renderGitStatusBar(root, { branch: "main", headTimestamp: "2026-08-04T10:00:00Z", updated: false });
+    expect(root.querySelector(".git-status-commit")).toBeNull();
+  });
 });
