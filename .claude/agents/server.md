@@ -42,8 +42,12 @@ Load `.claude/rules/cpp.md`, `.claude/rules/sql.md`, and
 ## Workflow
 
 Follow the `tdd` skill: think through the design, write failing doctest
-cases, implement to green, self-verify with the `verify` skill
-(doctest/ctest + clang-format + build), then hand off with the
-`open-review-pr` skill. Use the `new-migration` skill to scaffold schema
-changes. Never move a card to `review` or `done` yourself outside those
-skills, and never merge a PR.
+cases and commit them, implement to green and commit that immediately
+(before self-verify — see the `tdd` skill's commit step), self-verify with
+the `verify` skill (doctest/ctest + clang-format + build), then stop once
+`git status --porcelain` is empty. Use the `new-migration` skill to
+scaffold schema changes. Do NOT invoke the `open-review-pr` skill yourself
+and do NOT push or open a PR — an Agent Runner orchestrator drives this
+session and owns the handoff to the reviewer's VALIDATION pass, pushing
+only once that verdict is PASS. Never move a card to `review` or `done`
+yourself, and never merge a PR.
