@@ -115,6 +115,21 @@ describe("renderBoard", () => {
     expect(onCardClick).not.toHaveBeenCalled();
   });
 
+  it("shows a Re-run control on a review card and invokes onRun without triggering onCardClick", () => {
+    const root = document.createElement("div");
+    const onRun = vi.fn();
+    const onCardClick = vi.fn();
+    renderBoard(root, [task({ id: "T-0020", status: "review" })], { onDrop: vi.fn(), onCardClick, onRun });
+
+    const rerunBtn = root.querySelector('.card[data-id="T-0020"] .card-rerun');
+    expect(rerunBtn).not.toBeNull();
+    expect(root.querySelector('.card[data-id="T-0020"] .card-run')).toBeNull();
+    rerunBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+
+    expect(onRun).toHaveBeenCalledWith("T-0020");
+    expect(onCardClick).not.toHaveBeenCalled();
+  });
+
   it("renders a retired column, last, and does not show a Run control on a retired card", () => {
     const root = document.createElement("div");
     renderBoard(root, [task({ id: "T-0099", status: "retired" })], { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() });

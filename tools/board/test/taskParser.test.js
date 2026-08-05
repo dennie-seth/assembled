@@ -13,6 +13,7 @@ const VALID_TASK = {
   branch: null,
   commit: null,
   pr: null,
+  comments: [],
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
 };
 
@@ -160,6 +161,65 @@ describe("pr (auto-opened PR url)", () => {
 
   it("throws when pr is not a string or null", () => {
     expect(() => parseTask(frontmatter({ pr: 42 }))).toThrow(/pr/i);
+  });
+});
+
+describe("comments (human feedback for iterative re-runs)", () => {
+  it("round-trips a task with comments set", () => {
+    const task = {
+      ...VALID_TASK,
+      comments: [
+        { author: "Dennie", text: "CI check X failed, please fix.", timestamp: "2026-08-05T12:00:00.000Z" }
+      ]
+    };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("round-trips multiple comments in order", () => {
+    const task = {
+      ...VALID_TASK,
+      comments: [
+        { author: "Dennie", text: "First note", timestamp: "2026-08-05T12:00:00.000Z" },
+        { author: "Dennie", text: "Second note", timestamp: "2026-08-05T13:00:00.000Z" }
+      ]
+    };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults comments to [] when absent from the frontmatter", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.comments).toEqual([]);
+  });
+
+  it("throws when comments is not an array", () => {
+    expect(() => parseTask(frontmatter({ comments: "not an array" }))).toThrow(/comments/i);
+  });
+
+  it("throws when a comment entry is missing a required field", () => {
+    expect(() =>
+      parseTask(frontmatter({ comments: [{ author: "Dennie", text: "note" }] }))
+    ).toThrow(/comments/i);
+  });
+
+  it("throws when a comment entry has a non-string field", () => {
+    expect(() =>
+      parseTask(
+        frontmatter({ comments: [{ author: "Dennie", text: "note", timestamp: 42 }] })
+      )
+    ).toThrow(/comments/i);
   });
 });
 

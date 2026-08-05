@@ -35,6 +35,7 @@ function makeApp(overrides = {}) {
   const exportBacklogImpl = overrides.exportBacklogImpl ?? vi.fn();
   const exportDoneImpl = overrides.exportDoneImpl ?? vi.fn();
   const fetchGitStatusImpl = overrides.fetchGitStatusImpl ?? null;
+  const addCommentImpl = overrides.addCommentImpl ?? vi.fn().mockResolvedValue({});
   const app = createApp({
     boardRoot,
     detailRoot,
@@ -52,7 +53,8 @@ function makeApp(overrides = {}) {
     deleteTaskImpl,
     exportBacklogImpl,
     exportDoneImpl,
-    fetchGitStatusImpl
+    fetchGitStatusImpl,
+    addCommentImpl
   });
   return {
     app,
@@ -72,7 +74,8 @@ function makeApp(overrides = {}) {
     deleteTaskImpl,
     exportBacklogImpl,
     exportDoneImpl,
-    fetchGitStatusImpl
+    fetchGitStatusImpl,
+    addCommentImpl
   };
 }
 
@@ -107,6 +110,114 @@ describe("createApp handleDrop", () => {
     expect(app.getTasks()).toEqual([patched]);
     const column = boardRoot.querySelector('.column[data-status="in-progress"]');
     expect(column.textContent).toContain("Move me");
+  });
+});
+
+describe("createApp handleDrop — review card moved to in-progress re-runs instead of relabeling (Feature B)", () => {
+  it("calls runTaskImpl (not patchTaskImpl) when a review card is dropped on in-progress", async () => {
+    const original = task({ id: "T-0001", status: "review", title: "Fix the CI failure" });
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      runTaskImpl: vi.fn().mockResolvedValue(original)
+    });
+    await app.init();
+
+    await app.handleDrop("T-0001", "in-progress");
+
+    expect(runTaskImpl).toHaveBeenCalledWith("T-0001");
+    expect(patchTaskImpl).not.toHaveBeenCalled();
+  });
+
+  it("still PATCHes normally when a non-review card is dropped on in-progress", async () => {
+    const original = task({ id: "T-0001", status: "backlog", title: "Fresh card" });
+    const patched = { ...original, status: "in-progress" };
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      patchTaskImpl: vi.fn().mockResolvedValue(patched)
+    });
+    await app.init();
+
+    await app.handleDrop("T-0001", "in-progress");
+
+    expect(patchTaskImpl).toHaveBeenCalledWith("T-0001", { status: "in-progress" });
+    expect(runTaskImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not trigger a run when a review card is dropped on a status other than in-progress", async () => {
+    const original = task({ id: "T-0001", status: "review", title: "Reviewed card" });
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      patchTaskImpl: vi.fn().mockResolvedValue({ ...original, status: "done" })
+    });
+    await app.init();
+
+    await app.handleDrop("T-0001", "done");
+
+    expect(patchTaskImpl).toHaveBeenCalledWith("T-0001", { status: "done" });
+    expect(runTaskImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("createApp handleSave — review card status edited to in-progress re-runs instead of relabeling (Feature B)", () => {
+  it("calls runTaskImpl (not patchTaskImpl) when Save sets status: in-progress on a review card", async () => {
+    const original = task({ id: "T-0001", status: "review", title: "Fix the CI failure" });
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      runTaskImpl: vi.fn().mockResolvedValue(original)
+    });
+    await app.init();
+
+    await app.handleSave("T-0001", { status: "in-progress" });
+
+    expect(runTaskImpl).toHaveBeenCalledWith("T-0001");
+    expect(patchTaskImpl).not.toHaveBeenCalled();
+  });
+
+  it("still PATCHes normally when Save edits a review card without touching status", async () => {
+    const original = task({ id: "T-0001", status: "review", title: "Old title" });
+    const patched = { ...original, title: "New title" };
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      patchTaskImpl: vi.fn().mockResolvedValue(patched)
+    });
+    await app.init();
+
+    await app.handleSave("T-0001", { title: "New title" });
+
+    expect(patchTaskImpl).toHaveBeenCalledWith("T-0001", { title: "New title" });
+    expect(runTaskImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("createApp handleAddComment", () => {
+  it("POSTs the comment and merges the returned task into state", async () => {
+    const original = task({ id: "T-0001", comments: [] });
+    const updated = { ...original, comments: [{ author: "Anonymous", text: "please fix X", timestamp: "t" }] };
+    const { app, addCommentImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      addCommentImpl: vi.fn().mockResolvedValue(updated)
+    });
+    await app.init();
+
+    await app.handleAddComment("T-0001", "please fix X");
+
+    expect(addCommentImpl).toHaveBeenCalledWith("T-0001", "please fix X");
+    expect(app.getTasks()).toEqual([updated]);
+    expect(app.getError()).toBe(null);
+  });
+
+  it("surfaces the server's error without touching task state", async () => {
+    const original = task({ id: "T-0001" });
+    const { app } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      addCommentImpl: vi.fn().mockRejectedValue(new Error("text is required"))
+    });
+    await app.init();
+
+    await app.handleAddComment("T-0001", "");
+
+    expect(app.getTasks()).toEqual([original]);
+    expect(app.getError()).toBe("text is required");
   });
 });
 

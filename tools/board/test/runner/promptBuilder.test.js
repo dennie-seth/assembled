@@ -215,6 +215,55 @@ describe("buildPrompt — task body injection", () => {
   });
 });
 
+describe("buildPrompt — continuing an existing branch (re-run after review)", () => {
+  it("uses the standard fresh-implementation workflow by default", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).toContain("Write the failing test cases first");
+    expect(prompt).not.toContain("continuing existing work");
+  });
+
+  it("swaps in the continue-and-fix workflow when continuing: true", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, continuing: true });
+    expect(prompt).toContain("continuing existing work");
+    expect(prompt.toLowerCase()).toMatch(/resuming|fix|do not (discard|start over)/);
+  });
+
+  it("still tells the implementer not to push or open a PR itself when continuing", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, continuing: true });
+    expect(prompt).toMatch(/do not push|never push/i);
+    expect(prompt).toMatch(/do not open a pr|never open a pr/i);
+  });
+
+  it("includes a human comments section when comments are provided", () => {
+    const comments = [
+      { author: "Dennie", text: "CI failed on the lint step, please fix.", timestamp: "2026-08-05T12:00:00.000Z" }
+    ];
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, comments });
+    expect(prompt).toContain("## Human comments on this card");
+    expect(prompt).toContain("CI failed on the lint step, please fix.");
+    expect(prompt).toContain("Dennie");
+  });
+
+  it("renders multiple comments in order", () => {
+    const comments = [
+      { author: "Dennie", text: "First issue", timestamp: "2026-08-05T12:00:00.000Z" },
+      { author: "Dennie", text: "Second issue", timestamp: "2026-08-05T13:00:00.000Z" }
+    ];
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, comments });
+    expect(prompt.indexOf("First issue")).toBeLessThan(prompt.indexOf("Second issue"));
+  });
+
+  it("omits the human comments section entirely when there are no comments", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, comments: [] });
+    expect(prompt).not.toContain("## Human comments on this card");
+  });
+
+  it("works with no comments argument at all (defaults to none)", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).not.toContain("## Human comments on this card");
+  });
+});
+
 const UNASSIGNED_TASK = { ...TASK, agent: null };
 const PLANNER_AGENT_DEF = {
   name: "planner",

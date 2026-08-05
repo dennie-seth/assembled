@@ -20,6 +20,24 @@ const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio", "planner"];
 const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
 const OPTIONAL_FIELDS = ["branch", "commit", "pr"];
+const ARRAY_FIELDS = ["comments"];
+const COMMENT_FIELDS = ["author", "text", "timestamp"];
+
+function validateComments(comments) {
+  if (!Array.isArray(comments)) {
+    throw new Error("Invalid comments: expected an array");
+  }
+  for (const comment of comments) {
+    if (typeof comment !== "object" || comment === null || Array.isArray(comment)) {
+      throw new Error("Invalid comments entry: expected an object with author, text, timestamp");
+    }
+    for (const field of COMMENT_FIELDS) {
+      if (typeof comment[field] !== "string" || comment[field].length === 0) {
+        throw new Error(`Invalid comments entry: "${field}" must be a non-empty string`);
+      }
+    }
+  }
+}
 
 function validateTask(data) {
   for (const field of REQUIRED_FIELDS) {
@@ -65,6 +83,9 @@ function validateTask(data) {
       throw new Error(`Invalid ${field} "${data[field]}": expected a string or null`);
     }
   }
+  if ("comments" in data) {
+    validateComments(data.comments);
+  }
 }
 
 export function parseTask(raw) {
@@ -103,6 +124,7 @@ export function parseTask(raw) {
     branch: data.branch ?? null,
     commit: data.commit ?? null,
     pr: data.pr ?? null,
+    comments: Array.isArray(data.comments) ? data.comments : [],
     body
   };
 }
@@ -115,7 +137,8 @@ export function serializeTask(task) {
 
   const lines = [
     ...REQUIRED_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field])}`),
-    ...OPTIONAL_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`)
+    ...OPTIONAL_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
+    ...ARRAY_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? [])}`)
   ];
   return `---\n${lines.join("\n")}\n---\n${task.body}`;
 }

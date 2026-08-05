@@ -9,7 +9,8 @@ import {
   deleteTask,
   exportBacklog,
   exportDone,
-  fetchGitStatus
+  fetchGitStatus,
+  addComment
 } from "./api.js";
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard } from "./boardView.js";
@@ -36,6 +37,7 @@ export function createApp({
   exportBacklogImpl = exportBacklog,
   exportDoneImpl = exportDone,
   fetchGitStatusImpl = fetchGitStatus,
+  addCommentImpl = addComment,
   gitPollIntervalMs = 30000
 }) {
   let tasks = [];
@@ -70,6 +72,7 @@ export function createApp({
         onSave: handleSave,
         onClose: handleClose,
         onDelete: handleDelete,
+        onAddComment: handleAddComment,
         agentOptions,
         allTasks: tasks.map((task) => ({ id: task.id, title: task.title }))
       });
@@ -102,7 +105,20 @@ export function createApp({
     render();
   }
 
+  // A card in `review` moving to `in-progress` (dragged there, or via the detail panel's
+  // status dropdown) means "continue and fix this", not "relabel it" -- route it through
+  // the same /run call the Run/Re-run button uses (Feature B: gitOps.addWorktree reuses
+  // the existing branch instead of wiping it) rather than a plain PATCH.
+  function isReviewRerunTrigger(taskId, patch) {
+    if (patch.status !== "in-progress") return false;
+    const current = tasks.find((task) => task.id === taskId);
+    return Boolean(current && current.status === "review");
+  }
+
   async function handleDrop(taskId, newStatus) {
+    if (isReviewRerunTrigger(taskId, { status: newStatus })) {
+      return handleRun(taskId);
+    }
     try {
       await applyPatch(taskId, buildStatusPatch(newStatus));
     } catch (err) {
@@ -127,6 +143,9 @@ export function createApp({
   }
 
   async function handleSave(taskId, patch) {
+    if (isReviewRerunTrigger(taskId, patch)) {
+      return handleRun(taskId);
+    }
     try {
       await applyPatch(taskId, patch);
     } catch (err) {
@@ -204,6 +223,17 @@ export function createApp({
     render();
   }
 
+  async function handleAddComment(taskId, text) {
+    try {
+      const updated = await addCommentImpl(taskId, text);
+      tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
   function handleRunEvent(event) {
     const existing = runLogs.get(event.id) ?? [];
     runLogs.set(event.id, [...existing, { phase: event.phase, event: event.event }]);
@@ -270,6 +300,7 @@ export function createApp({
     handleRun,
     handleCancel,
     handleDelete,
+    handleAddComment,
     handleSortChange,
     handleToggleCreateForm,
     handleCancelCreate,

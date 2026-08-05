@@ -115,8 +115,8 @@ export class RunOrchestrator {
     if (!task) {
       throw new Error(`Task ${taskId} not found`);
     }
-    if (task.status !== "ready") {
-      throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready"`);
+    if (task.status !== "ready" && task.status !== "review") {
+      throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready" or "review"`);
     }
     if (this.activeRuns.has(taskId)) {
       throw new Error(`Task ${taskId} already has an active run`);
@@ -127,8 +127,10 @@ export class RunOrchestrator {
 
     this.activeCardIds.add(taskId);
     try {
+      let reused = false;
       try {
-        await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
+        const result = await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
+        reused = Boolean(result && result.reused);
       } catch (err) {
         await this._blocked(taskId, `worktree creation failed: ${err.message}`);
         return;
@@ -138,7 +140,7 @@ export class RunOrchestrator {
 
       const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
       try {
-        await this._runCardInWorktree(taskId, task, worktreeDir, branch, runLog);
+        await this._runCardInWorktree(taskId, task, worktreeDir, branch, runLog, reused);
       } finally {
         await runLog.close();
       }
@@ -150,7 +152,7 @@ export class RunOrchestrator {
     }
   }
 
-  async _runCardInWorktree(taskId, task, worktreeDir, branch, runLog) {
+  async _runCardInWorktree(taskId, task, worktreeDir, branch, runLog, reused = false) {
     // Unassigned cards run planner first to expand the spec, then a generic implementer.
     if (task.agent === null) {
       const plannerOk = await this._planUnassignedCard(taskId, task, worktreeDir, runLog);
@@ -161,7 +163,13 @@ export class RunOrchestrator {
     const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
     const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
-    const prompt = this.buildPromptFn({ task: { ...task, agent: effectiveAgent }, agentDef, rules });
+    const prompt = this.buildPromptFn({
+      task: { ...task, agent: effectiveAgent },
+      agentDef,
+      rules,
+      continuing: reused,
+      comments: task.comments ?? []
+    });
 
     const implementerResult = await this._runPhase({
       taskId,
@@ -220,7 +228,7 @@ export class RunOrchestrator {
     }
 
     if (verdict.verdict === "PASS") {
-      await this._handlePass(taskId, task, worktreeDir, branch, verdict, runLog);
+      await this._handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused);
     } else {
       await this._handleFailValidation(taskId, verdict);
     }
@@ -343,14 +351,17 @@ export class RunOrchestrator {
     });
   }
 
-  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog) {
+  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false) {
     let commit;
     try {
       await this.git.commitAll({
         worktreeDir,
         message: `feat: ${taskId} ${task.title}\n\nCo-authored-by: Claude <noreply@anthropic.com>`
       });
-      await this.git.push({ worktreeDir, branch });
+      // A continued run (reused branch) may not fast-forward from what's already on origin
+      // (e.g. the implementer amended a commit while fixing an issue) -- force-with-lease it.
+      const pushOptions = reused ? { worktreeDir, branch, force: true } : { worktreeDir, branch };
+      await this.git.push(pushOptions);
       commit = await this.git.getHeadCommit({ worktreeDir });
     } catch (err) {
       await this._blocked(taskId, `push to review failed: ${err.message}`);

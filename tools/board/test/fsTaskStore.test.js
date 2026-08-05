@@ -21,6 +21,7 @@ function makeTask(overrides = {}) {
     branch: null,
     commit: null,
     pr: null,
+    comments: [],
     body: "## Context\n...\n## Acceptance\n- [ ] ...\n",
     ...overrides
   };
@@ -98,6 +99,29 @@ describe("FsTaskStore CRUD", () => {
     await store.create(task);
     const moved = await store.move(task.id, "in-progress");
     expect(moved).toEqual({ ...task, status: "in-progress" });
+  });
+});
+
+describe("FsTaskStore comments", () => {
+  it("persists an appended comment and reads it back", async () => {
+    const task = makeTask();
+    await store.create(task);
+    const comment = { author: "Dennie", text: "please fix the CI failure", timestamp: "2026-08-05T12:00:00.000Z" };
+    const updated = await store.update(task.id, { comments: [comment] });
+    expect(updated.comments).toEqual([comment]);
+    expect(await store.get(task.id)).toEqual(updated);
+  });
+
+  it("survives an unrelated update -- a status/body write never clobbers existing comments", async () => {
+    const task = makeTask();
+    await store.create(task);
+    const comment = { author: "Dennie", text: "fix X", timestamp: "2026-08-05T12:00:00.000Z" };
+    await store.update(task.id, { comments: [comment] });
+
+    const updated = await store.update(task.id, { status: "in-progress", body: "## Notes\nre-run" });
+
+    expect(updated.comments).toEqual([comment]);
+    expect(await store.get(task.id)).toMatchObject({ comments: [comment], status: "in-progress" });
   });
 });
 

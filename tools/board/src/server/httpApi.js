@@ -11,6 +11,8 @@ import { pullDevelop, commitTaskFile, autoCommitCardsOnCreateFromEnv } from "../
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
 const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
+const TASK_COMMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/comments$/;
+const RUNNABLE_STATUSES = new Set(["ready", "review"]);
 const AGENTS_PATH = "/api/agents";
 const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const DONE_EXPORT_PATH = "/api/tasks/export/done";
@@ -174,8 +176,8 @@ async function handleRunTask(orchestrator, id, res) {
   if (!task) {
     throw new HttpError(404, `Task ${id} not found`);
   }
-  if (task.status !== "ready") {
-    throw new HttpError(409, `Cannot run ${id}: status is "${task.status}", expected "ready"`);
+  if (!RUNNABLE_STATUSES.has(task.status)) {
+    throw new HttpError(409, `Cannot run ${id}: status is "${task.status}", expected "ready" or "review"`);
   }
   if (orchestrator.isRunning(id)) {
     throw new HttpError(409, `Task ${id} already has an active run`);
@@ -188,6 +190,48 @@ async function handleRunTask(orchestrator, id, res) {
   });
 
   sendJson(res, 202, task);
+}
+
+/**
+ * Appends a human comment to a card (Feature A). Read by the implementer on a re-run
+ * (see promptBuilder's `comments` section) so a human can say "CI failed on X, please
+ * fix" and have it reach the agent. Committed to git the same way card creation is,
+ * so it's tracked immediately instead of sitting as untracked local state.
+ */
+async function handleAddComment(store, id, req, res, repoRoot, tasksDir) {
+  const body = requireJsonObject(await readJsonBody(req));
+  if (typeof body.text !== "string" || body.text.trim().length === 0) {
+    throw new HttpError(400, "text is required and must be a non-empty string");
+  }
+  const author = typeof body.author === "string" && body.author.trim().length > 0 ? body.author.trim() : "Anonymous";
+
+  const task = await store.get(id);
+  if (!task) {
+    throw new HttpError(404, `Task ${id} not found`);
+  }
+
+  const comment = { author, text: body.text.trim(), timestamp: new Date().toISOString() };
+  const comments = [...(task.comments ?? []), comment];
+
+  let updated;
+  try {
+    updated = await store.update(id, { comments });
+  } catch (err) {
+    throw new HttpError(400, err.message);
+  }
+
+  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+    try {
+      const relativePath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
+      await commitTaskFile({ repoRoot, filePath: relativePath, message: `chore(board): comment on card ${id}` });
+    } catch (err) {
+      // A comment must never fail to save because git couldn't commit it -- see the
+      // matching rationale on handleCreateTask's commitTaskFile call.
+      console.warn(`Board: failed to commit comment for ${id} (leaving it untracked):`, err.message);
+    }
+  }
+
+  sendJson(res, 201, updated);
 }
 
 async function handleListAgents(agentsDir, res) {
@@ -300,6 +344,7 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
       const idMatch = TASK_ID_PATH_RE.exec(pathname);
       const runMatch = TASK_RUN_PATH_RE.exec(pathname);
       const cancelMatch = TASK_CANCEL_PATH_RE.exec(pathname);
+      const commentsMatch = TASK_COMMENTS_PATH_RE.exec(pathname);
 
       if (pathname === GIT_STATUS_PATH && req.method === "GET") {
         return await handleGitStatus(gitInfoImpl, res);
@@ -334,7 +379,10 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
       if (cancelMatch && req.method === "POST") {
         return await handleCancelTask(orchestrator, cancelMatch[1], res);
       }
-      if (pathname === GIT_STATUS_PATH || pathname === AGENTS_PATH || pathname === "/api/tasks" || pathname === BACKLOG_EXPORT_PATH || pathname === DONE_EXPORT_PATH || idMatch || runMatch || cancelMatch) {
+      if (commentsMatch && req.method === "POST") {
+        return await handleAddComment(store, commentsMatch[1], req, res, repoRoot, tasksDir);
+      }
+      if (pathname === GIT_STATUS_PATH || pathname === AGENTS_PATH || pathname === "/api/tasks" || pathname === BACKLOG_EXPORT_PATH || pathname === DONE_EXPORT_PATH || idMatch || runMatch || cancelMatch || commentsMatch) {
         throw new HttpError(405, `Method ${req.method} not allowed on ${pathname}`);
       }
       throw new HttpError(404, "Not found");
