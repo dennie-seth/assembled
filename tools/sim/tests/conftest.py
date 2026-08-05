@@ -52,6 +52,7 @@ def make_cfg(**kwargs: object) -> SimConfig:
         max_items_per_hour=1000.0,
         throughput_window_ticks=60,
         encounter_rate_per_world_item=0.05,
+        unlock_scope="per_run",
     )
     defaults.update(kwargs)
     return SimConfig(**defaults)  # type: ignore[arg-type]
@@ -105,15 +106,16 @@ def make_agent(
     is_hoarder: bool = False,
     items_received: int = 0,
     ticks_active: int = 0,
+    universe_count: int = 0,
 ) -> Agent:
     return Agent(
         agent_id=agent_id,
         state=state,
         collapse_at=collapse_at,
-        is_first_universe=True,
         is_hoarder=is_hoarder,
         items_received=items_received,
         ticks_active=ticks_active,
+        universe_count=universe_count,
     )
 
 
