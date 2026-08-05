@@ -161,16 +161,31 @@ describe("resolveAllowedTools", () => {
     // were all denied because none of those forms had a matching grant; `cd server:*` only
     // covers a command that itself starts with "cd server", and each `&&`-joined segment of a
     // compound command is matched independently, so it never covered the DATABASE_URL segment.
-    expect(resolved).toContain("Bash(export DATABASE_URL=:*)");
-    expect(resolved).toContain("Bash(DATABASE_URL=:*)");
-    expect(resolved).toContain("Bash(env DATABASE_URL=:*)");
+    //
+    // The first attempt at this fix (#69) used `Bash(export DATABASE_URL=:*)` /
+    // `Bash(DATABASE_URL=:*)` / `Bash(env DATABASE_URL=:*)` -- syntactically valid per this
+    // file's own prefix-match convention, and it passed this exact test. It still did not work
+    // live: verified directly against the real `claude` CLI (v2.1.78, 2026-08-05) that
+    // `--allowedTools 'Bash(export FOO=:*)'` denies `export FOO=bar` ("This command requires
+    // approval"), while `--allowedTools 'Bash(export FOO=*)'` (bare trailing `*`, no colon)
+    // allows it. The `:*` convention only works when the granted prefix ends at a real
+    // argument/word boundary (e.g. `Bash(git diff:*)`, `Bash(ctest:*)`) -- it does not work when
+    // the wildcard must match a value glued directly onto the prefix via `=` with no space, which
+    // is exactly the shape of an inline env-var assignment (`DATABASE_URL=postgresql://...`).
+    // Use a bare trailing `*` for that shape instead.
+    expect(resolved).toContain("Bash(export DATABASE_URL=*)");
+    expect(resolved).toContain("Bash(DATABASE_URL=*)");
+    expect(resolved).toContain("Bash(env DATABASE_URL=*)");
+    expect(resolved).not.toContain("Bash(export DATABASE_URL=:*)");
+    expect(resolved).not.toContain("Bash(DATABASE_URL=:*)");
+    expect(resolved).not.toContain("Bash(env DATABASE_URL=:*)");
 
-    expect(isToolAllowed("Bash(export DATABASE_URL=:postgresql://postgres@localhost:5433/dev)", resolved)).toBe(
-      true
-    );
+    expect(
+      isToolAllowed("Bash(export DATABASE_URL=postgresql://postgres@localhost:5433/dev)", resolved)
+    ).toBe(true);
     expect(
       isToolAllowed(
-        "Bash(DATABASE_URL=:postgresql://postgres@localhost:5433/dev ctest --test-dir build)",
+        "Bash(DATABASE_URL=postgresql://postgres@localhost:5433/dev ctest --test-dir build)",
         resolved
       )
     ).toBe(true);
@@ -201,6 +216,25 @@ describe("isToolAllowed", () => {
 
   it("denies an unparseable tool string", () => {
     expect(isToolAllowed("", allowed)).toBe(false);
+  });
+
+  it("treats a bare trailing `*` (no colon) as a prefix wildcard too", () => {
+    // Real Claude Code CLI behavior (verified live, v2.1.78): `Bash(prefix:*)` only matches at a
+    // real argument/word boundary. For a value glued directly onto the prefix via `=` (inline
+    // env-var assignment, e.g. `DATABASE_URL=...`), the grant must use a bare trailing `*`
+    // instead -- `Bash(DATABASE_URL=*)`, not `Bash(DATABASE_URL=:*)`. This matcher must recognize
+    // that form as a wildcard too, or a correctly-written live grant looks unmatched here.
+    const bareStarAllowed = ["Bash(DATABASE_URL=*)"];
+    expect(isToolAllowed("Bash(DATABASE_URL=postgresql://x@localhost:5433/dev)", bareStarAllowed)).toBe(
+      true
+    );
+    expect(
+      isToolAllowed(
+        "Bash(DATABASE_URL=postgresql://x@localhost:5433/dev ctest --output-on-failure)",
+        bareStarAllowed
+      )
+    ).toBe(true);
+    expect(isToolAllowed("Bash(SOMETHING_ELSE=x)", bareStarAllowed)).toBe(false);
   });
 });
 
