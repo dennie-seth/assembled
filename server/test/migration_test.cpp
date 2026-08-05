@@ -19,6 +19,12 @@ TEST_CASE("migrations apply against a live Postgres") {
     auto db = assembled_server::Database::fromEnv();
     REQUIRE(db.has_value());
 
+    // Reset migration tracking so this test is repeatable against a persistent
+    // dev DB.  The migrations themselves are idempotent (CREATE IF NOT EXISTS /
+    // ON CONFLICT DO NOTHING), so re-applying them to an already-migrated
+    // schema is safe.
+    db->getClient()->execSqlSync("DROP TABLE IF EXISTS schema_migrations");
+
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     CHECK(runner.currentVersion(db->getClient()) >= 0);
 
