@@ -115,8 +115,8 @@ export class RunOrchestrator {
     if (!task) {
       throw new Error(`Task ${taskId} not found`);
     }
-    if (task.status !== "ready" && task.status !== "review") {
-      throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready" or "review"`);
+    if (task.status !== "ready" && task.status !== "review" && task.status !== "blocked") {
+      throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready", "review", or "blocked"`);
     }
     if (this.activeRuns.has(taskId)) {
       throw new Error(`Task ${taskId} already has an active run`);

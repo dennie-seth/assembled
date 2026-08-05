@@ -189,6 +189,67 @@ describe("createApp handleSave — review card status edited to in-progress re-r
   });
 });
 
+describe("createApp handleDrop — blocked card moved to in-progress re-runs instead of relabeling (mirrors Feature B for review)", () => {
+  it("calls runTaskImpl (not patchTaskImpl) when a blocked card is dropped on in-progress", async () => {
+    const original = task({ id: "T-0001", status: "blocked", title: "Fix the worktree issue" });
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      runTaskImpl: vi.fn().mockResolvedValue(original)
+    });
+    await app.init();
+
+    await app.handleDrop("T-0001", "in-progress");
+
+    expect(runTaskImpl).toHaveBeenCalledWith("T-0001");
+    expect(patchTaskImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not trigger a run when a blocked card is dropped on a status other than in-progress", async () => {
+    const original = task({ id: "T-0001", status: "blocked", title: "Blocked card" });
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      patchTaskImpl: vi.fn().mockResolvedValue({ ...original, status: "ready" })
+    });
+    await app.init();
+
+    await app.handleDrop("T-0001", "ready");
+
+    expect(patchTaskImpl).toHaveBeenCalledWith("T-0001", { status: "ready" });
+    expect(runTaskImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("createApp handleSave — blocked card status edited to in-progress re-runs instead of relabeling (mirrors Feature B for review)", () => {
+  it("calls runTaskImpl (not patchTaskImpl) when Save sets status: in-progress on a blocked card", async () => {
+    const original = task({ id: "T-0001", status: "blocked", title: "Fix the worktree issue" });
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      runTaskImpl: vi.fn().mockResolvedValue(original)
+    });
+    await app.init();
+
+    await app.handleSave("T-0001", { status: "in-progress" });
+
+    expect(runTaskImpl).toHaveBeenCalledWith("T-0001");
+    expect(patchTaskImpl).not.toHaveBeenCalled();
+  });
+
+  it("still PATCHes normally when Save edits a blocked card without touching status", async () => {
+    const original = task({ id: "T-0001", status: "blocked", title: "Old title" });
+    const patched = { ...original, title: "New title" };
+    const { app, patchTaskImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      patchTaskImpl: vi.fn().mockResolvedValue(patched)
+    });
+    await app.init();
+
+    await app.handleSave("T-0001", { title: "New title" });
+
+    expect(patchTaskImpl).toHaveBeenCalledWith("T-0001", { title: "New title" });
+    expect(runTaskImpl).not.toHaveBeenCalled();
+  });
+});
+
 describe("createApp handleAddComment", () => {
   it("POSTs the comment and merges the returned task into state", async () => {
     const original = task({ id: "T-0001", comments: [] });
