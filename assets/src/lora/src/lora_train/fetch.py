@@ -23,9 +23,8 @@ import pathlib
 import sys
 import urllib.parse
 import urllib.request
-from dataclasses import replace
 
-from lora_train.manifest import ALLOWED_LICENSES, Corpus, Ref, load_corpus
+from lora_train.manifest import Corpus, Ref, load_corpus
 
 _COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 _USER_AGENT = (

@@ -14,7 +14,6 @@ assets.md: "no CC-BY-NC weights" — enforced here via CHECKPOINT_ALLOWLIST.
 
 from __future__ import annotations
 
-import math
 import pathlib
 from dataclasses import dataclass
 
