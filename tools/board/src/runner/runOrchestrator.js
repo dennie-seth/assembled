@@ -10,6 +10,16 @@ import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
 
+/**
+ * Hard cap on total implementer/reviewer runs a card can consume across its bounded
+ * FAIL -> auto-retry -> FAIL -> ... loop before it's left `blocked` for a human. Persisted
+ * per-card as the `attempts` frontmatter field (see taskParser.js); reset to 0 at the start
+ * of every human/API-initiated runCard() call (see runCard's fresh-allowance reset) and on
+ * PASS (see _handlePass), so a card that exhausts its 5 auto-retries and gets manually
+ * re-run always gets a full new allowance rather than staying permanently capped.
+ */
+export const MAX_AUTO_RETRY_ATTEMPTS = 5;
+
 const AUTO_OPEN_PR_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
 
 /** AUTO_OPEN_PR env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable auto-PR on PASS. */
@@ -36,13 +46,14 @@ export function appendNote(body, heading, text) {
 }
 
 /**
- * Ties the slice-B runner engine to the board: on runCard, cuts a worktree
- * for the card, runs the implementer, hands off to the read-only reviewer,
- * and applies the reviewer's verdict -- PASS pushes the branch and moves the
- * card to `review`, FAIL moves it to `blocked` (a re-runnable terminal
- * state) with the verdict notes, and any runner failure (crash, missing
- * verdict) also blocks it instead of guessing. Never issues a transition
- * that reaches `done`.
+ * Ties the slice-B runner engine to the board: on runCard, cuts a worktree for the card,
+ * runs the implementer, hands off to the read-only reviewer, and applies the reviewer's
+ * verdict -- PASS pushes the branch and moves the card to `review`; FAIL automatically
+ * re-runs the implementer on the same worktree/branch (with the FAIL notes + comments
+ * injected into its prompt, the same resume mechanics a manual re-run uses) for up to
+ * MAX_AUTO_RETRY_ATTEMPTS total runs, and only lands the card on `blocked` once that cap
+ * is consumed. Any runner failure (crash, missing verdict) blocks it immediately instead of
+ * guessing or retrying. Never issues a transition that reaches `done`.
  */
 export class RunOrchestrator {
   constructor({
@@ -131,7 +142,11 @@ export class RunOrchestrator {
     if (task.status !== "ready" && task.status !== "review" && task.status !== "blocked") {
       throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready", "review", or "blocked"`);
     }
-    if (this.activeRuns.has(taskId)) {
+    // Guards re-entrancy across the whole runCard span, including the auto-retry loop's
+    // FAIL -> next-attempt gap where the phase-level activeRuns map is momentarily empty
+    // (see _runPhase) but the card is still very much in flight -- activeRuns alone would
+    // let a concurrent call slip through in that window.
+    if (this.activeCardIds.has(taskId)) {
       throw new Error(`Task ${taskId} already has an active run`);
     }
 
@@ -140,6 +155,10 @@ export class RunOrchestrator {
 
     this.activeCardIds.add(taskId);
     try {
+      // Human/API-initiated run: always grants a fresh auto-retry allowance, even if the
+      // card was previously blocked for exhausting all MAX_AUTO_RETRY_ATTEMPTS auto-retries.
+      await this._updateAndBroadcast(taskId, { attempts: 0 });
+
       let reused = false;
       try {
         const result = await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
@@ -165,14 +184,65 @@ export class RunOrchestrator {
     }
   }
 
+  /**
+   * Runs the implementer -> reviewer cycle, looping on reviewer FAIL up to
+   * MAX_AUTO_RETRY_ATTEMPTS total attempts (see the class docstring). The retry itself is a
+   * plain in-process loop -- not a fresh call to the public runCard() -- so it stays inside
+   * this single runCard() invocation's activeCardIds span the whole time: the orphanReaper
+   * (which only reaps cards absent from activeCardIds) and the restart coordinator's
+   * hasActiveRuns() guard both see one continuous in-flight run across every retry, exactly
+   * like a live run today, instead of a card that repeatedly looks idle between attempts.
+   * Each attempt is a full sequential implementer+reviewer cycle -- never parallel, never a
+   * tight loop, since each iteration blocks on real `claude` child processes.
+   *
+   * This is also what fixes the pre-#63 dead end: that version set the FAIL status to
+   * `in-progress`, a status runCard()'s own guard rejects, so nothing could ever act on it
+   * again. Driving the retry as a direct in-process call here means it never depends on a
+   * status a human (or the HTTP API) would have to click "Run" on.
+   */
   async _runCardInWorktree(taskId, task, worktreeDir, branch, runLog, reused = false) {
     // Unassigned cards run planner first to expand the spec, then a generic implementer.
     if (task.agent === null) {
       const plannerOk = await this._planUnassignedCard(taskId, task, worktreeDir, runLog);
       if (!plannerOk) return;
     }
-
     const effectiveAgent = task.agent ?? "generic";
+
+    let currentReused = reused;
+    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+      // Re-fetch: a prior attempt in this same loop may have appended a FAIL note to the
+      // body (read by the implementer's "continuing existing work" prompt on the retry).
+      const liveTask = await this.store.get(taskId);
+      await this._updateAndBroadcast(taskId, { attempts: attempt });
+
+      const { stop, verdict } = await this._runAttempt(
+        taskId,
+        liveTask,
+        effectiveAgent,
+        worktreeDir,
+        branch,
+        runLog,
+        currentReused
+      );
+      if (stop) return;
+
+      if (verdict.verdict === "PASS") {
+        await this._handlePass(taskId, liveTask, worktreeDir, branch, verdict, runLog, currentReused);
+        return;
+      }
+
+      const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
+      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !isFinalAttempt);
+      if (isFinalAttempt) return;
+
+      // Every attempt after the first resumes the same worktree/branch, regardless of
+      // whether addWorktree itself had to reuse it (a first attempt can start fresh).
+      currentReused = true;
+    }
+  }
+
+  /** Runs one implementer+reviewer cycle. Returns `{stop: true}` once the card has already been left in a terminal state (crash/blocked/cancelled) -- the caller must not act further -- or `{stop: false, verdict}` for the caller to grade. */
+  async _runAttempt(taskId, task, effectiveAgent, worktreeDir, branch, runLog, reused) {
     const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
     const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
@@ -195,11 +265,11 @@ export class RunOrchestrator {
       runLog
     });
     if (implementerResult.cancelled) {
-      return;
+      return { stop: true };
     }
     if (implementerResult.exitCode !== 0) {
       await this._blocked(taskId, this._crashReason("implementer", implementerResult));
-      return;
+      return { stop: true };
     }
 
     if (this.autoCaptureUncommitted) {
@@ -231,24 +301,20 @@ export class RunOrchestrator {
       runLog
     });
     if (reviewerResult.cancelled) {
-      return;
+      return { stop: true };
     }
     if (reviewerResult.exitCode !== 0) {
       await this._blocked(taskId, this._crashReason("reviewer", reviewerResult));
-      return;
+      return { stop: true };
     }
 
     const verdict = this.extractVerdictFn(reviewerResult.events);
     if (!verdict) {
       await this._blocked(taskId, "reviewer did not produce a machine-readable verdict");
-      return;
+      return { stop: true };
     }
 
-    if (verdict.verdict === "PASS") {
-      await this._handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused);
-    } else {
-      await this._handleFailValidation(taskId, verdict);
-    }
+    return { stop: false, verdict };
   }
 
   /** Runs the planner phase for an unassigned card. Returns true if planning succeeded, false if cancelled/failed (already blocked). */
@@ -406,11 +472,24 @@ export class RunOrchestrator {
     await this._updateAndBroadcast(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
   }
 
-  async _handleFailValidation(taskId, verdict) {
+  /** `(run N of MAX)` suffix on every FAIL note -- the attempt-count visibility the auto-retry loop needs on the card. */
+  _failNoteText(verdict, attempt, capped) {
+    const progress = `(run ${attempt} of ${MAX_AUTO_RETRY_ATTEMPTS})`;
+    const capSuffix = capped ? " Auto-retry limit reached -- blocked for human review." : "";
+    return `${verdict.notes}\n\n${progress}${capSuffix}`;
+  }
+
+  /**
+   * Records a FAIL verdict. `retrying` (true for every attempt but the last) keeps the card
+   * at `status: "in-progress"` -- the same status a live run shows -- since the auto-retry
+   * loop is about to re-invoke the implementer itself; the final attempt instead moves the
+   * card to `blocked` for a human, with a note explaining the cap was reached.
+   */
+  async _handleFailValidation(taskId, verdict, attempt, retrying) {
     const current = await this.store.get(taskId);
     await this._updateAndBroadcast(taskId, {
-      status: "blocked",
-      body: appendNote(current.body, "Validation: FAIL", verdict.notes)
+      status: retrying ? "in-progress" : "blocked",
+      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying))
     });
   }
 
@@ -441,7 +520,9 @@ export class RunOrchestrator {
 
     const current = await this.store.get(taskId);
     let body = appendNote(current.body, "Validation: PASS", verdict.notes);
-    const patch = { status: "review", branch, commit, body };
+    // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
+    // not carrying over how many attempts a previous round of FAILs consumed.
+    const patch = { status: "review", branch, commit, body, attempts: 0 };
     if (prUrl) {
       patch.pr = prUrl;
       patch.body = appendNote(body, "PR", prUrl);

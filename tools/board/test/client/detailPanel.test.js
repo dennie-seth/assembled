@@ -209,6 +209,23 @@ describe("renderDetailPanel review metadata (branch/commit)", () => {
   });
 });
 
+describe("renderDetailPanel auto-retry attempt counter", () => {
+  it("shows the run count out of 5 when the card has consumed auto-retry attempts", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ status: "in-progress", attempts: 3 }), baseOpts());
+    const info = root.querySelector(".detail-attempts");
+    expect(info).not.toBeNull();
+    expect(info.textContent).toContain("3");
+    expect(info.textContent).toContain("5");
+  });
+
+  it("does not render the attempt counter when attempts is 0 or absent", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ attempts: 0 }), baseOpts());
+    expect(root.querySelector(".detail-attempts")).toBeNull();
+  });
+});
+
 describe("renderDetailPanel comments (Feature A: human feedback for iterative re-runs)", () => {
   it("does not render the comments section when onAddComment is not provided", () => {
     const root = document.createElement("div");

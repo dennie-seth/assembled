@@ -20,6 +20,7 @@ const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio", "planner"];
 const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
 const OPTIONAL_FIELDS = ["branch", "commit", "pr"];
+const NUMERIC_FIELDS = ["attempts"];
 const ARRAY_FIELDS = ["comments", "attachments"];
 const COMMENT_FIELDS = ["author", "text", "timestamp"];
 const ATTACHMENT_STRING_FIELDS = ["filename", "mimetype", "uploaded_by", "uploaded_at"];
@@ -105,6 +106,11 @@ function validateTask(data) {
       throw new Error(`Invalid ${field} "${data[field]}": expected a string or null`);
     }
   }
+  for (const field of NUMERIC_FIELDS) {
+    if (field in data && (!Number.isInteger(data[field]) || data[field] < 0)) {
+      throw new Error(`Invalid ${field} "${data[field]}": expected a non-negative integer`);
+    }
+  }
   if ("comments" in data) {
     validateComments(data.comments);
   }
@@ -149,6 +155,7 @@ export function parseTask(raw) {
     branch: data.branch ?? null,
     commit: data.commit ?? null,
     pr: data.pr ?? null,
+    attempts: data.attempts ?? 0,
     comments: Array.isArray(data.comments) ? data.comments : [],
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
     body
@@ -164,6 +171,7 @@ export function serializeTask(task) {
   const lines = [
     ...REQUIRED_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field])}`),
     ...OPTIONAL_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
+    ...NUMERIC_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? 0)}`),
     ...ARRAY_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? [])}`)
   ];
   return `---\n${lines.join("\n")}\n---\n${task.body}`;
