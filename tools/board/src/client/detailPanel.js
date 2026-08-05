@@ -59,6 +59,60 @@ function branchInfoFor(task) {
   return info;
 }
 
+function commentsSectionFor(task, onAddComment) {
+  const wrap = document.createElement("div");
+  wrap.className = "detail-comments";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Comments";
+  wrap.appendChild(heading);
+
+  const list = document.createElement("div");
+  list.className = "detail-comments-list";
+  const comments = task.comments ?? [];
+  if (comments.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "detail-comments-empty";
+    empty.textContent = "No comments yet.";
+    list.appendChild(empty);
+  } else {
+    for (const comment of comments) {
+      const item = document.createElement("div");
+      item.className = "detail-comment";
+
+      const meta = document.createElement("div");
+      meta.className = "detail-comment-meta";
+      meta.textContent = `${comment.author} · ${comment.timestamp}`;
+
+      const text = document.createElement("div");
+      text.className = "detail-comment-text";
+      text.textContent = comment.text;
+
+      item.append(meta, text);
+      list.appendChild(item);
+    }
+  }
+  wrap.appendChild(list);
+
+  const input = document.createElement("textarea");
+  input.className = "detail-comment-input";
+  input.placeholder = "Add a comment...";
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "detail-comment-add";
+  addBtn.textContent = "Add comment";
+  addBtn.addEventListener("click", () => {
+    const text = input.value.trim();
+    if (text.length === 0) return;
+    onAddComment(task.id, text);
+    input.value = "";
+  });
+
+  wrap.append(input, addBtn);
+  return wrap;
+}
+
 function deleteControlsFor(task, onDelete) {
   const wrap = document.createElement("div");
   wrap.className = "detail-delete-wrap";
@@ -104,7 +158,7 @@ function deleteControlsFor(task, onDelete) {
 export function renderDetailPanel(
   root,
   task,
-  { onSave, onClose, onDelete, agentOptions = [], allTasks = [] }
+  { onSave, onClose, onDelete, onAddComment, agentOptions = [], allTasks = [] }
 ) {
   root.replaceChildren();
 
@@ -197,6 +251,10 @@ export function renderDetailPanel(
 
   if (branchInfo) {
     panel.appendChild(branchInfo);
+  }
+
+  if (onAddComment) {
+    panel.appendChild(commentsSectionFor(task, onAddComment));
   }
 
   panel.append(preview, labeledField("Body (markdown)", bodyTextarea), saveBtn, deleteControlsFor(task, onDelete));

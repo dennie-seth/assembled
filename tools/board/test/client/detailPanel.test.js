@@ -209,6 +209,70 @@ describe("renderDetailPanel review metadata (branch/commit)", () => {
   });
 });
 
+describe("renderDetailPanel comments (Feature A: human feedback for iterative re-runs)", () => {
+  it("does not render the comments section when onAddComment is not provided", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    expect(root.querySelector(".detail-comments")).toBeNull();
+  });
+
+  it("shows a no-comments message when the task has none", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ comments: [] }), baseOpts({ onAddComment: vi.fn() }));
+    expect(root.querySelector(".detail-comments-empty")).not.toBeNull();
+  });
+
+  it("renders each existing comment with author, timestamp, and text", () => {
+    const root = document.createElement("div");
+    const t = task({
+      comments: [
+        { author: "Dennie", text: "CI failed on lint, please fix.", timestamp: "2026-08-05T12:00:00.000Z" },
+        { author: "Dennie", text: "Also check the build.", timestamp: "2026-08-05T13:00:00.000Z" }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onAddComment: vi.fn() }));
+
+    const items = root.querySelectorAll(".detail-comment");
+    expect(items.length).toBe(2);
+    expect(items[0].textContent).toContain("Dennie");
+    expect(items[0].textContent).toContain("CI failed on lint, please fix.");
+    expect(items[0].textContent).toContain("2026-08-05T12:00:00.000Z");
+    expect(items[1].textContent).toContain("Also check the build.");
+  });
+
+  it("defaults to an empty comments list when task.comments is absent", () => {
+    const root = document.createElement("div");
+    const taskWithoutComments = task();
+    delete taskWithoutComments.comments;
+    renderDetailPanel(root, taskWithoutComments, baseOpts({ onAddComment: vi.fn() }));
+    expect(root.querySelector(".detail-comments-empty")).not.toBeNull();
+  });
+
+  it("calls onAddComment with the task id and trimmed text, then clears the input", () => {
+    const root = document.createElement("div");
+    const onAddComment = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0009" }), baseOpts({ onAddComment }));
+
+    const input = root.querySelector(".detail-comment-input");
+    input.value = "  please fix the CI failure  ";
+    root.querySelector(".detail-comment-add").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onAddComment).toHaveBeenCalledWith("T-0009", "please fix the CI failure");
+    expect(input.value).toBe("");
+  });
+
+  it("does not call onAddComment for blank/whitespace-only input", () => {
+    const root = document.createElement("div");
+    const onAddComment = vi.fn();
+    renderDetailPanel(root, task(), baseOpts({ onAddComment }));
+
+    root.querySelector(".detail-comment-input").value = "   ";
+    root.querySelector(".detail-comment-add").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onAddComment).not.toHaveBeenCalled();
+  });
+});
+
 describe("renderDetailPanel delete", () => {
   it("shows a delete button that reveals a confirmation step instead of deleting immediately", () => {
     const root = document.createElement("div");

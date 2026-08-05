@@ -120,38 +120,62 @@ describe("addWorktree — stale branch/worktree recovery", () => {
     expect(stat.isDirectory()).toBe(true);
   });
 
-  it("blocks with a clear, branch-naming message and preserves everything when the stale branch has unique unpushed commits", async () => {
+  it("reuses a branch with unique unpushed commits instead of destroying it, and reports reused: true", async () => {
     const worktreeDir = path.join(tmpDir, "worktrees", "T-0111");
     await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" });
     await fs.writeFile(path.join(worktreeDir, "real-work.txt"), "important\n", "utf8");
     await commitAll({ worktreeDir, message: "feat: real work" });
-    // Simulate the run dying after a real commit but before push -- must not be destroyed.
+    // Simulate the run dying after a real commit but before push -- must not be destroyed,
+    // and a later addWorktree() for the same card (e.g. a re-run after review) continues on it.
+    await removeWorktree({ repoRoot, worktreeDir });
 
-    await expect(
-      addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" })
-    ).rejects.toThrow(/feature\/T-0111/);
-    await expect(
-      addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" })
-    ).rejects.toThrow(/unpushed/i);
+    const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" });
 
+    expect(result).toEqual({ reused: true });
     const { stdout: branchSha } = await git(["rev-parse", "feature/T-0111"], repoRoot);
     expect(branchSha.trim().length).toBe(40);
     const stat = await fs.stat(worktreeDir);
     expect(stat.isDirectory()).toBe(true);
     const { stdout: log } = await git(["log", "-1", "--pretty=%s"], worktreeDir);
     expect(log.trim()).toBe("feat: real work");
+    const { stdout: branch } = await git(["rev-parse", "--abbrev-ref", "HEAD"], worktreeDir);
+    expect(branch.trim()).toBe("feature/T-0111");
     const { stdout: list } = await git(["worktree", "list"], repoRoot);
     expect(list).toContain(worktreeDir);
   });
 
-  it("leaves normal (non-stale) worktree creation unchanged", async () => {
-    const worktreeDir = path.join(tmpDir, "worktrees", "T-0199");
-    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0199", baseBranch: "develop" });
+  it("reuses a branch with unique commits even when its old worktree is still checked out (crashed run)", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0112");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0112", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "real-work.txt"), "important\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: real work" });
+    // Worktree left in place (no removeWorktree call) -- simulates a crash mid-run.
 
+    const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0112", baseBranch: "develop" });
+
+    expect(result).toEqual({ reused: true });
+    const { stdout: log } = await git(["log", "-1", "--pretty=%s"], worktreeDir);
+    expect(log.trim()).toBe("feat: real work");
+  });
+
+  it("leaves normal (non-stale) worktree creation unchanged and reports reused: false", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0199");
+    const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0199", baseBranch: "develop" });
+
+    expect(result).toEqual({ reused: false });
     const stat = await fs.stat(worktreeDir);
     expect(stat.isDirectory()).toBe(true);
     const { stdout: branch } = await git(["rev-parse", "--abbrev-ref", "HEAD"], worktreeDir);
     expect(branch.trim()).toBe("feature/T-0199");
+  });
+
+  it("reports reused: false when a stale branch with no unique commits is discarded", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0100b");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0100b", baseBranch: "develop" });
+
+    const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0100b", baseBranch: "develop" });
+
+    expect(result).toEqual({ reused: false });
   });
 });
 
@@ -235,6 +259,26 @@ describe("push", () => {
 
     const { stdout: branches } = await git(["branch", "-r"], repoRoot);
     expect(branches).toContain("origin/feature/T-0106");
+  });
+
+  it("force: true pushes with --force-with-lease, overwriting a diverged remote history for the same card's branch", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0113");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0113", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "v1.txt"), "v1\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: v1" });
+    await push({ worktreeDir, branch: "feature/T-0113" });
+
+    // Continuing the card: amend the commit locally so it no longer fast-forwards from origin.
+    await fs.writeFile(path.join(worktreeDir, "v1.txt"), "v2\n", "utf8");
+    await git(["add", "-A"], worktreeDir);
+    await git(["commit", "--amend", "-m", "feat: v2 (fixed)"], worktreeDir);
+
+    await expect(push({ worktreeDir, branch: "feature/T-0113" })).rejects.toThrow();
+    await expect(push({ worktreeDir, branch: "feature/T-0113", force: true })).resolves.not.toThrow();
+
+    await git(["fetch", "origin", "feature/T-0113"], repoRoot);
+    const { stdout: log } = await git(["log", "-1", "--pretty=%s", "FETCH_HEAD"], repoRoot);
+    expect(log.trim()).toBe("feat: v2 (fixed)");
   });
 });
 

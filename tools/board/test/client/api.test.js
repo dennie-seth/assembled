@@ -10,7 +10,8 @@ import {
   deleteTask,
   fetchAgents,
   exportBacklog,
-  exportDone
+  exportDone,
+  addComment
 } from "../../src/client/api.js";
 
 const originalFetch = global.fetch;
@@ -106,6 +107,35 @@ describe("cancelTask", () => {
       json: async () => ({ error: "No active run for T-0001" })
     });
     await expect(cancelTask("T-0001")).rejects.toThrow("No active run for T-0001");
+  });
+});
+
+describe("addComment", () => {
+  it("POSTs to the task's /comments endpoint with a JSON body and returns the updated task", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: "T-0001", comments: [{ author: "Anonymous", text: "hi", timestamp: "t" }] })
+    });
+    const result = await addComment("T-0001", "hi");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/tasks/T-0001/comments",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "hi" })
+      })
+    );
+    expect(result).toEqual({ id: "T-0001", comments: [{ author: "Anonymous", text: "hi", timestamp: "t" }] });
+  });
+
+  it("throws the server-provided error message on failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "text is required and must be a non-empty string" })
+    });
+    await expect(addComment("T-0001", "")).rejects.toThrow(/text is required/);
   });
 });
 

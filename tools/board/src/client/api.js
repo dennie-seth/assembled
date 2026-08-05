@@ -71,6 +71,20 @@ export function cancelTask(id) {
   return postAction(`${TASKS_PATH}/${id}/cancel`);
 }
 
+export async function addComment(id, text) {
+  const path = `${TASKS_PATH}/${id}/comments`;
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text })
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `POST ${path} failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export function exportBacklog(navigateTo = (url) => window.location.assign(url)) {
   navigateTo("/api/tasks/export/backlog");
 }

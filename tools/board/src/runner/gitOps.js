@@ -36,21 +36,17 @@ async function branchHasUniqueCommits({ repoRoot, branch, baseBranch }) {
 }
 
 /**
- * A dead/killed run can leave `feature/T-XXXX` (and its worktree) behind, which makes
- * every future addWorktree() for that card fail on "branch already exists". A leftover
- * branch with no commits beyond baseBranch -- whether it never diverged or has since been
- * merged -- is safe to discard and retry. One with real unpushed commits is not: block
- * instead so real work (see T-0111) never gets silently destroyed.
+ * A dead/killed run -- or a card sent back for another pass after review -- can leave
+ * `feature/T-XXXX` (and its worktree) behind, which makes every future addWorktree() for
+ * that card fail on "branch already exists". A leftover branch with no commits beyond
+ * baseBranch -- whether it never diverged or has since been merged -- is safe to discard
+ * and retry fresh. One with real unique commits is real work (see T-0111): rather than
+ * destroying it, reattach a worktree to the existing branch so the run continues on top of
+ * it instead of starting over.
  */
-async function reclaimStaleBranch({ repoRoot, worktreeDir, branch, baseBranch }) {
+async function reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch }) {
   if (!(await branchExists({ repoRoot, branch }))) {
-    return;
-  }
-  if (await branchHasUniqueCommits({ repoRoot, branch, baseBranch })) {
-    throw new Error(
-      `branch '${branch}' already exists with unpushed commits not in ${baseBranch} -- looks like real work left over ` +
-        `from a previous run. Push it, cherry-pick what you need, or delete it yourself (git branch -D ${branch}) before retrying.`
-    );
+    return false;
   }
   if (await pathExists(worktreeDir)) {
     try {
@@ -58,15 +54,30 @@ async function reclaimStaleBranch({ repoRoot, worktreeDir, branch, baseBranch })
     } catch {
       // administrative entry may already be broken (e.g. dir removed out-of-band); prune below clears it
     }
+    await git(["worktree", "prune"], repoRoot);
   }
-  await git(["worktree", "prune"], repoRoot);
-  await git(["branch", "-D", branch], repoRoot);
+  if (!(await branchHasUniqueCommits({ repoRoot, branch, baseBranch }))) {
+    await git(["branch", "-D", branch], repoRoot);
+    return false;
+  }
+  return true;
 }
 
-/** Creates a worktree for a card on a new branch cut from baseBranch (develop). */
+/**
+ * Creates a worktree for a card. If `branch` already exists with unique commits ahead of
+ * baseBranch (a card being continued after review, or a resumed crashed run), reattaches a
+ * worktree to that existing branch instead of cutting a fresh one -- returns `{ reused: true }`
+ * so the caller can prompt the implementer to fix outstanding issues rather than start over.
+ * Otherwise cuts a new branch from baseBranch as before -- returns `{ reused: false }`.
+ */
 export async function addWorktree({ repoRoot, worktreeDir, branch, baseBranch = "develop" }) {
-  await reclaimStaleBranch({ repoRoot, worktreeDir, branch, baseBranch });
-  await git(["worktree", "add", "-b", branch, worktreeDir, baseBranch], repoRoot);
+  const reused = await reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch });
+  if (reused) {
+    await git(["worktree", "add", worktreeDir, branch], repoRoot);
+  } else {
+    await git(["worktree", "add", "-b", branch, worktreeDir, baseBranch], repoRoot);
+  }
+  return { reused };
 }
 
 /** Force-removes a worktree, even if it has uncommitted changes. Never deletes the branch. */
@@ -98,8 +109,16 @@ export async function diffNames({ worktreeDir, baseBranch = "develop" }) {
     .filter(Boolean);
 }
 
-export async function push({ worktreeDir, branch }) {
-  await git(["push", "-u", "origin", branch], worktreeDir);
+/**
+ * Pushes `branch` to origin. `force: true` uses `--force-with-lease` -- needed when
+ * continuing a card whose worktree was reattached to an existing branch (see addWorktree's
+ * `reused` case) and the implementer's new commits don't fast-forward from what's already
+ * on origin (e.g. an amended commit). `--force-with-lease` still refuses to overwrite a
+ * remote that moved in some way we didn't expect, unlike a bare `--force`.
+ */
+export async function push({ worktreeDir, branch, force = false }) {
+  const args = force ? ["push", "--force-with-lease", "-u", "origin", branch] : ["push", "-u", "origin", branch];
+  await git(args, worktreeDir);
 }
 
 /** Full SHA of the worktree's current HEAD, for persisting review metadata on a card. */

@@ -359,7 +359,7 @@ describe("RunOrchestrator.runCard — runner failures become blocked, not a grad
 });
 
 describe("RunOrchestrator.runCard — guardrails", () => {
-  it("refuses to run a card that is not in ready status", async () => {
+  it("refuses to run a card that is not in ready or review status", async () => {
     const store = makeStore([baseTask({ status: "in-progress" })]);
     const git = makeGit();
     const runner = makeRunner();
@@ -415,6 +415,146 @@ describe("RunOrchestrator.runCard — guardrails", () => {
     for (const task of store.tasks.values()) {
       expect(task.status).not.toBe("done");
     }
+  });
+});
+
+describe("RunOrchestrator.runCard — re-run continues existing work instead of wiping (Feature B)", () => {
+  it("accepts a run on a review-status card (re-run after review, not just ready)", async () => {
+    const store = makeStore([baseTask({ status: "review", branch: "feature/T-0001" })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.addWorktree).toHaveBeenCalledWith({
+      repoRoot: "/repo",
+      worktreeDir: "/repo/worktrees/T-0001",
+      branch: "feature/T-0001",
+      baseBranch: "develop"
+    });
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("passes continuing: true and the card's comments to the prompt builder when addWorktree reuses an existing branch", async () => {
+    const comments = [{ author: "Dennie", text: "CI failed, please fix", timestamp: "2026-08-05T12:00:00.000Z" }];
+    const store = makeStore([baseTask({ status: "review", comments })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "continue prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 1, null);
+    await runPromise;
+
+    expect(buildPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ continuing: true, comments })
+    );
+  });
+
+  it("passes continuing: false when addWorktree cuts a fresh branch (reused: false)", async () => {
+    const store = makeStore([baseTask({ status: "ready" })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: false })) });
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "fresh prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 1, null);
+    await runPromise;
+
+    expect(buildPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ continuing: false, comments: [] })
+    );
+  });
+
+  it("treats a missing/undefined addWorktree return value as not reused (back-compat with a bare mock)", async () => {
+    const store = makeStore([baseTask({ status: "ready" })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => undefined) });
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "fresh prompt");
+    const orchestrator = makeOrchestrator({ store, git, runner, buildPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 1, null);
+    await runPromise;
+
+    expect(buildPromptFn).toHaveBeenCalledWith(expect.objectContaining({ continuing: false }));
+  });
+
+  it("force-pushes (force: true) on PASS when the run continued an existing (reused) branch", async () => {
+    const store = makeStore([baseTask({ status: "review" })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledWith({
+      worktreeDir: "/repo/worktrees/T-0001",
+      branch: "feature/T-0001",
+      force: true
+    });
+  });
+
+  it("does not force-push on PASS for a normal fresh-branch run (reused: false)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: false })) });
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "all green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledWith({
+      worktreeDir: "/repo/worktrees/T-0001",
+      branch: "feature/T-0001"
+    });
+  });
+
+  it("on re-run PASS, reuses the existing PR instead of opening a duplicate (findExistingPr idempotency)", async () => {
+    const store = makeStore([baseTask({ status: "review", pr: "https://github.com/example/repo/pull/55" })]);
+    const git = makeGit({ addWorktree: vi.fn(async () => ({ reused: true })) });
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      findExistingPr: vi.fn(async () => "https://github.com/example/repo/pull/55")
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fixed"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.createPr).not.toHaveBeenCalled();
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/55");
   });
 });
 
