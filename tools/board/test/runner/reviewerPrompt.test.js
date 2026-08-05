@@ -72,6 +72,45 @@ describe("buildReviewerPrompt", () => {
   });
 });
 
+describe("buildReviewerPrompt -- never ask, always fail closed", () => {
+  it("forbids AskUserQuestion outright, unconditionally, regardless of routes", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("Never call AskUserQuestion");
+  });
+
+  it("tells the reviewer a denied command or unavailable tool is a FAIL naming what was denied, not a dead end", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("is denied");
+    expect(prompt).toContain("that is a FAIL");
+    expect(prompt).toContain("name the exact command or tool that was denied or unavailable");
+  });
+
+  it("still forbids AskUserQuestion when a code-enforced route is present (server-db-verify)", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["server/src/main.cpp"]
+    });
+    expect(prompt).toContain("Never call AskUserQuestion");
+    expect(prompt).toContain("Server DB verify (server/**, shared/**)");
+  });
+});
+
+describe("buildReviewerPrompt -- assets/src/lora python-verify route", () => {
+  it("tells the reviewer to run venv+pip+pytest+ruff for a diff touching assets/src/lora", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["assets/src/lora/src/lora/train.py"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("Python verify (assets/src/lora)");
+    expect(prompt).toContain("cd assets/src/lora");
+    expect(prompt).toContain(".venv/bin/pytest");
+    expect(prompt).toContain(".venv/bin/ruff check .");
+  });
+});
+
 describe("buildReviewerPrompt -- routed verification section", () => {
   it("tells the reviewer to run the backlog validator AND the planner diff guard for a tasks/-only diff", () => {
     const prompt = buildReviewerPrompt({
@@ -117,11 +156,11 @@ describe("buildReviewerPrompt -- routed verification section", () => {
     expect(prompt).toContain("Board test/lint suite");
   });
 
-  it("omits the routed section entirely for a diff outside tasks/** and tools/board/** -- falls back to the verify skill's own table", () => {
+  it("omits the routed section entirely for a diff outside every code-enforced route -- falls back to the verify skill's own table", () => {
     const prompt = buildReviewerPrompt({
       task: TASK,
       agentDef: REVIEWER_AGENT_DEF,
-      changedPaths: ["server/src/main.cpp"]
+      changedPaths: ["client/src/main.cpp"]
     });
     expect(prompt).not.toContain("Required verification for this diff");
   });
@@ -168,5 +207,48 @@ describe("buildReviewerPrompt -- routed verification section", () => {
     });
     expect(prompt).toContain("Board test/lint suite");
     expect(prompt).toContain("Python verify (tools/palette-extract)");
+  });
+
+  it("tells the reviewer to run server-db-verify for a server/** diff, and treat a skipped or unregistered DB-gated test as FAIL", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["server/src/IdentityController.cpp"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("Server DB verify (server/**, shared/**)");
+    expect(prompt).toContain("docker compose up -d");
+    expect(prompt).toContain("DATABASE_URL");
+    expect(prompt).toContain("ctest --test-dir build --output-on-failure");
+    expect(prompt).toContain("T-0043");
+    expect(prompt).toContain("is a FAIL");
+    expect(prompt).toContain("missing entirely from `ctest -N`'s registered list");
+    expect(prompt).toContain("cannot bring up Postgres in this environment, that is also a FAIL");
+    expect(prompt).not.toContain("validateBacklog.js");
+    expect(prompt).not.toContain("Board test/lint suite");
+  });
+
+  it("routes a shared/** diff to server-db-verify too", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["shared/protocol.h"]
+    });
+    expect(prompt).toContain("Server DB verify (server/**, shared/**)");
+  });
+
+  it("tells the reviewer to run the python-verify step AND server-db-verify for a mixed server+python diff, each with its own fail-closed language", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: [
+        "server/src/main.cpp",
+        "tools/comfy-client/src/comfy_client/client.py"
+      ]
+    });
+    expect(prompt).toContain("Server DB verify (server/**, shared/**)");
+    expect(prompt).toContain("Python verify (tools/comfy-client)");
+    expect(prompt).toContain("python-verify step you did not run is a FAIL");
+    expect(prompt).toContain("server-db-verify route must actually bring up Postgres");
   });
 });
