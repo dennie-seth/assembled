@@ -113,6 +113,14 @@ class SimConfig:
     recipient_policy: str = "fifo"
 
     # ------------------------------------------------------------------
+    # Identity / universe scoping (T-0129)
+    # Controls which unlock tiers survive a collapse boundary.
+    #   "per_run"  -> tactical + session unlocks wiped on collapse; unique_keyed kept
+    #   "per_week" -> all tiers kept past collapse (expiry timer governs decay instead)
+    # ------------------------------------------------------------------
+    unlock_scope: str = "per_run"
+
+    # ------------------------------------------------------------------
     # Chain-tear key consumption — open question (12 §3a, 07 §2)
     # When enabled, a unique picked up by an agent still short of
     # chain_key_crossings_required is spent to cross a chain tear

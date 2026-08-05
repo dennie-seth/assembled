@@ -15,7 +15,10 @@ See docs/design/10-time-and-progression.md §2/§3, docs/HANDOFF.md §11.5.
 
 from __future__ import annotations
 
-from conftest import FAR_FUTURE, make_cfg
+from conftest import (
+    FAR_FUTURE,
+    make_cfg,
+)
 from sim.engine import SimEngine
 from sim.types import AgentState, ItemInstance, Rarity
 

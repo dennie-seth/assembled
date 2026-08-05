@@ -131,13 +131,13 @@ class SimEngine:
     def _spawn_agent(self) -> Agent:
         aid = self._next_agent_id
         self._next_agent_id += 1
-        collapse_duration = self.cfg.collapse_duration
-        if True:  # all agents in the sim are treated as first-universe
-            collapse_duration = int(collapse_duration * self.cfg.first_universe_multiplier)
+        # Newly-joined agents start in their first universe — apply the grace multiplier.
+        collapse_duration = int(self.cfg.collapse_duration * self.cfg.first_universe_multiplier)
         agent = Agent(
             agent_id=aid,
             state=AgentState.PLAYING,
             collapse_at=self._state.tick + collapse_duration,
+            universe_count=0,
             is_hoarder=(self._rng.random() < self.cfg.hoarder_fraction),
         )
         self._state.agents[aid] = agent
@@ -267,6 +267,39 @@ class SimEngine:
         for item in held:
             self._bleed_item(item)
 
+    def _start_new_universe(self, agent: Agent) -> None:
+        """Collapse the current universe and start the next one for this identity.
+
+        The identity survives — it is NOT set to QUIT. Run-scoped state resets
+        (items_received, ticks_active); identity-scoped state persists (vocabulary,
+        unique_keyed unlocks). Tactical and session unlocks are cleared when
+        unlock_scope is "per_run"; they survive until natural expiry when "per_week".
+
+        @param agent  The agent whose universe is collapsing.
+        """
+        tick = self._state.tick
+        cfg = self.cfg
+
+        # Scatter held items (identity does not carry items across the boundary)
+        self._scatter_agent_items(agent)
+
+        # Advance universe counter; reset run-scoped stats
+        agent.universe_count += 1
+        agent.items_received = 0
+        agent.ticks_active = 0
+
+        # Schedule next collapse using the base duration (no multiplier after first universe)
+        agent.collapse_at = tick + cfg.collapse_duration
+
+        # Clear per-run unlock tiers if configured; unique_keyed always survives
+        if cfg.unlock_scope == "per_run":
+            to_remove = [
+                uid for uid, u in self._state.unlocks.items()
+                if u.agent_id == agent.agent_id and u.tier in ("tactical", "session")
+            ]
+            for uid in to_remove:
+                del self._state.unlocks[uid]
+
     def _process_agent_lifecycle(self) -> None:
         cfg = self.cfg
         tick = self._state.tick
@@ -281,11 +314,9 @@ class SimEngine:
 
             agent.ticks_active += 1
 
-            # Collapse check (wall-clock — happens whether player is present)
+            # Collapse check (wall-clock — the identity survives into a new universe)
             if tick >= agent.collapse_at:
-                self._scatter_agent_items(agent)
-                agent.state = AgentState.QUIT
-                self._state.population -= 1
+                self._start_new_universe(agent)
                 continue
 
             # Random voluntary quit
@@ -388,6 +419,7 @@ class SimEngine:
                 item.anchor = None
                 item.holder = agent.agent_id
                 agent.items_received += 1
+                agent.vocabulary.add(item.type_id)
                 self._grant_unlock(agent.agent_id, item.type_id, item.rarity)
 
                 if (
