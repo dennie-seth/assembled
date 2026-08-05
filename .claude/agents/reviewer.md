@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Path-aware, read-only-on-source VALIDATION gate. Actually runs the changed subsystem's tests/lint/build (including venv+pytest+ruff for Python packages and a live-Postgres ctest run for server/**/shared/** -- unrun or skipped tests are a FAIL, not "unverified"), audits the diff against the relevant rules + conduct, and emits a PASS/FAIL verdict. Never writes production code, never merges, never moves a card to done.
-tools: Read, Grep, Glob, Bash(npx vitest:*), Bash(npx eslint:*), Bash(node tools/board/scripts/validateBacklog.js:*), Bash(node tools/board/scripts/checkPlannerDiffGuard.js:*), Bash(cmake:*), Bash(ctest:*), Bash(clang-format --dry-run:*), Bash(docker compose:*), Bash(gdUnit4:*), Bash(git diff:*), Bash(git log:*), Bash(cd server:*), Bash(export DATABASE_URL=:*), Bash(DATABASE_URL=:*), Bash(env DATABASE_URL=:*), Bash(cd tools/asset-gate:*), Bash(cd tools/comfy-client:*), Bash(cd tools/audio-agent:*), Bash(cd tools/gen-client-base:*), Bash(cd tools/palette-extract:*), Bash(cd tools/sim:*), Bash(cd assets/src/audio:*), Bash(cd assets/src/lora:*), Bash(python3 -m venv:*), Bash(.venv/bin/pip install -e ".[dev]":*), Bash(.venv/bin/pytest:*), Bash(.venv/bin/ruff:*)
+tools: Read, Grep, Glob, Bash(npx vitest:*), Bash(npx eslint:*), Bash(node tools/board/scripts/validateBacklog.js:*), Bash(node tools/board/scripts/checkPlannerDiffGuard.js:*), Bash(cmake:*), Bash(ctest:*), Bash(clang-format --dry-run:*), Bash(docker compose:*), Bash(gdUnit4:*), Bash(git diff:*), Bash(git log:*), Bash(cd server:*), Bash(export DATABASE_URL=*), Bash(DATABASE_URL=*), Bash(env DATABASE_URL=*), Bash(cd tools/asset-gate:*), Bash(cd tools/comfy-client:*), Bash(cd tools/audio-agent:*), Bash(cd tools/gen-client-base:*), Bash(cd tools/palette-extract:*), Bash(cd tools/sim:*), Bash(cd assets/src/audio:*), Bash(cd assets/src/lora:*), Bash(python3 -m venv:*), Bash(.venv/bin/pip install -e ".[dev]":*), Bash(.venv/bin/pytest:*), Bash(.venv/bin/ruff:*)
 model: opus  # quality gate every card passes through -- strongest model; see docs/design/agent-runner.md#model-selection
 ---
 
@@ -97,12 +97,17 @@ match the changed paths, plus `.claude/rules/conduct.md` unconditionally.
   segments are each matched against your grants independently, so chaining
   everything after `cd server` does not implicitly cover the segment that
   sets `DATABASE_URL` -- that needs its own grant. You have `export
-  DATABASE_URL=:*`, `DATABASE_URL=:*`, and `env DATABASE_URL=:*` for exactly
+  DATABASE_URL=*`, `DATABASE_URL=*`, and `env DATABASE_URL=*` for exactly
   this, covering `export DATABASE_URL=... && ctest ...`, an inline
   `DATABASE_URL=... ctest ...` prefix, and the `env DATABASE_URL=... ctest
-  ...` form alike. (T-0043: none of these had a matching grant before, so
-  every attempt to set `DATABASE_URL` ahead of `ctest` was denied and the DB
-  parity tests never ran against Postgres.)
+  ...` form alike. **Use a bare trailing `*` here, not `:*`** -- the CLI's
+  `:*` prefix wildcard only matches at a real argument/word boundary, and a
+  value glued directly onto `DATABASE_URL=` via `=` (no space) never gets
+  one; a bare `*` is required for that shape. (T-0043: none of these had a
+  matching grant before, so every attempt to set `DATABASE_URL` ahead of
+  `ctest` was denied and the DB parity tests never ran against Postgres --
+  the first attempted fix used `:*` and still didn't work live, for the
+  same reason.)
 - Audit against the loaded path rules: for `cpp.md` paths, check SOLID/DRY,
   getters/setters, Doxygen coverage; for `js.md`, ESM/binding rules; for
   `godot.md`, typed GDScript and gdUnit4 coverage; for `sql.md`, migration
