@@ -5,6 +5,8 @@ const VERDICT_FOOTER = `## Verdict output format — REQUIRED
 
 You are read-only on source: no Write or Edit of production code, and you never move this card yourself -- the orchestrator reads your verdict below and moves the card for you.
 
+**Never call AskUserQuestion. Never leave your verdict empty or unparseable.** This run is unattended -- no human is present to answer a question, so AskUserQuestion dead-ends the run: the orchestrator gets no verdict block, records that as a runner failure, and the card sits \`blocked\` with the actual check silently unrun rather than failed. If a required command is denied (a Bash permission you don't have), a tool you need isn't available, or you cannot complete a check for any environmental reason, that is a FAIL, not a question and not grounds to stop mid-run: end your message with the verdict block below, \`"verdict": "FAIL"\`, and name the exact command or tool that was denied or unavailable in \`notes\`. This generalizes the same fail-closed principle as an unrun python-verify or server-db-verify step above -- a check you could not run is never silently dropped, it is always reported as a failure.
+
 Follow the \`review\` skill's procedure (.claude/skills/review/SKILL.md): run \`verify\` for the paths this diff touches, load the applicable rules, and audit the diff against them. Then end your FINAL message with exactly one fenced block in this form, and nothing after it:
 
 \`\`\`verdict
@@ -50,7 +52,12 @@ function buildRequiredVerificationSection(changedPaths, baseBranch) {
  * see verifyRouter.js), the task body verbatim, and the
  * required machine-readable verdict format. The routed section also spells
  * out that these commands must actually be run, not inferred from reading
- * the diff -- an unrun check is a FAIL, not an "unverified" pass.
+ * the diff -- an unrun check is a FAIL, not an "unverified" pass. The
+ * verdict footer additionally forbids AskUserQuestion outright (this run is
+ * unattended -- a question dead-ends it with no verdict, and the card ends
+ * up silently `blocked` instead of correctly `FAIL`ed) and requires that a
+ * denied command or unavailable tool be reported as an explicit FAIL naming
+ * what was denied, never an empty or missing verdict.
  */
 export function buildReviewerPrompt({ task, agentDef, rules = [], changedPaths = [], baseBranch = "develop" }) {
   if (!task || typeof task.body !== "string") {

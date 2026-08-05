@@ -72,6 +72,45 @@ describe("buildReviewerPrompt", () => {
   });
 });
 
+describe("buildReviewerPrompt -- never ask, always fail closed", () => {
+  it("forbids AskUserQuestion outright, unconditionally, regardless of routes", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("Never call AskUserQuestion");
+  });
+
+  it("tells the reviewer a denied command or unavailable tool is a FAIL naming what was denied, not a dead end", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("is denied");
+    expect(prompt).toContain("that is a FAIL");
+    expect(prompt).toContain("name the exact command or tool that was denied or unavailable");
+  });
+
+  it("still forbids AskUserQuestion when a code-enforced route is present (server-db-verify)", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["server/src/main.cpp"]
+    });
+    expect(prompt).toContain("Never call AskUserQuestion");
+    expect(prompt).toContain("Server DB verify (server/**, shared/**)");
+  });
+});
+
+describe("buildReviewerPrompt -- assets/src/lora python-verify route", () => {
+  it("tells the reviewer to run venv+pip+pytest+ruff for a diff touching assets/src/lora", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["assets/src/lora/src/lora/train.py"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("Python verify (assets/src/lora)");
+    expect(prompt).toContain("cd assets/src/lora");
+    expect(prompt).toContain(".venv/bin/pytest");
+    expect(prompt).toContain(".venv/bin/ruff check .");
+  });
+});
+
 describe("buildReviewerPrompt -- routed verification section", () => {
   it("tells the reviewer to run the backlog validator AND the planner diff guard for a tasks/-only diff", () => {
     const prompt = buildReviewerPrompt({

@@ -69,12 +69,24 @@ describe("resolveVerifyRoutes", () => {
       "tools/gen-client-base",
       "tools/palette-extract",
       "tools/sim",
-      "assets/src/audio"
+      "assets/src/audio",
+      "assets/src/lora"
     ];
     for (const root of roots) {
       const routes = resolveVerifyRoutes([`${root}/tests/test_smoke.py`]);
       expect(routes.map((r) => r.id)).toEqual([`python-verify:${root}`]);
     }
+  });
+
+  it("routes an assets/src/lora/** diff to python-verify -- T-0072's package, added after it blocked on a missing reviewer grant", () => {
+    const routes = resolveVerifyRoutes(["assets/src/lora/src/lora/train.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:assets/src/lora"]);
+    const route = routes[0];
+    expect(route.command).toContain("cd assets/src/lora");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check .");
   });
 
   it("routes a diff touching two Python packages to a python-verify step per package", () => {
