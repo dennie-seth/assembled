@@ -156,3 +156,27 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
   }
   return routes;
 }
+
+/**
+ * The reviewer's "does the claimed artifact actually exist" route -- keyed
+ * off the task's own `deliverable_type`, not a diff path, since a card
+ * whose deliverable is a produced file (not source) may touch zero of the
+ * routes above and still need this check (e.g. a fetch/attach card whose
+ * only diff is an uploader script under a Python package root already
+ * covered by python-verify -- green pytest there says nothing about
+ * whether anything was actually fetched). See deliverableCheck.js: an
+ * "artifact" card with no attachments recorded is exactly the T-0136
+ * failure mode -- an uploader CLI shipped with fully mocked tests, nothing
+ * ever actually fetched or attached, and nothing in VALIDATION at the time
+ * checked for the attachment itself.
+ */
+export function resolveDeliverableRoute(task) {
+  if (!task || task.deliverable_type !== "artifact") {
+    return null;
+  }
+  return {
+    id: "deliverable-check",
+    label: `Deliverable artifact check (${task.id})`,
+    command: `node tools/board/scripts/checkDeliverable.js ${task.id}`
+  };
+}

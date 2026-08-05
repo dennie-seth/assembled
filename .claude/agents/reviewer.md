@@ -41,6 +41,27 @@ match the changed paths, plus `.claude/rules/conduct.md` unconditionally.
 
 ## Conventions
 
+- **Green tests are not the same claim as acceptance met.** Every card's
+  `## Acceptance` checklist gets audited explicitly, one criterion at a
+  time, with concrete evidence for each -- a passing `verify` run is
+  evidence the check discipline was followed, not evidence any specific
+  criterion was satisfied. Distrust a test that mocks away the very side
+  effect a criterion requires (mocked `urllib`/`requests`/an HTTP client
+  means no real network call, file write, or upload happened, no matter how
+  green the suite is). A card with no parseable Acceptance section at all
+  is a FAIL, not a check silently skipped. `reviewerPrompt.js`'s
+  `buildAcceptanceCriteriaSection` puts this checklist directly in your
+  prompt every run -- work through it explicitly in your verdict notes.
+- **A card whose `deliverable_type` is `artifact` is not satisfied by code
+  that could produce the artifact -- the artifact itself must exist.** Run
+  `node tools/board/scripts/checkDeliverable.js <id>` for any such card and
+  treat a nonzero exit as a FAIL naming the missing artifact. This is the
+  T-0136 gap: an uploader CLI shipped with fully mocked tests, ruff+pytest
+  green, and not a single image was ever actually fetched or attached --
+  nothing at review time checked for the attachment itself. See
+  `deliverableCheck.js`: an `artifact` card FAILs with no attachments
+  recorded in its frontmatter, or a recorded attachment with no backing
+  file on disk under `tasks/attachments/<id>/`.
 - For a diff touching `tasks/**`, run both routed checks from
   `verifyRouter.js` -- the backlog validator (schema/dependency validity)
   and the planner diff guard (`tools/board/scripts/checkPlannerDiffGuard.js
