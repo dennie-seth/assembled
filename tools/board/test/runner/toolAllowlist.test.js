@@ -152,6 +152,64 @@ describe("resolveAllowedTools", () => {
     );
   });
 
+  it("grants the server implementer a wildcarded .venv/bin/ruff so it can actually autofix lint on the python/sim cards it's dispatched", () => {
+    const resolved = resolveAllowedTools("server", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0129 (and the rest of the round-3 sim cards, T-0130..T-0133): every one of these is
+    // dispatched with agent: "server" despite the changed paths living under tools/sim, and the
+    // implementer's own `.venv/bin/ruff check --fix tests/test_identity.py` / `.venv/bin/ruff
+    // format` calls were denied outright ("This command requires approval") because server.md
+    // granted no ruff invocation at all. With no way to run the actual autofix, the implementer
+    // burned all 5 retries editing config instead of fixing the flagged code.
+    expect(resolved).toContain("Bash(.venv/bin/ruff:*)");
+    expect(isToolAllowed("Bash(.venv/bin/ruff:check --fix tests/test_identity.py)", resolved)).toBe(
+      true
+    );
+    expect(isToolAllowed("Bash(.venv/bin/ruff:format .)", resolved)).toBe(true);
+    expect(isToolAllowed("Bash(.venv/bin/ruff:check .)", resolved)).toBe(true);
+  });
+
+  it("grants the server implementer python -m ruff, for the module-invocation form of the same autofix", () => {
+    const resolved = resolveAllowedTools("server", { agentsDir: REAL_AGENTS_DIR });
+
+    expect(resolved).toContain("Bash(python -m ruff:*)");
+    expect(isToolAllowed("Bash(python -m ruff:check --fix .)", resolved)).toBe(true);
+  });
+
+  it("grants the server implementer cd tools/sim, so the compound `cd tools/sim && ruff ...` form isn't denied on its first segment", () => {
+    const resolved = resolveAllowedTools("server", { agentsDir: REAL_AGENTS_DIR });
+
+    // A compound command's &&-joined segments are matched against the allowlist independently
+    // (see the DATABASE_URL/T-0043 precedent above) -- granting ruff alone does not cover a
+    // `cd tools/sim && .venv/bin/ruff check --fix ...` invocation unless the `cd tools/sim`
+    // segment also has its own matching grant.
+    expect(resolved).toContain("Bash(cd tools/sim:*)");
+
+    // The `cd tools/sim` segment of the compound command, matched on its own (independent
+    // &&-segment matching, per the T-0043 precedent) -- and the ruff segment, matched by the
+    // grant added above. Both must independently match for the full compound invocation to go
+    // through unattended.
+    expect(
+      isToolAllowed("Bash(cd tools/sim:&& .venv/bin/ruff check --fix tests/test_identity.py)", resolved)
+    ).toBe(true);
+    expect(isToolAllowed("Bash(.venv/bin/ruff:check --fix tests/test_identity.py)", resolved)).toBe(
+      true
+    );
+  });
+
+  it("keeps the server implementer's existing grants (cmake/ctest/clang-format/docker compose/git) intact", () => {
+    const resolved = resolveAllowedTools("server", { agentsDir: REAL_AGENTS_DIR });
+
+    expect(resolved).toContain("Read");
+    expect(resolved).toContain("Write");
+    expect(resolved).toContain("Edit");
+    expect(resolved.some((t) => t.startsWith("Bash(cmake:"))).toBe(true);
+    expect(resolved.some((t) => t.startsWith("Bash(ctest:"))).toBe(true);
+    expect(resolved.some((t) => t.startsWith("Bash(clang-format:"))).toBe(true);
+    expect(resolved.some((t) => t.startsWith("Bash(docker compose:"))).toBe(true);
+    expect(resolved.some((t) => t.startsWith("Bash(git:"))).toBe(true);
+  });
+
   it("grants the reviewer permission to set DATABASE_URL for server-db-verify", () => {
     const resolved = resolveAllowedTools("reviewer", { agentsDir: REAL_AGENTS_DIR });
 

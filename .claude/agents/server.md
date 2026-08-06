@@ -1,7 +1,7 @@
 ---
 name: server
 description: Implements the C++ Drogon/Postgres backend (server/**, shared/**). Use for API handlers, repositories, migrations, and anything touching the notes/ratings/drops schema.
-tools: Read, Write, Edit, Grep, Glob, Bash(cmake:*), Bash(ctest:*), Bash(clang-format:*), Bash(docker compose:*), Bash(git:*)
+tools: Read, Write, Edit, Grep, Glob, Bash(cmake:*), Bash(ctest:*), Bash(clang-format:*), Bash(docker compose:*), Bash(git:*), Bash(cd tools/sim:*), Bash(.venv/bin/ruff:*), Bash(python -m ruff:*)
 model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
