@@ -288,9 +288,17 @@ export class RunOrchestrator {
       await this._captureUncommittedImplementerWork(taskId, worktreeDir, runLog);
     }
 
-    await this._updateAndBroadcast(taskId, { status: "validation" });
-
     const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch }).catch(() => []);
+
+    if (changedPaths.length === 0) {
+      const note =
+        "no commits on branch — skipping validation; the implementer phase produced no committed changes relative to develop";
+      await this._logCapture(taskId, runLog, note);
+      await this._blocked(taskId, note);
+      return { stop: true };
+    }
+
+    await this._updateAndBroadcast(taskId, { status: "validation" });
     const reviewerAgentDef = this.loadAgentDefFn("reviewer", { agentsDir: this.agentsDir });
     const reviewerRules = resolveRulesForPaths(changedPaths, this.loadRulesFn({ rulesDir: this.rulesDir }));
     const reviewerAllowedTools = this.resolveAllowedToolsFn("reviewer", { agentsDir: this.agentsDir });
