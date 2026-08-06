@@ -68,6 +68,7 @@ export class RunOrchestrator {
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
+    tasksDir = path.join(repoRoot, "tasks"),
     agentsDir = path.join(repoRoot, ".claude", "agents"),
     rulesDir = path.join(repoRoot, ".claude", "rules"),
     baseBranch = "develop",
@@ -94,6 +95,7 @@ export class RunOrchestrator {
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
+    this.tasksDir = tasksDir;
     this.agentsDir = agentsDir;
     this.rulesDir = rulesDir;
     this.baseBranch = baseBranch;
@@ -132,10 +134,34 @@ export class RunOrchestrator {
    * tick -- the board must not depend solely on the tasks/*.md file watcher
    * (which is debounced by chokidar's atomic-write detection) to learn that
    * a run changed a card's status.
+   *
+   * Also commits the card file to repoRoot, the same way handlePatchTask/comments/
+   * attachments do (see httpApi.js) -- every in-run status flip (ready -> in-progress ->
+   * validation -> review, or -> blocked) used to leave repoRoot's working tree dirty, which
+   * is exactly what made the Done-triggered `pullDevelop` abort with "local changes would be
+   * overwritten by merge" the moment origin touched the same card file. Best-effort: a commit
+   * failure (e.g. a lock collision with a concurrent pull) must never fail the run itself, so
+   * it's caught and logged -- the card falls back to the old drift-until-next-write behavior
+   * for that one write, same as handlePatchTask's matching fallback.
    */
   async _updateAndBroadcast(taskId, patch) {
     const updated = await this.store.update(taskId, patch);
     this.hub.broadcast({ type: "changed", id: taskId, task: updated });
+
+    if (this.repoRoot && this.tasksDir && this.git.autoCommitCardsOnCreateFromEnv()) {
+      try {
+        const relativePath = path.relative(this.repoRoot, path.join(this.tasksDir, `${taskId}.md`));
+        const changedFields = Object.keys(patch).filter((key) => key !== "id");
+        const message =
+          changedFields.length > 0
+            ? `chore(board): update card ${taskId} (${changedFields.join(", ")})`
+            : `chore(board): update card ${taskId}`;
+        await this.git.commitTaskFile({ repoRoot: this.repoRoot, filePath: relativePath, message });
+      } catch (err) {
+        console.warn(`Board: failed to commit run-status update for ${taskId} (leaving it untracked):`, err.message);
+      }
+    }
+
     return updated;
   }
 

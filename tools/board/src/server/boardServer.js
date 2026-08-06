@@ -38,6 +38,7 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     repoRoot: REPO_ROOT,
     worktreesDir: path.join(REPO_ROOT, "worktrees"),
     runsDir: path.join(tasksDir, ".runs"),
+    tasksDir,
     agentsDir,
     rulesDir: path.join(REPO_ROOT, ".claude", "rules"),
     onIdle: () => restartCoordinator.notifyIdle()
@@ -46,7 +47,9 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     store,
     hub,
     activeCardIds: orchestrator.activeCardIds,
-    runsDir: path.join(tasksDir, ".runs")
+    runsDir: path.join(tasksDir, ".runs"),
+    repoRoot: REPO_ROOT,
+    tasksDir
   });
   const selfImprovementLoop = createSelfImprovementLoop({
     store,
