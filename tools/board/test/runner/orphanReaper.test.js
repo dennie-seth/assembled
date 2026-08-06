@@ -36,6 +36,14 @@ function makeHub() {
   return { broadcast: vi.fn() };
 }
 
+function makeGit(overrides = {}) {
+  return {
+    commitTaskFile: vi.fn(async () => true),
+    autoCommitCardsOnCreateFromEnv: vi.fn(() => true),
+    ...overrides
+  };
+}
+
 describe("orphanRecoveryEnabledFromEnv", () => {
   const original = process.env.AUTO_RECOVER_ORPHANED_RUNS;
 
@@ -469,6 +477,121 @@ describe("liveness check (survives a process restart)", () => {
       void reaped;
       expect(store._byId.get("T-0036").status).toBe("blocked");
     });
+  });
+});
+
+describe("reapCard commits its status write to repoRoot", () => {
+  // Regression coverage: recovery (reapOnStartup/sweepOnce) used to call `store.update()`
+  // without committing, leaving repoRoot's working tree dirty exactly like the in-run status
+  // flips in runOrchestrator.js -- the next Done-triggered pullDevelop would abort with
+  // "local changes would be overwritten by merge" the moment origin touched the same card.
+  // Opt-in via repoRoot/tasksDir: omitting them (as the tests above all do) disables
+  // committing entirely, matching httpApi.js's `if (repoRoot && tasksDir && ...)` guard.
+
+  it("reapOnStartup commits the recovered card via git.commitTaskFile when repoRoot/tasksDir are configured", async () => {
+    const store = makeStore([makeTask({ id: "T-0040", status: "in-progress" })]);
+    const hub = makeHub();
+    const git = makeGit();
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds: new Set(),
+      enabled: true,
+      repoRoot: "/repo",
+      tasksDir: "/repo/tasks",
+      git
+    });
+
+    const reaped = await reaper.reapOnStartup();
+
+    expect(reaped).toEqual(["T-0040"]);
+    expect(git.commitTaskFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoRoot: "/repo",
+        filePath: "tasks/T-0040.md",
+        message: expect.stringContaining("T-0040")
+      })
+    );
+  });
+
+  it("sweepOnce commits the recovered card via git.commitTaskFile once grace elapses", async () => {
+    const store = makeStore([makeTask({ id: "T-0041", status: "in-progress" })]);
+    const hub = makeHub();
+    const git = makeGit();
+    let clock = 1000;
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds: new Set(),
+      enabled: true,
+      graceMs: 15_000,
+      now: () => clock,
+      repoRoot: "/repo",
+      tasksDir: "/repo/tasks",
+      git
+    });
+
+    await reaper.sweepOnce();
+    clock += 15_000;
+    const reaped = await reaper.sweepOnce();
+
+    expect(reaped).toEqual(["T-0041"]);
+    expect(git.commitTaskFile).toHaveBeenCalledWith(
+      expect.objectContaining({ repoRoot: "/repo", filePath: "tasks/T-0041.md" })
+    );
+  });
+
+  it("does not attempt to commit when repoRoot/tasksDir are not configured (existing test default)", async () => {
+    const store = makeStore([makeTask({ id: "T-0042", status: "in-progress" })]);
+    const hub = makeHub();
+    const git = makeGit();
+    const reaper = createOrphanReaper({ store, hub, activeCardIds: new Set(), enabled: true, git });
+
+    await reaper.reapOnStartup();
+
+    expect(git.commitTaskFile).not.toHaveBeenCalled();
+  });
+
+  it("does not skip the reap or crash the sweep when git.commitTaskFile rejects", async () => {
+    const store = makeStore([makeTask({ id: "T-0043", status: "in-progress" })]);
+    const hub = makeHub();
+    const git = makeGit({ commitTaskFile: vi.fn(async () => { throw new Error("index.lock exists"); }) });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds: new Set(),
+      enabled: true,
+      repoRoot: "/repo",
+      tasksDir: "/repo/tasks",
+      git
+    });
+
+    const reaped = await reaper.reapOnStartup();
+
+    expect(reaped).toEqual(["T-0043"]);
+    expect(store._byId.get("T-0043").status).toBe("blocked");
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("skips committing when git.autoCommitCardsOnCreateFromEnv() reports the flag disabled", async () => {
+    const store = makeStore([makeTask({ id: "T-0044", status: "in-progress" })]);
+    const hub = makeHub();
+    const git = makeGit({ autoCommitCardsOnCreateFromEnv: vi.fn(() => false) });
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds: new Set(),
+      enabled: true,
+      repoRoot: "/repo",
+      tasksDir: "/repo/tasks",
+      git
+    });
+
+    await reaper.reapOnStartup();
+
+    expect(git.commitTaskFile).not.toHaveBeenCalled();
   });
 });
 

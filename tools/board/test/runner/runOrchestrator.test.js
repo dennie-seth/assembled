@@ -114,6 +114,8 @@ function makeGit(overrides = {}) {
     push: vi.fn(async () => {}),
     getHeadCommit: vi.fn(async () => "abc1234def5678abc1234def5678abc1234def5"),
     linkBoardNodeModules: vi.fn(async () => {}),
+    commitTaskFile: vi.fn(async () => true),
+    autoCommitCardsOnCreateFromEnv: vi.fn(() => true),
     ...overrides
   };
 }
@@ -1730,6 +1732,107 @@ describe("RunOrchestrator — persists run liveness state for the orphan reaper"
     expect(writeRunStateFn).toHaveBeenCalledTimes(1);
     expect(clearRunStateFn).toHaveBeenCalledTimes(1);
     expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+});
+
+describe("RunOrchestrator — commits every in-run status write to repoRoot", () => {
+  // Regression coverage: `_updateAndBroadcast` used to call `store.update()` without
+  // committing, leaving repoRoot's working tree dirty after every in-run status flip
+  // (ready -> in-progress -> validation -> review, or -> blocked on FAIL/crash). The next
+  // Done-triggered `pullDevelop` would then abort with "local changes would be overwritten
+  // by merge" the moment origin touched the same card file -- exactly the failure this
+  // covers (see handlePatchTask's matching commitTaskFile call in httpApi.js).
+
+  it("commits the card file after the in-progress status write, via git.commitTaskFile", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await nthChild(runner, 1);
+
+    await vi.waitFor(() => expect(git.commitTaskFile).toHaveBeenCalled());
+    expect(git.commitTaskFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoRoot: "/repo",
+        filePath: "tasks/T-0001.md",
+        message: expect.stringContaining("update card T-0001")
+      })
+    );
+
+    const implChild = runner.spawnedChildren[0];
+    implChild.stdout.emit("data", ndjson(assistantEvent("implementing...")));
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    // Multiple distinct status transitions (in-progress, validation, review) each get their
+    // own commit -- mirrors the one-commit-per-write behavior of comments/attachments.
+    expect(git.commitTaskFile.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("blocks the card and appends a note when a FAIL exhausts retries, still committing that final write", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt += 1) {
+      const implChild = await nthChild(runner, attempt * 2 - 1);
+      implChild.emit("exit", 0, null);
+      const reviewChild = await nthChild(runner, attempt * 2);
+      reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("FAIL", "nope")}`)));
+      reviewChild.emit("exit", 0, null);
+    }
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("blocked");
+    expect(git.commitTaskFile).toHaveBeenCalledWith(
+      expect.objectContaining({ repoRoot: "/repo", filePath: "tasks/T-0001.md" })
+    );
+  });
+
+  it("does not skip the status write or crash the run when git.commitTaskFile rejects", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ commitTaskFile: vi.fn(async () => { throw new Error("index.lock exists"); }) });
+    const runner = makeRunner();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+    implChild.stdout.emit("data", ndjson(assistantEvent("implementing...")));
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await expect(runPromise).resolves.toBeUndefined();
+    expect((await store.get("T-0001")).status).toBe("review");
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("skips committing when git.autoCommitCardsOnCreateFromEnv() reports the flag disabled", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ autoCommitCardsOnCreateFromEnv: vi.fn(() => false) });
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.commitTaskFile).not.toHaveBeenCalled();
   });
 });
 
