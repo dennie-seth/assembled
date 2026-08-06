@@ -17,6 +17,7 @@ import {
   commitTaskFile,
   commitPaths,
   autoCommitCardsOnCreateFromEnv,
+  linkBoardNodeModules,
   BOARD_COMMIT_AUTHOR
 } from "../../src/runner/gitOps.js";
 
@@ -682,6 +683,43 @@ describe("commitPaths", () => {
 
     expect(committed).toBe(false);
     expect(after).toBe(before);
+  });
+});
+
+describe("linkBoardNodeModules", () => {
+  it("creates a symlink at <worktreeDir>/tools/board/node_modules pointing to <repoRoot>/tools/board/node_modules", async () => {
+    const src = path.join(repoRoot, "tools", "board", "node_modules");
+    await fs.mkdir(src, { recursive: true });
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0137a");
+    await fs.mkdir(path.join(worktreeDir, "tools", "board"), { recursive: true });
+
+    await linkBoardNodeModules({ worktreeDir, repoRoot });
+
+    const dest = path.join(worktreeDir, "tools", "board", "node_modules");
+    const stat = await fs.lstat(dest);
+    expect(stat.isSymbolicLink()).toBe(true);
+    const target = await fs.readlink(dest);
+    expect(target).toBe(src);
+  });
+
+  it("is idempotent — does not throw when the symlink already exists", async () => {
+    const src = path.join(repoRoot, "tools", "board", "node_modules");
+    await fs.mkdir(src, { recursive: true });
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0137b");
+    await fs.mkdir(path.join(worktreeDir, "tools", "board"), { recursive: true });
+
+    await linkBoardNodeModules({ worktreeDir, repoRoot });
+    await expect(linkBoardNodeModules({ worktreeDir, repoRoot })).resolves.not.toThrow();
+  });
+
+  it("is a no-op when repoRoot/tools/board/node_modules does not exist", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0137c");
+    await fs.mkdir(path.join(worktreeDir, "tools", "board"), { recursive: true });
+
+    await expect(linkBoardNodeModules({ worktreeDir, repoRoot })).resolves.not.toThrow();
+
+    const dest = path.join(worktreeDir, "tools", "board", "node_modules");
+    await expect(fs.lstat(dest)).rejects.toThrow();
   });
 });
 

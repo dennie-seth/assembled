@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
+import path from "node:path";
 import { schedulePush } from "./autoPush.js";
 
 const execFileAsync = promisify(execFile);
@@ -257,4 +258,34 @@ export async function commitTaskFile({
   logger = console
 }) {
   return commitPaths({ repoRoot, filePaths: [filePath], message, author, autoPush, pushBranch, logger });
+}
+
+/**
+ * Creates a symlink at `<worktreeDir>/tools/board/node_modules` pointing to
+ * `<repoRoot>/tools/board/node_modules` so that verification agents can run
+ * `npm test` in a fresh worktree without first running `npm install`.
+ *
+ * Best-effort: if the source doesn't exist yet (e.g. the main worktree hasn't
+ * had `npm install` run yet) the call silently returns without creating the link.
+ * Idempotent: if the destination already exists (symlink or real dir) it returns
+ * without error.
+ */
+export async function linkBoardNodeModules({ worktreeDir, repoRoot }) {
+  const src = path.join(repoRoot, "tools", "board", "node_modules");
+  const dest = path.join(worktreeDir, "tools", "board", "node_modules");
+
+  try {
+    await fs.stat(src);
+  } catch {
+    return;
+  }
+
+  try {
+    await fs.lstat(dest);
+    return;
+  } catch {
+    // dest doesn't exist — proceed to create symlink
+  }
+
+  await fs.symlink(src, dest);
 }

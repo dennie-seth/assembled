@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, vi } from "vitest";
-import { renderBoard } from "../../src/client/boardView.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderBoard, BATCH_SIZE } from "../../src/client/boardView.js";
 import { STATUSES } from "../../src/client/board.js";
 
 function task(overrides = {}) {
@@ -347,7 +347,7 @@ describe("renderBoard per-column sort control", () => {
     expect(sortSelect).not.toBeNull();
     expect(sortSelect.value).toBe("id");
     const values = Array.from(sortSelect.options).map((o) => o.value);
-    expect(values).toEqual(["id", "priority", "agent", "phase"]);
+    expect(values).toEqual(["id", "priority", "agent", "phase", "oldest", "newest"]);
   });
 
   it("orders cards within a column by the current sort key for that column", () => {
@@ -394,5 +394,186 @@ describe("renderBoard per-column sort control", () => {
     select.dispatchEvent(new Event("change", { bubbles: true }));
 
     expect(onSortChange).toHaveBeenCalledWith("ready", "agent");
+  });
+});
+
+describe("BATCH_SIZE export", () => {
+  it("is a positive integer", () => {
+    expect(Number.isInteger(BATCH_SIZE)).toBe(true);
+    expect(BATCH_SIZE).toBeGreaterThan(0);
+  });
+});
+
+describe("renderBoard — batched rendering", () => {
+  let root;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    vi.stubGlobal("IntersectionObserver", undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function makeTasks(count, status = "backlog") {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `T-${String(i + 1).padStart(4, "0")}`,
+      title: `Task ${i + 1}`,
+      status,
+      priority: "P2",
+      phase: 1,
+      agent: null,
+      depends_on: []
+    }));
+  }
+
+  it("renders all cards when count is exactly BATCH_SIZE", () => {
+    const tasks = makeTasks(BATCH_SIZE, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+    const list = root.querySelector(".column-cards[data-status='backlog']");
+    expect(list.querySelectorAll(".card").length).toBe(BATCH_SIZE);
+    expect(list.querySelector(".batch-sentinel")).toBeNull();
+  });
+
+  it("renders all cards when count is below BATCH_SIZE", () => {
+    const tasks = makeTasks(3, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+    const list = root.querySelector(".column-cards[data-status='backlog']");
+    expect(list.querySelectorAll(".card").length).toBe(3);
+    expect(list.querySelector(".batch-sentinel")).toBeNull();
+  });
+
+  it("renders only BATCH_SIZE cards when count exceeds BATCH_SIZE and no columnBatch", () => {
+    const tasks = makeTasks(BATCH_SIZE + 5, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    const list = root.querySelector(".column-cards[data-status='backlog']");
+    expect(list.querySelectorAll(".card").length).toBe(BATCH_SIZE);
+  });
+
+  it("adds a batch sentinel when there are more cards than the visible count", () => {
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    const sentinel = root.querySelector(".batch-sentinel");
+    expect(sentinel).not.toBeNull();
+    expect(sentinel.dataset.status).toBe("backlog");
+  });
+
+  it("does not add a sentinel when onShowMore is not provided", () => {
+    const tasks = makeTasks(BATCH_SIZE + 5, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+    expect(root.querySelector(".batch-sentinel")).toBeNull();
+  });
+
+  it("renders extended batch when columnBatch provides a higher visible count", () => {
+    const tasks = makeTasks(BATCH_SIZE + 5, "backlog");
+    const columnBatch = new Map([["backlog", BATCH_SIZE + 5]]);
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), columnBatch, onShowMore: vi.fn() });
+    const list = root.querySelector(".column-cards[data-status='backlog']");
+    expect(list.querySelectorAll(".card").length).toBe(BATCH_SIZE + 5);
+    expect(list.querySelector(".batch-sentinel")).toBeNull();
+  });
+
+  it("sentinel data-status matches the column status", () => {
+    const tasks = makeTasks(BATCH_SIZE + 1, "done");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    const sentinel = root.querySelector(".batch-sentinel");
+    expect(sentinel?.dataset.status).toBe("done");
+  });
+});
+
+describe("renderBoard — IntersectionObserver wiring", () => {
+  let root;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function makeTasks(count, status = "backlog") {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `T-${String(i + 1).padStart(4, "0")}`,
+      title: `Task ${i + 1}`,
+      status,
+      priority: "P2",
+      phase: 1,
+      agent: null,
+      depends_on: []
+    }));
+  }
+
+  it("observes sentinels when onShowMore and IntersectionObserver are available", () => {
+    const observe = vi.fn();
+    class MockIO {
+      constructor(_cb) {}
+      observe = observe;
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    expect(observe).toHaveBeenCalled();
+  });
+
+  it("calls onShowMore with status when sentinel intersects", () => {
+    const onShowMore = vi.fn();
+    let observerCallback;
+    class MockIO {
+      constructor(cb) { observerCallback = cb; }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore });
+    const sentinel = root.querySelector(".batch-sentinel");
+    observerCallback([{ isIntersecting: true, target: sentinel }]);
+    expect(onShowMore).toHaveBeenCalledWith("backlog");
+  });
+
+  it("does not call onShowMore for non-intersecting entries", () => {
+    const onShowMore = vi.fn();
+    let observerCallback;
+    class MockIO {
+      constructor(cb) { observerCallback = cb; }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore });
+    const sentinel = root.querySelector(".batch-sentinel");
+    observerCallback([{ isIntersecting: false, target: sentinel }]);
+    expect(onShowMore).not.toHaveBeenCalled();
+  });
+
+  it("does not instantiate IntersectionObserver when onShowMore is absent", () => {
+    const constructed = vi.fn();
+    class MockIO {
+      constructor(cb) { constructed(cb); }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+    expect(constructed).not.toHaveBeenCalled();
+  });
+
+  it("disconnects the previous observer on re-render", () => {
+    const disconnect = vi.fn();
+    class MockIO {
+      constructor(_cb) {}
+      observe = vi.fn();
+      disconnect = disconnect;
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    expect(disconnect).toHaveBeenCalledTimes(1);
   });
 });

@@ -264,7 +264,16 @@ async function handleGetTask(store, id, res) {
   sendJson(res, 200, task);
 }
 
-async function handlePatchTask(store, id, req, res, repoRoot, orchestrator, restartCoordinator) {
+/**
+ * Handles ordinary card edits (drag between board columns, editing title/priority/agent/etc.
+ * via the UI) -- the one route every routine field/status change goes through, including the
+ * Review -> Done flip. Commits the updated card file the same way create/comments/attachments
+ * do (see their matching rationale), so an update never leaves repoRoot's working tree dirty.
+ * That matters here specifically: the Done-triggered `pullDevelop` below needs a clean tree to
+ * merge, and a prior update's uncommitted diff was exactly what made that pull start failing
+ * with "local changes ... would be overwritten by merge" once origin touched the same file.
+ */
+async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestrator, restartCoordinator) {
   const body = requireJsonObject(await readJsonBody(req));
   if ("id" in body && body.id !== id) {
     throw new HttpError(400, "Cannot change a task's id");
@@ -287,6 +296,23 @@ async function handlePatchTask(store, id, req, res, repoRoot, orchestrator, rest
   } catch (err) {
     const status = /not found/i.test(err.message) ? 404 : 400;
     throw new HttpError(status, err.message);
+  }
+
+  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+    try {
+      const relativePath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
+      const changedFields = Object.keys(body).filter((key) => key !== "id");
+      const message =
+        changedFields.length > 0
+          ? `chore(board): update card ${id} (${changedFields.join(", ")})`
+          : `chore(board): update card ${id}`;
+      await commitTaskFile({ repoRoot, filePath: relativePath, message });
+    } catch (err) {
+      // An update must never fail to save because git couldn't commit it -- see the matching
+      // rationale on handleAddComment's commitTaskFile call. Leaving it untracked here just
+      // reverts to the old drift-until-next-write behavior for this one update.
+      console.warn(`Board: failed to commit update for ${id} (leaving it untracked):`, err.message);
+    }
   }
 
   if (updated.status === "done" && repoRoot) {
@@ -705,7 +731,7 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
         return await handleGetTask(store, idMatch[1], res);
       }
       if (idMatch && req.method === "PATCH") {
-        return await handlePatchTask(store, idMatch[1], req, res, repoRoot, orchestrator, restartCoordinator);
+        return await handlePatchTask(store, idMatch[1], req, res, repoRoot, tasksDir, orchestrator, restartCoordinator);
       }
       if (idMatch && req.method === "DELETE") {
         return await handleDeleteTask(store, idMatch[1], res);

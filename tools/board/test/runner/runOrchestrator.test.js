@@ -113,6 +113,7 @@ function makeGit(overrides = {}) {
     commitAll: vi.fn(async () => true),
     push: vi.fn(async () => {}),
     getHeadCommit: vi.fn(async () => "abc1234def5678abc1234def5678abc1234def5"),
+    linkBoardNodeModules: vi.fn(async () => {}),
     ...overrides
   };
 }
@@ -186,6 +187,31 @@ describe("RunOrchestrator.runCard — happy path (PASS)", () => {
     expect(runEventMessages.every((m) => m.id === "T-0001")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "implementer")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "reviewer")).toBe(true);
+  });
+});
+
+describe("RunOrchestrator.runCard — links node_modules after worktree creation", () => {
+  it("calls git.linkBoardNodeModules with the worktreeDir and repoRoot after addWorktree succeeds", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`ok ${verdictBlock("PASS", "green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(git.linkBoardNodeModules).toHaveBeenCalledWith({
+      worktreeDir: "/repo/worktrees/T-0001",
+      repoRoot: "/repo"
+    });
   });
 });
 
