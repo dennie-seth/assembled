@@ -47,7 +47,9 @@ add_library(assembled_server_lib OBJECT
   src/RateLimiter.cpp
   src/IdentityController.cpp
 )
-target_include_directories(assembled_server_lib PUBLIC include)
+# PUBLIC: server headers under include/, plus repo root so that both server
+# and tests can #include "shared/note_templates.hpp" (T-0043).
+target_include_directories(assembled_server_lib PUBLIC include ${CMAKE_SOURCE_DIR}/..)
 target_link_libraries(assembled_server_lib PUBLIC Drogon::Drogon OpenSSL::Crypto)
 target_compile_definitions(assembled_server_lib PUBLIC
   ASSEMBLED_MIGRATIONS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/migrations"
@@ -65,6 +67,7 @@ add_executable(server_tests
   test/smoke_test.cpp
   test/health_test.cpp
   test/migration_test.cpp
+  test/seed_parity_test.cpp
 )
 target_link_libraries(server_tests PRIVATE assembled_server_lib doctest::doctest)
 

@@ -15,7 +15,8 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   of `backlog|ready|in-progress|validation|review|done|blocked`, `priority`
   one of `P0..P3`, `phase` an integer, `agent` one of the assignable agent
   names or `null`, `depends_on` an array of valid `T-NNNN` ids, `created` an
-  `YYYY-MM-DD` string.
+  `YYYY-MM-DD` string, and (optional, defaults to `code`)
+  `deliverable_type` one of `code|artifact`.
 - A card body has a `## Context` section (why this exists, grounded in a
   doc reference) and a `## Acceptance` section (checkable criteria) — the
   shape every existing card already follows (`docs/PLAN.md` §Task file
@@ -24,6 +25,28 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   title, or Acceptance criteria too vague to check off, is not acceptable
   planner output. Tighten it or leave a specific note about what's still
   unresolved and why.
+- **Every acceptance criterion must be independently checkable by the
+  reviewer** — `reviewerPrompt.js`'s `buildAcceptanceCriteriaSection` parses
+  the `## Acceptance` checklist and requires the reviewer to confirm each
+  item with concrete evidence, not infer it from green tests. A criterion
+  like "it works" or "the script runs" is not acceptable; a criterion must
+  name a specific, inspectable outcome.
+- **Decide and record the card's `deliverable_type`.** Most cards are
+  `code` (the default — leave the field unset). When a card's real output
+  is a produced artifact — an asset, a doc, a fetched/generated file that
+  gets attached to the ticket — set `deliverable_type: artifact` in its
+  frontmatter, and write its Acceptance criteria to name the artifact
+  itself and where it must end up (e.g. "T-0072's Attachments section shows
+  the fetched corpus images"), never the mechanism that could produce it
+  (e.g. not "an uploader script exists and its tests pass"). This is the
+  T-0136 lesson: an uploader CLI shipped with fully mocked tests, ruff+pytest
+  green, and not a single image was ever actually fetched or attached —
+  nothing in the card's own Acceptance section or in VALIDATION at the time
+  distinguished "capable of producing the artifact" from "produced it."
+  `tools/board/src/lib/deliverableCheck.js` and
+  `tools/board/scripts/checkDeliverable.js` are the reviewer's machine-checked
+  gate for `artifact` cards — they FAIL a card with no attachments recorded,
+  or a recorded attachment with no backing file on disk.
 
 ## Grounding in docs
 

@@ -1,15 +1,15 @@
 {
-  "corpus_version": "1",
-  "_comment": "T-0072: Soviet brutalist/constructivist reference corpus for SDXL style LoRA. 13-asset-pipeline.md §3.2. Images are fetched by running: python -m lora_train.fetch --download. sha256 fields are null until fetched.",
+  "corpus_version": "2",
+  "_comment": "T-0072: Soviet brutalist/constructivist reference corpus for SDXL style LoRA. 13-asset-pipeline.md §3.2. Every entry below was individually resolved and verified against the live Wikimedia Commons API (action=query&prop=imageinfo) before being added -- see assets/src/lora/CORPUS_CURATION.md for the discovery/verification method. Images are fetched by running: python -m lora_train.fetch --download. sha256 fields are null until fetched.",
   "selection_criteria": {
     "prefer": [
       "Exterior facades showing repetitive modular geometry (a brutalist facade is a tileset)",
-      "Flat or nearly flat camera angle — side-on or head-on, no strong perspective recede",
+      "Flat or nearly flat camera angle -- side-on or head-on, no strong perspective recede",
       "Hard geometric silhouettes with minimal organic intrusion (trees, sky secondary)",
-      "Desaturated tonal range — concrete greys, oxide rust, institutional green, deep shadow",
-      "Decay and weathering visible — stains, spalling, watermarks read as texture not error",
+      "Desaturated tonal range -- concrete greys, oxide rust, institutional green, deep shadow",
+      "Decay and weathering visible -- stains, spalling, watermarks read as texture not error",
       "Institutional interiors: corridors, stairwells, mechanical rooms with consistent palette",
-      "Scale that communicates mass — the building overwhelming rather than the surrounding"
+      "Scale that communicates mass -- the building overwhelming rather than the surrounding"
     ],
     "avoid": [
       "Interiors of private apartments or residential spaces",
@@ -20,335 +20,367 @@
       "Post-Soviet renovation that adds incongruous cladding or colour",
       "Tourist-posed shots where the human figure dominates the frame"
     ],
-    "target_count": 40
+    "target_count": 44
   },
   "allowed_licenses": [
     "CC0",
     "CC-BY-4.0",
     "CC-BY-SA-4.0",
-    "PD-old",
-    "PD-old-70-1923"
+    "CC-BY-3.0",
+    "CC-BY-SA-3.0"
   ],
   "refs": [
     {
       "id": "ref_001",
-      "commons_file": "File:Narkomfin_Building_Moscow_2009.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Yury Palmin / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Narkomfin building (Ginzburg, 1930). Canonical Constructivist ribbon facade. Horizontal banding, pilotis, repetitive window grid. Directly relevant to side-on corridor geometry."
+      "commons_file": "File:Moscow, Narkomfin building in May 2021 01.jpg",
+      "license": "CC0",
+      "attribution": "Retired electrician / Wikimedia Commons",
+      "sha256": "9c98947cb286bd6df0bea276effeb7a171b85f3ec2e97b06d28767be79856241",
+      "curation_notes": "Narkomfin Building, Moscow, May 2021, described on Commons as \"the rebuilt Narkomfin Building\" -- post-restoration exterior."
     },
     {
       "id": "ref_002",
-      "commons_file": "File:Moscow_State_University_crop.jpg",
-      "license": "CC-BY-SA-3.0",
-      "attribution": "A.Savin / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "MGU main tower. Massive Soviet institutional geometry. Repetitive window grid across enormous facade. Useful for scale and repetition cues."
+      "commons_file": "File:Moscow, Narkomfin building in May 2021 03.jpg",
+      "license": "CC0",
+      "attribution": "Retired electrician / Wikimedia Commons",
+      "sha256": "2c237c4721542cd79908b6ff5daf387bf21daa4e322d54f20476156ebd283ffa",
+      "curation_notes": "Narkomfin Building, Moscow, May 2021, alternate angle from the same post-restoration photo series as ref 01."
     },
     {
       "id": "ref_003",
-      "commons_file": "File:Mikrorayon_Cheremushki_Moscow.jpg",
+      "commons_file": "File:Moscow Narkomfin 6831.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Sergei Arssenev / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Khrushchyovka panel block (Cheremushki, Moscow). Flat prefabricated panel facade, extremely repetitive module. The brutalist tileset archetype."
+      "attribution": "Ludvig14 / Wikimedia Commons",
+      "sha256": "7b2c28608fe162a537de5b40946258c618ca3301e0bab6af18d527370e8e38d3",
+      "curation_notes": "Narkomfin Building, Novinsky Boulevard 25, Moscow -- per the file description. Canonical constructivist ribbon facade."
     },
     {
       "id": "ref_004",
-      "commons_file": "File:Tbilisi_Ministry_of_Highways.jpg",
+      "commons_file": "File:Narkomfin building 2015-11 1448726061.JPG",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Paata Vardanashvili / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Ministry of Highways, Tbilisi (Chkhenkeli, 1975). Famous brutalist cantilever cascade. Hard geometric silhouette, massive concrete, institutionally desaturated."
+      "attribution": "Artyom Svetlov / Wikimedia Commons",
+      "sha256": "2803de06ee82f7d49f75c795a7a67a7efe567c9e9d939dab592fc7480402025e",
+      "curation_notes": "Narkomfin Building, Moscow, described on Commons as \"multifamily residential, architectural landmark, apartment building Narkomfin building\", November 2015."
     },
     {
       "id": "ref_005",
-      "commons_file": "File:Rusanovka_microdistrict_Kyiv.jpg",
+      "commons_file": "File:Exterieur van het Narkomfin, 2015.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Bykivnia / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Soviet panel housing in Rusanivka, Kyiv. Water-adjacent context gives reflection of the repetitive facade — useful for value study of panel geometry."
+      "attribution": "Jeooren / Wikimedia Commons",
+      "sha256": "1b5d841148793016549c3769949be85f563e1fad0e561279cdd5e8fafedafa93",
+      "curation_notes": "Narkomfin Building exterior, Moscow, 2015 (pre-restoration). Ribbon windows and horizontal banding of the Ginzburg constructivist landmark."
     },
     {
       "id": "ref_006",
-      "commons_file": "File:ZIL_Cultural_Centre_Moscow.jpg",
+      "commons_file": "File:Dom Narkomfin under renovation.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Alexei Naroditsky / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "ZIL Cultural Centre (Vesnin brothers, 1931). Constructivist. Projecting volumes, horizontal ribbon windows, strong geometry. Interior corridor logic."
+      "attribution": "Amos Jackson / Wikimedia Commons",
+      "sha256": "bf6e7aef11f8f529eaaa10e91452be66355ef60cf3fc084f8e1fe2661ef6f992",
+      "curation_notes": "Narkomfin Building, Moscow, photographed December 2019 during its restoration. Shows the canonical ribbon-window constructivist facade with visible weathering/scaffolding from the renovation era."
     },
     {
       "id": "ref_007",
-      "commons_file": "File:Narodnogo_Opolcheniya_panel_block_Moscow.jpg",
+      "commons_file": "File:Moscow Leninsky33 8248.jpg",
       "license": "CC-BY-SA-4.0",
       "attribution": "Ludvig14 / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Large-panel Brezhnev-era block, head-on view. Nearly orthographic, repetitive grid. Oxide staining at joints. Close match for wall tile generation target."
+      "sha256": "3ee972290743f44c016c7f7dcedc9ce997264ad3e5275d95019c6cd65db27322",
+      "curation_notes": "Leninsky Prospekt 33, Moscow. From Commons category \"Constructivist architecture in Moscow\"."
     },
     {
       "id": "ref_008",
-      "commons_file": "File:VDNKH_Pavilion_26_Moscow.jpg",
+      "commons_file": "File:Moscow RadioStreet17b6 8747.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "GAlexandrova / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "VDNKh Pavilion 26, Moscow. Soviet expo modernism. Flat concrete facade, geometric ornament as surface texture, muted palette. Good prop reference."
+      "attribution": "Ludvig14 / Wikimedia Commons",
+      "sha256": "0ffe4ff380f7f7bae6c17b4def6cc51b22904f13dc1636056b7a8d8e74cc0f80",
+      "curation_notes": "Radio Street 17 bld. 6, Moscow. From Commons category \"Constructivist architecture in Moscow\"."
     },
     {
       "id": "ref_009",
-      "commons_file": "File:Kyiv_Institute_of_Scientific_Information.jpg",
+      "commons_file": "File:Moscow Spiridonovka24 0812.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Brücke-Osteuropa / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Ukrainian Institute of Scientific and Technical Expertise, Kyiv. Brutalist grid facade, very high window-to-wall ratio. Lattice silhouette useful for tileset transitions."
+      "attribution": "Ludvig14 / Wikimedia Commons",
+      "sha256": "77bf83a29a1d755661565eedf453d1b884736eda257e4050ccc3461bcc484d45",
+      "curation_notes": "Spiridonovka Street 24/1, Moscow. From Commons category \"Constructivist architecture in Moscow\"."
     },
     {
       "id": "ref_010",
-      "commons_file": "File:Minsk_House_of_Government.jpg",
+      "commons_file": "File:Москва, Тишинская площадь, 6.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Homoatrox / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Government House, Minsk (Langbard, 1934). Early Soviet classicism shading into constructivism. Massive orthographic facade, institutional scale, near-monochrome in overcast."
+      "attribution": "AndyVolykhov / Wikimedia Commons",
+      "sha256": "92b78f3ac63ec54d3e946c98cb4bec057a1a4ec4026c8482e96e9d0986d0581d",
+      "curation_notes": "RZhSKT \"Voyenny Stroitel\" residential buildings, Tishinskaya Square 6, Moscow. From Commons category \"Constructivist architecture in Moscow\"."
     },
     {
       "id": "ref_011",
-      "commons_file": "File:Belarusian_State_University_main_building.jpg",
+      "commons_file": "File:MAI building at Panfilova street 01.JPG",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Homoatrox / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "BSU main building, Minsk. Soviet modernist slab. Repetitive bays, concrete fins as vertical rhythm, institutional green visible in window soffits."
+      "attribution": "Andreykor / Wikimedia Commons",
+      "sha256": "030307484755458223d6627e2be08dd99f573be6862474b8e5448511ac850f47",
+      "curation_notes": "Moscow Aviation Institute building, Panfilova Street, Moscow (architect N. Ya. Kolli per the file description). From Commons category \"Constructivist architecture in Moscow\"."
     },
     {
       "id": "ref_012",
-      "commons_file": "File:Novosibirsk_State_Academic_Theatre_of_Opera.jpg",
+      "commons_file": "File:Гараж Совета народных комиссаров. Москва. Вид со стороны Каретного Ряда.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "A.Savin / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Novosibirsk Opera House (1941). Massive dome and colonnaded perimeter. Concrete in overcast gives the tonal baseline for the brutalist grey range."
+      "attribution": "Maratel / Wikimedia Commons",
+      "sha256": "7222bc88c9048c24aa078bd49f726b69f1f465feb7d536de9ccdec2afc9563ce",
+      "curation_notes": "Garage of the Council of People's Commissars, Karetny Ryad St 4, Moscow. From Commons category \"Constructivist architecture in Moscow\" -- the Melnikov/Shukhov bus-garage type, curved geometric massing."
     },
     {
       "id": "ref_013",
-      "commons_file": "File:Palace_of_Culture_Lviv_Ukraine.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Lestat (Jan Mehlich) / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Palace of Culture, Lviv. Soviet neoclassicism with brutalist proportions. Stacked pilasters as vertical tilestrip. Good for wall-to-ceiling transition geometry."
+      "commons_file": "File:Moscow, Krasnoproletarskaya street 32.jpg",
+      "license": "CC0",
+      "attribution": "Svetlov Artem / Wikimedia Commons",
+      "sha256": "91161bc39e91b2202ce3114fcca3f6bb3be4552e80dac2bb8430b4ded6d245ad",
+      "curation_notes": "Krasnoproletarskaya Street 32, Moscow -- per the file description, a workers' club building. From Commons category \"Constructivist architecture in Moscow\"."
     },
     {
       "id": "ref_014",
-      "commons_file": "File:Soviet_prefab_stairwell_interior.jpg",
+      "commons_file": "File:Moscow KhoromnyTupik2 1288.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "George Chernilevsky / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Interior stairwell of a Soviet panel apartment block. Institutional green dado rail, bare concrete above, fluorescent-lit. Directly matches corridor art direction."
+      "attribution": "Ludvig14 / Wikimedia Commons",
+      "sha256": "56b99eec0ef244cc73992f2bab5cc481dca1f745b059060c20f3ef4b4e45d504",
+      "curation_notes": "Boyarsky Lane 6/2, Moscow. From Commons category \"Constructivist architecture in Moscow\"."
     },
     {
       "id": "ref_015",
-      "commons_file": "File:Khrushchevka_entrance_hall_interior.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Igorgubernatov / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Khrushchyovka entrance lobby. Tiled floor, painted concrete walls, rusted mailboxes. Colour palette sample: cream, ochre, grey, rust — all within the home palette family."
+      "commons_file": "File:Moscow, Kotelnicheskaya Embankment 25 March 2020 01.jpg",
+      "license": "CC0",
+      "attribution": "Retired electrician / Wikimedia Commons",
+      "sha256": "3d2f5ea7ded4072038cae423c338869515181109f3c5b807245384cfa891ceee",
+      "curation_notes": "Kotelnicheskaya Embankment 25, Moscow. Per the file description, a Narkomlegprom-era apartment building. From Commons category \"Stalinist architecture in Moscow\", same embankment district as the Kotelnicheskaya \"Seven Sisters\" skyscraper."
     },
     {
       "id": "ref_016",
-      "commons_file": "File:Abandoned_Soviet_factory_interior_Russia.jpg",
+      "commons_file": "File:Gennady Shpalikov Tverskaya 7.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Sergei Larenkov / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Abandoned factory floor, Russia. Concrete columns at regular intervals, broken glass overhead, decay and light shafts. Models the abandoned-industrial atmosphere."
+      "attribution": "Amm789 / Wikimedia Commons",
+      "sha256": "aa928cc81b01b4be528e3d815e95353d385fbaaf64b565e916eff08cbcc59d9d",
+      "curation_notes": "1-ya Tverskaya-Yamskaya 13, Moscow. From Commons category \"Stalinist architecture in Moscow\". Residential facade with commemorative plaque noted in the file description."
     },
     {
       "id": "ref_017",
-      "commons_file": "File:Zelenograd_microdistrict_panel_block.jpg",
+      "commons_file": "File:Moscow Krasnoprudnaya Street 3-5 2020-11 1605107619.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Ludvig14 / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Zelenograd panel block. Seam-jointed precast panels in overcast light. Joint lines become implicit tile grid. Very clean head-on framing."
+      "attribution": "Amm789 / Wikimedia Commons",
+      "sha256": "3e369b834985a31adaf1cd3b84cf08456eb9b1350c71e1c123f58a9c0701fe5c",
+      "curation_notes": "Krasnoprudnaya Street 3/5, Moscow. From Commons category \"Stalinist architecture in Moscow\"."
     },
     {
       "id": "ref_018",
-      "commons_file": "File:Brutalist_housing_estate_Moscow_oblique.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Sergey Norin / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Moscow brutalist housing, mild oblique angle. Shows corner treatment and balcony rhythm. Useful for wall-floor transition silhouette reference."
+      "commons_file": "File:Moscow, Kosmodamianskaya Embankment 32-34, February 2013 01.jpg",
+      "license": "CC0",
+      "attribution": "Retired electrician / Wikimedia Commons",
+      "sha256": "39203ccb864ce491ee3e142cda7b89bb8adfe27c742391ac74bc7675e8d9b7e2",
+      "curation_notes": "Kosmodamianskaya Embankment 32-34, Moscow. Per the file description, a housing complex begun before WWII and completed in 1945. From Commons category \"Stalinist architecture in Moscow\"."
     },
     {
       "id": "ref_019",
-      "commons_file": "File:Institute_of_Physical_Culture_Moscow.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "A.Savin / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Soviet sports institute, Moscow. Horizontal ribbon windows alternating with concrete spandrels. Highly regular module, good rhythm reference for repeating tile sets."
+      "commons_file": "File:Moscow, Paveletskaya Embankment 4, August 2012.jpg",
+      "license": "CC0",
+      "attribution": "Retired electrician / Wikimedia Commons",
+      "sha256": "42e201de42153d92f0912410b0fbf0979280ff7d0f0b2aebe8d4fee6cb9a3863",
+      "curation_notes": "Paveletskaya Embankment 4, Moscow. From Commons category \"Stalinist architecture in Moscow\"."
     },
     {
       "id": "ref_020",
-      "commons_file": "File:Akademgorodok_research_institute_Novosibirsk.jpg",
+      "commons_file": "File:Москва, Большая Грузинская улица, 36, строение 3.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "A.Savin / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Research institute, Akademgorodok. Late-Soviet institutional modernism. Deep-set windows casting shadow grids on concrete spandrel. Strong value contrast."
+      "attribution": "AndyVolykhov / Wikimedia Commons",
+      "sha256": "ae93deff85560d0be3fe85a04edfddd98d196b812bb9b2b2c53aefe9da450fd6",
+      "curation_notes": "Residential building, Bolshaya Gruzinskaya St 36 bld. 3, Moscow. From Commons category \"Stalinist architecture in Moscow\"."
     },
     {
       "id": "ref_021",
-      "commons_file": "File:Vilnius_Lazdynai_housing_estate.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Benas Šarka / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Lazdynai, Vilnius — award-winning Soviet housing (1973). Terraced on hillside, standardised modules. Shows module stacking and silhouette variety from identical units."
+      "commons_file": "File:Moscow, Sadovnicheskaya 51 May 2022 01.jpg",
+      "license": "CC0",
+      "attribution": "Retired electrician / Wikimedia Commons",
+      "sha256": "974f88e3592ca419ead0a6da873d185090bb6a1620107273ce2ec9c14075fa8a",
+      "curation_notes": "Sadovnicheskaya Street 51, Moscow -- per the file description, an 1939-built structure on the corner of Komissariatsky Lane. From Commons category \"Stalinist architecture in Moscow\"."
     },
     {
       "id": "ref_022",
-      "commons_file": "File:Riga_Academy_of_Sciences.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Ikars Kublins / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Riga Academy of Sciences (Stalinist skyscraper, 1958). Stepped massing, repetitive window grids across large floorplate. Scale and mass reference."
+      "commons_file": "File:Moscow, Bolshaya Andronyevskaya 11-13 May 2022 12.jpg",
+      "license": "CC0",
+      "attribution": "Retired electrician / Wikimedia Commons",
+      "sha256": "ddeab01dedd3828a315703aebf6233f0e16f73df1f95eecc65d26e5dd4a89b0a",
+      "curation_notes": "Bolshaya Andronyevskaya 11-13, Moscow -- per the file description, a seven-storey \"house with arches\" from 1940. From Commons category \"Stalinist architecture in Moscow\"."
     },
     {
       "id": "ref_023",
-      "commons_file": "File:Tallinn_Lasnamae_panel_blocks.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Kaido Haagen / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Lasnamäe panel estates, Tallinn. Estonian late-Soviet housing. Identical slab blocks against overcast — shows the repetition-as-landscape effect."
+      "commons_file": "File:Main building of Moscow State University IMG 0042 01.jpg",
+      "license": "CC-BY-4.0",
+      "attribution": "Sunny365days / Wikimedia Commons",
+      "sha256": "769c5426b14ebc8a797f68c95b77aeb24b66636077e41c43b0d733e11f9bd69b",
+      "curation_notes": "Moscow State University main building, modern photograph. One of the Stalinist \"Seven Sisters\" skyscrapers; massive stepped facade with repetitive window grid."
     },
     {
       "id": "ref_024",
-      "commons_file": "File:Yerevan_Mashtots_Avenue_Soviet_housing.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Raffi Kojian / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Soviet housing, Yerevan. Tufa stone cladding on concrete frame — warm variant of the grey range, showing the oxide/stone notes in the palette."
+      "commons_file": "File:Main building of Moscow State University IMG 0042 03.jpg",
+      "license": "CC-BY-4.0",
+      "attribution": "Sunny365days / Wikimedia Commons",
+      "sha256": "77dcd322ffa730a0cb232160da5e90cd7cee593f53fd6b4eadc70d174947afbb",
+      "curation_notes": "Moscow State University main building, modern photograph, alternate angle from the same series as IMG 0042 01."
     },
     {
       "id": "ref_025",
-      "commons_file": "File:Almaty_Soviet_era_housing_block.jpg",
+      "commons_file": "File:Moscou (novembre 2001) - 1.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Altayirok / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Soviet-era housing in Almaty. Central Asian context adds dust and faded paint. Useful for the desaturated warm-grey end of the palette."
+      "attribution": "AntonyB / Wikimedia Commons",
+      "sha256": "adfff6a7bab10d90ebed131d9421fad254427cc8029da8d531b4d91c3fde0815",
+      "curation_notes": "General Moscow street view, November 2001, from a photo set that includes Moscow State University in its subject categories."
     },
     {
       "id": "ref_026",
-      "commons_file": "File:Tashkent_Administrative_Building_Soviet.jpg",
+      "commons_file": "File:1964 Hammond Slides Moscow State.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Vkotov / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Soviet administrative building, Tashkent. Precast concrete with decorative screens — shows how surface ornament can be achieved within the geometry."
+      "attribution": "Thomas Taylor Hammond (1920-1993) / Wikimedia Commons",
+      "sha256": "264ca6c5051eb955cad751c63862f463b1863c51fbf99ed248affb322fe386ca",
+      "curation_notes": "Moscow State University main building, photographed 1964 by the University of Virginia's Hammond Collection. Historic archival photo of the Stalinist skyscraper (one of the \"Seven Sisters\"); repetitive window grid across a massive stepped facade."
     },
     {
       "id": "ref_027",
-      "commons_file": "File:Minsk_Nemiga_panel_apartment_blocks.jpg",
+      "commons_file": "File:Hammond Slides MGU.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Homoatrox / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Nemiga-area panel blocks, Minsk. Row of identical slabs, very flat lighting. Nearly orthographic side elevation visible in foreground block — direct tilestrip reference."
+      "attribution": "Thomas Taylor Hammond (1920-1993) / Wikimedia Commons",
+      "sha256": "a34f9445c970480a30ecac6985a71a84424cb08a44369ad758fc335ad716eb0f",
+      "curation_notes": "Moscow State University main building interior/reading-room view, from the 1964 Hammond Collection archival photo set. University of Virginia Center for Russian, East European and Eurasian Studies."
     },
     {
       "id": "ref_028",
-      "commons_file": "File:Kaunas_Soviet_housing_Eiguliai.jpg",
+      "commons_file": "File:Apartment House at Obvodny Canal SPB 01.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Antanas Šimkus / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Eiguliai estate, Kaunas. Lithuanian Soviet housing. Very plain rectangular panels with square window grid. High-contrast in raking autumn light — good for shadow study."
+      "attribution": "Florstein (Telegram:WikiPhoto.Space) / Wikimedia Commons",
+      "sha256": "d7fd20c488f32df6d65573a65fe77ff367ba19de1d3513f2265910ff7ccb7440",
+      "curation_notes": "Apartment house at Obvodny Canal, Saint Petersburg. From Commons category \"Constructivist architecture in Saint Petersburg\". Repetitive residential block massing."
     },
     {
       "id": "ref_029",
-      "commons_file": "File:Kyiv_Darnytsya_panel_housing_estate.jpg",
+      "commons_file": "File:SPb ProspektStachek15 4661.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Brücke-Osteuropa / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Darnytsia housing, Kyiv. 1970s-80s Kyiv panel estate. Road-level view shows wall-floor interface at scale, pedestrian-height reference."
+      "attribution": "Ludvig14 / Wikimedia Commons",
+      "sha256": "f805cfe5b1552b61577a6118a4016f6572d9f66bd90949fd965635387a457f0a",
+      "curation_notes": "Residential house of the Kirovsky Plant, Prospekt Stachek 15, Saint Petersburg. From Commons category \"Constructivist architecture in Saint Petersburg\"."
     },
     {
       "id": "ref_030",
-      "commons_file": "File:Volgograd_Lenin_Square_Stalinist_architecture.jpg",
+      "commons_file": "File:Щемиловский жилмассив (дом-«колбаса»).JPG",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Nataliya Semenova / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Lenin Square, Volgograd. Stalinist neoclassical facades flanking a plaza. Colossal repeated archway rhythm, institutional ochre plaster over concrete — warm palette extreme."
+      "attribution": "Rasaddin / Wikimedia Commons",
+      "sha256": "277777a4695b57225611cdde9789f330807ad67e4e6fc25618fac6e19c0d4040",
+      "curation_notes": "Workers' housing block in the Shchemilovka residential complex, Saint Petersburg -- per the file description, nicknamed the \"sausage house\" for its curved plan. From Commons category \"Constructivist architecture in Saint Petersburg\"."
     },
     {
       "id": "ref_031",
-      "commons_file": "File:Abandoned_Soviet_collective_farm_building.jpg",
+      "commons_file": "File:Геологический комитет, конструктивистский корпус.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Sergei Larenkov / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Abandoned kolkhoz building, Russia. Collapsed roof sections, bare concrete, weed growth at margins. Heavy decay — good for weathering texture reference."
+      "attribution": "Екатерина Борисова / Wikimedia Commons",
+      "sha256": "92f7e051cba0e3d68e1308b5194e5c4bc2a34e78188a6e9036b1104ce9459e00",
+      "curation_notes": "Geological Committee building (new wing), 19th Line of Vasilyevsky Island 24, Saint Petersburg. From Commons category \"Constructivist architecture in Saint Petersburg\"."
     },
     {
       "id": "ref_032",
-      "commons_file": "File:Soviet_factory_exterior_wall_close.jpg",
+      "commons_file": "File:Дрогобич (237).JPG",
       "license": "CC-BY-SA-4.0",
-      "attribution": "George Chernilevsky / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Close-up factory wall. Precast concrete panels with visible aggregate, rust runs from embedded iron, moss in joints. Material texture reference — best for LoRA surface learning."
+      "attribution": "ЯдвигаВереск / Wikimedia Commons",
+      "sha256": "eee62b6ff868314423cb79b5e57cf1d320484fca30004365cb3d98ef7459032a",
+      "curation_notes": "Residential building, Yu. Drohobycha St 3, Drohobych, Ukraine. From Commons category \"Constructivist architecture in Ukraine\"."
     },
     {
       "id": "ref_033",
-      "commons_file": "File:Pripyat_apartment_block_facade.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Timm Suess / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Apartment facade, Pripyat. 40 years of abandonment — faded panel paint, vegetation beginning to reassert, structural bones still dominant. Canonical abandoned-Soviet reference."
+      "commons_file": "File:Фрагмент фасада будинку \"Слово\", вул. Культури, 9, м.Харків.JPG",
+      "license": "CC-BY-SA-3.0",
+      "attribution": "Denis Vitchenko / Wikimedia Commons",
+      "sha256": "f3c59bbbf2260048df5722dd054d64b0534a82c01b5d722e02ba49729344da12",
+      "curation_notes": "Facade fragment of the \"Slovo\" building, Kultury St 9, Kharkiv -- per the file description, built 1929-1934 as housing for Ukrainian Soviet writers. From Commons category \"Constructivist architecture in Ukraine\"."
     },
     {
       "id": "ref_034",
-      "commons_file": "File:Pripyat_Palace_of_Culture_exterior.jpg",
+      "commons_file": "File:Комплекс залізничного вокзалу — станція Ніжин, де в роки нацистської окупації діяло 5 підпільних груп 74-104-0062 04.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Wendelin Jacober / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Palace of Culture, Pripyat. Concrete modernist cultural building abandoned post-1986. Strong horizontal mass, stripped to essential geometry by abandonment."
+      "attribution": "Klymenko Tatyana / Wikimedia Commons",
+      "sha256": "80ee878c5b99df11cf7d38896626bae87c4874c3d9f84c37aa7c3c32c76bf929",
+      "curation_notes": "Nizhyn railway station complex, Ukraine. From Commons category \"Constructivist architecture in Ukraine\"."
     },
     {
       "id": "ref_035",
-      "commons_file": "File:Chernobyl_NPP_administration_building.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Ingmar Runge / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "ChNPP administration building. Nuclear-plant institutional modernism — exactly the visual register the game targets. Concrete, functional geometry, institutional scale."
+      "commons_file": "File:Mariupol 2007 (33).jpg",
+      "license": "CC-BY-SA-3.0",
+      "attribution": "Olegzima / Wikimedia Commons",
+      "sha256": "93ac88ea69e2a4de118b03ecb977dbf3f30b8ada98b00f7394c2e8dd102af16e",
+      "curation_notes": "Building in Mariupol, categorized on Commons under \"Brutalist architecture in Ukraine\" and \"Mariupol State University\"."
     },
     {
       "id": "ref_036",
-      "commons_file": "File:Soviet_institutional_corridor_interior.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "George Chernilevsky / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Institutional corridor. Tiled lower walls (cream/green), painted upper section, fluorescent strip lighting, linoleum floor. The interior tileset material palette in one frame."
+      "commons_file": "File:National Academy for Public Administration (Ukraine).jpg",
+      "license": "CC-BY-SA-3.0",
+      "attribution": "Pressnapa / Wikimedia Commons",
+      "sha256": "531c328b25e947b87c3f8932389770e8b594260d3284de8f9a01ea7b9d698edb",
+      "curation_notes": "National Academy for Public Administration teaching building, Yevhena Pottier St 20, Kyiv. From Commons category \"Brutalist architecture in Ukraine\"."
     },
     {
       "id": "ref_037",
-      "commons_file": "File:Soviet_stairwell_concrete_exposed.jpg",
-      "license": "CC-BY-SA-4.0",
-      "attribution": "Igorgubernatov / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Exposed-concrete stairwell. Formwork-marked concrete, steel handrail, terrazzo floor edge. Good for the stairwell vertical-transition tile type."
+      "commons_file": "File:Poltava Regional Library.JPG",
+      "license": "CC-BY-SA-3.0",
+      "attribution": "Pavlo1 / Wikimedia Commons",
+      "sha256": "b36943891dba44223b7ce40e33f7d4a50528611f462c3c16a7ccaa93086c1133",
+      "curation_notes": "Poltava Regional Library, Ukraine. From Commons category \"Brutalist architecture in Ukraine\"."
     },
     {
       "id": "ref_038",
-      "commons_file": "File:Soviet_boiler_room_abandoned_interior.jpg",
+      "commons_file": "File:Kozelnytska 4 Lviv.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Sergei Larenkov / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "Abandoned boiler room. Pipes, valves, concrete walls, rust and corrosion throughout. Industrial prop reference for the Signal Tower mechanical archetype."
+      "attribution": "ElisavetaIvanova / Wikimedia Commons",
+      "sha256": "fdad9a949dbb0a00453f64c269092b1c37cd1693ab1a16e385bf3082ff68c6c8",
+      "curation_notes": "Building at Kozelnytska 4, Lviv. From Commons category \"Brutalist architecture in Ukraine\"."
     },
     {
       "id": "ref_039",
-      "commons_file": "File:GES_2_power_station_Moscow_exterior.jpg",
+      "commons_file": "File:2025-02-08 45 Vazha-Pshavela Avenue.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "A.Savin / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "GES-2 power station exterior (1907, renovated). Brick and concrete combined industrial heritage. Chimneys, geometric massing, industrial scale — good for exterior tile reference."
+      "attribution": "Yuri Samoylov / Wikimedia Commons",
+      "sha256": "3172f6325ac36e2f918a6f6b5ed788ff70f5423280a0ce0cccb689b4d1f08b84",
+      "curation_notes": "Office building, Vazha-Pshavela Avenue, Tbilisi. From Commons category \"Brutalist architecture in Georgia (country)\". Flat institutional facade."
     },
     {
       "id": "ref_040",
-      "commons_file": "File:ZIL_factory_Moscow_exterior_wall.jpg",
+      "commons_file": "File:Former Building of the Science-Technology Department of the National Scientific Library of Georgia, Tbilisi.jpg",
       "license": "CC-BY-SA-4.0",
-      "attribution": "Alexei Naroditsky / Wikimedia Commons",
-      "sha256": null,
-      "curation_notes": "ZIL factory exterior wall. Pre-war Soviet industrial brick with later concrete additions. Weathered surface, geometric mass. Seam between different construction eras visible."
+      "attribution": "FingerWiki / Wikimedia Commons",
+      "sha256": "e9eee7fd4fecbe0039e5951283edddcfba7983d2decd6750d48bdaa5a6382375",
+      "curation_notes": "Former Science-Technology Department building of the National Scientific Library of Georgia, Merab Kostava St, Tbilisi. From Commons category \"Brutalist architecture in Georgia (country)\"."
+    },
+    {
+      "id": "ref_041",
+      "commons_file": "File:House in Krasny Pereulok III.JPG",
+      "license": "CC-BY-SA-3.0",
+      "attribution": "Николай Путин / Wikimedia Commons",
+      "sha256": "c69d26f5815ef27cf5dd71fabf379222868c041195081553f3acf7c991e95082",
+      "curation_notes": "House in Krasny Pereulok, Russia. From Commons category \"Brutalist architecture in Russia\"."
+    },
+    {
+      "id": "ref_042",
+      "commons_file": "File:Philharmony-kostroma.jpg",
+      "license": "CC-BY-SA-3.0",
+      "attribution": "A.Savin / Wikimedia Commons",
+      "sha256": "d4cf4f69b81b470b5f0acfa6db009d533543305118544843eeb8302ea2fa323d",
+      "curation_notes": "Oblast Philharmony, Kostroma, Russia. From Commons category \"Brutalist architecture in Russia\"."
+    },
+    {
+      "id": "ref_043",
+      "commons_file": "File:Сморгонский районный исполнительный комитет.jpg",
+      "license": "CC-BY-SA-4.0",
+      "attribution": "Herasimchyk / Wikimedia Commons",
+      "sha256": "8967a4e22f79e53467a1113442434641295760b9ba12023d3e89e8b6e9b26f9d",
+      "curation_notes": "Smarhon district executive committee building, Belarus. From Commons category \"Brutalist architecture in Belarus\"."
+    },
+    {
+      "id": "ref_044",
+      "commons_file": "File:Arkadak. House of Culture 04524.jpg",
+      "license": "CC-BY-3.0",
+      "attribution": "Krupski Oleg / Wikimedia Commons",
+      "sha256": "8b462ea01d11237d665fd0c227985cef2512ce001776e6c2623454077dccd8bf",
+      "curation_notes": "House of Culture, Arkadak, Russia. From Commons category \"Stalinist architecture in Russia\" (regional)."
     }
   ]
 }

@@ -19,6 +19,98 @@ struct PendingMigration {
     fs::path upFile;
 };
 
+/// Split a SQL script on `;` statement terminators and return one statement
+/// per element.  Leading/trailing whitespace is stripped from each segment.
+/// Segments that consist only of whitespace or `--` line comments are omitted
+/// so that a trailing newline after the last `;` never produces a spurious
+/// empty exec.
+///
+/// The splitter is comment-aware: a `;` that appears after `--` on the same
+/// line is inside a line comment and does NOT act as a statement terminator.
+/// This handles migration files that include SQL fragments in their header
+/// comments (e.g. `-- HMAC-SHA256(key, phrase); the phrase cannot be ...`).
+///
+/// Postgres (via libpq prepared-statement path) rejects multi-command strings,
+/// so migration files must be split and executed one statement at a time.
+static std::vector<std::string> splitStatements(const std::string &sql) {
+    std::vector<std::string> stmts;
+    std::string current;
+    bool inLineComment = false;
+
+    for (std::string::size_type i = 0; i < sql.size(); ++i) {
+        const char c = sql[i];
+
+        if (inLineComment) {
+            current += c;
+            if (c == '\n') {
+                inLineComment = false;
+            }
+            continue;
+        }
+
+        // Detect start of a -- line comment.
+        if (c == '-' && i + 1 < sql.size() && sql[i + 1] == '-') {
+            inLineComment = true;
+            current += c;
+            continue;
+        }
+
+        if (c == ';') {
+            // Statement boundary — stash the accumulated text.
+            const auto first = current.find_first_not_of(" \t\r\n");
+            if (first != std::string::npos) {
+                const auto last = current.find_last_not_of(" \t\r\n");
+                std::string seg = current.substr(first, last - first + 1);
+
+                // Skip segments whose non-blank lines are all `--` comments.
+                bool hasSql = false;
+                std::istringstream ss(seg);
+                for (std::string line; std::getline(ss, line);) {
+                    const auto lf = line.find_first_not_of(" \t");
+                    if (lf == std::string::npos) {
+                        continue;
+                    }
+                    if (line.compare(lf, 2, "--") != 0) {
+                        hasSql = true;
+                        break;
+                    }
+                }
+                if (hasSql) {
+                    stmts.push_back(std::move(seg));
+                }
+            }
+            current.clear();
+        } else {
+            current += c;
+        }
+    }
+
+    // Handle trailing content after the last `;` (or files with no `;`).
+    const auto first = current.find_first_not_of(" \t\r\n");
+    if (first != std::string::npos) {
+        const auto last = current.find_last_not_of(" \t\r\n");
+        std::string seg = current.substr(first, last - first + 1);
+
+        bool hasSql = false;
+        std::istringstream ss(seg);
+        for (std::string line; std::getline(ss, line);) {
+            const auto lf = line.find_first_not_of(" \t");
+            if (lf == std::string::npos) {
+                continue;
+            }
+            if (line.compare(lf, 2, "--") != 0) {
+                hasSql = true;
+                break;
+            }
+        }
+        if (hasSql) {
+            stmts.push_back(std::move(seg));
+        }
+    }
+
+    return stmts;
+}
+
 } // namespace
 
 MigrationRunner::MigrationRunner(std::string migrationsDir)
@@ -86,7 +178,11 @@ int MigrationRunner::applyPending(const drogon::orm::DbClientPtr &client) const 
         std::stringstream buffer;
         buffer << in.rdbuf();
 
-        client->execSqlSync(buffer.str());
+        // Execute each statement individually: Postgres rejects multi-command
+        // strings when libpq uses the prepared-statement protocol (PQexecParams).
+        for (const auto &stmt : splitStatements(buffer.str())) {
+            client->execSqlSync(stmt);
+        }
         client->execSqlSync("INSERT INTO schema_migrations (version) VALUES (" +
                             std::to_string(migration.version) + ")");
         ++applied;

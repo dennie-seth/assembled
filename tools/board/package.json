@@ -14,7 +14,10 @@
     "build": "vite build",
     "lint": "eslint .",
     "validate:backlog": "node scripts/validateBacklog.js",
-    "check:planner-diff-guard": "node scripts/checkPlannerDiffGuard.js"
+    "check:planner-diff-guard": "node scripts/checkPlannerDiffGuard.js",
+    "check:deliverable": "node scripts/checkDeliverable.js",
+    "check:live-run": "node scripts/checkLiveRun.js",
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

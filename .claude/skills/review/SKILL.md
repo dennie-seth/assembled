@@ -37,7 +37,31 @@ edits production code, only the card's status and notes.
      instead, the file stays); every rewritten/new card cites a specific
      `docs/` reference, not invented scope; new ids follow the gap-tolerant
      `T-NNNN` scheme with no reuse.
-4. **Emit a verdict.**
+4. **Audit the card's own Acceptance criteria and deliverable — separately
+   from `verify` passing.** `verify` going green is not a verdict on its
+   own; it says the check discipline was followed, not that the card's
+   acceptance criteria were met.
+   - Work through the card's `## Acceptance` checklist one criterion at a
+     time (`reviewerPrompt.js` puts this list directly in your prompt via
+     `buildAcceptanceCriteriaSection`). For each, cite concrete evidence —
+     a command you ran, a file you inspected — not "the code looks
+     correct." Any single unmet or unconfirmable criterion is a FAIL for
+     the whole card. A card with no parseable Acceptance section at all is
+     also a FAIL, not a skipped check.
+   - Distrust a test that mocks away the very side effect a criterion
+     requires (e.g. mocked `urllib`/`requests` so no real network call,
+     file write, or upload ever happens) — a green suite built entirely on
+     such mocks proves the code *could* satisfy the criterion, not that it
+     *did*.
+   - If the card's `deliverable_type` is `artifact` (its real output is a
+     produced file — an asset, a doc, an attached image — not the code
+     that creates one), run
+     `node tools/board/scripts/checkDeliverable.js <id>` and treat a
+     nonzero exit as a FAIL naming the missing artifact. This is the
+     T-0136 gap: an uploader CLI shipped with fully mocked tests,
+     ruff+pytest green, and not one image was ever actually fetched or
+     attached — nothing checked for the attachment itself.
+5. **Emit a verdict.**
    - **PASS** — `verify` green and the audit finds nothing disqualifying.
      Move the card to `review`, attach a short summary of what was checked.
    - **FAIL** — either `verify` is red, or the audit finds a rule

@@ -1678,6 +1678,61 @@ describe("RunOrchestrator.hasActiveRuns / onIdle -- restart-safety window", () =
   });
 });
 
+describe("RunOrchestrator — persists run liveness state for the orphan reaper", () => {
+  it("records the child pid + run log path at the start of each phase, and clears it once runCard finishes", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const writeRunStateFn = vi.fn(async () => {});
+    const clearRunStateFn = vi.fn(async () => {});
+    const orchestrator = makeOrchestrator({ store, git, runner, hub, writeRunStateFn, clearRunStateFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.stdout.emit("data", ndjson(assistantEvent("implementing...")));
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(writeRunStateFn).toHaveBeenCalledTimes(2);
+    expect(writeRunStateFn).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ runsDir: "/repo/tasks/.runs", taskId: "T-0001", pid: 4242 })
+    );
+    expect(writeRunStateFn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ runsDir: "/repo/tasks/.runs", taskId: "T-0001", pid: 4242 })
+    );
+    expect(clearRunStateFn).toHaveBeenCalledTimes(1);
+    expect(clearRunStateFn).toHaveBeenCalledWith(expect.objectContaining({ runsDir: "/repo/tasks/.runs", taskId: "T-0001" }));
+  });
+
+  it("clears run state even when a phase crashes and the card is blocked", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const hub = { broadcast: vi.fn() };
+    const writeRunStateFn = vi.fn(async () => {});
+    const clearRunStateFn = vi.fn(async () => {});
+    const orchestrator = makeOrchestrator({ store, git, runner, hub, writeRunStateFn, clearRunStateFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 1, null);
+    await runPromise;
+
+    expect(writeRunStateFn).toHaveBeenCalledTimes(1);
+    expect(clearRunStateFn).toHaveBeenCalledTimes(1);
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+});
+
 describe("appendNote", () => {
   it("appends a heading and text to the end of a task body", () => {
     const result = appendNote("## Context\nOriginal.\n", "Validation: PASS", "all good");
