@@ -237,9 +237,12 @@ class TestCollapse:
         agent = next(iter(engine.state.agents.values()))
         assert agent.state != AgentState.QUIT
 
-        engine.tick()  # tick 10 — collapse fires
+        engine.tick()  # tick 10 — collapse fires; identity survives into new universe
         agent = next(iter(engine.state.agents.values()))
-        assert agent.state == AgentState.QUIT
+        # Collapse no longer terminates the identity (T-0129) — it starts a
+        # new universe. The agent must still be active, not QUIT.
+        assert agent.state != AgentState.QUIT
+        assert agent.universe_count == 1
 
     def test_first_universe_grace_extends_collapse(self):
         cfg = make_cfg(
