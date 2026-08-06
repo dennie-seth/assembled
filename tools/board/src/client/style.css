@@ -439,3 +439,25 @@ body:has(#terminal-panel.collapsed) #side-panel {
 .deps-chip-remove:hover {
   opacity: 1;
 }
+
+.batch-sentinel {
+  height: 1px;
+}
+
+#go-up-btn {
+  position: fixed;
+  bottom: calc(var(--terminal-height) + 1rem);
+  right: 1rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 0.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: Canvas;
+  cursor: pointer;
+  font-size: 0.85rem;
+  box-shadow: 0 2px 8px color-mix(in srgb, currentColor 20%, transparent);
+  z-index: 100;
+}
+
+#go-up-btn[hidden] {
+  display: none;
+}

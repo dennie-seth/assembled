@@ -1,5 +1,6 @@
 import { createApp } from "./app.js";
 import { createTerminalPanel } from "./terminalPanel.js";
+import { initGoUpButton } from "./goUp.js";
 
 const boardRoot = document.getElementById("board");
 const detailRoot = document.getElementById("detail");
@@ -13,6 +14,13 @@ const terminalToggle = document.getElementById("terminal-toggle");
 
 const app = createApp({ boardRoot, detailRoot, consoleRoot, createFormRoot, sidePanelRoot, gitStatusRoot });
 app.init();
+
+const goUpBtn = document.createElement("button");
+goUpBtn.id = "go-up-btn";
+goUpBtn.type = "button";
+goUpBtn.textContent = "↑ Go up";
+document.body.appendChild(goUpBtn);
+initGoUpButton(goUpBtn);
 
 if (newCardBtn) {
   newCardBtn.addEventListener("click", () => app.handleToggleCreateForm());

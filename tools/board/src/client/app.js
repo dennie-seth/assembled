@@ -15,7 +15,7 @@ import {
   removeAttachment
 } from "./api.js";
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
-import { renderBoard } from "./boardView.js";
+import { renderBoard, BATCH_SIZE } from "./boardView.js";
 import { renderDetailPanel } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
 import { renderCreateForm } from "./createForm.js";
@@ -52,6 +52,7 @@ export function createApp({
   let createError = null;
   const runLogs = new Map();
   const columnSort = new Map(STATUSES.map((status) => [status, "id"]));
+  const columnBatch = new Map(STATUSES.map((status) => [status, BATCH_SIZE]));
   let gitStatus = null;
   let knownGitHead = null;
 
@@ -65,7 +66,9 @@ export function createApp({
       onExportDone: handleExportDone,
       error,
       columnSort,
-      onSortChange: handleSortChange
+      onSortChange: handleSortChange,
+      columnBatch,
+      onShowMore: handleShowMore
     });
     const selected = selectedId !== null ? (tasks.find((task) => task.id === selectedId) ?? null) : null;
     if (sidePanelRoot) {
@@ -136,6 +139,11 @@ export function createApp({
 
   function handleSortChange(status, sortKey) {
     columnSort.set(status, sortKey);
+    render();
+  }
+
+  function handleShowMore(status) {
+    columnBatch.set(status, (columnBatch.get(status) ?? BATCH_SIZE) + BATCH_SIZE);
     render();
   }
 
@@ -333,6 +341,7 @@ export function createApp({
     handleUploadAttachment,
     handleRemoveAttachment,
     handleSortChange,
+    handleShowMore,
     handleToggleCreateForm,
     handleCancelCreate,
     handleCreateSubmit,
