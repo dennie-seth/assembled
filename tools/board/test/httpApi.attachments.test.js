@@ -111,7 +111,7 @@ describe("POST /api/tasks/:id/attachments", () => {
     expect(updated.attachments[0].uploaded_by).toBe("Dennie");
   });
 
-  it("appends to existing attachments rather than replacing them", async () => {
+  it("keeps distinct filenames as separate coexisting entries", async () => {
     const task = await createTask();
     await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, {
       method: "POST",
@@ -125,6 +125,74 @@ describe("POST /api/tasks/:id/attachments", () => {
 
     const updated = await res.json();
     expect(updated.attachments.map((a) => a.filename)).toEqual(["first.png", "second.png"]);
+  });
+
+  it("replaces the metadata entry in place when the same filename is uploaded twice, instead of appending a duplicate", async () => {
+    const task = await createTask();
+    const bigBinary = Buffer.concat([TINY_PNG, Buffer.alloc(50, 7)]);
+
+    await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, {
+      method: "POST",
+      body: pngUploadForm({ filename: "reference.png", uploadedBy: "First" })
+    });
+    const firstTask = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+    const firstUploadedAt = firstTask.attachments[0].uploaded_at;
+
+    const secondForm = new FormData();
+    secondForm.append("file", new Blob([bigBinary], { type: "image/png" }), "reference.png");
+    secondForm.append("uploaded_by", "Second");
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, {
+      method: "POST",
+      body: secondForm
+    });
+
+    expect(res.status).toBe(201);
+    const updated = await res.json();
+    expect(updated.attachments).toHaveLength(1);
+    expect(updated.attachments[0]).toMatchObject({
+      filename: "reference.png",
+      size: bigBinary.length,
+      uploaded_by: "Second"
+    });
+    expect(updated.attachments[0].uploaded_at >= firstUploadedAt).toBe(true);
+
+    const onDisk = await fs.readFile(path.join(tasksDir, "attachments", task.id, "reference.png"));
+    expect(onDisk.equals(bigBinary)).toBe(true);
+  });
+
+  it("commits the replacement as a modification, not a duplicate add, when re-uploading the same filename", async () => {
+    const task = await createTask();
+    await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, { method: "POST", body: pngUploadForm() });
+
+    const secondForm = new FormData();
+    secondForm.append("file", new Blob([Buffer.alloc(20, 9)], { type: "application/octet-stream" }), "reference.png");
+    await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, { method: "POST", body: secondForm });
+
+    const { stdout: status } = await git(
+      ["status", "--porcelain", "--", `tasks/${task.id}.md`, `tasks/attachments/${task.id}/reference.png`],
+      repoRoot
+    );
+    expect(status.trim()).toBe("");
+    const { stdout: log } = await git(["log", "--oneline", "--", `tasks/attachments/${task.id}/reference.png`], repoRoot);
+    expect(log.trim().split("\n")).toHaveLength(2);
+  });
+
+  it("re-uploading the same filename remains downloadable and consistent via GET after the replace", async () => {
+    const task = await createTask();
+    await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, { method: "POST", body: pngUploadForm() });
+
+    const newBytes = Buffer.alloc(30, 5);
+    const secondForm = new FormData();
+    secondForm.append("file", new Blob([newBytes], { type: "application/octet-stream" }), "reference.png");
+    await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, { method: "POST", body: secondForm });
+
+    const taskRes = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+    expect(taskRes.attachments).toHaveLength(1);
+
+    const downloadRes = await fetch(`${baseUrl}/api/tasks/${task.id}/attachments/reference.png`);
+    expect(downloadRes.status).toBe(200);
+    const bytes = Buffer.from(await downloadRes.arrayBuffer());
+    expect(bytes.equals(newBytes)).toBe(true);
   });
 
   it("commits both the card file and the attachment file to git in one commit", async () => {

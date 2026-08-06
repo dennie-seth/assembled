@@ -44,7 +44,8 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
   const orphanReaper = createOrphanReaper({
     store,
     hub,
-    activeCardIds: orchestrator.activeCardIds
+    activeCardIds: orchestrator.activeCardIds,
+    runsDir: path.join(tasksDir, ".runs")
   });
 
   watcher.on("task-changed", (event) => hub.broadcast(event));

@@ -375,9 +375,13 @@ async function handleAddComment(store, id, req, res, repoRoot, tasksDir) {
  * Uploads a file attachment to a card (works from a browser's FormData POST or from
  * `curl -F file=@path`). Parses the multipart body with busboy (raw Node http, no express),
  * sniffs the real mime type and rejects active markup (see resolveMimeType), writes the file
- * to `tasks/attachments/<id>/<filename>`, appends `{ filename, size, mimetype, uploaded_by,
- * uploaded_at }` metadata to the card (mirrors handleAddComment's `comments` pattern), and
- * commits both the card file and the new attachment in one commit.
+ * to `tasks/attachments/<id>/<filename>`, and records `{ filename, size, mimetype, uploaded_by,
+ * uploaded_at }` metadata on the card (mirrors handleAddComment's `comments` pattern). Re-uploading
+ * an existing filename REPLACES that entry in place (the file on disk is overwritten, and the
+ * single matching `attachments[]` entry is updated with the new size/mimetype/uploaded_by/
+ * uploaded_at) rather than appending a second, stale entry pointing at the same path -- exactly
+ * one metadata entry per stored filename is an invariant. Commits both the card file and the
+ * attachment in one commit either way.
  */
 async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir) {
   const task = await store.get(id);
@@ -418,7 +422,12 @@ async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir) {
     uploaded_by: uploadedBy,
     uploaded_at: new Date().toISOString()
   };
-  const attachments = [...(task.attachments ?? []), attachment];
+  const existing = task.attachments ?? [];
+  const existingIndex = existing.findIndex((a) => a.filename === safeName);
+  const isReplace = existingIndex !== -1;
+  const attachments = isReplace
+    ? existing.map((a, i) => (i === existingIndex ? attachment : a))
+    : [...existing, attachment];
 
   let updated;
   try {
@@ -432,10 +441,13 @@ async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir) {
     try {
       const cardRelPath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
       const attachmentRelPath = path.relative(repoRoot, destPath);
+      const message = isReplace
+        ? `chore(board): replace attachment ${safeName} on card ${id}`
+        : `chore(board): attach ${safeName} to card ${id}`;
       await commitPaths({
         repoRoot,
         filePaths: [cardRelPath, attachmentRelPath],
-        message: `chore(board): attach ${safeName} to card ${id}`
+        message
       });
     } catch (err) {
       // An attachment must never fail to save because git couldn't commit it -- see the
