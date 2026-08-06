@@ -34,4 +34,5 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP"]
 
 [tool.ruff.lint.isort]
+src = ["src", "tests"]
 known-first-party = ["conftest", "sim"]
