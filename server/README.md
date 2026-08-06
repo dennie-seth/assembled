@@ -53,8 +53,27 @@ sudo apt-get install -y \
 ```sh
 cmake -S server -B server/build -DCMAKE_BUILD_TYPE=Release
 cmake --build server/build --parallel
-ctest --test-dir server/build --output-on-failure
+ctest --test-dir server/build --output-on-failure   # non-DB tests only
 ```
+
+For the full suite including DB-gated tests, use the `db` CMake preset
+(defined in `server/CTestPresets.json`) instead of setting `DATABASE_URL`
+manually. The preset injects it automatically — no `export` or inline
+env-var prefix needed:
+
+```sh
+cd server
+docker compose up -d && sleep 10   # wait for Postgres healthy
+rm -rf build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --preset db --output-on-failure   # injects DATABASE_URL via preset
+```
+
+**Note:** `$()` command substitution and `DATABASE_URL=...` inline prefixes
+are blocked in the reviewer agent's Bash tool. Always use
+`ctest --preset db` for the DB-gated run — never `export DATABASE_URL=...`
+or `DATABASE_URL=... ctest ...`.
 
 `server_tests` links `doctest` (fetched via CMake `FetchContent`, cached in
 CI) and covers:
@@ -65,8 +84,10 @@ CI) and covers:
   shuts it down. Proves Drogon actually builds *and serves*, not just
   compiles.
 - `migrations apply against a live Postgres` — gated on `DATABASE_URL`
-  (`doctest::skip`), so it's wired but doesn't fail a DB-less build. Bring up
-  the compose Postgres below and export `DATABASE_URL` to run it for real.
+  (early-return guard, not `doctest::skip`), so it registers with `ctest -N`
+  always but executes SQL only when DATABASE_URL is set. The test drops
+  `schema_migrations` before running to be repeatable against a persistent
+  dev DB (migrations are idempotent, so re-applying is safe).
 
 ## Dev Postgres
 

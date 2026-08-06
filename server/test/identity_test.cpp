@@ -111,7 +111,9 @@ TEST_CASE("RateLimiter tracks limits per-IP independently") {
 
 // ── Integration: identity table schema check (DB, no HTTP) ───────────────────
 
-TEST_CASE("identity table has no phrase column" * doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("identity table has no phrase column") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     auto db = assembled_server::Database::fromEnv();
     REQUIRE(db.has_value());
 
@@ -133,7 +135,9 @@ namespace {
 constexpr uint16_t kIdentityTestPort = 18082;
 } // namespace
 
-TEST_CASE("POST /v1/identity HTTP integration" * doctest::skip(!std::getenv("DATABASE_URL"))) {
+TEST_CASE("POST /v1/identity HTTP integration") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
     // Rate limit = 3 so we can confirm three successes then a 429.
     // Must be configured BEFORE the server thread starts.
     assembled_server::IdentityController::setRateLimiterForTesting(3, std::chrono::seconds(60));

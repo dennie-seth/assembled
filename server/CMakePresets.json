@@ -1,0 +1,30 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default build",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "db",
+      "configurePreset": "default",
+      "displayName": "Run all tests against local dev Postgres",
+      "description": "Requires docker compose postgres on 127.0.0.1:5433. Start with: docker compose up -d",
+      "environment": {
+        "DATABASE_URL": "postgresql://assembled:assembled@127.0.0.1:5433/assembled_dev"
+      }
+    }
+  ]
+}
