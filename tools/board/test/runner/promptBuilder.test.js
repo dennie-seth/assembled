@@ -343,3 +343,35 @@ describe("buildPlannerPrompt -- deliverable_type and hardened acceptance criteri
     expect(prompt.toLowerCase()).toContain("not a restatement of the title");
   });
 });
+
+describe("buildPlannerPrompt -- acceptance completeness self-check (T-0141 lesson)", () => {
+  it("instructs the planner to enumerate every requirement the story implies and confirm each maps to a criterion", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("enumerate every distinct requirement");
+    expect(prompt.toLowerCase()).toContain("maps to at least one criterion");
+  });
+
+  it("tells the planner not to invent requirements the story never asked for", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("do not invent requirements");
+    expect(prompt.toLowerCase()).toContain("gold-plating");
+  });
+
+  it("tells the planner each named case, direction, or state needs its own criterion, never collapsed into one bullet", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("scroll right and left");
+    expect(prompt.toLowerCase()).toContain("never collapsed into a single bullet");
+  });
+
+  it("cites T-0141 as the cautionary example of a static-property criterion passing while the behavioral requirement stayed broken", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toContain("T-0141");
+    expect(prompt).toContain("overflow-x: auto");
+    expect(prompt.toLowerCase()).toContain("observable behavior");
+  });
+
+  it("ends the self-check with an explicit would-this-fully-solve-the-story question", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("completely solved");
+  });
+});
