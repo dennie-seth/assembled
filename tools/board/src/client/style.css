@@ -67,6 +67,17 @@ body {
   padding-bottom: 0.5rem;
 }
 
+/* When the side-panel is open it physically overlays the right side of the
+   board. Even with few columns that don't naturally overflow the viewport,
+   padding-right equal to the panel width guarantees the board's scrollable
+   content extends past the overlay — so every column is reachable by
+   scrolling right. Mathematical proof: at max scroll the last column's right
+   edge lands at clientWidth - paddingRight = clientWidth - panelWidth, which
+   is exactly the panel's left edge (fully clear, not behind it). */
+body:has(#side-panel:not([hidden])) .board {
+  padding-right: 28rem;
+}
+
 .column {
   flex: 1 0 14rem;
   background: color-mix(in srgb, currentColor 6%, transparent);
