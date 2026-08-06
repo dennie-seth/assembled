@@ -1,5 +1,9 @@
 import { STATUSES, groupTasksByStatus, computeBlockerCounts, sortTasks, SORT_KEYS } from "./board.js";
 
+export const BATCH_SIZE = 20;
+
+let _batchObserver = null;
+
 const STATUS_LABELS = {
   backlog: "Backlog",
   ready: "Ready",
@@ -159,8 +163,16 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
     }
   });
 
-  for (const task of sortTasks(tasks, sortKey)) {
+  const visibleCount = callbacks.columnBatch?.get(status) ?? BATCH_SIZE;
+  const sorted = sortTasks(tasks, sortKey);
+  for (const task of sorted.slice(0, visibleCount)) {
     list.appendChild(renderCard(task, callbacks, blockerCounts));
+  }
+  if (sorted.length > visibleCount && callbacks.onShowMore) {
+    const sentinel = document.createElement("div");
+    sentinel.className = "batch-sentinel";
+    sentinel.dataset.status = status;
+    list.appendChild(sentinel);
   }
 
   column.appendChild(list);
@@ -168,6 +180,9 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
 }
 
 export function renderBoard(root, tasks, callbacks) {
+  _batchObserver?.disconnect();
+  _batchObserver = null;
+
   const grouped = groupTasksByStatus(tasks);
   const blockerCounts = computeBlockerCounts(tasks);
   root.replaceChildren();
@@ -187,4 +202,17 @@ export function renderBoard(root, tasks, callbacks) {
   }
 
   root.appendChild(board);
+
+  if (callbacks.onShowMore && typeof IntersectionObserver !== "undefined") {
+    _batchObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          callbacks.onShowMore(entry.target.dataset.status);
+        }
+      }
+    });
+    for (const sentinel of root.querySelectorAll(".batch-sentinel")) {
+      _batchObserver.observe(sentinel);
+    }
+  }
 }

@@ -507,10 +507,12 @@ describe("renderBoard — IntersectionObserver wiring", () => {
 
   it("observes sentinels when onShowMore and IntersectionObserver are available", () => {
     const observe = vi.fn();
-    vi.stubGlobal(
-      "IntersectionObserver",
-      vi.fn().mockImplementation(() => ({ observe, disconnect: vi.fn() }))
-    );
+    class MockIO {
+      constructor(_cb) {}
+      observe = observe;
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
     const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
     renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
     expect(observe).toHaveBeenCalled();
@@ -519,13 +521,12 @@ describe("renderBoard — IntersectionObserver wiring", () => {
   it("calls onShowMore with status when sentinel intersects", () => {
     const onShowMore = vi.fn();
     let observerCallback;
-    vi.stubGlobal(
-      "IntersectionObserver",
-      vi.fn().mockImplementation((cb) => {
-        observerCallback = cb;
-        return { observe: vi.fn(), disconnect: vi.fn() };
-      })
-    );
+    class MockIO {
+      constructor(cb) { observerCallback = cb; }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
     const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
     renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore });
     const sentinel = root.querySelector(".batch-sentinel");
@@ -536,13 +537,12 @@ describe("renderBoard — IntersectionObserver wiring", () => {
   it("does not call onShowMore for non-intersecting entries", () => {
     const onShowMore = vi.fn();
     let observerCallback;
-    vi.stubGlobal(
-      "IntersectionObserver",
-      vi.fn().mockImplementation((cb) => {
-        observerCallback = cb;
-        return { observe: vi.fn(), disconnect: vi.fn() };
-      })
-    );
+    class MockIO {
+      constructor(cb) { observerCallback = cb; }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
     const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
     renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore });
     const sentinel = root.querySelector(".batch-sentinel");
@@ -551,19 +551,26 @@ describe("renderBoard — IntersectionObserver wiring", () => {
   });
 
   it("does not instantiate IntersectionObserver when onShowMore is absent", () => {
-    const IOSpy = vi.fn().mockImplementation(() => ({ observe: vi.fn(), disconnect: vi.fn() }));
-    vi.stubGlobal("IntersectionObserver", IOSpy);
+    const constructed = vi.fn();
+    class MockIO {
+      constructor(cb) { constructed(cb); }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
     const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
     renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
-    expect(IOSpy).not.toHaveBeenCalled();
+    expect(constructed).not.toHaveBeenCalled();
   });
 
   it("disconnects the previous observer on re-render", () => {
     const disconnect = vi.fn();
-    vi.stubGlobal(
-      "IntersectionObserver",
-      vi.fn().mockImplementation(() => ({ observe: vi.fn(), disconnect }))
-    );
+    class MockIO {
+      constructor(_cb) {}
+      observe = vi.fn();
+      disconnect = disconnect;
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
     const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
     renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
     renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
