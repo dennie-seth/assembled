@@ -1,4 +1,5 @@
 import { appendNote } from "./runOrchestrator.js";
+import { readRunState, isRunLive, isPidAlive, DEFAULT_HEARTBEAT_STALE_MS } from "./runState.js";
 
 const ORPHAN_RECOVERY_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
 
@@ -31,18 +32,28 @@ async function reapCard(store, hub, task) {
  * card stuck at `in-progress`/`validation` forever with nothing left alive
  * to move it. Two entry points cover the two ways that happens:
  *
- * - `reapOnStartup`: a fresh process has zero active runs by definition, so
- *   any card already sitting at `in-progress`/`validation` when the board
- *   boots belongs to a run that died with the previous process. Reap it
- *   immediately, no grace window needed.
+ * - `reapOnStartup`: a fresh process has zero active runs *in memory* by
+ *   definition, so `activeCardIds` alone can't tell a genuinely-dead run
+ *   from one whose `claude` child process (spawned `detached: true`,
+ *   see claudeCliRunner.js) survived a `node --watch` relaunch or board
+ *   restart -- that child is not in this process's process group, so it
+ *   keeps running with the same pid across the restart. Before reaping,
+ *   check `runState.js`'s persisted `{pid, runLogPath}` for the card: a
+ *   live pid (`isPidAlive`) means the run is genuinely still going, so the
+ *   card is left at its current status and re-adopted into `activeCardIds`
+ *   instead of being reset. Only a card with no evidence of a live process
+ *   is reaped, immediately, no grace window needed.
  * - `sweepOnce` (run on an interval via `start`/`stop`): covers a process
  *   crashing while the board itself stays up. A card only reaches
  *   `in-progress`/`validation` after `RunOrchestrator.runCard` has already
  *   added it to `activeCardIds` (see runOrchestrator.js), so a card in one
- *   of those statuses but absent from `activeCardIds` has no live run behind
- *   it. The grace window (tracked per-card via `orphanSince`) exists purely
- *   as a safety margin against sweep-tick timing, not because that ordering
- *   can actually race.
+ *   of those statuses but absent from `activeCardIds` has no *tracked* live
+ *   run behind it. The grace window (tracked per-card via `orphanSince`)
+ *   exists as a safety margin against sweep-tick timing; once it elapses,
+ *   the same pid/heartbeat liveness check as `reapOnStartup` runs before
+ *   actually reaping, so a card whose process survived independently of
+ *   this process's bookkeeping (the same restart scenario) is re-adopted
+ *   rather than reaped.
  *
  * Recovery only ever changes `status` (+ appends a note) -- branches,
  * worktrees, and everything else the card carries are left untouched so the
@@ -56,10 +67,29 @@ export function createOrphanReaper({
   graceMs = DEFAULT_GRACE_MS,
   intervalMs = DEFAULT_SWEEP_INTERVAL_MS,
   now = () => Date.now(),
-  logger = console
+  logger = console,
+  runsDir = null,
+  heartbeatStaleMs = DEFAULT_HEARTBEAT_STALE_MS,
+  isPidAliveFn = isPidAlive,
+  readRunStateFn = readRunState,
+  isRunLiveFn = isRunLive
 }) {
   const orphanSince = new Map();
   let timer = null;
+
+  /** No runsDir configured (e.g. legacy test callers) preserves the pre-fix behavior: always reap. */
+  async function isCardStillLive(taskId) {
+    if (!runsDir) return false;
+    const state = await readRunStateFn({ runsDir, taskId });
+    return isRunLiveFn({ state, now: now(), heartbeatStaleMs, isPidAliveFn });
+  }
+
+  function readopt(taskId) {
+    orphanSince.delete(taskId);
+    if (activeCardIds && typeof activeCardIds.add === "function") {
+      activeCardIds.add(taskId);
+    }
+  }
 
   async function reapOnStartup() {
     if (!enabled) return [];
@@ -67,6 +97,11 @@ export function createOrphanReaper({
     const reaped = [];
     for (const task of tasks) {
       if (!ORPHANABLE_STATUSES.has(task.status)) continue;
+      if (await isCardStillLive(task.id)) {
+        readopt(task.id);
+        logger.log(`assembled-board: card ${task.id} still has a live run (survived restart) -- re-adopted, not reaped`);
+        continue;
+      }
       await reapCard(store, hub, task);
       reaped.push(task.id);
       logger.log(`assembled-board: recovered orphaned card ${task.id} on startup (was ${task.status})`);
@@ -93,6 +128,12 @@ export function createOrphanReaper({
       }
 
       if (now() - orphanSince.get(task.id) >= graceMs) {
+        if (await isCardStillLive(task.id)) {
+          readopt(task.id);
+          stillCandidate.delete(task.id);
+          logger.log(`assembled-board: card ${task.id} still has a live run (untracked by this process) -- re-adopted, not reaped`);
+          continue;
+        }
         await reapCard(store, hub, task);
         orphanSince.delete(task.id);
         reaped.push(task.id);

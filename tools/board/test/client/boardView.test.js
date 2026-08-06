@@ -251,6 +251,26 @@ describe("renderBoard blocker badges", () => {
   });
 });
 
+describe("renderBoard auto-retry attempts badge", () => {
+  it("renders an accessible badge showing the run count when a card is mid auto-retry", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "in-progress", attempts: 2 });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-attempts-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.title || badge.getAttribute("aria-label")).toMatch(/run 2 of 5/i);
+  });
+
+  it("does not render an attempts badge when the card has no attempts consumed", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "ready", attempts: 0 });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    expect(root.querySelector('.card[data-id="T-0001"] .card-attempts-badge')).toBeNull();
+  });
+});
+
 describe("renderBoard backlog export button", () => {
   it("renders an export button in the backlog column when onExportBacklog is provided", () => {
     const root = document.createElement("div");

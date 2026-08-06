@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveVerifyRoutes } from "../../src/runner/verifyRouter.js";
+import { resolveVerifyRoutes, resolveDeliverableRoute } from "../../src/runner/verifyRouter.js";
 
 describe("resolveVerifyRoutes", () => {
   it("routes a tasks/-only diff to the backlog validator AND the planner diff guard, and nothing else", () => {
@@ -194,5 +194,25 @@ describe("resolveVerifyRoutes -- server-db-verify", () => {
   it("routes a diff touching server/** and tools/board/** to both server-db-verify and board-suite", () => {
     const routes = resolveVerifyRoutes(["server/src/main.cpp", "tools/board/src/lib/fsTaskStore.js"]);
     expect(routes.map((r) => r.id).sort()).toEqual(["board-suite", "server-db-verify"]);
+  });
+});
+
+describe("resolveDeliverableRoute -- task-driven, not diff-path-driven (T-0136 gap)", () => {
+  it("returns null when deliverable_type is 'code' (the default)", () => {
+    expect(resolveDeliverableRoute({ id: "T-0001", deliverable_type: "code" })).toBeNull();
+  });
+
+  it("returns null when deliverable_type is absent", () => {
+    expect(resolveDeliverableRoute({ id: "T-0001" })).toBeNull();
+  });
+
+  it("returns null when task is missing", () => {
+    expect(resolveDeliverableRoute(undefined)).toBeNull();
+  });
+
+  it("returns the deliverable check route for deliverable_type: 'artifact', naming the task id", () => {
+    const route = resolveDeliverableRoute({ id: "T-0136", deliverable_type: "artifact" });
+    expect(route.id).toBe("deliverable-check");
+    expect(route.command).toBe("node tools/board/scripts/checkDeliverable.js T-0136");
   });
 });

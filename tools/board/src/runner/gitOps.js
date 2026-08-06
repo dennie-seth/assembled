@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
+import { schedulePush } from "./autoPush.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -156,6 +157,32 @@ export async function pullDevelop({ repoRoot, branch = "develop" }) {
   return { advanced: before !== after, before, after };
 }
 
+/**
+ * Fetches `branch` from origin and merges `origin/<branch>` into repoRoot's checkout with
+ * `--no-ff` -- always a real merge commit, even on the (common, for a repo whose local
+ * `develop` never diverges from origin) case where a plain fast-forward would apply. Used
+ * both by the deploy script's pre-restart sync step and by the auto-push retry path
+ * (`autoPush.js`) to reconcile before retrying a rejected push.
+ *
+ * On conflict, runs `merge --abort` before rethrowing -- the caller gets a clean, mergeable
+ * working tree back either way, never one left mid-merge with conflict markers on disk. That
+ * property is what lets the deploy script "abort loudly" instead of leaving a broken tree for
+ * `node --watch` (or the next deploy attempt) to trip over.
+ */
+export async function mergeNoFF({ repoRoot, branch = "develop" }) {
+  await git(["fetch", "origin", branch], repoRoot);
+  try {
+    await git(["merge", "--no-ff", "--no-edit", `origin/${branch}`], repoRoot);
+  } catch (err) {
+    await git(["merge", "--abort"], repoRoot).catch(() => {
+      // Best-effort cleanup -- if there was nothing to abort (e.g. the fetch/ref-resolution
+      // itself failed before a merge ever started), that's fine; the original error below is
+      // what matters to the caller.
+    });
+    throw err;
+  }
+}
+
 /** Identity for commits the board tool makes on an agent's behalf rather than authored by the agent (see `commitAll`'s `author` param and `commitTaskFile`). */
 export const BOARD_COMMIT_AUTHOR = { name: "assembled-board", email: "board@localhost" };
 const AUTO_COMMIT_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
@@ -166,17 +193,35 @@ export function autoCommitCardsOnCreateFromEnv() {
 }
 
 /**
- * Stages and commits a single card file (relative to repoRoot) so it becomes part of tracked
+ * Stages and commits one or more paths (relative to repoRoot) so they become part of tracked
  * history immediately, instead of sitting as untracked local state that a branch cut from
  * origin (or a sibling worktree started before this moment) can never see -- the root cause of
- * card-ID reuse this pairs with the git-aware `IdAllocator`. Scoped to `filePath` via `commit
+ * card-ID reuse this pairs with the git-aware `IdAllocator`. Scoped to `filePaths` via `commit
  * --` pathspec so it can never accidentally sweep up unrelated staged changes in repoRoot.
- * Returns false (no-op) if nothing actually changed for that path.
+ * Uses `add -A` (not plain `add`) so a path that was deleted from the working tree -- e.g. an
+ * attachment removed from disk -- is staged as a deletion rather than silently ignored. Returns
+ * false (no-op) if nothing actually changed across those paths.
+ *
+ * On a real commit, also schedules an async push of `pushBranch` (default "develop") to origin
+ * -- see `autoPush.js`. This is the single choke point every board-authored runtime commit goes
+ * through (card create, comments, attachments), so wiring it in here means every caller gets
+ * auto-push for free with zero changes at the call sites -- deliberately, so origin stops
+ * drifting from repoRoot's `develop` without having to touch each route handler (notably the
+ * attachment routes) individually. Pass `autoPush: false` to opt a specific call out; the
+ * `AUTO_PUSH_ON_COMMIT` env var (see `autoPushOnCommitFromEnv`) is the global on/off switch.
  */
-export async function commitTaskFile({ repoRoot, filePath, message, author = BOARD_COMMIT_AUTHOR }) {
-  await git(["add", "--", filePath], repoRoot);
+export async function commitPaths({
+  repoRoot,
+  filePaths,
+  message,
+  author = BOARD_COMMIT_AUTHOR,
+  autoPush = true,
+  pushBranch = "develop",
+  logger = console
+}) {
+  await git(["add", "-A", "--", ...filePaths], repoRoot);
   try {
-    await git(["diff", "--cached", "--quiet", "--", filePath], repoRoot);
+    await git(["diff", "--cached", "--quiet", "--", ...filePaths], repoRoot);
     return false;
   } catch {
     // non-zero exit from `diff --quiet` means there IS a staged change -- fall through to commit.
@@ -191,9 +236,25 @@ export async function commitTaskFile({ repoRoot, filePath, message, author = BOA
       "-m",
       message,
       "--",
-      filePath
+      ...filePaths
     ],
     repoRoot
   );
+  if (autoPush) {
+    schedulePush({ repoRoot, branch: pushBranch, git: { push, mergeNoFF }, logger });
+  }
   return true;
+}
+
+/** Single-path convenience wrapper around `commitPaths` (see its docstring, including the auto-push behavior). */
+export async function commitTaskFile({
+  repoRoot,
+  filePath,
+  message,
+  author = BOARD_COMMIT_AUTHOR,
+  autoPush = true,
+  pushBranch = "develop",
+  logger = console
+}) {
+  return commitPaths({ repoRoot, filePaths: [filePath], message, author, autoPush, pushBranch, logger });
 }

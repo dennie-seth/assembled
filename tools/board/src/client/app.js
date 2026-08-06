@@ -10,7 +10,9 @@ import {
   exportBacklog,
   exportDone,
   fetchGitStatus,
-  addComment
+  addComment,
+  uploadAttachment,
+  removeAttachment
 } from "./api.js";
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard } from "./boardView.js";
@@ -38,6 +40,8 @@ export function createApp({
   exportDoneImpl = exportDone,
   fetchGitStatusImpl = fetchGitStatus,
   addCommentImpl = addComment,
+  uploadAttachmentImpl = uploadAttachment,
+  removeAttachmentImpl = removeAttachment,
   gitPollIntervalMs = 30000
 }) {
   let tasks = [];
@@ -63,24 +67,26 @@ export function createApp({
       columnSort,
       onSortChange: handleSortChange
     });
+    const selected = selectedId !== null ? (tasks.find((task) => task.id === selectedId) ?? null) : null;
     if (sidePanelRoot) {
-      sidePanelRoot.hidden = selectedId === null;
+      sidePanelRoot.hidden = selected === null;
     }
     if (detailRoot) {
-      const selected = tasks.find((task) => task.id === selectedId) ?? null;
       renderDetailPanel(detailRoot, selected, {
         onSave: handleSave,
         onClose: handleClose,
         onDelete: handleDelete,
         onAddComment: handleAddComment,
+        onUploadAttachment: handleUploadAttachment,
+        onRemoveAttachment: handleRemoveAttachment,
         agentOptions,
         allTasks: tasks.map((task) => ({ id: task.id, title: task.title }))
       });
     }
     if (consoleRoot) {
       renderConsolePanel(consoleRoot, {
-        taskId: selectedId,
-        entries: selectedId ? (runLogs.get(selectedId) ?? []) : []
+        taskId: selected ? selectedId : null,
+        entries: selected ? (runLogs.get(selectedId) ?? []) : []
       });
     }
     if (createFormRoot) {
@@ -235,6 +241,28 @@ export function createApp({
     render();
   }
 
+  async function handleUploadAttachment(taskId, file, uploadedBy) {
+    try {
+      const updated = await uploadAttachmentImpl(taskId, file, uploadedBy);
+      tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
+  async function handleRemoveAttachment(taskId, filename) {
+    try {
+      const updated = await removeAttachmentImpl(taskId, filename);
+      tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
   function handleRunEvent(event) {
     const existing = runLogs.get(event.id) ?? [];
     runLogs.set(event.id, [...existing, { phase: event.phase, event: event.event }]);
@@ -302,6 +330,8 @@ export function createApp({
     handleCancel,
     handleDelete,
     handleAddComment,
+    handleUploadAttachment,
+    handleRemoveAttachment,
     handleSortChange,
     handleToggleCreateForm,
     handleCancelCreate,

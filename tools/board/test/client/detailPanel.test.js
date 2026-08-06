@@ -209,6 +209,23 @@ describe("renderDetailPanel review metadata (branch/commit)", () => {
   });
 });
 
+describe("renderDetailPanel auto-retry attempt counter", () => {
+  it("shows the run count out of 5 when the card has consumed auto-retry attempts", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ status: "in-progress", attempts: 3 }), baseOpts());
+    const info = root.querySelector(".detail-attempts");
+    expect(info).not.toBeNull();
+    expect(info.textContent).toContain("3");
+    expect(info.textContent).toContain("5");
+  });
+
+  it("does not render the attempt counter when attempts is 0 or absent", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ attempts: 0 }), baseOpts());
+    expect(root.querySelector(".detail-attempts")).toBeNull();
+  });
+});
+
 describe("renderDetailPanel comments (Feature A: human feedback for iterative re-runs)", () => {
   it("does not render the comments section when onAddComment is not provided", () => {
     const root = document.createElement("div");
@@ -270,6 +287,262 @@ describe("renderDetailPanel comments (Feature A: human feedback for iterative re
     root.querySelector(".detail-comment-add").dispatchEvent(new Event("click", { bubbles: true }));
 
     expect(onAddComment).not.toHaveBeenCalled();
+  });
+});
+
+describe("renderDetailPanel draft preservation across live re-renders", () => {
+  // A re-render triggered by a WS "changed" event (see app.js's handleSocketMessage)
+  // used to call root.replaceChildren() unconditionally, tearing down and rebuilding
+  // a brand-new <textarea> from server state -- wiping any comment the user was
+  // mid-typing. These simulate that exact re-render (same task id, called again while
+  // focused) and assert the draft, focus, and caret survive it.
+
+  it("preserves an in-progress comment draft across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const t = task({ id: "T-0137" });
+    renderDetailPanel(root, t, baseOpts({ onAddComment: vi.fn() }));
+
+    const input = root.querySelector(".detail-comment-input");
+    input.focus();
+    input.value = "please check the lo";
+
+    // Simulate a live-update tick for the same card (e.g. a status/attempts change
+    // broadcast over the board socket) re-rendering the still-selected detail panel.
+    renderDetailPanel(root, task({ id: "T-0137", attempts: 1 }), baseOpts({ onAddComment: vi.fn() }));
+
+    const newInput = root.querySelector(".detail-comment-input");
+    expect(newInput).not.toBe(input);
+    expect(newInput.value).toBe("please check the lo");
+    document.body.removeChild(root);
+  });
+
+  it("keeps focus and caret position on the comment textarea across a re-render", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const t = task({ id: "T-0137" });
+    renderDetailPanel(root, t, baseOpts({ onAddComment: vi.fn() }));
+
+    const input = root.querySelector(".detail-comment-input");
+    input.focus();
+    input.value = "please check the log";
+    input.setSelectionRange(7, 12);
+
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment: vi.fn() }));
+
+    const newInput = root.querySelector(".detail-comment-input");
+    expect(document.activeElement).toBe(newInput);
+    expect(newInput.selectionStart).toBe(7);
+    expect(newInput.selectionEnd).toBe(12);
+    document.body.removeChild(root);
+  });
+
+  it("still updates the comments list around the preserved draft when a new comment arrives", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const t = task({ id: "T-0137", comments: [] });
+    renderDetailPanel(root, t, baseOpts({ onAddComment: vi.fn() }));
+
+    const input = root.querySelector(".detail-comment-input");
+    input.focus();
+    input.value = "still typing my reply";
+
+    const updated = task({
+      id: "T-0137",
+      comments: [{ author: "Reviewer", text: "fix the lint error", timestamp: "2026-08-06T00:00:00.000Z" }]
+    });
+    renderDetailPanel(root, updated, baseOpts({ onAddComment: vi.fn() }));
+
+    expect(root.querySelector(".detail-comment-input").value).toBe("still typing my reply");
+    expect(root.querySelectorAll(".detail-comment").length).toBe(1);
+    expect(root.querySelector(".detail-comment").textContent).toContain("fix the lint error");
+    document.body.removeChild(root);
+  });
+
+  it("does not bleed a draft over to a newly selected, different task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment: vi.fn() }));
+
+    const input = root.querySelector(".detail-comment-input");
+    input.focus();
+    input.value = "draft for T-0137";
+
+    renderDetailPanel(root, task({ id: "T-0200" }), baseOpts({ onAddComment: vi.fn() }));
+
+    expect(root.querySelector(".detail-comment-input").value).toBe("");
+    document.body.removeChild(root);
+  });
+
+  it("preserves an in-progress body-textarea edit across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts());
+
+    const body = root.querySelector(".detail-body-edit");
+    body.focus();
+    body.value = "## Context\nediting this in place";
+
+    renderDetailPanel(root, task({ id: "T-0137", attempts: 2 }), baseOpts());
+
+    const newBody = root.querySelector(".detail-body-edit");
+    expect(newBody.value).toBe("## Context\nediting this in place");
+    expect(document.activeElement).toBe(newBody);
+    document.body.removeChild(root);
+  });
+
+  it("preserves an in-progress title edit across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0137", title: "Original title" }), baseOpts());
+
+    const titleInput = root.querySelector(".detail-title");
+    titleInput.focus();
+    titleInput.value = "Renaming in progr";
+
+    renderDetailPanel(root, task({ id: "T-0137", title: "Original title" }), baseOpts());
+
+    expect(root.querySelector(".detail-title").value).toBe("Renaming in progr");
+    document.body.removeChild(root);
+  });
+
+  it("does not restore a stale draft once the field has lost focus", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment: vi.fn() }));
+
+    const input = root.querySelector(".detail-comment-input");
+    input.focus();
+    input.value = "typed then blurred";
+    input.blur();
+
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment: vi.fn() }));
+
+    expect(root.querySelector(".detail-comment-input").value).toBe("");
+    document.body.removeChild(root);
+  });
+});
+
+describe("renderDetailPanel attachments", () => {
+  it("does not render the attachments section when onUploadAttachment is not provided", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    expect(root.querySelector(".detail-attachments")).toBeNull();
+  });
+
+  it("shows a no-attachments message when the task has none", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ attachments: [] }), baseOpts({ onUploadAttachment: vi.fn() }));
+    expect(root.querySelector(".detail-attachments-empty")).not.toBeNull();
+  });
+
+  it("defaults to an empty attachments list when task.attachments is absent", () => {
+    const root = document.createElement("div");
+    const taskWithoutAttachments = task();
+    delete taskWithoutAttachments.attachments;
+    renderDetailPanel(root, taskWithoutAttachments, baseOpts({ onUploadAttachment: vi.fn() }));
+    expect(root.querySelector(".detail-attachments-empty")).not.toBeNull();
+  });
+
+  it("renders each attachment with a filename/size download link", () => {
+    const root = document.createElement("div");
+    const t = task({
+      id: "T-0009",
+      attachments: [
+        {
+          filename: "reference.png",
+          size: 2048,
+          mimetype: "image/png",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T12:00:00.000Z"
+        },
+        {
+          filename: "weights.bin",
+          size: 10,
+          mimetype: "application/octet-stream",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T13:00:00.000Z"
+        }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onUploadAttachment: vi.fn() }));
+
+    const items = root.querySelectorAll(".detail-attachment");
+    expect(items.length).toBe(2);
+    const links = root.querySelectorAll(".detail-attachment-link");
+    expect(links[0].getAttribute("href")).toBe("/api/tasks/T-0009/attachments/reference.png");
+    expect(links[0].textContent).toContain("reference.png");
+    expect(links[0].textContent).toContain("2.0 KB");
+    expect(links[1].getAttribute("href")).toBe("/api/tasks/T-0009/attachments/weights.bin");
+  });
+
+  it("renders an inline image thumbnail only for image mimetypes", () => {
+    const root = document.createElement("div");
+    const t = task({
+      id: "T-0009",
+      attachments: [
+        {
+          filename: "reference.png",
+          size: 10,
+          mimetype: "image/png",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T12:00:00.000Z"
+        },
+        {
+          filename: "weights.bin",
+          size: 10,
+          mimetype: "application/octet-stream",
+          uploaded_by: "Dennie",
+          uploaded_at: "2026-08-05T13:00:00.000Z"
+        }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onUploadAttachment: vi.fn() }));
+
+    const thumbs = root.querySelectorAll(".detail-attachment-thumb");
+    expect(thumbs.length).toBe(1);
+    expect(thumbs[0].getAttribute("src")).toBe("/api/tasks/T-0009/attachments/reference.png");
+  });
+
+  it("calls onUploadAttachment with the task id and selected file, then clears the input", () => {
+    const root = document.createElement("div");
+    const onUploadAttachment = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0009" }), baseOpts({ onUploadAttachment }));
+
+    const fileInput = root.querySelector(".detail-attachment-input");
+    const file = new File(["hello"], "a.png", { type: "image/png" });
+    Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(onUploadAttachment).toHaveBeenCalledWith("T-0009", file);
+    expect(fileInput.value).toBe("");
+  });
+
+  it("does not render a remove control when onRemoveAttachment is not provided", () => {
+    const root = document.createElement("div");
+    const t = task({
+      attachments: [
+        { filename: "a.png", size: 1, mimetype: "image/png", uploaded_by: "D", uploaded_at: "2026-08-05T12:00:00.000Z" }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onUploadAttachment: vi.fn() }));
+    expect(root.querySelector(".detail-attachment-remove")).toBeNull();
+  });
+
+  it("calls onRemoveAttachment with the task id and filename", () => {
+    const root = document.createElement("div");
+    const onRemoveAttachment = vi.fn();
+    const t = task({
+      id: "T-0009",
+      attachments: [
+        { filename: "a.png", size: 1, mimetype: "image/png", uploaded_by: "D", uploaded_at: "2026-08-05T12:00:00.000Z" }
+      ]
+    });
+    renderDetailPanel(root, t, baseOpts({ onUploadAttachment: vi.fn(), onRemoveAttachment }));
+
+    root.querySelector(".detail-attachment-remove").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onRemoveAttachment).toHaveBeenCalledWith("T-0009", "a.png");
   });
 });
 

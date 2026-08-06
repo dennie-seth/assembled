@@ -12,6 +12,7 @@ import { RunOrchestrator } from "../runner/runOrchestrator.js";
 import { ClaudeCliRunner } from "../runner/claudeCliRunner.js";
 import { createRestartCoordinator } from "../runner/serviceRestart.js";
 import { createOrphanReaper } from "../runner/orphanReaper.js";
+import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -44,7 +45,14 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
   const orphanReaper = createOrphanReaper({
     store,
     hub,
-    activeCardIds: orchestrator.activeCardIds
+    activeCardIds: orchestrator.activeCardIds,
+    runsDir: path.join(tasksDir, ".runs")
+  });
+  const selfImprovementLoop = createSelfImprovementLoop({
+    store,
+    idAllocator,
+    repoRoot: REPO_ROOT,
+    tasksDir
   });
 
   watcher.on("task-changed", (event) => hub.broadcast(event));
@@ -78,6 +86,7 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
   // reap those before anything else touches the store.
   await orphanReaper.reapOnStartup();
   orphanReaper.start();
+  selfImprovementLoop.start();
 
   await watcher.start();
   await new Promise((resolve, reject) => {
@@ -95,7 +104,9 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
     orchestrator,
     restartCoordinator,
     orphanReaper,
+    selfImprovementLoop,
     async close() {
+      selfImprovementLoop.stop();
       orphanReaper.stop();
       hub.close();
       ptyBridge.close();

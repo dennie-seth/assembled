@@ -36,6 +36,8 @@ function makeApp(overrides = {}) {
   const exportDoneImpl = overrides.exportDoneImpl ?? vi.fn();
   const fetchGitStatusImpl = overrides.fetchGitStatusImpl ?? null;
   const addCommentImpl = overrides.addCommentImpl ?? vi.fn().mockResolvedValue({});
+  const uploadAttachmentImpl = overrides.uploadAttachmentImpl ?? vi.fn().mockResolvedValue({});
+  const removeAttachmentImpl = overrides.removeAttachmentImpl ?? vi.fn().mockResolvedValue({});
   const app = createApp({
     boardRoot,
     detailRoot,
@@ -54,7 +56,9 @@ function makeApp(overrides = {}) {
     exportBacklogImpl,
     exportDoneImpl,
     fetchGitStatusImpl,
-    addCommentImpl
+    addCommentImpl,
+    uploadAttachmentImpl,
+    removeAttachmentImpl
   });
   return {
     app,
@@ -75,7 +79,9 @@ function makeApp(overrides = {}) {
     exportBacklogImpl,
     exportDoneImpl,
     fetchGitStatusImpl,
-    addCommentImpl
+    addCommentImpl,
+    uploadAttachmentImpl,
+    removeAttachmentImpl
   };
 }
 
@@ -282,6 +288,87 @@ describe("createApp handleAddComment", () => {
   });
 });
 
+describe("createApp handleUploadAttachment", () => {
+  it("uploads the file and merges the returned task into state", async () => {
+    const original = task({ id: "T-0001", attachments: [] });
+    const file = new File(["hello"], "a.png", { type: "image/png" });
+    const updated = { ...original, attachments: [{ filename: "a.png", size: 5, mimetype: "image/png" }] };
+    const { app, uploadAttachmentImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      uploadAttachmentImpl: vi.fn().mockResolvedValue(updated)
+    });
+    await app.init();
+
+    await app.handleUploadAttachment("T-0001", file, "Dennie");
+
+    expect(uploadAttachmentImpl).toHaveBeenCalledWith("T-0001", file, "Dennie");
+    expect(app.getTasks()).toEqual([updated]);
+    expect(app.getError()).toBe(null);
+  });
+
+  it("surfaces the server's error without touching task state", async () => {
+    const original = task({ id: "T-0001" });
+    const file = new File(["<svg></svg>"], "evil.svg", { type: "image/svg+xml" });
+    const { app } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      uploadAttachmentImpl: vi.fn().mockRejectedValue(new Error("Attachment type is not allowed"))
+    });
+    await app.init();
+
+    await app.handleUploadAttachment("T-0001", file);
+
+    expect(app.getTasks()).toEqual([original]);
+    expect(app.getError()).toBe("Attachment type is not allowed");
+  });
+});
+
+describe("createApp handleRemoveAttachment", () => {
+  it("removes the attachment and merges the returned task into state", async () => {
+    const original = task({
+      id: "T-0001",
+      attachments: [{ filename: "a.png", size: 5, mimetype: "image/png" }]
+    });
+    const updated = { ...original, attachments: [] };
+    const { app, removeAttachmentImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      removeAttachmentImpl: vi.fn().mockResolvedValue(updated)
+    });
+    await app.init();
+
+    await app.handleRemoveAttachment("T-0001", "a.png");
+
+    expect(removeAttachmentImpl).toHaveBeenCalledWith("T-0001", "a.png");
+    expect(app.getTasks()).toEqual([updated]);
+    expect(app.getError()).toBe(null);
+  });
+
+  it("surfaces the server's error without touching task state", async () => {
+    const original = task({ id: "T-0001", attachments: [{ filename: "a.png" }] });
+    const { app } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([original]),
+      removeAttachmentImpl: vi.fn().mockRejectedValue(new Error('Attachment "a.png" not found on T-0001'))
+    });
+    await app.init();
+
+    await app.handleRemoveAttachment("T-0001", "a.png");
+
+    expect(app.getTasks()).toEqual([original]);
+    expect(app.getError()).toBe('Attachment "a.png" not found on T-0001');
+  });
+});
+
+describe("createApp render wires attachment handlers into the detail panel", () => {
+  it("passes onUploadAttachment/onRemoveAttachment through to renderDetailPanel", async () => {
+    const original = task({ id: "T-0001" });
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([original]) });
+    await app.init();
+
+    app.handleCardClick("T-0001");
+
+    expect(detailRoot.querySelector(".detail-attachments")).not.toBeNull();
+  });
+});
+
 describe("createApp handleDrop dependency guard", () => {
   it("keeps the task in its original column and surfaces the server's error when the move is rejected", async () => {
     const original = task({ id: "T-0001", status: "backlog", title: "Blocked task" });
@@ -401,6 +488,38 @@ describe("createApp handleSocketMessage", () => {
     // a prior corrupting message must not leave the board permanently stuck.
     app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...original, status: "in-progress" } });
     expect(boardRoot.querySelector('.column[data-status="in-progress"]').textContent).toContain("Unassigned card");
+  });
+});
+
+describe("createApp stale state when selected task is removed externally", () => {
+  it("hides the side panel when the selected task is removed via a socket removed event", async () => {
+    const t = task({ id: "T-0001" });
+    const { app, sidePanelRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+    expect(sidePanelRoot.hidden).toBe(false);
+
+    app.handleSocketMessage({ type: "removed", id: "T-0001", task: null });
+
+    expect(sidePanelRoot.hidden).toBe(true);
+  });
+
+  it("hides the console panel when the selected task is removed via a socket removed event", async () => {
+    const t = task({ id: "T-0001", status: "in-progress" });
+    const { app, consoleRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+    app.handleSocketMessage({
+      type: "run-event",
+      id: "T-0001",
+      phase: "implementer",
+      event: { type: "result", result: "done" }
+    });
+    expect(consoleRoot.hidden).toBe(false);
+
+    app.handleSocketMessage({ type: "removed", id: "T-0001", task: null });
+
+    expect(consoleRoot.hidden).toBe(true);
   });
 });
 

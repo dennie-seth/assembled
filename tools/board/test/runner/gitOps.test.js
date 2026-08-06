@@ -13,7 +13,9 @@ import {
   push,
   getHeadCommit,
   pullDevelop,
+  mergeNoFF,
   commitTaskFile,
+  commitPaths,
   autoCommitCardsOnCreateFromEnv,
   BOARD_COMMIT_AUTHOR
 } from "../../src/runner/gitOps.js";
@@ -423,6 +425,113 @@ describe("pullDevelop", () => {
   });
 });
 
+describe("mergeNoFF", () => {
+  it("fetches and merges origin/<branch> with --no-ff, producing a merge commit", async () => {
+    const cloneDir = path.join(tmpDir, "other-clone-mergenoff");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: new commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await mergeNoFF({ repoRoot, branch: "develop" });
+
+    const { stdout: log } = await git(["log", "--oneline", "develop"], repoRoot);
+    expect(log).toContain("upstream: new commit");
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").length).toBe(2); // merge commit has two parents
+  });
+
+  it("merges cleanly (no-op merge commit) when already up to date", async () => {
+    await expect(mergeNoFF({ repoRoot, branch: "develop" })).resolves.not.toThrow();
+  });
+
+  it("aborts the merge and rethrows on conflict, leaving a clean working tree behind", async () => {
+    await fs.writeFile(path.join(repoRoot, "conflict.txt"), "local version\n", "utf8");
+    await git(["add", "conflict.txt"], repoRoot);
+    await git(["commit", "-m", "local: conflicting change"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-conflict");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "conflict.txt"), "upstream version\n", "utf8");
+    await git(["add", "conflict.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: conflicting change"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(mergeNoFF({ repoRoot, branch: "develop" })).rejects.toThrow();
+
+    // Working tree must be clean -- no leftover conflict markers -- not left mid-merge.
+    const { stdout: status } = await git(["status", "--porcelain"], repoRoot);
+    expect(status.trim()).toBe("");
+    const { stdout: mergeHead } = await git(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], repoRoot).catch(
+      (err) => ({ stdout: "", err })
+    );
+    expect(mergeHead.trim()).toBe("");
+    const conflictContent = await fs.readFile(path.join(repoRoot, "conflict.txt"), "utf8");
+    expect(conflictContent).toBe("local version\n");
+  });
+
+  it("rejects with a descriptive error when the branch does not exist on origin", async () => {
+    await expect(mergeNoFF({ repoRoot, branch: "nonexistent-branch" })).rejects.toThrow(/nonexistent-branch|git/i);
+  });
+});
+
+describe("commitPaths — auto-push", () => {
+  it("pushes the commit to origin's develop by default (AUTO_PUSH_ON_COMMIT unset)", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0030.md"), "card body\n", "utf8");
+
+    await commitPaths({ repoRoot, filePaths: ["tasks/T-0030.md"], message: "chore(board): add card T-0030" });
+    // schedulePush is fire-and-forget -- give its microtask chain a tick to actually run.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
+    expect(log).toContain("chore(board): add card T-0030");
+  });
+
+  it("does not push when autoPush: false is passed", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0031.md"), "card body\n", "utf8");
+
+    await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0031.md"],
+      message: "chore(board): add card T-0031",
+      autoPush: false
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
+    expect(log).not.toContain("chore(board): add card T-0031");
+  });
+
+  it("does not push when AUTO_PUSH_ON_COMMIT is disabled via env", async () => {
+    const original = process.env.AUTO_PUSH_ON_COMMIT;
+    process.env.AUTO_PUSH_ON_COMMIT = "0";
+    try {
+      await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+      await fs.writeFile(path.join(repoRoot, "tasks", "T-0032.md"), "card body\n", "utf8");
+
+      await commitPaths({ repoRoot, filePaths: ["tasks/T-0032.md"], message: "chore(board): add card T-0032" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
+      expect(log).not.toContain("chore(board): add card T-0032");
+    } finally {
+      if (original === undefined) delete process.env.AUTO_PUSH_ON_COMMIT;
+      else process.env.AUTO_PUSH_ON_COMMIT = original;
+    }
+  });
+});
+
 describe("commitTaskFile", () => {
   it("stages and commits only the given card file, leaving other staged changes untouched", async () => {
     await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
@@ -433,7 +542,8 @@ describe("commitTaskFile", () => {
     const committed = await commitTaskFile({
       repoRoot,
       filePath: "tasks/T-0010.md",
-      message: "chore(board): add card T-0010"
+      message: "chore(board): add card T-0010",
+      autoPush: false
     });
 
     expect(committed).toBe(true);
@@ -448,7 +558,12 @@ describe("commitTaskFile", () => {
     await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
     await fs.writeFile(path.join(repoRoot, "tasks", "T-0011.md"), "card body\n", "utf8");
 
-    await commitTaskFile({ repoRoot, filePath: "tasks/T-0011.md", message: "chore(board): add card T-0011" });
+    await commitTaskFile({
+      repoRoot,
+      filePath: "tasks/T-0011.md",
+      message: "chore(board): add card T-0011",
+      autoPush: false
+    });
 
     const { stdout: authorName } = await git(["log", "-1", "--pretty=%an"], repoRoot);
     const { stdout: authorEmail } = await git(["log", "-1", "--pretty=%ae"], repoRoot);
@@ -459,13 +574,19 @@ describe("commitTaskFile", () => {
   it("is a no-op and returns false when the file has no staged changes", async () => {
     await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
     await fs.writeFile(path.join(repoRoot, "tasks", "T-0012.md"), "card body\n", "utf8");
-    await commitTaskFile({ repoRoot, filePath: "tasks/T-0012.md", message: "chore(board): add card T-0012" });
+    await commitTaskFile({
+      repoRoot,
+      filePath: "tasks/T-0012.md",
+      message: "chore(board): add card T-0012",
+      autoPush: false
+    });
 
     const { stdout: before } = await git(["rev-parse", "HEAD"], repoRoot);
     const committed = await commitTaskFile({
       repoRoot,
       filePath: "tasks/T-0012.md",
-      message: "chore(board): add card T-0012 (again)"
+      message: "chore(board): add card T-0012 (again)",
+      autoPush: false
     });
     const { stdout: after } = await git(["rev-parse", "HEAD"], repoRoot);
 
@@ -477,10 +598,90 @@ describe("commitTaskFile", () => {
     await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
     await fs.writeFile(path.join(repoRoot, "tasks", "T-0013.md"), "card body\n", "utf8");
 
-    await commitTaskFile({ repoRoot, filePath: "tasks/T-0013.md", message: "chore(board): add card T-0013" });
+    await commitTaskFile({
+      repoRoot,
+      filePath: "tasks/T-0013.md",
+      message: "chore(board): add card T-0013",
+      autoPush: false
+    });
 
     const { stdout: lsFiles } = await git(["ls-files", "tasks/T-0013.md"], repoRoot);
     expect(lsFiles.trim()).toBe("tasks/T-0013.md");
+  });
+});
+
+describe("commitPaths", () => {
+  it("stages and commits multiple paths in a single commit, leaving other staged changes untouched", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks", "attachments", "T-0020"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0020.md"), "card body\n", "utf8");
+    await fs.writeFile(path.join(repoRoot, "tasks", "attachments", "T-0020", "a.png"), "binary\n", "utf8");
+    await fs.writeFile(path.join(repoRoot, "unrelated.txt"), "unrelated\n", "utf8");
+    await git(["add", "unrelated.txt"], repoRoot);
+
+    const committed = await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0020.md", "tasks/attachments/T-0020/a.png"],
+      message: "chore(board): attach a.png to card T-0020",
+      autoPush: false
+    });
+
+    expect(committed).toBe(true);
+    const { stdout: log } = await git(["log", "-1", "--pretty=%s"], repoRoot);
+    expect(log.trim()).toBe("chore(board): attach a.png to card T-0020");
+    const { stdout: lsFiles } = await git(["ls-files", "tasks/T-0020.md", "tasks/attachments/T-0020/a.png"], repoRoot);
+    expect(lsFiles.trim().split("\n").sort()).toEqual(
+      ["tasks/T-0020.md", "tasks/attachments/T-0020/a.png"].sort()
+    );
+    const { stdout: statusAfter } = await git(["status", "--porcelain"], repoRoot);
+    expect(statusAfter).toContain("A  unrelated.txt");
+  });
+
+  it("stages a deleted path as a removal (git add -A), not silently ignoring it", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks", "attachments", "T-0021"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0021.md"), "card body\n", "utf8");
+    const attachmentPath = path.join(repoRoot, "tasks", "attachments", "T-0021", "a.png");
+    await fs.writeFile(attachmentPath, "binary\n", "utf8");
+    await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0021.md", "tasks/attachments/T-0021/a.png"],
+      message: "chore(board): attach a.png to card T-0021",
+      autoPush: false
+    });
+
+    await fs.rm(attachmentPath);
+    const committed = await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0021.md", "tasks/attachments/T-0021/a.png"],
+      message: "chore(board): remove a.png from card T-0021",
+      autoPush: false
+    });
+
+    expect(committed).toBe(true);
+    const { stdout: lsFiles } = await git(["ls-files", "tasks/attachments/T-0021/a.png"], repoRoot);
+    expect(lsFiles.trim()).toBe("");
+  });
+
+  it("is a no-op and returns false when none of the paths have staged changes", async () => {
+    await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tasks", "T-0022.md"), "card body\n", "utf8");
+    await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0022.md"],
+      message: "chore(board): add card T-0022",
+      autoPush: false
+    });
+
+    const { stdout: before } = await git(["rev-parse", "HEAD"], repoRoot);
+    const committed = await commitPaths({
+      repoRoot,
+      filePaths: ["tasks/T-0022.md"],
+      message: "chore(board): add card T-0022 (again)",
+      autoPush: false
+    });
+    const { stdout: after } = await git(["rev-parse", "HEAD"], repoRoot);
+
+    expect(committed).toBe(false);
+    expect(after).toBe(before);
   });
 });
 

@@ -1,23 +1,48 @@
 import path from "node:path";
 import http from "node:http";
+import { promises as fs, createReadStream } from "node:fs";
+import busboy from "busboy";
+import { fileTypeFromBuffer } from "file-type";
 import {
   assertCanMoveToInProgress,
   UnmetDependencyError,
   DependencyCycleError
 } from "../lib/dependencyGuard.js";
 import { listAssignableAgents } from "../lib/agentCatalog.js";
-import { pullDevelop, commitTaskFile, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
+import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
 const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
 const TASK_COMMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/comments$/;
+const TASK_ATTACHMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/attachments$/;
+const TASK_ATTACHMENT_FILE_PATH_RE = /^\/api\/tasks\/([^/]+)\/attachments\/([^/]+)$/;
 const RUNNABLE_STATUSES = new Set(["ready", "review", "blocked"]);
 const AGENTS_PATH = "/api/agents";
 const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const DONE_EXPORT_PATH = "/api/tasks/export/done";
 const GIT_STATUS_PATH = "/api/git/status";
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
+
+/**
+ * Attachment upload policy (see handleUploadAttachment): a denylist, not a strict allowlist --
+ * the LoRA/reference-image tasks that drive this endpoint via curl may send arbitrary binary
+ * blobs (e.g. .safetensors) that `file-type` can't identify by magic bytes, and those must go
+ * through. What must NEVER go through is active markup that a browser could execute if it were
+ * ever rendered: SVG and HTML. `file-type` sniffs real binary image formats reliably, but SVG/
+ * HTML/XML are text formats with no magic number it can detect -- so the second, text-pattern
+ * check below is the actual defense for those, not the REJECTED_SNIFFED_MIMES set (which is
+ * cheap insurance in case a future file-type version ever learns to sniff them).
+ */
+const DEFAULT_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+/** BOARD_ATTACHMENT_MAX_BYTES env var: default 25 MB; read per-request (like autoCommitCardsOnCreateFromEnv). */
+function attachmentMaxBytesFromEnv() {
+  const raw = Number(process.env.BOARD_ATTACHMENT_MAX_BYTES);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_ATTACHMENT_MAX_BYTES;
+}
+const PREVIEWABLE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const REJECTED_SNIFFED_MIMES = new Set(["image/svg+xml", "text/html", "application/xhtml+xml"]);
+const MARKUP_SNIFF_RE = /<\s*(?:svg|script|html|!doctype\s+html)/i;
 
 const DEFAULTS = {
   status: "backlog",
@@ -66,6 +91,118 @@ function sendJson(res, status, payload) {
     "Content-Length": Buffer.byteLength(raw)
   });
   res.end(raw);
+}
+
+/** Strips any directory components and rejects empty/"."/".."/control-char names. */
+function sanitizeFilename(rawFilename) {
+  if (typeof rawFilename !== "string") return null;
+  const base = path.basename(rawFilename.replace(/\\/g, "/")).trim();
+  if (base.length === 0 || base === "." || base === "..") return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f]/.test(base)) return null;
+  return base;
+}
+
+/** Resolves `filename` to a path guaranteed to live inside `cardAttachmentsDir`, or null. */
+function resolveAttachmentPath(cardAttachmentsDir, filename) {
+  const safeName = sanitizeFilename(filename);
+  if (!safeName) return null;
+  const resolved = path.resolve(cardAttachmentsDir, safeName);
+  const dirResolved = path.resolve(cardAttachmentsDir) + path.sep;
+  if (!resolved.startsWith(dirResolved)) return null;
+  return resolved;
+}
+
+/** Sniffs `buffer`'s real type and rejects active markup (SVG/HTML) regardless of what the uploader claimed. */
+async function resolveMimeType(buffer) {
+  const sniffed = await fileTypeFromBuffer(buffer);
+  const sniffedMime = sniffed?.mime ?? null;
+  if (sniffedMime && REJECTED_SNIFFED_MIMES.has(sniffedMime)) {
+    throw new HttpError(415, `Attachment type "${sniffedMime}" is not allowed`);
+  }
+  if (sniffedMime) return sniffedMime;
+  if (MARKUP_SNIFF_RE.test(buffer.subarray(0, 4096).toString("utf8"))) {
+    throw new HttpError(415, "Attachment content looks like markup (SVG/HTML), which is not allowed");
+  }
+  // file-type can't sniff plain-text/unstructured binary formats (e.g. .safetensors, .json,
+  // .txt) by magic bytes -- these pass through as opaque binary. Downloads always set
+  // X-Content-Type-Options: nosniff and a Content-Disposition, so the browser never executes
+  // them regardless of the label.
+  return "application/octet-stream";
+}
+
+/** Parses a single-file multipart/form-data body (field "file", optional field "uploaded_by") from a raw Node request. */
+function parseMultipartUpload(req, { maxBytes }) {
+  return new Promise((resolve, reject) => {
+    let bb;
+    try {
+      // busboy decodes multipart filename/field params as latin1 by default (RFC 2388), which
+      // mangles non-ASCII filenames sent as UTF-8 (the browser/curl default) -- force utf8.
+      bb = busboy({ headers: req.headers, limits: { fileSize: maxBytes, files: 1 }, defParamCharset: "utf8" });
+    } catch {
+      reject(new HttpError(400, "Request must be multipart/form-data"));
+      return;
+    }
+
+    let settled = false;
+    const settleReject = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
+    let fileResult = null;
+    let truncated = false;
+    let sawFile = false;
+    const fields = {};
+
+    bb.on("file", (_name, stream, info) => {
+      sawFile = true;
+      const chunks = [];
+      stream.on("data", (chunk) => chunks.push(chunk));
+      stream.on("limit", () => {
+        truncated = true;
+      });
+      stream.on("close", () => {
+        fileResult = { filename: info.filename, buffer: Buffer.concat(chunks) };
+      });
+    });
+
+    bb.on("field", (name, value) => {
+      fields[name] = value;
+    });
+
+    bb.on("error", (err) => settleReject(new HttpError(400, `Malformed upload: ${err.message}`)));
+
+    bb.on("close", () => {
+      if (settled) return;
+      if (truncated) {
+        settleReject(new HttpError(413, `Attachment exceeds the ${maxBytes}-byte limit`));
+        return;
+      }
+      if (!sawFile || !fileResult || !fileResult.filename) {
+        settleReject(new HttpError(400, 'Request must include a file part named "file"'));
+        return;
+      }
+      settled = true;
+      resolve({ file: fileResult, fields });
+    });
+
+    req.pipe(bb);
+  });
+}
+
+const RFC5987_UNRESERVED_RE = /['()*]/g;
+function encodeRfc5987ValueChars(str) {
+  return encodeURIComponent(str)
+    .replace(RFC5987_UNRESERVED_RE, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+    .replace(/%(7C|60|5E)/g, (_match, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+/** ASCII-only fallback for the legacy `filename=` parameter (RFC 6266 recommends pairing it with `filename*=`). */
+function asciiFallbackFilename(name) {
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+  return ascii.length > 0 ? ascii : "attachment";
 }
 
 async function handleListTasks(store, res) {
@@ -234,6 +371,204 @@ async function handleAddComment(store, id, req, res, repoRoot, tasksDir) {
   sendJson(res, 201, updated);
 }
 
+/**
+ * Uploads a file attachment to a card (works from a browser's FormData POST or from
+ * `curl -F file=@path`). Parses the multipart body with busboy (raw Node http, no express),
+ * sniffs the real mime type and rejects active markup (see resolveMimeType), writes the file
+ * to `tasks/attachments/<id>/<filename>`, and records `{ filename, size, mimetype, uploaded_by,
+ * uploaded_at }` metadata on the card (mirrors handleAddComment's `comments` pattern). Re-uploading
+ * an existing filename REPLACES that entry in place (the file on disk is overwritten, and the
+ * single matching `attachments[]` entry is updated with the new size/mimetype/uploaded_by/
+ * uploaded_at) rather than appending a second, stale entry pointing at the same path -- exactly
+ * one metadata entry per stored filename is an invariant. Commits both the card file and the
+ * attachment in one commit either way.
+ */
+async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir) {
+  const task = await store.get(id);
+  if (!task) {
+    throw new HttpError(404, `Task ${id} not found`);
+  }
+
+  const contentType = req.headers["content-type"] || "";
+  if (!contentType.startsWith("multipart/form-data")) {
+    throw new HttpError(400, "Content-Type must be multipart/form-data");
+  }
+
+  const { file, fields } = await parseMultipartUpload(req, { maxBytes: attachmentMaxBytesFromEnv() });
+
+  const safeName = sanitizeFilename(file.filename);
+  if (!safeName) {
+    throw new HttpError(400, "Invalid filename");
+  }
+
+  const mimetype = await resolveMimeType(file.buffer);
+
+  const cardAttachmentsDir = path.join(tasksDir, "attachments", id);
+  await fs.mkdir(cardAttachmentsDir, { recursive: true });
+  const destPath = resolveAttachmentPath(cardAttachmentsDir, safeName);
+  if (!destPath) {
+    throw new HttpError(400, "Invalid filename");
+  }
+  await fs.writeFile(destPath, file.buffer);
+
+  const uploadedBy =
+    typeof fields.uploaded_by === "string" && fields.uploaded_by.trim().length > 0
+      ? fields.uploaded_by.trim()
+      : "Anonymous";
+  const attachment = {
+    filename: safeName,
+    size: file.buffer.length,
+    mimetype,
+    uploaded_by: uploadedBy,
+    uploaded_at: new Date().toISOString()
+  };
+  const existing = task.attachments ?? [];
+  const existingIndex = existing.findIndex((a) => a.filename === safeName);
+  const isReplace = existingIndex !== -1;
+  const attachments = isReplace
+    ? existing.map((a, i) => (i === existingIndex ? attachment : a))
+    : [...existing, attachment];
+
+  let updated;
+  try {
+    updated = await store.update(id, { attachments });
+  } catch (err) {
+    await fs.rm(destPath, { force: true }).catch(() => {});
+    throw new HttpError(400, err.message);
+  }
+
+  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+    try {
+      const cardRelPath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
+      const attachmentRelPath = path.relative(repoRoot, destPath);
+      const message = isReplace
+        ? `chore(board): replace attachment ${safeName} on card ${id}`
+        : `chore(board): attach ${safeName} to card ${id}`;
+      await commitPaths({
+        repoRoot,
+        filePaths: [cardRelPath, attachmentRelPath],
+        message
+      });
+    } catch (err) {
+      // An attachment must never fail to save because git couldn't commit it -- see the
+      // matching rationale on handleAddComment's commitTaskFile call.
+      console.warn(`Board: failed to commit attachment for ${id} (leaving it untracked):`, err.message);
+    }
+  }
+
+  sendJson(res, 201, updated);
+}
+
+/** Streams an attachment's bytes with the correct headers; path-traversal-safe via resolveAttachmentPath. */
+async function handleDownloadAttachment(store, id, filenameRaw, tasksDir, res) {
+  const task = await store.get(id);
+  if (!task) {
+    throw new HttpError(404, `Task ${id} not found`);
+  }
+
+  let filename;
+  try {
+    filename = decodeURIComponent(filenameRaw);
+  } catch {
+    throw new HttpError(400, "Invalid filename encoding");
+  }
+
+  const cardAttachmentsDir = path.join(tasksDir, "attachments", id);
+  const filePath = resolveAttachmentPath(cardAttachmentsDir, filename);
+  if (!filePath) {
+    throw new HttpError(400, "Invalid attachment filename");
+  }
+
+  const meta = (task.attachments ?? []).find((a) => a.filename === path.basename(filePath));
+  if (!meta) {
+    throw new HttpError(404, `Attachment "${filename}" not found on ${id}`);
+  }
+
+  let stat;
+  try {
+    stat = await fs.stat(filePath);
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      throw new HttpError(404, `Attachment "${filename}" not found on ${id}`);
+    }
+    throw err;
+  }
+
+  const disposition = PREVIEWABLE_IMAGE_MIMES.has(meta.mimetype) ? "inline" : "attachment";
+  const encodedFilename = encodeRfc5987ValueChars(meta.filename);
+  res.writeHead(200, {
+    "Content-Type": meta.mimetype || "application/octet-stream",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Length": stat.size,
+    "Content-Disposition": `${disposition}; filename="${asciiFallbackFilename(meta.filename)}"; filename*=UTF-8''${encodedFilename}`
+  });
+
+  await new Promise((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on("error", reject);
+    res.on("finish", resolve);
+    stream.pipe(res);
+  });
+}
+
+/** Removes an attachment's file (git rm) and its metadata entry, then commits both changes together. */
+async function handleRemoveAttachment(store, id, filenameRaw, res, repoRoot, tasksDir) {
+  const task = await store.get(id);
+  if (!task) {
+    throw new HttpError(404, `Task ${id} not found`);
+  }
+
+  let filename;
+  try {
+    filename = decodeURIComponent(filenameRaw);
+  } catch {
+    throw new HttpError(400, "Invalid filename encoding");
+  }
+
+  const cardAttachmentsDir = path.join(tasksDir, "attachments", id);
+  const filePath = resolveAttachmentPath(cardAttachmentsDir, filename);
+  if (!filePath) {
+    throw new HttpError(400, "Invalid attachment filename");
+  }
+
+  const existing = task.attachments ?? [];
+  const meta = existing.find((a) => a.filename === path.basename(filePath));
+  if (!meta) {
+    throw new HttpError(404, `Attachment "${filename}" not found on ${id}`);
+  }
+
+  const attachments = existing.filter((a) => a.filename !== meta.filename);
+
+  let updated;
+  try {
+    updated = await store.update(id, { attachments });
+  } catch (err) {
+    throw new HttpError(400, err.message);
+  }
+
+  try {
+    await fs.unlink(filePath);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+
+  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+    try {
+      const cardRelPath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
+      const attachmentRelPath = path.relative(repoRoot, filePath);
+      await commitPaths({
+        repoRoot,
+        filePaths: [cardRelPath, attachmentRelPath],
+        message: `chore(board): remove attachment ${meta.filename} from card ${id}`
+      });
+    } catch (err) {
+      console.warn(`Board: failed to commit attachment removal for ${id} (leaving it untracked):`, err.message);
+    }
+  }
+
+  sendJson(res, 200, updated);
+}
+
 async function handleListAgents(agentsDir, res) {
   const agents = agentsDir ? await listAssignableAgents(agentsDir) : [];
   sendJson(res, 200, agents);
@@ -345,6 +680,8 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
       const runMatch = TASK_RUN_PATH_RE.exec(pathname);
       const cancelMatch = TASK_CANCEL_PATH_RE.exec(pathname);
       const commentsMatch = TASK_COMMENTS_PATH_RE.exec(pathname);
+      const attachmentsMatch = TASK_ATTACHMENTS_PATH_RE.exec(pathname);
+      const attachmentFileMatch = TASK_ATTACHMENT_FILE_PATH_RE.exec(pathname);
 
       if (pathname === GIT_STATUS_PATH && req.method === "GET") {
         return await handleGitStatus(gitInfoImpl, res);
@@ -382,7 +719,28 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
       if (commentsMatch && req.method === "POST") {
         return await handleAddComment(store, commentsMatch[1], req, res, repoRoot, tasksDir);
       }
-      if (pathname === GIT_STATUS_PATH || pathname === AGENTS_PATH || pathname === "/api/tasks" || pathname === BACKLOG_EXPORT_PATH || pathname === DONE_EXPORT_PATH || idMatch || runMatch || cancelMatch || commentsMatch) {
+      if (attachmentsMatch && req.method === "POST") {
+        return await handleUploadAttachment(store, attachmentsMatch[1], req, res, repoRoot, tasksDir);
+      }
+      if (attachmentFileMatch && req.method === "GET") {
+        return await handleDownloadAttachment(store, attachmentFileMatch[1], attachmentFileMatch[2], tasksDir, res);
+      }
+      if (attachmentFileMatch && req.method === "DELETE") {
+        return await handleRemoveAttachment(store, attachmentFileMatch[1], attachmentFileMatch[2], res, repoRoot, tasksDir);
+      }
+      if (
+        pathname === GIT_STATUS_PATH ||
+        pathname === AGENTS_PATH ||
+        pathname === "/api/tasks" ||
+        pathname === BACKLOG_EXPORT_PATH ||
+        pathname === DONE_EXPORT_PATH ||
+        idMatch ||
+        runMatch ||
+        cancelMatch ||
+        commentsMatch ||
+        attachmentsMatch ||
+        attachmentFileMatch
+      ) {
         throw new HttpError(405, `Method ${req.method} not allowed on ${pathname}`);
       }
       throw new HttpError(404, "Not found");
