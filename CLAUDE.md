@@ -60,6 +60,9 @@ Full plan: [docs/PLAN.md](docs/PLAN.md). Branching: [docs/branching.md](docs/bra
 None of these exist yet — this is Phase 0. Populated as each phase lands:
 
 - `tools/board` (Phase 1): Vite + Vitest, npm scripts. `npm run dev`, `npm test`.
+  Deploying the live board service: `npm run deploy` — see
+  [tools/board/DEPLOY.md](tools/board/DEPLOY.md) (stops the systemd service before touching
+  the working tree, merges `--no-ff`, health-checks).
 - `server` (Phase 4): CMake + Drogon + libpqxx, doctest. `cmake --build build`, `ctest`.
 - `client` (Phase 5): Godot 4.x + godot-cpp via SCons. `scons`, open in Godot editor.
 - Dev Postgres (Phase 4): `docker compose up` (dockerd/moby, not containerd).
