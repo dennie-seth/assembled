@@ -39,12 +39,11 @@ describe("board column layout (T-0141 scaling fix)", () => {
     column.className = "column";
     document.body.appendChild(column);
 
-    // flex-basis is set to 14rem; happy-dom reports it as the basis value
+    // flex-basis is set to 14rem. happy-dom keeps rem units without resolving
+    // to px, so we check the numeric part (>=10rem is meaningfully wide).
     const flexBasis = getComputedStyle(column).flexBasis;
-    // Accept any non-zero, non-auto basis that keeps a column wide enough.
-    // 14rem at default 16px font = 224px. happy-dom resolves to px.
-    const pxVal = parseFloat(flexBasis);
-    expect(pxVal).toBeGreaterThanOrEqual(100);
+    const remVal = parseFloat(flexBasis);
+    expect(remVal).toBeGreaterThanOrEqual(10);
   });
 
   it("side-panel is position fixed (overlays board rather than pushing it)", () => {
