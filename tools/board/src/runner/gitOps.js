@@ -147,12 +147,26 @@ export async function getHeadCommit({ worktreeDir }) {
  * have yet, and a `pull.ff=only` or `pull.rebase=true` global default would otherwise turn a
  * perfectly normal divergence into a failed/rewritten pull. A plain three-way merge is what we
  * want here: it's predictable and, since card files are new/unique paths, essentially
- * conflict-free in practice.
+ * conflict-free in practice -- but not guaranteed conflict-free (two runs touching the same
+ * card, or a card reworked on both sides, are real cases), so on failure this runs `merge
+ * --abort` before rethrowing, the same as `mergeNoFF` below: a caller that only logs the
+ * error (as the Done-triggered call in httpApi.js does) must never be left with repoRoot mid-
+ * merge -- conflict markers on disk block every subsequent commit and pull until someone
+ * resolves it by hand.
  */
 export async function pullDevelop({ repoRoot, branch = "develop" }) {
   const { stdout: beforeOut } = await git(["rev-parse", "HEAD"], repoRoot);
   const before = beforeOut.trim();
-  await git(["pull", "--no-rebase", "--no-edit", "origin", branch], repoRoot);
+  try {
+    await git(["pull", "--no-rebase", "--no-edit", "origin", branch], repoRoot);
+  } catch (err) {
+    await git(["merge", "--abort"], repoRoot).catch(() => {
+      // Best-effort cleanup -- if there was nothing to abort (e.g. the pull failed before a
+      // merge ever started, such as the branch-doesn't-exist case), that's fine; the original
+      // error below is what matters to the caller.
+    });
+    throw err;
+  }
   const { stdout: afterOut } = await git(["rev-parse", "HEAD"], repoRoot);
   const after = afterOut.trim();
   return { advanced: before !== after, before, after };
