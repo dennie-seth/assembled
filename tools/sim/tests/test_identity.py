@@ -19,7 +19,6 @@ from conftest import FAR_FUTURE, make_cfg
 from sim.engine import SimEngine
 from sim.types import AgentState, ItemInstance, Rarity
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
