@@ -347,7 +347,7 @@ describe("renderBoard per-column sort control", () => {
     expect(sortSelect).not.toBeNull();
     expect(sortSelect.value).toBe("id");
     const values = Array.from(sortSelect.options).map((o) => o.value);
-    expect(values).toEqual(["id", "priority", "agent", "phase"]);
+    expect(values).toEqual(["id", "priority", "agent", "phase", "oldest", "newest"]);
   });
 
   it("orders cards within a column by the current sort key for that column", () => {

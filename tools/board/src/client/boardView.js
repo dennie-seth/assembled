@@ -15,7 +15,9 @@ const SORT_LABELS = {
   id: "ID",
   priority: "Priority",
   agent: "Agent",
-  phase: "Phase"
+  phase: "Phase",
+  oldest: "Oldest",
+  newest: "Newest"
 };
 
 function actionButton(className, label, onClick) {

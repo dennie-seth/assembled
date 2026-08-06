@@ -171,4 +171,32 @@ describe("sortTasks", () => {
     const tasks = [t({ id: "T-0002" }), t({ id: "T-0001" })];
     expect(sortTasks(tasks, "bogus").map((x) => x.id)).toEqual(["T-0001", "T-0002"]);
   });
+
+  it("sorts by created date ascending (oldest first) for key 'oldest'", () => {
+    const tasks = [
+      t({ id: "T-0001", created: "2026-08-01" }),
+      t({ id: "T-0002", created: "2026-07-01" }),
+      t({ id: "T-0003", created: "2026-09-01" })
+    ];
+    expect(sortTasks(tasks, "oldest").map((x) => x.id)).toEqual(["T-0002", "T-0001", "T-0003"]);
+  });
+
+  it("sorts by created date descending (newest first) for key 'newest'", () => {
+    const tasks = [
+      t({ id: "T-0001", created: "2026-08-01" }),
+      t({ id: "T-0002", created: "2026-07-01" }),
+      t({ id: "T-0003", created: "2026-09-01" })
+    ];
+    expect(sortTasks(tasks, "newest").map((x) => x.id)).toEqual(["T-0003", "T-0001", "T-0002"]);
+  });
+
+  it("breaks ties in oldest/newest by id when created dates are equal", () => {
+    const tasks = [
+      t({ id: "T-0003", created: "2026-08-01" }),
+      t({ id: "T-0001", created: "2026-08-01" }),
+      t({ id: "T-0002", created: "2026-08-01" })
+    ];
+    expect(sortTasks(tasks, "oldest").map((x) => x.id)).toEqual(["T-0001", "T-0002", "T-0003"]);
+    expect(sortTasks(tasks, "newest").map((x) => x.id)).toEqual(["T-0001", "T-0002", "T-0003"]);
+  });
 });
