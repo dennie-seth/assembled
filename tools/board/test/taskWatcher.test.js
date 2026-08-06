@@ -64,6 +64,11 @@ describe("TaskWatcher", () => {
   it("emits task-changed with type 'removed' when a task file is deleted externally", async () => {
     await fs.writeFile(path.join(tmpDir, "T-0001.md"), makeTaskRaw(), "utf8");
     await waitForEvent(watcher, "task-changed");
+    // chokidar can emit both 'add' and 'change' for a single writeFile on some
+    // file systems (Linux/WSL2 in particular). Drain any extra queued events
+    // before arming the listener for the 'unlink' so the delete event isn't
+    // preempted by a stale 'changed' event from the write.
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     const eventPromise = waitForEvent(watcher, "task-changed");
     await fs.rm(path.join(tmpDir, "T-0001.md"));

@@ -11,12 +11,6 @@ body {
   padding-bottom: 18rem;
 }
 
-/* Reserve room for #side-panel only while it's actually showing content,
-   so its fixed overlay never overlaps (and permanently clips) board columns
-   scrolled underneath it - see #side-panel[hidden] below. */
-body:has(#side-panel:not([hidden])) {
-  padding-right: 29rem;
-}
 
 #terminal-panel {
   position: fixed;
@@ -74,8 +68,7 @@ body:has(#side-panel:not([hidden])) {
 }
 
 .column {
-  flex: 1 1 0;
-  min-width: 12rem;
+  flex: 1 0 14rem;
   background: color-mix(in srgb, currentColor 6%, transparent);
   border-radius: 0.5rem;
   padding: 0.5rem;
