@@ -8,6 +8,54 @@ const PRIORITIES = ["P0", "P1", "P2", "P3"];
 const UNASSIGNED_AGENT_VALUE = "";
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
+// Live updates (board socket "changed" events -- see app.js's handleSocketMessage) call
+// renderDetailPanel again for the same, still-selected task on every server-side change,
+// e.g. an in-progress card's `attempts` counter ticking up. Each call tears down and
+// rebuilds the whole subtree from `task`, which used to wipe an un-submitted comment (or
+// title/body) the user was mid-typing. Capture the focused field's value/caret before the
+// teardown and restore it onto its freshly-built replacement so typing survives a re-render;
+// switching to a different task, or a re-render while the field isn't focused, intentionally
+// does not restore anything so a legitimate server-side change still wins.
+const SELECTABLE_INPUT_TYPES = new Set(["text", "search", "url", "tel", "password"]);
+
+function supportsSelectionRange(el) {
+  if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName === "INPUT") return SELECTABLE_INPUT_TYPES.has(el.type);
+  return false;
+}
+
+function captureFocusState(root) {
+  const active = document.activeElement;
+  if (!active || !root.contains(active)) return null;
+  const field = active.dataset?.detailField;
+  if (!field) return null;
+
+  const state = { field, value: active.value };
+  if (supportsSelectionRange(active)) {
+    state.selectionStart = active.selectionStart;
+    state.selectionEnd = active.selectionEnd;
+  }
+  return state;
+}
+
+function restoreFocusState(root, focusState) {
+  if (!focusState) return;
+  const el = root.querySelector(`[data-detail-field="${focusState.field}"]`);
+  if (!el) return;
+
+  if (el.type !== "file") {
+    el.value = focusState.value;
+  }
+  el.focus();
+  if ("selectionStart" in focusState && typeof el.setSelectionRange === "function") {
+    try {
+      el.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
+    } catch {
+      // Some focusable input types (e.g. number) don't support selection ranges.
+    }
+  }
+}
+
 function formatBytes(bytes) {
   if (typeof bytes !== "number" || !Number.isFinite(bytes)) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -123,6 +171,7 @@ function commentsSectionFor(task, onAddComment) {
   const input = document.createElement("textarea");
   input.className = "detail-comment-input";
   input.placeholder = "Add a comment...";
+  input.dataset.detailField = "comment";
 
   const addBtn = document.createElement("button");
   addBtn.type = "button";
@@ -194,6 +243,7 @@ function attachmentsSectionFor(task, onUploadAttachment, onRemoveAttachment) {
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.className = "detail-attachment-input";
+    fileInput.dataset.detailField = "attachment";
     fileInput.addEventListener("change", () => {
       const file = fileInput.files[0];
       if (!file) return;
@@ -262,12 +312,18 @@ export function renderDetailPanel(
     allTasks = []
   }
 ) {
+  const previousTaskId = root.dataset.taskId ?? null;
+  const isSameTask = task && previousTaskId === String(task.id);
+  const focusState = isSameTask ? captureFocusState(root) : null;
+
   root.replaceChildren();
 
   if (!task) {
+    delete root.dataset.taskId;
     root.hidden = true;
     return;
   }
+  root.dataset.taskId = String(task.id);
   root.hidden = false;
 
   const panel = document.createElement("div");
@@ -283,6 +339,7 @@ export function renderDetailPanel(
   titleInput.type = "text";
   titleInput.className = "detail-title";
   titleInput.value = task.title;
+  titleInput.dataset.detailField = "title";
 
   const prioritySelect = selectFor(PRIORITIES, task.priority);
   prioritySelect.className = "detail-priority";
@@ -297,6 +354,7 @@ export function renderDetailPanel(
   phaseInput.type = "number";
   phaseInput.className = "detail-phase";
   phaseInput.value = String(task.phase);
+  phaseInput.dataset.detailField = "phase";
 
   const depsEl = document.createElement("div");
   depsEl.className = "detail-deps";
@@ -319,6 +377,7 @@ export function renderDetailPanel(
   const bodyTextarea = document.createElement("textarea");
   bodyTextarea.className = "detail-body-edit";
   bodyTextarea.value = task.body;
+  bodyTextarea.dataset.detailField = "body";
 
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
@@ -371,4 +430,5 @@ export function renderDetailPanel(
   panel.append(preview, labeledField("Body (markdown)", bodyTextarea), saveBtn, deleteControlsFor(task, onDelete));
 
   root.appendChild(panel);
+  restoreFocusState(root, focusState);
 }
