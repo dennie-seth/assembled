@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createOrphanReaper, orphanRecoveryEnabledFromEnv, ORPHANABLE_STATUSES } from "../../src/runner/orphanReaper.js";
+import { writeRunState } from "../../src/runner/runState.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -312,6 +316,159 @@ describe("start/stop", () => {
     await vi.advanceTimersByTimeAsync(5000);
 
     expect(store._byId.get("T-0022").status).toBe("in-progress");
+  });
+});
+
+describe("liveness check (survives a process restart)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "orphan-reaper-liveness-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  describe("reapOnStartup", () => {
+    it("does NOT reap a card whose recorded pid is still alive, and re-adopts it into activeCardIds", async () => {
+      const store = makeStore([makeTask({ id: "T-0030", status: "in-progress" })]);
+      const hub = makeHub();
+      const activeCardIds = new Set();
+      await writeRunState({ runsDir, taskId: "T-0030", pid: 9999, runLogPath: path.join(runsDir, "T-0030.jsonl") });
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds,
+        enabled: true,
+        runsDir,
+        isPidAliveFn: (pid) => pid === 9999
+      });
+
+      const reaped = await reaper.reapOnStartup();
+
+      expect(reaped).toEqual([]);
+      expect(store._byId.get("T-0030").status).toBe("in-progress");
+      expect(hub.broadcast).not.toHaveBeenCalled();
+      expect(activeCardIds.has("T-0030")).toBe(true);
+    });
+
+    it("reaps a card whose recorded pid is dead", async () => {
+      const store = makeStore([makeTask({ id: "T-0031", status: "in-progress" })]);
+      const hub = makeHub();
+      await writeRunState({ runsDir, taskId: "T-0031", pid: 9998, runLogPath: path.join(runsDir, "T-0031.jsonl") });
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds: new Set(),
+        enabled: true,
+        runsDir,
+        isPidAliveFn: () => false
+      });
+
+      const reaped = await reaper.reapOnStartup();
+
+      expect(reaped).toEqual(["T-0031"]);
+      expect(store._byId.get("T-0031").status).toBe("blocked");
+    });
+
+    it("reaps a card with no runstate on disk at all (pre-fix runs, or genuinely never started)", async () => {
+      const store = makeStore([makeTask({ id: "T-0032", status: "in-progress" })]);
+      const hub = makeHub();
+      const reaper = createOrphanReaper({ store, hub, activeCardIds: new Set(), enabled: true, runsDir });
+
+      const reaped = await reaper.reapOnStartup();
+
+      expect(reaped).toEqual(["T-0032"]);
+      expect(store._byId.get("T-0032").status).toBe("blocked");
+    });
+
+    it("does not crash and reaps when the runstate file exists but has no usable pid and a stale heartbeat", async () => {
+      const store = makeStore([makeTask({ id: "T-0033", status: "validation" })]);
+      const hub = makeHub();
+      const logPath = path.join(runsDir, "T-0033.jsonl");
+      await fs.writeFile(logPath, "{}\n", "utf8");
+      await fs.utimes(logPath, new Date(Date.now() - 5 * 60_000), new Date(Date.now() - 5 * 60_000));
+      await writeRunState({ runsDir, taskId: "T-0033", pid: undefined, runLogPath: logPath });
+      const reaper = createOrphanReaper({ store, hub, activeCardIds: new Set(), enabled: true, runsDir });
+
+      const reaped = await reaper.reapOnStartup();
+
+      expect(reaped).toEqual(["T-0033"]);
+    });
+  });
+
+  describe("sweepOnce", () => {
+    it("does not reap an absent-from-activeCardIds card once grace elapses if its pid is still alive, and re-adopts it", async () => {
+      const store = makeStore([makeTask({ id: "T-0034", status: "in-progress" })]);
+      const hub = makeHub();
+      const activeCardIds = new Set();
+      await writeRunState({ runsDir, taskId: "T-0034", pid: 7777, runLogPath: path.join(runsDir, "T-0034.jsonl") });
+      let clock = 1000;
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds,
+        enabled: true,
+        graceMs: 15_000,
+        runsDir,
+        isPidAliveFn: (pid) => pid === 7777,
+        now: () => clock
+      });
+
+      await reaper.sweepOnce();
+      clock += 15_000;
+      const reaped = await reaper.sweepOnce();
+
+      expect(reaped).toEqual([]);
+      expect(store._byId.get("T-0034").status).toBe("in-progress");
+      expect(activeCardIds.has("T-0034")).toBe(true);
+    });
+
+    it("reaps once grace elapses when the recorded pid is dead", async () => {
+      const store = makeStore([makeTask({ id: "T-0035", status: "in-progress" })]);
+      const hub = makeHub();
+      await writeRunState({ runsDir, taskId: "T-0035", pid: 7778, runLogPath: path.join(runsDir, "T-0035.jsonl") });
+      let clock = 1000;
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds: new Set(),
+        enabled: true,
+        graceMs: 15_000,
+        runsDir,
+        isPidAliveFn: () => false,
+        now: () => clock
+      });
+
+      await reaper.sweepOnce();
+      clock += 15_000;
+      const reaped = await reaper.sweepOnce();
+
+      expect(reaped).toEqual(["T-0035"]);
+      expect(store._byId.get("T-0035").status).toBe("blocked");
+    });
+
+    it("does not crash when there is no runstate file for the candidate card", async () => {
+      const store = makeStore([makeTask({ id: "T-0036", status: "in-progress" })]);
+      const hub = makeHub();
+      let clock = 1000;
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds: new Set(),
+        enabled: true,
+        graceMs: 15_000,
+        runsDir,
+        now: () => clock
+      });
+
+      await reaper.sweepOnce();
+      clock += 15_000;
+      const reaped = await expect(reaper.sweepOnce()).resolves.toEqual(["T-0036"]);
+      void reaped;
+      expect(store._byId.get("T-0036").status).toBe("blocked");
+    });
   });
 });
 

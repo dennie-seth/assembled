@@ -6,6 +6,7 @@ import { extractVerdictFromEvents } from "./verdict.js";
 import { loadAgentDef, loadRules } from "./configLoader.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { createRunLog } from "./runLog.js";
+import { writeRunState, clearRunState } from "./runState.js";
 import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
@@ -78,6 +79,8 @@ export class RunOrchestrator {
     buildReviewerPromptFn = buildReviewerPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     createRunLogFn = createRunLog,
+    writeRunStateFn = writeRunState,
+    clearRunStateFn = clearRunState,
     now = () => new Date(),
     onIdle = () => {}
   }) {
@@ -102,6 +105,8 @@ export class RunOrchestrator {
     this.buildReviewerPromptFn = buildReviewerPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.createRunLogFn = createRunLogFn;
+    this.writeRunStateFn = writeRunStateFn;
+    this.clearRunStateFn = clearRunStateFn;
     this.now = now;
     this.onIdle = onIdle;
     this.activeRuns = new Map();
@@ -178,6 +183,11 @@ export class RunOrchestrator {
       }
     } finally {
       this.activeCardIds.delete(taskId);
+      // Best-effort: the orphan reaper only ever trusts a *present* runstate file, so once
+      // there's no more span of runCard() left to protect, clearing it (rather than leaving a
+      // stale pid behind) keeps a future restart's liveness check from having to reason about
+      // a runstate written by a run that's already fully finished.
+      await this.clearRunStateFn({ runsDir: this.runsDir, taskId });
       if (this.activeCardIds.size === 0) {
         this.onIdle();
       }
@@ -408,6 +418,11 @@ export class RunOrchestrator {
     const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model });
     const entry = { phase, run, worktreeDir, cancelled: false };
     this.activeRuns.set(taskId, entry);
+    // Persisted so the orphan reaper can tell a genuinely-dead run from one whose detached
+    // `claude` child (see claudeCliRunner.js) survived a board restart with the same pid --
+    // overwritten on every phase since the implementer and reviewer are separate child
+    // processes within one runCard() span.
+    await this.writeRunStateFn({ runsDir: this.runsDir, taskId, pid: run.child.pid, runLogPath: runLog.path, now: this.now });
 
     const events = [];
     let appendChain = Promise.resolve();
