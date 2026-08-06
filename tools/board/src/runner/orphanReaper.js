@@ -1,5 +1,7 @@
+import path from "node:path";
 import { appendNote } from "./runOrchestrator.js";
 import { readRunState, isRunLive, isPidAlive, DEFAULT_HEARTBEAT_STALE_MS } from "./runState.js";
+import * as gitOps from "./gitOps.js";
 
 const ORPHAN_RECOVERY_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
 
@@ -17,12 +19,35 @@ export function orphanRecoveryEnabledFromEnv() {
   return !ORPHAN_RECOVERY_DISABLE_VALUES.has((process.env.AUTO_RECOVER_ORPHANED_RUNS ?? "").toLowerCase());
 }
 
-async function reapCard(store, hub, task) {
+/**
+ * Commits the reaped card file to repoRoot, the same way runOrchestrator.js's
+ * `_updateAndBroadcast` does (see its docstring) -- recovery is just another in-run status
+ * write, so it left the same dirty-tree trail that broke the Done-triggered `pullDevelop`.
+ * Opt-in via `repoRoot`/`tasksDir`: omitting them disables committing entirely, matching
+ * httpApi.js's `if (repoRoot && tasksDir && ...)` guard. Best-effort -- a commit failure
+ * must never undo the reap itself, so it's caught and logged.
+ */
+async function commitReapedCard({ taskId, repoRoot, tasksDir, git }) {
+  if (!repoRoot || !tasksDir || !git.autoCommitCardsOnCreateFromEnv()) return;
+  try {
+    const relativePath = path.relative(repoRoot, path.join(tasksDir, `${taskId}.md`));
+    await git.commitTaskFile({
+      repoRoot,
+      filePath: relativePath,
+      message: `chore(board): update card ${taskId} (status, body)`
+    });
+  } catch (err) {
+    console.warn(`Board: failed to commit orphan recovery for ${taskId} (leaving it untracked):`, err.message);
+  }
+}
+
+async function reapCard(store, hub, task, { repoRoot, tasksDir, git }) {
   const updated = await store.update(task.id, {
     status: "blocked",
     body: appendNote(task.body, "Recovered", RECOVERY_NOTE_TEXT)
   });
   hub.broadcast({ type: "changed", id: task.id, task: updated });
+  await commitReapedCard({ taskId: task.id, repoRoot, tasksDir, git });
   return updated;
 }
 
@@ -72,7 +97,10 @@ export function createOrphanReaper({
   heartbeatStaleMs = DEFAULT_HEARTBEAT_STALE_MS,
   isPidAliveFn = isPidAlive,
   readRunStateFn = readRunState,
-  isRunLiveFn = isRunLive
+  isRunLiveFn = isRunLive,
+  repoRoot = null,
+  tasksDir = null,
+  git = gitOps
 }) {
   const orphanSince = new Map();
   let timer = null;
@@ -102,7 +130,7 @@ export function createOrphanReaper({
         logger.log(`assembled-board: card ${task.id} still has a live run (survived restart) -- re-adopted, not reaped`);
         continue;
       }
-      await reapCard(store, hub, task);
+      await reapCard(store, hub, task, { repoRoot, tasksDir, git });
       reaped.push(task.id);
       logger.log(`assembled-board: recovered orphaned card ${task.id} on startup (was ${task.status})`);
     }
@@ -134,7 +162,7 @@ export function createOrphanReaper({
           logger.log(`assembled-board: card ${task.id} still has a live run (untracked by this process) -- re-adopted, not reaped`);
           continue;
         }
-        await reapCard(store, hub, task);
+        await reapCard(store, hub, task, { repoRoot, tasksDir, git });
         orphanSince.delete(task.id);
         reaped.push(task.id);
         logger.log(`assembled-board: recovered orphaned card ${task.id} (was ${task.status}, no active run)`);

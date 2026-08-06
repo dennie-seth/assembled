@@ -424,6 +424,46 @@ describe("pullDevelop", () => {
 
     await expect(pullDevelop({ repoRoot, branch: "develop" })).resolves.toMatchObject({ advanced: true });
   });
+
+  it("aborts the merge and rethrows on conflict, leaving a clean working tree behind (not wedged mid-merge)", async () => {
+    // Regression coverage: unlike mergeNoFF (below), pullDevelop used to have no
+    // merge --abort safety net on failure -- a real content conflict (not just a dirty
+    // working tree) left repoRoot permanently stuck mid-merge with conflict markers on
+    // disk, blocking every subsequent commit ("cannot do a partial commit during a merge")
+    // and every subsequent pull ("Pulling is not possible because you have unmerged
+    // files") until someone resolved it by hand.
+    await fs.writeFile(path.join(repoRoot, "conflict.txt"), "local version\n", "utf8");
+    await git(["add", "conflict.txt"], repoRoot);
+    await git(["commit", "-m", "local: conflicting change"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-pull-conflict");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "conflict.txt"), "upstream version\n", "utf8");
+    await git(["add", "conflict.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: conflicting change"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(pullDevelop({ repoRoot, branch: "develop" })).rejects.toThrow();
+
+    // Working tree must be clean -- no leftover conflict markers -- not left mid-merge.
+    const { stdout: status } = await git(["status", "--porcelain"], repoRoot);
+    expect(status.trim()).toBe("");
+    const { stdout: mergeHead } = await git(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], repoRoot).catch(
+      (err) => ({ stdout: "", err })
+    );
+    expect(mergeHead.trim()).toBe("");
+    const conflictContent = await fs.readFile(path.join(repoRoot, "conflict.txt"), "utf8");
+    expect(conflictContent).toBe("local version\n");
+
+    // And a subsequent commit must succeed -- proof the repo isn't wedged.
+    await fs.writeFile(path.join(repoRoot, "after.txt"), "post-conflict work\n", "utf8");
+    await git(["add", "after.txt"], repoRoot);
+    await expect(git(["commit", "-m", "local: work after aborted pull"], repoRoot)).resolves.toBeDefined();
+  });
 });
 
 describe("mergeNoFF", () => {

@@ -90,6 +90,8 @@ function makeGit(overrides = {}) {
     push: vi.fn(async () => {}),
     getHeadCommit: vi.fn(async () => "abc1234def5678abc1234def5678abc1234def5"),
     linkBoardNodeModules: vi.fn(async () => {}),
+    commitTaskFile: vi.fn(async () => true),
+    autoCommitCardsOnCreateFromEnv: vi.fn(() => true),
     ...overrides
   };
 }
