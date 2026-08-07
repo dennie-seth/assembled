@@ -96,6 +96,12 @@ export async function startBoardServer({
 
   if (watcher) {
     watcher.on("task-changed", (event) => hub.broadcast(event));
+    // TaskWatcher emits 'error' (e.g. a parse failure on a file caught mid-write) rather than
+    // throwing -- EventEmitter throws synchronously when an 'error' event has no listener, which
+    // would otherwise surface as an unhandled rejection and crash nothing while looking like it did.
+    watcher.on("error", (err) => {
+      console.warn("Board: TaskWatcher error (ignoring, next fs event will retry):", err.message);
+    });
   }
 
   const gitInfoImpl = () => getGitStatus(REPO_ROOT);
