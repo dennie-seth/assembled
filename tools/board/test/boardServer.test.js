@@ -167,6 +167,64 @@ describe("board server task store selection (BOARD_TASK_STORE)", () => {
     }
   });
 
+  it("does not start a TaskWatcher in db mode -- there is no tasks/*.md to watch", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-nowatcher-"));
+    const dbDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-nowatcher-db-"));
+    const priorBoardDbPath = process.env.BOARD_DB_PATH;
+    process.env.BOARD_DB_PATH = path.join(dbDir, "board.db");
+    try {
+      const server = await startBoardServer({ tasksDir: dir, port: 0, taskStoreKind: "db" });
+      try {
+        expect(server.watcher).toBeNull();
+      } finally {
+        await server.close();
+      }
+    } finally {
+      if (priorBoardDbPath === undefined) delete process.env.BOARD_DB_PATH;
+      else process.env.BOARD_DB_PATH = priorBoardDbPath;
+      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dbDir, { recursive: true, force: true });
+    }
+  });
+
+  it("broadcasts a card write over /ws/board in db mode without any tasks/*.md file ever being written", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-dbbroadcast-"));
+    const dbDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-dbbroadcast-db-"));
+    const priorBoardDbPath = process.env.BOARD_DB_PATH;
+    process.env.BOARD_DB_PATH = path.join(dbDir, "board.db");
+    try {
+      const server = await startBoardServer({ tasksDir: dir, port: 0, taskStoreKind: "db" });
+      try {
+        const { port } = server.server.address();
+        const client = new WebSocket(`ws://127.0.0.1:${port}/ws/board`);
+        await waitForOpen(client);
+
+        const messagePromise = waitForMessage(client);
+        const res = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "Db broadcast card", phase: 1 })
+        });
+        const task = await res.json();
+
+        const event = await messagePromise;
+        expect(event.type).toBe("added");
+        expect(event.id).toBe(task.id);
+        expect(event.task.title).toBe("Db broadcast card");
+        expect(await fs.readdir(dir)).toEqual([]);
+
+        client.close();
+      } finally {
+        await server.close();
+      }
+    } finally {
+      if (priorBoardDbPath === undefined) delete process.env.BOARD_DB_PATH;
+      else process.env.BOARD_DB_PATH = priorBoardDbPath;
+      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dbDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an unrecognized BOARD_TASK_STORE value", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-bad-"));
     try {

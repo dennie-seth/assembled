@@ -196,6 +196,8 @@ export function createSelfImprovementLoop({
   idAllocator,
   repoRoot,
   tasksDir,
+  taskStoreKind = "fs",
+  hub,
   enabled = selfImproveEnabledFromEnv(),
   reworkThreshold = reworkThresholdFromEnv(),
   minReworkSample = minReworkSampleFromEnv(),
@@ -244,7 +246,7 @@ export function createSelfImprovementLoop({
 
     const proposal = draftImprovementCard({ stats, trigger, now });
     try {
-      const created = await createCardFn({ store, idAllocator, repoRoot, tasksDir, fields: proposal });
+      const created = await createCardFn({ store, idAllocator, repoRoot, tasksDir, fields: proposal, taskStoreKind, hub });
       logger.log(`assembled-board: flow-stats self-improvement proposed ${created.id} (${trigger.reason})`);
       return created;
     } catch (err) {

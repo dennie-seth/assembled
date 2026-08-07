@@ -16,8 +16,13 @@ const FIELD_DEFAULTS = {
  * Not a refactor of the HTTP handler itself (see docs/design/flow-stats-self-improvement.md for
  * why); this is the shared non-HTTP core both that handler and the flow-stats self-improvement
  * loop call through.
+ *
+ * In db mode (`taskStoreKind === "db"`), the commit step is skipped -- there is no tasks/*.md
+ * file to commit -- and, if `hub` is provided, an "added" event is broadcast directly so the
+ * live board reflects the new card without depending on a file watcher that isn't running in
+ * this mode (see docs/design/cards-to-database.md, Phase 2).
  */
-export async function createCard({ store, idAllocator, repoRoot, tasksDir, fields, logger = console }) {
+export async function createCard({ store, idAllocator, repoRoot, tasksDir, fields, logger = console, taskStoreKind = "fs", hub }) {
   const id = await idAllocator.allocate();
   const task = {
     id,
@@ -34,7 +39,7 @@ export async function createCard({ store, idAllocator, repoRoot, tasksDir, field
 
   const created = await store.create(task);
 
-  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+  if (taskStoreKind !== "db" && repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
     try {
       const relativePath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
       await commitTaskFile({ repoRoot, filePath: relativePath, message: `chore(board): add card ${id}` });
@@ -43,6 +48,10 @@ export async function createCard({ store, idAllocator, repoRoot, tasksDir, field
       // couldn't commit it.
       logger.warn(`Board: failed to commit card file for ${id} (leaving it untracked):`, err.message);
     }
+  }
+
+  if (taskStoreKind === "db" && hub) {
+    hub.broadcast({ type: "added", id, task: created });
   }
 
   return created;

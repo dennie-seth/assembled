@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { FsTaskStore } from "../../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../../src/lib/idAllocator.js";
+import { DbTaskStore } from "../../src/lib/db/dbTaskStore.js";
+import { IdAllocatorDb } from "../../src/lib/db/idAllocatorDb.js";
 import { createCard } from "../../src/runner/cardCreation.js";
 
 const execFileAsync = promisify(execFile);
@@ -102,5 +104,60 @@ describe("createCard", () => {
     expect(created.priority).toBe("P2");
     expect(created.agent).toBeNull();
     expect(created.depends_on).toEqual([]);
+  });
+});
+
+describe("createCard in db mode", () => {
+  let dbStore;
+  let dbIdAllocator;
+
+  beforeEach(() => {
+    dbStore = new DbTaskStore(":memory:");
+    dbIdAllocator = new IdAllocatorDb(dbStore.db);
+  });
+
+  afterEach(() => {
+    dbStore.close();
+  });
+
+  it("never commits to git, even when repoRoot/tasksDir point at a real repo", async () => {
+    const created = await createCard({
+      store: dbStore,
+      idAllocator: dbIdAllocator,
+      repoRoot,
+      tasksDir,
+      fields: minimalFields,
+      taskStoreKind: "db"
+    });
+
+    expect(created.id).toMatch(/^T-\d{4}$/);
+    expect(await dbStore.get(created.id)).toMatchObject({ title: minimalFields.title });
+    const { stdout: log } = await git(["log", "--oneline"], repoRoot);
+    // Only the "initial" commit from beforeEach -- createCard added nothing to git.
+    expect(log.trim().split("\n")).toHaveLength(1);
+    const { stdout: status } = await git(["status", "--porcelain"], repoRoot);
+    expect(status.trim()).toBe("");
+  });
+
+  it("broadcasts an 'added' event over hub instead of relying on a file watcher", async () => {
+    const hub = { broadcast: vi.fn() };
+    const created = await createCard({
+      store: dbStore,
+      idAllocator: dbIdAllocator,
+      repoRoot,
+      tasksDir,
+      fields: minimalFields,
+      taskStoreKind: "db",
+      hub
+    });
+
+    expect(hub.broadcast).toHaveBeenCalledWith({ type: "added", id: created.id, task: created });
+  });
+
+  it("does not broadcast in fs mode (unchanged default behavior)", async () => {
+    const hub = { broadcast: vi.fn() };
+    await createCard({ store, idAllocator, repoRoot, tasksDir, fields: minimalFields, hub });
+
+    expect(hub.broadcast).not.toHaveBeenCalled();
   });
 });

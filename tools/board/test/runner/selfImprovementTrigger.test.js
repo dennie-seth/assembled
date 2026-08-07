@@ -322,6 +322,30 @@ describe("createSelfImprovementLoop / sweepOnce", () => {
     expect(result).toBe(created);
   });
 
+  it("forwards taskStoreKind and hub to createCardFn -- so a db-mode proposal never commits and broadcasts instead", async () => {
+    const store = makeFakeStore(reworkTasks());
+    const created = { id: "T-9999", title: "proposal" };
+    const createCardFn = vi.fn(async () => created);
+    const hub = { broadcast: vi.fn() };
+    const loop = createSelfImprovementLoop({
+      store,
+      enabled: true,
+      reworkThreshold: 0.3,
+      minReworkSample: 5,
+      createCardFn,
+      taskStoreKind: "db",
+      hub,
+      logger: makeLogger()
+    });
+
+    await loop.sweepOnce();
+
+    expect(createCardFn).toHaveBeenCalledTimes(1);
+    const [args] = createCardFn.mock.calls[0];
+    expect(args.taskStoreKind).toBe("db");
+    expect(args.hub).toBe(hub);
+  });
+
   it("does not create a second proposal card on the very next sweep once one was already created (cadence + dedup)", async () => {
     const tasks = reworkTasks();
     const store = makeFakeStore(tasks);
