@@ -70,29 +70,94 @@ Pure function, no I/O — the sweep (below) is the only I/O boundary.
 
 ## Trigger cadence
 
-**Concrete rule, evaluated on every sweep tick:**
+**Revised 2026-08-07** (T-0147): the original interval/rework-rate design fired far too often in
+practice — see "Post-launch revision" below for what went wrong and why. **Concrete rule, evaluated
+on every sweep tick:**
 
-- fires on the **interval** condition once `doneCount - baseline >= FLOW_STATS_SELFIMPROVE_INTERVAL_CARDS`
-  (default 10) more cards have reached `done` since the baseline, **or**
-- fires on the **rework-rate** condition once `reworkRate >= FLOW_STATS_SELFIMPROVE_REWORK_THRESHOLD`
-  (default 0.3) **and** the sample (`reworkSample`) is at least `FLOW_STATS_SELFIMPROVE_MIN_REWORK_SAMPLE`
-  (default 5) — the sample-size floor exists so 1 FAIL out of 1 card doesn't read as a 100% crisis.
+Two gates apply before any threshold is even considered:
 
-**No separate state file.** The "baseline" isn't persisted anywhere new — it's read back out of
-the most recent auto-proposed card's own body, which carries a fixed marker:
-`<!-- flow-stats-self-improve: baseline-done=<N> -->`. This means the trigger's memory can never
-drift out of sync with reality (there's nothing to desync — it's the same `store.list()` scan
-already in hand), and it costs zero new persistence machinery. **De-dupe:** if the most recent
-auto-proposed card is still open (not `done`/`retired`), the sweep does not propose another one,
-regardless of what the numbers say — one open proposal at a time, so a persistently bad rework
-rate doesn't spam a new card every sweep tick.
+- **De-dupe.** If the most recent auto-proposed card is still open (`backlog`/`ready`/`in-progress`/
+  `validation`/`review`/`blocked` — anything short of `done`/`retired`), the sweep does not propose
+  another one, regardless of what the numbers say. One open proposal at a time.
+- **Weekly cadence.** Even once the previous proposal is closed, the sweep will not propose again
+  until at least `FLOW_STATS_SELFIMPROVE_MIN_INTERVAL_DAYS` (default **7**) have elapsed since the
+  previous proposal's `proposed-at` marker, regardless of what the numbers say. This is the direct
+  fix for "don't spam the board with the same task" — a persistently bad metric now produces at
+  most one proposal per week instead of one every time the dedup guard clears.
+
+Only past both gates does the sweep look for a genuinely evidenced, actionable signal — there is
+**no pure-volume/interval trigger anymore** (see "Post-launch revision"):
+
+- **rework-rate**: `reworkRate >= FLOW_STATS_SELFIMPROVE_REWORK_THRESHOLD` (default 0.3) **and**
+  `reworkSample >= FLOW_STATS_SELFIMPROVE_MIN_REWORK_SAMPLE` (default **10**, raised from 5).
+- **retry-cap-blocked**: `retryCapBlockedCount >= FLOW_STATS_SELFIMPROVE_MIN_RETRY_CAP_BLOCKED`
+  (default 3) — repeated auto-retry-cap exhaustion across multiple cards, not a one-off.
+- **orphan-recovery**: `recoveredTotal >= FLOW_STATS_SELFIMPROVE_MIN_RECOVERED` (default 3) —
+  repeated orphan-reaper interventions, not a single blip.
+
+If none of the three cross their floor, the sweep proposes nothing — a quiet week produces no
+card, deliberately, so "no news" never becomes filler.
+
+**No separate state file.** The "baseline" and "proposed-at" timestamp aren't persisted anywhere
+new — both are read back out of the most recent auto-proposed card's own body, which carries a
+fixed marker: `<!-- flow-stats-self-improve: baseline-done=<N> proposed-at=<ISO-8601> -->`. This
+means the trigger's memory can never drift out of sync with reality (there's nothing to desync —
+it's the same `store.list()` scan already in hand), and it costs zero new persistence machinery.
+Cards written by the pre-revision code carry a marker with no `proposed-at` field; `extractProposedAt`
+returns `null` for those, and the cadence gate treats a `null` timestamp as "no cadence info, don't
+block" (back-compat, not a special case to remove later — this is on the same code path forever).
 
 Sweep interval itself (how often the cheap `store.list()` + threshold check runs, not how often it
 fires): `FLOW_STATS_SELFIMPROVE_SWEEP_INTERVAL_MS`, default 10 minutes — cheap enough to run this
-often (same cost as `orphanReaper`'s 30s sweep, just spaced out since there's no urgency).
+often (same cost as `orphanReaper`'s 30s sweep, just spaced out since there's no urgency). The
+10-minute sweep and the 7-day propose cadence are deliberately different numbers: the sweep cost is
+negligible, so there's no reason to slow it down just because proposals are rare.
 
-All four are read from env at construction time, same pattern as every other `*FromEnv()` helper
-in this codebase (`orphanRecoveryEnabledFromEnv`, `autoPushOnCommitFromEnv`, etc.).
+All env helpers are read at construction time, same pattern as every other `*FromEnv()` helper in
+this codebase (`orphanRecoveryEnabledFromEnv`, `autoPushOnCommitFromEnv`, etc.).
+
+## Post-launch revision (T-0147, 2026-08-07)
+
+Within a day of shipping, the loop produced three near-identical proposal cards (T-0143, T-0145,
+T-0146: "rework rate 62%/65%/67% over 60/65/70 validations") in under 24 hours, each auto-retried
+five times by the normal implementer pipeline before being blocked/retired for human review — real
+board churn for no new information each time. Root cause: `reworkRate` is a **cumulative** stat
+over the entire card corpus, not a rolling window, so once it crosses 0.3 it tends to *stay*
+crossed; the only thing that had been preventing re-fire was the open-card dedup guard, and each
+of those cards got auto-retried to exhaustion and closed (`retired`) within hours — clearing the
+guard and letting the next sweep fire again immediately with a marginally different percentage.
+The card bodies also carried no signal beyond the aggregate numbers already in `## Context` — no
+specific card ids, no time window, nothing pointing at what to actually go fix — so even a human
+looking at three of these in a row had no way to tell whether card #2 was "the same problem as #1,
+still unfixed" or "a new problem."
+
+Two changes, both in this revision:
+
+1. **Weekly cadence gate** (above) — the primary fix for spam. A cumulative metric that stays
+   elevated for weeks will now produce at most one card a week about it, not one every time the
+   previous card gets auto-retried into `retired`.
+2. **Evidence-carrying drafts.** `evaluateTrigger` now collects up to 5 concrete card ids (with
+   timestamps) backing whichever signal fired — the most recent `## Validation: FAIL (` notes for
+   rework-rate, the actually-blocked cards for retry-cap, the actually-recovered cards for
+   orphan-recovery — and `draftImprovementCard` renders them under a new `## Evidence` section with
+   the time window they span, plus a `Suggested direction` line tailored to the trigger reason
+   (still phrased as an investigation prompt, not a diagnosis — deterministic code cites patterns,
+   it doesn't claim to know root cause). The pure-volume "10 cards completed" trigger was dropped
+   entirely, since raw throughput is not itself a problem signal and was the clearest source of
+   filler proposals on an otherwise healthy week.
+
+**Planner-routed drafting, considered and not taken.** This design's original "open question" noted
+that if rule-based drafting proved too shallow, the natural upgrade was to route the drafting step
+through the `planner` agent instead of a template. Evaluated for this revision and set aside for
+now: `runOrchestrator.js`'s agent invocations have no timeout and run for unbounded real minutes,
+and `selfImprovementTrigger.js`'s sweep is a bare `setInterval` with no in-flight guard — an
+unbounded planner call inside `sweepOnce` risks stalling or overlapping sweeps in a way that could
+itself undermine the cadence guarantee this revision just added, and would need a new narrow grant
+plus a way to bound its runtime, neither of which exist yet. The deterministic evidence-citation
+above (concrete card ids + timestamps + reason-specific direction) was judged to close most of the
+"too shallow" gap on its own, without that new risk surface. If proposals are still too generic
+after this ships, planner-routed drafting remains the documented next step — this paragraph is
+where to pick that back up.
 
 ## From stats to a card (`flowImprovementCard.js`, `draftImprovementCard`)
 
