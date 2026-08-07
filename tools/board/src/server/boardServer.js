@@ -3,6 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FsTaskStore } from "../lib/fsTaskStore.js";
 import { IdAllocator } from "../lib/idAllocator.js";
+import { openDb } from "../lib/db/connection.js";
+import { DbTaskStore } from "../lib/db/dbTaskStore.js";
+import { IdAllocatorDb } from "../lib/db/idAllocatorDb.js";
 import { TaskWatcher } from "../lib/taskWatcher.js";
 import { getGitStatus } from "../lib/gitInfo.js";
 import { createRequestListener } from "./httpApi.js";
@@ -19,13 +22,37 @@ const WS_PTY_PATH = "/ws/pty";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 
-export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" }) {
+/**
+ * Phase 1 of docs/design/cards-to-database.md: the store/allocator pair is selectable via
+ * BOARD_TASK_STORE, but the live board is NOT wired to run on "db" yet -- everything else in
+ * this function (TaskWatcher, the git-commit-on-write call sites in httpApi.js/gitOps.js, the
+ * Done-triggered pullDevelop) still assumes an fs-backed store and is untouched. "db" exists
+ * here so the wiring point exists and DbTaskStore is provably a drop-in, not because db mode is
+ * production-ready this phase. Default stays "fs" -- nothing about the live runtime path
+ * changes unless this env var is set.
+ */
+function createTaskStoreAndAllocator({ tasksDir, taskStoreKind }) {
+  if (taskStoreKind === "fs") {
+    return { store: new FsTaskStore(tasksDir), idAllocator: new IdAllocator(tasksDir), db: null };
+  }
+  if (taskStoreKind === "db") {
+    const db = openDb();
+    return { store: new DbTaskStore(db), idAllocator: new IdAllocatorDb(db), db };
+  }
+  throw new Error(`Unknown BOARD_TASK_STORE "${taskStoreKind}": expected "fs" or "db"`);
+}
+
+export async function startBoardServer({
+  tasksDir,
+  port = 0,
+  host = "127.0.0.1",
+  taskStoreKind = process.env.BOARD_TASK_STORE || "fs"
+}) {
   if (host !== "127.0.0.1") {
     throw new Error("Board server must bind to 127.0.0.1 only");
   }
 
-  const store = new FsTaskStore(tasksDir);
-  const idAllocator = new IdAllocator(tasksDir);
+  const { store, idAllocator, db } = createTaskStoreAndAllocator({ tasksDir, taskStoreKind });
   const hub = new WsHub();
   const watcher = new TaskWatcher(tasksDir);
   const ptyBridge = new PtyBridge({ cwd: REPO_ROOT });
@@ -115,6 +142,7 @@ export async function startBoardServer({ tasksDir, port = 0, host = "127.0.0.1" 
       ptyBridge.close();
       await watcher.close();
       await new Promise((resolve) => server.close(resolve));
+      if (db) db.close();
     }
   };
 }

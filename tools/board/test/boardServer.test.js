@@ -5,6 +5,10 @@ import path from "node:path";
 import WebSocket from "ws";
 import { startBoardServer } from "../src/server/boardServer.js";
 import { serializeTask } from "../src/lib/taskParser.js";
+import { FsTaskStore } from "../src/lib/fsTaskStore.js";
+import { IdAllocator } from "../src/lib/idAllocator.js";
+import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
+import { IdAllocatorDb } from "../src/lib/db/idAllocatorDb.js";
 
 let tmpDir;
 let board;
@@ -101,6 +105,77 @@ describe("board server integration", () => {
 
   it("is bound to 127.0.0.1", () => {
     expect(board.server.address().address).toBe("127.0.0.1");
+  });
+});
+
+describe("board server task store selection (BOARD_TASK_STORE)", () => {
+  it("defaults to FsTaskStore when unset -- Phase 1 of cards-to-database changes nothing live", () => {
+    expect(board.store).toBeInstanceOf(FsTaskStore);
+    expect(board.idAllocator).toBeInstanceOf(IdAllocator);
+  });
+
+  it("uses FsTaskStore when taskStoreKind is explicitly 'fs'", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-fs-"));
+    const server = await startBoardServer({ tasksDir: dir, port: 0, taskStoreKind: "fs" });
+    try {
+      expect(server.store).toBeInstanceOf(FsTaskStore);
+    } finally {
+      await server.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses DbTaskStore when taskStoreKind is 'db', without touching FsTaskStore's tasksDir", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-db-"));
+    const dbDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-dbfile-"));
+    const priorBoardDbPath = process.env.BOARD_DB_PATH;
+    process.env.BOARD_DB_PATH = path.join(dbDir, "board.db");
+    try {
+      const server = await startBoardServer({ tasksDir: dir, port: 0, taskStoreKind: "db" });
+      try {
+        expect(server.store).toBeInstanceOf(DbTaskStore);
+        expect(server.idAllocator).toBeInstanceOf(IdAllocatorDb);
+        await server.store.create({
+          id: "T-0001",
+          title: "Db-mode task",
+          status: "backlog",
+          priority: "P1",
+          phase: 1,
+          agent: "infra",
+          depends_on: [],
+          created: "2026-08-07",
+          branch: null,
+          commit: null,
+          pr: null,
+          deliverable_type: "code",
+          attempts: 0,
+          comments: [],
+          attachments: [],
+          body: ""
+        });
+        expect(await server.store.get("T-0001")).toMatchObject({ title: "Db-mode task" });
+        // fs tasksDir was never touched -- nothing writes card files in db mode
+        expect(await fs.readdir(dir)).toEqual([]);
+      } finally {
+        await server.close();
+      }
+    } finally {
+      if (priorBoardDbPath === undefined) delete process.env.BOARD_DB_PATH;
+      else process.env.BOARD_DB_PATH = priorBoardDbPath;
+      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dbDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unrecognized BOARD_TASK_STORE value", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-store-bad-"));
+    try {
+      await expect(
+        startBoardServer({ tasksDir: dir, port: 0, taskStoreKind: "postgres" })
+      ).rejects.toThrow(/Unknown BOARD_TASK_STORE/i);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
