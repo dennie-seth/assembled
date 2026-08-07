@@ -46,7 +46,12 @@ board-db-backup.sh -- separate, daily: runs the app's own `npm run backup:db`
                        <dataDir>/backups/ to a retention count. Runs at 03:00,
                        ahead of board-integrity-check.py's 03:20 backup-
                        restorability check, so a fresh backup always exists
-                       for it to validate.
+                       for it to validate. After the local prune, it also
+                       uploads the newest local snapshot to a dedicated Drive
+                       folder (same `gdrive:` remote as the asset pipeline)
+                       and prunes that Drive folder down to a small retention
+                       count, so the DB survives a machine reload/wipe even
+                       though local retention stays at 14.
 ```
 
 The Notion reconcile step (syncing staged/Drive-pushed assets into Notion)
@@ -62,7 +67,7 @@ scope for these scripts.
 | `board-assets-copy.py` | Idempotent `rclone copy` of each staged, mapped task dir to its Drive folder. |
 | `board-assets-sync.sh` | Orchestrates stage -> drivemap -> copy under a single `flock`; used by the hourly timer. |
 | `board-integrity-check.py` | Read-only daily health check (DB integrity, DB<->API<->attachments consistency, backup freshness, staged-export freshness). |
-| `board-db-backup.sh` | Runs the app's `npm run backup:db` (WAL-safe online backup) then prunes old backups under `<dataDir>/backups/` to a retention count; used by the daily timer. |
+| `board-db-backup.sh` | Runs the app's `npm run backup:db` (WAL-safe online backup) then prunes old backups under `<dataDir>/backups/` to a retention count; used by the daily timer. Also uploads the newest backup to Drive and prunes the Drive folder to a small retention count. |
 
 ## Install locations on the box
 
@@ -87,7 +92,10 @@ scope for these scripts.
 | `INTEGRITY_LOG_DIR` | integrity-check | `~/.local/state/board-integrity-check` |
 | `BOARD_REPO_ROOT` | db-backup | `~/dev/assembled-board` |
 | `BOARD_DATA_DIR` | db-backup | `~/.local/share/assembled-board` |
-| `BOARD_DB_BACKUP_RETENTION` | db-backup | `14` (backups kept before pruning) |
+| `BOARD_DB_BACKUP_RETENTION` | db-backup | `14` (local backups kept before pruning) |
+| `BOARD_DB_BACKUP_RCLONE_REMOTE` | db-backup | `gdrive:` |
+| `BOARD_DB_BACKUP_DRIVE_DIR` | db-backup | `Assembled — DB Backups` (Drive folder, created if missing) |
+| `BOARD_DB_BACKUP_DRIVE_RETENTION` | db-backup | `2` (Drive copies kept before pruning) |
 
 `board-assets-drivemap.py` and `board-assets-copy.py` also depend on an
 `rclone` remote named `gdrive:` (configured separately via `rclone config`,
@@ -95,6 +103,9 @@ not read from these scripts) and call the `rclone` binary at
 `~/.local/bin/rclone`. The Drive parent folder ID is hardcoded in
 `board-assets-drivemap.py` (`PARENT_FOLDER_ID`) — it is a folder identifier,
 not a credential; the actual Drive auth lives in rclone's own config.
+`board-db-backup.sh` reuses the same `gdrive:` remote but uploads to a plain
+named folder off the Drive root (`BOARD_DB_BACKUP_DRIVE_DIR`) rather than a
+folder-ID lookup, since it only ever needs the one destination.
 
 ## systemd timers
 
