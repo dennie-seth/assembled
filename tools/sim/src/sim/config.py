@@ -99,3 +99,38 @@ class SimConfig:
     # INV-8: encounter rate estimate
     # ------------------------------------------------------------------
     encounter_rate_per_world_item: float = 0.01
+
+    # ------------------------------------------------------------------
+    # Recipient selection on bleed/pickup contention — open param DM-5
+    # Governs the order in which PLAYING agents attempt a pickup each
+    # tick, which decides who wins when several agents roll a successful
+    # pickup against the same scarce world_items pool in one tick.
+    #   "fifo"         agent-creation order (the previously-implicit
+    #                   default — favours veteran/low-agent-id players)
+    #   "random"       shuffled fresh each tick
+    #   "need_weighted" agents with fewer items_received go first
+    # ------------------------------------------------------------------
+    recipient_policy: str = "fifo"
+
+    # ------------------------------------------------------------------
+    # Identity / universe scoping (T-0129)
+    # Controls which unlock tiers survive a collapse boundary.
+    #   "per_run"  -> tactical + session unlocks wiped on collapse; unique_keyed kept
+    #   "per_week" -> all tiers kept past collapse (expiry timer governs decay instead)
+    # ------------------------------------------------------------------
+    unlock_scope: str = "per_run"
+
+    # ------------------------------------------------------------------
+    # Chain-tear key consumption — open question (12 §3a, 07 §2)
+    # When enabled, a unique picked up by an agent still short of
+    # chain_key_crossings_required is spent to cross a chain tear
+    # instead of following the normal held-bleed timer.
+    #   "destroy"   instance is permanently removed — the pool that
+    #               never respawns (07 §2), taken literally
+    #   "transfer"  instance is sent onward immediately (12 §3a: "using
+    #               the key sends it onward to another player") — stays
+    #               in circulation, functionally an instant bleed-land
+    # ------------------------------------------------------------------
+    chain_key_enabled: bool = False
+    chain_key_mode: str = "destroy"
+    chain_key_crossings_required: int = 2

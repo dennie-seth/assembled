@@ -25,8 +25,8 @@ has known drift, tracked in `HANDOFF.md` §3.
 | [13-asset-pipeline.md](design/13-asset-pipeline.md) | v3, art + audio pipeline locked |
 | [agent-runner.md](design/agent-runner.md) | agreed — Phase 2 (tooling, not GDD-numbered) |
 | [INDEX.md](design/INDEX.md) | reconciliation record for the 2026-08-02 doc merge — historical, not live |
-| [GDD-QUESTIONS.md](design/GDD-QUESTIONS.md) | archived in place, annotated superseded — Tiers 1–6 landed above, Tier 7 in `OPEN-QUESTIONS.md`. A duplicate un-annotated copy also lives at `../archive/GDD-QUESTIONS.md` per the reconciliation source; the annotated copy here is canonical |
-| [OPEN-QUESTIONS.md](design/OPEN-QUESTIONS.md) | live — tuning/parameter questions blocked on @DennieSeth (`HANDOFF.md` §6) |
+| [GDD-QUESTIONS.md](archive/GDD-QUESTIONS.md) | archived in place, annotated superseded — Tiers 1–6 landed above, Tier 7 in `OPEN-QUESTIONS.md`. A duplicate un-annotated copy also lives at `../archive/GDD-QUESTIONS.md` per the reconciliation source; the annotated copy here is canonical |
+| [OPEN-QUESTIONS.md](archive/OPEN-QUESTIONS.md) | live — tuning/parameter questions blocked on @DennieSeth (`HANDOFF.md` §6) |
 
 **`06-audio.md` removed** — superseded by `13-asset-pipeline.md` §4; it was
 never more than a two-line stub blocked on the vision doc, which has since

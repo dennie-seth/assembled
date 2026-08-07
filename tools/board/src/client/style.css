@@ -11,12 +11,6 @@ body {
   padding-bottom: 18rem;
 }
 
-/* Reserve room for #side-panel only while it's actually showing content,
-   so its fixed overlay never overlaps (and permanently clips) board columns
-   scrolled underneath it - see #side-panel[hidden] below. */
-body:has(#side-panel:not([hidden])) {
-  padding-right: 29rem;
-}
 
 #terminal-panel {
   position: fixed;
@@ -73,9 +67,19 @@ body:has(#side-panel:not([hidden])) {
   padding-bottom: 0.5rem;
 }
 
+/* When the side-panel is open it physically overlays the right side of the
+   board. Even with few columns that don't naturally overflow the viewport,
+   padding-right equal to the panel width guarantees the board's scrollable
+   content extends past the overlay — so every column is reachable by
+   scrolling right. Mathematical proof: at max scroll the last column's right
+   edge lands at clientWidth - paddingRight = clientWidth - panelWidth, which
+   is exactly the panel's left edge (fully clear, not behind it). */
+body:has(#side-panel:not([hidden])) .board {
+  padding-right: 28rem;
+}
+
 .column {
-  flex: 1 1 0;
-  min-width: 12rem;
+  flex: 1 0 14rem;
   background: color-mix(in srgb, currentColor 6%, transparent);
   border-radius: 0.5rem;
   padding: 0.5rem;
@@ -114,6 +118,12 @@ body:has(#side-panel:not([hidden])) {
 .card-blocker-badge {
   font-size: 0.75rem;
   cursor: help;
+}
+
+.card-attempts-badge {
+  font-size: 0.75rem;
+  cursor: help;
+  font-family: ui-monospace, monospace;
 }
 
 .column-sort {
@@ -205,6 +215,7 @@ body:has(#terminal-panel.collapsed) #side-panel {
 }
 
 .card-run,
+.card-rerun,
 .card-cancel {
   margin-top: 0.375rem;
   margin-right: 0.375rem;
@@ -259,6 +270,54 @@ body:has(#terminal-panel.collapsed) #side-panel {
   margin: 0.5rem 0;
 }
 
+.detail-attempts {
+  font-size: 0.8rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.375rem 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.detail-attachments {
+  margin: 0.75rem 0;
+}
+
+.detail-attachments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-bottom: 0.5rem;
+}
+
+.detail-attachment {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.detail-attachment-thumb {
+  max-width: 3rem;
+  max-height: 3rem;
+  object-fit: cover;
+  border-radius: 0.25rem;
+}
+
+.detail-attachment-remove {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  cursor: pointer;
+}
+
+.detail-attachments-empty {
+  opacity: 0.6;
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
 .detail-delete-wrap {
   margin-top: 0.75rem;
 }
@@ -290,7 +349,38 @@ body:has(#terminal-panel.collapsed) #side-panel {
 }
 
 #toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
   margin-bottom: 0.75rem;
+}
+
+.git-status-bar {
+  font-size: 0.8rem;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.git-status-branch {
+  font-family: monospace;
+}
+
+.git-status-updated {
+  color: color-mix(in srgb, orange 80%, currentColor);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.git-status-reload {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+  border-radius: 0.2rem;
+  border: 1px solid color-mix(in srgb, orange 50%, transparent);
+  background: color-mix(in srgb, orange 12%, transparent);
+  cursor: pointer;
 }
 
 #new-card-btn {
@@ -359,4 +449,26 @@ body:has(#terminal-panel.collapsed) #side-panel {
 
 .deps-chip-remove:hover {
   opacity: 1;
+}
+
+.batch-sentinel {
+  height: 1px;
+}
+
+#go-up-btn {
+  position: fixed;
+  bottom: calc(var(--terminal-height) + 1rem);
+  right: 1rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 0.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: Canvas;
+  cursor: pointer;
+  font-size: 0.85rem;
+  box-shadow: 0 2px 8px color-mix(in srgb, currentColor 20%, transparent);
+  z-index: 100;
+}
+
+#go-up-btn[hidden] {
+  display: none;
 }

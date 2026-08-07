@@ -1,5 +1,9 @@
 # Open Questions — Tuning & Parameters
 
+> **ARCHIVED (2026-08-04)** — superseded by `docs/GDD-OPEN.md` §4 (Class D)
+> and the committed sim tuning results (`tools/sim/results/`). Kept for
+> history.
+
 > **Author:** Claude (Opus 5)
 > **Status:** live — blocked on @DennieSeth
 > Source: `docs/HANDOFF.md` §6. These are **not tasks.** Nothing in the

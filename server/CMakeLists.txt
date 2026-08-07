@@ -25,6 +25,11 @@ FetchContent_MakeAvailable(doctest)
 #     smaller "minimal dev-env" footprint, which is the point of this task.
 find_package(Drogon CONFIG REQUIRED)
 
+# T-0094: OpenSSL::Crypto for HMAC-SHA256 token derivation.  libssl-dev is
+# already a transitive dependency of libdrogon-dev but we declare it
+# explicitly so the linker sees it regardless of Drogon's link visibility.
+find_package(OpenSSL REQUIRED)
+
 enable_testing()
 
 # Library shared by the server binary, the migrate tool, and the tests, so
@@ -38,9 +43,14 @@ add_library(assembled_server_lib OBJECT
   src/HealthController.cpp
   src/Database.cpp
   src/MigrationRunner.cpp
+  src/SeedPhrase.cpp
+  src/RateLimiter.cpp
+  src/IdentityController.cpp
 )
-target_include_directories(assembled_server_lib PUBLIC include)
-target_link_libraries(assembled_server_lib PUBLIC Drogon::Drogon)
+# PUBLIC: server headers under include/, plus repo root so that both server
+# and tests can #include "shared/note_templates.hpp" (T-0043).
+target_include_directories(assembled_server_lib PUBLIC include ${CMAKE_SOURCE_DIR}/..)
+target_link_libraries(assembled_server_lib PUBLIC Drogon::Drogon OpenSSL::Crypto)
 target_compile_definitions(assembled_server_lib PUBLIC
   ASSEMBLED_MIGRATIONS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/migrations"
 )
@@ -57,8 +67,19 @@ add_executable(server_tests
   test/smoke_test.cpp
   test/health_test.cpp
   test/migration_test.cpp
+  test/seed_parity_test.cpp
 )
 target_link_libraries(server_tests PRIVATE assembled_server_lib doctest::doctest)
 
 include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
 doctest_discover_tests(server_tests)
+
+# T-0094: identity tests in a separate binary — drogon::app() is a
+# process-global singleton; after health_test stops it via quit(), calling
+# run() again is unsupported.  A fresh process gets a clean singleton.
+# identity_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(identity_tests
+  test/identity_test.cpp
+)
+target_link_libraries(identity_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(identity_tests)

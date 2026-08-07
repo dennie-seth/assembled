@@ -117,6 +117,137 @@ describe("resolveAllowedTools", () => {
     expect(resolved).not.toContain("Edit");
     expect(resolved).toContain("Read");
   });
+
+  it("grants the reviewer a wildcarded .venv/bin/pytest and .venv/bin/ruff so a python-verify package's tests/lint actually run", () => {
+    const resolved = resolveAllowedTools("reviewer", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0072: the reviewer's own Bash call is `.venv/bin/pytest -v` / `.venv/bin/ruff check .`,
+    // run once its shell is already cd'd into the package (assets/src/lora) -- not chained
+    // after a `cd assets/src/lora && ...`. A `cd assets/src/lora:*` prefix grant never matches
+    // that command string, so pytest/ruff need their own generic (non-cwd-scoped) grants.
+    expect(resolved).toContain("Bash(.venv/bin/pytest:*)");
+    expect(resolved).toContain("Bash(.venv/bin/ruff:*)");
+
+    expect(isToolAllowed("Bash(.venv/bin/pytest:-v)", resolved)).toBe(true);
+    expect(isToolAllowed("Bash(.venv/bin/ruff:check .)", resolved)).toBe(true);
+
+    // Not just for lora -- the grant is generic, so it covers every python-verify root
+    // (tools/asset-gate, tools/comfy-client, etc.) regardless of which package cwd it runs from.
+    const withoutLoraCdGrant = resolved.filter((t) => !t.startsWith("Bash(cd assets/src/lora"));
+    expect(isToolAllowed("Bash(.venv/bin/pytest:-v)", withoutLoraCdGrant)).toBe(true);
+  });
+
+  it("grants the reviewer a wildcarded pip install so python-verify's exact command string isn't required verbatim", () => {
+    const resolved = resolveAllowedTools("reviewer", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0132: the reviewer's own grant was `Bash(.venv/bin/pip install -e ".[dev]")` with no
+    // `:*` -- an exact-match string, same bug class as the #63 fix (missing wildcard). Every
+    // form the reviewer actually tried (chained after `cd tools/sim`, relative, absolute) was
+    // denied because none of them are byte-for-byte identical to that one exact string.
+    expect(resolved).toContain('Bash(.venv/bin/pip install -e ".[dev]":*)');
+    expect(resolved).not.toContain('Bash(.venv/bin/pip install -e ".[dev]")');
+
+    expect(isToolAllowed('Bash(.venv/bin/pip install -e ".[dev]":extra-index-url=x)', resolved)).toBe(
+      true
+    );
+  });
+
+  it("grants the server implementer a wildcarded .venv/bin/ruff so it can actually autofix lint on the python/sim cards it's dispatched", () => {
+    const resolved = resolveAllowedTools("server", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0129 (and the rest of the round-3 sim cards, T-0130..T-0133): every one of these is
+    // dispatched with agent: "server" despite the changed paths living under tools/sim, and the
+    // implementer's own `.venv/bin/ruff check --fix tests/test_identity.py` / `.venv/bin/ruff
+    // format` calls were denied outright ("This command requires approval") because server.md
+    // granted no ruff invocation at all. With no way to run the actual autofix, the implementer
+    // burned all 5 retries editing config instead of fixing the flagged code.
+    expect(resolved).toContain("Bash(.venv/bin/ruff:*)");
+    expect(isToolAllowed("Bash(.venv/bin/ruff:check --fix tests/test_identity.py)", resolved)).toBe(
+      true
+    );
+    expect(isToolAllowed("Bash(.venv/bin/ruff:format .)", resolved)).toBe(true);
+    expect(isToolAllowed("Bash(.venv/bin/ruff:check .)", resolved)).toBe(true);
+  });
+
+  it("grants the server implementer python -m ruff, for the module-invocation form of the same autofix", () => {
+    const resolved = resolveAllowedTools("server", { agentsDir: REAL_AGENTS_DIR });
+
+    expect(resolved).toContain("Bash(python -m ruff:*)");
+    expect(isToolAllowed("Bash(python -m ruff:check --fix .)", resolved)).toBe(true);
+  });
+
+  it("grants the server implementer cd tools/sim, so the compound `cd tools/sim && ruff ...` form isn't denied on its first segment", () => {
+    const resolved = resolveAllowedTools("server", { agentsDir: REAL_AGENTS_DIR });
+
+    // A compound command's &&-joined segments are matched against the allowlist independently
+    // (see the DATABASE_URL/T-0043 precedent above) -- granting ruff alone does not cover a
+    // `cd tools/sim && .venv/bin/ruff check --fix ...` invocation unless the `cd tools/sim`
+    // segment also has its own matching grant.
+    expect(resolved).toContain("Bash(cd tools/sim:*)");
+
+    // The `cd tools/sim` segment of the compound command, matched on its own (independent
+    // &&-segment matching, per the T-0043 precedent) -- and the ruff segment, matched by the
+    // grant added above. Both must independently match for the full compound invocation to go
+    // through unattended.
+    expect(
+      isToolAllowed("Bash(cd tools/sim:&& .venv/bin/ruff check --fix tests/test_identity.py)", resolved)
+    ).toBe(true);
+    expect(isToolAllowed("Bash(.venv/bin/ruff:check --fix tests/test_identity.py)", resolved)).toBe(
+      true
+    );
+  });
+
+  it("keeps the server implementer's existing grants (cmake/ctest/clang-format/docker compose/git) intact", () => {
+    const resolved = resolveAllowedTools("server", { agentsDir: REAL_AGENTS_DIR });
+
+    expect(resolved).toContain("Read");
+    expect(resolved).toContain("Write");
+    expect(resolved).toContain("Edit");
+    expect(resolved.some((t) => t.startsWith("Bash(cmake:"))).toBe(true);
+    expect(resolved.some((t) => t.startsWith("Bash(ctest:"))).toBe(true);
+    expect(resolved.some((t) => t.startsWith("Bash(clang-format:"))).toBe(true);
+    expect(resolved.some((t) => t.startsWith("Bash(docker compose:"))).toBe(true);
+    expect(resolved.some((t) => t.startsWith("Bash(git:"))).toBe(true);
+  });
+
+  it("grants the reviewer permission to set DATABASE_URL for server-db-verify", () => {
+    const resolved = resolveAllowedTools("reviewer", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0043: cmake:* and ctest:* were already granted, but the reviewer also needs to set
+    // DATABASE_URL (port 5433) ahead of them per the server-db-verify recipe in this file --
+    // `export DATABASE_URL=...`, `DATABASE_URL=... ctest`, and `env DATABASE_URL=... ctest`
+    // were all denied because none of those forms had a matching grant; `cd server:*` only
+    // covers a command that itself starts with "cd server", and each `&&`-joined segment of a
+    // compound command is matched independently, so it never covered the DATABASE_URL segment.
+    //
+    // The first attempt at this fix (#69) used `Bash(export DATABASE_URL=:*)` /
+    // `Bash(DATABASE_URL=:*)` / `Bash(env DATABASE_URL=:*)` -- syntactically valid per this
+    // file's own prefix-match convention, and it passed this exact test. It still did not work
+    // live: verified directly against the real `claude` CLI (v2.1.78, 2026-08-05) that
+    // `--allowedTools 'Bash(export FOO=:*)'` denies `export FOO=bar` ("This command requires
+    // approval"), while `--allowedTools 'Bash(export FOO=*)'` (bare trailing `*`, no colon)
+    // allows it. The `:*` convention only works when the granted prefix ends at a real
+    // argument/word boundary (e.g. `Bash(git diff:*)`, `Bash(ctest:*)`) -- it does not work when
+    // the wildcard must match a value glued directly onto the prefix via `=` with no space, which
+    // is exactly the shape of an inline env-var assignment (`DATABASE_URL=postgresql://...`).
+    // Use a bare trailing `*` for that shape instead.
+    expect(resolved).toContain("Bash(export DATABASE_URL=*)");
+    expect(resolved).toContain("Bash(DATABASE_URL=*)");
+    expect(resolved).toContain("Bash(env DATABASE_URL=*)");
+    expect(resolved).not.toContain("Bash(export DATABASE_URL=:*)");
+    expect(resolved).not.toContain("Bash(DATABASE_URL=:*)");
+    expect(resolved).not.toContain("Bash(env DATABASE_URL=:*)");
+
+    expect(
+      isToolAllowed("Bash(export DATABASE_URL=postgresql://postgres@localhost:5433/dev)", resolved)
+    ).toBe(true);
+    expect(
+      isToolAllowed(
+        "Bash(DATABASE_URL=postgresql://postgres@localhost:5433/dev ctest --test-dir build)",
+        resolved
+      )
+    ).toBe(true);
+  });
 });
 
 describe("isToolAllowed", () => {
@@ -143,6 +274,25 @@ describe("isToolAllowed", () => {
 
   it("denies an unparseable tool string", () => {
     expect(isToolAllowed("", allowed)).toBe(false);
+  });
+
+  it("treats a bare trailing `*` (no colon) as a prefix wildcard too", () => {
+    // Real Claude Code CLI behavior (verified live, v2.1.78): `Bash(prefix:*)` only matches at a
+    // real argument/word boundary. For a value glued directly onto the prefix via `=` (inline
+    // env-var assignment, e.g. `DATABASE_URL=...`), the grant must use a bare trailing `*`
+    // instead -- `Bash(DATABASE_URL=*)`, not `Bash(DATABASE_URL=:*)`. This matcher must recognize
+    // that form as a wildcard too, or a correctly-written live grant looks unmatched here.
+    const bareStarAllowed = ["Bash(DATABASE_URL=*)"];
+    expect(isToolAllowed("Bash(DATABASE_URL=postgresql://x@localhost:5433/dev)", bareStarAllowed)).toBe(
+      true
+    );
+    expect(
+      isToolAllowed(
+        "Bash(DATABASE_URL=postgresql://x@localhost:5433/dev ctest --output-on-failure)",
+        bareStarAllowed
+      )
+    ).toBe(true);
+    expect(isToolAllowed("Bash(SOMETHING_ELSE=x)", bareStarAllowed)).toBe(false);
   });
 });
 

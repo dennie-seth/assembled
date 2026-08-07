@@ -1,0 +1,47 @@
+[
+  {
+    "policy": "fifo",
+    "seed": 42,
+    "ticks_run": 6000,
+    "population": 20,
+    "gini_items_received": 0.04185684125867084,
+    "min_items_received": 440,
+    "max_items_received": 557,
+    "mean_items_received": 497.35,
+    "violation_summary": {
+      "INV-7": 6032,
+      "INV-8": 474860,
+      "INV-9": 22
+    }
+  },
+  {
+    "policy": "random",
+    "seed": 42,
+    "ticks_run": 6000,
+    "population": 20,
+    "gini_items_received": 0.03899940909986199,
+    "min_items_received": 449,
+    "max_items_received": 578,
+    "mean_items_received": 507.7,
+    "violation_summary": {
+      "INV-7": 6001,
+      "INV-8": 474940,
+      "INV-9": 3
+    }
+  },
+  {
+    "policy": "need_weighted",
+    "seed": 42,
+    "ticks_run": 6000,
+    "population": 20,
+    "gini_items_received": 0.051121476776498476,
+    "min_items_received": 446,
+    "max_items_received": 598,
+    "mean_items_received": 503.8,
+    "violation_summary": {
+      "INV-7": 6023,
+      "INV-8": 473880,
+      "INV-9": 24
+    }
+  }
+]

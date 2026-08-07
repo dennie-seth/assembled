@@ -6,15 +6,42 @@ import { extractVerdictFromEvents } from "./verdict.js";
 import { loadAgentDef, loadRules } from "./configLoader.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { createRunLog } from "./runLog.js";
+import { writeRunState, clearRunState } from "./runState.js";
 import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
+import {
+  materializePlannerFileView,
+  cleanupPlannerFileView,
+  diffPlannerFileView,
+  applyPlannerFileViewDiff
+} from "./plannerFileView.js";
+
+/**
+ * Hard cap on total implementer/reviewer runs a card can consume across its bounded
+ * FAIL -> auto-retry -> FAIL -> ... loop before it's left `blocked` for a human. Persisted
+ * per-card as the `attempts` frontmatter field (see taskParser.js); reset to 0 at the start
+ * of every human/API-initiated runCard() call (see runCard's fresh-allowance reset) and on
+ * PASS (see _handlePass), so a card that exhausts its 5 auto-retries and gets manually
+ * re-run always gets a full new allowance rather than staying permanently capped.
+ */
+export const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
 const AUTO_OPEN_PR_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
 
 /** AUTO_OPEN_PR env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable auto-PR on PASS. */
 function autoOpenPrFromEnv() {
   return !AUTO_OPEN_PR_DISABLE_VALUES.has((process.env.AUTO_OPEN_PR ?? "").toLowerCase());
+}
+
+const AUTO_CAPTURE_UNCOMMITTED_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
+
+/**
+ * AUTO_CAPTURE_UNCOMMITTED_WORK env var: default ON; set to "0"/"false"/"off"/"no" (any case) to
+ * disable the post-implementer capture safety net (see `_captureUncommittedImplementerWork`).
+ */
+function autoCaptureUncommittedFromEnv() {
+  return !AUTO_CAPTURE_UNCOMMITTED_DISABLE_VALUES.has((process.env.AUTO_CAPTURE_UNCOMMITTED_WORK ?? "").toLowerCase());
 }
 
 /** Appends a timestamped `## <heading>` note to a task body -- how validation results are recorded on the card. */
@@ -26,12 +53,14 @@ export function appendNote(body, heading, text) {
 }
 
 /**
- * Ties the slice-B runner engine to the board: on runCard, cuts a worktree
- * for the card, runs the implementer, hands off to the read-only reviewer,
- * and applies the reviewer's verdict -- PASS pushes the branch and moves the
- * card to `review`, FAIL sends it back to `in-progress` with reasons, and
- * any runner failure (crash, missing verdict) blocks it instead of guessing.
- * Never issues a transition that reaches `done`.
+ * Ties the slice-B runner engine to the board: on runCard, cuts a worktree for the card,
+ * runs the implementer, hands off to the read-only reviewer, and applies the reviewer's
+ * verdict -- PASS pushes the branch and moves the card to `review`; FAIL automatically
+ * re-runs the implementer on the same worktree/branch (with the FAIL notes + comments
+ * injected into its prompt, the same resume mechanics a manual re-run uses) for up to
+ * MAX_AUTO_RETRY_ATTEMPTS total runs, and only lands the card on `blocked` once that cap
+ * is consumed. Any runner failure (crash, missing verdict) blocks it immediately instead of
+ * guessing or retrying. Never issues a transition that reaches `done`.
  */
 export class RunOrchestrator {
   constructor({
@@ -41,12 +70,15 @@ export class RunOrchestrator {
     git = gitOps,
     github = githubOps,
     autoOpenPr = autoOpenPrFromEnv(),
+    autoCaptureUncommitted = autoCaptureUncommittedFromEnv(),
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
+    tasksDir = path.join(repoRoot, "tasks"),
     agentsDir = path.join(repoRoot, ".claude", "agents"),
     rulesDir = path.join(repoRoot, ".claude", "rules"),
     baseBranch = "develop",
+    taskStoreKind = "fs",
     loadAgentDefFn = loadAgentDef,
     loadRulesFn = loadRules,
     resolveAllowedToolsFn = resolveAllowedTools,
@@ -55,7 +87,10 @@ export class RunOrchestrator {
     buildReviewerPromptFn = buildReviewerPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     createRunLogFn = createRunLog,
-    now = () => new Date()
+    writeRunStateFn = writeRunState,
+    clearRunStateFn = clearRunState,
+    now = () => new Date(),
+    onIdle = () => {}
   }) {
     this.store = store;
     this.hub = hub;
@@ -63,12 +98,15 @@ export class RunOrchestrator {
     this.git = git;
     this.github = github;
     this.autoOpenPr = autoOpenPr;
+    this.autoCaptureUncommitted = autoCaptureUncommitted;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
+    this.tasksDir = tasksDir;
     this.agentsDir = agentsDir;
     this.rulesDir = rulesDir;
     this.baseBranch = baseBranch;
+    this.taskStoreKind = taskStoreKind;
     this.loadAgentDefFn = loadAgentDefFn;
     this.loadRulesFn = loadRulesFn;
     this.resolveAllowedToolsFn = resolveAllowedToolsFn;
@@ -77,12 +115,26 @@ export class RunOrchestrator {
     this.buildReviewerPromptFn = buildReviewerPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.createRunLogFn = createRunLogFn;
+    this.writeRunStateFn = writeRunStateFn;
+    this.clearRunStateFn = clearRunStateFn;
     this.now = now;
+    this.onIdle = onIdle;
     this.activeRuns = new Map();
+    // Tracks the full span of runCard() (worktree setup through cleanup), unlike
+    // activeRuns above which is only set while a phase's child process is actually
+    // alive -- it goes empty between phases (e.g. implementer exited, reviewer not
+    // yet spawned). Anything gating "is it safe to restart the service" needs the
+    // wider window: killing the process between phases would still orphan the run.
+    this.activeCardIds = new Set();
   }
 
   isRunning(taskId) {
     return this.activeRuns.has(taskId);
+  }
+
+  /** True while any card run (from worktree setup through final cleanup) is in flight. */
+  hasActiveRuns() {
+    return this.activeCardIds.size > 0;
   }
 
   /**
@@ -90,10 +142,39 @@ export class RunOrchestrator {
    * tick -- the board must not depend solely on the tasks/*.md file watcher
    * (which is debounced by chokidar's atomic-write detection) to learn that
    * a run changed a card's status.
+   *
+   * Also commits the card file to repoRoot, the same way handlePatchTask/comments/
+   * attachments do (see httpApi.js) -- every in-run status flip (ready -> in-progress ->
+   * validation -> review, or -> blocked) used to leave repoRoot's working tree dirty, which
+   * is exactly what made the Done-triggered `pullDevelop` abort with "local changes would be
+   * overwritten by merge" the moment origin touched the same card file. Best-effort: a commit
+   * failure (e.g. a lock collision with a concurrent pull) must never fail the run itself, so
+   * it's caught and logged -- the card falls back to the old drift-until-next-write behavior
+   * for that one write, same as handlePatchTask's matching fallback.
+   *
+   * In db mode (`taskStoreKind === "db"`), the commit step is skipped entirely -- there is no
+   * tasks/*.md file to commit, card state lives only in SQLite (docs/design/cards-to-database.md,
+   * Phase 2). The broadcast above already fires unconditionally, so the board's live view never
+   * depended on the commit in the first place.
    */
   async _updateAndBroadcast(taskId, patch) {
     const updated = await this.store.update(taskId, patch);
     this.hub.broadcast({ type: "changed", id: taskId, task: updated });
+
+    if (this.taskStoreKind !== "db" && this.repoRoot && this.tasksDir && this.git.autoCommitCardsOnCreateFromEnv()) {
+      try {
+        const relativePath = path.relative(this.repoRoot, path.join(this.tasksDir, `${taskId}.md`));
+        const changedFields = Object.keys(patch).filter((key) => key !== "id");
+        const message =
+          changedFields.length > 0
+            ? `chore(board): update card ${taskId} (${changedFields.join(", ")})`
+            : `chore(board): update card ${taskId}`;
+        await this.git.commitTaskFile({ repoRoot: this.repoRoot, filePath: relativePath, message });
+      } catch (err) {
+        console.warn(`Board: failed to commit run-status update for ${taskId} (leaving it untracked):`, err.message);
+      }
+    }
+
     return updated;
   }
 
@@ -102,45 +183,127 @@ export class RunOrchestrator {
     if (!task) {
       throw new Error(`Task ${taskId} not found`);
     }
-    if (task.status !== "ready") {
-      throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready"`);
+    if (task.status !== "ready" && task.status !== "review" && task.status !== "blocked") {
+      throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready", "review", or "blocked"`);
     }
-    if (this.activeRuns.has(taskId)) {
+    // Guards re-entrancy across the whole runCard span, including the auto-retry loop's
+    // FAIL -> next-attempt gap where the phase-level activeRuns map is momentarily empty
+    // (see _runPhase) but the card is still very much in flight -- activeRuns alone would
+    // let a concurrent call slip through in that window.
+    if (this.activeCardIds.has(taskId)) {
       throw new Error(`Task ${taskId} already has an active run`);
     }
 
     const branch = `feature/${taskId}`;
     const worktreeDir = path.join(this.worktreesDir, taskId);
 
+    this.activeCardIds.add(taskId);
     try {
-      await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
-    } catch (err) {
-      await this._blocked(taskId, `worktree creation failed: ${err.message}`);
-      return;
-    }
+      // Human/API-initiated run: always grants a fresh auto-retry allowance, even if the
+      // card was previously blocked for exhausting all MAX_AUTO_RETRY_ATTEMPTS auto-retries.
+      await this._updateAndBroadcast(taskId, { attempts: 0 });
 
-    await this._updateAndBroadcast(taskId, { status: "in-progress" });
+      let reused = false;
+      try {
+        const result = await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
+        reused = Boolean(result && result.reused);
+      } catch (err) {
+        await this._blocked(taskId, `worktree creation failed: ${err.message}`);
+        return;
+      }
 
-    const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
-    try {
-      await this._runCardInWorktree(taskId, task, worktreeDir, branch, runLog);
+      await this.git.linkBoardNodeModules({ worktreeDir, repoRoot: this.repoRoot });
+
+      await this._updateAndBroadcast(taskId, { status: "in-progress" });
+
+      const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
+      try {
+        await this._runCardInWorktree(taskId, task, worktreeDir, branch, runLog, reused);
+      } finally {
+        await runLog.close();
+      }
     } finally {
-      await runLog.close();
+      this.activeCardIds.delete(taskId);
+      // Best-effort: the orphan reaper only ever trusts a *present* runstate file, so once
+      // there's no more span of runCard() left to protect, clearing it (rather than leaving a
+      // stale pid behind) keeps a future restart's liveness check from having to reason about
+      // a runstate written by a run that's already fully finished.
+      await this.clearRunStateFn({ runsDir: this.runsDir, taskId });
+      if (this.activeCardIds.size === 0) {
+        this.onIdle();
+      }
     }
   }
 
-  async _runCardInWorktree(taskId, task, worktreeDir, branch, runLog) {
+  /**
+   * Runs the implementer -> reviewer cycle, looping on reviewer FAIL up to
+   * MAX_AUTO_RETRY_ATTEMPTS total attempts (see the class docstring). The retry itself is a
+   * plain in-process loop -- not a fresh call to the public runCard() -- so it stays inside
+   * this single runCard() invocation's activeCardIds span the whole time: the orphanReaper
+   * (which only reaps cards absent from activeCardIds) and the restart coordinator's
+   * hasActiveRuns() guard both see one continuous in-flight run across every retry, exactly
+   * like a live run today, instead of a card that repeatedly looks idle between attempts.
+   * Each attempt is a full sequential implementer+reviewer cycle -- never parallel, never a
+   * tight loop, since each iteration blocks on real `claude` child processes.
+   *
+   * This is also what fixes the pre-#63 dead end: that version set the FAIL status to
+   * `in-progress`, a status runCard()'s own guard rejects, so nothing could ever act on it
+   * again. Driving the retry as a direct in-process call here means it never depends on a
+   * status a human (or the HTTP API) would have to click "Run" on.
+   */
+  async _runCardInWorktree(taskId, task, worktreeDir, branch, runLog, reused = false) {
     // Unassigned cards run planner first to expand the spec, then a generic implementer.
     if (task.agent === null) {
       const plannerOk = await this._planUnassignedCard(taskId, task, worktreeDir, runLog);
       if (!plannerOk) return;
     }
-
     const effectiveAgent = task.agent ?? "generic";
+
+    let currentReused = reused;
+    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+      // Re-fetch: a prior attempt in this same loop may have appended a FAIL note to the
+      // body (read by the implementer's "continuing existing work" prompt on the retry).
+      const liveTask = await this.store.get(taskId);
+      await this._updateAndBroadcast(taskId, { attempts: attempt });
+
+      const { stop, verdict } = await this._runAttempt(
+        taskId,
+        liveTask,
+        effectiveAgent,
+        worktreeDir,
+        branch,
+        runLog,
+        currentReused
+      );
+      if (stop) return;
+
+      if (verdict.verdict === "PASS") {
+        await this._handlePass(taskId, liveTask, worktreeDir, branch, verdict, runLog, currentReused);
+        return;
+      }
+
+      const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
+      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !isFinalAttempt);
+      if (isFinalAttempt) return;
+
+      // Every attempt after the first resumes the same worktree/branch, regardless of
+      // whether addWorktree itself had to reuse it (a first attempt can start fresh).
+      currentReused = true;
+    }
+  }
+
+  /** Runs one implementer+reviewer cycle. Returns `{stop: true}` once the card has already been left in a terminal state (crash/blocked/cancelled) -- the caller must not act further -- or `{stop: false, verdict}` for the caller to grade. */
+  async _runAttempt(taskId, task, effectiveAgent, worktreeDir, branch, runLog, reused) {
     const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
     const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
-    const prompt = this.buildPromptFn({ task: { ...task, agent: effectiveAgent }, agentDef, rules });
+    const prompt = this.buildPromptFn({
+      task: { ...task, agent: effectiveAgent },
+      agentDef,
+      rules,
+      continuing: reused,
+      comments: task.comments ?? []
+    });
 
     const implementerResult = await this._runPhase({
       taskId,
@@ -153,16 +316,28 @@ export class RunOrchestrator {
       runLog
     });
     if (implementerResult.cancelled) {
-      return;
+      return { stop: true };
     }
     if (implementerResult.exitCode !== 0) {
       await this._blocked(taskId, this._crashReason("implementer", implementerResult));
-      return;
+      return { stop: true };
+    }
+
+    if (this.autoCaptureUncommitted) {
+      await this._captureUncommittedImplementerWork(taskId, worktreeDir, runLog);
+    }
+
+    const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch }).catch(() => []);
+
+    if (changedPaths.length === 0) {
+      const note =
+        "no commits on branch — skipping validation; the implementer phase produced no committed changes relative to develop";
+      await this._logCapture(taskId, runLog, note);
+      await this._blocked(taskId, note);
+      return { stop: true };
     }
 
     await this._updateAndBroadcast(taskId, { status: "validation" });
-
-    const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch }).catch(() => []);
     const reviewerAgentDef = this.loadAgentDefFn("reviewer", { agentsDir: this.agentsDir });
     const reviewerRules = resolveRulesForPaths(changedPaths, this.loadRulesFn({ rulesDir: this.rulesDir }));
     const reviewerAllowedTools = this.resolveAllowedToolsFn("reviewer", { agentsDir: this.agentsDir });
@@ -185,27 +360,36 @@ export class RunOrchestrator {
       runLog
     });
     if (reviewerResult.cancelled) {
-      return;
+      return { stop: true };
     }
     if (reviewerResult.exitCode !== 0) {
       await this._blocked(taskId, this._crashReason("reviewer", reviewerResult));
-      return;
+      return { stop: true };
     }
 
     const verdict = this.extractVerdictFn(reviewerResult.events);
     if (!verdict) {
       await this._blocked(taskId, "reviewer did not produce a machine-readable verdict");
-      return;
+      return { stop: true };
     }
 
-    if (verdict.verdict === "PASS") {
-      await this._handlePass(taskId, task, worktreeDir, branch, verdict, runLog);
-    } else {
-      await this._handleFailValidation(taskId, verdict);
-    }
+    return { stop: false, verdict };
   }
 
-  /** Runs the planner phase for an unassigned card. Returns true if planning succeeded, false if cancelled/failed (already blocked). */
+  /**
+   * Runs the planner phase for an unassigned card. Returns true if planning succeeded, false if
+   * cancelled/failed (already blocked).
+   *
+   * In db mode, wraps the run with the "ephemeral file view" (docs/design/cards-to-database.md,
+   * "The planner problem"): materializes the DB's cards to `<worktreeDir>/tasks/*.md` before the
+   * planner runs, so its unmodified Read/Edit/Write workflow has real files to act on, then
+   * reconciles whatever it wrote back into the DB (enforcing the same status-unchanged/
+   * no-delete guardrails `plannerDiffGuard.js` enforces via git diff in fs mode, just applied to
+   * two in-memory snapshots instead) and deletes the scratch directory before returning -- the
+   * implementer phase that follows must never see it. In fs mode this whole block is a no-op:
+   * the planner edits the real tasks/*.md file and commits it as part of the card's own branch,
+   * unchanged from before this refactor.
+   */
   async _planUnassignedCard(taskId, task, worktreeDir, runLog) {
     this.hub.broadcast({
       type: "run-status",
@@ -213,6 +397,9 @@ export class RunOrchestrator {
       phase: "planning",
       message: "Card is unassigned — invoking planner to expand spec before implementation"
     });
+
+    const fileView =
+      this.taskStoreKind === "db" ? await materializePlannerFileView({ store: this.store, worktreeDir }) : null;
 
     const plannerDef = this.loadAgentDefFn("planner", { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
@@ -230,12 +417,81 @@ export class RunOrchestrator {
       runLog
     });
 
-    if (plannerResult.cancelled) return false;
+    if (plannerResult.cancelled) {
+      if (fileView) await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
+      return false;
+    }
     if (plannerResult.exitCode !== 0) {
+      if (fileView) await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
       await this._blocked(taskId, this._crashReason("planner", plannerResult));
       return false;
     }
+
+    if (fileView) {
+      const plan = await diffPlannerFileView({ tasksDir: fileView.tasksDir, before: fileView.before });
+      await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
+      if (!plan.ok) {
+        const summary = plan.violations.map((v) => `${v.file}: ${v.message}`).join("; ");
+        await this._blocked(taskId, `planner guardrail violation: ${summary}`);
+        return false;
+      }
+      const { createdIds, updatedIds } = await applyPlannerFileViewDiff({ store: this.store, plan });
+      for (const id of createdIds) {
+        const created = await this.store.get(id);
+        this.hub.broadcast({ type: "added", id, task: created });
+      }
+      for (const id of updatedIds) {
+        const updated = await this.store.get(id);
+        this.hub.broadcast({ type: "changed", id, task: updated });
+      }
+    }
     return true;
+  }
+
+  /**
+   * Safety net for the implementer's own workflow ("implement to green, self-verify, commit your
+   * work locally, then stop"): an agent that gets absorbed in self-verification -- or hits a
+   * denied/unavailable tool mid-check -- can reach `end_turn` without ever running that final
+   * commit. The work is real and tested, but it sits as unstaged/untracked changes that the
+   * reviewer's git-history-based checks (`git diff base...HEAD`, `git log`) can't see, so it
+   * FAILs on "implementation not committed" even though the implementation is done (observed live
+   * on T-0129, T-0131, T-0132 -- config.py/engine.py/types.py, invariants.py, and run_round3.py
+   * respectively, all uncommitted after the implementer phase ended cleanly).
+   *
+   * Runs after the implementer phase and before the reviewer is ever spawned, so the reviewer's
+   * diff reflects the complete work. Attributed to the board, not the agent, since the agent
+   * never authored a commit for it. `commitAll` no-ops (returns false) on an already-clean
+   * worktree, so this never creates an empty commit.
+   */
+  async _captureUncommittedImplementerWork(taskId, worktreeDir, runLog) {
+    const message = [
+      `chore(${taskId}): capture uncommitted implementer changes`,
+      "",
+      "Auto-captured by the Agent Runner orchestrator: the implementer phase ended with " +
+        "changes still uncommitted in the worktree. The content originates from that phase, " +
+        "not from this commit's author.",
+      "",
+      "Co-authored-by: Claude <noreply@anthropic.com>"
+    ].join("\n");
+    const captured = await this.git.commitAll({
+      worktreeDir,
+      message,
+      author: gitOps.BOARD_COMMIT_AUTHOR
+    });
+    if (captured) {
+      await this._logCapture(
+        taskId,
+        runLog,
+        "Captured uncommitted implementer changes before review -- the worktree was not clean after the implementer phase finished."
+      );
+    }
+    return captured;
+  }
+
+  async _logCapture(taskId, runLog, message) {
+    const event = { type: "capture", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "capture", event });
   }
 
   _crashReason(phase, result) {
@@ -250,6 +506,11 @@ export class RunOrchestrator {
     const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model });
     const entry = { phase, run, worktreeDir, cancelled: false };
     this.activeRuns.set(taskId, entry);
+    // Persisted so the orphan reaper can tell a genuinely-dead run from one whose detached
+    // `claude` child (see claudeCliRunner.js) survived a board restart with the same pid --
+    // overwritten on every phase since the implementer and reviewer are separate child
+    // processes within one runCard() span.
+    await this.writeRunStateFn({ runsDir: this.runsDir, taskId, pid: run.child.pid, runLogPath: runLog.path, now: this.now });
 
     const events = [];
     let appendChain = Promise.resolve();
@@ -314,22 +575,38 @@ export class RunOrchestrator {
     await this._updateAndBroadcast(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
   }
 
-  async _handleFailValidation(taskId, verdict) {
+  /** `(run N of MAX)` suffix on every FAIL note -- the attempt-count visibility the auto-retry loop needs on the card. */
+  _failNoteText(verdict, attempt, capped) {
+    const progress = `(run ${attempt} of ${MAX_AUTO_RETRY_ATTEMPTS})`;
+    const capSuffix = capped ? " Auto-retry limit reached -- blocked for human review." : "";
+    return `${verdict.notes}\n\n${progress}${capSuffix}`;
+  }
+
+  /**
+   * Records a FAIL verdict. `retrying` (true for every attempt but the last) keeps the card
+   * at `status: "in-progress"` -- the same status a live run shows -- since the auto-retry
+   * loop is about to re-invoke the implementer itself; the final attempt instead moves the
+   * card to `blocked` for a human, with a note explaining the cap was reached.
+   */
+  async _handleFailValidation(taskId, verdict, attempt, retrying) {
     const current = await this.store.get(taskId);
     await this._updateAndBroadcast(taskId, {
-      status: "in-progress",
-      body: appendNote(current.body, "Validation: FAIL", verdict.notes)
+      status: retrying ? "in-progress" : "blocked",
+      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying))
     });
   }
 
-  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog) {
+  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false) {
     let commit;
     try {
       await this.git.commitAll({
         worktreeDir,
         message: `feat: ${taskId} ${task.title}\n\nCo-authored-by: Claude <noreply@anthropic.com>`
       });
-      await this.git.push({ worktreeDir, branch });
+      // A continued run (reused branch) may not fast-forward from what's already on origin
+      // (e.g. the implementer amended a commit while fixing an issue) -- force-with-lease it.
+      const pushOptions = reused ? { worktreeDir, branch, force: true } : { worktreeDir, branch };
+      await this.git.push(pushOptions);
       commit = await this.git.getHeadCommit({ worktreeDir });
     } catch (err) {
       await this._blocked(taskId, `push to review failed: ${err.message}`);
@@ -346,7 +623,9 @@ export class RunOrchestrator {
 
     const current = await this.store.get(taskId);
     let body = appendNote(current.body, "Validation: PASS", verdict.notes);
-    const patch = { status: "review", branch, commit, body };
+    // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
+    // not carrying over how many attempts a previous round of FAILs consumed.
+    const patch = { status: "review", branch, commit, body, attempts: 0 };
     if (prUrl) {
       patch.pr = prUrl;
       patch.body = appendNote(body, "PR", prUrl);

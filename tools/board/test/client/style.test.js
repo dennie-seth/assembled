@@ -33,3 +33,26 @@ describe("detail-delete-confirm [hidden] cascade", () => {
     expect(getComputedStyle(el).display).toBe("flex");
   });
 });
+
+describe("card-rerun CSS styling", () => {
+  it("has the same cursor as card-run (not unstyled browser default)", () => {
+    const runBtn = document.createElement("button");
+    runBtn.className = "card-run";
+    const rerunBtn = document.createElement("button");
+    rerunBtn.className = "card-rerun";
+    document.body.append(runBtn, rerunBtn);
+
+    expect(getComputedStyle(rerunBtn).cursor).toBe("pointer");
+    expect(getComputedStyle(rerunBtn).cursor).toBe(getComputedStyle(runBtn).cursor);
+  });
+
+  it("has the same border-radius as card-run", () => {
+    const runBtn = document.createElement("button");
+    runBtn.className = "card-run";
+    const rerunBtn = document.createElement("button");
+    rerunBtn.className = "card-rerun";
+    document.body.append(runBtn, rerunBtn);
+
+    expect(getComputedStyle(rerunBtn).borderRadius).toBe(getComputedStyle(runBtn).borderRadius);
+  });
+});

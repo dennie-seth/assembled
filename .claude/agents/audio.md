@@ -42,6 +42,10 @@ running any workflow. Key points, in priority order:
 ## Workflow
 
 Generate via the `AssetAgent` HTTP interface, normalize loudness, curate
-into `assets/final/audio/`, then run the `asset-provenance` skill before
-handing off with `open-review-pr`. Never move a card to `review` or `done`
-yourself outside that skill, and never merge a PR.
+into `assets/final/audio/`, run the `asset-provenance` skill, then commit
+everything (curated finals + provenance entry) and stop once
+`git status --porcelain` is empty. Do NOT invoke the `open-review-pr` skill
+yourself and do NOT push or open a PR — an Agent Runner orchestrator drives
+this session and owns the handoff to the reviewer's VALIDATION pass,
+pushing only once that verdict is PASS. Never move a card to `review` or
+`done` yourself, and never merge a PR.

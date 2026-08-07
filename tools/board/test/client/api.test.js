@@ -9,7 +9,12 @@ import {
   createTask,
   deleteTask,
   fetchAgents,
-  exportBacklog
+  exportBacklog,
+  exportDone,
+  addComment,
+  uploadAttachment,
+  removeAttachment,
+  attachmentDownloadUrl
 } from "../../src/client/api.js";
 
 const originalFetch = global.fetch;
@@ -105,6 +110,108 @@ describe("cancelTask", () => {
       json: async () => ({ error: "No active run for T-0001" })
     });
     await expect(cancelTask("T-0001")).rejects.toThrow("No active run for T-0001");
+  });
+});
+
+describe("addComment", () => {
+  it("POSTs to the task's /comments endpoint with a JSON body and returns the updated task", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: "T-0001", comments: [{ author: "Anonymous", text: "hi", timestamp: "t" }] })
+    });
+    const result = await addComment("T-0001", "hi");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/tasks/T-0001/comments",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "hi" })
+      })
+    );
+    expect(result).toEqual({ id: "T-0001", comments: [{ author: "Anonymous", text: "hi", timestamp: "t" }] });
+  });
+
+  it("throws the server-provided error message on failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "text is required and must be a non-empty string" })
+    });
+    await expect(addComment("T-0001", "")).rejects.toThrow(/text is required/);
+  });
+});
+
+describe("uploadAttachment", () => {
+  it("POSTs FormData with the file to the task's /attachments endpoint and returns the updated task", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: "T-0001", attachments: [{ filename: "a.png" }] })
+    });
+    const file = new File(["hello"], "a.png", { type: "image/png" });
+
+    const result = await uploadAttachment("T-0001", file);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/tasks/T-0001/attachments",
+      expect.objectContaining({ method: "POST" })
+    );
+    const [, options] = global.fetch.mock.calls[0];
+    expect(options.body).toBeInstanceOf(FormData);
+    expect(options.body.get("file")).toBe(file);
+    expect(options.body.has("uploaded_by")).toBe(false);
+    expect(result).toEqual({ id: "T-0001", attachments: [{ filename: "a.png" }] });
+  });
+
+  it("includes uploaded_by in the form data when provided", async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+    const file = new File(["hello"], "a.png", { type: "image/png" });
+
+    await uploadAttachment("T-0001", file, "Dennie");
+
+    const [, options] = global.fetch.mock.calls[0];
+    expect(options.body.get("uploaded_by")).toBe("Dennie");
+  });
+
+  it("throws the server-provided error message on failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 415,
+      json: async () => ({ error: "Attachment type is not allowed" })
+    });
+    const file = new File(["<svg></svg>"], "evil.svg", { type: "image/svg+xml" });
+    await expect(uploadAttachment("T-0001", file)).rejects.toThrow(/not allowed/);
+  });
+});
+
+describe("removeAttachment", () => {
+  it("DELETEs the task's attachment endpoint with the filename URI-encoded", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "T-0001", attachments: [] })
+    });
+
+    const result = await removeAttachment("T-0001", "a b.png");
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/tasks/T-0001/attachments/a%20b.png", { method: "DELETE" });
+    expect(result).toEqual({ id: "T-0001", attachments: [] });
+  });
+
+  it("throws the server-provided error message on failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: 'Attachment "a.png" not found on T-0001' })
+    });
+    await expect(removeAttachment("T-0001", "a.png")).rejects.toThrow(/not found/);
+  });
+});
+
+describe("attachmentDownloadUrl", () => {
+  it("builds the download URL with the filename URI-encoded", () => {
+    expect(attachmentDownloadUrl("T-0001", "a b.png")).toBe("/api/tasks/T-0001/attachments/a%20b.png");
   });
 });
 
@@ -235,6 +342,25 @@ describe("exportBacklog", () => {
     try {
       exportBacklog();
       expect(window.location.assign).toHaveBeenCalledWith("/api/tasks/export/backlog");
+    } finally {
+      window.location.assign = originalAssign;
+    }
+  });
+});
+
+describe("exportDone", () => {
+  it("calls navigateTo with /api/tasks/export/done", () => {
+    const navigateTo = vi.fn();
+    exportDone(navigateTo);
+    expect(navigateTo).toHaveBeenCalledWith("/api/tasks/export/done");
+  });
+
+  it("uses window.location.assign as the default navigateTo", () => {
+    const originalAssign = window.location.assign;
+    window.location.assign = vi.fn();
+    try {
+      exportDone();
+      expect(window.location.assign).toHaveBeenCalledWith("/api/tasks/export/done");
     } finally {
       window.location.assign = originalAssign;
     }

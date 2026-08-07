@@ -467,8 +467,30 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
     expect(payload.error).toMatch(/ready/i);
   });
 
+  it("returns 409 when running a retired task", async () => {
+    const task = await createTask({ status: "retired" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/ready/i);
+  });
+
   it("accepts a run on a ready card and kicks off the orchestrator without blocking the response", async () => {
     const task = await createTask({ status: "ready" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(202);
+    await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
+  });
+
+  it("accepts a run on a review card -- re-running to continue existing work, not just a fresh ready card", async () => {
+    const task = await createTask({ status: "review" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(202);
+    await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
+  });
+
+  it("accepts a run on a blocked card -- re-running to continue existing work instead of leaving it stuck", async () => {
+    const task = await createTask({ status: "blocked" });
     const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
     expect(res.status).toBe(202);
     await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
@@ -502,6 +524,67 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
 
   it("returns 404 running/cancelling an unknown route method combination gracefully", async () => {
     const res = await fetch(`${orchBaseUrl}/api/tasks/T-0001/run`, { method: "GET" });
+    expect(res.status).toBe(405);
+  });
+});
+
+describe("GET /api/git/status", () => {
+  let gitServer;
+  let gitBaseUrl;
+  let gitTmpDir;
+  let gitInfoImpl;
+
+  beforeEach(async () => {
+    gitTmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-httpapi-git-"));
+    const store = new FsTaskStore(gitTmpDir);
+    const idAllocator = new IdAllocator(gitTmpDir);
+    gitInfoImpl = vi.fn().mockResolvedValue({
+      branch: "feature/T-0116",
+      head: "abc1234567890abcdef1234567890abcdef123456",
+      headTimestamp: "2026-08-04T10:00:00+00:00"
+    });
+    gitServer = await startHttpServer({ store, idAllocator, gitInfoImpl, port: 0 });
+    const { port } = gitServer.address();
+    gitBaseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise((resolve) => gitServer.close(resolve));
+    await fs.rm(gitTmpDir, { recursive: true, force: true });
+  });
+
+  it("returns 200 with branch, head, and headTimestamp", async () => {
+    const res = await fetch(`${gitBaseUrl}/api/git/status`);
+    expect(res.status).toBe(200);
+    const payload = await res.json();
+    expect(payload.branch).toBe("feature/T-0116");
+    expect(payload.head).toBe("abc1234567890abcdef1234567890abcdef123456");
+    expect(payload.headTimestamp).toBe("2026-08-04T10:00:00+00:00");
+  });
+
+  it("calls gitInfoImpl exactly once per request", async () => {
+    await fetch(`${gitBaseUrl}/api/git/status`);
+    expect(gitInfoImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 200 with null fields when no gitInfoImpl is configured", async () => {
+    const bareDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-httpapi-noGit-"));
+    const bareStore = new FsTaskStore(bareDir);
+    const bareAllocator = new IdAllocator(bareDir);
+    const bareServer = await startHttpServer({ store: bareStore, idAllocator: bareAllocator, port: 0 });
+    const { port } = bareServer.address();
+    const res = await fetch(`http://127.0.0.1:${port}/api/git/status`);
+    expect(res.status).toBe(200);
+    const payload = await res.json();
+    expect(payload.branch).toBeNull();
+    expect(payload.head).toBeNull();
+    expect(payload.headTimestamp).toBeNull();
+    await new Promise((resolve) => bareServer.close(resolve));
+    await fs.rm(bareDir, { recursive: true, force: true });
+  });
+
+  it("returns 405 for non-GET methods on /api/git/status", async () => {
+    const res = await fetch(`${gitBaseUrl}/api/git/status`, { method: "POST" });
     expect(res.status).toBe(405);
   });
 });
@@ -548,6 +631,29 @@ describe("GET /api/tasks/export/backlog", () => {
     expect(text).toContain("3");
   });
 
+  it("includes status in the export for each backlog task", async () => {
+    await createTask({ title: "Status task", status: "backlog" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    expect(text).toContain("Status: backlog");
+  });
+
+  it("includes depends_on in the export listing dependency ids when present", async () => {
+    const dep = await createTask({ title: "Dep task" });
+    await createTask({ title: "Dependent task", depends_on: [dep.id] });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    // The dependent task's section should list the dependency id
+    expect(text).toMatch(/Depends on:.*T-0001/);
+  });
+
+  it("includes depends_on showing none when the task has no dependencies", async () => {
+    await createTask({ title: "Solo task" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    expect(text).toContain("Depends on: none");
+  });
+
   it("indicates zero tasks when there are no backlog tasks", async () => {
     const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
     expect(res.status).toBe(200);
@@ -557,6 +663,61 @@ describe("GET /api/tasks/export/backlog", () => {
 
   it("returns 405 for non-GET methods on the export route", async () => {
     const res = await fetch(`${baseUrl}/api/tasks/export/backlog`, { method: "POST" });
+    expect(res.status).toBe(405);
+  });
+});
+
+describe("GET /api/tasks/export/done", () => {
+  async function createTask(overrides = {}) {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody(overrides))
+    });
+    return res.json();
+  }
+
+  it("returns 200 with text/plain content type", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/export/done`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/plain/);
+  });
+
+  it("returns a Content-Disposition attachment header referencing done", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/export/done`);
+    const cd = res.headers.get("content-disposition");
+    expect(cd).toMatch(/attachment/);
+    expect(cd).toMatch(/done/);
+  });
+
+  it("includes only done task titles, not tasks of other statuses", async () => {
+    await createTask({ title: "Finished task", status: "done" });
+    await createTask({ title: "Pending task", status: "backlog" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/done`);
+    const text = await res.text();
+    expect(text).toContain("Finished task");
+    expect(text).not.toContain("Pending task");
+  });
+
+  it("includes task metadata (id, priority, agent, phase) in the export", async () => {
+    await createTask({ title: "Meta done task", priority: "P1", agent: "server", phase: 2, status: "done" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/done`);
+    const text = await res.text();
+    expect(text).toContain("T-0001");
+    expect(text).toContain("P1");
+    expect(text).toContain("server");
+    expect(text).toContain("2");
+  });
+
+  it("indicates zero tasks when there are no done tasks", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/export/done`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("0 tasks");
+  });
+
+  it("returns 405 for non-GET methods on the done export route", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/export/done`, { method: "POST" });
     expect(res.status).toBe(405);
   });
 });

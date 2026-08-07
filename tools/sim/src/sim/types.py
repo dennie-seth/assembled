@@ -74,11 +74,13 @@ class Agent:
 
     agent_id: int
     state: AgentState
-    collapse_at: int          # tick at which the universe collapses
-    is_first_universe: bool = True
-    is_hoarder: bool = False  # never voluntarily transfers (hoarder cohort sweep)
-    items_received: int = 0   # cumulative pickups; used by INV-9
-    ticks_active: int = 0     # ticks in PLAYING or IDLE; denominator for INV-9
+    collapse_at: int              # tick at which the current universe collapses
+    universe_count: int = 0       # number of completed universes (0 = first universe)
+    is_hoarder: bool = False      # never voluntarily transfers (hoarder cohort sweep)
+    items_received: int = 0       # run-scoped pickups; reset on collapse, used by INV-9
+    ticks_active: int = 0         # run-scoped active ticks; reset on collapse (INV-9)
+    chain_progress: int = 0       # uniques consumed to cross chain tears (12 §3a)
+    vocabulary: set[int] = field(default_factory=set)  # identity-level: type_ids ever held
 
 
 @dataclass

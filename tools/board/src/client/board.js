@@ -1,4 +1,4 @@
-export const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked"];
+export const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked", "retired"];
 
 export function groupTasksByStatus(tasks, statuses = STATUSES) {
   const grouped = new Map(statuses.map((status) => [status, []]));
@@ -52,10 +52,12 @@ const SORT_COMPARATORS = {
   id: (a, b) => compareIds(a.id, b.id),
   priority: (a, b) => (PRIORITY_RANK[a.priority] ?? 99) - (PRIORITY_RANK[b.priority] ?? 99) || compareIds(a.id, b.id),
   agent: (a, b) => (a.agent ?? "").localeCompare(b.agent ?? "") || compareIds(a.id, b.id),
-  phase: (a, b) => a.phase - b.phase || compareIds(a.id, b.id)
+  phase: (a, b) => a.phase - b.phase || compareIds(a.id, b.id),
+  oldest: (a, b) => (a.created ?? "").localeCompare(b.created ?? "") || compareIds(a.id, b.id),
+  newest: (a, b) => (b.created ?? "").localeCompare(a.created ?? "") || compareIds(a.id, b.id)
 };
 
-export const SORT_KEYS = ["id", "priority", "agent", "phase"];
+export const SORT_KEYS = ["id", "priority", "agent", "phase", "oldest", "newest"];
 
 export function sortTasks(tasks, sortKey) {
   const compare = SORT_COMPARATORS[sortKey] ?? SORT_COMPARATORS.id;

@@ -15,13 +15,55 @@ const REQUIRED_FIELDS = [
 
 const ID_RE = /^T-\d{4}$/;
 const CREATED_RE = /^\d{4}-\d{2}-\d{2}$/;
-const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked"];
+const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked", "retired"];
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio", "planner"];
 const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
 const OPTIONAL_FIELDS = ["branch", "commit", "pr"];
+const DELIVERABLE_TYPES = ["code", "artifact"];
+const NUMERIC_FIELDS = ["attempts"];
+const ARRAY_FIELDS = ["comments", "attachments"];
+const COMMENT_FIELDS = ["author", "text", "timestamp"];
+const ATTACHMENT_STRING_FIELDS = ["filename", "mimetype", "uploaded_by", "uploaded_at"];
 
-function validateTask(data) {
+function validateComments(comments) {
+  if (!Array.isArray(comments)) {
+    throw new Error("Invalid comments: expected an array");
+  }
+  for (const comment of comments) {
+    if (typeof comment !== "object" || comment === null || Array.isArray(comment)) {
+      throw new Error("Invalid comments entry: expected an object with author, text, timestamp");
+    }
+    for (const field of COMMENT_FIELDS) {
+      if (typeof comment[field] !== "string" || comment[field].length === 0) {
+        throw new Error(`Invalid comments entry: "${field}" must be a non-empty string`);
+      }
+    }
+  }
+}
+
+function validateAttachments(attachments) {
+  if (!Array.isArray(attachments)) {
+    throw new Error("Invalid attachments: expected an array");
+  }
+  for (const attachment of attachments) {
+    if (typeof attachment !== "object" || attachment === null || Array.isArray(attachment)) {
+      throw new Error(
+        "Invalid attachments entry: expected an object with filename, size, mimetype, uploaded_by, uploaded_at"
+      );
+    }
+    for (const field of ATTACHMENT_STRING_FIELDS) {
+      if (typeof attachment[field] !== "string" || attachment[field].length === 0) {
+        throw new Error(`Invalid attachments entry: "${field}" must be a non-empty string`);
+      }
+    }
+    if (typeof attachment.size !== "number" || !Number.isFinite(attachment.size) || attachment.size < 0) {
+      throw new Error('Invalid attachments entry: "size" must be a non-negative number');
+    }
+  }
+}
+
+export function validateTask(data) {
   for (const field of REQUIRED_FIELDS) {
     if (!(field in data)) {
       throw new Error(`Task frontmatter missing required field: ${field}`);
@@ -65,6 +107,22 @@ function validateTask(data) {
       throw new Error(`Invalid ${field} "${data[field]}": expected a string or null`);
     }
   }
+  if ("deliverable_type" in data && !DELIVERABLE_TYPES.includes(data.deliverable_type)) {
+    throw new Error(
+      `Invalid deliverable_type "${data.deliverable_type}": expected one of ${DELIVERABLE_TYPES.join(", ")}`
+    );
+  }
+  for (const field of NUMERIC_FIELDS) {
+    if (field in data && (!Number.isInteger(data[field]) || data[field] < 0)) {
+      throw new Error(`Invalid ${field} "${data[field]}": expected a non-negative integer`);
+    }
+  }
+  if ("comments" in data) {
+    validateComments(data.comments);
+  }
+  if ("attachments" in data) {
+    validateAttachments(data.attachments);
+  }
 }
 
 export function parseTask(raw) {
@@ -103,6 +161,10 @@ export function parseTask(raw) {
     branch: data.branch ?? null,
     commit: data.commit ?? null,
     pr: data.pr ?? null,
+    deliverable_type: data.deliverable_type ?? "code",
+    attempts: data.attempts ?? 0,
+    comments: Array.isArray(data.comments) ? data.comments : [],
+    attachments: Array.isArray(data.attachments) ? data.attachments : [],
     body
   };
 }
@@ -115,7 +177,10 @@ export function serializeTask(task) {
 
   const lines = [
     ...REQUIRED_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field])}`),
-    ...OPTIONAL_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`)
+    ...OPTIONAL_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
+    `deliverable_type: ${JSON.stringify(task.deliverable_type ?? "code")}`,
+    ...NUMERIC_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? 0)}`),
+    ...ARRAY_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? [])}`)
   ];
   return `---\n${lines.join("\n")}\n---\n${task.body}`;
 }

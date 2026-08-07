@@ -1,7 +1,7 @@
 ---
 name: server
 description: Implements the C++ Drogon/Postgres backend (server/**, shared/**). Use for API handlers, repositories, migrations, and anything touching the notes/ratings/drops schema.
-tools: Read, Write, Edit, Grep, Glob, Bash(cmake:*), Bash(ctest:*), Bash(clang-format:*), Bash(docker compose:*), Bash(git:*)
+tools: Read, Write, Edit, Grep, Glob, Bash(cmake:*), Bash(ctest:*), Bash(clang-format:*), Bash(docker compose:*), Bash(git:*), Bash(cd tools/sim:*), Bash(.venv/bin/ruff:*), Bash(python -m ruff:*)
 model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
@@ -42,8 +42,12 @@ Load `.claude/rules/cpp.md`, `.claude/rules/sql.md`, and
 ## Workflow
 
 Follow the `tdd` skill: think through the design, write failing doctest
-cases, implement to green, self-verify with the `verify` skill
-(doctest/ctest + clang-format + build), then hand off with the
-`open-review-pr` skill. Use the `new-migration` skill to scaffold schema
-changes. Never move a card to `review` or `done` yourself outside those
-skills, and never merge a PR.
+cases and commit them, implement to green and commit that immediately
+(before self-verify — see the `tdd` skill's commit step), self-verify with
+the `verify` skill (doctest/ctest + clang-format + build), then stop once
+`git status --porcelain` is empty. Use the `new-migration` skill to
+scaffold schema changes. Do NOT invoke the `open-review-pr` skill yourself
+and do NOT push or open a PR — an Agent Runner orchestrator drives this
+session and owns the handoff to the reviewer's VALIDATION pass, pushing
+only once that verdict is PASS. Never move a card to `review` or `done`
+yourself, and never merge a PR.

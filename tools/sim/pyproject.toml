@@ -13,6 +13,9 @@ dev = [
 
 [project.scripts]
 sim = "sim.sweeps:main"
+sim-tuning-sweep = "sim.run:main"
+sim-round2-sweep = "sim.run_round2:main"
+sim-round3-sweep = "sim.run_round3:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -30,3 +33,6 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["conftest", "sim"]

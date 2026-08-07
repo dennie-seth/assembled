@@ -7,13 +7,19 @@ import {
   cancelTask,
   createTask,
   deleteTask,
-  exportBacklog
+  exportBacklog,
+  exportDone,
+  fetchGitStatus,
+  addComment,
+  uploadAttachment,
+  removeAttachment
 } from "./api.js";
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
-import { renderBoard } from "./boardView.js";
+import { renderBoard, BATCH_SIZE } from "./boardView.js";
 import { renderDetailPanel } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
 import { renderCreateForm } from "./createForm.js";
+import { renderGitStatusBar } from "./gitStatusBar.js";
 
 export function createApp({
   boardRoot,
@@ -21,6 +27,7 @@ export function createApp({
   consoleRoot,
   createFormRoot,
   sidePanelRoot,
+  gitStatusRoot = null,
   fetchTasksImpl = fetchTasks,
   fetchAgentsImpl = fetchAgents,
   patchTaskImpl = patchTask,
@@ -29,7 +36,13 @@ export function createApp({
   cancelTaskImpl = cancelTask,
   createTaskImpl = createTask,
   deleteTaskImpl = deleteTask,
-  exportBacklogImpl = exportBacklog
+  exportBacklogImpl = exportBacklog,
+  exportDoneImpl = exportDone,
+  fetchGitStatusImpl = fetchGitStatus,
+  addCommentImpl = addComment,
+  uploadAttachmentImpl = uploadAttachment,
+  removeAttachmentImpl = removeAttachment,
+  gitPollIntervalMs = 30000
 }) {
   let tasks = [];
   let agentOptions = [];
@@ -39,6 +52,9 @@ export function createApp({
   let createError = null;
   const runLogs = new Map();
   const columnSort = new Map(STATUSES.map((status) => [status, "id"]));
+  const columnBatch = new Map(STATUSES.map((status) => [status, BATCH_SIZE]));
+  let gitStatus = null;
+  let knownGitHead = null;
 
   function render() {
     renderBoard(boardRoot, tasks, {
@@ -47,27 +63,33 @@ export function createApp({
       onRun: handleRun,
       onCancel: handleCancel,
       onExportBacklog: handleExportBacklog,
+      onExportDone: handleExportDone,
       error,
       columnSort,
-      onSortChange: handleSortChange
+      onSortChange: handleSortChange,
+      columnBatch,
+      onShowMore: handleShowMore
     });
+    const selected = selectedId !== null ? (tasks.find((task) => task.id === selectedId) ?? null) : null;
     if (sidePanelRoot) {
-      sidePanelRoot.hidden = selectedId === null;
+      sidePanelRoot.hidden = selected === null;
     }
     if (detailRoot) {
-      const selected = tasks.find((task) => task.id === selectedId) ?? null;
       renderDetailPanel(detailRoot, selected, {
         onSave: handleSave,
         onClose: handleClose,
         onDelete: handleDelete,
+        onAddComment: handleAddComment,
+        onUploadAttachment: handleUploadAttachment,
+        onRemoveAttachment: handleRemoveAttachment,
         agentOptions,
         allTasks: tasks.map((task) => ({ id: task.id, title: task.title }))
       });
     }
     if (consoleRoot) {
       renderConsolePanel(consoleRoot, {
-        taskId: selectedId,
-        entries: selectedId ? (runLogs.get(selectedId) ?? []) : []
+        taskId: selected ? selectedId : null,
+        entries: selected ? (runLogs.get(selectedId) ?? []) : []
       });
     }
     if (createFormRoot) {
@@ -80,6 +102,9 @@ export function createApp({
         error: createError
       });
     }
+    if (gitStatusRoot) {
+      renderGitStatusBar(gitStatusRoot, gitStatus);
+    }
   }
 
   async function applyPatch(taskId, patch) {
@@ -89,7 +114,21 @@ export function createApp({
     render();
   }
 
+  // A card in `review` or `blocked` moving to `in-progress` (dragged there, or via the
+  // detail panel's status dropdown) means "continue and fix this", not "relabel it" --
+  // route it through the same /run call the Run/Re-run button uses (Feature B, extended
+  // to blocked cards: gitOps.addWorktree reuses the existing branch instead of wiping it)
+  // rather than a plain PATCH.
+  function isRerunTrigger(taskId, patch) {
+    if (patch.status !== "in-progress") return false;
+    const current = tasks.find((task) => task.id === taskId);
+    return Boolean(current && (current.status === "review" || current.status === "blocked"));
+  }
+
   async function handleDrop(taskId, newStatus) {
+    if (isRerunTrigger(taskId, { status: newStatus })) {
+      return handleRun(taskId);
+    }
     try {
       await applyPatch(taskId, buildStatusPatch(newStatus));
     } catch (err) {
@@ -100,6 +139,11 @@ export function createApp({
 
   function handleSortChange(status, sortKey) {
     columnSort.set(status, sortKey);
+    render();
+  }
+
+  function handleShowMore(status) {
+    columnBatch.set(status, (columnBatch.get(status) ?? BATCH_SIZE) + BATCH_SIZE);
     render();
   }
 
@@ -114,6 +158,9 @@ export function createApp({
   }
 
   async function handleSave(taskId, patch) {
+    if (isRerunTrigger(taskId, patch)) {
+      return handleRun(taskId);
+    }
     try {
       await applyPatch(taskId, patch);
     } catch (err) {
@@ -134,6 +181,10 @@ export function createApp({
 
   function handleExportBacklog() {
     exportBacklogImpl();
+  }
+
+  function handleExportDone() {
+    exportDoneImpl();
   }
 
   function handleToggleCreateForm() {
@@ -187,6 +238,39 @@ export function createApp({
     render();
   }
 
+  async function handleAddComment(taskId, text) {
+    try {
+      const updated = await addCommentImpl(taskId, text);
+      tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
+  async function handleUploadAttachment(taskId, file, uploadedBy) {
+    try {
+      const updated = await uploadAttachmentImpl(taskId, file, uploadedBy);
+      tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
+  async function handleRemoveAttachment(taskId, filename) {
+    try {
+      const updated = await removeAttachmentImpl(taskId, filename);
+      tasks = tasks.map((task) => (task.id === updated.id ? updated : task));
+      error = null;
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+  }
+
   function handleRunEvent(event) {
     const existing = runLogs.get(event.id) ?? [];
     runLogs.set(event.id, [...existing, { phase: event.phase, event: event.event }]);
@@ -208,6 +292,18 @@ export function createApp({
     render();
   }
 
+  async function pollGitStatus() {
+    if (!fetchGitStatusImpl) return;
+    try {
+      const info = await fetchGitStatusImpl();
+      const updated = knownGitHead !== null && info.head !== knownGitHead;
+      gitStatus = { ...info, updated, onReload: () => window.location.reload() };
+      render();
+    } catch {
+      // Non-fatal: git status is informational; don't surface fetch errors on the board.
+    }
+  }
+
   async function init() {
     const [fetchedTasks, fetchedAgents] = await Promise.all([
       fetchTasksImpl(),
@@ -217,6 +313,18 @@ export function createApp({
     agentOptions = fetchedAgents;
     render();
     connectSocketImpl(handleSocketMessage);
+
+    if (fetchGitStatusImpl) {
+      const info = await fetchGitStatusImpl().catch(() => null);
+      if (info) {
+        knownGitHead = info.head;
+        gitStatus = { ...info, updated: false, onReload: () => window.location.reload() };
+        render();
+        if (gitPollIntervalMs > 0) {
+          setInterval(pollGitStatus, gitPollIntervalMs);
+        }
+      }
+    }
   }
 
   return {
@@ -229,12 +337,18 @@ export function createApp({
     handleRun,
     handleCancel,
     handleDelete,
+    handleAddComment,
+    handleUploadAttachment,
+    handleRemoveAttachment,
     handleSortChange,
+    handleShowMore,
     handleToggleCreateForm,
     handleCancelCreate,
     handleCreateSubmit,
     handleSocketMessage,
     handleExportBacklog,
+    handleExportDone,
+    pollGitStatus,
     getTasks: () => tasks,
     getSelectedId: () => selectedId,
     getError: () => error

@@ -1,8 +1,19 @@
 # GDD Discovery — Question Set
 
-> **Author:** Claude (Opus 5) · **For:** @DennieSeth · **Status:** unanswered
-> Working doc. Answer inline; this becomes `docs/design/01-vision.md`.
-> Ordered by blast radius — Tier 1 answers change everything below them.
+> **Author:** Claude (Opus 5) · **For:** @DennieSeth · **Status:** superseded (Tiers 1–6); Tier 7 partly open
+> Archived working doc from the pre-GDD dispatch session.
+>
+> **Superseded per `docs/HANDOFF.md` §1:** Tiers 1–6 answers now live in
+> `01-vision.md`, `02-notes-system.md`, `05-art-direction.md`,
+> `07-items-economy.md` (pending delivery), `08-invariants.md`,
+> `09-identity.md`, and `10-time-and-progression.md` (pending delivery).
+> **Tier 7 (risks) is still partly unanswered** — see
+> `docs/archive/OPEN-QUESTIONS.md` for what's left.
+>
+> Kept for historical record of how the Tier 1–6 questions were originally
+> framed; do not use as a live spec.
+
+Ordered by blast radius — Tier 1 answers change everything below them.
 
 ---
 

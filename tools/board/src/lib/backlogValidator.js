@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseTask } from "./taskParser.js";
+import { parseTask, serializeTask } from "./taskParser.js";
 import { assertNoCycle, DependencyCycleError } from "./dependencyGuard.js";
 
 export const DEFAULT_TASKS_DIR = path.resolve(
@@ -24,6 +24,20 @@ export async function readBacklogEntries(dir) {
     entries.push({ file: name, raw });
   }
   return entries;
+}
+
+/**
+ * Builds the same `{file, raw}` shape `readBacklogEntries` reads off disk, from a list of
+ * already-parsed task objects (a `store.list()` result) instead -- the db-mode entrypoint for
+ * `validateBacklog`, since there's no `tasks/*.md` directory to `readdir` when
+ * BOARD_TASK_STORE=db (see scripts/validateBacklog.js). `file` is synthesized as `${id}.md`,
+ * which makes `checkFilenameMatchesId` below trivially pass by construction -- there is no
+ * filename-vs-id mismatch possible for a DB row, matching
+ * docs/design/cards-to-database.md's "drop the filename check, which has no DB analog" without
+ * needing a separate code path for it.
+ */
+export function backlogEntriesFromTasks(tasks) {
+  return tasks.map((task) => ({ file: `${task.id}.md`, raw: serializeTask(task) }));
 }
 
 function parseAll(entries) {

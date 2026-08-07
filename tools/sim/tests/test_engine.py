@@ -237,9 +237,12 @@ class TestCollapse:
         agent = next(iter(engine.state.agents.values()))
         assert agent.state != AgentState.QUIT
 
-        engine.tick()  # tick 10 — collapse fires
+        engine.tick()  # tick 10 — collapse fires; identity survives into new universe
         agent = next(iter(engine.state.agents.values()))
-        assert agent.state == AgentState.QUIT
+        # Collapse no longer terminates the identity (T-0129) — it starts a
+        # new universe. The agent must still be active, not QUIT.
+        assert agent.state != AgentState.QUIT
+        assert agent.universe_count == 1
 
     def test_first_universe_grace_extends_collapse(self):
         cfg = make_cfg(
@@ -495,6 +498,164 @@ class TestInvariantsDuringTick:
         result = engine.run(200)
         inv6_violations = [v for v in result.violations if v.invariant == "INV-6"]
         assert inv6_violations == [], f"Spawner violated INV-6: {inv6_violations}"
+
+
+# ---------------------------------------------------------------------------
+# Recipient selection on pickup contention (DM-5)
+# ---------------------------------------------------------------------------
+
+
+class TestRecipientPolicy:
+    def test_fifo_is_creation_order(self):
+        cfg = make_cfg(initial_population=5, recipient_policy="fifo")
+        engine = SimEngine(cfg, seed=0)
+        ordered = engine._ordered_playing_agents()
+        assert [a.agent_id for a in ordered] == sorted(engine.state.agents.keys())
+
+    def test_need_weighted_sorts_by_fewest_items_received_first(self):
+        cfg = make_cfg(initial_population=4, recipient_policy="need_weighted")
+        engine = SimEngine(cfg, seed=0)
+        agents = list(engine.state.agents.values())
+        agents[0].items_received = 5
+        agents[1].items_received = 0
+        agents[2].items_received = 2
+        agents[3].items_received = 1
+
+        ordered = engine._ordered_playing_agents()
+        assert [a.items_received for a in ordered] == [0, 1, 2, 5]
+
+    def test_random_policy_is_a_permutation_of_all_playing_agents(self):
+        cfg = make_cfg(initial_population=10, recipient_policy="random")
+        engine = SimEngine(cfg, seed=0)
+        ordered = engine._ordered_playing_agents()
+        assert sorted(a.agent_id for a in ordered) == sorted(engine.state.agents.keys())
+
+    def test_unknown_policy_raises(self):
+        cfg = make_cfg(initial_population=2, recipient_policy="bogus")
+        engine = SimEngine(cfg, seed=0)
+        try:
+            engine._ordered_playing_agents()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected ValueError for unknown recipient_policy")
+
+    def test_fifo_vs_need_weighted_change_who_wins_scarce_pickup(self):
+        """Two agents, one scarce world item, both roll a successful pickup
+        in the same tick — the winner must depend on recipient_policy."""
+        from sim.types import ItemInstance
+
+        def run_once(policy: str) -> int:
+            cfg = make_cfg(
+                initial_population=2,
+                recipient_policy=policy,
+                pickup_probability=1.0,
+                transfer_probability=0.0,
+                spawn_rate_common=0.0,
+                spawn_rate_rare=0.0,
+                unique_count=0,
+                idle_probability=0.0,
+            )
+            engine = SimEngine(cfg, seed=0)
+            ids = sorted(engine.state.agents.keys())
+            engine.state.agents[ids[0]].items_received = 3  # richer, but first in creation order
+            engine.state.items[999] = ItemInstance(
+                instance_id=999,
+                type_id=0,
+                rarity=Rarity.COMMON,
+                holder=None,
+                anchor=0,
+                bleed_at=FAR_FUTURE,
+            )
+            engine.tick()
+            return engine.state.items[999].holder
+
+        assert run_once("fifo") == 0  # creation order — agent 0 goes first regardless of wealth
+        assert run_once("need_weighted") == 1  # agent 1 has fewer items_received, goes first
+
+
+# ---------------------------------------------------------------------------
+# Chain-tear key consumption (Q4 — unique drain)
+# ---------------------------------------------------------------------------
+
+
+class TestChainKeyConsumption:
+    def _pickup_cfg(self, **overrides):
+        defaults = dict(
+            initial_population=1,
+            unique_count=1,
+            join_rate=0.0,
+            quit_rate=0.0,
+            idle_probability=0.0,
+            pickup_probability=1.0,
+            transfer_probability=0.0,
+            spawn_rate_common=0.0,
+            spawn_rate_rare=0.0,
+            chain_key_enabled=True,
+            chain_key_crossings_required=2,
+        )
+        defaults.update(overrides)
+        return make_cfg(**defaults)
+
+    def test_destroy_mode_permanently_removes_the_unique(self):
+        cfg = self._pickup_cfg(chain_key_mode="destroy")
+        engine = SimEngine(cfg, seed=0)
+        agent_id = next(iter(engine.state.agents))
+
+        engine.tick()
+
+        assert _count(engine, Rarity.UNIQUE) == 0
+        assert engine.state.agents[agent_id].chain_progress == 1
+
+    def test_transfer_mode_keeps_the_unique_in_circulation(self):
+        cfg = self._pickup_cfg(chain_key_mode="transfer")
+        engine = SimEngine(cfg, seed=0)
+        agent_id = next(iter(engine.state.agents))
+
+        engine.tick()
+
+        assert _count(engine, Rarity.UNIQUE) == 1
+        item = next(iter(engine.state.items.values()))
+        assert item.anchor is not None
+        assert item.holder is None
+        assert engine.state.agents[agent_id].chain_progress == 1
+
+    def test_disabled_by_default_falls_back_to_ordinary_held_bleed(self):
+        cfg = self._pickup_cfg(chain_key_enabled=False)
+        engine = SimEngine(cfg, seed=0)
+        agent_id = next(iter(engine.state.agents))
+
+        engine.tick()
+
+        assert _count(engine, Rarity.UNIQUE) == 1
+        item = next(iter(engine.state.items.values()))
+        assert item.holder == agent_id
+        assert engine.state.agents[agent_id].chain_progress == 0
+
+    def test_stops_consuming_once_crossings_required_reached(self):
+        cfg = self._pickup_cfg(chain_key_mode="destroy", chain_key_crossings_required=1)
+        engine = SimEngine(cfg, seed=0)
+        agent_id = next(iter(engine.state.agents))
+
+        engine.tick()  # crosses once, unique #1 destroyed
+        assert engine.state.agents[agent_id].chain_progress == 1
+
+        # Give the agent a second unique — it should NOT be consumed now.
+        from sim.types import ItemInstance
+
+        engine.state.items[7777] = ItemInstance(
+            instance_id=7777,
+            type_id=cfg.num_item_types_common + cfg.num_item_types_rare,
+            rarity=Rarity.UNIQUE,
+            holder=None,
+            anchor=0,
+            bleed_at=FAR_FUTURE,
+        )
+        engine.tick()
+
+        assert 7777 in engine.state.items
+        assert engine.state.items[7777].holder == agent_id
+        assert engine.state.agents[agent_id].chain_progress == 1
 
 
 FAR_FUTURE = 100_000

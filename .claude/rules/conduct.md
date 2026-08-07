@@ -32,3 +32,14 @@ files add to this, they never relax it.
   `assets` or `audio` agent gets an `ASSET_PROVENANCE.md` entry —
   `model + license + prompt + seed` — before the card can leave
   `in-progress`. No exceptions, no "will backfill later."
+- **A card's stated deliverable is what must exist, not code that could
+  produce it.** Most cards deliver code and passing tests are the
+  deliverable's own evidence. A card with `deliverable_type: artifact` in
+  its frontmatter is different: its real output is a produced file — an
+  asset, a doc, a fetched/generated file attached to the ticket — and no
+  amount of green tests around the code that would produce it substitutes
+  for the artifact actually existing. Green, even fully-passing, tests that
+  mock away the actual side effect (a network fetch, a file write, an
+  upload) prove the code *could* work, not that it *did*. See T-0136: an
+  uploader CLI shipped with fully mocked tests and clean lint, and not a
+  single image was ever actually fetched or attached.

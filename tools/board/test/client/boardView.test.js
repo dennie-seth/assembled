@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, vi } from "vitest";
-import { renderBoard } from "../../src/client/boardView.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderBoard, BATCH_SIZE } from "../../src/client/boardView.js";
 import { STATUSES } from "../../src/client/board.js";
 
 function task(overrides = {}) {
@@ -115,6 +115,48 @@ describe("renderBoard", () => {
     expect(onCardClick).not.toHaveBeenCalled();
   });
 
+  it("shows a Re-run control on a review card and invokes onRun without triggering onCardClick", () => {
+    const root = document.createElement("div");
+    const onRun = vi.fn();
+    const onCardClick = vi.fn();
+    renderBoard(root, [task({ id: "T-0020", status: "review" })], { onDrop: vi.fn(), onCardClick, onRun });
+
+    const rerunBtn = root.querySelector('.card[data-id="T-0020"] .card-rerun');
+    expect(rerunBtn).not.toBeNull();
+    expect(root.querySelector('.card[data-id="T-0020"] .card-run')).toBeNull();
+    rerunBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+
+    expect(onRun).toHaveBeenCalledWith("T-0020");
+    expect(onCardClick).not.toHaveBeenCalled();
+  });
+
+  it("shows a Re-run control on a blocked card and invokes onRun without triggering onCardClick", () => {
+    const root = document.createElement("div");
+    const onRun = vi.fn();
+    const onCardClick = vi.fn();
+    renderBoard(root, [task({ id: "T-0021", status: "blocked" })], { onDrop: vi.fn(), onCardClick, onRun });
+
+    const rerunBtn = root.querySelector('.card[data-id="T-0021"] .card-rerun');
+    expect(rerunBtn).not.toBeNull();
+    expect(root.querySelector('.card[data-id="T-0021"] .card-run')).toBeNull();
+    rerunBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+
+    expect(onRun).toHaveBeenCalledWith("T-0021");
+    expect(onCardClick).not.toHaveBeenCalled();
+  });
+
+  it("renders a retired column, last, and does not show a Run control on a retired card", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [task({ id: "T-0099", status: "retired" })], { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() });
+
+    const columns = root.querySelectorAll(".column");
+    expect(columns[columns.length - 1].dataset.status).toBe("retired");
+
+    const column = root.querySelector('.column[data-status="retired"]');
+    expect(column.querySelector(".column-header").textContent).toContain("Retired");
+    expect(column.querySelector('.card[data-id="T-0099"] .card-run')).toBeNull();
+  });
+
   it("does not show a Run control on a card that isn't ready", () => {
     const root = document.createElement("div");
     renderBoard(root, [task({ id: "T-0007", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() });
@@ -209,6 +251,26 @@ describe("renderBoard blocker badges", () => {
   });
 });
 
+describe("renderBoard auto-retry attempts badge", () => {
+  it("renders an accessible badge showing the run count when a card is mid auto-retry", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "in-progress", attempts: 2 });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-attempts-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.title || badge.getAttribute("aria-label")).toMatch(/run 2 of 5/i);
+  });
+
+  it("does not render an attempts badge when the card has no attempts consumed", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "ready", attempts: 0 });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    expect(root.querySelector('.card[data-id="T-0001"] .card-attempts-badge')).toBeNull();
+  });
+});
+
 describe("renderBoard backlog export button", () => {
   it("renders an export button in the backlog column when onExportBacklog is provided", () => {
     const root = document.createElement("div");
@@ -242,6 +304,39 @@ describe("renderBoard backlog export button", () => {
   });
 });
 
+describe("renderBoard done export button", () => {
+  it("renders an export button in the done column when onExportDone is provided", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), onExportDone: vi.fn() });
+    const exportBtn = root.querySelector('.column[data-status="done"] .column-export-done');
+    expect(exportBtn).not.toBeNull();
+    expect(exportBtn.textContent).toMatch(/export/i);
+  });
+
+  it("does not render the done export button in non-done columns", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), onExportDone: vi.fn() });
+    for (const status of ["backlog", "ready", "in-progress", "review", "blocked", "validation"]) {
+      expect(root.querySelector(`.column[data-status="${status}"] .column-export-done`)).toBeNull();
+    }
+  });
+
+  it("calls onExportDone when the done export button is clicked", () => {
+    const root = document.createElement("div");
+    const onExportDone = vi.fn();
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn(), onExportDone });
+    const exportBtn = root.querySelector('.column[data-status="done"] .column-export-done');
+    exportBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+    expect(onExportDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render the done export button when onExportDone is not provided", () => {
+    const root = document.createElement("div");
+    renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn() });
+    expect(root.querySelector(".column-export-done")).toBeNull();
+  });
+});
+
 describe("renderBoard per-column sort control", () => {
   it("renders a sort select per column defaulting to id", () => {
     const root = document.createElement("div");
@@ -252,7 +347,7 @@ describe("renderBoard per-column sort control", () => {
     expect(sortSelect).not.toBeNull();
     expect(sortSelect.value).toBe("id");
     const values = Array.from(sortSelect.options).map((o) => o.value);
-    expect(values).toEqual(["id", "priority", "agent", "phase"]);
+    expect(values).toEqual(["id", "priority", "agent", "phase", "oldest", "newest"]);
   });
 
   it("orders cards within a column by the current sort key for that column", () => {
@@ -299,5 +394,186 @@ describe("renderBoard per-column sort control", () => {
     select.dispatchEvent(new Event("change", { bubbles: true }));
 
     expect(onSortChange).toHaveBeenCalledWith("ready", "agent");
+  });
+});
+
+describe("BATCH_SIZE export", () => {
+  it("is a positive integer", () => {
+    expect(Number.isInteger(BATCH_SIZE)).toBe(true);
+    expect(BATCH_SIZE).toBeGreaterThan(0);
+  });
+});
+
+describe("renderBoard — batched rendering", () => {
+  let root;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    vi.stubGlobal("IntersectionObserver", undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function makeTasks(count, status = "backlog") {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `T-${String(i + 1).padStart(4, "0")}`,
+      title: `Task ${i + 1}`,
+      status,
+      priority: "P2",
+      phase: 1,
+      agent: null,
+      depends_on: []
+    }));
+  }
+
+  it("renders all cards when count is exactly BATCH_SIZE", () => {
+    const tasks = makeTasks(BATCH_SIZE, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+    const list = root.querySelector(".column-cards[data-status='backlog']");
+    expect(list.querySelectorAll(".card").length).toBe(BATCH_SIZE);
+    expect(list.querySelector(".batch-sentinel")).toBeNull();
+  });
+
+  it("renders all cards when count is below BATCH_SIZE", () => {
+    const tasks = makeTasks(3, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+    const list = root.querySelector(".column-cards[data-status='backlog']");
+    expect(list.querySelectorAll(".card").length).toBe(3);
+    expect(list.querySelector(".batch-sentinel")).toBeNull();
+  });
+
+  it("renders only BATCH_SIZE cards when count exceeds BATCH_SIZE and no columnBatch", () => {
+    const tasks = makeTasks(BATCH_SIZE + 5, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    const list = root.querySelector(".column-cards[data-status='backlog']");
+    expect(list.querySelectorAll(".card").length).toBe(BATCH_SIZE);
+  });
+
+  it("adds a batch sentinel when there are more cards than the visible count", () => {
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    const sentinel = root.querySelector(".batch-sentinel");
+    expect(sentinel).not.toBeNull();
+    expect(sentinel.dataset.status).toBe("backlog");
+  });
+
+  it("does not add a sentinel when onShowMore is not provided", () => {
+    const tasks = makeTasks(BATCH_SIZE + 5, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+    expect(root.querySelector(".batch-sentinel")).toBeNull();
+  });
+
+  it("renders extended batch when columnBatch provides a higher visible count", () => {
+    const tasks = makeTasks(BATCH_SIZE + 5, "backlog");
+    const columnBatch = new Map([["backlog", BATCH_SIZE + 5]]);
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), columnBatch, onShowMore: vi.fn() });
+    const list = root.querySelector(".column-cards[data-status='backlog']");
+    expect(list.querySelectorAll(".card").length).toBe(BATCH_SIZE + 5);
+    expect(list.querySelector(".batch-sentinel")).toBeNull();
+  });
+
+  it("sentinel data-status matches the column status", () => {
+    const tasks = makeTasks(BATCH_SIZE + 1, "done");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    const sentinel = root.querySelector(".batch-sentinel");
+    expect(sentinel?.dataset.status).toBe("done");
+  });
+});
+
+describe("renderBoard — IntersectionObserver wiring", () => {
+  let root;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function makeTasks(count, status = "backlog") {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `T-${String(i + 1).padStart(4, "0")}`,
+      title: `Task ${i + 1}`,
+      status,
+      priority: "P2",
+      phase: 1,
+      agent: null,
+      depends_on: []
+    }));
+  }
+
+  it("observes sentinels when onShowMore and IntersectionObserver are available", () => {
+    const observe = vi.fn();
+    class MockIO {
+      constructor(_cb) {}
+      observe = observe;
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    expect(observe).toHaveBeenCalled();
+  });
+
+  it("calls onShowMore with status when sentinel intersects", () => {
+    const onShowMore = vi.fn();
+    let observerCallback;
+    class MockIO {
+      constructor(cb) { observerCallback = cb; }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore });
+    const sentinel = root.querySelector(".batch-sentinel");
+    observerCallback([{ isIntersecting: true, target: sentinel }]);
+    expect(onShowMore).toHaveBeenCalledWith("backlog");
+  });
+
+  it("does not call onShowMore for non-intersecting entries", () => {
+    const onShowMore = vi.fn();
+    let observerCallback;
+    class MockIO {
+      constructor(cb) { observerCallback = cb; }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore });
+    const sentinel = root.querySelector(".batch-sentinel");
+    observerCallback([{ isIntersecting: false, target: sentinel }]);
+    expect(onShowMore).not.toHaveBeenCalled();
+  });
+
+  it("does not instantiate IntersectionObserver when onShowMore is absent", () => {
+    const constructed = vi.fn();
+    class MockIO {
+      constructor(cb) { constructed(cb); }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+    expect(constructed).not.toHaveBeenCalled();
+  });
+
+  it("disconnects the previous observer on re-render", () => {
+    const disconnect = vi.fn();
+    class MockIO {
+      constructor(_cb) {}
+      observe = vi.fn();
+      disconnect = disconnect;
+    }
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const tasks = makeTasks(BATCH_SIZE + 1, "backlog");
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn(), onShowMore: vi.fn() });
+    expect(disconnect).toHaveBeenCalledTimes(1);
   });
 });

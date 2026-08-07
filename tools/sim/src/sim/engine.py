@@ -131,13 +131,13 @@ class SimEngine:
     def _spawn_agent(self) -> Agent:
         aid = self._next_agent_id
         self._next_agent_id += 1
-        collapse_duration = self.cfg.collapse_duration
-        if True:  # all agents in the sim are treated as first-universe
-            collapse_duration = int(collapse_duration * self.cfg.first_universe_multiplier)
+        # Newly-joined agents start in their first universe — apply the grace multiplier.
+        collapse_duration = int(self.cfg.collapse_duration * self.cfg.first_universe_multiplier)
         agent = Agent(
             agent_id=aid,
             state=AgentState.PLAYING,
             collapse_at=self._state.tick + collapse_duration,
+            universe_count=0,
             is_hoarder=(self._rng.random() < self.cfg.hoarder_fraction),
         )
         self._state.agents[aid] = agent
@@ -267,6 +267,39 @@ class SimEngine:
         for item in held:
             self._bleed_item(item)
 
+    def _start_new_universe(self, agent: Agent) -> None:
+        """Collapse the current universe and start the next one for this identity.
+
+        The identity survives — it is NOT set to QUIT. Run-scoped state resets
+        (items_received, ticks_active); identity-scoped state persists (vocabulary,
+        unique_keyed unlocks). Tactical and session unlocks are cleared when
+        unlock_scope is "per_run"; they survive until natural expiry when "per_week".
+
+        @param agent  The agent whose universe is collapsing.
+        """
+        tick = self._state.tick
+        cfg = self.cfg
+
+        # Scatter held items (identity does not carry items across the boundary)
+        self._scatter_agent_items(agent)
+
+        # Advance universe counter; reset run-scoped stats
+        agent.universe_count += 1
+        agent.items_received = 0
+        agent.ticks_active = 0
+
+        # Schedule next collapse using the base duration (no multiplier after first universe)
+        agent.collapse_at = tick + cfg.collapse_duration
+
+        # Clear per-run unlock tiers if configured; unique_keyed always survives
+        if cfg.unlock_scope == "per_run":
+            to_remove = [
+                uid for uid, u in self._state.unlocks.items()
+                if u.agent_id == agent.agent_id and u.tier in ("tactical", "session")
+            ]
+            for uid in to_remove:
+                del self._state.unlocks[uid]
+
     def _process_agent_lifecycle(self) -> None:
         cfg = self.cfg
         tick = self._state.tick
@@ -281,11 +314,9 @@ class SimEngine:
 
             agent.ticks_active += 1
 
-            # Collapse check (wall-clock — happens whether player is present)
+            # Collapse check (wall-clock — the identity survives into a new universe)
             if tick >= agent.collapse_at:
-                self._scatter_agent_items(agent)
-                agent.state = AgentState.QUIT
-                self._state.population -= 1
+                self._start_new_universe(agent)
                 continue
 
             # Random voluntary quit
@@ -344,10 +375,27 @@ class SimEngine:
                 self._place_item_at_anchor(type_id, Rarity.RARE)
                 rare_count += 1
 
+    def _ordered_playing_agents(self) -> list[Agent]:
+        """Order PLAYING agents for this tick's pickup attempts (DM-5).
+
+        When several agents roll a successful pickup in the same tick and
+        compete for the same scarce world_items pool, this order decides
+        who wins — see config.py's recipient_policy docstring.
+        """
+        playing = [a for a in self._state.agents.values() if a.state == AgentState.PLAYING]
+        policy = self.cfg.recipient_policy
+        if policy == "random":
+            self._rng.shuffle(playing)
+        elif policy == "need_weighted":
+            playing.sort(key=lambda a: a.items_received)
+        elif policy != "fifo":
+            raise ValueError(f"unknown recipient_policy {policy!r}")
+        return playing
+
     def _process_agent_actions(self) -> None:
         """Playing agents pick up from and deposit items into the world."""
         cfg = self.cfg
-        playing = [a for a in self._state.agents.values() if a.state == AgentState.PLAYING]
+        playing = self._ordered_playing_agents()
         world_items = [it for it in self._state.items.values() if it.anchor is not None]
 
         for agent in playing:
@@ -370,12 +418,46 @@ class SimEngine:
                 world_items.remove(item)
                 item.anchor = None
                 item.holder = agent.agent_id
-                bleed_dur = self._rng.randint(cfg.held_bleed_min, cfg.held_bleed_max)
-                if item.rarity == Rarity.UNIQUE:
-                    bleed_dur = int(bleed_dur * cfg.unique_held_bleed_multiplier)
-                item.bleed_at = self._state.tick + bleed_dur
                 agent.items_received += 1
+                agent.vocabulary.add(item.type_id)
                 self._grant_unlock(agent.agent_id, item.type_id, item.rarity)
+
+                if (
+                    cfg.chain_key_enabled
+                    and item.rarity == Rarity.UNIQUE
+                    and agent.chain_progress < cfg.chain_key_crossings_required
+                ):
+                    self._consume_chain_key(agent, item, world_items)
+                else:
+                    bleed_dur = self._rng.randint(cfg.held_bleed_min, cfg.held_bleed_max)
+                    if item.rarity == Rarity.UNIQUE:
+                        bleed_dur = int(bleed_dur * cfg.unique_held_bleed_multiplier)
+                    item.bleed_at = self._state.tick + bleed_dur
+
+    def _consume_chain_key(
+        self, agent: Agent, item: ItemInstance, world_items: list[ItemInstance]
+    ) -> None:
+        """Spend a held unique to cross a chain tear (12 §3a, 07 §2 — Q4).
+
+        "destroy": the instance is permanently removed — literally the
+        "pool that never respawns." "transfer": it is sent onward
+        immediately, same as the door-key semantics in 12 §3a — it stays
+        in circulation rather than being destroyed.
+        """
+        cfg = self.cfg
+        agent.chain_progress += 1
+        if cfg.chain_key_mode == "destroy":
+            del self._state.items[item.instance_id]
+        elif cfg.chain_key_mode == "transfer":
+            anchor = self._rng.randrange(cfg.num_anchors)
+            bleed_dur = self._rng.randint(cfg.world_bleed_min, cfg.world_bleed_max)
+            item.holder = None
+            item.anchor = anchor
+            item.bleed_at = self._state.tick + bleed_dur
+            item.custody_depth += 1
+            world_items.append(item)
+        else:
+            raise ValueError(f"unknown chain_key_mode {cfg.chain_key_mode!r}")
 
     def _update_throughput(self) -> None:
         """Record per-player throughput snapshot for INV-9/INV-14 tracking."""

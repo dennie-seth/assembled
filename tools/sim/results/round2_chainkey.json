@@ -1,0 +1,5070 @@
+{
+  "series": [
+    {
+      "mode": "destroy",
+      "tick": 60,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 1980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 2940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 3960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 4980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 5940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 6960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 7980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 8940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 9960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 10980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 11940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 12960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 13980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 14940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 15960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 16980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 17940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 18960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 19980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 20940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 21960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 22980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 23940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 24960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 25980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 26940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27240,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27300,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27360,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27420,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27480,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27540,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27600,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27660,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27720,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27780,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27840,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27900,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 27960,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28020,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28080,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28140,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28200,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28260,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28320,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28380,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28440,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28500,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28560,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28620,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28680,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28740,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28800,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28860,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28920,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 28980,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29040,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29100,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29160,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29220,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29280,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29340,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29400,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29460,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29520,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29580,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29640,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29700,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29760,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29820,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29880,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 29940,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 30000,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 30060,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 30120,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 30180,
+      "unique_count": 0
+    },
+    {
+      "mode": "destroy",
+      "tick": 30240,
+      "unique_count": 0
+    },
+    {
+      "mode": "transfer",
+      "tick": 60,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 1980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 2940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 3960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 4980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 5940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 6960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 7980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 8940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 9960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 10980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 11940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 12960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 13980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 14940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 15960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 16980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 17940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 18960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 19980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 20940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 21960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 22980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 23940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 24960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 25980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 26940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27240,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27300,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27360,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27420,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27480,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27540,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27600,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27660,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27720,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27780,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27840,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27900,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 27960,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28020,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28080,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28140,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28200,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28260,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28320,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28380,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28440,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28500,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28560,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28620,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28680,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28740,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28800,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28860,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28920,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 28980,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29040,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29100,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29160,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29220,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29280,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29340,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29400,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29460,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29520,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29580,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29640,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29700,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29760,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29820,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29880,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 29940,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 30000,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 30060,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 30120,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 30180,
+      "unique_count": 5
+    },
+    {
+      "mode": "transfer",
+      "tick": 30240,
+      "unique_count": 5
+    }
+  ],
+  "summary": [
+    {
+      "mode": "destroy",
+      "seed": 42,
+      "ticks_run": 30240,
+      "unique_count_initial": 5,
+      "unique_count_final": 0,
+      "exhausted_at_tick": 60,
+      "exhausted_at_week": 0.005952380952380952,
+      "fraction_of_run_at_zero": 1.0,
+      "total_chain_crossings_completed": 5,
+      "final_population": 51
+    },
+    {
+      "mode": "transfer",
+      "seed": 42,
+      "ticks_run": 30240,
+      "unique_count_initial": 5,
+      "unique_count_final": 5,
+      "exhausted_at_tick": null,
+      "exhausted_at_week": null,
+      "fraction_of_run_at_zero": 0.0,
+      "total_chain_crossings_completed": 2032,
+      "final_population": 55
+    }
+  ]
+}

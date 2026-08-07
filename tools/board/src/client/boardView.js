@@ -1,5 +1,9 @@
 import { STATUSES, groupTasksByStatus, computeBlockerCounts, sortTasks, SORT_KEYS } from "./board.js";
 
+export const BATCH_SIZE = 20;
+
+let _batchObserver = null;
+
 const STATUS_LABELS = {
   backlog: "Backlog",
   ready: "Ready",
@@ -7,14 +11,17 @@ const STATUS_LABELS = {
   validation: "Validation",
   review: "Review",
   done: "Done",
-  blocked: "Blocked"
+  blocked: "Blocked",
+  retired: "Retired"
 };
 
 const SORT_LABELS = {
   id: "ID",
   priority: "Priority",
   agent: "Agent",
-  phase: "Phase"
+  phase: "Phase",
+  oldest: "Oldest",
+  newest: "Newest"
 };
 
 function actionButton(className, label, onClick) {
@@ -35,6 +42,21 @@ function blockerBadgeFor(blockCount) {
   badge.className = "card-blocker-badge";
   const label = `Blocks ${blockCount} task${blockCount === 1 ? "" : "s"}`;
   badge.textContent = "⛔";
+  badge.title = label;
+  badge.setAttribute("aria-label", label);
+  return badge;
+}
+
+// Mirrors MAX_AUTO_RETRY_ATTEMPTS in src/runner/runOrchestrator.js (server-only module, not
+// importable from the client bundle) -- the bounded FAIL -> auto-retry loop's cap.
+const MAX_AUTO_RETRY_ATTEMPTS = 5;
+
+function attemptsBadgeFor(task) {
+  if (!task.attempts) return null;
+  const badge = document.createElement("span");
+  badge.className = "card-attempts-badge";
+  const label = `Auto-retry: run ${task.attempts} of ${MAX_AUTO_RETRY_ATTEMPTS}`;
+  badge.textContent = `↻ ${task.attempts}/${MAX_AUTO_RETRY_ATTEMPTS}`;
   badge.title = label;
   badge.setAttribute("aria-label", label);
   return badge;
@@ -64,6 +86,11 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
     titleRow.appendChild(badge);
   }
 
+  const attemptsBadge = attemptsBadgeFor(task);
+  if (attemptsBadge) {
+    titleRow.appendChild(attemptsBadge);
+  }
+
   const meta = document.createElement("div");
   meta.className = "card-meta";
   meta.textContent = `${task.id} · ${task.priority} · ${task.agent ?? "unassigned"} · phase ${task.phase}`;
@@ -72,6 +99,9 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
 
   if (task.status === "ready" && onRun) {
     card.appendChild(actionButton("card-run", "Run", () => onRun(task.id)));
+  }
+  if ((task.status === "review" || task.status === "blocked") && onRun) {
+    card.appendChild(actionButton("card-rerun", "Re-run", () => onRun(task.id)));
   }
   if ((task.status === "in-progress" || task.status === "validation") && onCancel) {
     card.appendChild(actionButton("card-cancel", "Cancel", () => onCancel(task.id)));
@@ -116,6 +146,9 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
   if (status === "backlog" && callbacks.onExportBacklog) {
     column.appendChild(actionButton("column-export-backlog", "Export", callbacks.onExportBacklog));
   }
+  if (status === "done" && callbacks.onExportDone) {
+    column.appendChild(actionButton("column-export-done", "Export", callbacks.onExportDone));
+  }
 
   const list = document.createElement("div");
   list.className = "column-cards";
@@ -132,8 +165,16 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
     }
   });
 
-  for (const task of sortTasks(tasks, sortKey)) {
+  const visibleCount = callbacks.columnBatch?.get(status) ?? BATCH_SIZE;
+  const sorted = sortTasks(tasks, sortKey);
+  for (const task of sorted.slice(0, visibleCount)) {
     list.appendChild(renderCard(task, callbacks, blockerCounts));
+  }
+  if (sorted.length > visibleCount && callbacks.onShowMore) {
+    const sentinel = document.createElement("div");
+    sentinel.className = "batch-sentinel";
+    sentinel.dataset.status = status;
+    list.appendChild(sentinel);
   }
 
   column.appendChild(list);
@@ -141,6 +182,9 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
 }
 
 export function renderBoard(root, tasks, callbacks) {
+  _batchObserver?.disconnect();
+  _batchObserver = null;
+
   const grouped = groupTasksByStatus(tasks);
   const blockerCounts = computeBlockerCounts(tasks);
   root.replaceChildren();
@@ -160,4 +204,17 @@ export function renderBoard(root, tasks, callbacks) {
   }
 
   root.appendChild(board);
+
+  if (callbacks.onShowMore && typeof IntersectionObserver !== "undefined") {
+    _batchObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          callbacks.onShowMore(entry.target.dataset.status);
+        }
+      }
+    });
+    for (const sentinel of root.querySelectorAll(".batch-sentinel")) {
+      _batchObserver.observe(sentinel);
+    }
+  }
 }
