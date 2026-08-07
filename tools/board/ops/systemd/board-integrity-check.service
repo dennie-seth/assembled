@@ -1,0 +1,7 @@
+[Unit]
+Description=Read-only integrity check for the assembled board (db-store mode)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/board-integrity-check.py

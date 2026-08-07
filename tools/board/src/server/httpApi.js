@@ -129,6 +129,39 @@ function resolveAttachmentPath(cardAttachmentsDir, filename) {
   return resolved;
 }
 
+/** Resolves `id`'s attachment directory to a path guaranteed to live inside `root`, or null. */
+function resolveCardAttachmentsDir(root, id) {
+  if (typeof id !== "string" || id.length === 0) return null;
+  const resolved = path.resolve(root, id);
+  const rootResolved = path.resolve(root) + path.sep;
+  if (!resolved.startsWith(rootResolved)) return null;
+  return resolved;
+}
+
+/**
+ * Best-effort removal of a card's on-disk attachment directory, called after the store's row
+ * delete has already committed (see handleDeleteTask): a filesystem failure here must never
+ * block or appear to fail the delete the user asked for -- it only risks leaving an orphaned
+ * directory behind for the periodic integrity checker to flag, which beats refusing to delete a
+ * card because of an unrelated disk/permission problem. Skips entirely (no warning) when the
+ * server wasn't given enough config to know where attachments would live -- that's a handful of
+ * tests that construct a bare server without tasksDir/dataDir, not a real deployment.
+ */
+async function removeCardAttachments({ taskStoreKind, tasksDir, dataDir, id }) {
+  if (taskStoreKind === "db" ? !dataDir : !tasksDir) return;
+  const root = attachmentsRootDir({ taskStoreKind, tasksDir, dataDir });
+  const dir = resolveCardAttachmentsDir(root, id);
+  if (!dir) {
+    console.warn(`Board: refusing to remove attachments for invalid task id "${id}"`);
+    return;
+  }
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`Board: failed to remove attachments directory for ${id} (leaving it orphaned):`, err.message);
+  }
+}
+
 /** Sniffs `buffer`'s real type and rejects active markup (SVG/HTML) regardless of what the uploader claimed. */
 async function resolveMimeType(buffer) {
   const sniffed = await fileTypeFromBuffer(buffer);
@@ -715,7 +748,7 @@ async function handleExportDone(store, res) {
   res.end(text);
 }
 
-async function handleDeleteTask(store, id, res, taskStoreKind, hub) {
+async function handleDeleteTask(store, id, res, taskStoreKind, hub, tasksDir, dataDir) {
   const task = await store.get(id);
   if (!task) {
     throw new HttpError(404, `Task ${id} not found`);
@@ -724,6 +757,7 @@ async function handleDeleteTask(store, id, res, taskStoreKind, hub) {
     throw new HttpError(409, `Cannot delete ${id}: status is "${task.status}" (active run)`);
   }
   await store.remove(id);
+  await removeCardAttachments({ taskStoreKind, tasksDir, dataDir, id });
   if (taskStoreKind === "db" && hub) {
     hub.broadcast({ type: "removed", id, task: null });
   }
@@ -801,7 +835,7 @@ export function createRequestListener({
         );
       }
       if (idMatch && req.method === "DELETE") {
-        return await handleDeleteTask(store, idMatch[1], res, taskStoreKind, hub);
+        return await handleDeleteTask(store, idMatch[1], res, taskStoreKind, hub, tasksDir, dataDir);
       }
       if (runMatch && req.method === "POST") {
         return await handleRunTask(orchestrator, runMatch[1], res);

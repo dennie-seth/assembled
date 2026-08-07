@@ -546,3 +546,38 @@ describe("DELETE /api/tasks/:id/attachments/:filename", () => {
     expect(res.status).toBe(405);
   });
 });
+
+describe("DELETE /api/tasks/:id (attachment cleanup)", () => {
+  it("also removes the card's attachment directory from <tasksDir>/attachments/<id>/ (T-0150)", async () => {
+    const task = await createTask();
+    await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, { method: "POST", body: pngUploadForm() });
+    const cardAttachmentsDir = path.join(tasksDir, "attachments", task.id);
+    await expect(fs.stat(cardAttachmentsDir)).resolves.toBeTruthy();
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+
+    await expect(fs.stat(cardAttachmentsDir)).rejects.toThrow();
+  });
+
+  it("deleting a card with no attachments is a no-op on disk, not an error", async () => {
+    const task = await createTask();
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+  });
+
+  it("does not delete another card's attachment directory when the deleted id is a prefix of it", async () => {
+    const task = await createTask();
+    const otherId = `${task.id}-evil`;
+    await fs.mkdir(path.join(tasksDir, "attachments", otherId), { recursive: true });
+    await fs.writeFile(path.join(tasksDir, "attachments", otherId, "keep.txt"), "keep me");
+
+    await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+
+    await expect(
+      fs.readFile(path.join(tasksDir, "attachments", otherId, "keep.txt"), "utf8")
+    ).resolves.toBe("keep me");
+  });
+});
