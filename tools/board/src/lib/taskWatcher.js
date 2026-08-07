@@ -14,7 +14,12 @@ export class TaskWatcher extends EventEmitter {
   start() {
     this.watcher = chokidar.watch("*.md", {
       cwd: this.dir,
-      ignoreInitial: true
+      ignoreInitial: true,
+      // Without this, chokidar can fire 'add'/'change' while a write is still landing on disk
+      // (see the WSL2/Linux double-fire note in test/taskWatcher.test.js) -- _handleUpsert then
+      // reads a truncated file and parseTask throws "missing frontmatter delimiters". Waiting
+      // for the file size to stabilize before emitting avoids reading a partial write.
+      awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 10 }
     });
     this.watcher.on("add", (file) => this._handleUpsert(file, "added"));
     this.watcher.on("change", (file) => this._handleUpsert(file, "changed"));

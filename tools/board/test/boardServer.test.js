@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -105,6 +105,20 @@ describe("board server integration", () => {
 
   it("is bound to 127.0.0.1", () => {
     expect(board.server.address().address).toBe("127.0.0.1");
+  });
+
+  it("logs and survives a TaskWatcher 'error' event instead of crashing on an unhandled rejection", async () => {
+    // EventEmitter throws synchronously when an 'error' event has no listener -- if boardServer
+    // ever stopped wiring one up, this emit would throw here rather than being logged.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    board.watcher.emit("error", new Error("Task file is missing frontmatter delimiters (--- ... ---)"));
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("TaskWatcher error"),
+      expect.stringContaining("missing frontmatter delimiters")
+    );
+    warnSpy.mockRestore();
   });
 });
 

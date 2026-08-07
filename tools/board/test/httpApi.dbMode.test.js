@@ -212,6 +212,41 @@ describe("db mode -- DELETE /api/tasks/:id", () => {
     expect(await store.get(task.id)).toBeNull();
     expect(hub.broadcast).toHaveBeenCalledWith({ type: "removed", id: task.id, task: null });
   });
+
+  it("also removes the card's attachment directory from <dataDir>/attachments/<id>/ (T-0150)", async () => {
+    const task = await createTask();
+    const form = new FormData();
+    form.append("file", new Blob([TINY_PNG], { type: "image/png" }), "reference.png");
+    await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, { method: "POST", body: form });
+    const cardAttachmentsDir = path.join(dataDir, "attachments", task.id);
+    await expect(fs.stat(cardAttachmentsDir)).resolves.toBeTruthy();
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+
+    await expect(fs.stat(cardAttachmentsDir)).rejects.toThrow();
+  });
+
+  it("deleting a card with no attachments is a no-op on disk, not an error", async () => {
+    const task = await createTask();
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+  });
+
+  it("does not delete another card's attachment directory when the deleted id is a prefix of it", async () => {
+    const task = await createTask();
+    const otherId = `${task.id}-evil`;
+    await fs.mkdir(path.join(dataDir, "attachments", otherId), { recursive: true });
+    await fs.writeFile(path.join(dataDir, "attachments", otherId, "keep.txt"), "keep me");
+
+    await fetch(`${baseUrl}/api/tasks/${task.id}`, { method: "DELETE" });
+
+    await expect(
+      fs.readFile(path.join(dataDir, "attachments", otherId, "keep.txt"), "utf8")
+    ).resolves.toBe("keep me");
+  });
 });
 
 describe("db mode -- fs-mode behavior stays available side-by-side (taskStoreKind default)", () => {
