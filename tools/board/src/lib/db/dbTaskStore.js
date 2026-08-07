@@ -83,14 +83,32 @@ export class DbTaskStore extends TaskStore {
       if (exists) {
         throw new Error(`Task ${task.id} already exists`);
       }
+      this._insertTaskRowsSync(task, actor);
+    });
 
-      db.prepare(
+    run();
+    return this.get(task.id);
+  }
+
+  /**
+   * The synchronous, no-existence-check half of create() -- inserts a task row plus its
+   * depends_on/comments/attachments/card_events rows. Exists so the importer
+   * (src/lib/db/importer.js) can insert many tasks inside ONE outer transaction (better-sqlite3
+   * transaction functions must be synchronous, so it can't call the async create() per task and
+   * still get one atomic commit across the whole import). Callers are responsible for wrapping
+   * this in their own db.transaction(...) and for checking id collisions first if they need a
+   * clean error rather than a raw UNIQUE-constraint failure.
+   */
+  _insertTaskRowsSync(task, actor) {
+    this.db
+      .prepare(
         `INSERT INTO tasks
            (id, title, status, priority, phase, agent, created, branch, commit_sha, pr,
             deliverable_type, attempts, body)
          VALUES (@id, @title, @status, @priority, @phase, @agent, @created, @branch, @commit_sha,
                  @pr, @deliverable_type, @attempts, @body)`
-      ).run({
+      )
+      .run({
         id: task.id,
         title: task.title,
         status: task.status,
@@ -106,14 +124,10 @@ export class DbTaskStore extends TaskStore {
         body: task.body
       });
 
-      this._insertDependsOn(task.id, task.depends_on ?? []);
-      this._insertComments(task.id, task.comments ?? []);
-      this._insertAttachments(task.id, task.attachments ?? []);
-      this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor);
-    });
-
-    run();
-    return this.get(task.id);
+    this._insertDependsOn(task.id, task.depends_on ?? []);
+    this._insertComments(task.id, task.comments ?? []);
+    this._insertAttachments(task.id, task.attachments ?? []);
+    this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor);
   }
 
   async update(id, updates, { actor = DEFAULT_ACTOR } = {}) {

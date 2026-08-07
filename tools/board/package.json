@@ -18,7 +18,8 @@
     "check:deliverable": "node scripts/checkDeliverable.js",
     "check:live-run": "node scripts/checkLiveRun.js",
     "deploy": "bash scripts/deploy.sh",
-    "backup:db": "node scripts/backupDb.js"
+    "backup:db": "node scripts/backupDb.js",
+    "import:db": "node scripts/importTasksToDb.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
