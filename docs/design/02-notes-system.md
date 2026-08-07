@@ -1,6 +1,6 @@
 # 02 — Notes System
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v3, locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v4, locked
 > Related: `01-vision.md`, `07-items-economy.md`, `08-invariants.md`, `09-identity.md`
 
 ---
@@ -37,14 +37,18 @@ Notes must express more than *Dark Souls* required — this game needs **request
 
 ### Template form
 
+**Slots are named, not positional.** Each locale ships its own template string with the same named slot set, freely reordered (`17-localization.md` §4, L-2/L-3) — Russian, German, and Japanese all want different orderings, and a positional system can't survive that. English is the authored default; translations aren't required to match its word order.
+
 ```
-TEMPLATE  "{ACTION} {QUALIFIER}, {DIRECTION}"        -> "Hide slowly, below"
-          "{HAZARD} {DIRECTION}"                     -> "The watcher ahead"
-          "I need {ITEM_REF}"                        -> exchange request
-          "{OBJECT} opens with {ITEM_REF}"           -> path hint
+TEMPLATE  "{action} {qualifier}, {direction}"        -> "Hide slowly, below"
+          "{hazard} {direction}"                     -> "The watcher ahead"
+          "Need {item_ref}"                          -> exchange request
+          "{object} opens with {item_ref}"           -> path hint
 ```
 
-Templates declare slot arity and types. Server validates arity and category on write — a mismatch is a `400`.
+Templates declare a **named slot set** (category + identifier — a template needing two DIRECTION slots would declare `direction_1`/`direction_2`, not rely on position). Server validates arity and category on write — a mismatch is a `400`. Every locale must declare the identical slot set; a locale with a positional-only placeholder fails the build (`17-localization.md` L-2/L-3).
+
+**Register: fragments, not sentences** (`17-localization.md` §5.2). Nominative, telegraphic, uninflected — *"The watcher. Ahead."*, not *"There is a watcher ahead."* Vocabulary stays to grammatically inert parts of speech: nouns, adverbs, imperatives. Avoid conjugated verbs and adjectives that agree for gender or number — Russian's case system multiplies a naive word list six-fold otherwise. This is why the exchange-request template reads **"Need {item_ref}"**, not "I need {item_ref}": an imperative fragment carries no subject to conjugate.
 
 ### Start point
 
@@ -95,7 +99,7 @@ Vocabulary unlocks across runs, mirroring item rarity. This is the mechanism beh
 
 **1. Comprehension is never gated.** A player reads every note from run one, at full fidelity. Only *composition* is tiered. An unreadable note is a hard failure; a note you cannot yet write is an aspiration. Unlocking must feel like gaining voice, never like being handed a decoder.
 
-**2. Core function stays common-tier.** Exchange requests especially — `"I need {ITEM_REF}"` must be available immediately. If asking for things were rare, new players could not participate in the economy at all, and the social gate would become a wall. Rarity gates *flourish*, never *utility*.
+**2. Core function stays common-tier.** Exchange requests especially — **"Need {item_ref}"** must be available immediately. If asking for things were rare, new players could not participate in the economy at all, and the social gate would become a wall. Rarity gates *flourish*, never *utility*.
 
 ---
 
@@ -186,7 +190,7 @@ Corpus size and authorship: **open (V-8)**.
 |---|---|
 | N-1 | Bleed-timer bonus curve (§7) |
 | N-2 | Decay rate + `N` visible (§8) |
-| N-3 | Final template/word list — needs the archetype set to exist first |
+| N-3 | Final template/word list — needs the archetype set to exist first; must be authored against the named-slot and telegraphic-register rules (`17-localization.md` §4–§5), not retrofitted |
 | N-4 | Do ghost notes rate? Can they be rated? |
 | N-5 | Petition cost, cooldown, breadth (may name a gating item — resolved, §6) |
 | N-6 | Unlock triggers per tier — runs survived? archetypes seen? notes rated well? |
@@ -201,3 +205,4 @@ Corpus size and authorship: **open (V-8)**.
 | 2026-08-01 | v2: anchor tags replace coordinates, vocabulary tiers, broadcast petition, proof-of-play rating | Claude (Opus 5), rev. @DennieSeth |
 | 2026-08-01 | N-5 resolved: petitions may name a gating/unique item | Claude, rev. @DennieSeth |
 | 2026-08-02 | v3: status line corrected; no content change | Claude, rev. pending |
+| 2026-08-03 | v4: §2 templates take **named** slots, not positional (per-locale reordering, `17-localization.md` L-2/L-3); telegraphic/grammatically-inert register rule added; exchange template changed **"I need {item_ref}"** → **"Need {item_ref}"** (§2, §5) to drop the conjugated subject. Raised by the pipeline chat (`17-localization.md`) | Claude, rev. @DennieSeth |

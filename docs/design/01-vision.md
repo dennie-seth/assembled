@@ -1,6 +1,6 @@
 # 01 — Vision
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v7, locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v11, locked
 > Source: GDD sessions 2026-08-01. Supersedes `GDD-QUESTIONS.md` Tiers 1–6.
 
 ---
@@ -88,8 +88,8 @@ Three nested scopes. Conflating them was a real bug in v1–v2 of this document.
 
 ```
 identity   -> one universe, dying on a wall-clock. Weeks.
-  run      -> one waking. 30–45 min. Ends in death, quit, or unrecovered disconnect.
-    room   -> one screen. ~15 per run.
+  run      -> one waking. 30-45 min. Ends in death, quit, or unrecovered disconnect.
+    room   -> one screen. Up to 18 per run.
 ```
 
 ### The universe is yours, and it is singular
@@ -122,6 +122,15 @@ All three carry the same consequence:
 **Disconnects get a grace window.** Reconnecting within the lease TTL resumes the run exactly where it was — nothing scatters. Only once the lease actually expires does it count as ended. A network hiccup is not punished; walking away and not coming back is.
 
 Ending a run this way is **generative, not punitive**: it is the primary engine that circulates content through the network.
+
+### After a Run Ends
+
+Fade out to a screen offering **Try Again** and **New Game**:
+
+- **Try Again** re-assembles the **same archetype/variant selection** the run just used — same 3 archetypes, same layout to navigate. Live content at each anchor (items, notes, entity rolls) is still queried fresh; only the *selection* is pinned, not the world state.
+- **New Game** assembles a fresh selection under the normal population/eligibility rules (V-9).
+
+Both are still an ended run — held items scatter, unlocks and notes persist, same as any death/quit/disconnect (above). The only difference is whether the next assembly is pinned or re-rolled.
 
 ### Collapse — the meta fail state
 
@@ -157,9 +166,13 @@ Three levels. Keeping them distinct matters — different budgets, different sca
 |---|---|---|
 | **Archetype** | A named place. *Hospital, Signal Tower, Long Descent.* | 12–15 in v1 |
 | **Variant** | One authored realization of an archetype. Same place, different configuration. | 1 at launch, grows |
-| **Room** | A screen-scale space inside a variant. | ~15 visited per run |
+| **Room** | A screen-scale space inside a variant. | Up to 18 visited per run |
 
-A run selects **5–7 archetypes**, picks one **variant** of each, and assembles them.
+A run assembles **exactly 3 archetypes**, picks one **variant** of each (eligibility gated on population, V-9), and combines them up to an **18-room** ceiling. Archetypes are authored at **5–8 rooms** each; selection is size-aware — one large archetype (like Signal Tower) pairs with two smaller ones rather than three large ones being drawn blind. The assembled set is server-authoritative and doubles as the run's proof-of-play record (`02-notes-system.md` §7).
+
+**A tear pocket (`12-tears.md` §3) counts as one of the archetype's own 5–8 rooms, never an addition on top.** The largest an archetype can be is `18 − 5 − 5 = 8`, tear pocket included — miscounting it as extra is exactly how Signal Tower briefly overflowed the cap (see `14-vertical-slice.md` changelog, corrected).
+
+**The 3 archetypes have a sequence, established by tears (`12-tears.md` §3a).** Archetypes 1 and 2 each carry a chain tear, unlocked with a held unique, leading to the next archetype's own entry room. Archetype 3's tear is a free pocket tear, leading to a self-contained foreign pocket — there's nowhere further to chain to. A player who never finds the key for a chain tear stays in that archetype; this is the exit-condition's social gate applied one level down, not a bug.
 
 ### Anchor tags
 
@@ -182,7 +195,7 @@ Notes and items bind to **tags, not coordinates**:
 
 All content — items, vocabulary, variants — is **authored up front and released gradually**. As population grows, more variants become eligible when a universe is configured.
 
-**What scales is variety, not size.** A run is ~15 rooms at any population. On a quiet server the Hospital is always the same Hospital; on a busy one it could be any of six. Per-player pacing is constant; the world gets *deeper*, never longer. (`08-invariants.md` INV-9.)
+**What scales is variety, not size.** A run is up to 18 rooms at any population, assembled from exactly 3 archetypes. On a quiet server the Hospital is always the same Hospital; on a busy one it could be any of six. Per-player pacing is constant; the world gets *deeper*, never longer. (`08-invariants.md` INV-9.)
 
 **Enemy layer is local.** Each universe rolls its own hazards. Consequence: warnings in notes are *unreliable* — someone warning of a horror you do not have is not lying, they are simply from elsewhere.
 
@@ -248,12 +261,12 @@ The collapse clock is never shown as a number. **The screen is the clock.** A la
 |---|---|---|
 | V-5 | Home palette — exact hex set | **Phase 6** |
 | V-6 | Localization set for v1 | vocabulary budget |
-| V-7 | Vertical slice definition | Phase 8 acceptance |
 | V-8 | Cold-start: size and authorship of the seeded-ghost corpus | launch |
 | V-9 | Variant release schedule — which population thresholds unlock what | balance |
 | V-10 | Exact collapse duration within the ~2–4 week bracket (§9) | **simulation** |
+| V-12 | Archetype size distribution — how many of the 12–15 are "small" vs. "large" (§7) | content budget |
 
-**Resolved:** V-1 (§9) · V-2 (Windows + Linux) · V-3 (itch, Steam cleared) · V-4 (384×216) · V-11 (§6, "The Ending")
+**Resolved:** V-1 (§9) · V-2 (Windows + Linux) · V-3 (itch, Steam cleared) · V-4 (384×216) · V-7 (`14-vertical-slice.md`/`19-vertical-slice-hospital.md`/`20-vertical-slice-long-descent.md` — Signal Tower, Hospital, Long Descent) · V-11 (§6, "The Ending")
 
 ---
 
@@ -268,3 +281,7 @@ The collapse clock is never shown as a number. **The screen is the clock.** A la
 | 2026-08-01 | v5: NEW-1/NEW-2 resolved — run ends via death/quit/unrecovered disconnect, reconnect-within-TTL grace window, explicit quit action added | Claude, rev. @DennieSeth |
 | 2026-08-01 | v6: T-1 order of magnitude set — collapse ~2–4 weeks nominal, ~1.5× for first universe | Claude, rev. @DennieSeth |
 | 2026-08-02 | v7: status line corrected (header said v3, changelog ran to v6); 16px tile + pipeline cross-refs | Claude, rev. pending |
+| 2026-08-02 | v8: room budget revised — a run assembles **1–3 archetypes** of varying authored size, up to **18 rooms** (was 5–7 archetypes / ~15 rooms). Raised by the pipeline chat against Signal Tower's 8–9-room size; ratified by @DennieSeth | Claude, rev. @DennieSeth |
+| 2026-08-02 | v9: narrowed to **exactly 3 archetypes** per run (was 1–3) — a 1-archetype run undercut the multiverse premise. Archetypes now carry an authored **5–8 room** size band; selection is size-aware against the 18-room ceiling. @DennieSeth | Claude, rev. @DennieSeth |
+| 2026-08-03 | v10: §7 clarified — a tear pocket counts as one of the archetype's own 5–8 rooms, not an addition on top. Guards against the Signal Tower room-count bug recurring for future archetypes | Claude, rev. @DennieSeth |
+| 2026-08-03 | v11: **§7 — archetype sequence added** (chain tears order the run's 3 archetypes; terminal archetype gets a pocket tear, `12-tears.md` §3a). **§6 — Try Again/New Game post-run screen added.** **V-7 resolved** — vertical slice now spans `14-vertical-slice.md`/`19-vertical-slice-hospital.md`/`20-vertical-slice-long-descent.md` | Claude, rev. @DennieSeth |
