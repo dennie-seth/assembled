@@ -475,3 +475,60 @@ Reaffirmed at Dispatch's request so it lives on the card as well as here: **the 
 The Board Assets database shows 1-asset folders for T-0070, T-0080, T-0081. **That is correct, not a failure** — those are install/baseline cards whose only deliverable is a baseline doc. T-0073 at 2 assets looked thin but is explained: the chain shipped one tile plus its provenance, and the tile is real.
 
 **The gap is not missing files, it is untested breadth.** One wall tile proves the chain runs. §12-c proves it produces a *tileset*.
+
+---
+
+## 13. Chain Keys × Population — a scale failure round 2 could not see
+
+**Raised 2026-08-06.** This is a design problem, not a wording problem. Do **not** amend INV-9 to accommodate it until it is measured.
+
+### 13.1 The mechanism
+
+`01` §7 (v11) now states plainly that a chain tear is unlocked with a **held unique**, and that a player who never finds one **stays in that archetype** — framed as the exit condition's social gate applied one level down. That is ratified design, not drift.
+
+But uniques are a **fixed small absolute count that explicitly does not scale with population** (`07` §2). So the share of players holding one at any moment falls roughly as `unique_count / P`:
+
+| P | unique_count | Rough share holding one |
+|---|---|---|
+| 50 | 5 | ~10% |
+| 2,000 | 5 | ~0.25% |
+| 100,000 | 5 | ~0.005% |
+
+Round 2 measured **2,032 chain crossings in three weeks at P≈50** — healthy, because five uniques circulate fast among fifty people. At P=10⁵ the same five instances are spread across a hundred thousand. **Nearly every run becomes one archetype long.**
+
+### 13.2 Three consequences, all load-bearing
+
+- **INV-9 breaks properly.** Not "wide variance" — the *distribution of rooms-per-run shifts with P*, which is precisely what scale invariance forbids. A run is 18 rooms at P=50 and 5–8 rooms at P=10⁵.
+- **INV-14 inverts.** More players → lower per-player chance of holding a key → fewer chain crossings → less of the game reachable. The pitch is *"more players, faster progress."*
+- **`01` §7 becomes false at scale.** It says a run assembles three archetypes. At high P it would assemble one and stop.
+
+### 13.3 Why round 2 could not have caught it
+
+The chain-key sweep ran at **a single population point**. This is an interaction that only appears when `P` is swept — the same class of blind spot as §10.1 D4 (population dynamics disabled). Round 2 was right about what it tested; it simply could not see this.
+
+### 13.4 Action — measure, do not document around it
+
+Round 3 already carries **T-0132** (E-4 sweep, includes `unique_count`) and **T-0133** (INV-14 across `P`). One addition:
+
+| Handle | Work | Done when | P |
+|---|---|---|---|
+| **§13-a** | **Run the chain-key model across the population sweep.** Fold chain-key consumption into T-0133's `P ∈ {2, 20, 200, 2000, 20000}` runs rather than testing it at one point. Report **chain crossings per player per run** and **rooms-per-run** as functions of `P`, with IQR bands | Both curves exist across the full P range, and whether rooms-per-run is P-invariant is answered explicitly | **P0** — small extension to work already scoped |
+
+### 13.5 If confirmed — the fix
+
+**Rare-tier chain keys.** Raised on 08-02 and dropped too early; under this analysis it becomes close to forced.
+
+Rares scale as `k_r · P`, so key availability **grows with population** instead of thinning. Traversal stays constant across scale while uniques stay reserved for the exit — the two stop competing, and `01` §5's *"several uniques held simultaneously"* keeps its scarcity without also gating basic movement.
+
+The alternatives are worse:
+
+- **Scale `unique_count` with `P`** — destroys the meaning of "unique" and breaks `07` §2's fixed-count rule, which several other systems rely on.
+- **Accept one-archetype runs at scale** — contradicts the premise the game is named for, and inverts INV-14 permanently.
+
+The "deliberate, costly" beat `01` §3 asks for survives intact with a rare key. A rare is still scarce; it is just scarce in a way that tracks the population it is scarce *among*.
+
+### 13.6 Separate, smaller: INV-9's wording
+
+Independent of the above, **INV-9 conflates two different claims**: that the *distribution* of per-player metrics is stable across `P`, and that players have *similar* experiences. Only the first is the invariant. Wide within-population variance is compatible with scale invariance; a distribution that *moves with P* is not.
+
+Worth stating explicitly in `08` §2 so a future sim run reports the right thing. Raised with the design chat; `08` is design-owned.

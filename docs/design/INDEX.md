@@ -1,4 +1,25 @@
-# INDEX — Canonical Design Docs
+# INDEX — Canonical Design Docs (ARCHIVED 2026-08-06)
+
+> # ⚠️ ARCHIVED — 2026-08-06. Do not follow the instructions below.
+>
+> **This page was a one-time migration plan** for moving the design set out of a scratch folder and into git. **That migration is complete.** Everything below describes a state that no longer exists, and two sections are now actively dangerous:
+>
+> - **§3 step 4** says *"Delete `03-net-protocol.md` and `04-data-model.md`, then rewrite from HANDOFF §5."* True on 08-02, when those were the cut-systems versions. **They are now the correct documents.** Following this deletes good work.
+> - **§4 "Repo Docs That Are Actively Wrong"** lists `03`, `04`, the `01/02/05` stubs, and a v2 `PLAN.md`. All fixed. The section now describes the opposite of reality.
+>
+> Other stale content: the contents table lists `13-asset-pipeline` at v4 (repo is v5); `HANDOFF` §5's schema sketch is superseded by `04`; T-0090/T-0091 are done.
+>
+> **The current steady state is:**
+>
+> \| \| \|
+> \| --- \| --- \|
+> \| **Design source of truth** \| Notion. Dispatch exports to the repo \|
+> \| **`PLAN.md`** \| git-only — dispatch reads and amends it there \|
+> \| **`13-asset-pipeline`** \| **repo → Notion** for now. The repo copy (v5) is ahead, and Notion's §6.8/6.10/6.11 tables are malformed. Do not overwrite the repo copy from Notion \|
+> \| **Ownership, decision log, next steps** \| the **Assembled — Design** root page \|
+> \| **Task IDs** \| Dispatch allocates. Docs propose section-scoped handles (`§13-a`), never `T-NNNN` — `HANDOFF` §11.7 \|
+>
+> Kept for provenance: it records how the set was reconciled on 08-02 and why. Nothing here should be acted on.
 
 > **Project:** Assembled · **Revised:** 2026-08-02 (rev 2) · **By:** Claude
 > **This set is the source of truth.** Post-merge, duplicate-free, and internally reconciled.
