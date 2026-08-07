@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly push of staged board assets to Google Drive
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
