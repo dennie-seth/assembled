@@ -1,14 +1,27 @@
 import { computeFlowStats } from "../lib/flowStats.js";
-import { draftImprovementCard, isAutoProposedCard, extractBaselineDone } from "../lib/flowImprovementCard.js";
+import {
+  draftImprovementCard,
+  isAutoProposedCard,
+  extractBaselineDone,
+  extractProposedAt
+} from "../lib/flowImprovementCard.js";
 import { createCard as createCardDefault } from "./cardCreation.js";
 
 const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 const OPEN_STATUSES = new Set(["backlog", "ready", "in-progress", "validation", "review", "blocked"]);
 
-const DEFAULT_INTERVAL_CARDS = 10;
 const DEFAULT_REWORK_THRESHOLD = 0.3;
-const DEFAULT_MIN_REWORK_SAMPLE = 5;
+const DEFAULT_MIN_REWORK_SAMPLE = 10;
+const DEFAULT_MIN_INTERVAL_DAYS = 7;
+const DEFAULT_MIN_RETRY_CAP_BLOCKED = 3;
+const DEFAULT_MIN_RECOVERED = 3;
 const DEFAULT_SWEEP_INTERVAL_MS = 10 * 60_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const EVIDENCE_LIMIT = 5;
+
+const FAIL_NOTE_CAPTURE_RE = /^## Validation: FAIL \(([^)]+)\)/gm;
+const RECOVERED_NOTE_CAPTURE_RE = /^## Recovered \(([^)]+)\)/gm;
+const RETRY_CAP_TEXT_RE = /Auto-retry limit reached/;
 
 /**
  * FLOW_STATS_SELFIMPROVE_ENABLED env var: default OFF -- the reverse of every other AUTO_* flag
@@ -31,16 +44,25 @@ function rateFromEnv(name, fallback) {
   return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : fallback;
 }
 
-export function intervalCardsFromEnv() {
-  return positiveIntFromEnv("FLOW_STATS_SELFIMPROVE_INTERVAL_CARDS", DEFAULT_INTERVAL_CARDS);
-}
-
 export function reworkThresholdFromEnv() {
   return rateFromEnv("FLOW_STATS_SELFIMPROVE_REWORK_THRESHOLD", DEFAULT_REWORK_THRESHOLD);
 }
 
 export function minReworkSampleFromEnv() {
   return positiveIntFromEnv("FLOW_STATS_SELFIMPROVE_MIN_REWORK_SAMPLE", DEFAULT_MIN_REWORK_SAMPLE);
+}
+
+/** Floor on how often the loop may propose a new card, regardless of how many thresholds are crossed. */
+export function minIntervalDaysFromEnv() {
+  return positiveIntFromEnv("FLOW_STATS_SELFIMPROVE_MIN_INTERVAL_DAYS", DEFAULT_MIN_INTERVAL_DAYS);
+}
+
+export function minRetryCapBlockedFromEnv() {
+  return positiveIntFromEnv("FLOW_STATS_SELFIMPROVE_MIN_RETRY_CAP_BLOCKED", DEFAULT_MIN_RETRY_CAP_BLOCKED);
+}
+
+export function minRecoveredFromEnv() {
+  return positiveIntFromEnv("FLOW_STATS_SELFIMPROVE_MIN_RECOVERED", DEFAULT_MIN_RECOVERED);
 }
 
 export function sweepIntervalMsFromEnv() {
@@ -53,28 +75,109 @@ function latestAutoProposedCard(tasks) {
     .sort((a, b) => b.id.localeCompare(a.id))[0] ?? null;
 }
 
+function windowFrom(evidence) {
+  const timestamps = evidence.map((e) => e.timestamp).filter(Boolean).sort();
+  if (timestamps.length === 0) return { windowStart: null, windowEnd: null };
+  return { windowStart: timestamps[0], windowEnd: timestamps[timestamps.length - 1] };
+}
+
+/** Most recent FAIL-note cards, newest first -- concrete pointers instead of just the aggregate rework rate. */
+function collectFailEvidence(tasks, limit = EVIDENCE_LIMIT) {
+  const hits = [];
+  for (const task of tasks) {
+    const body = task.body ?? "";
+    for (const match of body.matchAll(FAIL_NOTE_CAPTURE_RE)) {
+      hits.push({ id: task.id, timestamp: match[1] });
+    }
+  }
+  hits.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return hits.slice(0, limit);
+}
+
+/** Cards currently blocked on retry-cap exhaustion, with the timestamp of their final FAIL note if present. */
+function collectRetryCapEvidence(tasks, limit = EVIDENCE_LIMIT) {
+  const hits = [];
+  for (const task of tasks) {
+    const body = task.body ?? "";
+    if (task.status !== "blocked" || !RETRY_CAP_TEXT_RE.test(body)) continue;
+    const matches = [...body.matchAll(FAIL_NOTE_CAPTURE_RE)];
+    const timestamp = matches.length ? matches[matches.length - 1][1] : undefined;
+    hits.push({ id: task.id, timestamp });
+  }
+  hits.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
+  return hits.slice(0, limit);
+}
+
+/** Cards with at least one orphan-reaper "## Recovered (" note, newest first. */
+function collectRecoveredEvidence(tasks, limit = EVIDENCE_LIMIT) {
+  const hits = [];
+  for (const task of tasks) {
+    const body = task.body ?? "";
+    for (const match of body.matchAll(RECOVERED_NOTE_CAPTURE_RE)) {
+      hits.push({ id: task.id, timestamp: match[1] });
+    }
+  }
+  hits.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return hits.slice(0, limit);
+}
+
 /**
  * Pure decision function: given current stats and the task corpus, does a new improvement
- * proposal belong on the board right now? No state file -- the "baseline" this reads back is
- * embedded in the most recent auto-proposed card's own body (see flowImprovementCard.js), so
- * there is nothing that can desync from the actual card corpus. De-dupe: never fires while the
- * most recent auto-proposed card is still open (not done/retired), regardless of what the
- * numbers say, so a persistently bad rework rate can't spam a new card every sweep tick.
+ * proposal belong on the board right now? No state file -- the "baseline" and "last proposed at"
+ * this reads back are embedded in the most recent auto-proposed card's own body (see
+ * flowImprovementCard.js), so there is nothing that can desync from the actual card corpus.
+ *
+ * Two independent gates before any threshold is even considered:
+ * - de-dupe: never fires while the most recent auto-proposed card is still open (not
+ *   done/retired), so a persistently bad signal can't spam a new card while the last one is
+ *   still unactioned.
+ * - cadence: never fires within `minIntervalDays` of the last proposal's `proposed-at` marker,
+ *   regardless of what the numbers say -- at most one proposal per week by default.
+ *
+ * Only genuinely evidenced, actionable signals fire a proposal (no pure-volume/interval trigger):
+ * sustained rework rate, repeated retry-cap exhaustion, or repeated orphan-reaper recovery, each
+ * gated by its own minimum-sample floor so a quiet week with a couple of blips stays silent.
  */
-export function evaluateTrigger({ stats, tasks, intervalCards, reworkThreshold, minReworkSample }) {
+export function evaluateTrigger({
+  stats,
+  tasks,
+  reworkThreshold,
+  minReworkSample,
+  minIntervalDays,
+  minRetryCapBlocked,
+  minRecovered,
+  now = () => new Date()
+}) {
   const latest = latestAutoProposedCard(tasks);
   if (latest && OPEN_STATUSES.has(latest.status)) {
     return null;
   }
 
-  const baselineDone = latest ? (extractBaselineDone(latest.body) ?? 0) : 0;
-  const doneDelta = stats.byStatus.done - baselineDone;
-  if (doneDelta >= intervalCards) {
-    return { reason: "interval", doneDelta, baselineDone };
+  if (latest) {
+    const proposedAt = extractProposedAt(latest.body);
+    if (proposedAt) {
+      const elapsedMs = now().getTime() - proposedAt.getTime();
+      if (elapsedMs < minIntervalDays * DAY_MS) {
+        return null;
+      }
+    }
   }
 
+  const baselineDone = latest ? (extractBaselineDone(latest.body) ?? 0) : 0;
+
   if (stats.reworkSample >= minReworkSample && stats.reworkRate >= reworkThreshold) {
-    return { reason: "rework-rate", reworkRate: stats.reworkRate, reworkSample: stats.reworkSample, baselineDone };
+    const evidence = collectFailEvidence(tasks);
+    return { reason: "rework-rate", reworkRate: stats.reworkRate, reworkSample: stats.reworkSample, baselineDone, evidence, ...windowFrom(evidence) };
+  }
+
+  if (stats.retryCapBlockedCount >= minRetryCapBlocked) {
+    const evidence = collectRetryCapEvidence(tasks);
+    return { reason: "retry-cap-blocked", retryCapBlockedCount: stats.retryCapBlockedCount, baselineDone, evidence, ...windowFrom(evidence) };
+  }
+
+  if (stats.recoveredTotal >= minRecovered) {
+    const evidence = collectRecoveredEvidence(tasks);
+    return { reason: "orphan-recovery", recoveredTotal: stats.recoveredTotal, baselineDone, evidence, ...windowFrom(evidence) };
   }
 
   return null;
@@ -94,9 +197,11 @@ export function createSelfImprovementLoop({
   repoRoot,
   tasksDir,
   enabled = selfImproveEnabledFromEnv(),
-  intervalCards = intervalCardsFromEnv(),
   reworkThreshold = reworkThresholdFromEnv(),
   minReworkSample = minReworkSampleFromEnv(),
+  minIntervalDays = minIntervalDaysFromEnv(),
+  minRetryCapBlocked = minRetryCapBlockedFromEnv(),
+  minRecovered = minRecoveredFromEnv(),
   intervalMs = sweepIntervalMsFromEnv(),
   now = () => new Date(),
   logger = console,
@@ -125,7 +230,16 @@ export function createSelfImprovementLoop({
     if (tasks === null) return null;
 
     const stats = computeFlowStats(tasks);
-    const trigger = evaluateTrigger({ stats, tasks, intervalCards, reworkThreshold, minReworkSample });
+    const trigger = evaluateTrigger({
+      stats,
+      tasks,
+      reworkThreshold,
+      minReworkSample,
+      minIntervalDays,
+      minRetryCapBlocked,
+      minRecovered,
+      now
+    });
     if (!trigger) return null;
 
     const proposal = draftImprovementCard({ stats, trigger, now });

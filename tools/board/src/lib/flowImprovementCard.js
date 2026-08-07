@@ -1,15 +1,24 @@
-const BASELINE_MARKER_RE = /<!-- flow-stats-self-improve: baseline-done=(\d+) -->/;
+const MARKER_RE = /<!-- flow-stats-self-improve: baseline-done=(\d+)(?: proposed-at=(\S+))? -->/;
 
 /** True iff a task's body carries the auto-proposal marker this module writes -- used for de-dupe (see selfImprovementTrigger.js). */
 export function isAutoProposedCard(task) {
   const body = task && task.body;
-  return typeof body === "string" && BASELINE_MARKER_RE.test(body);
+  return typeof body === "string" && MARKER_RE.test(body);
 }
 
 /** Returns the `done` count recorded as this card's baseline, or null if the card carries no marker. */
 export function extractBaselineDone(body) {
-  const match = BASELINE_MARKER_RE.exec(body ?? "");
+  const match = MARKER_RE.exec(body ?? "");
   return match ? Number(match[1]) : null;
+}
+
+/**
+ * Returns the timestamp this card was proposed at, or null if the card carries no marker or
+ * carries a legacy marker written before the weekly-cadence gate added this field.
+ */
+export function extractProposedAt(body) {
+  const match = MARKER_RE.exec(body ?? "");
+  return match && match[2] ? new Date(match[2]) : null;
 }
 
 function percent(rate) {
@@ -37,17 +46,50 @@ function contextSection(stats) {
 }
 
 function triggerLine(trigger) {
-  if (trigger.reason === "interval") {
-    return `Triggered: ${trigger.doneDelta} cards reached done since the last flow-health review (threshold reached).`;
+  if (trigger.reason === "rework-rate") {
+    return `Triggered: rework rate ${percent(trigger.reworkRate)} over the last ${trigger.reworkSample} validation notes (threshold crossed).`;
   }
-  return `Triggered: rework rate ${percent(trigger.reworkRate)} over the last ${trigger.reworkSample} validation notes (threshold crossed).`;
+  if (trigger.reason === "retry-cap-blocked") {
+    return `Triggered: ${trigger.retryCapBlockedCount} cards blocked after exhausting the auto-retry cap (threshold crossed).`;
+  }
+  return `Triggered: ${trigger.recoveredTotal} orphan-reaper recoveries recorded (threshold crossed).`;
 }
 
-function title(stats, trigger, dateStr) {
-  if (trigger.reason === "interval") {
-    return `Flow health: ${trigger.doneDelta} cards completed since last review (auto-proposed ${dateStr})`;
+function title(trigger, dateStr) {
+  if (trigger.reason === "rework-rate") {
+    return `Flow health: rework rate ${percent(trigger.reworkRate)} over ${trigger.reworkSample} validations (auto-proposed ${dateStr})`;
   }
-  return `Flow health: rework rate ${percent(trigger.reworkRate)} over ${trigger.reworkSample} validations (auto-proposed ${dateStr})`;
+  if (trigger.reason === "retry-cap-blocked") {
+    return `Flow health: ${trigger.retryCapBlockedCount} cards blocked on retry-cap exhaustion (auto-proposed ${dateStr})`;
+  }
+  return `Flow health: ${trigger.recoveredTotal} orphan-reaper recoveries (auto-proposed ${dateStr})`;
+}
+
+/** Cites the specific cards + time window backing the trigger, not just the aggregate numbers. */
+function evidenceSection(trigger) {
+  if (!trigger.evidence || trigger.evidence.length === 0) return null;
+  const rows = trigger.evidence.map((e) => `- ${e.id}${e.timestamp ? ` (${e.timestamp})` : ""}`);
+  const lines = ["## Evidence", ""];
+  if (trigger.windowStart && trigger.windowEnd) {
+    lines.push(`Window: ${trigger.windowStart} to ${trigger.windowEnd}.`, "");
+  }
+  lines.push(...rows);
+  return lines.join("\n");
+}
+
+/**
+ * A concrete next step tailored to the reason this fired, so the card gives the implementer a
+ * lead instead of just a number -- still phrased as an investigation prompt (deterministic code
+ * cannot claim to know the actual root cause), not a fabricated diagnosis.
+ */
+function directionLine(trigger) {
+  if (trigger.reason === "rework-rate") {
+    return "Suggested direction: read the FAIL notes on the cards listed under Evidence for a shared root cause (a recurring guard, grant, or lint failure is the common pattern in this codebase) and land one infra fix that removes it.";
+  }
+  if (trigger.reason === "retry-cap-blocked") {
+    return "Suggested direction: each card listed under Evidence exhausted the auto-retry cap -- check for a shared blocking condition (permission grant, diff guard, flaky test) across them before assuming each is a one-off.";
+  }
+  return "Suggested direction: repeated orphan-reaper recoveries usually point at a hang or crash pattern in the runner/CLI invocation -- check the recovered cards' run logs under Evidence for a common failure point.";
 }
 
 /**
@@ -57,8 +99,9 @@ function title(stats, trigger, dateStr) {
  * I/O; `cardCreation.js`'s `createCard` is what actually writes it.
  */
 export function draftImprovementCard({ stats, trigger, now = () => new Date() }) {
-  const dateStr = now().toISOString().slice(0, 10);
-  const marker = `<!-- flow-stats-self-improve: baseline-done=${stats.byStatus.done} -->`;
+  const nowValue = now();
+  const dateStr = nowValue.toISOString().slice(0, 10);
+  const marker = `<!-- flow-stats-self-improve: baseline-done=${stats.byStatus.done} proposed-at=${nowValue.toISOString()} -->`;
 
   const body = [
     marker,
@@ -67,15 +110,21 @@ export function draftImprovementCard({ stats, trigger, now = () => new Date() })
     "",
     triggerLine(trigger),
     "",
+    evidenceSection(trigger),
+    "",
+    directionLine(trigger),
+    "",
     "## Acceptance",
     "",
     "- [ ] Root cause identified for the flow signal above (cite specific card ids and FAIL/Blocked note text, not just the aggregate numbers)",
     "- [ ] At least one concrete infra fix implemented (grant fix, prompt fix, guard fix, or similar) addressing the identified cause",
     "- [ ] A following flow-stats snapshot shows the number moved, or this card documents why improvement isn't yet measurable"
-  ].join("\n");
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
 
   return {
-    title: title(stats, trigger, dateStr),
+    title: title(trigger, dateStr),
     status: "backlog",
     priority: "P2",
     phase: 0,
