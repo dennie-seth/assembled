@@ -38,6 +38,15 @@ board-integrity-check.py -- separate, read-only daily check: cross-checks the
                              backup freshness/size delta, and staged-export
                              freshness. Logs findings; does not modify
                              anything.
+
+board-db-backup.sh -- separate, daily: runs the app's own `npm run backup:db`
+                       (tools/board/scripts/backupDb.js, a WAL-safe online
+                       backup via better-sqlite3, read-only against the live
+                       db), then prunes old files under
+                       <dataDir>/backups/ to a retention count. Runs at 03:00,
+                       ahead of board-integrity-check.py's 03:20 backup-
+                       restorability check, so a fresh backup always exists
+                       for it to validate.
 ```
 
 The Notion reconcile step (syncing staged/Drive-pushed assets into Notion)
@@ -53,6 +62,7 @@ scope for these scripts.
 | `board-assets-copy.py` | Idempotent `rclone copy` of each staged, mapped task dir to its Drive folder. |
 | `board-assets-sync.sh` | Orchestrates stage -> drivemap -> copy under a single `flock`; used by the hourly timer. |
 | `board-integrity-check.py` | Read-only daily health check (DB integrity, DB<->API<->attachments consistency, backup freshness, staged-export freshness). |
+| `board-db-backup.sh` | Runs the app's `npm run backup:db` (WAL-safe online backup) then prunes old backups under `<dataDir>/backups/` to a retention count; used by the daily timer. |
 
 ## Install locations on the box
 
@@ -75,6 +85,9 @@ scope for these scripts.
 | `INTEGRITY_BACKUP_DELTA_MIN` | integrity-check | `10` |
 | `INTEGRITY_BACKUP_DELTA_PCT` | integrity-check | `0.1` |
 | `INTEGRITY_LOG_DIR` | integrity-check | `~/.local/state/board-integrity-check` |
+| `BOARD_REPO_ROOT` | db-backup | `~/dev/assembled-board` |
+| `BOARD_DATA_DIR` | db-backup | `~/.local/share/assembled-board` |
+| `BOARD_DB_BACKUP_RETENTION` | db-backup | `14` (backups kept before pruning) |
 
 `board-assets-drivemap.py` and `board-assets-copy.py` also depend on an
 `rclone` remote named `gdrive:` (configured separately via `rclone config`,
@@ -88,6 +101,7 @@ not a credential; the actual Drive auth lives in rclone's own config.
 | Timer | Schedule | Runs |
 |---|---|---|
 | `board-assets-sync.timer` | hourly (`OnCalendar=hourly`, ±120s random delay) | `board-assets-sync.sh` |
+| `board-db-backup.timer` | daily at 03:00 (±120s random delay) | `board-db-backup.sh` |
 | `board-integrity-check.timer` | daily at 03:20 (±300s random delay) | `board-integrity-check.py` |
 
 Both timers are `Persistent=true` (catch up on a missed run after the box was
