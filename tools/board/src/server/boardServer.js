@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FsTaskStore } from "../lib/fsTaskStore.js";
 import { IdAllocator } from "../lib/idAllocator.js";
-import { openDb } from "../lib/db/connection.js";
+import { openDb, resolveDbPath } from "../lib/db/connection.js";
 import { DbTaskStore } from "../lib/db/dbTaskStore.js";
 import { IdAllocatorDb } from "../lib/db/idAllocatorDb.js";
 import { TaskWatcher } from "../lib/taskWatcher.js";
@@ -23,13 +23,13 @@ const WS_PTY_PATH = "/ws/pty";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 /**
- * Phase 1 of docs/design/cards-to-database.md: the store/allocator pair is selectable via
- * BOARD_TASK_STORE, but the live board is NOT wired to run on "db" yet -- everything else in
- * this function (TaskWatcher, the git-commit-on-write call sites in httpApi.js/gitOps.js, the
- * Done-triggered pullDevelop) still assumes an fs-backed store and is untouched. "db" exists
- * here so the wiring point exists and DbTaskStore is provably a drop-in, not because db mode is
- * production-ready this phase. Default stays "fs" -- nothing about the live runtime path
- * changes unless this env var is set.
+ * Phase 2 of docs/design/cards-to-database.md: the store/allocator pair is selectable via
+ * BOARD_TASK_STORE, and "db" is now a fully wired, production-ready mode -- every card
+ * read/write path (this function's TaskWatcher wiring, httpApi.js's commit-on-write and
+ * Done-triggered pullDevelop, RunOrchestrator/orphanReaper's commit-on-write, the planner's file
+ * view) branches on which store is selected. The code DEFAULT stays "fs" -- flipping the live
+ * board to "db" is a deliberate BOARD_TASK_STORE env change at deploy time, not something this
+ * function decides on its own.
  */
 function createTaskStoreAndAllocator({ tasksDir, taskStoreKind }) {
   if (taskStoreKind === "fs") {
@@ -54,7 +54,12 @@ export async function startBoardServer({
 
   const { store, idAllocator, db } = createTaskStoreAndAllocator({ tasksDir, taskStoreKind });
   const hub = new WsHub();
-  const watcher = new TaskWatcher(tasksDir);
+  // No tasks/*.md to watch in db mode -- card writes go straight to SQLite, and every write
+  // path (httpApi.js, RunOrchestrator, orphanReaper, cardCreation) broadcasts over `hub`
+  // directly instead of relying on a file watcher noticing the change (see
+  // docs/design/cards-to-database.md, Phase 2's "TaskWatcher removed" row).
+  const watcher = taskStoreKind === "fs" ? new TaskWatcher(tasksDir) : null;
+  const dataDir = taskStoreKind === "db" ? path.dirname(resolveDbPath()) : null;
   const ptyBridge = new PtyBridge({ cwd: REPO_ROOT });
   const agentsDir = path.join(REPO_ROOT, ".claude", "agents");
   const restartCoordinator = createRestartCoordinator();
@@ -68,6 +73,7 @@ export async function startBoardServer({
     tasksDir,
     agentsDir,
     rulesDir: path.join(REPO_ROOT, ".claude", "rules"),
+    taskStoreKind,
     onIdle: () => restartCoordinator.notifyIdle()
   });
   const orphanReaper = createOrphanReaper({
@@ -76,16 +82,21 @@ export async function startBoardServer({
     activeCardIds: orchestrator.activeCardIds,
     runsDir: path.join(tasksDir, ".runs"),
     repoRoot: REPO_ROOT,
-    tasksDir
+    tasksDir,
+    taskStoreKind
   });
   const selfImprovementLoop = createSelfImprovementLoop({
     store,
     idAllocator,
     repoRoot: REPO_ROOT,
-    tasksDir
+    tasksDir,
+    taskStoreKind,
+    hub
   });
 
-  watcher.on("task-changed", (event) => hub.broadcast(event));
+  if (watcher) {
+    watcher.on("task-changed", (event) => hub.broadcast(event));
+  }
 
   const gitInfoImpl = () => getGitStatus(REPO_ROOT);
   const server = http.createServer(
@@ -96,6 +107,9 @@ export async function startBoardServer({
       agentsDir,
       repoRoot: REPO_ROOT,
       tasksDir,
+      dataDir,
+      taskStoreKind,
+      hub,
       restartCoordinator,
       gitInfoImpl
     })
@@ -118,7 +132,9 @@ export async function startBoardServer({
   orphanReaper.start();
   selfImprovementLoop.start();
 
-  await watcher.start();
+  if (watcher) {
+    await watcher.start();
+  }
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, resolve);
@@ -140,7 +156,7 @@ export async function startBoardServer({
       orphanReaper.stop();
       hub.close();
       ptyBridge.close();
-      await watcher.close();
+      if (watcher) await watcher.close();
       await new Promise((resolve) => server.close(resolve));
       if (db) db.close();
     }
