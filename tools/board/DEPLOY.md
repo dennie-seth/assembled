@@ -88,3 +88,63 @@ runtime commit now also pushes `develop` to origin.
   question, and the next runtime commit will try pushing again.
 - **Disabling it:** set `AUTO_PUSH_ON_COMMIT=0` (also accepts `false`/`off`/`no`, any case) in
   the service's environment.
+
+## Database backups (`scripts/backupDb.js`, `npm run backup:db`)
+
+Phase 1 of `docs/design/cards-to-database.md` moves card state into a SQLite file
+(`BOARD_DB_PATH`, default `~/.local/share/assembled-board/board.db`) that lives outside git --
+losing git's free "every edit is a recoverable commit" property is a real regression the design
+doc calls out explicitly (see its "Backup strategy" section), and this script plus the
+`card_events` audit table are the two mitigations. **Not wired into the live board in this
+phase** -- `BOARD_TASK_STORE` still defaults to `fs`, so this only matters once/if a later phase
+flips that flag.
+
+```
+npm run backup:db -- [--db-path <path>] [--out-dir <dir>]
+# defaults: --db-path = $BOARD_DB_PATH or ~/.local/share/assembled-board/board.db
+#           --out-dir = <dirname of db-path>/backups
+```
+
+Writes a timestamped, standalone copy (`board-<ISO-timestamp>.db`) via SQLite's online backup
+API (`better-sqlite3`'s `Database#backup`, wrapping `sqlite3_backup_init`/`step`/`finish`) --
+safe to run against a live, concurrently-written WAL-mode database, unlike a raw `cp` which can
+copy a torn set of pages mid-write. The source connection is opened `readonly` and is never
+mutated. A backup file is a complete, independent SQLite database: restoring is "stop the
+service (or point `BOARD_DB_PATH` at it for a throwaway check), copy the `.bak` file over the
+live path, start the service" -- no special tooling needed, verified in
+`test/dbBackup.test.js` by opening a produced backup directly with `DbTaskStore` and confirming
+it reads back identically to the source.
+
+**Recommended cadence: daily, retained 14 days**, piggybacking on the same
+flock-guarded-systemd-`--user`-timer pattern `board-assets-sync.timer` already uses on this
+machine (see project memory `project_assembled_gdrive_asset_sync`) -- a new sibling unit, not a
+new mechanism:
+
+```ini
+# ~/.config/systemd/user/board-db-backup.service
+[Unit]
+Description=assembled-board SQLite backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/dev/assembled-board/tools/board
+ExecStart=/usr/bin/npm run backup:db
+ExecStartPost=/usr/bin/find %h/.local/share/assembled-board/backups -name 'board-*.db' -mtime +14 -delete
+```
+
+```ini
+# ~/.config/systemd/user/board-db-backup.timer
+[Unit]
+Description=Daily assembled-board SQLite backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable with `systemctl --user enable --now board-db-backup.timer`. This is a deploy/install
+step, not something CI or this repo's test suite can verify -- flag it on the rollout checklist
+for whichever phase first makes the DB the live store.

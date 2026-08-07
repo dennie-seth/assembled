@@ -63,7 +63,7 @@ function validateAttachments(attachments) {
   }
 }
 
-function validateTask(data) {
+export function validateTask(data) {
   for (const field of REQUIRED_FIELDS) {
     if (!(field in data)) {
       throw new Error(`Task frontmatter missing required field: ${field}`);
