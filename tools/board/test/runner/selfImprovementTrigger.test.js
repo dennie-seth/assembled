@@ -3,9 +3,11 @@ import {
   evaluateTrigger,
   createSelfImprovementLoop,
   selfImproveEnabledFromEnv,
-  intervalCardsFromEnv,
   reworkThresholdFromEnv,
-  minReworkSampleFromEnv
+  minReworkSampleFromEnv,
+  minIntervalDaysFromEnv,
+  minRetryCapBlockedFromEnv,
+  minRecoveredFromEnv
 } from "../../src/runner/selfImprovementTrigger.js";
 
 function makeStats(overrides = {}) {
@@ -33,62 +35,47 @@ function makeStats(overrides = {}) {
   };
 }
 
-function autoProposedTask({ id = "T-0100", status = "done", baselineDone = 0 } = {}) {
-  return {
-    id,
-    status,
-    body: `<!-- flow-stats-self-improve: baseline-done=${baselineDone} -->\n\n## Context\n`
-  };
+function autoProposedTask({ id = "T-0100", status = "done", baselineDone = 0, proposedAt } = {}) {
+  const marker = proposedAt
+    ? `<!-- flow-stats-self-improve: baseline-done=${baselineDone} proposed-at=${proposedAt} -->`
+    : `<!-- flow-stats-self-improve: baseline-done=${baselineDone} -->`;
+  return { id, status, body: `${marker}\n\n## Context\n` };
+}
+
+function failNote(id, timestamp) {
+  return { id, status: "done", body: `## Validation: FAIL (${timestamp})\n\nsome failure\n` };
 }
 
 describe("evaluateTrigger", () => {
-  const defaults = { intervalCards: 10, reworkThreshold: 0.3, minReworkSample: 5 };
+  const defaults = {
+    reworkThreshold: 0.3,
+    minReworkSample: 10,
+    minIntervalDays: 7,
+    minRetryCapBlocked: 3,
+    minRecovered: 3,
+    now: () => new Date("2026-08-07T00:00:00.000Z")
+  };
 
-  it("does not fire when nothing has crossed either threshold", () => {
-    const stats = makeStats({ byStatus: { done: 3 } });
+  it("does not fire when nothing has crossed any threshold (quiet week -> no filler card)", () => {
+    const stats = makeStats({ byStatus: { done: 50 }, reworkTotal: 1, passTotal: 19, reworkRate: 0.05, reworkSample: 20 });
     expect(evaluateTrigger({ stats, tasks: [], ...defaults })).toBeNull();
   });
 
-  it("fires the interval reason once doneCount - baseline >= intervalCards", () => {
-    const stats = makeStats({ byStatus: { done: 10 } });
-    const result = evaluateTrigger({ stats, tasks: [], ...defaults });
-    expect(result).toMatchObject({ reason: "interval", doneDelta: 10 });
+  it("does not fire purely on card-completion volume -- there is no interval/volume trigger anymore", () => {
+    const stats = makeStats({ byStatus: { done: 500 }, reworkTotal: 0, passTotal: 0, reworkRate: 0, reworkSample: 0 });
+    expect(evaluateTrigger({ stats, tasks: [], ...defaults })).toBeNull();
   });
 
-  it("uses the most recent auto-proposed card's marker as the baseline, not zero", () => {
-    const tasks = [autoProposedTask({ id: "T-0050", status: "done", baselineDone: 5 })];
-    const stats = makeStats({ byStatus: { done: 14 } }); // 14 - 5 = 9, below interval of 10
-    expect(evaluateTrigger({ stats, tasks, ...defaults })).toBeNull();
+  it("fires the rework-rate reason once the rate crosses threshold with enough sample, citing evidence", () => {
+    const tasks = [failNote("T-0201", "2026-08-01T00:00:00.000Z"), failNote("T-0202", "2026-08-02T00:00:00.000Z")];
+    const stats = makeStats({ reworkTotal: 8, passTotal: 2, reworkRate: 0.8, reworkSample: 10 });
+    const result = evaluateTrigger({ stats, tasks, ...defaults });
 
-    const statsAtThreshold = makeStats({ byStatus: { done: 15 } }); // 15 - 5 = 10
-    expect(evaluateTrigger({ stats: statsAtThreshold, tasks, ...defaults })).toMatchObject({ reason: "interval" });
-  });
-
-  it("does not fire (of either reason) while the latest auto-proposed card is still open", () => {
-    const tasks = [autoProposedTask({ id: "T-0050", status: "in-progress", baselineDone: 0 })];
-    const stats = makeStats({
-      byStatus: { done: 50 },
-      reworkTotal: 9,
-      passTotal: 1,
-      reworkRate: 0.9,
-      reworkSample: 10
-    });
-    expect(evaluateTrigger({ stats, tasks, ...defaults })).toBeNull();
-  });
-
-  it("fires again once the previous auto-proposed card reached a closed status (done or retired)", () => {
-    const doneTasks = [autoProposedTask({ id: "T-0050", status: "done", baselineDone: 0 })];
-    const retiredTasks = [autoProposedTask({ id: "T-0050", status: "retired", baselineDone: 0 })];
-    const stats = makeStats({ byStatus: { done: 10 } });
-
-    expect(evaluateTrigger({ stats, tasks: doneTasks, ...defaults })).toMatchObject({ reason: "interval" });
-    expect(evaluateTrigger({ stats, tasks: retiredTasks, ...defaults })).toMatchObject({ reason: "interval" });
-  });
-
-  it("fires the rework-rate reason once the rate crosses threshold with enough sample", () => {
-    const stats = makeStats({ reworkTotal: 4, passTotal: 1, reworkRate: 0.8, reworkSample: 5 });
-    const result = evaluateTrigger({ stats, tasks: [], ...defaults });
-    expect(result).toMatchObject({ reason: "rework-rate", reworkRate: 0.8 });
+    expect(result).toMatchObject({ reason: "rework-rate", reworkRate: 0.8, reworkSample: 10 });
+    expect(result.evidence.length).toBeGreaterThan(0);
+    expect(result.evidence.map((e) => e.id)).toContain("T-0202");
+    expect(result.windowStart).toBe("2026-08-01T00:00:00.000Z");
+    expect(result.windowEnd).toBe("2026-08-02T00:00:00.000Z");
   });
 
   it("does not fire the rework-rate reason when the sample is below minReworkSample, even at 100% rate", () => {
@@ -97,29 +84,112 @@ describe("evaluateTrigger", () => {
   });
 
   it("does not fire the rework-rate reason when the rate is below threshold", () => {
-    const stats = makeStats({ reworkTotal: 1, passTotal: 9, reworkRate: 0.1, reworkSample: 10 });
+    const stats = makeStats({ reworkTotal: 1, passTotal: 19, reworkRate: 0.05, reworkSample: 20 });
     expect(evaluateTrigger({ stats, tasks: [], ...defaults })).toBeNull();
   });
 
-  it("prefers the interval reason when both conditions are true at once", () => {
-    const stats = makeStats({
-      byStatus: { done: 10 },
-      reworkTotal: 8,
-      passTotal: 2,
-      reworkRate: 0.8,
-      reworkSample: 10
-    });
+  it("fires the retry-cap-blocked reason once repeated retry-cap exhaustions cross the floor", () => {
+    const tasks = [
+      { id: "T-0301", status: "blocked", body: "## Validation: FAIL (2026-08-03T00:00:00.000Z)\n\nAuto-retry limit reached\n" },
+      { id: "T-0302", status: "blocked", body: "## Validation: FAIL (2026-08-04T00:00:00.000Z)\n\nAuto-retry limit reached\n" },
+      { id: "T-0303", status: "blocked", body: "## Validation: FAIL (2026-08-05T00:00:00.000Z)\n\nAuto-retry limit reached\n" }
+    ];
+    const stats = makeStats({ retryCapBlockedCount: 3 });
+    const result = evaluateTrigger({ stats, tasks, ...defaults });
+
+    expect(result).toMatchObject({ reason: "retry-cap-blocked", retryCapBlockedCount: 3 });
+    expect(result.evidence.map((e) => e.id).sort()).toEqual(["T-0301", "T-0302", "T-0303"]);
+  });
+
+  it("does not fire retry-cap-blocked below the minimum floor", () => {
+    const stats = makeStats({ retryCapBlockedCount: 2 });
+    expect(evaluateTrigger({ stats, tasks: [], ...defaults })).toBeNull();
+  });
+
+  it("fires the orphan-recovery reason once repeated reaper recoveries cross the floor", () => {
+    const tasks = [
+      { id: "T-0401", status: "done", body: "## Recovered (2026-08-01T00:00:00.000Z)\n\nreset from in-progress\n" },
+      { id: "T-0402", status: "done", body: "## Recovered (2026-08-02T00:00:00.000Z)\n\nreset from validation\n" },
+      { id: "T-0403", status: "done", body: "## Recovered (2026-08-03T00:00:00.000Z)\n\nreset from in-progress\n" }
+    ];
+    const stats = makeStats({ recoveredTotal: 3 });
+    const result = evaluateTrigger({ stats, tasks, ...defaults });
+
+    expect(result).toMatchObject({ reason: "orphan-recovery", recoveredTotal: 3 });
+    expect(result.evidence.length).toBe(3);
+  });
+
+  it("does not fire orphan-recovery below the minimum floor", () => {
+    const stats = makeStats({ recoveredTotal: 2 });
+    expect(evaluateTrigger({ stats, tasks: [], ...defaults })).toBeNull();
+  });
+
+  it("prefers rework-rate over retry-cap-blocked and orphan-recovery when multiple cross at once", () => {
+    const stats = makeStats({ reworkTotal: 8, passTotal: 2, reworkRate: 0.8, reworkSample: 10, retryCapBlockedCount: 5, recoveredTotal: 5 });
     const result = evaluateTrigger({ stats, tasks: [], ...defaults });
-    expect(result.reason).toBe("interval");
+    expect(result.reason).toBe("rework-rate");
+  });
+
+  describe("dedup: while the latest auto-proposed card is still open", () => {
+    it("does not fire regardless of how far past thresholds the numbers are", () => {
+      const tasks = [autoProposedTask({ id: "T-0050", status: "in-progress", baselineDone: 0 })];
+      const stats = makeStats({ reworkTotal: 9, passTotal: 1, reworkRate: 0.9, reworkSample: 10, retryCapBlockedCount: 10 });
+      expect(evaluateTrigger({ stats, tasks, ...defaults })).toBeNull();
+    });
+
+    it("blocked counts as still open (unactioned)", () => {
+      const tasks = [autoProposedTask({ id: "T-0050", status: "blocked", baselineDone: 0 })];
+      const stats = makeStats({ reworkTotal: 9, passTotal: 1, reworkRate: 0.9, reworkSample: 10 });
+      expect(evaluateTrigger({ stats, tasks, ...defaults })).toBeNull();
+    });
+  });
+
+  describe("weekly cadence gate", () => {
+    it("does not fire again within minIntervalDays of the last proposal, even though thresholds are crossed", () => {
+      const tasks = [autoProposedTask({ id: "T-0050", status: "retired", baselineDone: 0, proposedAt: "2026-08-02T00:00:00.000Z" })];
+      const stats = makeStats({ reworkTotal: 8, passTotal: 2, reworkRate: 0.8, reworkSample: 10 });
+      // now is 2026-08-07, only 5 days after the last proposal (< 7)
+      expect(evaluateTrigger({ stats, tasks, ...defaults })).toBeNull();
+    });
+
+    it("fires again once minIntervalDays have elapsed since the last proposal", () => {
+      const tasks = [autoProposedTask({ id: "T-0050", status: "retired", baselineDone: 0, proposedAt: "2026-07-31T00:00:00.000Z" })];
+      const stats = makeStats({ reworkTotal: 8, passTotal: 2, reworkRate: 0.8, reworkSample: 10 });
+      // now is 2026-08-07, exactly 7 days after the last proposal
+      const result = evaluateTrigger({ stats, tasks, ...defaults });
+      expect(result).toMatchObject({ reason: "rework-rate" });
+    });
+
+    it("does not require a 7-day wait before the very first proposal ever", () => {
+      const stats = makeStats({ reworkTotal: 8, passTotal: 2, reworkRate: 0.8, reworkSample: 10 });
+      const result = evaluateTrigger({ stats, tasks: [], ...defaults });
+      expect(result).toMatchObject({ reason: "rework-rate" });
+    });
+
+    it("treats a legacy marker with no proposed-at timestamp as not cadence-gating (back-compat)", () => {
+      const tasks = [autoProposedTask({ id: "T-0050", status: "retired", baselineDone: 0 })];
+      const stats = makeStats({ reworkTotal: 8, passTotal: 2, reworkRate: 0.8, reworkSample: 10 });
+      const result = evaluateTrigger({ stats, tasks, ...defaults });
+      expect(result).toMatchObject({ reason: "rework-rate" });
+    });
+
+    it("respects a configured minIntervalDays other than the default", () => {
+      const tasks = [autoProposedTask({ id: "T-0050", status: "retired", baselineDone: 0, proposedAt: "2026-08-06T00:00:00.000Z" })];
+      const stats = makeStats({ reworkTotal: 8, passTotal: 2, reworkRate: 0.8, reworkSample: 10 });
+      expect(evaluateTrigger({ stats, tasks, ...defaults, minIntervalDays: 1 })).toMatchObject({ reason: "rework-rate" });
+      expect(evaluateTrigger({ stats, tasks, ...defaults, minIntervalDays: 2 })).toBeNull();
+    });
   });
 });
 
 describe("env helpers", () => {
   const keys = [
     "FLOW_STATS_SELFIMPROVE_ENABLED",
-    "FLOW_STATS_SELFIMPROVE_INTERVAL_CARDS",
     "FLOW_STATS_SELFIMPROVE_REWORK_THRESHOLD",
-    "FLOW_STATS_SELFIMPROVE_MIN_REWORK_SAMPLE"
+    "FLOW_STATS_SELFIMPROVE_MIN_REWORK_SAMPLE",
+    "FLOW_STATS_SELFIMPROVE_MIN_INTERVAL_DAYS",
+    "FLOW_STATS_SELFIMPROVE_MIN_RETRY_CAP_BLOCKED",
+    "FLOW_STATS_SELFIMPROVE_MIN_RECOVERED"
   ];
   const originals = {};
 
@@ -149,13 +219,6 @@ describe("env helpers", () => {
     expect(selfImproveEnabledFromEnv()).toBe(false);
   });
 
-  it("intervalCardsFromEnv defaults to 10 and reads a valid override", () => {
-    delete process.env.FLOW_STATS_SELFIMPROVE_INTERVAL_CARDS;
-    expect(intervalCardsFromEnv()).toBe(10);
-    process.env.FLOW_STATS_SELFIMPROVE_INTERVAL_CARDS = "25";
-    expect(intervalCardsFromEnv()).toBe(25);
-  });
-
   it("reworkThresholdFromEnv defaults to 0.3 and reads a valid override", () => {
     delete process.env.FLOW_STATS_SELFIMPROVE_REWORK_THRESHOLD;
     expect(reworkThresholdFromEnv()).toBe(0.3);
@@ -163,11 +226,32 @@ describe("env helpers", () => {
     expect(reworkThresholdFromEnv()).toBe(0.5);
   });
 
-  it("minReworkSampleFromEnv defaults to 5 and reads a valid override", () => {
+  it("minReworkSampleFromEnv defaults to 10 and reads a valid override", () => {
     delete process.env.FLOW_STATS_SELFIMPROVE_MIN_REWORK_SAMPLE;
-    expect(minReworkSampleFromEnv()).toBe(5);
+    expect(minReworkSampleFromEnv()).toBe(10);
     process.env.FLOW_STATS_SELFIMPROVE_MIN_REWORK_SAMPLE = "8";
     expect(minReworkSampleFromEnv()).toBe(8);
+  });
+
+  it("minIntervalDaysFromEnv defaults to 7 and reads a valid override", () => {
+    delete process.env.FLOW_STATS_SELFIMPROVE_MIN_INTERVAL_DAYS;
+    expect(minIntervalDaysFromEnv()).toBe(7);
+    process.env.FLOW_STATS_SELFIMPROVE_MIN_INTERVAL_DAYS = "14";
+    expect(minIntervalDaysFromEnv()).toBe(14);
+  });
+
+  it("minRetryCapBlockedFromEnv defaults to 3 and reads a valid override", () => {
+    delete process.env.FLOW_STATS_SELFIMPROVE_MIN_RETRY_CAP_BLOCKED;
+    expect(minRetryCapBlockedFromEnv()).toBe(3);
+    process.env.FLOW_STATS_SELFIMPROVE_MIN_RETRY_CAP_BLOCKED = "5";
+    expect(minRetryCapBlockedFromEnv()).toBe(5);
+  });
+
+  it("minRecoveredFromEnv defaults to 3 and reads a valid override", () => {
+    delete process.env.FLOW_STATS_SELFIMPROVE_MIN_RECOVERED;
+    expect(minRecoveredFromEnv()).toBe(3);
+    process.env.FLOW_STATS_SELFIMPROVE_MIN_RECOVERED = "5";
+    expect(minRecoveredFromEnv()).toBe(5);
   });
 });
 
@@ -177,6 +261,12 @@ function makeFakeStore(tasks) {
 
 function makeLogger() {
   return { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+}
+
+function reworkTasks() {
+  return Array.from({ length: 8 }, (_, i) => failNote(`T-${2000 + i}`, `2026-08-0${(i % 9) + 1}T00:00:00.000Z`)).concat(
+    Array.from({ length: 2 }, (_, i) => ({ id: `T-${3000 + i}`, status: "done", body: "## Validation: PASS (2026-08-01T00:00:00.000Z)\n" }))
+  );
 }
 
 describe("createSelfImprovementLoop / sweepOnce", () => {
@@ -192,15 +282,14 @@ describe("createSelfImprovementLoop / sweepOnce", () => {
     expect(createCardFn).not.toHaveBeenCalled();
   });
 
-  it("does not create a card when enabled but no trigger condition is met", async () => {
+  it("does not create a card when enabled but no trigger condition is met (quiet week)", async () => {
     const store = makeFakeStore([{ id: "T-0001", status: "backlog", body: "" }]);
     const createCardFn = vi.fn();
     const loop = createSelfImprovementLoop({
       store,
       enabled: true,
-      intervalCards: 10,
       reworkThreshold: 0.3,
-      minReworkSample: 5,
+      minReworkSample: 10,
       createCardFn,
       logger: makeLogger()
     });
@@ -211,15 +300,13 @@ describe("createSelfImprovementLoop / sweepOnce", () => {
     expect(createCardFn).not.toHaveBeenCalled();
   });
 
-  it("creates a proposal card through createCardFn when the interval trigger fires", async () => {
-    const doneTasks = Array.from({ length: 10 }, (_, i) => ({ id: `T-${1000 + i}`, status: "done", body: "" }));
-    const store = makeFakeStore(doneTasks);
+  it("creates a proposal card through createCardFn when the rework-rate trigger fires", async () => {
+    const store = makeFakeStore(reworkTasks());
     const created = { id: "T-9999", title: "proposal" };
     const createCardFn = vi.fn(async () => created);
     const loop = createSelfImprovementLoop({
       store,
       enabled: true,
-      intervalCards: 10,
       reworkThreshold: 0.3,
       minReworkSample: 5,
       createCardFn,
@@ -233,6 +320,31 @@ describe("createSelfImprovementLoop / sweepOnce", () => {
     expect(args.fields.status).toBe("backlog");
     expect(args.fields.agent).toBeNull();
     expect(result).toBe(created);
+  });
+
+  it("does not create a second proposal card on the very next sweep once one was already created (cadence + dedup)", async () => {
+    const tasks = reworkTasks();
+    const store = makeFakeStore(tasks);
+    let createdCard = null;
+    const createCardFn = vi.fn(async ({ fields }) => {
+      createdCard = { id: "T-9999", status: fields.status, body: fields.body };
+      tasks.push(createdCard);
+      return createdCard;
+    });
+    const loop = createSelfImprovementLoop({
+      store,
+      enabled: true,
+      reworkThreshold: 0.3,
+      minReworkSample: 5,
+      createCardFn,
+      logger: makeLogger()
+    });
+
+    await loop.sweepOnce();
+    expect(createCardFn).toHaveBeenCalledTimes(1);
+
+    await loop.sweepOnce();
+    expect(createCardFn).toHaveBeenCalledTimes(1);
   });
 
   it("retries store.list() exactly once on a transient read failure, then proceeds normally", async () => {
@@ -271,11 +383,10 @@ describe("createSelfImprovementLoop / sweepOnce", () => {
   });
 
   it("logs an error and returns null (never throws) when createCardFn fails, without retrying it", async () => {
-    const doneTasks = Array.from({ length: 10 }, (_, i) => ({ id: `T-${1000 + i}`, status: "done", body: "" }));
-    const store = makeFakeStore(doneTasks);
+    const store = makeFakeStore(reworkTasks());
     const createCardFn = vi.fn(async () => { throw new Error("git commit failed"); });
     const logger = makeLogger();
-    const loop = createSelfImprovementLoop({ store, enabled: true, intervalCards: 10, createCardFn, logger });
+    const loop = createSelfImprovementLoop({ store, enabled: true, minReworkSample: 5, createCardFn, logger });
 
     const result = await loop.sweepOnce();
 
@@ -296,13 +407,12 @@ describe("createSelfImprovementLoop / start & stop", () => {
   });
 
   it("sweeps on the configured interval once started", async () => {
-    const doneTasks = Array.from({ length: 10 }, (_, i) => ({ id: `T-${1000 + i}`, status: "done", body: "" }));
-    const store = makeFakeStore(doneTasks);
+    const store = makeFakeStore(reworkTasks());
     const createCardFn = vi.fn(async () => ({ id: "T-9999" }));
     const loop = createSelfImprovementLoop({
       store,
       enabled: true,
-      intervalCards: 10,
+      minReworkSample: 5,
       intervalMs: 1000,
       createCardFn,
       logger: makeLogger()
