@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateBacklog, readBacklogEntries, DEFAULT_TASKS_DIR } from "../src/lib/backlogValidator.js";
+import { validateBacklog, readBacklogEntries, backlogEntriesFromTasks, DEFAULT_TASKS_DIR } from "../src/lib/backlogValidator.js";
+import { parseTask } from "../src/lib/taskParser.js";
 import { serializeTask } from "../src/lib/taskParser.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -180,5 +181,37 @@ describe("validateBacklog against the real repo backlog", () => {
       console.error("Real backlog validation errors:", report.errors);
     }
     expect(report.ok).toBe(true);
+  });
+});
+
+describe("backlogEntriesFromTasks (db-mode entrypoint, see scripts/validateBacklog.js)", () => {
+  it("builds the same {file, raw} shape readBacklogEntries produces off disk", () => {
+    const tasks = [task({ id: "T-0001" }), task({ id: "T-0002", depends_on: ["T-0001"] })];
+    const entries = backlogEntriesFromTasks(tasks);
+    expect(entries).toEqual([
+      { file: "T-0001.md", raw: expect.any(String) },
+      { file: "T-0002.md", raw: expect.any(String) }
+    ]);
+    expect(parseTask(entries[0].raw)).toMatchObject({ id: "T-0001" });
+  });
+
+  it("passes validateBacklog the same way a real tasks/ directory would", async () => {
+    const tasks = [task({ id: "T-0001" }), task({ id: "T-0002", depends_on: ["T-0001"] })];
+    const report = await validateBacklog(backlogEntriesFromTasks(tasks));
+    expect(report.ok).toBe(true);
+    expect(report.taskCount).toBe(2);
+  });
+
+  it("the synthesized filename always matches the task id, so the filename-mismatch check never fires (there is no DB analog)", async () => {
+    const tasks = [task({ id: "T-0003" })];
+    const report = await validateBacklog(backlogEntriesFromTasks(tasks));
+    expect(report.ok).toBe(true);
+  });
+
+  it("still catches a real backlog defect -- a dangling depends_on reference", async () => {
+    const tasks = [task({ id: "T-0001", depends_on: ["T-9999"] })];
+    const report = await validateBacklog(backlogEntriesFromTasks(tasks));
+    expect(report.ok).toBe(false);
+    expect(report.errors[0].message).toMatch(/does not resolve/i);
   });
 });

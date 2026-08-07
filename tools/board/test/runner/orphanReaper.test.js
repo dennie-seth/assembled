@@ -593,6 +593,31 @@ describe("reapCard commits its status write to repoRoot", () => {
 
     expect(git.commitTaskFile).not.toHaveBeenCalled();
   });
+
+  it("skips committing in db mode even when repoRoot/tasksDir are configured -- card state lives only in SQLite", async () => {
+    const store = makeStore([makeTask({ id: "T-0045", status: "in-progress" })]);
+    const hub = makeHub();
+    const git = makeGit();
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds: new Set(),
+      enabled: true,
+      repoRoot: "/repo",
+      tasksDir: "/repo/tasks",
+      git,
+      taskStoreKind: "db"
+    });
+
+    const reaped = await reaper.reapOnStartup();
+
+    expect(reaped).toEqual(["T-0045"]);
+    expect(store._byId.get("T-0045").status).toBe("blocked");
+    expect(git.commitTaskFile).not.toHaveBeenCalled();
+    // The reap itself still broadcasts, unaffected by taskStoreKind -- db mode's board refresh
+    // never depended on the commit in the first place.
+    expect(hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "changed", id: "T-0045" }));
+  });
 });
 
 describe("ORPHANABLE_STATUSES", () => {

@@ -43,3 +43,13 @@ export function openDb(dbPath = process.env.BOARD_DB_PATH || DEFAULT_DB_PATH) {
   runMigrations(db, MIGRATIONS_DIR);
   return db;
 }
+
+/**
+ * Resolves the db file path without opening it -- same BOARD_DB_PATH -> DEFAULT_DB_PATH
+ * override chain as openDb(). Used to derive the db-mode attachments root
+ * (`<dirname(dbPath)>/attachments/`, see docs/design/cards-to-database.md's "Attachments stay
+ * files on disk") without needing an extra env var of its own.
+ */
+export function resolveDbPath(dbPath = process.env.BOARD_DB_PATH || DEFAULT_DB_PATH) {
+  return dbPath;
+}

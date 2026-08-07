@@ -103,6 +103,22 @@ function sanitizeFilename(rawFilename) {
   return base;
 }
 
+/**
+ * Root directory attachment files live under: `<dataDir>/attachments/` in db mode (rooted under
+ * the same out-of-repo data directory as the SQLite file itself, so `git pull`/checkout on the
+ * repo can never touch attachments either), `<tasksDir>/attachments/` in fs mode (unchanged --
+ * see docs/design/cards-to-database.md, "Attachments stay files on disk").
+ */
+function attachmentsRootDir({ taskStoreKind, tasksDir, dataDir }) {
+  if (taskStoreKind === "db") {
+    if (!dataDir) {
+      throw new HttpError(500, "Server misconfigured: db mode requires dataDir for attachment storage");
+    }
+    return path.join(dataDir, "attachments");
+  }
+  return path.join(tasksDir, "attachments");
+}
+
 /** Resolves `filename` to a path guaranteed to live inside `cardAttachmentsDir`, or null. */
 function resolveAttachmentPath(cardAttachmentsDir, filename) {
   const safeName = sanitizeFilename(filename);
@@ -210,7 +226,7 @@ async function handleListTasks(store, res) {
   sendJson(res, 200, tasks);
 }
 
-async function handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir) {
+async function handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir, taskStoreKind, hub) {
   const body = requireJsonObject(await readJsonBody(req));
   if (typeof body.title !== "string" || body.title.length === 0) {
     throw new HttpError(400, "title is required and must be a non-empty string");
@@ -239,7 +255,7 @@ async function handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir
     throw new HttpError(400, err.message);
   }
 
-  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+  if (taskStoreKind !== "db" && repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
     try {
       const relativePath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
       await commitTaskFile({ repoRoot, filePath: relativePath, message: `chore(board): add card ${id}` });
@@ -251,6 +267,12 @@ async function handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir
       // for this one card.
       console.warn(`Board: failed to commit card file for ${id} (leaving it untracked):`, err.message);
     }
+  }
+
+  // In db mode there is no tasks/*.md file for a watcher to notice, so this route broadcasts
+  // directly -- the fs-mode equivalent of this event comes from TaskWatcher picking up the write.
+  if (taskStoreKind === "db" && hub) {
+    hub.broadcast({ type: "added", id, task: created });
   }
 
   sendJson(res, 201, created);
@@ -273,7 +295,7 @@ async function handleGetTask(store, id, res) {
  * merge, and a prior update's uncommitted diff was exactly what made that pull start failing
  * with "local changes ... would be overwritten by merge" once origin touched the same file.
  */
-async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestrator, restartCoordinator) {
+async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub) {
   const body = requireJsonObject(await readJsonBody(req));
   if ("id" in body && body.id !== id) {
     throw new HttpError(400, "Cannot change a task's id");
@@ -298,7 +320,7 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     throw new HttpError(status, err.message);
   }
 
-  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+  if (taskStoreKind !== "db" && repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
     try {
       const relativePath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
       const changedFields = Object.keys(body).filter((key) => key !== "id");
@@ -315,7 +337,14 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     }
   }
 
-  if (updated.status === "done" && repoRoot) {
+  if (taskStoreKind === "db" && hub) {
+    hub.broadcast({ type: "changed", id, task: updated });
+  }
+
+  // Done-triggered pullDevelop exists to fetch code that card commits (this repo's own, and
+  // others') had pushed -- meaningless in db mode, since card writes never touch git there
+  // (docs/design/cards-to-database.md, Phase 2).
+  if (taskStoreKind !== "db" && updated.status === "done" && repoRoot) {
     // Fire-and-forget: pull (and any restart it triggers) must not block this response.
     pullDevelop({ repoRoot })
       .then((result) => {
@@ -361,7 +390,7 @@ async function handleRunTask(orchestrator, id, res) {
  * fix" and have it reach the agent. Committed to git the same way card creation is,
  * so it's tracked immediately instead of sitting as untracked local state.
  */
-async function handleAddComment(store, id, req, res, repoRoot, tasksDir) {
+async function handleAddComment(store, id, req, res, repoRoot, tasksDir, taskStoreKind, hub) {
   const body = requireJsonObject(await readJsonBody(req));
   if (typeof body.text !== "string" || body.text.trim().length === 0) {
     throw new HttpError(400, "text is required and must be a non-empty string");
@@ -383,7 +412,7 @@ async function handleAddComment(store, id, req, res, repoRoot, tasksDir) {
     throw new HttpError(400, err.message);
   }
 
-  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+  if (taskStoreKind !== "db" && repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
     try {
       const relativePath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
       await commitTaskFile({ repoRoot, filePath: relativePath, message: `chore(board): comment on card ${id}` });
@@ -392,6 +421,10 @@ async function handleAddComment(store, id, req, res, repoRoot, tasksDir) {
       // matching rationale on handleCreateTask's commitTaskFile call.
       console.warn(`Board: failed to commit comment for ${id} (leaving it untracked):`, err.message);
     }
+  }
+
+  if (taskStoreKind === "db" && hub) {
+    hub.broadcast({ type: "changed", id, task: updated });
   }
 
   sendJson(res, 201, updated);
@@ -409,7 +442,7 @@ async function handleAddComment(store, id, req, res, repoRoot, tasksDir) {
  * one metadata entry per stored filename is an invariant. Commits both the card file and the
  * attachment in one commit either way.
  */
-async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir) {
+async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir, taskStoreKind, hub, dataDir) {
   const task = await store.get(id);
   if (!task) {
     throw new HttpError(404, `Task ${id} not found`);
@@ -429,7 +462,7 @@ async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir) {
 
   const mimetype = await resolveMimeType(file.buffer);
 
-  const cardAttachmentsDir = path.join(tasksDir, "attachments", id);
+  const cardAttachmentsDir = path.join(attachmentsRootDir({ taskStoreKind, tasksDir, dataDir }), id);
   await fs.mkdir(cardAttachmentsDir, { recursive: true });
   const destPath = resolveAttachmentPath(cardAttachmentsDir, safeName);
   if (!destPath) {
@@ -463,7 +496,7 @@ async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir) {
     throw new HttpError(400, err.message);
   }
 
-  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+  if (taskStoreKind !== "db" && repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
     try {
       const cardRelPath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
       const attachmentRelPath = path.relative(repoRoot, destPath);
@@ -482,11 +515,15 @@ async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir) {
     }
   }
 
+  if (taskStoreKind === "db" && hub) {
+    hub.broadcast({ type: "changed", id, task: updated });
+  }
+
   sendJson(res, 201, updated);
 }
 
 /** Streams an attachment's bytes with the correct headers; path-traversal-safe via resolveAttachmentPath. */
-async function handleDownloadAttachment(store, id, filenameRaw, tasksDir, res) {
+async function handleDownloadAttachment(store, id, filenameRaw, tasksDir, res, taskStoreKind, dataDir) {
   const task = await store.get(id);
   if (!task) {
     throw new HttpError(404, `Task ${id} not found`);
@@ -499,7 +536,7 @@ async function handleDownloadAttachment(store, id, filenameRaw, tasksDir, res) {
     throw new HttpError(400, "Invalid filename encoding");
   }
 
-  const cardAttachmentsDir = path.join(tasksDir, "attachments", id);
+  const cardAttachmentsDir = path.join(attachmentsRootDir({ taskStoreKind, tasksDir, dataDir }), id);
   const filePath = resolveAttachmentPath(cardAttachmentsDir, filename);
   if (!filePath) {
     throw new HttpError(400, "Invalid attachment filename");
@@ -538,7 +575,7 @@ async function handleDownloadAttachment(store, id, filenameRaw, tasksDir, res) {
 }
 
 /** Removes an attachment's file (git rm) and its metadata entry, then commits both changes together. */
-async function handleRemoveAttachment(store, id, filenameRaw, res, repoRoot, tasksDir) {
+async function handleRemoveAttachment(store, id, filenameRaw, res, repoRoot, tasksDir, taskStoreKind, hub, dataDir) {
   const task = await store.get(id);
   if (!task) {
     throw new HttpError(404, `Task ${id} not found`);
@@ -551,7 +588,7 @@ async function handleRemoveAttachment(store, id, filenameRaw, res, repoRoot, tas
     throw new HttpError(400, "Invalid filename encoding");
   }
 
-  const cardAttachmentsDir = path.join(tasksDir, "attachments", id);
+  const cardAttachmentsDir = path.join(attachmentsRootDir({ taskStoreKind, tasksDir, dataDir }), id);
   const filePath = resolveAttachmentPath(cardAttachmentsDir, filename);
   if (!filePath) {
     throw new HttpError(400, "Invalid attachment filename");
@@ -578,7 +615,7 @@ async function handleRemoveAttachment(store, id, filenameRaw, res, repoRoot, tas
     if (err.code !== "ENOENT") throw err;
   }
 
-  if (repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
+  if (taskStoreKind !== "db" && repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
     try {
       const cardRelPath = path.relative(repoRoot, path.join(tasksDir, `${id}.md`));
       const attachmentRelPath = path.relative(repoRoot, filePath);
@@ -590,6 +627,10 @@ async function handleRemoveAttachment(store, id, filenameRaw, res, repoRoot, tas
     } catch (err) {
       console.warn(`Board: failed to commit attachment removal for ${id} (leaving it untracked):`, err.message);
     }
+  }
+
+  if (taskStoreKind === "db" && hub) {
+    hub.broadcast({ type: "changed", id, task: updated });
   }
 
   sendJson(res, 200, updated);
@@ -674,7 +715,7 @@ async function handleExportDone(store, res) {
   res.end(text);
 }
 
-async function handleDeleteTask(store, id, res) {
+async function handleDeleteTask(store, id, res, taskStoreKind, hub) {
   const task = await store.get(id);
   if (!task) {
     throw new HttpError(404, `Task ${id} not found`);
@@ -683,6 +724,9 @@ async function handleDeleteTask(store, id, res) {
     throw new HttpError(409, `Cannot delete ${id}: status is "${task.status}" (active run)`);
   }
   await store.remove(id);
+  if (taskStoreKind === "db" && hub) {
+    hub.broadcast({ type: "removed", id, task: null });
+  }
   sendJson(res, 200, { id, deleted: true });
 }
 
@@ -698,7 +742,19 @@ async function handleCancelTask(orchestrator, id, res) {
   sendJson(res, 200, task);
 }
 
-export function createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, tasksDir, restartCoordinator, gitInfoImpl }) {
+export function createRequestListener({
+  store,
+  idAllocator,
+  orchestrator,
+  agentsDir,
+  repoRoot,
+  tasksDir,
+  dataDir,
+  taskStoreKind = "fs",
+  hub,
+  restartCoordinator,
+  gitInfoImpl
+}) {
   return async function requestListener(req, res) {
     try {
       const { pathname } = new URL(req.url, "http://localhost");
@@ -725,16 +781,27 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
         return await handleListTasks(store, res);
       }
       if (pathname === "/api/tasks" && req.method === "POST") {
-        return await handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir);
+        return await handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir, taskStoreKind, hub);
       }
       if (idMatch && req.method === "GET") {
         return await handleGetTask(store, idMatch[1], res);
       }
       if (idMatch && req.method === "PATCH") {
-        return await handlePatchTask(store, idMatch[1], req, res, repoRoot, tasksDir, orchestrator, restartCoordinator);
+        return await handlePatchTask(
+          store,
+          idMatch[1],
+          req,
+          res,
+          repoRoot,
+          tasksDir,
+          orchestrator,
+          restartCoordinator,
+          taskStoreKind,
+          hub
+        );
       }
       if (idMatch && req.method === "DELETE") {
-        return await handleDeleteTask(store, idMatch[1], res);
+        return await handleDeleteTask(store, idMatch[1], res, taskStoreKind, hub);
       }
       if (runMatch && req.method === "POST") {
         return await handleRunTask(orchestrator, runMatch[1], res);
@@ -743,16 +810,34 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
         return await handleCancelTask(orchestrator, cancelMatch[1], res);
       }
       if (commentsMatch && req.method === "POST") {
-        return await handleAddComment(store, commentsMatch[1], req, res, repoRoot, tasksDir);
+        return await handleAddComment(store, commentsMatch[1], req, res, repoRoot, tasksDir, taskStoreKind, hub);
       }
       if (attachmentsMatch && req.method === "POST") {
-        return await handleUploadAttachment(store, attachmentsMatch[1], req, res, repoRoot, tasksDir);
+        return await handleUploadAttachment(store, attachmentsMatch[1], req, res, repoRoot, tasksDir, taskStoreKind, hub, dataDir);
       }
       if (attachmentFileMatch && req.method === "GET") {
-        return await handleDownloadAttachment(store, attachmentFileMatch[1], attachmentFileMatch[2], tasksDir, res);
+        return await handleDownloadAttachment(
+          store,
+          attachmentFileMatch[1],
+          attachmentFileMatch[2],
+          tasksDir,
+          res,
+          taskStoreKind,
+          dataDir
+        );
       }
       if (attachmentFileMatch && req.method === "DELETE") {
-        return await handleRemoveAttachment(store, attachmentFileMatch[1], attachmentFileMatch[2], res, repoRoot, tasksDir);
+        return await handleRemoveAttachment(
+          store,
+          attachmentFileMatch[1],
+          attachmentFileMatch[2],
+          res,
+          repoRoot,
+          tasksDir,
+          taskStoreKind,
+          hub,
+          dataDir
+        );
       }
       if (
         pathname === GIT_STATUS_PATH ||
@@ -780,11 +865,39 @@ export function createRequestListener({ store, idAllocator, orchestrator, agents
   };
 }
 
-export function startHttpServer({ store, idAllocator, orchestrator, agentsDir, repoRoot, tasksDir, restartCoordinator, gitInfoImpl, port = 0, host = "127.0.0.1" }) {
+export function startHttpServer({
+  store,
+  idAllocator,
+  orchestrator,
+  agentsDir,
+  repoRoot,
+  tasksDir,
+  dataDir,
+  taskStoreKind = "fs",
+  hub,
+  restartCoordinator,
+  gitInfoImpl,
+  port = 0,
+  host = "127.0.0.1"
+}) {
   if (host !== "127.0.0.1") {
     throw new Error("HTTP API must bind to 127.0.0.1 only");
   }
-  const server = http.createServer(createRequestListener({ store, idAllocator, orchestrator, agentsDir, repoRoot, tasksDir, restartCoordinator, gitInfoImpl }));
+  const server = http.createServer(
+    createRequestListener({
+      store,
+      idAllocator,
+      orchestrator,
+      agentsDir,
+      repoRoot,
+      tasksDir,
+      dataDir,
+      taskStoreKind,
+      hub,
+      restartCoordinator,
+      gitInfoImpl
+    })
+  );
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));

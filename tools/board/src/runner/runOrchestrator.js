@@ -10,6 +10,12 @@ import { writeRunState, clearRunState } from "./runState.js";
 import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
+import {
+  materializePlannerFileView,
+  cleanupPlannerFileView,
+  diffPlannerFileView,
+  applyPlannerFileViewDiff
+} from "./plannerFileView.js";
 
 /**
  * Hard cap on total implementer/reviewer runs a card can consume across its bounded
@@ -72,6 +78,7 @@ export class RunOrchestrator {
     agentsDir = path.join(repoRoot, ".claude", "agents"),
     rulesDir = path.join(repoRoot, ".claude", "rules"),
     baseBranch = "develop",
+    taskStoreKind = "fs",
     loadAgentDefFn = loadAgentDef,
     loadRulesFn = loadRules,
     resolveAllowedToolsFn = resolveAllowedTools,
@@ -99,6 +106,7 @@ export class RunOrchestrator {
     this.agentsDir = agentsDir;
     this.rulesDir = rulesDir;
     this.baseBranch = baseBranch;
+    this.taskStoreKind = taskStoreKind;
     this.loadAgentDefFn = loadAgentDefFn;
     this.loadRulesFn = loadRulesFn;
     this.resolveAllowedToolsFn = resolveAllowedToolsFn;
@@ -143,12 +151,17 @@ export class RunOrchestrator {
    * failure (e.g. a lock collision with a concurrent pull) must never fail the run itself, so
    * it's caught and logged -- the card falls back to the old drift-until-next-write behavior
    * for that one write, same as handlePatchTask's matching fallback.
+   *
+   * In db mode (`taskStoreKind === "db"`), the commit step is skipped entirely -- there is no
+   * tasks/*.md file to commit, card state lives only in SQLite (docs/design/cards-to-database.md,
+   * Phase 2). The broadcast above already fires unconditionally, so the board's live view never
+   * depended on the commit in the first place.
    */
   async _updateAndBroadcast(taskId, patch) {
     const updated = await this.store.update(taskId, patch);
     this.hub.broadcast({ type: "changed", id: taskId, task: updated });
 
-    if (this.repoRoot && this.tasksDir && this.git.autoCommitCardsOnCreateFromEnv()) {
+    if (this.taskStoreKind !== "db" && this.repoRoot && this.tasksDir && this.git.autoCommitCardsOnCreateFromEnv()) {
       try {
         const relativePath = path.relative(this.repoRoot, path.join(this.tasksDir, `${taskId}.md`));
         const changedFields = Object.keys(patch).filter((key) => key !== "id");
@@ -363,7 +376,20 @@ export class RunOrchestrator {
     return { stop: false, verdict };
   }
 
-  /** Runs the planner phase for an unassigned card. Returns true if planning succeeded, false if cancelled/failed (already blocked). */
+  /**
+   * Runs the planner phase for an unassigned card. Returns true if planning succeeded, false if
+   * cancelled/failed (already blocked).
+   *
+   * In db mode, wraps the run with the "ephemeral file view" (docs/design/cards-to-database.md,
+   * "The planner problem"): materializes the DB's cards to `<worktreeDir>/tasks/*.md` before the
+   * planner runs, so its unmodified Read/Edit/Write workflow has real files to act on, then
+   * reconciles whatever it wrote back into the DB (enforcing the same status-unchanged/
+   * no-delete guardrails `plannerDiffGuard.js` enforces via git diff in fs mode, just applied to
+   * two in-memory snapshots instead) and deletes the scratch directory before returning -- the
+   * implementer phase that follows must never see it. In fs mode this whole block is a no-op:
+   * the planner edits the real tasks/*.md file and commits it as part of the card's own branch,
+   * unchanged from before this refactor.
+   */
   async _planUnassignedCard(taskId, task, worktreeDir, runLog) {
     this.hub.broadcast({
       type: "run-status",
@@ -371,6 +397,9 @@ export class RunOrchestrator {
       phase: "planning",
       message: "Card is unassigned — invoking planner to expand spec before implementation"
     });
+
+    const fileView =
+      this.taskStoreKind === "db" ? await materializePlannerFileView({ store: this.store, worktreeDir }) : null;
 
     const plannerDef = this.loadAgentDefFn("planner", { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
@@ -388,10 +417,33 @@ export class RunOrchestrator {
       runLog
     });
 
-    if (plannerResult.cancelled) return false;
+    if (plannerResult.cancelled) {
+      if (fileView) await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
+      return false;
+    }
     if (plannerResult.exitCode !== 0) {
+      if (fileView) await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
       await this._blocked(taskId, this._crashReason("planner", plannerResult));
       return false;
+    }
+
+    if (fileView) {
+      const plan = await diffPlannerFileView({ tasksDir: fileView.tasksDir, before: fileView.before });
+      await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
+      if (!plan.ok) {
+        const summary = plan.violations.map((v) => `${v.file}: ${v.message}`).join("; ");
+        await this._blocked(taskId, `planner guardrail violation: ${summary}`);
+        return false;
+      }
+      const { createdIds, updatedIds } = await applyPlannerFileViewDiff({ store: this.store, plan });
+      for (const id of createdIds) {
+        const created = await this.store.get(id);
+        this.hub.broadcast({ type: "added", id, task: created });
+      }
+      for (const id of updatedIds) {
+        const updated = await this.store.get(id);
+        this.hub.broadcast({ type: "changed", id, task: updated });
+      }
     }
     return true;
   }
