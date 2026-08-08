@@ -58,7 +58,7 @@ Statistical. Cannot be unit-tested — require simulation.
 | **INV-13** | Exit non-persistence | Exit progress is never stored. The condition is evaluated only at the instant of simultaneous possession. No partial credit, no accumulation, no cache. **Pillar-level** (`01-vision.md` §5). |
 | **INV-14** | Population monotonicity | Increasing `P` must not slow a given player's progress. Item flow and unsolved-lock surface both grow with `P`; the design claims flow wins. **This is a claim, not a fact — the sim must confirm it.** |
 
-**INV-9 is the scaling law.** The *law* is population-independent; only its parameters are tuned. Concretely: the *distribution* of run lengths is ~15 rooms at P=2 and ~15 rooms at P=10⁵; what grows is which variants can appear. INV-9 does **not** require individual players to have similar experiences — the within-population spread may be wide. What it forbids is the distribution itself *shifting* with `P`: if the centre or shape of the metric distribution moves as population grows or shrinks, INV-9 has been violated and the design has a scaling bug regardless of what the code does.
+**INV-9 is the scaling law.** The *law* is population-independent; only its parameters are tuned. Concretely: the *distribution* of run lengths centres around up to 18 rooms at P=2 and at P=10⁵, assembled from **exactly 3 archetypes** of varying authored size (5–8 rooms each); what grows is which archetypes and variants are eligible to appear, not the room count. INV-9 does **not** require individual players to have similar experiences — the within-population spread may be wide. What it forbids is the distribution itself *shifting* with `P`: if the centre or shape of the metric distribution moves as population grows or shrinks, INV-9 has been violated and the design has a scaling bug regardless of what the code does.
 
 **INV-8 now has an enforcement mechanism**, not just a hope: the broadcast petition (`02-notes-system.md` §6), answered by seeded ghosts when live population cannot. A stuck player has an affordance to reach for.
 
@@ -71,7 +71,7 @@ Statistical. Cannot be unit-tested — require simulation.
 | # | Question | Resolution |
 |---|---|---|
 | **O-1** | Unique items vs. gated completion | **Unique = one instance at any moment.** Uniques circulate permanently, are exempt from supply scaling, always re-anchor on bleed, and pass to a new holder on completion. Scarcity preserved, lockout impossible. |
-| **O-2** | What "more rooms" means | **Variety scales, size does not.** Fixed ~15 rooms per run; population unlocks more *variants* per archetype. Preserves authored pacing and satisfies INV-9. |
+| **O-2** | What "more rooms" means | **Variety scales, size does not.** Up to 18 rooms per run, assembled from exactly 3 archetypes; population unlocks more *variants* per archetype. Preserves authored pacing and satisfies INV-9. |
 | **O-3** | Universe petition semantics | **Broadcast to network.** Surfaces in many worlds at once; ghosts answer when population is thin. Preserves the "cannot finish alone" pillar and enforces INV-8. |
 
 ---
@@ -116,4 +116,6 @@ Deliberately small — a few hundred lines, no engine, no server.
 | 2026-08-01 | E-7 resolved (`07-items-economy.md` §4) — simulation harness unblocked | Claude, rev. @DennieSeth |
 | 2026-08-01 | T-1/T-2 order-of-magnitude sweep brackets set (§4) | Claude, rev. @DennieSeth |
 | 2026-08-02 | v3: status line corrected; P-4 (asset index semantics) cross-referenced from INV-12 | Claude, rev. pending |
+| 2026-08-02 | INV-9/O-2 updated for revised room budget — up to 18 rooms from 1–3 archetypes (was ~15 rooms from 5–7 archetypes) | Claude, rev. @DennieSeth |
+| 2026-08-02 | INV-9/O-2 narrowed to **exactly 3 archetypes** per run (was 1–3), 5–8 rooms each | Claude, rev. @DennieSeth |
 | 2026-08-08 | INV-9 wording clarified: invariant is distribution-stability across P, not per-player similarity; within-population variance explicitly acknowledged as compatible (T-0157) | Claude (Sonnet 4.6) |

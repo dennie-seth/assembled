@@ -16,8 +16,10 @@ from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import assert_checkpoint_allowed
 
 from comfy_client.base_url import resolve_base_url
+from comfy_client.checkpoint_hash import hash_checkpoint_file
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.descend import descend_stub
+from comfy_client.errors import MissingModelHashError
 from comfy_client.provenance import ProvenanceRecord, build_provenance_record
 from comfy_client.recipe import Recipe
 from comfy_client.workflow import render_workflow
@@ -39,14 +41,35 @@ def generate(
     client: GenerationClient | None = None,
     timeout: float = 300.0,
     poll_interval: float = 1.0,
+    checkpoint_dir: Path | str | None = None,
 ) -> GenerationResult:
     """recipe -> generate -> descend(stub) -> provenance.
 
     Raises `CheckpointNotAllowedError` before ever rendering a workflow or
     touching `client` if `recipe.checkpoint` isn't on the license allowlist
     -- the T-0071 guardrail is enforced here, not left to the caller.
+
+    Raises `MissingModelHashError` if neither `checkpoint_dir` is supplied
+    nor `recipe.model_hash` is already set.  When `checkpoint_dir` is given
+    the checkpoint file is hashed (SHA-256) before any network call, and the
+    result overwrites whatever `recipe.model_hash` held -- the file is the
+    ground truth (T-0151).
     """
     assert_checkpoint_allowed(recipe.checkpoint)
+
+    # Resolve model_hash before any generation work (T-0151).
+    if checkpoint_dir is not None:
+        ckpt_path = Path(checkpoint_dir) / recipe.checkpoint
+        computed_hash = hash_checkpoint_file(ckpt_path)
+        from dataclasses import asdict
+        recipe = Recipe(**{**asdict(recipe), "model_hash": computed_hash})
+    elif recipe.model_hash is None:
+        raise MissingModelHashError(
+            f"recipe.model_hash is None and checkpoint_dir was not supplied "
+            f"(checkpoint: {recipe.checkpoint!r}). "
+            "Pass checkpoint_dir= so the file can be hashed, or set "
+            "recipe.model_hash to the known SHA-256 of the checkpoint."
+        )
 
     graph = render_workflow(recipe)
     graph_hash = compute_workflow_hash(graph)

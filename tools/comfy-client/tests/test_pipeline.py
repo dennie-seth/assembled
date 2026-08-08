@@ -4,10 +4,13 @@ provenance -- the T-0071 handoff point for T-0073 (descend) and T-0102
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
+from comfy_client.errors import MissingModelHashError
 from comfy_client.pipeline import generate
 from comfy_client.recipe import Recipe
 
@@ -75,3 +78,54 @@ def test_generate_refuses_disallowed_checkpoint_before_any_client_call(tmp_path)
     with pytest.raises(CheckpointNotAllowedError):
         generate(recipe, out_dir=tmp_path, client=client)
     assert client.calls == []
+
+
+# ---- T-0151: model_hash required ----------------------------------------
+
+
+def test_generate_with_checkpoint_dir_populates_model_hash(tmp_path):
+    """generate() with checkpoint_dir hashes the file and stores it in provenance."""
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir()
+    ckpt_file = ckpt_dir / "sd_xl_base_1.0.safetensors"
+    ckpt_file.write_bytes(b"FAKE_CHECKPOINT_BYTES")
+    expected_hash = hashlib.sha256(b"FAKE_CHECKPOINT_BYTES").hexdigest()
+
+    recipe = Recipe(prompt="a signal tower", seed=1)
+    client = FakeClient()
+    result = generate(recipe, out_dir=tmp_path / "out", client=client, checkpoint_dir=ckpt_dir)
+
+    assert result.provenance.model_hash == expected_hash
+
+
+def test_generate_with_pre_set_model_hash_uses_it(tmp_path):
+    """If recipe.model_hash is already set, no checkpoint_dir is needed."""
+    recipe = Recipe(prompt="a signal tower", seed=1, model_hash="abcd1234" + "0" * 56)
+    client = FakeClient()
+    result = generate(recipe, out_dir=tmp_path, client=client)
+    assert result.provenance.model_hash == recipe.model_hash
+
+
+def test_generate_raises_missing_model_hash_without_checkpoint_dir(tmp_path):
+    """generate() with no checkpoint_dir and recipe.model_hash=None raises."""
+    recipe = Recipe(prompt="a signal tower", seed=1)  # model_hash defaults to None
+    client = FakeClient()
+    with pytest.raises(MissingModelHashError):
+        generate(recipe, out_dir=tmp_path, client=client)
+    # Client should not be called -- the error is raised before generation
+    assert client.calls == []
+
+
+def test_generate_checkpoint_dir_hash_overrides_recipe_model_hash(tmp_path):
+    """If both checkpoint_dir and recipe.model_hash are provided, file hash wins."""
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir()
+    ckpt_file = ckpt_dir / "sd_xl_base_1.0.safetensors"
+    ckpt_file.write_bytes(b"ACTUAL_BYTES")
+    file_hash = hashlib.sha256(b"ACTUAL_BYTES").hexdigest()
+
+    recipe = Recipe(prompt="a signal tower", seed=1, model_hash="stale_hash" + "0" * 54)
+    client = FakeClient()
+    result = generate(recipe, out_dir=tmp_path / "out", client=client, checkpoint_dir=ckpt_dir)
+
+    assert result.provenance.model_hash == file_hash
