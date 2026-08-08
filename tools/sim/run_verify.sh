@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-cd /home/dennieseth/dev/assembled-board/worktrees/T-0156/tools/sim
+cd "$(dirname "$0")"
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]" -q
 echo "=== PYTEST ==="

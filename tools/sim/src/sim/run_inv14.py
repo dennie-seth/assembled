@@ -134,6 +134,14 @@ def _run_one_point(
     @return                            Dict with "chain_crossings" and "rooms_per_run" lists,
                                        one entry per non-QUIT agent.
     """
+    # Scale world size with population so the spawn loop can produce k_c*P items
+    # within the compressed test window.  num_anchors is the per-tick spawn
+    # budget; at 20 fixed anchors the spawn rate is 20*0.002=0.04 items/tick
+    # regardless of P, which starves large populations (P=200 needs cap=400 but
+    # only ~8 items spawn in 200 ticks).  With num_anchors ∝ P the rate scales
+    # to P*10*0.002 = P*0.02 items/tick, so the world reaches k_c*P items in
+    # ≈ 2*P / (P*0.02) = 100 ticks — well within the 200-tick window.
+    num_anchors = max(20, population * 10)
     cfg = SimConfig(
         initial_population=population,
         join_rate=0.0,
@@ -146,6 +154,7 @@ def _run_one_point(
         # so items_received and chain_progress reflect exactly one run.
         collapse_duration=ticks + 1,
         first_universe_multiplier=1.0,
+        num_anchors=num_anchors,
     )
     engine = SimEngine(cfg, seed=seed)
     engine.run(ticks)

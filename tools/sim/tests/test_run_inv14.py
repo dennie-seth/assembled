@@ -17,12 +17,12 @@ from __future__ import annotations
 import pytest
 
 from sim.run_inv14 import (
-    POPULATION_RANGE,
-    SEEDS_PER_POINT,
     _iqr_stats,
     _run_one_point,
     p_invariance_verdict,
+    POPULATION_RANGE,
     run_chain_key_population_sweep,
+    SEEDS_PER_POINT,
 )
 
 
