@@ -491,6 +491,69 @@ describe("createApp handleSocketMessage", () => {
   });
 });
 
+// DOT-7 (docs/board-invariants.md): a dependency edit on one card must not leave a
+// STALE badge on a different, related card. render() rebuilds the whole board from
+// the current `tasks` array on every call, recomputing computeBlockerCounts and
+// computeDependencyStatus fresh -- these tests pin that down as an explicit,
+// cross-card regression rather than relying on it being an incidental side effect
+// of the render architecture (T-0096/T-0095 field report, 2026-08-09).
+describe("createApp dependency badge propagation across cards", () => {
+  it("clears a card's blocker badge when a DIFFERENT card's dependency on it is removed via a socket event", async () => {
+    const dependedOn = task({ id: "T-0096", title: "Integration test", status: "ready", depends_on: [] });
+    const dependent = task({ id: "T-0095", title: "CAS transfer", status: "ready", depends_on: ["T-0096"] });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([dependedOn, dependent])
+    });
+    await app.init();
+
+    let badge = boardRoot.querySelector('.card[data-id="T-0096"] .card-blocker-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.title || badge.getAttribute("aria-label")).toMatch(/blocks 1 task/i);
+
+    // T-0095 (not T-0096) is the one that changes -- it drops T-0096 from its own
+    // depends_on. T-0096 itself is untouched by this event.
+    app.handleSocketMessage({ type: "changed", id: "T-0095", task: { ...dependent, depends_on: [] } });
+
+    badge = boardRoot.querySelector('.card[data-id="T-0096"] .card-blocker-badge');
+    expect(badge).toBeNull();
+  });
+
+  it("updates a card's own dependency dot when its depends_on is emptied via a socket event", async () => {
+    const dependent = task({ id: "T-0001", title: "A", status: "ready", depends_on: ["T-0002"] });
+    const dependedOn = task({ id: "T-0002", title: "B", status: "backlog", depends_on: [] });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([dependent, dependedOn])
+    });
+    await app.init();
+
+    let card = boardRoot.querySelector('.card[data-id="T-0001"]');
+    expect(card.querySelector(".card-blocked-badge")).not.toBeNull();
+    expect(card.querySelector(".card-unblocked-badge")).toBeNull();
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...dependent, depends_on: [] } });
+
+    card = boardRoot.querySelector('.card[data-id="T-0001"]');
+    expect(card.querySelector(".card-blocked-badge")).toBeNull();
+    expect(card.querySelector(".card-unblocked-badge")).not.toBeNull();
+  });
+
+  it("clears a card's blocker badge when a dependency is removed via the local Save path (no socket round-trip)", async () => {
+    const dependedOn = task({ id: "T-0096", title: "Integration test", status: "ready", depends_on: [] });
+    const dependent = task({ id: "T-0095", title: "CAS transfer", status: "ready", depends_on: ["T-0096"] });
+    const patchTaskImpl = vi.fn().mockResolvedValue({ ...dependent, depends_on: [] });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([dependedOn, dependent]),
+      patchTaskImpl
+    });
+    await app.init();
+    expect(boardRoot.querySelector('.card[data-id="T-0096"] .card-blocker-badge')).not.toBeNull();
+
+    await app.handleSave("T-0095", { depends_on: [] });
+
+    expect(boardRoot.querySelector('.card[data-id="T-0096"] .card-blocker-badge')).toBeNull();
+  });
+});
+
 describe("createApp stale state when selected task is removed externally", () => {
   it("hides the side panel when the selected task is removed via a socket removed event", async () => {
     const t = task({ id: "T-0001" });
