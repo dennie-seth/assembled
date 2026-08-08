@@ -1,7 +1,7 @@
 {
   "model": "sd_xl_base_1.0.safetensors",
   "model_license": "CreativeML Open RAIL++-M",
-  "model_hash": null,
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
   "prompt": "brutalist concrete wall texture, worn concrete floor surface, wall-to-floor trim, muted concrete grey and oxide and institutional green, flat side-on reference sheet, no perspective, value-separated material panels, interior, weathered surface detail, rough stained concrete",
   "negative_prompt": "equipment, control panel, machinery, switches, buttons, sky, perspective, three-quarter view, isometric, vanishing point, text, watermark, glow, blurry, low quality, character, creature, smooth, flat colour, solid colour",
   "seed": 3101,

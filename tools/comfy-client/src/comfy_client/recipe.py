@@ -32,9 +32,10 @@ class Recipe:
     # discards the init image's latent entirely; lower values preserve more
     # of its layout. Unused by the txt2img template.
     denoise: float = 1.0
-    # TODO(T-0075): populate from the checkpoint file once a hashing step
-    # exists on the Windows ComfyUI host (the .safetensors isn't reachable
-    # from WSL); the provenance writer records this alongside seed/prompt.
+    # SHA-256 of the checkpoint file, computed at generation time via
+    # hash_checkpoint_file() (T-0151).  None is only permitted in the recipe
+    # definition itself; generate() and build_provenance_record() both raise
+    # MissingModelHashError if it is still None at call time.
     model_hash: str | None = None
 
     def __post_init__(self) -> None:

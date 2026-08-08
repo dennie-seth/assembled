@@ -13,7 +13,7 @@ from comfy_client.recipe import Recipe
 
 
 def test_build_provenance_record_captures_recipe_and_workflow_fields():
-    r = Recipe(prompt="a rusted hospital corridor", seed=7, steps=25, cfg=6.5)
+    r = Recipe(prompt="a rusted hospital corridor", seed=7, steps=25, cfg=6.5, model_hash="c" * 64)
     rec = build_provenance_record(r, workflow_hash="deadbeef", prompt_id="p1")
 
     assert rec.model == r.checkpoint
