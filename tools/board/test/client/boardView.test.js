@@ -397,6 +397,66 @@ describe("renderBoard per-column sort control", () => {
   });
 });
 
+describe("renderBoard unblocked badge", () => {
+  it("renders an unblocked badge on a card whose all dependencies are done", () => {
+    const root = document.createElement("div");
+    const dep = task({ id: "T-0001", status: "done" });
+    const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
+    renderBoard(root, [dep, t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0002"] .card-unblocked-badge');
+    expect(badge).not.toBeNull();
+  });
+
+  it("renders an unblocked badge on a card whose all dependencies are retired", () => {
+    const root = document.createElement("div");
+    const dep = task({ id: "T-0001", status: "retired" });
+    const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
+    renderBoard(root, [dep, t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0002"] .card-unblocked-badge');
+    expect(badge).not.toBeNull();
+  });
+
+  it("renders an unblocked badge when dependencies mix done and retired", () => {
+    const root = document.createElement("div");
+    const dep1 = task({ id: "T-0001", status: "done" });
+    const dep2 = task({ id: "T-0002", status: "retired" });
+    const t = task({ id: "T-0003", status: "ready", depends_on: ["T-0001", "T-0002"] });
+    renderBoard(root, [dep1, dep2, t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0003"] .card-unblocked-badge');
+    expect(badge).not.toBeNull();
+  });
+
+  it("does not render an unblocked badge when a dependency is not done or retired", () => {
+    const root = document.createElement("div");
+    const dep = task({ id: "T-0001", status: "in-progress" });
+    const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
+    renderBoard(root, [dep, t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    expect(root.querySelector('.card[data-id="T-0002"] .card-unblocked-badge')).toBeNull();
+  });
+
+  it("does not render an unblocked badge on a card with no dependencies", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "ready", depends_on: [] });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    expect(root.querySelector('.card[data-id="T-0001"] .card-unblocked-badge')).toBeNull();
+  });
+
+  it("the unblocked badge has an accessible title or aria-label", () => {
+    const root = document.createElement("div");
+    const dep = task({ id: "T-0001", status: "done" });
+    const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
+    renderBoard(root, [dep, t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0002"] .card-unblocked-badge');
+    expect(badge.title || badge.getAttribute("aria-label")).toBeTruthy();
+  });
+});
+
 describe("BATCH_SIZE export", () => {
   it("is a positive integer", () => {
     expect(Number.isInteger(BATCH_SIZE)).toBe(true);
