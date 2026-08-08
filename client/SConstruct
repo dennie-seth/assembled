@@ -179,6 +179,13 @@ env.Append(CPPPATH=["src/", CURL_INCLUDE_DIR])
 env.Append(LIBPATH=[os.path.join(CURL_PREFIX, "lib")])
 # Link the static libcurl directly so no system curl is needed at runtime.
 env.Append(LIBS=["curl"])
+if env["platform"] != "windows":
+    # Even with SSL disabled, the vendored curl static lib still references
+    # zlib symbols (e.g. inflateEnd) for HTTP content decoding. Without
+    # explicitly linking zlib, the linked .so loads with an unresolved
+    # "undefined symbol: inflateEnd". Scoped to non-Windows: Windows' zlib
+    # linkage (lib name / vcpkg vs. static) hasn't been verified yet.
+    env.Append(LIBS=["z"])
 
 sources = Glob("src/*.cpp")
 
