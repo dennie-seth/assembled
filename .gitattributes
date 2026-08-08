@@ -42,6 +42,13 @@
 # Git LFS — audio finals are large regardless of art direction, so LFS from day one.
 assets/final/audio/** filter=lfs diff=lfs merge=lfs -text
 
+# develop's committed blob for this file has 2 stray NUL bytes baked into a
+# string literal (pre-existing, unrelated to any single branch) that trip
+# git's NUL-byte binary-diff heuristic on either side of a comparison. Force
+# text diffing so PRs render a real patch instead of "Binary files differ".
+# Safe to remove once develop's copy of the file no longer contains NULs.
+tools/board/src/runner/promptBuilder.js diff
+
 # --- DEFERRED ---
 # Image LFS patterns (e.g. assets/final/**/*.png) are intentionally NOT
 # configured yet. Whether images need LFS depends on the art-direction call
