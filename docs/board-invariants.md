@@ -77,6 +77,7 @@ combination — not just its ingredients — is actually under test.
 | DOT-4 | A `depends_on` id that doesn't resolve to any known task counts as **unmet** (blocked), not silently ignored. | A dangling reference (typo, deleted card) must fail closed, not fail open into a false "ready". | ✅ Covered — `board.test.js` "marks a task blocked when a dependency id is missing". |
 | DOT-5 | The downstream "Blocks N tasks" 🔗 badge is independent of DOT-1–4 and may co-occur with the **ready** badge. | This is the other half of the #120 root cause: a card can legitimately be both ready-to-run and something else depends on it. | ✅ Covered — `boardView.test.js` T-0045 regression (ready + 🔗 together, no ⛔ text). |
 | DOT-6 | The 🔗 badge may also co-occur with the **blocked** badge (a blocked card that other cards also depend on). | Same independence claim as DOT-5, but the "blocked ⨯ blocked-by-others" combination was never actually exercised — DOT-5's regression test only covers the ready side. | ❌ **Not covered before this PR.** New test added (`boardView.test.js`). |
+| DOT-7 | Dependency/blocker badges always reflect current cross-card state after any edit — a card's own dot AND every other card's 🔗 "blocks N" badge — without a manual refresh, whether the edit arrives as a WS `changed` event or via the local Save path. | Field report (2026-08-09): T-0096 appeared to still show a "blocks" mark after all its dependencies were removed. Investigation traced it to `render()` (`app.js`) always rebuilding the whole board from the live `tasks` array on every call — `computeBlockerCounts`/`computeDependencyStatus` (`board.js`) are recomputed fresh each time rather than cached, so a change to *any* card's `depends_on` updates *every* affected card's badges on the very next render. No stale-render bug was found; the actual T-0096 case was a genuine dangling reverse-reference (T-0095 still listed T-0096 in its own `depends_on`) — real data, correctly rendered. This invariant pins the "always correct after any edit" property down as a regression test so a future change (e.g. an optimization that re-renders only the edited card) can't silently reintroduce staleness. | ✅ Covered — `app.test.js` "createApp dependency badge propagation across cards" (WS event on the *other* card, local Save path, and the card's own dot). |
 
 ## 2. Card status lifecycle
 
@@ -143,7 +144,7 @@ enumeration.
 
 | Area | Covered | Partially covered | Not covered (fixed this PR) | Not covered (deferred) |
 |------|---------|--------------------|------------------------------|--------------------------|
-| Dependency dots | DOT-1..5 | — | DOT-6 | — |
+| Dependency dots | DOT-1..5, DOT-7 | — | DOT-6 | — |
 | Status lifecycle | LC-1..4, LC-6 | — | LC-5 | LC-7 |
 | Create/update | CR-2, CR-3 | CR-1 | — | — |
 | WS event application | WS-1..4 | — | WS-5, WS-6, WS-7, WS-8 | — |
