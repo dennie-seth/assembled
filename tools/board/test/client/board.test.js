@@ -5,7 +5,7 @@ import {
   buildStatusPatch,
   applyTaskEvent,
   computeBlockerCounts,
-  computeUnblockedIds,
+  computeDependencyStatus,
   sortTasks
 } from "../../src/client/board.js";
 
@@ -202,69 +202,89 @@ describe("sortTasks", () => {
   });
 });
 
-describe("computeUnblockedIds", () => {
-  it("returns an empty set when no tasks have dependencies", () => {
+describe("computeDependencyStatus", () => {
+  it("marks a task with no dependencies as ready", () => {
     const tasks = [task({ id: "T-0001", depends_on: [] }), task({ id: "T-0002", depends_on: [] })];
-    expect(computeUnblockedIds(tasks).size).toBe(0);
+    const status = computeDependencyStatus(tasks);
+    expect(status.get("T-0001")).toBe("ready");
+    expect(status.get("T-0002")).toBe("ready");
   });
 
-  it("includes a task id when all its dependencies are done", () => {
+  it("marks a task ready when all its dependencies are done", () => {
     const tasks = [
       task({ id: "T-0001", depends_on: ["T-0002"] }),
       task({ id: "T-0002", status: "done" })
     ];
-    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(true);
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("ready");
   });
 
-  it("includes a task id when all its dependencies are retired", () => {
+  it("marks a task ready when all its dependencies are retired", () => {
     const tasks = [
       task({ id: "T-0001", depends_on: ["T-0002"] }),
       task({ id: "T-0002", status: "retired" })
     ];
-    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(true);
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("ready");
   });
 
-  it("includes a task id when dependencies mix done and retired", () => {
+  it("marks a task ready when dependencies mix done and retired", () => {
     const tasks = [
       task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
       task({ id: "T-0002", status: "done" }),
       task({ id: "T-0003", status: "retired" })
     ];
-    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(true);
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("ready");
   });
 
-  it("does not include a task when a dependency is not done or retired", () => {
+  it("marks a task blocked when a dependency is not done or retired", () => {
     const tasks = [
       task({ id: "T-0001", depends_on: ["T-0002"] }),
       task({ id: "T-0002", status: "in-progress" })
     ];
-    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(false);
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("blocked");
   });
 
-  it("does not include a task when any dependency is not yet terminal even if others are done", () => {
+  it("marks a task blocked when any dependency is not yet terminal even if others are done", () => {
     const tasks = [
       task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
       task({ id: "T-0002", status: "done" }),
       task({ id: "T-0003", status: "ready" })
     ];
-    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(false);
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("blocked");
   });
 
-  it("does not include a task when a dependency id is missing from the task list", () => {
+  it("marks a task blocked when a dependency id is missing from the task list", () => {
     const tasks = [task({ id: "T-0001", depends_on: ["T-0099"] })];
-    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(false);
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("blocked");
   });
 
-  it("does not include a task with an empty depends_on array", () => {
-    const tasks = [task({ id: "T-0001", depends_on: [] })];
-    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(false);
-  });
-
-  it("returns a Set (not an array)", () => {
+  it("returns a Map (not a Set)", () => {
     const tasks = [
       task({ id: "T-0001", depends_on: ["T-0002"] }),
       task({ id: "T-0002", status: "done" })
     ];
-    expect(computeUnblockedIds(tasks)).toBeInstanceOf(Set);
+    expect(computeDependencyStatus(tasks)).toBeInstanceOf(Map);
+  });
+
+  it("assigns every task exactly one of 'blocked' or 'ready', never both, never neither", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: [] }),
+      task({ id: "T-0002", depends_on: ["T-0001"] }),
+      task({ id: "T-0003", depends_on: ["T-0099"] }),
+      task({ id: "T-0004", status: "done", depends_on: [] })
+    ];
+    const status = computeDependencyStatus(tasks);
+    for (const t of tasks) {
+      expect(["blocked", "ready"]).toContain(status.get(t.id));
+    }
+    expect(status.size).toBe(tasks.length);
+  });
+
+  it("a task's own dependency status is independent of whether other tasks depend on it (T-0045-style: own deps done, and it blocks a downstream task)", () => {
+    const tasks = [
+      task({ id: "T-0044", status: "done", depends_on: [] }),
+      task({ id: "T-0045", depends_on: ["T-0044"] }),
+      task({ id: "T-0063", depends_on: ["T-0045"] })
+    ];
+    expect(computeDependencyStatus(tasks).get("T-0045")).toBe("ready");
   });
 });

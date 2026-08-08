@@ -118,7 +118,9 @@ body {
   font-weight: 600;
 }
 
-.card-blocker-badge {
+.card-blocker-badge,
+.card-blocked-badge,
+.card-unblocked-badge {
   font-size: 0.75rem;
   cursor: help;
 }

@@ -31,19 +31,24 @@ export function applyTaskEvent(tasks, event) {
   return next;
 }
 
-/** Returns the Set of task ids whose every dependency is done or retired. */
-export function computeUnblockedIds(tasks) {
+/**
+ * Single derived dependency status per task, keyed on that task's OWN depends_on:
+ * "blocked" if any dependency is missing or not done/retired, otherwise "ready"
+ * (including tasks with no dependencies at all). Every task gets exactly one of
+ * the two values, so callers rendering a badge from this map can never end up
+ * showing both a "blocked" and a "ready" indicator on the same card.
+ */
+export function computeDependencyStatus(tasks) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
-  const ids = new Set();
+  const status = new Map();
   for (const task of tasks) {
-    if (task.depends_on.length === 0) continue;
-    const allTerminal = task.depends_on.every((depId) => {
+    const isBlocked = task.depends_on.some((depId) => {
       const dep = byId.get(depId);
-      return dep && (dep.status === "done" || dep.status === "retired");
+      return !dep || (dep.status !== "done" && dep.status !== "retired");
     });
-    if (allTerminal) ids.add(task.id);
+    status.set(task.id, isBlocked ? "blocked" : "ready");
   }
-  return ids;
+  return status;
 }
 
 /** Reverse-dependency counts: how many other tasks list each task id in their depends_on. */
