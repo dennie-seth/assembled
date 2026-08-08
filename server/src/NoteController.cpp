@@ -126,24 +126,22 @@ void NoteController::createNote(const drogon::HttpRequestPtr &req,
     // A detached worker thread holds no Drogon resources and is safe to use
     // here: both DbClientPtr and the drogon callback are thread-safe.
     std::thread(
-        [tid, archetype_id, anchor_tag_val, slots, item_ref, token, cb](
-            drogon::orm::DbClientPtr client) mutable {
+        [tid, archetype_id, anchor_tag_val, slots, item_ref, token,
+         cb](drogon::orm::DbClientPtr client) mutable {
             try {
                 // Vocabulary check: every slot word must appear in the
                 // caller's unlocked vocabulary (4002 VOCAB_TIER_LOCKED).
                 if (!slots.empty()) {
                     int unlocked = 0;
                     if (slots.size() == 1) {
-                        auto r = client->execSqlSync(
-                            "SELECT COUNT(*) FROM vocabulary "
-                            "WHERE token = $1 AND word_id = $2",
-                            token, slots[0]);
+                        auto r = client->execSqlSync("SELECT COUNT(*) FROM vocabulary "
+                                                     "WHERE token = $1 AND word_id = $2",
+                                                     token, slots[0]);
                         unlocked = r[0][0].as<int>();
                     } else {
-                        auto r = client->execSqlSync(
-                            "SELECT COUNT(*) FROM vocabulary "
-                            "WHERE token = $1 AND word_id IN ($2, $3)",
-                            token, slots[0], slots[1]);
+                        auto r = client->execSqlSync("SELECT COUNT(*) FROM vocabulary "
+                                                     "WHERE token = $1 AND word_id IN ($2, $3)",
+                                                     token, slots[0], slots[1]);
                         unlocked = r[0][0].as<int>();
                     }
                     if (unlocked < static_cast<int>(slots.size())) {

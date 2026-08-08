@@ -100,8 +100,8 @@ TEST_CASE("POST /v1/notes HTTP integration") {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    auto httpClient = drogon::HttpClient::newHttpClient(
-        "http://127.0.0.1:" + std::to_string(kNoteHandlerTestPort));
+    auto httpClient = drogon::HttpClient::newHttpClient("http://127.0.0.1:" +
+                                                        std::to_string(kNoteHandlerTestPort));
 
     // ── Test 1: unknown template_id → 400 / error 2001 ───────────────────
     {
@@ -122,7 +122,7 @@ TEST_CASE("POST /v1/notes HTTP integration") {
         Json::Value body;
         body["archetype"] = 1;
         body["tag"] = 1;
-        body["template_id"] = 6;                        // {ACTION} — 1 slot
+        body["template_id"] = 6;                       // {ACTION} — 1 slot
         body["slots"] = Json::Value(Json::arrayValue); // 0 slots provided
 
         auto [code, j] = sendNotePost(httpClient, body, "test-token-notes-ok");
