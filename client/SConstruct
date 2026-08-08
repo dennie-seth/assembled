@@ -48,6 +48,8 @@ CURL_SRC_DIR = os.path.join(VENDOR_DIR, f"curl-{CURL_VERSION}")
 CURL_PREFIX = os.path.join(VENDOR_DIR, "curl")
 CURL_STATIC_LIB = os.path.join(CURL_PREFIX, "lib", "libcurl.a")
 CURL_INCLUDE_DIR = os.path.join(CURL_PREFIX, "include")
+# Written after a successful fPIC build so we can detect stale (non-fPIC) builds.
+CURL_PIC_STAMP = os.path.join(CURL_PREFIX, ".built_pic")
 
 
 def _vendor_curl():
@@ -129,28 +131,31 @@ def _vendor_curl():
     print("[curl vendor] Installing …")
     subprocess.check_call(["cmake", "--install", "."], cwd=build_dir)
 
+    # Write a stamp so _curl_needs_rebuild() knows this install was built
+    # with -fPIC (cmake's CMakeCache.txt entry type varies across versions,
+    # making direct cache text inspection unreliable as a freshness check).
+    with open(CURL_PIC_STAMP, "w") as fh:
+        fh.write(f"curl-{CURL_VERSION}-pic\n")
+
     print(f"[curl vendor] Done — {CURL_STATIC_LIB}")
 
 
 def _curl_needs_rebuild() -> bool:
     """Return True if curl must be (re)vendored.
 
-    Checks for two conditions:
-    1. The static library is missing entirely.
-    2. The cached build was compiled WITHOUT position-independent code (-fPIC),
-       which causes the linker to fail when the lib is pulled into our .so.
-       Detected by inspecting the CMakeCache generated during the prior run.
+    Checks two conditions:
+    1. The static library is absent.
+    2. The library was built WITHOUT position-independent code (-fPIC), which
+       causes a linker error when linked into a shared object.  Detected via
+       CURL_PIC_STAMP — a sentinel file written only by a successful fPIC build.
+       (Inspecting CMakeCache.txt for the flag is unreliable because cmake's
+       cache type for `-DNAME=ON` is STRING, not BOOL, across cmake versions.)
     """
     if not os.path.exists(CURL_STATIC_LIB):
         return True
-    cmake_cache = os.path.join(CURL_SRC_DIR, "_build", "CMakeCache.txt")
-    if not os.path.exists(cmake_cache):
-        return False  # no cache → assume the manual/external build is fine
-    with open(cmake_cache) as fh:
-        cache_text = fh.read()
-    if "CMAKE_POSITION_INDEPENDENT_CODE:BOOL=ON" not in cache_text:
+    if not os.path.exists(CURL_PIC_STAMP):
         print(
-            "[curl vendor] Stale build detected: missing -fPIC.\n"
+            "[curl vendor] Stale build detected: not built with -fPIC.\n"
             "  Removing old install + build tree and rebuilding …"
         )
         shutil.rmtree(os.path.join(CURL_SRC_DIR, "_build"), ignore_errors=True)
