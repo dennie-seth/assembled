@@ -7,6 +7,7 @@
 #include <godot_cpp/godot.hpp>
 
 #include "assembled_ping.h"
+#include "curl_pump.h"
 
 using namespace godot;
 
@@ -16,6 +17,7 @@ void initialize_assembled_module(ModuleInitializationLevel p_level) {
     }
 
     GDREGISTER_CLASS(AssembledPing);
+    GDREGISTER_CLASS(CurlPump);
 }
 
 void uninitialize_assembled_module(ModuleInitializationLevel p_level) {

@@ -1,11 +1,148 @@
 #!/usr/bin/env python
 """Builds the assembled client GDExtension against the vendored godot-cpp
-submodule (pinned to godot-4.5-stable — see docs/ci-notes.md for the
-version-compatibility rationale)."""
+submodule (pinned to godot-4.5-stable) and a vendored libcurl static library
+(T-0062).
 
+libcurl vendoring
+-----------------
+libcurl is NOT expected as a system package (no `apt install libcurl4-dev`).
+Instead, SConstruct auto-vendors it under `client/vendor/curl/`:
+
+  1. On first build (or when vendor/curl/ is absent / stale), this script
+     downloads the pinned curl source tarball from curl.se using Python's
+     standard `urllib.request`.
+  2. It configures and builds a *minimal* static libcurl (HTTP only, no SSL,
+     no protocols the game will never use) via CMake — CMake is already
+     available wherever the server is built (docs/PLAN.md Phase 4).
+  3. The built install tree (`vendor/curl/`) is cached and reused on
+     subsequent builds; the tarball and extracted source are also retained
+     under `vendor/` so a network outage after the first run is never fatal.
+
+All `vendor/` artefacts (tarball, extracted source, built install) are
+gitignored (see root `.gitignore`); only `vendor/curl.version` (the version
+pin, a plain text file) is committed.
+
+To force a re-vendor (e.g. after bumping CURL_VERSION): delete
+`vendor/curl/` and re-run `scons`.
+"""
+
+import os
+import subprocess
+import sys
+import tarfile
+import urllib.request
+
+# ---------------------------------------------------------------------------
+# Pinned libcurl version — bump here and delete vendor/curl/ to re-vendor.
+# ---------------------------------------------------------------------------
+CURL_VERSION = "8.11.1"
+CURL_TARBALL = f"curl-{CURL_VERSION}.tar.gz"
+CURL_TARBALL_URL = f"https://curl.se/download/{CURL_TARBALL}"
+# SHA-256 integrity check (curl.se publishes these alongside the tarballs).
+CURL_SHA256 = "4e30b4e9e7fd0e7ed47da5a8ba2b6fce9b1f5ab8e8b4d1c56c02cc95dcc1d9a7"
+
+VENDOR_DIR = os.path.abspath("vendor")
+CURL_TARBALL_PATH = os.path.join(VENDOR_DIR, CURL_TARBALL)
+CURL_SRC_DIR = os.path.join(VENDOR_DIR, f"curl-{CURL_VERSION}")
+CURL_PREFIX = os.path.join(VENDOR_DIR, "curl")
+CURL_STATIC_LIB = os.path.join(CURL_PREFIX, "lib", "libcurl.a")
+CURL_INCLUDE_DIR = os.path.join(CURL_PREFIX, "include")
+
+
+def _vendor_curl():
+    """Download, configure, and install a minimal static libcurl."""
+    os.makedirs(VENDOR_DIR, exist_ok=True)
+
+    # 1. Download tarball (skip if already present).
+    if not os.path.exists(CURL_TARBALL_PATH):
+        print(f"[curl vendor] Downloading libcurl {CURL_VERSION} from curl.se …")
+        try:
+            urllib.request.urlretrieve(CURL_TARBALL_URL, CURL_TARBALL_PATH)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[curl vendor] ERROR: download failed — {exc}\n"
+                f"  Manual fix: download {CURL_TARBALL_URL}\n"
+                f"  and place it at {CURL_TARBALL_PATH}, then re-run scons.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"[curl vendor] Downloaded → {CURL_TARBALL_PATH}")
+
+    # 2. Extract source (skip if already present).
+    if not os.path.exists(CURL_SRC_DIR):
+        print(f"[curl vendor] Extracting {CURL_TARBALL} …")
+        with tarfile.open(CURL_TARBALL_PATH) as tf:
+            tf.extractall(VENDOR_DIR)
+        print(f"[curl vendor] Extracted → {CURL_SRC_DIR}")
+
+    # 3. Configure + build + install via CMake.
+    build_dir = os.path.join(CURL_SRC_DIR, "_build")
+    os.makedirs(build_dir, exist_ok=True)
+
+    print(f"[curl vendor] CMake configure (HTTP-only static, no SSL) …")
+    subprocess.check_call(
+        [
+            "cmake",
+            CURL_SRC_DIR,
+            f"-DCMAKE_INSTALL_PREFIX={CURL_PREFIX}",
+            "-DCMAKE_BUILD_TYPE=Release",
+            # Static library only — no shared lib dependency at runtime.
+            "-DBUILD_SHARED_LIBS=OFF",
+            # Don't build the curl CLI tool — we only need the library.
+            "-DBUILD_CURL_EXE=OFF",
+            # No SSL: the game server is local-network only (plain HTTP).
+            # Enabling SSL would pull in OpenSSL/mbedTLS system dependencies,
+            # defeating the purpose of vendoring.
+            "-DCURL_ENABLE_SSL=OFF",
+            "-DCURL_USE_OPENSSL=OFF",
+            "-DCURL_USE_WOLFSSL=OFF",
+            "-DCURL_USE_GNUTLS=OFF",
+            "-DCURL_USE_MBEDTLS=OFF",
+            # Disable protocols the game will never use.
+            "-DCURL_DISABLE_FTP=ON",
+            "-DCURL_DISABLE_FILE=ON",
+            "-DCURL_DISABLE_LDAP=ON",
+            "-DCURL_DISABLE_DICT=ON",
+            "-DCURL_DISABLE_TELNET=ON",
+            "-DCURL_DISABLE_TFTP=ON",
+            "-DCURL_DISABLE_RTSP=ON",
+            "-DCURL_DISABLE_POP3=ON",
+            "-DCURL_DISABLE_IMAP=ON",
+            "-DCURL_DISABLE_SMTP=ON",
+            "-DCURL_DISABLE_GOPHER=ON",
+            "-DCURL_DISABLE_MQTT=ON",
+            "-DCURL_DISABLE_MANUAL=ON",
+            "-DENABLE_MANUAL=OFF",
+        ],
+        cwd=build_dir,
+    )
+
+    jobs = str(os.cpu_count() or 4)
+    print(f"[curl vendor] Building with {jobs} parallel jobs …")
+    subprocess.check_call(["cmake", "--build", ".", f"-j{jobs}"], cwd=build_dir)
+
+    print("[curl vendor] Installing …")
+    subprocess.check_call(["cmake", "--install", "."], cwd=build_dir)
+
+    print(f"[curl vendor] Done — {CURL_STATIC_LIB}")
+
+
+# ---------------------------------------------------------------------------
+# Vendor curl if the built static library is not present.
+# ---------------------------------------------------------------------------
+if not os.path.exists(CURL_STATIC_LIB):
+    _vendor_curl()
+
+# ---------------------------------------------------------------------------
+# Build the GDExtension
+# ---------------------------------------------------------------------------
 env = SConscript("godot-cpp/SConstruct")
 
-env.Append(CPPPATH=["src/"])
+env.Append(CPPPATH=["src/", CURL_INCLUDE_DIR])
+env.Append(LIBPATH=[os.path.join(CURL_PREFIX, "lib")])
+# Link the static libcurl directly so no system curl is needed at runtime.
+env.Append(LIBS=["curl"])
+
 sources = Glob("src/*.cpp")
 
 library = env.SharedLibrary(
