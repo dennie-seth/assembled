@@ -7,7 +7,7 @@
  * Design contract
  * ---------------
  * - One `CurlPump` node per scene tree.  Add it as an autoload or as a child
- *   of the scene root; it enables processing in `_ready()` automatically.
+ *   of the scene root; processing is enabled in `_ready()` automatically.
  * - `_process()` delegates entirely to `tick()`.  Tests call `tick()` directly
  *   to drive the pump without a running game loop.
  * - `enqueue_get()` fires a one-shot GET request.  Responses are currently
@@ -42,22 +42,21 @@ class CurlPump : public Node {
     CurlPump();
     ~CurlPump() override;
 
-    /// Called by the engine each frame; delegates to tick().
+    /// Enable `_process` once the node enters the scene tree.
+    void _ready() override;
+
+    /// Called by the engine each frame; delegates to `tick()`.
     void _process(double delta) override;
 
     /**
      * @brief Drive the multi-handle for one frame tick.
      *
-     * Calls `curl_multi_perform()` (non-blocking) and drains any completed
-     * transfer messages from the multi-handle's info queue.  Completed easy
-     * handles are removed and cleaned up automatically.
+     * Calls `curl_multi_perform()` (non-blocking) then drains completed
+     * transfer messages from the multi-handle's info queue.  Public so that
+     * headless tests can drive the pump without a running scene tree.
      *
-     * Public so that headless tests can call it directly without a running
-     * scene tree (T-0062 timing test).
-     *
-     * @param delta Seconds since the last frame (passed through from
-     *              `_process`; not used by the multi-handle but preserved
-     *              so the signature mirrors the engine contract).
+     * @param delta Seconds since the last frame (mirrors the engine contract;
+     *              not consumed by the multi-handle itself).
      */
     void tick(double delta);
 
@@ -65,18 +64,17 @@ class CurlPump : public Node {
      * @brief Enqueue a fire-and-forget HTTP GET request.
      *
      * The response body is discarded.  T-0063 will add a result-signal variant
-     * that forwards the body to GDScript.
+     * that forwards the response to GDScript.
      *
      * @param url Full URL including scheme, e.g. "http://127.0.0.1:8080/ping".
-     *            Invalid URLs produce a no-op (the easy handle is cleaned up
-     *            without being added to the multi).
+     *            Invalid URLs produce a no-op (the easy handle is discarded).
      */
     void enqueue_get(const String &url);
 
     /**
      * @brief Number of transfers currently running inside the multi-handle.
-     * @return Count returned by the most recent `curl_multi_perform()` call,
-     *         or 0 if the multi-handle was never initialised.
+     * @return Count from the most recent `curl_multi_perform()` call, or 0
+     *         if the multi-handle was never initialised.
      */
     int get_running_count() const;
 
@@ -84,11 +82,15 @@ class CurlPump : public Node {
     static void _bind_methods();
 
   private:
+    /// Owns a CURL* easy handle and its URL buffer.  RAII: url outlives easy.
+    struct InFlight {
+        CURL *easy = nullptr;
+        std::string url; ///< kept alive because CURLOPT_URL doesn't copy it
+    };
+
     CURLM *multi_ = nullptr;
     int running_ = 0;
-
-    /// Owned easy handles currently tracked by the multi-handle.
-    std::vector<CURL *> in_flight_;
+    std::vector<InFlight> in_flight_;
 
     /// Discard-all write callback (response body not needed by this layer).
     static size_t discard_write(void *buf, size_t size, size_t nmemb,

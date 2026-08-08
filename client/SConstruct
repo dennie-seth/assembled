@@ -27,6 +27,7 @@ To force a re-vendor (e.g. after bumping CURL_VERSION): delete
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -86,6 +87,10 @@ def _vendor_curl():
             CURL_SRC_DIR,
             f"-DCMAKE_INSTALL_PREFIX={CURL_PREFIX}",
             "-DCMAKE_BUILD_TYPE=Release",
+            # Position-independent code is required when linking a static lib
+            # into a shared library (.so / .dll).  Without this the linker
+            # rejects the object files with "recompile with -fPIC".
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
             # Static library only — no shared lib dependency at runtime.
             "-DBUILD_SHARED_LIBS=OFF",
             # Don't build the curl CLI tool — we only need the library.
@@ -127,10 +132,37 @@ def _vendor_curl():
     print(f"[curl vendor] Done — {CURL_STATIC_LIB}")
 
 
+def _curl_needs_rebuild() -> bool:
+    """Return True if curl must be (re)vendored.
+
+    Checks for two conditions:
+    1. The static library is missing entirely.
+    2. The cached build was compiled WITHOUT position-independent code (-fPIC),
+       which causes the linker to fail when the lib is pulled into our .so.
+       Detected by inspecting the CMakeCache generated during the prior run.
+    """
+    if not os.path.exists(CURL_STATIC_LIB):
+        return True
+    cmake_cache = os.path.join(CURL_SRC_DIR, "_build", "CMakeCache.txt")
+    if not os.path.exists(cmake_cache):
+        return False  # no cache → assume the manual/external build is fine
+    with open(cmake_cache) as fh:
+        cache_text = fh.read()
+    if "CMAKE_POSITION_INDEPENDENT_CODE:BOOL=ON" not in cache_text:
+        print(
+            "[curl vendor] Stale build detected: missing -fPIC.\n"
+            "  Removing old install + build tree and rebuilding …"
+        )
+        shutil.rmtree(os.path.join(CURL_SRC_DIR, "_build"), ignore_errors=True)
+        shutil.rmtree(CURL_PREFIX, ignore_errors=True)
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
-# Vendor curl if the built static library is not present.
+# Vendor curl if the built static library is absent or stale.
 # ---------------------------------------------------------------------------
-if not os.path.exists(CURL_STATIC_LIB):
+if _curl_needs_rebuild():
     _vendor_curl()
 
 # ---------------------------------------------------------------------------

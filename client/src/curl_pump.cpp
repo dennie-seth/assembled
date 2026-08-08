@@ -16,14 +16,9 @@ CurlPump::CurlPump() {
 }
 
 CurlPump::~CurlPump() {
-    for (CURL *easy : in_flight_) {
-        // Retrieve the heap-allocated URL string stored as private data.
-        char *raw = nullptr;
-        curl_easy_getinfo(easy, CURLINFO_PRIVATE, &raw);
-        delete reinterpret_cast<std::string *>(raw); // NOLINT(cppcoreguidelines-owning-memory)
-
-        curl_multi_remove_handle(multi_, easy);
-        curl_easy_cleanup(easy);
+    for (InFlight &entry : in_flight_) {
+        curl_multi_remove_handle(multi_, entry.easy);
+        curl_easy_cleanup(entry.easy);
     }
     in_flight_.clear();
 
@@ -39,6 +34,8 @@ CurlPump::~CurlPump() {
 // Node overrides
 // ---------------------------------------------------------------------------
 
+void CurlPump::_ready() { set_process(true); }
+
 void CurlPump::_process(double delta) { tick(delta); }
 
 // ---------------------------------------------------------------------------
@@ -50,10 +47,10 @@ void CurlPump::tick(double /*delta*/) {
         return;
     }
 
-    // Non-blocking: pump whatever I/O work is ready without waiting.
+    // Non-blocking: pump whatever I/O is ready without waiting for more.
     curl_multi_perform(multi_, &running_);
 
-    // Drain completed transfer messages and free finished handles.
+    // Drain completed transfer messages and release finished handles.
     int msgs = 0;
     while (CURLMsg *msg = curl_multi_info_read(multi_, &msgs)) {
         if (msg->msg == CURLMSG_DONE) {
@@ -72,29 +69,25 @@ void CurlPump::enqueue_get(const String &url) {
         return;
     }
 
-    // CURLOPT_URL does not copy the string — we need the buffer to outlive
-    // the transfer.  Heap-allocate an std::string and recover it in
-    // cleanup_easy() via CURLINFO_PRIVATE.
-    auto *owned_url = new std::string(url.utf8().get_data()); // NOLINT(cppcoreguidelines-owning-memory)
+    // Store the URL in an InFlight entry before passing its c_str() to curl.
+    // CURLOPT_URL does NOT copy the string; the buffer must outlive the
+    // transfer.  Storing it in the struct guarantees that.
+    in_flight_.push_back({easy, std::string(url.utf8().get_data())});
+    const std::string &stored = in_flight_.back().url;
 
-    curl_easy_setopt(easy, CURLOPT_URL, owned_url->c_str());
-    // Thread safety: never deliver signals from libcurl.
+    curl_easy_setopt(easy, CURLOPT_URL, stored.c_str());
+    // Prevent libcurl from delivering signals on the game's main thread.
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     // Discard the response body; T-0063 adds a real data sink.
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &CurlPump::discard_write);
     curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 5000L);
     curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, 2000L);
-    // Carry the owned URL pointer so cleanup_easy() can free it.
-    curl_easy_setopt(easy, CURLOPT_PRIVATE, owned_url);
 
     CURLMcode rc = curl_multi_add_handle(multi_, easy);
     if (rc != CURLM_OK) {
-        delete owned_url; // NOLINT(cppcoreguidelines-owning-memory)
+        in_flight_.pop_back(); // rolls back the entry we just pushed
         curl_easy_cleanup(easy);
-        return;
     }
-
-    in_flight_.push_back(easy);
 }
 
 int CurlPump::get_running_count() const { return running_; }
@@ -109,14 +102,11 @@ size_t CurlPump::discard_write(void * /*buf*/, size_t size, size_t nmemb,
 }
 
 void CurlPump::cleanup_easy(CURL *easy) {
-    char *raw = nullptr;
-    curl_easy_getinfo(easy, CURLINFO_PRIVATE, &raw);
-    delete reinterpret_cast<std::string *>(raw); // NOLINT(cppcoreguidelines-owning-memory)
-
     curl_multi_remove_handle(multi_, easy);
     curl_easy_cleanup(easy);
 
-    auto it = std::find(in_flight_.begin(), in_flight_.end(), easy);
+    auto it = std::find_if(in_flight_.begin(), in_flight_.end(),
+                           [easy](const InFlight &e) { return e.easy == easy; });
     if (it != in_flight_.end()) {
         in_flight_.erase(it);
     }
