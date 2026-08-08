@@ -11,6 +11,12 @@
 > below for the full sweep this triggered: every user-facing rule the board
 > depends on, whether it's tested today, and what's left.
 >
+> **Headline finding in this PR: [PULL-1](#6-deploy-propagation-pull-on-done)**
+> — the live board's *only* auto-deploy path (pull `origin/develop` when a
+> card is marked done) silently went dead on the 2026-08-07 db-mode cutover,
+> and nothing caught it. Fixed here, with a regression test that fails
+> against the pre-fix code.
+>
 > Status legend: ✅ Covered · ⚠️ Partially covered · ❌ NOT covered
 
 ---
@@ -117,6 +123,20 @@ db mode — flows through before touching rendered state.
 | RUN-2 | A card already running cannot be run again concurrently. | Two orchestrator runs on the same card/worktree would race each other's git state. | ✅ Covered — `httpApi.test.js` "returns 409 when running a card that already has an active run". |
 | RUN-3 | The Run affordance must reflect actual readiness: a card whose own dependencies are unmet (DOT-1 shows 🔴) cannot be started via Run, matching LC-4's guard on manual `PATCH →in-progress`. | Same rule as LC-5 above — listed here too since "Run gating" was called out as its own area. The client doesn't hide the Run button based on the dependency dot (`boardView.js`'s Run button is gated only on `task.status === "ready"`), so the server-side check is the only enforcement point. | ❌ **Was NOT covered, and the code violated it.** Fixed in this PR (see LC-5). |
 
+## 6. Deploy propagation (pull-on-done)
+
+This area is different in kind from §1–5: it's not about what renders on a
+card, but about whether merged code on `origin/develop` ever reaches the
+live board process at all. It's the headline finding of this PR — a real,
+already-shipped regression, not just a coverage gap discovered by
+enumeration.
+
+| ID | Invariant | Why it matters | Status |
+|----|-----------|-----------------|--------|
+| PULL-1 | Marking a card `done` triggers a pull of `origin/develop` into `repoRoot`, **independent of task-store mode** (fs or db). | This is the live board's *only* auto-deploy mechanism — there is no timer or other trigger (confirmed: `systemctl --user list-timers` on the live host shows only asset-sync/backup/integrity-check timers, nothing pull-related). `handlePatchTask` (`httpApi.js`) gated the pull with `taskStoreKind !== "db"`, reasoning that "card writes never touch git in db mode" — true, but irrelevant to this invariant: `repoRoot` is still a real, live checkout of `develop` in db mode (Phase 2 keeps `tasks/` git-tracked alongside the DB), and *other* merged PRs still need to reach it. When the live board was cut over to `BOARD_TASK_STORE=db` on 2026-08-07, this gate silently killed the only auto-deploy path — merged code stopped reaching the live tree with no error, no log line, nothing. First noticed 2026-08-08 when the user reported merged code wasn't showing up live. | ❌ **Was NOT covered, and shipped broken for a day.** Fixed in this PR: the `taskStoreKind !== "db"` condition is dropped from the gate. New regression tests in `httpApi.dbMode.test.js` (`PULL-1: ...`), confirmed failing against the pre-fix code before the fix landed. |
+| PULL-2 | The pull never blocks or delays the PATCH response — it's fire-and-forget, and a failed pull (network down, no `develop` ref, merge conflict) still returns 200 with the card's updated status. | A flaky/offline git remote must not make marking a card done appear to fail. | ✅ Covered — `httpApi.done.test.js` "still returns 200 even when pullDevelop rejects". |
+| PULL-3 | The pull itself is never gated on whether a card run is active, but a **service restart** triggered by the pull (`restartCoordinator.notifyPulled`) *is* deferred while `orchestrator.hasActiveRuns()` is true. | These are deliberately different gates on different risks. `pullDevelop` runs `git pull` against `repoRoot` only; a card's live run happens in its own `git worktree` (`gitOps.addWorktree`, on a `feature/T-XXXX` branch) — a separate working tree and HEAD that a pull into `repoRoot`'s `develop` checkout cannot touch or interrupt. What *would* interrupt a live run is restarting the board's Node process out from under the in-process `RunOrchestrator` — that's the actual risk, and it's the thing already deferred. Gating the pull itself on "no live run" (rather than just the restart) would be over-broad and would reintroduce a version of this same bug: a long-running card would indefinitely block *all* deploys, not just its own restart. | ✅ Covered — `httpApi.done.test.js` "restart-on-pull coordination" (fs mode, 4 tests) and the new `httpApi.dbMode.test.js` "PULL-1: defers the restart-on-pull coordinator... in db mode too" (confirms the same deferral holds in db mode, not just fs mode). |
+
 ---
 
 ## Summary
@@ -128,6 +148,7 @@ db mode — flows through before touching rendered state.
 | Create/update | CR-2, CR-3 | CR-1 | — | — |
 | WS event application | WS-1..4 | — | WS-5, WS-6, WS-7, WS-8 | — |
 | Run gating | RUN-1, RUN-2 | — | RUN-3 (= LC-5) | — |
+| Deploy propagation | PULL-2, PULL-3 | — | **PULL-1 (headline)** | — |
 
 **Deferred, not silently dropped:** LC-7 (no guard against a manual card edit
 racing an active orchestrator run) is a real, confirmed gap found while
