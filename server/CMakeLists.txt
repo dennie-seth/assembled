@@ -47,6 +47,7 @@ add_library(assembled_server_lib OBJECT
   src/RateLimiter.cpp
   src/IdentityController.cpp
   src/NoteRepo.cpp
+  src/NoteController.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -93,3 +94,12 @@ add_executable(note_repo_tests
 )
 target_link_libraries(note_repo_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(note_repo_tests)
+
+# T-0045: NoteController HTTP handler tests — separate binary (same
+# singleton rationale as above).
+# note_handler_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(note_handler_tests
+  test/note_handler_test.cpp
+)
+target_link_libraries(note_handler_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(note_handler_tests)
