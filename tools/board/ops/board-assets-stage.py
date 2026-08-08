@@ -57,6 +57,13 @@ TYPE_MAP = {
 }
 RESERVED_DIRNAMES = {"_rclone_logs", ".stage-tmp"}
 
+# Pinned/untracked entries whose canonical Notion row title (matched by
+# Drive folder id, not name) does not match what's mechanically derivable
+# from the manifest heading. Keep in sync with the actual Notion row title.
+UNTRACKED_TITLE_OVERRIDES = {
+    "UNTRACKED-keyart": "UNTRACKED — Signal Tower key art",
+}
+
 
 def log(msg):
     print(f"[stage] {msg}", file=sys.stderr)
@@ -82,7 +89,9 @@ def load_all_cards():
 def classify(filename: str) -> str:
     ext = Path(filename).suffix.lower()
     if ".provenance." in filename or ".meta." in filename:
-        return "metadata"
+        # Notion's Asset types multi-select only allows
+        # image/audio/doc/result/code/other -- no bespoke "metadata" value.
+        return "other"
     return TYPE_MAP.get(ext, "other")
 
 
@@ -286,6 +295,8 @@ def parse_manifest_for_index(task_dir: Path, cards: dict):
     agent = live.get("agent") if live else table_field("Producing agent")
     if live and live.get("title"):
         card_title = live["title"]
+    if tid in UNTRACKED_TITLE_OVERRIDES:
+        card_title = UNTRACKED_TITLE_OVERRIDES[tid]
     if status is None:
         status = table_field("Status") or "unknown"
     if agent is None:
