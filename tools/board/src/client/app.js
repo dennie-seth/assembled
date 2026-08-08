@@ -202,7 +202,11 @@ export function createApp({
   async function handleCreateSubmit(payload) {
     try {
       const created = await createTaskImpl(payload);
-      tasks = [...tasks, created];
+      // Upsert by id rather than blindly appending: the server's WS broadcast for this
+      // same create can reach handleSocketMessage before this POST promise resolves,
+      // and applyTaskEvent will have already inserted it -- appending unconditionally
+      // here would produce a second, duplicate card until the next full refresh.
+      tasks = applyTaskEvent(tasks, { type: "added", id: created.id, task: created });
       createFormOpen = false;
       createError = null;
       error = null;

@@ -5,6 +5,7 @@ import {
   buildStatusPatch,
   applyTaskEvent,
   computeBlockerCounts,
+  computeUnblockedIds,
   sortTasks
 } from "../../src/client/board.js";
 
@@ -198,5 +199,72 @@ describe("sortTasks", () => {
     ];
     expect(sortTasks(tasks, "oldest").map((x) => x.id)).toEqual(["T-0001", "T-0002", "T-0003"]);
     expect(sortTasks(tasks, "newest").map((x) => x.id)).toEqual(["T-0001", "T-0002", "T-0003"]);
+  });
+});
+
+describe("computeUnblockedIds", () => {
+  it("returns an empty set when no tasks have dependencies", () => {
+    const tasks = [task({ id: "T-0001", depends_on: [] }), task({ id: "T-0002", depends_on: [] })];
+    expect(computeUnblockedIds(tasks).size).toBe(0);
+  });
+
+  it("includes a task id when all its dependencies are done", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "done" })
+    ];
+    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(true);
+  });
+
+  it("includes a task id when all its dependencies are retired", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "retired" })
+    ];
+    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(true);
+  });
+
+  it("includes a task id when dependencies mix done and retired", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
+      task({ id: "T-0002", status: "done" }),
+      task({ id: "T-0003", status: "retired" })
+    ];
+    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(true);
+  });
+
+  it("does not include a task when a dependency is not done or retired", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "in-progress" })
+    ];
+    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(false);
+  });
+
+  it("does not include a task when any dependency is not yet terminal even if others are done", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
+      task({ id: "T-0002", status: "done" }),
+      task({ id: "T-0003", status: "ready" })
+    ];
+    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(false);
+  });
+
+  it("does not include a task when a dependency id is missing from the task list", () => {
+    const tasks = [task({ id: "T-0001", depends_on: ["T-0099"] })];
+    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(false);
+  });
+
+  it("does not include a task with an empty depends_on array", () => {
+    const tasks = [task({ id: "T-0001", depends_on: [] })];
+    expect(computeUnblockedIds(tasks).has("T-0001")).toBe(false);
+  });
+
+  it("returns a Set (not an array)", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "done" })
+    ];
+    expect(computeUnblockedIds(tasks)).toBeInstanceOf(Set);
   });
 });

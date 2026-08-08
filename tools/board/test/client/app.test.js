@@ -771,6 +771,46 @@ describe("createApp create-card wiring", () => {
     expect(createFormRoot.hidden).toBe(false);
   });
 
+  it("does not duplicate the card when the WS added-echo for the same id arrives before the create POST resolves (race)", async () => {
+    const created = task({ id: "T-0002", title: "Brand new" });
+    let resolveCreate;
+    const createTaskImpl = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        })
+    );
+    const { app, boardRoot } = makeApp({ createTaskImpl });
+    await app.init();
+    app.handleToggleCreateForm();
+
+    const submitPromise = app.handleCreateSubmit({ title: "Brand new", phase: 1 });
+    // The server broadcasts the "added" event to all clients, including the one that
+    // submitted the create -- it can reach this client over the socket before the HTTP
+    // POST promise resolves.
+    app.handleSocketMessage({ type: "added", id: "T-0002", task: created });
+    resolveCreate(created);
+    await submitPromise;
+
+    expect(app.getTasks().filter((t) => t.id === "T-0002")).toHaveLength(1);
+    expect(boardRoot.querySelectorAll('.card[data-id="T-0002"]')).toHaveLength(1);
+  });
+
+  it("does not duplicate the card when the WS added-echo for the same id arrives after the create POST resolves", async () => {
+    const created = task({ id: "T-0002", title: "Brand new" });
+    const { app, boardRoot } = makeApp({
+      createTaskImpl: vi.fn().mockResolvedValue(created)
+    });
+    await app.init();
+    app.handleToggleCreateForm();
+
+    await app.handleCreateSubmit({ title: "Brand new", phase: 1 });
+    app.handleSocketMessage({ type: "added", id: "T-0002", task: created });
+
+    expect(app.getTasks().filter((t) => t.id === "T-0002")).toHaveLength(1);
+    expect(boardRoot.querySelectorAll('.card[data-id="T-0002"]')).toHaveLength(1);
+  });
+
   it("closes the form without creating anything on handleCancelCreate", async () => {
     const { app, createFormRoot, createTaskImpl } = makeApp();
     await app.init();

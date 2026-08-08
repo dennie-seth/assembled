@@ -49,7 +49,7 @@ export async function assertCanMoveToInProgress(store, taskId) {
   const unmetIds = [];
   for (const depId of task.depends_on) {
     const dep = await store.get(depId);
-    if (!dep || dep.status !== "done") {
+    if (!dep || (dep.status !== "done" && dep.status !== "retired")) {
       unmetIds.push(depId);
     }
   }
