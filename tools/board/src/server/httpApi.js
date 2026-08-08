@@ -375,10 +375,14 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     hub.broadcast({ type: "changed", id, task: updated });
   }
 
-  // Done-triggered pullDevelop exists to fetch code that card commits (this repo's own, and
-  // others') had pushed -- meaningless in db mode, since card writes never touch git there
-  // (docs/design/cards-to-database.md, Phase 2).
-  if (taskStoreKind !== "db" && updated.status === "done" && repoRoot) {
+  // Done-triggered pullDevelop exists to fetch code that OTHER merged PRs have pushed to
+  // origin/develop, so it must fire in every task-store mode: `repoRoot` is still a real
+  // git checkout of develop even in db mode (docs/design/cards-to-database.md, Phase 2
+  // keeps tasks/ git-tracked alongside the DB). Whether *this card's own write* touches
+  // git is unrelated and handled separately above -- conflating the two previously gated
+  // this off entirely in db mode, silently killing the live board's only auto-deploy path
+  // after the 2026-08-07 cutover (docs/board-invariants.md PULL-1).
+  if (updated.status === "done" && repoRoot) {
     // Fire-and-forget: pull (and any restart it triggers) must not block this response.
     pullDevelop({ repoRoot })
       .then((result) => {

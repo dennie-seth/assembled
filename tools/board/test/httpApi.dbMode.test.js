@@ -8,6 +8,13 @@ import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { IdAllocatorDb } from "../src/lib/db/idAllocatorDb.js";
 import { startHttpServer } from "../src/server/httpApi.js";
 
+vi.mock("../src/runner/gitOps.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, pullDevelop: vi.fn() };
+});
+
+import { pullDevelop } from "../src/runner/gitOps.js";
+
 const execFileAsync = promisify(execFile);
 
 async function git(args, cwd) {
@@ -29,6 +36,8 @@ let server;
 let baseUrl;
 
 beforeEach(async () => {
+  vi.clearAllMocks();
+  pullDevelop.mockResolvedValue({ advanced: false, before: "aaa", after: "aaa" });
   // A real git repo with tasks/ tracked -- the Phase 2 dual-track window: db mode is live, but
   // tasks/ still has real fs-mode content checked out from develop until Phase 3 removes it.
   repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "board-httpapi-dbmode-"));
@@ -120,7 +129,15 @@ describe("db mode -- PATCH /api/tasks/:id", () => {
     expect(hub.broadcast).toHaveBeenCalledWith({ type: "changed", id: task.id, task: expect.objectContaining({ status: "ready" }) });
   });
 
-  it("does not call pullDevelop when a card moves to done -- meaningless once card writes never touch git", async () => {
+  // PULL-1 (docs/board-invariants.md): merged code on origin/develop must reach the live
+  // board when a card completes, independent of task-store mode. This regressed silently
+  // on the 2026-08-07 db-mode cutover -- the pull-on-done hook was gated on
+  // `taskStoreKind !== "db"`, on the (wrong) reasoning that "this card's own write never
+  // touches git in db mode" also meant "pulling in *other* merged PRs is meaningless" here.
+  // It doesn't: `repoRoot` is still a real git checkout of origin/develop in db mode (the
+  // Phase 2 dual-track window -- see the file-level comment above), so other merged code
+  // still needs to reach it. No test caught the gate going permanently dead on cutover.
+  it("PULL-1: calls pullDevelop with the configured repoRoot when a card moves to done, even in db mode", async () => {
     const task = await createTask();
 
     const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
@@ -130,10 +147,63 @@ describe("db mode -- PATCH /api/tasks/:id", () => {
     });
     expect(res.status).toBe(200);
 
-    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(pullDevelop).toHaveBeenCalledWith({ repoRoot }));
+    // The card write itself still never touches git in db mode -- only the pull-in of
+    // *other* commits does, and pullDevelop is mocked here so it can't actually happen.
     expect(await gitLogCount()).toBe(1);
     const { stdout: status } = await git(["status", "--porcelain"], repoRoot);
     expect(status.trim()).toBe("");
+  });
+
+  it("PULL-1: does not call pullDevelop when a db-mode card is patched to a non-done status", async () => {
+    const task = await createTask();
+
+    await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "ready" })
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(pullDevelop).not.toHaveBeenCalled();
+  });
+
+  it("PULL-1: defers the restart-on-pull coordinator while a card run is active, in db mode too", async () => {
+    pullDevelop.mockResolvedValueOnce({ advanced: true, before: "aaa", after: "bbb" });
+    const restartCoordinator = { notifyPulled: vi.fn(), notifyIdle: vi.fn() };
+    const orchestrator = { hasActiveRuns: vi.fn(() => true) };
+    const withOrchestrator = await startHttpServer({
+      store,
+      idAllocator: new IdAllocatorDb(store.db),
+      repoRoot,
+      tasksDir,
+      dataDir,
+      taskStoreKind: "db",
+      hub,
+      orchestrator,
+      restartCoordinator,
+      port: 0
+    });
+    const { port } = withOrchestrator.address();
+    const url = `http://127.0.0.1:${port}`;
+
+    const task = await (
+      await fetch(`${url}/api/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Db restart-deferred task", phase: 1 })
+      })
+    ).json();
+
+    await fetch(`${url}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" })
+    });
+
+    await vi.waitFor(() => expect(restartCoordinator.notifyPulled).toHaveBeenCalledWith({ hasActiveRuns: true }));
+
+    await new Promise((resolve) => withOrchestrator.close(resolve));
   });
 });
 
