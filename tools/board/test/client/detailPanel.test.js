@@ -423,6 +423,173 @@ describe("renderDetailPanel draft preservation across live re-renders", () => {
   });
 });
 
+describe("renderDetailPanel unsaved edits survive live re-renders (T-0151)", () => {
+  // The comment-draft fix above only protects whichever single field currently has
+  // focus. The deps picker is a compound widget (a <select> plus removable chips) that
+  // is rebuilt from scratch every render, so an added-but-unsaved dependency chip was
+  // wiped by the very next live "changed"/"added" event -- reported live: "when I'm
+  // trying to add a dependency and scroll down to save the task, the dependency gets
+  // removed before I even have a chance to save it." These simulate that exact
+  // re-render (same task id, called again after a local edit) for the deps picker and
+  // the other editable fields the focus-only mechanism didn't cover (priority, status,
+  // agent, phase), while also asserting a genuinely unedited field still picks up a
+  // legitimate incoming server change.
+
+  it("preserves an added-but-unsaved dependency chip across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const t = task({ id: "T-0001", depends_on: [] });
+    renderDetailPanel(root, t, baseOpts());
+
+    selectDep(root, "T-0002");
+    expect(root.querySelectorAll(".detail-deps-edit .deps-chip").length).toBe(1);
+
+    // Simulate a live-update tick for the same card (e.g. another field changing,
+    // broadcast over the board socket) re-rendering the still-selected detail panel.
+    renderDetailPanel(root, task({ id: "T-0001", depends_on: [], attempts: 1 }), baseOpts());
+
+    const chips = root.querySelectorAll(".detail-deps-edit .deps-chip");
+    expect(chips.length).toBe(1);
+    expect(chips[0].dataset.id).toBe("T-0002");
+    document.body.removeChild(root);
+  });
+
+  it("preserves a removed-but-unsaved dependency chip across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const t = task({ id: "T-0001", depends_on: ["T-0002"] });
+    renderDetailPanel(root, t, baseOpts());
+
+    root.querySelector('.detail-deps-edit .deps-chip[data-id="T-0002"] .deps-chip-remove').dispatchEvent(
+      new Event("click", { bubbles: true })
+    );
+    expect(root.querySelectorAll(".detail-deps-edit .deps-chip").length).toBe(0);
+
+    renderDetailPanel(root, task({ id: "T-0001", depends_on: ["T-0002"], attempts: 1 }), baseOpts());
+
+    expect(root.querySelectorAll(".detail-deps-edit .deps-chip").length).toBe(0);
+    document.body.removeChild(root);
+  });
+
+  it("preserves an unsaved priority change (an unfocused <select>) across a re-render", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001", priority: "P2" }), baseOpts());
+
+    root.querySelector(".detail-priority").value = "P0";
+
+    renderDetailPanel(root, task({ id: "T-0001", priority: "P2", attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-priority").value).toBe("P0");
+    document.body.removeChild(root);
+  });
+
+  it("preserves an unsaved status change across a re-render", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001", status: "backlog" }), baseOpts());
+
+    root.querySelector(".detail-status").value = "ready";
+
+    renderDetailPanel(root, task({ id: "T-0001", status: "backlog", attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-status").value).toBe("ready");
+    document.body.removeChild(root);
+  });
+
+  it("preserves an unsaved agent change across a re-render", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001", agent: "infra" }), baseOpts());
+
+    root.querySelector(".detail-agent").value = "server";
+
+    renderDetailPanel(root, task({ id: "T-0001", agent: "infra", attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-agent").value).toBe("server");
+    document.body.removeChild(root);
+  });
+
+  it("preserves an unsaved phase change across a re-render", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001", phase: 1 }), baseOpts());
+
+    root.querySelector(".detail-phase").value = "4";
+
+    renderDetailPanel(root, task({ id: "T-0001", phase: 1, attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-phase").value).toBe("4");
+    document.body.removeChild(root);
+  });
+
+  it("preserves an unsaved title edit even after focus has moved elsewhere (e.g. into the deps picker)", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001", title: "Original title" }), baseOpts());
+
+    root.querySelector(".detail-title").value = "Renamed but not saved";
+    // Move focus away from the title, onto the deps picker's select -- the pre-existing
+    // focus-only capture mechanism would lose the title edit here.
+    root.querySelector(".detail-deps-edit .deps-picker-select").focus();
+
+    renderDetailPanel(root, task({ id: "T-0001", title: "Original title", attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-title").value).toBe("Renamed but not saved");
+    document.body.removeChild(root);
+  });
+
+  it("still applies a legitimate incoming change to a field the user did not touch", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001", priority: "P2", status: "backlog" }), baseOpts());
+
+    // Only touch priority; leave status untouched.
+    root.querySelector(".detail-priority").value = "P0";
+
+    renderDetailPanel(root, task({ id: "T-0001", priority: "P2", status: "ready" }), baseOpts());
+
+    expect(root.querySelector(".detail-priority").value).toBe("P0");
+    expect(root.querySelector(".detail-status").value).toBe("ready");
+    document.body.removeChild(root);
+  });
+
+  it("does not carry an unsaved deps edit over to a newly selected, different task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001", depends_on: [] }), baseOpts());
+
+    selectDep(root, "T-0002");
+    expect(root.querySelectorAll(".detail-deps-edit .deps-chip").length).toBe(1);
+
+    renderDetailPanel(root, task({ id: "T-0003", depends_on: [] }), baseOpts());
+
+    expect(root.querySelectorAll(".detail-deps-edit .deps-chip").length).toBe(0);
+    document.body.removeChild(root);
+  });
+
+  it("discards unsaved edits once Save is clicked and the panel re-renders with the saved value", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001", priority: "P2" }), baseOpts({ onSave }));
+
+    root.querySelector(".detail-priority").value = "P0";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+    expect(onSave).toHaveBeenCalledWith("T-0001", { priority: "P0" });
+
+    // The save round-trip lands and the panel re-renders with the now-current server task.
+    renderDetailPanel(root, task({ id: "T-0001", priority: "P0" }), baseOpts({ onSave }));
+    expect(root.querySelector(".detail-priority").value).toBe("P0");
+
+    // A later, unrelated live update should now flow through normally -- no stale dirty
+    // state should be preserved from before the save.
+    renderDetailPanel(root, task({ id: "T-0001", priority: "P1" }), baseOpts({ onSave }));
+    expect(root.querySelector(".detail-priority").value).toBe("P1");
+    document.body.removeChild(root);
+  });
+});
+
 describe("renderDetailPanel attachments", () => {
   it("does not render the attachments section when onUploadAttachment is not provided", () => {
     const root = document.createElement("div");

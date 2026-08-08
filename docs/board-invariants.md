@@ -137,6 +137,20 @@ enumeration.
 | PULL-2 | The pull never blocks or delays the PATCH response — it's fire-and-forget, and a failed pull (network down, no `develop` ref, merge conflict) still returns 200 with the card's updated status. | A flaky/offline git remote must not make marking a card done appear to fail. | ✅ Covered — `httpApi.done.test.js` "still returns 200 even when pullDevelop rejects". |
 | PULL-3 | The pull itself is never gated on whether a card run is active, but a **service restart** triggered by the pull (`restartCoordinator.notifyPulled`) *is* deferred while `orchestrator.hasActiveRuns()` is true. | These are deliberately different gates on different risks. `pullDevelop` runs `git pull` against `repoRoot` only; a card's live run happens in its own `git worktree` (`gitOps.addWorktree`, on a `feature/T-XXXX` branch) — a separate working tree and HEAD that a pull into `repoRoot`'s `develop` checkout cannot touch or interrupt. What *would* interrupt a live run is restarting the board's Node process out from under the in-process `RunOrchestrator` — that's the actual risk, and it's the thing already deferred. Gating the pull itself on "no live run" (rather than just the restart) would be over-broad and would reintroduce a version of this same bug: a long-running card would indefinitely block *all* deploys, not just its own restart. | ✅ Covered — `httpApi.done.test.js` "restart-on-pull coordination" (fs mode, 4 tests) and the new `httpApi.dbMode.test.js` "PULL-1: defers the restart-on-pull coordinator... in db mode too" (confirms the same deferral holds in db mode, not just fs mode). |
 
+## 7. Detail panel live-update safety
+
+`renderDetailPanel` (`detailPanel.js`) is called on every render tick,
+including the ones triggered by a board-socket `"changed"`/`"added"` event for
+*any* card while the detail panel happens to be open on the still-selected
+one (`app.js`'s `handleSocketMessage` → `render()` → `renderDetailPanel` for
+whichever task is currently selected). It unconditionally tears the panel
+down (`root.replaceChildren()`) and rebuilds every field from `task`.
+
+| ID | Invariant | Why it matters | Status |
+|----|-----------|-----------------|--------|
+| DP-1 | An unsaved, in-progress edit to any detail-panel field (title, priority, status, agent, phase, dependencies, body, or an in-progress comment draft) survives a live re-render of the same still-open card, and is only discarded by clicking Save or closing/switching cards. | Reported live (T-0151): "when I'm trying to add a dependency and scroll down to save the task, the dependency gets removed before I even have a chance to save it." A card under active agent work (`in-progress`/`validation`) re-broadcasts `"changed"` (e.g. its `attempts` counter) often enough to land in that exact scroll-to-Save window. An earlier fix (T-0137) covered this only for whichever single field currently has DOM focus (comment/title/body/attachment inputs tagged `data-detail-field`); it explicitly left the priority/status/agent `<select>`s and the deps picker (a compound `<select>`-plus-chips widget, not a plain input) unprotected, and even for the fields it did cover, an edit was lost the moment focus moved to another field before the next re-render (e.g. typing a title, then clicking into the deps picker) — the mechanism keyed off `document.activeElement`, not "has this field been edited". | ❌ **Was NOT covered, and the code was wrong.** Fixed in this PR: `captureDirtyFields` diffs each field's live DOM value against the task object the panel was last built from, and carries forward only the fields that drifted. New tests in `detailPanel.test.js` ("unsaved edits survive live re-renders (T-0151)": deps add/remove, priority/status/agent/phase, title surviving a focus change, dirty state cleared after Save, no bleed-over to a different card) plus two `app.test.js` socket-level integration tests exercising the real `handleSocketMessage` path, all confirmed failing against the pre-fix code before the fix landed. |
+| DP-2 | A live re-render that does *not* touch a field the user hasn't edited still applies the server's latest value for that field (e.g. another user's comment appearing, or an unrelated field changing elsewhere). | The fix for DP-1 must not regress into "live updates never reach an open card" — that would hide real information (another reviewer's status change, a new comment) behind a stale local view. | ✅ Covered — same `detailPanel.test.js` describe block, "still applies a legitimate incoming change to a field the user did not touch"; also the pre-existing "keeps the detail panel in sync when the selected task changes over the socket" (`app.test.js`) and the T-0137 comment-list tests. |
+
 ---
 
 ## Summary
@@ -149,6 +163,7 @@ enumeration.
 | WS event application | WS-1..4 | — | WS-5, WS-6, WS-7, WS-8 | — |
 | Run gating | RUN-1, RUN-2 | — | RUN-3 (= LC-5) | — |
 | Deploy propagation | PULL-2, PULL-3 | — | **PULL-1 (headline)** | — |
+| Detail panel live-update safety | — | — | DP-1, DP-2 | — |
 
 **Deferred, not silently dropped:** LC-7 (no guard against a manual card edit
 racing an active orchestrator run) is a real, confirmed gap found while

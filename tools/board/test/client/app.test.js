@@ -601,6 +601,47 @@ describe("createApp card detail wiring", () => {
 
     expect(detailRoot.querySelector(".detail-title").value).toBe("Externally renamed");
   });
+
+  it("does not clobber an unsaved dependency selection when a socket 'changed' event arrives for the open card (T-0151)", async () => {
+    // Reported live: "when I'm trying to add a dependency and scroll down to save the
+    // task, the dependency gets removed before I even have a chance to save it." A card
+    // under active agent work re-broadcasts "changed" frequently enough (e.g. its
+    // `attempts` counter) to land squarely in that scroll-to-Save window.
+    const t = task({ id: "T-0001", depends_on: [] });
+    const other = task({ id: "T-0002", title: "Blocked-on candidate" });
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t, other]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    const depsSelect = detailRoot.querySelector(".detail-deps-edit .deps-picker-select");
+    depsSelect.value = "T-0002";
+    depsSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(detailRoot.querySelectorAll(".detail-deps-edit .deps-chip").length).toBe(1);
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...t, attempts: 1 } });
+
+    const chips = detailRoot.querySelectorAll(".detail-deps-edit .deps-chip");
+    expect(chips.length).toBe(1);
+    expect(chips[0].dataset.id).toBe("T-0002");
+  });
+
+  it("does not clobber an unsaved dependency selection when a socket 'added' event arrives for a different card", async () => {
+    const t = task({ id: "T-0001", depends_on: [] });
+    const other = task({ id: "T-0002", title: "Blocked-on candidate" });
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t, other]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    const depsSelect = detailRoot.querySelector(".detail-deps-edit .deps-picker-select");
+    depsSelect.value = "T-0002";
+    depsSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    app.handleSocketMessage({ type: "added", id: "T-0003", task: task({ id: "T-0003", title: "New card" }) });
+
+    const chips = detailRoot.querySelectorAll(".detail-deps-edit .deps-chip");
+    expect(chips.length).toBe(1);
+    expect(chips[0].dataset.id).toBe("T-0002");
+  });
 });
 
 describe("createApp Run / Cancel wiring", () => {
