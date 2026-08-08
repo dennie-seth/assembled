@@ -58,31 +58,31 @@ def _vendor_curl():
 
     # 1. Download tarball (skip if already present).
     if not os.path.exists(CURL_TARBALL_PATH):
-        print(f"[curl vendor] Downloading libcurl {CURL_VERSION} from curl.se …")
+        print(f"[curl vendor] Downloading libcurl {CURL_VERSION} from curl.se ...")
         try:
             urllib.request.urlretrieve(CURL_TARBALL_URL, CURL_TARBALL_PATH)
         except Exception as exc:  # noqa: BLE001
             print(
-                f"[curl vendor] ERROR: download failed — {exc}\n"
+                f"[curl vendor] ERROR: download failed -- {exc}\n"
                 f"  Manual fix: download {CURL_TARBALL_URL}\n"
                 f"  and place it at {CURL_TARBALL_PATH}, then re-run scons.",
                 file=sys.stderr,
             )
             sys.exit(1)
-        print(f"[curl vendor] Downloaded → {CURL_TARBALL_PATH}")
+        print(f"[curl vendor] Downloaded -> {CURL_TARBALL_PATH}")
 
     # 2. Extract source (skip if already present).
     if not os.path.exists(CURL_SRC_DIR):
-        print(f"[curl vendor] Extracting {CURL_TARBALL} …")
+        print(f"[curl vendor] Extracting {CURL_TARBALL} ...")
         with tarfile.open(CURL_TARBALL_PATH) as tf:
             tf.extractall(VENDOR_DIR)
-        print(f"[curl vendor] Extracted → {CURL_SRC_DIR}")
+        print(f"[curl vendor] Extracted -> {CURL_SRC_DIR}")
 
     # 3. Configure + build + install via CMake.
     build_dir = os.path.join(CURL_SRC_DIR, "_build")
     os.makedirs(build_dir, exist_ok=True)
 
-    print(f"[curl vendor] CMake configure (HTTP-only static, no SSL) …")
+    print(f"[curl vendor] CMake configure (HTTP-only static, no SSL) ...")
     subprocess.check_call(
         [
             "cmake",
@@ -125,10 +125,10 @@ def _vendor_curl():
     )
 
     jobs = str(os.cpu_count() or 4)
-    print(f"[curl vendor] Building with {jobs} parallel jobs …")
+    print(f"[curl vendor] Building with {jobs} parallel jobs ...")
     subprocess.check_call(["cmake", "--build", ".", f"-j{jobs}"], cwd=build_dir)
 
-    print("[curl vendor] Installing …")
+    print("[curl vendor] Installing ...")
     subprocess.check_call(["cmake", "--install", "."], cwd=build_dir)
 
     # Write a stamp so _curl_needs_rebuild() knows this install was built
@@ -137,7 +137,7 @@ def _vendor_curl():
     with open(CURL_PIC_STAMP, "w") as fh:
         fh.write(f"curl-{CURL_VERSION}-pic\n")
 
-    print(f"[curl vendor] Done — {CURL_STATIC_LIB}")
+    print(f"[curl vendor] Done -- {CURL_STATIC_LIB}")
 
 
 def _curl_needs_rebuild() -> bool:
@@ -156,7 +156,7 @@ def _curl_needs_rebuild() -> bool:
     if not os.path.exists(CURL_PIC_STAMP):
         print(
             "[curl vendor] Stale build detected: not built with -fPIC.\n"
-            "  Removing old install + build tree and rebuilding …"
+            "  Removing old install + build tree and rebuilding ..."
         )
         shutil.rmtree(os.path.join(CURL_SRC_DIR, "_build"), ignore_errors=True)
         shutil.rmtree(CURL_PREFIX, ignore_errors=True)
