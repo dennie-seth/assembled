@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "ComfyUI HTTP client + recipe->workflow layer driving the AssetAgent (T-0071, docs/design/13-asset-pipeline.md)"
 requires-python = ">=3.12"
 dependencies = [
-  "gen-client-base @ file:./../gen-client-base",
   "requests==2.32.3",
   "Pillow==11.0.0",
   "numpy==2.5.1",
@@ -32,6 +31,11 @@ comfy_client = ["templates/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# gen-client-base is a sibling monorepo package; pip can't resolve relative
+# file: URIs on Linux, so we add its src tree to sys.path for pytest runs.
+# Install it editably first if you need it outside of pytest:
+#   pip install -e ../gen-client-base
+pythonpath = ["../gen-client-base/src"]
 
 [tool.ruff]
 line-length = 100
