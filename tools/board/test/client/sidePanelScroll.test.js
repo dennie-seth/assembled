@@ -3,30 +3,21 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-// Tests for T-0142: guarantee every card is reachable by scrolling when the
-// side-panel is open, regardless of column count.
+// Tests for T-0142/side-panel-reflow: guarantee every column stays visible
+// (not painted under the fixed panel) when the side-panel is open, regardless
+// of column count or scroll position.
 //
-// Root cause: T-0141 set overflow-x:auto on .board, but overflow only appears
-// when columns naturally exceed the viewport width. With few columns the board
-// doesn't overflow, so the last column can sit behind the fixed, overlaying
-// side-panel with no scrollbar to reach it.
+// Root cause (T-0141): .board got padding-right: 28rem when the panel opened.
+// Padding only extends the *scrollable content*, so it helps once you scroll
+// there — it does nothing for columns already onscreen at the current scroll
+// position, which end up painted under the fixed, overlaying side-panel.
 //
-// Fix: when the side-panel is visible, .board gets padding-right: 28rem
-// (matching the side-panel width). This guarantees the board's scrollable
-// content overflows by at least the panel width, so the user can always scroll
-// the last column clear of the overlay.
-//
-// Mathematical basis: at max scroll position,
-//   lastColRightEdge_in_viewport = clientWidth - paddingRight
-// For paddingRight = panelWidth: the last column's right edge lands exactly at
-// the panel's left edge — fully visible, not behind it. Proof:
-//   scrollWidth   = colsWidth + paddingRight
-//   scrollMax     = scrollWidth - clientWidth
-//   afterMaxScroll position of last column right edge
-//               = colsWidth - scrollMax
-//               = colsWidth - (colsWidth + paddingRight - clientWidth)
-//               = clientWidth - paddingRight
-// With paddingRight = panelWidth: result = clientWidth - panelWidth = panel left edge.
+// Fix: when the side-panel is visible, .board gets margin-right: 28rem
+// instead — this shrinks the board's own visible box so its right edge
+// reflows to meet the panel's left edge, at any scroll position. Gated
+// behind a `min-width: 28rem` media query to match the panel's own
+// min(28rem, 100%) width formula: below that breakpoint the panel already
+// covers the full viewport, so shrinking the board further is unnecessary.
 
 beforeAll(() => {
   const css = fs.readFileSync(path.join(process.cwd(), "src/client/style.css"), "utf8");
@@ -57,34 +48,31 @@ function makeBoard(numCols) {
   return board;
 }
 
-describe("side-panel scroll reachability (T-0142)", () => {
-  it("few columns + panel open: board has 28rem right padding so the last column is not permanently hidden", () => {
-    // Few columns = fewer than would naturally overflow the viewport.
-    // Without the fix, no scrollbar appears and the last column is stuck behind the panel.
-    // The padding-right must be the full 28rem panel width (not just > 0).
+describe("side-panel reflow (T-0142 / side-panel-reflow)", () => {
+  it("few columns + panel open: board gets 28rem right margin so columns reflow clear of the panel", () => {
+    // Few columns = fewer than would naturally overflow the viewport. Under the old
+    // padding-right approach these never scrolled, so they sat permanently behind
+    // the panel. margin-right must apply regardless of column count.
     const panel = makeSidePanel({ hidden: false });
     const board = makeBoard(2);
     document.body.append(panel, board);
 
-    const paddingRight = getComputedStyle(board).paddingRight;
-    // happy-dom returns rem values as-is (e.g. "28rem").
-    // parseFloat("28rem") = 28; parseFloat("") = NaN; parseFloat("0px") = 0.
-    const remValue = parseFloat(paddingRight);
-    expect(remValue).toBeGreaterThanOrEqual(28);
+    // happy-dom resolves rem to px at 16px/rem (28rem -> "448px").
+    const marginRight = parseFloat(getComputedStyle(board).marginRight);
+    expect(marginRight).toBeGreaterThanOrEqual(448);
   });
 
-  it("many columns + panel open: board retains 28rem right padding so all columns are reachable in both directions", () => {
-    // Regression guard for T-0141: many columns still get the extra padding.
+  it("many columns + panel open: board still gets 28rem right margin", () => {
+    // Regression guard for T-0141: many columns still get the reflow margin.
     const panel = makeSidePanel({ hidden: false });
     const board = makeBoard(8);
     document.body.append(panel, board);
 
-    const paddingRight = getComputedStyle(board).paddingRight;
-    const remValue = parseFloat(paddingRight);
-    expect(remValue).toBeGreaterThanOrEqual(28);
+    const marginRight = parseFloat(getComputedStyle(board).marginRight);
+    expect(marginRight).toBeGreaterThanOrEqual(448);
   });
 
-  it("panel closed: board has no extra right padding so no spurious scrollbar appears", () => {
+  it("panel closed: board has no extra right margin so it uses the full available width", () => {
     // When the panel is hidden the overlay is gone; the conditional rule
     // body:has(#side-panel:not([hidden])) .board must NOT apply.
     // happy-dom returns "" for properties with no applied rule (no inline or
@@ -93,24 +81,40 @@ describe("side-panel scroll reachability (T-0142)", () => {
     const board = makeBoard(2);
     document.body.append(panel, board);
 
-    const paddingRight = getComputedStyle(board).paddingRight;
-    const remValue = parseFloat(paddingRight);
-    // NaN (empty string) and 0 both mean no padding was applied.
-    expect(remValue > 0).toBe(false);
+    const marginRight = getComputedStyle(board).marginRight;
+    const value = parseFloat(marginRight);
+    // NaN (empty string) and 0 both mean no margin was applied.
+    expect(value > 0).toBe(false);
   });
 
-  it("panel open: right padding value is at least 28rem so the last column clears the side-panel at max scroll", () => {
-    // The side-panel is min(28rem, 100%) wide; for any typical viewport this is
-    // 28rem. padding-right must be >= that value so at max scroll the last
-    // column's right edge lands at the panel's left edge (see math in header).
+  it("panel open: margin-right value is at least 28rem so columns fully clear the panel's left edge", () => {
+    // The side-panel is min(28rem, 100%) wide; margin-right must be >= that
+    // value so the board's visible right edge lands at (or left of) the
+    // panel's left edge, at any scroll position -- not just at max scroll.
     const panel = makeSidePanel({ hidden: false });
     const board = makeBoard(3);
     document.body.append(panel, board);
 
-    const paddingRight = getComputedStyle(board).paddingRight;
-    // happy-dom resolves rem to px at 16px/rem (28rem → "448px"), so
-    // parseFloat("448px") = 448. Either way, >= 28 holds (rem) or >= 448 holds (px).
-    const value = parseFloat(paddingRight);
-    expect(value).toBeGreaterThanOrEqual(28);
+    const marginRight = parseFloat(getComputedStyle(board).marginRight);
+    expect(marginRight).toBeGreaterThanOrEqual(448);
+  });
+
+  it("narrow viewport (<28rem): the reflow margin does not apply, since the panel already goes full-width and covers the board regardless", () => {
+    // Below the min-width: 28rem breakpoint, #side-panel's own
+    // min(28rem, 100%) width formula switches to 100% (full viewport), so it
+    // already covers the entire board. Applying margin-right there too would
+    // just collapse the board for no benefit once the panel closes again.
+    window.happyDOM.setViewport({ width: 320 });
+    try {
+      const panel = makeSidePanel({ hidden: false });
+      const board = makeBoard(2);
+      document.body.append(panel, board);
+
+      const marginRight = getComputedStyle(board).marginRight;
+      const value = parseFloat(marginRight);
+      expect(value > 0).toBe(false);
+    } finally {
+      window.happyDOM.setViewport({ width: 1024 });
+    }
   });
 });
