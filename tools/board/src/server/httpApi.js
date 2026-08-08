@@ -10,6 +10,7 @@ import {
 } from "../lib/dependencyGuard.js";
 import { listAssignableAgents } from "../lib/agentCatalog.js";
 import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
+import { appendNote } from "../runner/runOrchestrator.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
@@ -410,8 +411,22 @@ async function handleRunTask(orchestrator, id, res) {
 
   // Fire-and-forget: a run (implementer + reviewer) can take minutes. The
   // client follows progress over the board WS, not this response.
-  orchestrator.runCard(id).catch((err) => {
+  orchestrator.runCard(id).catch(async (err) => {
     console.error(`Agent Runner: run failed for ${id}:`, err);
+    try {
+      const current = await orchestrator.store.get(id);
+      if (current) {
+        const updated = await orchestrator.store.update(id, {
+          status: "blocked",
+          body: appendNote(current.body ?? "", "Run Failed", err.message),
+        });
+        if (orchestrator.hub) {
+          orchestrator.hub.broadcast({ type: "changed", id, task: updated });
+        }
+      }
+    } catch (e2) {
+      console.error(`Agent Runner: failed to persist run failure for ${id}:`, e2);
+    }
   });
 
   sendJson(res, 202, task);
