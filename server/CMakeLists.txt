@@ -93,3 +93,13 @@ add_executable(note_repo_tests
 )
 target_link_libraries(note_repo_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(note_repo_tests)
+
+# T-0046: GET /v1/notes — tag equality + ranking tests.
+# Separate binary: spins up a drogon::app() instance; must not share the
+# singleton with other test binaries.
+# notes_handler_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(notes_handler_tests
+  test/notes_handler_test.cpp
+)
+target_link_libraries(notes_handler_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(notes_handler_tests)
