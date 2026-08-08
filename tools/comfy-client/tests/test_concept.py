@@ -176,7 +176,11 @@ def test_generate_concept_conditioned_concept_hash_is_the_init_image_hash(
 
 def test_generate_concept_conditioned_records_denoise_from_recipe(tmp_path, init_image_path):
     recipe = Recipe(
-        prompt="brutalist concrete wall texture", seed=99, denoise=0.65, name="material_sheet"
+        prompt="brutalist concrete wall texture",
+        seed=99,
+        denoise=0.65,
+        name="material_sheet",
+        model_hash="b" * 64,
     )
     client = FakeConditionedClient()
     result = generate_concept_conditioned(
