@@ -249,6 +249,24 @@ describe("renderBoard blocker badges", () => {
 
     expect(root.querySelector('.card[data-id="T-0002"] .card-blocker-badge')).toBeNull();
   });
+
+  // DOT-6 (docs/board-invariants.md): the blocker badge is independent of a card's OWN
+  // dependency status and may co-occur with either dot. The T-0045-style regression test
+  // elsewhere only exercises the ready+blocker combination -- this covers the other half.
+  it("co-occurs with the card's own blocked (red) badge, not just the ready (green) one", () => {
+    const root = document.createElement("div");
+    const unmetDep = task({ id: "T-0000", status: "backlog" });
+    const middle = task({ id: "T-0001", status: "backlog", depends_on: ["T-0000"] });
+    const downstream = task({ id: "T-0002", status: "backlog", depends_on: ["T-0001"] });
+    renderBoard(root, [unmetDep, middle, downstream], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const card = root.querySelector('.card[data-id="T-0001"]');
+    expect(card.querySelector(".card-blocked-badge")).not.toBeNull();
+    expect(card.querySelector(".card-unblocked-badge")).toBeNull();
+    const blockerBadge = card.querySelector(".card-blocker-badge");
+    expect(blockerBadge).not.toBeNull();
+    expect(blockerBadge.title || blockerBadge.getAttribute("aria-label")).toMatch(/blocks 1 task/i);
+  });
 });
 
 describe("renderBoard auto-retry attempts badge", () => {

@@ -375,10 +375,14 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     hub.broadcast({ type: "changed", id, task: updated });
   }
 
-  // Done-triggered pullDevelop exists to fetch code that card commits (this repo's own, and
-  // others') had pushed -- meaningless in db mode, since card writes never touch git there
-  // (docs/design/cards-to-database.md, Phase 2).
-  if (taskStoreKind !== "db" && updated.status === "done" && repoRoot) {
+  // Done-triggered pullDevelop exists to fetch code that OTHER merged PRs have pushed to
+  // origin/develop, so it must fire in every task-store mode: `repoRoot` is still a real
+  // git checkout of develop even in db mode (docs/design/cards-to-database.md, Phase 2
+  // keeps tasks/ git-tracked alongside the DB). Whether *this card's own write* touches
+  // git is unrelated and handled separately above -- conflating the two previously gated
+  // this off entirely in db mode, silently killing the live board's only auto-deploy path
+  // after the 2026-08-07 cutover (docs/board-invariants.md PULL-1).
+  if (updated.status === "done" && repoRoot) {
     // Fire-and-forget: pull (and any restart it triggers) must not block this response.
     pullDevelop({ repoRoot })
       .then((result) => {
@@ -407,6 +411,19 @@ async function handleRunTask(orchestrator, id, res) {
   }
   if (orchestrator.isRunning(id)) {
     throw new HttpError(409, `Task ${id} already has an active run`);
+  }
+
+  // A run moves the card to in-progress the same way a manual PATCH does -- reuse the
+  // same dependency/cycle guard handlePatchTask applies there, so the Run/Re-run button
+  // can't start work whose own dependencies aren't resolved just because it bypasses
+  // the PATCH route (docs/board-invariants.md RUN-3 / LC-5).
+  try {
+    await assertCanMoveToInProgress(orchestrator.store, id);
+  } catch (err) {
+    if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError) {
+      throw new HttpError(409, err.message);
+    }
+    throw err;
   }
 
   // Fire-and-forget: a run (implementer + reviewer) can take minutes. The
