@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "ComfyUI HTTP client + recipe->workflow layer driving the AssetAgent (T-0071, docs/design/13-asset-pipeline.md)"
 requires-python = ">=3.12"
 dependencies = [
+  "gen-client-base @ file://../gen-client-base",
   "requests==2.32.3",
   "Pillow==11.0.0",
   "numpy==2.5.1",
