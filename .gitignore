@@ -24,6 +24,7 @@ client/vendor/curl/
 # One-off verify debug helpers, not part of the project.
 client/vendor_clean.py
 commit_msg.txt
+run_clang_format.sh
 
 # ci-client.yml's import/smoke/export step logs (local repro artifacts,
 # CI keeps its own via the Actions log — not source)
