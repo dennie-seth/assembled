@@ -75,6 +75,47 @@ std::vector<NoteRecord> PgNoteRepo::fetch(int16_t archetype_id, int16_t anchor_t
     return result;
 }
 
+std::vector<NoteRecord> PgNoteRepo::fetchRanked(int16_t archetype_id, int16_t anchor_tag,
+                                                int limit) {
+    const int32_t clamped = (limit < 1) ? 1 : (limit > kMaxNotesLimit ? kMaxNotesLimit : limit);
+
+    // Interpolate clamped directly: it is server-controlled and already range-checked,
+    // so string interpolation is safe and avoids Drogon binary-protocol wire-format
+    // mismatches for the LIMIT parameter (Postgres rejects mis-sized binary params).
+    const std::string sql = "SELECT id, author_token, archetype_id, anchor_tag, template_id, "
+                            "slot_a, slot_b, item_ref, rating "
+                            "FROM notes "
+                            "WHERE archetype_id = $1 AND anchor_tag = $2 "
+                            "ORDER BY rating DESC "
+                            "LIMIT " +
+                            std::to_string(clamped);
+    const auto rows = client_->execSqlSync(sql, archetype_id, anchor_tag);
+
+    std::vector<NoteRecord> result;
+    result.reserve(static_cast<std::size_t>(rows.size()));
+    for (const auto &row : rows) {
+        NoteRecord n;
+        n.id = row["id"].as<std::string>();
+        n.author_token = row["author_token"].as<std::string>();
+        n.archetype_id = row["archetype_id"].as<int16_t>();
+        n.anchor_tag = row["anchor_tag"].as<int16_t>();
+        n.template_id = row["template_id"].as<int16_t>();
+
+        if (!row["slot_a"].isNull())
+            n.slot_a = row["slot_a"].as<int16_t>();
+
+        if (!row["slot_b"].isNull())
+            n.slot_b = row["slot_b"].as<int16_t>();
+
+        if (!row["item_ref"].isNull())
+            n.item_ref = row["item_ref"].as<std::string>();
+
+        n.rating = row["rating"].as<int32_t>();
+        result.push_back(std::move(n));
+    }
+    return result;
+}
+
 void PgNoteRepo::rate(const std::string &note_id) {
     client_->execSqlSync("UPDATE notes SET rating = rating + 1 WHERE id = $1::uuid", note_id);
 }

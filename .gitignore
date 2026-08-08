@@ -24,6 +24,8 @@ client/export.log
 
 # C++
 build/
+build2/
+build_verify/
 cmake-build-*/
 *.o
 *.os
