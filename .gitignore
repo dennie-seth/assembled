@@ -24,6 +24,10 @@ client/export.log
 
 # C++
 build/
+# CMake out-of-source build dirs anywhere in the tree (e.g. server/build2/,
+# a second local build dir alongside server/build/) — "build/" above only
+# matches a dir literally named "build", not variants like "build2".
+build*/
 build2/
 build_verify/
 cmake-build-*/
