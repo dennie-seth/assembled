@@ -33,7 +33,12 @@ def fake_clock() -> FakeClock:
 @pytest.fixture
 def sample_recipe() -> Recipe:
     return Recipe(
-        prompt="a derelict signal tower, brutalist concrete", seed=42, name="signal_tower"
+        prompt="a derelict signal tower, brutalist concrete",
+        seed=42,
+        name="signal_tower",
+        # Synthetic hash for tests -- real generation requires a checkpoint_dir
+        # so hash_checkpoint_file() runs against the actual file (T-0151).
+        model_hash="a" * 64,
     )
 
 

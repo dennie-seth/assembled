@@ -57,7 +57,8 @@ const PYTHON_PACKAGE_ROOTS = [
   "tools/palette-extract/",
   "tools/sim/",
   "assets/src/audio/",
-  "assets/src/lora/"
+  "assets/src/lora/",
+  "assets/src/tiles/"
 ];
 
 function detectPythonPackageRoots(changedPaths) {

@@ -321,6 +321,35 @@ describe("buildPlannerPrompt — card-expansion prompt for unassigned cards", ()
     const prompt = buildPlannerPrompt({ task });
     expect(prompt.split("<<<TASK_BODY:END>>>").length - 1).toBe(1);
   });
+
+  it("includes a human comments section when comments are provided", () => {
+    const comments = [
+      { author: "Dennie", text: "This should also cover the null-agent case.", timestamp: "2026-08-05T12:00:00.000Z" }
+    ];
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF, comments });
+    expect(prompt).toContain("## Human comments on this card");
+    expect(prompt).toContain("This should also cover the null-agent case.");
+    expect(prompt).toContain("Dennie");
+  });
+
+  it("renders multiple comments in order", () => {
+    const comments = [
+      { author: "Dennie", text: "First issue", timestamp: "2026-08-05T12:00:00.000Z" },
+      { author: "Dennie", text: "Second issue", timestamp: "2026-08-05T13:00:00.000Z" }
+    ];
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF, comments });
+    expect(prompt.indexOf("First issue")).toBeLessThan(prompt.indexOf("Second issue"));
+  });
+
+  it("omits the human comments section entirely when there are no comments", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF, comments: [] });
+    expect(prompt).not.toContain("## Human comments on this card");
+  });
+
+  it("works with no comments argument at all (defaults to none)", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).not.toContain("## Human comments on this card");
+  });
 });
 
 describe("buildPlannerPrompt -- deliverable_type and hardened acceptance criteria (T-0136 lesson)", () => {

@@ -7,6 +7,7 @@ exits 0 if every check passed, 1 otherwise -- the shape CI needs.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 import soundfile as sf
@@ -14,6 +15,7 @@ from PIL import Image
 
 from asset_gate import art, audio
 from asset_gate import palette as palette_mod
+from asset_gate import provenance as provenance_mod
 from asset_gate.result import CheckResult, all_passed, format_report
 
 
@@ -49,6 +51,11 @@ def _cmd_art_indexed_preservation(args: argparse.Namespace) -> int:
     return _report_and_exit([art.check_indexed_preservation(image, pal)])
 
 
+def _cmd_provenance_model_hash(args: argparse.Namespace) -> int:
+    prov = json.loads(args.provenance.read())
+    return _report_and_exit([provenance_mod.check_provenance_model_hash(prov)])
+
+
 def _cmd_audio_gate(args: argparse.Namespace) -> int:
     samples, sample_rate = sf.read(args.audio, always_2d=False)
     targets = audio.load_loudness_targets(args.loudness_targets)
@@ -66,6 +73,13 @@ def _cmd_audio_gate(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="asset-gate")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser(
+        "provenance-model-hash",
+        help="validate model_hash is present and non-null in a provenance sidecar (T-0151)",
+    )
+    p.add_argument("provenance", type=argparse.FileType("r"), help=".provenance.json path")
+    p.set_defaults(func=_cmd_provenance_model_hash)
 
     p = sub.add_parser("art-palette", help="palette membership + index semantics (P-4)")
     p.add_argument("image")

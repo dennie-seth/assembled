@@ -404,7 +404,12 @@ export class RunOrchestrator {
     const plannerDef = this.loadAgentDefFn("planner", { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
     const plannerAllowedTools = this.resolveAllowedToolsFn("planner", { agentsDir: this.agentsDir });
-    const plannerPrompt = this.buildPlannerPromptFn({ task, agentDef: plannerDef, rules });
+    const plannerPrompt = this.buildPlannerPromptFn({
+      task,
+      agentDef: plannerDef,
+      rules,
+      comments: task.comments ?? []
+    });
 
     const plannerResult = await this._runPhase({
       taskId,

@@ -1,0 +1,33 @@
+{
+  "model": "N/A — procedurally generated",
+  "model_license": "N/A",
+  "model_hash": null,
+  "prompt": "N/A — tile pixels are computed from locked home palette slot indices (WALL=8 #58554c, FLOOR=13 #7e7c74, JOINT=4 #3d3b31) via tile layout logic in transition_sheet.py",
+  "negative_prompt": null,
+  "seed": null,
+  "generator": "assets/src/tiles/src/tile_gen/transition_sheet.py",
+  "card": "T-0153",
+  "spec": "docs/design/13-asset-pipeline.md §3.4",
+  "layout": {
+    "sheet_px": [64, 32],
+    "tile_px": 16,
+    "cols": 4,
+    "rows": 2,
+    "tiles": {
+      "(0,0)": "wall",
+      "(1,0)": "floor",
+      "(2,0)": "wall_floor_v",
+      "(3,0)": "wall_floor_h",
+      "(0,1)": "corner_tl",
+      "(1,1)": "corner_tr",
+      "(2,1)": "corner_bl",
+      "(3,1)": "corner_br"
+    }
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "gate_results": {
+    "tile_seamlessness": "PASS (wall, floor — 2/2)",
+    "transition_adjacency": "PASS (10/10 declared pairs)",
+    "total": "12/12 passed"
+  }
+}

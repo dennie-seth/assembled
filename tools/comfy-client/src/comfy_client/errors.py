@@ -41,3 +41,12 @@ class FetchError(ComfyClientError):
 
 class UploadError(ComfyClientError):
     """POST /upload/image failed -- used by the img2img conditioning path (T-0106)."""
+
+
+class MissingModelHashError(ComfyClientError):
+    """Provenance cannot be written without a checkpoint hash (T-0151).
+
+    PLAN.md §0: a null hash means the exact weights that produced an asset
+    cannot be proven.  Call generate() with checkpoint_dir= or set
+    recipe.model_hash before generating.
+    """
