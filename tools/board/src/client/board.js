@@ -31,6 +31,21 @@ export function applyTaskEvent(tasks, event) {
   return next;
 }
 
+/** Returns the Set of task ids whose every dependency is done or retired. */
+export function computeUnblockedIds(tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const ids = new Set();
+  for (const task of tasks) {
+    if (task.depends_on.length === 0) continue;
+    const allTerminal = task.depends_on.every((depId) => {
+      const dep = byId.get(depId);
+      return dep && (dep.status === "done" || dep.status === "retired");
+    });
+    if (allTerminal) ids.add(task.id);
+  }
+  return ids;
+}
+
 /** Reverse-dependency counts: how many other tasks list each task id in their depends_on. */
 export function computeBlockerCounts(tasks) {
   const counts = new Map();
