@@ -47,6 +47,7 @@ add_library(assembled_server_lib OBJECT
   src/RateLimiter.cpp
   src/IdentityController.cpp
   src/NoteRepo.cpp
+  src/NoteController.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
