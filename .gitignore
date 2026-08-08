@@ -21,8 +21,9 @@ client/godot-cpp/bin/
 client/vendor/curl-*/
 client/vendor/*.tar.gz
 client/vendor/curl/
-# One-off verify debug helper, not part of the project.
+# One-off verify debug helpers, not part of the project.
 client/vendor_clean.py
+commit_msg.txt
 
 # ci-client.yml's import/smoke/export step logs (local repro artifacts,
 # CI keeps its own via the Actions log — not source)
