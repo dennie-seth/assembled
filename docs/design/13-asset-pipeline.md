@@ -200,7 +200,7 @@ Rare and deliberate. In a game that is otherwise ambient dread, music arriving s
 - Ducks the archetype bed; bed stays audible underneath.
 - Purely a level-asset property — **no schema impact, no server involvement.**
 
-**Open (AU-1): per-run density cap.** A run assembles 5–7 archetypes. If several carry `music_cue` rooms, music stops being rare. Same class of problem as note density; likely wants a cap or weighting in the assembler.
+**Open (AU-1): per-run density cap.** A run assembles exactly 3 archetypes. If more than one carries `music_cue` rooms, music stops being rare. Same class of problem as note density; likely wants a cap or weighting in the assembler.
 
 ### 4.3 Archetype bed
 
@@ -448,3 +448,4 @@ documented escalation path, not something v1 does.
 | 2026-08-02 | v3: tile size (A-1) recorded as resolved in `05` §5; ownership of A-2/A-3 clarified to avoid duplicate tracking | Claude, rev. pending |
 | 2026-08-02 | v4: **V-5/P-A resolved as a process** — palette extracted from an approved concept sheet (cluster -> value ramp -> LUT, T-0105), not a fixed hex list; new §6 Concept Art (concept is a committed full-colour source, P-1/P-3 inverted, two human gates, archetype-first coherence guard); §1 chain now starts with concept for art | Claude, rev. pending |
 | 2026-08-02 | v5: §6.8–§6.11 added, synced from canonical Notion doc 13 — key art vs. concept sheet split (`assets/src/keyart/` vs. `assets/src/concept/`, only the latter feeds the pipeline/palette extraction); concept-sheet framing/legibility/value-separation requirements; palette extraction is interior-only (mask sky/veg on exteriors); round-1 assessment of the two 2026-08-02 Signal Tower sheets as key art, not concept sheets; stitching rules (stitch layout, never style, never LoRA training) | Claude, rev. pending |
+| 2026-08-08 | v5.1: §4.2 (AU-1) archetype-count corrected — a run assembles **exactly 3** archetypes (was “5–7”), matching `01` §7 and `12`; density-cap wording adjusted to “more than one” accordingly | Claude, rev. pending |

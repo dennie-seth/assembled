@@ -1,6 +1,6 @@
 # 11 — Moment-to-Moment Play
 
-> **Author:** Claude · **Reviewed:** pending · **Status:** v2, locked — A-I resolved
+> **Author:** Claude · **Reviewed:** pending · **Status:** v3, locked — A-I resolved, climax rooms added
 > Related: `01-vision.md` §3/§6, `02-notes-system.md` §2 (HAZARD vocab), `07-items-economy.md` §8, `GDD-OPEN.md` A-I
 > **Purpose:** what the player does with their hands. Blocks Phase 5.
 
@@ -98,12 +98,29 @@ Mix freely per room — level design's call, same precedent as §5.
 
 ---
 
-## 7. Open
+## 7. Climax Rooms
+
+A **climax room** is a named room type: a guaranteed delivery *point* for the highest-tier item currently hosted by the player's universe — same precedent as puzzle item rewards (§6) and tear pockets (`12` §3). It draws from the **existing capped spawn pool**, not a new source, so INV-6 holds without special-casing.
+
+**"Guaranteed" means guaranteed-if-available.** Under the hosting model (`04` §4): a unique surfaces there if one is currently hosted by that universe; otherwise a rare; otherwise the room is empty. It is the *priority delivery target*, not a mint.
+
+| Property | Answer |
+|---|---|
+| Placement | Declared anchor tag, same INV-12 mechanism as any other anchor |
+| Cap | One per archetype — at most 3 per run (`01` §7, exactly 3 archetypes) |
+| Pressure | Low — a climax room is a set-piece/discovery beat, not a gauntlet |
+| Audio | Often doubles as the archetype's `music_cue` room (`13` §4.2) — climax ≈ music ≈ reward |
+
+A climax room may sit anywhere in the layout, including an optional branch — it doesn't need to be on the critical path. See `14` §5 for a worked example (Records Room).
+
+---
+
+## 8. Open
 
 | # | Question |
 |---|---|
 | M-1 | Movement/noise model (§4) is an **inferred default**, not an explicit decision — confirm binary walk/run noise, no stamina |
-| M-2 | Sensor parameters (cone angle/range, sound radius by movement state, patrol paths) — tuning, not blocking |
+| M-2 | Sensor parameters (cone angle/range, sound radius by movement state, patrol paths) — tuning, not blocking. First-pass values for the vertical slice are in `14` §10 |
 | M-3 | Entity count/roster beyond the vertical-slice 3 |
 | M-6 | Puzzle authoring budget — how many required per run/variant? (content, not blocking) |
 
@@ -117,3 +134,4 @@ Mix freely per room — level design's call, same precedent as §5.
 |---|---|---|
 | 2026-08-01 | Initial — sensor kit, hiding, trap/lock resolved for A-I | Claude, rev. pending |
 | 2026-08-02 | v2: **M-5 resolved** (switch-locked doors = Session tier); M-1 added (noise model still an inferred default); audio-fairness cross-ref to P-5; A-I closed | Claude, rev. pending |
+| 2026-08-02 | v3: **§7 Climax Rooms added** (D-21) — guaranteed delivery point for the highest-tier hosted item, capped one per archetype; resolves the Clearance Chit testability gap raised against `14` | Claude, rev. @DennieSeth |
