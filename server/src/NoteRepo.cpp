@@ -79,14 +79,17 @@ std::vector<NoteRecord> PgNoteRepo::fetchRanked(int16_t archetype_id, int16_t an
                                                 int limit) {
     const int32_t clamped = (limit < 1) ? 1 : (limit > kMaxNotesLimit ? kMaxNotesLimit : limit);
 
-    const auto rows =
-        client_->execSqlSync("SELECT id, author_token, archetype_id, anchor_tag, template_id, "
-                             "slot_a, slot_b, item_ref, rating "
-                             "FROM notes "
-                             "WHERE archetype_id = $1 AND anchor_tag = $2 "
-                             "ORDER BY rating DESC "
-                             "LIMIT $3",
-                             archetype_id, anchor_tag, clamped);
+    // Interpolate clamped directly: it is server-controlled and already range-checked,
+    // so string interpolation is safe and avoids Drogon binary-protocol wire-format
+    // mismatches for the LIMIT parameter (Postgres rejects mis-sized binary params).
+    const std::string sql = "SELECT id, author_token, archetype_id, anchor_tag, template_id, "
+                            "slot_a, slot_b, item_ref, rating "
+                            "FROM notes "
+                            "WHERE archetype_id = $1 AND anchor_tag = $2 "
+                            "ORDER BY rating DESC "
+                            "LIMIT " +
+                            std::to_string(clamped);
+    const auto rows = client_->execSqlSync(sql, archetype_id, anchor_tag);
 
     std::vector<NoteRecord> result;
     result.reserve(static_cast<std::size_t>(rows.size()));
