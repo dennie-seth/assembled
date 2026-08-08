@@ -1,6 +1,11 @@
 {
   "_comment": "Locked home palette (V-5, P-A resolved), extracted by T-0105 from the approved interior concept sheet listed in `source`. Slot order is a value ramp, darkest (0) -> lightest (N-1), by Oklab lightness -- see palette_extract/extract.py docstring. Slot indices are load-bearing (P-4 / chroma swap): do not reorder or renumber if this file is regenerated, only re-extract and diff.",
   "source": "assets/src/concept/signal_tower_material_sheet.png (sha256:9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460)",
+  "character": {
+    "dominant_family": "green",
+    "warm_notes": false,
+    "_note": "Signal Tower interior archetype: institutional green dominates (6/16 slots — indices 2,3,5,7,9,11). No oxide/rust extracted — the concept sheet was an interior and the generation did not produce a distinct warm-hue cluster. See T-0152 Decision Log (docs/decision-log.md DL-1) for rationale and chroma-mechanic calibration note."
+  },
   "slots": [
     {
       "index": 0,
