@@ -105,3 +105,250 @@ extracted, that palette will carry warm slots. At that point, verify:
 
 No blocker on current Phase 6 work — the Signal Tower vertical slice palette
 is correct for its archetype.
+
+---
+
+## DL-2 — Localization mechanism (17)
+
+**Date:** 2026-08-02
+
+**Localization mechanism** (`17`). `FText`-style type split — `LocId` cannot
+render, display text cannot travel the wire; seed-phrase wordlist is
+structurally exempt. **Templates take named arguments** (positional cannot
+survive translation — change needed in `02` §2). ICU replaced by two rules:
+**no numbers inside sentences**, and a **telegraphic, grammatically inert
+register**. **V-6 resolved: English + Russian**
+
+**Touched docs:**
+- `docs/design/02-notes-system.md`
+- `docs/design/03-net-protocol.md`
+- `docs/design/07-items-economy.md`
+- `docs/design/13-asset-pipeline.md`
+- `docs/design/17-localization.md`
+
+---
+
+## DL-3 — Climax rooms
+
+**Date:** 2026-08-02
+
+**Climax rooms.** A room type carrying a rare or unique. Framed as a
+**delivery point, not a source** — draws from the capped pool, same precedent
+as puzzle rewards and tear pockets, so INV-6 holds. Surfaces the highest-tier
+item currently hosted in your universe; guaranteed-if-available. Suggested
+cap: one per archetype. **First named room type** — seed for the level-design
+doc
+
+**Touched docs:**
+- `docs/design/07-items-economy.md`
+- `docs/design/11-moment-to-moment.md`
+- `docs/design/13-asset-pipeline.md`
+- `docs/design/14-vertical-slice.md`
+
+---
+
+## DL-4 — Run structure
+
+**Date:** 2026-08-02
+
+**Run structure.** 5–8 rooms per archetype; **3 archetypes per run** (floor
+and ceiling both 3); assembler caps the run at **18 rooms**, selecting
+size-aware. Run length stays 30–45 min because held bleed is defined as ≈2× it
+
+**Touched docs:**
+- `docs/design/01-vision.md`
+- `docs/design/03-net-protocol.md`
+- `docs/design/08-invariants.md`
+- `docs/design/12-tears.md`
+- `docs/design/13-asset-pipeline.md`
+- `docs/design/14-vertical-slice.md`
+- `docs/HANDOFF.md`
+
+---
+
+## DL-5 — Concept art precedes generation
+
+**Date:** 2026-08-02
+
+**Concept art precedes generation.** Source not output, one sheet per asset
+set, conditions inference, two human gates. **V-5 resolved** — palette is
+extracted from an approved sheet (T-0105), not chosen. P-A resolves with it
+
+**Touched docs:**
+- `docs/design/05-art-direction.md`
+- `docs/design/13-asset-pipeline.md`
+- `docs/GDD-OPEN.md`
+- `docs/HANDOFF.md`
+
+---
+
+## DL-6 — Item hosting
+
+**Date:** 2026-08-02
+
+**Item hosting.** An anchored instance lives in exactly one universe
+(`hosted_by`); offerings stay globally visible. Escrow becomes the only
+genuine contention point. NP-2 resolved
+
+**Touched docs:**
+- `docs/design/03-net-protocol.md`
+- `docs/design/04-data-model.md`
+- `docs/design/07-items-economy.md`
+
+---
+
+## DL-7 — Server topology
+
+**Date:** 2026-08-02
+
+**Server topology.** Federation seams built now, single deployment until
+after the slice. Sweep worker is a per-shard singleton. Uniques centrally
+brokered; forks fully independent — **answers 7.5**
+
+**Touched docs:**
+- `docs/design/04-data-model.md`
+- `docs/design/15-server-ops.md`
+
+---
+
+## DL-8 — Copy-on-write
+
+**Date:** 2026-08-02
+
+**Copy-on-write.** Volume snapshots for all shards; **append-only custody log
+for uniques only**, affordable because uniques do not scale. `custody_depth`
+becomes derived rather than incremented
+
+**Touched docs:**
+- `docs/design/07-items-economy.md`
+- `docs/design/15-server-ops.md`
+
+---
+
+## DL-9 — Offline runs persist nothing
+
+**Date:** 2026-08-02
+
+**Offline runs persist nothing.** A security position, not a simplification —
+sync-on-reconnect would mean accepting client-asserted progress from an
+open-source client
+
+**Touched docs:**
+- `docs/design/01-vision.md`
+- `docs/design/03-net-protocol.md`
+
+---
+
+## DL-10 — Level design framework (16)
+
+**Date:** 2026-08-03
+
+**Level design framework** (`16`). Room-type taxonomy — Climax, Tear own
+dedicated system-facing tags; Gate, Hazard, Transit are author-facing roles
+on ordinary room tags. Placement budget: Tear exactly 1/archetype, Climax ≤1,
+Gate recommended ≥1, Hazard/Transit flexible. **Entities are rolled
+per-universe onto authored sensor-category slots**, not fixed per variant.
+Variant authoring split into fixed (tag set, room count) vs. free
+(connectivity, dressing, role placement) — unblocks A-3's cost estimate
+
+**Touched docs:**
+- `docs/design/01-vision.md`
+- `docs/design/11-moment-to-moment.md`
+- `docs/design/12-tears.md`
+- `docs/design/14-vertical-slice.md`
+- `docs/design/16-level-design.md`
+
+---
+
+## DL-11 — First-run experience (18)
+
+**Date:** 2026-08-03
+
+**First-run experience** (`18`). Phrase auto-saved to a local text file on
+generation, no manual export (**S-3 resolved**); reveal screen requires
+explicit acknowledgment, names phrase-loss and collapse as distinct endings.
+Chroma-clock explained once, in text, only after a baseline exploration
+window — first-universe grace multiplier stays invisible to the player.
+Offline signaling required pre-play, during, and at session end. Core loop
+taught by room design (Ground Relay pattern), never by tutorial popups
+
+**Touched docs:**
+- `docs/design/09-identity.md`
+- `docs/design/18-first-run.md`
+
+---
+
+## DL-12 — Vertical-slice walkthrough: tears now chain archetypes
+
+**Date:** 2026-08-03
+
+**Full vertical-slice walkthrough review surfaced a real gap: tears now chain
+archetypes.** Records Room (`14`) switched from item-locked to puzzle-locked,
+resolving an entry circularity; its climax reward (renamed **Resonance Key**)
+now opens Broadcast Deck's tear — reclassified a **chain tear**. `12` §3a
+formalizes chain vs. pocket tears: archetypes 1–2 in a run's sequence chain
+onward via a unique-keyed unlock (home palette, not foreign); the terminal
+archetype gets a free pocket tear (genuinely foreign). Vertical slice expanded
+to all 3 archetypes — **Signal Tower (7) → Hospital (5, `19`) → Long Descent
+(6, `20`)**, summing to exactly 18 rooms. Trap/lock demoed for the first time
+(Hospital's Stairwell). Dead Frequency Room and its foreign Watcher reused
+wholesale as Long Descent's terminal pocket. Also: V-7 resolved (vertical
+slice now spans `14`/`19`/`20`); **Try Again/New Game** post-run screen added
+to `01` §6 (Try Again re-assembles the same archetype selection); solo-testing
+scope note added to `14`
+
+**Touched docs:**
+- `docs/design/01-vision.md`
+- `docs/design/12-tears.md`
+- `docs/design/14-vertical-slice.md`
+- `docs/design/16-level-design.md`
+- `docs/design/19-vertical-slice-hospital.md`
+- `docs/design/20-vertical-slice-long-descent.md`
+
+---
+
+## DL-13 — Chain-tear key changed unique → rare-tier
+
+**Date:** 2026-08-04
+
+**Chain-tear key changed unique → rare-tier.** The pipeline chat flagged that
+a 3-archetype run spends two unique-tier keys, competing with the exit
+condition's own fixed pool (`01` §5); T-0099 round 2 confirmed the pool
+doesn't drain either way but couldn't confirm simultaneous-possession still
+works. Rare-tier removes the risk at the source rather than waiting on round
+3, and — since rares participate in the ordinary spawn pool — lets Records
+Room/Nurses' Station drop the Climax/hosting-model mechanism entirely in favor
+of ordinary puzzle rewards, fully retiring the debug-grant dependency.
+Persistence confirmed ~1 week, identity/variant-scoped, not per-run. Transfer
+semantics (vs. destroy) stated explicitly, backed by simulation: destroy
+exhausts a 5-instance pool in ~1 hour/5 crossings, transfer sustained 2,032.
+Two leftover contradictions in `12` (§3 trip-type table, §4 "always
+crossable") fixed. Signal Tower and Hospital both lose their Climax rooms;
+Long Descent's Storage Vault is now the vertical slice's sole example
+
+**Touched docs:**
+- `docs/design/12-tears.md`
+- `docs/design/14-vertical-slice.md`
+- `docs/design/16-level-design.md`
+- `docs/design/19-vertical-slice-hospital.md`
+
+---
+
+## DL-14 — Propagation gap closed + INV-9 wording synced from git
+
+**Date:** 2026-08-08
+
+**Propagation gap closed + INV-9 wording synced from git.** `01` §7 still said
+chain tears need a "held unique" four days after the tier changed to rare —
+the one place the 08-04 fix never landed, and the premise `HANDOFF` §13's
+independent population-scaling analysis (raised 08-06) was built on. Fixed;
+population-scaling rationale folded into §7 directly. Separately, `08` §2/§3
+synced to match `docs/design/08-invariants.md` (T-0157): INV-9 restated as
+*distribution*-stability across `P`, not per-player similarity — wide
+within-population variance is explicitly compatible, only a shift of the
+distribution with `P` is a violation. Unblocks sim round 3's population-sweep
+reporting (§13-a)
+
+**Touched docs:**
+- `docs/design/01-vision.md`
+- `docs/design/08-invariants.md`
