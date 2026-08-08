@@ -33,9 +33,8 @@ TEST_CASE("PgNoteRepo CRUD round-trip") {
     runner.applyPending(db->getClient());
 
     // Seed a test identity to satisfy the notes.author_token FK.
-    db->getClient()->execSqlSync(
-        "INSERT INTO identity (token) VALUES ('test-token-note-crud') "
-        "ON CONFLICT DO NOTHING");
+    db->getClient()->execSqlSync("INSERT INTO identity (token) VALUES ('test-token-note-crud') "
+                                 "ON CONFLICT DO NOTHING");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
@@ -43,9 +42,9 @@ TEST_CASE("PgNoteRepo CRUD round-trip") {
     assembled_server::CreateNoteParams params;
     params.author_token = "test-token-note-crud";
     params.archetype_id = 1; // HOSPITAL
-    params.anchor_tag   = 1; // entrance
-    params.template_id  = 6; // {ACTION}
-    params.slot_a       = 21; // wait
+    params.anchor_tag = 1;   // entrance
+    params.template_id = 6;  // {ACTION}
+    params.slot_a = 21;      // wait
     // slot_b and item_ref left as nullopt
 
     const std::string note_id = repo.create(params);
@@ -61,8 +60,8 @@ TEST_CASE("PgNoteRepo CRUD round-trip") {
             found = true;
             CHECK(n.author_token == "test-token-note-crud");
             CHECK(n.archetype_id == 1);
-            CHECK(n.anchor_tag   == 1);
-            CHECK(n.template_id  == 6);
+            CHECK(n.anchor_tag == 1);
+            CHECK(n.template_id == 6);
             REQUIRE(n.slot_a.has_value());
             CHECK(n.slot_a.value() == 21);
             CHECK(!n.slot_b.has_value());
@@ -94,18 +93,17 @@ TEST_CASE("PgNoteRepo rejects bad template_id via FK") {
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(db->getClient());
 
-    db->getClient()->execSqlSync(
-        "INSERT INTO identity (token) VALUES ('test-token-bad-tmpl') "
-        "ON CONFLICT DO NOTHING");
+    db->getClient()->execSqlSync("INSERT INTO identity (token) VALUES ('test-token-bad-tmpl') "
+                                 "ON CONFLICT DO NOTHING");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
     assembled_server::CreateNoteParams params;
     params.author_token = "test-token-bad-tmpl";
     params.archetype_id = 1;
-    params.anchor_tag   = 1;
-    params.template_id  = 999; // does not exist in note_templates
-    params.slot_a       = 21;
+    params.anchor_tag = 1;
+    params.template_id = 999; // does not exist in note_templates
+    params.slot_a = 21;
 
     CHECK_THROWS(repo.create(params));
 }
@@ -122,18 +120,17 @@ TEST_CASE("PgNoteRepo rejects bad slot_a via FK") {
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(db->getClient());
 
-    db->getClient()->execSqlSync(
-        "INSERT INTO identity (token) VALUES ('test-token-bad-slot') "
-        "ON CONFLICT DO NOTHING");
+    db->getClient()->execSqlSync("INSERT INTO identity (token) VALUES ('test-token-bad-slot') "
+                                 "ON CONFLICT DO NOTHING");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
     assembled_server::CreateNoteParams params;
     params.author_token = "test-token-bad-slot";
     params.archetype_id = 1;
-    params.anchor_tag   = 1;
-    params.template_id  = 6; // valid
-    params.slot_a       = 999; // does not exist in note_words
+    params.anchor_tag = 1;
+    params.template_id = 6; // valid
+    params.slot_a = 999;    // does not exist in note_words
 
     CHECK_THROWS(repo.create(params));
 }
@@ -144,8 +141,8 @@ TEST_CASE("NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius")
     // Static assertion: the only two-argument overload of PgNoteRepo::fetch
     // takes (int16_t, int16_t).  Adding a radius parameter would change the
     // signature and break this cast, catching the regression at compile time.
-    using FetchFn = std::vector<assembled_server::NoteRecord> (
-        assembled_server::PgNoteRepo::*)(int16_t, int16_t);
+    using FetchFn = std::vector<assembled_server::NoteRecord> (assembled_server::PgNoteRepo::*)(
+        int16_t, int16_t);
     static_cast<void>(static_cast<FetchFn>(&assembled_server::PgNoteRepo::fetch));
     CHECK(true); // if we got here the signature is correct
 }

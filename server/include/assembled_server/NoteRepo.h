@@ -17,20 +17,20 @@ namespace assembled_server {
 
 /// A note as returned by the repository (read model).
 struct NoteRecord {
-    std::string id;                    ///< UUID primary key (hex string).
-    std::string author_token;          ///< Derived identity token.
-    int16_t archetype_id{};           ///< World archetype (FK → anchor_tag).
-    int16_t anchor_tag{};             ///< Anchor within archetype (FK → anchor_tag).
-    int16_t template_id{};            ///< Note template (FK → note_templates).
-    std::optional<int16_t> slot_a;    ///< First word slot (FK → note_words).
-    std::optional<int16_t> slot_b;    ///< Second word slot (FK → note_words).
+    std::string id;                      ///< UUID primary key (hex string).
+    std::string author_token;            ///< Derived identity token.
+    int16_t archetype_id{};              ///< World archetype (FK → anchor_tag).
+    int16_t anchor_tag{};                ///< Anchor within archetype (FK → anchor_tag).
+    int16_t template_id{};               ///< Note template (FK → note_templates).
+    std::optional<int16_t> slot_a;       ///< First word slot (FK → note_words).
+    std::optional<int16_t> slot_b;       ///< Second word slot (FK → note_words).
     std::optional<std::string> item_ref; ///< Server-assigned item key (nullable).
-    int32_t rating{};                 ///< Aggregate rating.
+    int32_t rating{};                    ///< Aggregate rating.
 };
 
 /// Parameters for INoteRepo::create.
 struct CreateNoteParams {
-    std::string author_token;          ///< Must exist in identity.token.
+    std::string author_token; ///< Must exist in identity.token.
     int16_t archetype_id{};
     int16_t anchor_tag{};
     int16_t template_id{};

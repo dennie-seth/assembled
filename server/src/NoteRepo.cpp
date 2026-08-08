@@ -1,23 +1,23 @@
 #include "assembled_server/NoteRepo.h"
 
-#include <drogon/orm/SqlBinder.h>
-
 namespace assembled_server {
 
 PgNoteRepo::PgNoteRepo(drogon::orm::DbClientPtr client) : client_(std::move(client)) {}
 
 std::string PgNoteRepo::create(const CreateNoteParams &params) {
-    // Build the INSERT using SqlBinder directly so we can conditionally push
-    // nullptr (→ SQL NULL) for optional slot_a, slot_b, and item_ref columns.
-    // SqlBinder throws DrogonDbException on FK violation or any DB error.
+    // Use SqlBinder directly so we can conditionally push nullptr (→ SQL NULL)
+    // for optional slot_a, slot_b, and item_ref columns.  SqlBinder throws
+    // DrogonDbException on FK violation or any DB error.
     drogon::orm::Result r(nullptr);
     {
-        auto binder = *client_
-            << "INSERT INTO notes "
-               "(author_token, archetype_id, anchor_tag, template_id, slot_a, slot_b, item_ref) "
-               "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
-            << params.author_token << params.archetype_id << params.anchor_tag
-            << params.template_id;
+        auto binder = *client_ << "INSERT INTO notes "
+                                  "(author_token, archetype_id, anchor_tag, template_id, "
+                                  "slot_a, slot_b, item_ref) "
+                                  "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id";
+        binder << params.author_token;
+        binder << params.archetype_id;
+        binder << params.anchor_tag;
+        binder << params.template_id;
 
         if (params.slot_a.has_value())
             binder << params.slot_a.value();
@@ -34,29 +34,31 @@ std::string PgNoteRepo::create(const CreateNoteParams &params) {
         else
             binder << nullptr;
 
-        binder << drogon::orm::Mode::Blocking >> r;
+        binder << drogon::orm::Mode::Blocking;
+        binder >> [&r](const drogon::orm::Result &result) { r = result; };
+        binder.exec();
     }
     return r[0]["id"].as<std::string>();
 }
 
 std::vector<NoteRecord> PgNoteRepo::fetch(int16_t archetype_id, int16_t anchor_tag) {
-    const auto rows = client_->execSqlSync(
-        "SELECT id, author_token, archetype_id, anchor_tag, template_id, "
-        "slot_a, slot_b, item_ref, rating "
-        "FROM notes "
-        "WHERE archetype_id = $1 AND anchor_tag = $2 "
-        "ORDER BY created_at DESC",
-        archetype_id, anchor_tag);
+    const auto rows =
+        client_->execSqlSync("SELECT id, author_token, archetype_id, anchor_tag, template_id, "
+                             "slot_a, slot_b, item_ref, rating "
+                             "FROM notes "
+                             "WHERE archetype_id = $1 AND anchor_tag = $2 "
+                             "ORDER BY created_at DESC",
+                             archetype_id, anchor_tag);
 
     std::vector<NoteRecord> result;
     result.reserve(static_cast<std::size_t>(rows.size()));
     for (const auto &row : rows) {
         NoteRecord n;
-        n.id           = row["id"].as<std::string>();
+        n.id = row["id"].as<std::string>();
         n.author_token = row["author_token"].as<std::string>();
         n.archetype_id = row["archetype_id"].as<int16_t>();
-        n.anchor_tag   = row["anchor_tag"].as<int16_t>();
-        n.template_id  = row["template_id"].as<int16_t>();
+        n.anchor_tag = row["anchor_tag"].as<int16_t>();
+        n.template_id = row["template_id"].as<int16_t>();
 
         if (!row["slot_a"].isNull())
             n.slot_a = row["slot_a"].as<int16_t>();
