@@ -1,10 +1,10 @@
-Start testing: Aug 08 22:11 CEST
+Start testing: Aug 08 23:52 CEST
 ----------------------------------------------------------
-1/37 Testing: GET /health returns 200 with {"status":"ok"}
-1/37 Test: GET /health returns 200 with {"status":"ok"}
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=GET /health returns 200 with {"status":"ok"}"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"GET /health returns 200 with {"status":"ok"}" start time: Aug 08 22:11 CEST
+1/42 Testing: GET /health returns 200 with {"status":"ok"}
+1/42 Test: GET /health returns 200 with {"status":"ok"}
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=GET /health returns 200 with {"status":"ok"}"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"GET /health returns 200 with {"status":"ok"}" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -14,51 +14,81 @@ Output:
 [doctest] assertions: 6 | 6 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.03 sec
+Test time =   0.04 sec
 ----------------------------------------------------------
 Test Passed.
-"GET /health returns 200 with {"status":"ok"}" end time: Aug 08 22:11 CEST
+"GET /health returns 200 with {"status":"ok"}" end time: Aug 08 23:52 CEST
 "GET /health returns 200 with {"status":"ok"}" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-2/37 Testing: migrations apply against a live Postgres
-2/37 Test: migrations apply against a live Postgres
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=migrations apply against a live Postgres"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"migrations apply against a live Postgres" start time: Aug 08 22:11 CEST
+2/42 Testing: migrations apply against a live Postgres
+2/42 Test: migrations apply against a live Postgres
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=migrations apply against a live Postgres"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"migrations apply against a live Postgres" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  extension "pgcrypto" already exists, skipping
-NOTICE:  relation "identity" already exists, skipping
-NOTICE:  relation "note_templates" already exists, skipping
-NOTICE:  relation "note_words" already exists, skipping
-NOTICE:  relation "archetype" already exists, skipping
-NOTICE:  relation "anchor_tag" already exists, skipping
-NOTICE:  relation "notes" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 5 | 5 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.05 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"migrations apply against a live Postgres" end time: Aug 08 22:11 CEST
+"migrations apply against a live Postgres" end time: Aug 08 23:52 CEST
 "migrations apply against a live Postgres" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-3/37 Testing: T-0043 header: word count matches design spec (02-notes-system.md §2)
-3/37 Test: T-0043 header: word count matches design spec (02-notes-system.md §2)
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: word count matches design spec (02-notes-system.md §2)"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: word count matches design spec (02-notes-system.md §2)" start time: Aug 08 22:11 CEST
+3/42 Testing: T-0043 header: word count matches design spec (02-notes-system.md §2)
+3/42 Test: T-0043 header: word count matches design spec (02-notes-system.md §2)
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: word count matches design spec (02-notes-system.md §2)"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: word count matches design spec (02-notes-system.md §2)" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
+[doctest] assertions: 1 | 1 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"T-0043 header: word count matches design spec (02-notes-system.md §2)" end time: Aug 08 23:52 CEST
+"T-0043 header: word count matches design spec (02-notes-system.md §2)" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/42 Testing: T-0043 header: template count matches design spec
+4/42 Test: T-0043 header: template count matches design spec
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: template count matches design spec"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: template count matches design spec" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
+[doctest] assertions: 1 | 1 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"T-0043 header: template count matches design spec" end time: Aug 08 23:52 CEST
+"T-0043 header: template count matches design spec" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/42 Testing: T-0043 header: archetype count
+5/42 Test: T-0043 header: archetype count
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: archetype count"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: archetype count" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -71,57 +101,15 @@ Output:
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 header: word count matches design spec (02-notes-system.md §2)" end time: Aug 08 22:11 CEST
-"T-0043 header: word count matches design spec (02-notes-system.md §2)" time elapsed: 00:00:00
-----------------------------------------------------------
-
-4/37 Testing: T-0043 header: template count matches design spec
-4/37 Test: T-0043 header: template count matches design spec
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: template count matches design spec"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: template count matches design spec" start time: Aug 08 22:11 CEST
-Output:
-----------------------------------------------------------
-[doctest] doctest version is "2.4.11"
-[doctest] run with "--help" for options
-===============================================================================
-[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 1 | 1 passed | 0 failed |
-[doctest] Status: SUCCESS!
-<end of output>
-Test time =   0.00 sec
-----------------------------------------------------------
-Test Passed.
-"T-0043 header: template count matches design spec" end time: Aug 08 22:11 CEST
-"T-0043 header: template count matches design spec" time elapsed: 00:00:00
-----------------------------------------------------------
-
-5/37 Testing: T-0043 header: archetype count
-5/37 Test: T-0043 header: archetype count
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: archetype count"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: archetype count" start time: Aug 08 22:11 CEST
-Output:
-----------------------------------------------------------
-[doctest] doctest version is "2.4.11"
-[doctest] run with "--help" for options
-===============================================================================
-[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 1 | 1 passed | 0 failed |
-[doctest] Status: SUCCESS!
-<end of output>
-Test time =   0.00 sec
-----------------------------------------------------------
-Test Passed.
-"T-0043 header: archetype count" end time: Aug 08 22:11 CEST
+"T-0043 header: archetype count" end time: Aug 08 23:52 CEST
 "T-0043 header: archetype count" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-6/37 Testing: T-0043 header: anchor_tag count
-6/37 Test: T-0043 header: anchor_tag count
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: anchor_tag count"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: anchor_tag count" start time: Aug 08 22:11 CEST
+6/42 Testing: T-0043 header: anchor_tag count
+6/42 Test: T-0043 header: anchor_tag count
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: anchor_tag count"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: anchor_tag count" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -134,15 +122,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 header: anchor_tag count" end time: Aug 08 22:11 CEST
+"T-0043 header: anchor_tag count" end time: Aug 08 23:52 CEST
 "T-0043 header: anchor_tag count" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-7/37 Testing: T-0043 header: word category distribution (02-notes-system.md §2)
-7/37 Test: T-0043 header: word category distribution (02-notes-system.md §2)
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: word category distribution (02-notes-system.md §2)"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: word category distribution (02-notes-system.md §2)" start time: Aug 08 22:11 CEST
+7/42 Testing: T-0043 header: word category distribution (02-notes-system.md §2)
+7/42 Test: T-0043 header: word category distribution (02-notes-system.md §2)
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: word category distribution (02-notes-system.md §2)"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: word category distribution (02-notes-system.md §2)" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -155,15 +143,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 header: word category distribution (02-notes-system.md §2)" end time: Aug 08 22:11 CEST
+"T-0043 header: word category distribution (02-notes-system.md §2)" end time: Aug 08 23:52 CEST
 "T-0043 header: word category distribution (02-notes-system.md §2)" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-8/37 Testing: T-0043 header: word IDs are unique
-8/37 Test: T-0043 header: word IDs are unique
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: word IDs are unique"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: word IDs are unique" start time: Aug 08 22:11 CEST
+8/42 Testing: T-0043 header: word IDs are unique
+8/42 Test: T-0043 header: word IDs are unique
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: word IDs are unique"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: word IDs are unique" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -176,15 +164,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 header: word IDs are unique" end time: Aug 08 22:11 CEST
+"T-0043 header: word IDs are unique" end time: Aug 08 23:52 CEST
 "T-0043 header: word IDs are unique" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-9/37 Testing: T-0043 header: template IDs are unique
-9/37 Test: T-0043 header: template IDs are unique
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: template IDs are unique"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: template IDs are unique" start time: Aug 08 22:11 CEST
+9/42 Testing: T-0043 header: template IDs are unique
+9/42 Test: T-0043 header: template IDs are unique
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: template IDs are unique"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: template IDs are unique" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -197,15 +185,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 header: template IDs are unique" end time: Aug 08 22:11 CEST
+"T-0043 header: template IDs are unique" end time: Aug 08 23:52 CEST
 "T-0043 header: template IDs are unique" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-10/37 Testing: T-0043 header: template slots are in {0, 1, 2}
-10/37 Test: T-0043 header: template slots are in {0, 1, 2}
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: template slots are in {0\, 1\, 2}"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: template slots are in {0, 1, 2}" start time: Aug 08 22:11 CEST
+10/42 Testing: T-0043 header: template slots are in {0, 1, 2}
+10/42 Test: T-0043 header: template slots are in {0, 1, 2}
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: template slots are in {0\, 1\, 2}"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: template slots are in {0, 1, 2}" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -218,15 +206,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 header: template slots are in {0, 1, 2}" end time: Aug 08 22:11 CEST
+"T-0043 header: template slots are in {0, 1, 2}" end time: Aug 08 23:52 CEST
 "T-0043 header: template slots are in {0, 1, 2}" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-11/37 Testing: T-0043 header: anchor_tags reference valid archetype IDs
-11/37 Test: T-0043 header: anchor_tags reference valid archetype IDs
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: anchor_tags reference valid archetype IDs"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: anchor_tags reference valid archetype IDs" start time: Aug 08 22:11 CEST
+11/42 Testing: T-0043 header: anchor_tags reference valid archetype IDs
+11/42 Test: T-0043 header: anchor_tags reference valid archetype IDs
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: anchor_tags reference valid archetype IDs"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: anchor_tags reference valid archetype IDs" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -239,15 +227,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 header: anchor_tags reference valid archetype IDs" end time: Aug 08 22:11 CEST
+"T-0043 header: anchor_tags reference valid archetype IDs" end time: Aug 08 23:52 CEST
 "T-0043 header: anchor_tags reference valid archetype IDs" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-12/37 Testing: T-0043 header: anchor_tag (archetype_id, tag) pairs are unique
-12/37 Test: T-0043 header: anchor_tag (archetype_id, tag) pairs are unique
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 header: anchor_tag (archetype_id\, tag) pairs are unique"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 header: anchor_tag (archetype_id, tag) pairs are unique" start time: Aug 08 22:11 CEST
+12/42 Testing: T-0043 header: anchor_tag (archetype_id, tag) pairs are unique
+12/42 Test: T-0043 header: anchor_tag (archetype_id, tag) pairs are unique
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 header: anchor_tag (archetype_id\, tag) pairs are unique"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 header: anchor_tag (archetype_id, tag) pairs are unique" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -255,227 +243,209 @@ Output:
 ===============================================================================
 [doctest] test cases:  1 |  1 passed | 0 failed | 21 skipped
 [doctest] assertions: 24 | 24 passed | 0 failed |
-[doctest] Status: SUCCESS!
-<end of output>
-Test time =   0.00 sec
-----------------------------------------------------------
-Test Passed.
-"T-0043 header: anchor_tag (archetype_id, tag) pairs are unique" end time: Aug 08 22:11 CEST
-"T-0043 header: anchor_tag (archetype_id, tag) pairs are unique" time elapsed: 00:00:00
-----------------------------------------------------------
-
-13/37 Testing: T-0043 DB parity: note_templates row count
-13/37 Test: T-0043 DB parity: note_templates row count
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: note_templates row count"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: note_templates row count" start time: Aug 08 22:11 CEST
-Output:
-----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
-[doctest] doctest version is "2.4.11"
-[doctest] run with "--help" for options
-===============================================================================
-[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
-[doctest] Status: SUCCESS!
-<end of output>
-Test time =   0.02 sec
-----------------------------------------------------------
-Test Passed.
-"T-0043 DB parity: note_templates row count" end time: Aug 08 22:11 CEST
-"T-0043 DB parity: note_templates row count" time elapsed: 00:00:00
-----------------------------------------------------------
-
-14/37 Testing: T-0043 DB parity: note_templates IDs match shared header
-14/37 Test: T-0043 DB parity: note_templates IDs match shared header
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: note_templates IDs match shared header"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: note_templates IDs match shared header" start time: Aug 08 22:11 CEST
-Output:
-----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
-[doctest] doctest version is "2.4.11"
-[doctest] run with "--help" for options
-===============================================================================
-[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
-[doctest] Status: SUCCESS!
-<end of output>
-Test time =   0.02 sec
-----------------------------------------------------------
-Test Passed.
-"T-0043 DB parity: note_templates IDs match shared header" end time: Aug 08 22:11 CEST
-"T-0043 DB parity: note_templates IDs match shared header" time elapsed: 00:00:00
-----------------------------------------------------------
-
-15/37 Testing: T-0043 DB parity: note_words row count
-15/37 Test: T-0043 DB parity: note_words row count
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: note_words row count"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: note_words row count" start time: Aug 08 22:11 CEST
-Output:
-----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
-[doctest] doctest version is "2.4.11"
-[doctest] run with "--help" for options
-===============================================================================
-[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 DB parity: note_words row count" end time: Aug 08 22:11 CEST
+"T-0043 header: anchor_tag (archetype_id, tag) pairs are unique" end time: Aug 08 23:52 CEST
+"T-0043 header: anchor_tag (archetype_id, tag) pairs are unique" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/42 Testing: T-0043 DB parity: note_templates row count
+13/42 Test: T-0043 DB parity: note_templates row count
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: note_templates row count"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: note_templates row count" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"T-0043 DB parity: note_templates row count" end time: Aug 08 23:52 CEST
+"T-0043 DB parity: note_templates row count" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/42 Testing: T-0043 DB parity: note_templates IDs match shared header
+14/42 Test: T-0043 DB parity: note_templates IDs match shared header
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: note_templates IDs match shared header"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: note_templates IDs match shared header" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"T-0043 DB parity: note_templates IDs match shared header" end time: Aug 08 23:52 CEST
+"T-0043 DB parity: note_templates IDs match shared header" time elapsed: 00:00:00
+----------------------------------------------------------
+
+15/42 Testing: T-0043 DB parity: note_words row count
+15/42 Test: T-0043 DB parity: note_words row count
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: note_words row count"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: note_words row count" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"T-0043 DB parity: note_words row count" end time: Aug 08 23:52 CEST
 "T-0043 DB parity: note_words row count" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-16/37 Testing: T-0043 DB parity: note_words IDs match shared header
-16/37 Test: T-0043 DB parity: note_words IDs match shared header
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: note_words IDs match shared header"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: note_words IDs match shared header" start time: Aug 08 22:11 CEST
+16/42 Testing: T-0043 DB parity: note_words IDs match shared header
+16/42 Test: T-0043 DB parity: note_words IDs match shared header
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: note_words IDs match shared header"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: note_words IDs match shared header" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 DB parity: note_words IDs match shared header" end time: Aug 08 22:11 CEST
+"T-0043 DB parity: note_words IDs match shared header" end time: Aug 08 23:52 CEST
 "T-0043 DB parity: note_words IDs match shared header" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-17/37 Testing: T-0043 DB parity: note_words categories match shared header
-17/37 Test: T-0043 DB parity: note_words categories match shared header
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: note_words categories match shared header"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: note_words categories match shared header" start time: Aug 08 22:11 CEST
+17/42 Testing: T-0043 DB parity: note_words categories match shared header
+17/42 Test: T-0043 DB parity: note_words categories match shared header
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: note_words categories match shared header"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: note_words categories match shared header" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
-[doctest] test cases:   1 |   1 passed | 0 failed | 21 skipped
-[doctest] assertions: 113 | 113 passed | 0 failed |
+[doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 DB parity: note_words categories match shared header" end time: Aug 08 22:11 CEST
+"T-0043 DB parity: note_words categories match shared header" end time: Aug 08 23:52 CEST
 "T-0043 DB parity: note_words categories match shared header" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-18/37 Testing: T-0043 DB parity: archetype row count
-18/37 Test: T-0043 DB parity: archetype row count
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: archetype row count"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: archetype row count" start time: Aug 08 22:11 CEST
+18/42 Testing: T-0043 DB parity: archetype row count
+18/42 Test: T-0043 DB parity: archetype row count
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: archetype row count"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: archetype row count" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 DB parity: archetype row count" end time: Aug 08 22:11 CEST
+"T-0043 DB parity: archetype row count" end time: Aug 08 23:52 CEST
 "T-0043 DB parity: archetype row count" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-19/37 Testing: T-0043 DB parity: archetype IDs match shared header
-19/37 Test: T-0043 DB parity: archetype IDs match shared header
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: archetype IDs match shared header"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: archetype IDs match shared header" start time: Aug 08 22:11 CEST
+19/42 Testing: T-0043 DB parity: archetype IDs match shared header
+19/42 Test: T-0043 DB parity: archetype IDs match shared header
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: archetype IDs match shared header"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: archetype IDs match shared header" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 DB parity: archetype IDs match shared header" end time: Aug 08 22:11 CEST
+"T-0043 DB parity: archetype IDs match shared header" end time: Aug 08 23:52 CEST
 "T-0043 DB parity: archetype IDs match shared header" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-20/37 Testing: T-0043 DB parity: anchor_tag row count
-20/37 Test: T-0043 DB parity: anchor_tag row count
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: anchor_tag row count"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: anchor_tag row count" start time: Aug 08 22:11 CEST
+20/42 Testing: T-0043 DB parity: anchor_tag row count
+20/42 Test: T-0043 DB parity: anchor_tag row count
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: anchor_tag row count"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: anchor_tag row count" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 DB parity: anchor_tag row count" end time: Aug 08 22:11 CEST
+"T-0043 DB parity: anchor_tag row count" end time: Aug 08 23:52 CEST
 "T-0043 DB parity: anchor_tag row count" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-21/37 Testing: T-0043 DB parity: anchor_tag pairs match shared header
-21/37 Test: T-0043 DB parity: anchor_tag pairs match shared header
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=T-0043 DB parity: anchor_tag pairs match shared header"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"T-0043 DB parity: anchor_tag pairs match shared header" start time: Aug 08 22:11 CEST
+21/42 Testing: T-0043 DB parity: anchor_tag pairs match shared header
+21/42 Test: T-0043 DB parity: anchor_tag pairs match shared header
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=T-0043 DB parity: anchor_tag pairs match shared header"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"T-0043 DB parity: anchor_tag pairs match shared header" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 21 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"T-0043 DB parity: anchor_tag pairs match shared header" end time: Aug 08 22:11 CEST
+"T-0043 DB parity: anchor_tag pairs match shared header" end time: Aug 08 23:52 CEST
 "T-0043 DB parity: anchor_tag pairs match shared header" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-22/37 Testing: server CI toolchain is wired
-22/37 Test: server CI toolchain is wired
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests" "--test-case=server CI toolchain is wired"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"server CI toolchain is wired" start time: Aug 08 22:11 CEST
+22/42 Testing: server CI toolchain is wired
+22/42 Test: server CI toolchain is wired
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests" "--test-case=server CI toolchain is wired"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"server CI toolchain is wired" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -485,18 +455,18 @@ Output:
 [doctest] assertions: 1 | 1 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.01 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"server CI toolchain is wired" end time: Aug 08 22:11 CEST
+"server CI toolchain is wired" end time: Aug 08 23:52 CEST
 "server CI toolchain is wired" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-23/37 Testing: SeedPhrase wordlist has exactly 256 entries
-23/37 Test: SeedPhrase wordlist has exactly 256 entries
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=SeedPhrase wordlist has exactly 256 entries"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"SeedPhrase wordlist has exactly 256 entries" start time: Aug 08 22:11 CEST
+23/42 Testing: SeedPhrase wordlist has exactly 256 entries
+23/42 Test: SeedPhrase wordlist has exactly 256 entries
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=SeedPhrase wordlist has exactly 256 entries"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"SeedPhrase wordlist has exactly 256 entries" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -509,15 +479,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"SeedPhrase wordlist has exactly 256 entries" end time: Aug 08 22:11 CEST
+"SeedPhrase wordlist has exactly 256 entries" end time: Aug 08 23:52 CEST
 "SeedPhrase wordlist has exactly 256 entries" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-24/37 Testing: SeedPhrase::generate produces 8 words all from the wordlist
-24/37 Test: SeedPhrase::generate produces 8 words all from the wordlist
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=SeedPhrase::generate produces 8 words all from the wordlist"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"SeedPhrase::generate produces 8 words all from the wordlist" start time: Aug 08 22:11 CEST
+24/42 Testing: SeedPhrase::generate produces 8 words all from the wordlist
+24/42 Test: SeedPhrase::generate produces 8 words all from the wordlist
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=SeedPhrase::generate produces 8 words all from the wordlist"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"SeedPhrase::generate produces 8 words all from the wordlist" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -530,15 +500,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"SeedPhrase::generate produces 8 words all from the wordlist" end time: Aug 08 22:11 CEST
+"SeedPhrase::generate produces 8 words all from the wordlist" end time: Aug 08 23:52 CEST
 "SeedPhrase::generate produces 8 words all from the wordlist" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-25/37 Testing: SeedPhrase::generate produces varied output across calls
-25/37 Test: SeedPhrase::generate produces varied output across calls
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=SeedPhrase::generate produces varied output across calls"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"SeedPhrase::generate produces varied output across calls" start time: Aug 08 22:11 CEST
+25/42 Testing: SeedPhrase::generate produces varied output across calls
+25/42 Test: SeedPhrase::generate produces varied output across calls
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=SeedPhrase::generate produces varied output across calls"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"SeedPhrase::generate produces varied output across calls" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -551,15 +521,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"SeedPhrase::generate produces varied output across calls" end time: Aug 08 22:11 CEST
+"SeedPhrase::generate produces varied output across calls" end time: Aug 08 23:52 CEST
 "SeedPhrase::generate produces varied output across calls" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-26/37 Testing: SeedPhrase::deriveToken is deterministic
-26/37 Test: SeedPhrase::deriveToken is deterministic
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=SeedPhrase::deriveToken is deterministic"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"SeedPhrase::deriveToken is deterministic" start time: Aug 08 22:11 CEST
+26/42 Testing: SeedPhrase::deriveToken is deterministic
+26/42 Test: SeedPhrase::deriveToken is deterministic
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=SeedPhrase::deriveToken is deterministic"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"SeedPhrase::deriveToken is deterministic" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -572,15 +542,15 @@ Output:
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"SeedPhrase::deriveToken is deterministic" end time: Aug 08 22:11 CEST
+"SeedPhrase::deriveToken is deterministic" end time: Aug 08 23:52 CEST
 "SeedPhrase::deriveToken is deterministic" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-27/37 Testing: SeedPhrase::deriveToken differs for different phrases
-27/37 Test: SeedPhrase::deriveToken differs for different phrases
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=SeedPhrase::deriveToken differs for different phrases"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"SeedPhrase::deriveToken differs for different phrases" start time: Aug 08 22:11 CEST
+27/42 Testing: SeedPhrase::deriveToken differs for different phrases
+27/42 Test: SeedPhrase::deriveToken differs for different phrases
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=SeedPhrase::deriveToken differs for different phrases"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"SeedPhrase::deriveToken differs for different phrases" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -593,15 +563,15 @@ Output:
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"SeedPhrase::deriveToken differs for different phrases" end time: Aug 08 22:11 CEST
+"SeedPhrase::deriveToken differs for different phrases" end time: Aug 08 23:52 CEST
 "SeedPhrase::deriveToken differs for different phrases" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-28/37 Testing: SeedPhrase::deriveToken output is not the phrase itself
-28/37 Test: SeedPhrase::deriveToken output is not the phrase itself
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=SeedPhrase::deriveToken output is not the phrase itself"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"SeedPhrase::deriveToken output is not the phrase itself" start time: Aug 08 22:11 CEST
+28/42 Testing: SeedPhrase::deriveToken output is not the phrase itself
+28/42 Test: SeedPhrase::deriveToken output is not the phrase itself
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=SeedPhrase::deriveToken output is not the phrase itself"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"SeedPhrase::deriveToken output is not the phrase itself" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -614,15 +584,15 @@ Output:
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"SeedPhrase::deriveToken output is not the phrase itself" end time: Aug 08 22:11 CEST
+"SeedPhrase::deriveToken output is not the phrase itself" end time: Aug 08 23:52 CEST
 "SeedPhrase::deriveToken output is not the phrase itself" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-29/37 Testing: RateLimiter allows requests within the limit
-29/37 Test: RateLimiter allows requests within the limit
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=RateLimiter allows requests within the limit"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"RateLimiter allows requests within the limit" start time: Aug 08 22:11 CEST
+29/42 Testing: RateLimiter allows requests within the limit
+29/42 Test: RateLimiter allows requests within the limit
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=RateLimiter allows requests within the limit"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"RateLimiter allows requests within the limit" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -635,15 +605,15 @@ Output:
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"RateLimiter allows requests within the limit" end time: Aug 08 22:11 CEST
+"RateLimiter allows requests within the limit" end time: Aug 08 23:52 CEST
 "RateLimiter allows requests within the limit" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-30/37 Testing: RateLimiter blocks the request that exceeds the limit
-30/37 Test: RateLimiter blocks the request that exceeds the limit
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=RateLimiter blocks the request that exceeds the limit"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"RateLimiter blocks the request that exceeds the limit" start time: Aug 08 22:11 CEST
+30/42 Testing: RateLimiter blocks the request that exceeds the limit
+30/42 Test: RateLimiter blocks the request that exceeds the limit
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=RateLimiter blocks the request that exceeds the limit"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"RateLimiter blocks the request that exceeds the limit" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -653,18 +623,18 @@ Output:
 [doctest] assertions: 1 | 1 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.00 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"RateLimiter blocks the request that exceeds the limit" end time: Aug 08 22:11 CEST
+"RateLimiter blocks the request that exceeds the limit" end time: Aug 08 23:52 CEST
 "RateLimiter blocks the request that exceeds the limit" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-31/37 Testing: RateLimiter tracks limits per-IP independently
-31/37 Test: RateLimiter tracks limits per-IP independently
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=RateLimiter tracks limits per-IP independently"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"RateLimiter tracks limits per-IP independently" start time: Aug 08 22:11 CEST
+31/42 Testing: RateLimiter tracks limits per-IP independently
+31/42 Test: RateLimiter tracks limits per-IP independently
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=RateLimiter tracks limits per-IP independently"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"RateLimiter tracks limits per-IP independently" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -677,134 +647,120 @@ Output:
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"RateLimiter tracks limits per-IP independently" end time: Aug 08 22:11 CEST
+"RateLimiter tracks limits per-IP independently" end time: Aug 08 23:52 CEST
 "RateLimiter tracks limits per-IP independently" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-32/37 Testing: identity table has no phrase column
-32/37 Test: identity table has no phrase column
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=identity table has no phrase column"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"identity table has no phrase column" start time: Aug 08 22:11 CEST
+32/42 Testing: identity table has no phrase column
+32/42 Test: identity table has no phrase column
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=identity table has no phrase column"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"identity table has no phrase column" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 10 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"identity table has no phrase column" end time: Aug 08 22:11 CEST
+"identity table has no phrase column" end time: Aug 08 23:52 CEST
 "identity table has no phrase column" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-33/37 Testing: POST /v1/identity HTTP integration
-33/37 Test: POST /v1/identity HTTP integration
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/identity_tests" "--test-case=POST /v1/identity HTTP integration"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"POST /v1/identity HTTP integration" start time: Aug 08 22:11 CEST
+33/42 Testing: POST /v1/identity HTTP integration
+33/42 Test: POST /v1/identity HTTP integration
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/identity_tests" "--test-case=POST /v1/identity HTTP integration"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"POST /v1/identity HTTP integration" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
-[doctest] test cases:  1 |  1 passed | 0 failed | 10 skipped
-[doctest] assertions: 12 | 12 passed | 0 failed |
+[doctest] test cases: 1 | 1 passed | 0 failed | 10 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.03 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"POST /v1/identity HTTP integration" end time: Aug 08 22:11 CEST
+"POST /v1/identity HTTP integration" end time: Aug 08 23:52 CEST
 "POST /v1/identity HTTP integration" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-34/37 Testing: PgNoteRepo CRUD round-trip
-34/37 Test: PgNoteRepo CRUD round-trip
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/note_repo_tests" "--test-case=PgNoteRepo CRUD round-trip"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"PgNoteRepo CRUD round-trip" start time: Aug 08 22:11 CEST
+34/42 Testing: PgNoteRepo CRUD round-trip
+34/42 Test: PgNoteRepo CRUD round-trip
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/note_repo_tests" "--test-case=PgNoteRepo CRUD round-trip"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"PgNoteRepo CRUD round-trip" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
 ===============================================================================
-[doctest] test cases:  1 |  1 passed | 0 failed | 3 skipped
-[doctest] assertions: 14 | 14 passed | 0 failed |
+[doctest] test cases: 1 | 1 passed | 0 failed | 3 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"PgNoteRepo CRUD round-trip" end time: Aug 08 22:11 CEST
+"PgNoteRepo CRUD round-trip" end time: Aug 08 23:52 CEST
 "PgNoteRepo CRUD round-trip" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-35/37 Testing: PgNoteRepo rejects bad template_id via FK
-35/37 Test: PgNoteRepo rejects bad template_id via FK
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/note_repo_tests" "--test-case=PgNoteRepo rejects bad template_id via FK"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"PgNoteRepo rejects bad template_id via FK" start time: Aug 08 22:11 CEST
+35/42 Testing: PgNoteRepo rejects bad template_id via FK
+35/42 Test: PgNoteRepo rejects bad template_id via FK
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/note_repo_tests" "--test-case=PgNoteRepo rejects bad template_id via FK"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"PgNoteRepo rejects bad template_id via FK" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
-20260808 20:11:23.859564 UTC 456138 ERROR ERROR:  insert or update on table "notes" violates foreign key constraint "notes_template_id_fkey"
-DETAIL:  Key (template_id)=(999) is not present in table "note_templates".
- - PgBatchConnection.cc:507
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 3 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"PgNoteRepo rejects bad template_id via FK" end time: Aug 08 22:11 CEST
+"PgNoteRepo rejects bad template_id via FK" end time: Aug 08 23:52 CEST
 "PgNoteRepo rejects bad template_id via FK" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-36/37 Testing: PgNoteRepo rejects bad slot_a via FK
-36/37 Test: PgNoteRepo rejects bad slot_a via FK
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/note_repo_tests" "--test-case=PgNoteRepo rejects bad slot_a via FK"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"PgNoteRepo rejects bad slot_a via FK" start time: Aug 08 22:11 CEST
+36/42 Testing: PgNoteRepo rejects bad slot_a via FK
+36/42 Test: PgNoteRepo rejects bad slot_a via FK
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/note_repo_tests" "--test-case=PgNoteRepo rejects bad slot_a via FK"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"PgNoteRepo rejects bad slot_a via FK" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
-NOTICE:  relation "schema_migrations" already exists, skipping
-NOTICE:  relation "schema_migrations" already exists, skipping
 [doctest] doctest version is "2.4.11"
 [doctest] run with "--help" for options
-20260808 20:11:23.879095 UTC 456140 ERROR ERROR:  insert or update on table "notes" violates foreign key constraint "notes_slot_a_fkey"
-DETAIL:  Key (slot_a)=(999) is not present in table "note_words".
- - PgBatchConnection.cc:507
 ===============================================================================
 [doctest] test cases: 1 | 1 passed | 0 failed | 3 skipped
-[doctest] assertions: 2 | 2 passed | 0 failed |
+[doctest] assertions: 0 | 0 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.02 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"PgNoteRepo rejects bad slot_a via FK" end time: Aug 08 22:11 CEST
+"PgNoteRepo rejects bad slot_a via FK" end time: Aug 08 23:52 CEST
 "PgNoteRepo rejects bad slot_a via FK" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-37/37 Testing: NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius
-37/37 Test: NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius
-Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/note_repo_tests" "--test-case=NoteRepo fetch is keyed on (archetype_id\, anchor_tag) — no radius"
-Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2
-"NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius" start time: Aug 08 22:11 CEST
+37/42 Testing: NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius
+37/42 Test: NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/note_repo_tests" "--test-case=NoteRepo fetch is keyed on (archetype_id\, anchor_tag) — no radius"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius" start time: Aug 08 23:52 CEST
 Output:
 ----------------------------------------------------------
 [doctest] doctest version is "2.4.11"
@@ -814,11 +770,116 @@ Output:
 [doctest] assertions: 1 | 1 passed | 0 failed |
 [doctest] Status: SUCCESS!
 <end of output>
-Test time =   0.01 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius" end time: Aug 08 22:11 CEST
+"NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius" end time: Aug 08 23:52 CEST
 "NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Aug 08 22:11 CEST
+38/42 Testing: fetchRanked signature is (archetype_id, anchor_tag, limit) — no radius
+38/42 Test: fetchRanked signature is (archetype_id, anchor_tag, limit) — no radius
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/notes_handler_tests" "--test-case=fetchRanked signature is (archetype_id\, anchor_tag\, limit) — no radius"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"fetchRanked signature is (archetype_id, anchor_tag, limit) — no radius" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 4 skipped
+[doctest] assertions: 1 | 1 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"fetchRanked signature is (archetype_id, anchor_tag, limit) — no radius" end time: Aug 08 23:52 CEST
+"fetchRanked signature is (archetype_id, anchor_tag, limit) — no radius" time elapsed: 00:00:00
+----------------------------------------------------------
+
+39/42 Testing: fetchRanked returns notes ordered by rating DESC
+39/42 Test: fetchRanked returns notes ordered by rating DESC
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/notes_handler_tests" "--test-case=fetchRanked returns notes ordered by rating DESC"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"fetchRanked returns notes ordered by rating DESC" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 4 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"fetchRanked returns notes ordered by rating DESC" end time: Aug 08 23:52 CEST
+"fetchRanked returns notes ordered by rating DESC" time elapsed: 00:00:00
+----------------------------------------------------------
+
+40/42 Testing: fetchRanked clamps limit to kMaxNotesLimit
+40/42 Test: fetchRanked clamps limit to kMaxNotesLimit
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/notes_handler_tests" "--test-case=fetchRanked clamps limit to kMaxNotesLimit"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"fetchRanked clamps limit to kMaxNotesLimit" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 4 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"fetchRanked clamps limit to kMaxNotesLimit" end time: Aug 08 23:52 CEST
+"fetchRanked clamps limit to kMaxNotesLimit" time elapsed: 00:00:00
+----------------------------------------------------------
+
+41/42 Testing: fetchRanked returns empty vector for anchor with no notes — not an error
+41/42 Test: fetchRanked returns empty vector for anchor with no notes — not an error
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/notes_handler_tests" "--test-case=fetchRanked returns empty vector for anchor with no notes — not an error"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"fetchRanked returns empty vector for anchor with no notes — not an error" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 4 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"fetchRanked returns empty vector for anchor with no notes — not an error" end time: Aug 08 23:52 CEST
+"fetchRanked returns empty vector for anchor with no notes — not an error" time elapsed: 00:00:00
+----------------------------------------------------------
+
+42/42 Testing: GET /v1/notes HTTP integration
+42/42 Test: GET /v1/notes HTTP integration
+Command: "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/notes_handler_tests" "--test-case=GET /v1/notes HTTP integration"
+Directory: /home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2
+"GET /v1/notes HTTP integration" start time: Aug 08 23:52 CEST
+Output:
+----------------------------------------------------------
+[doctest] doctest version is "2.4.11"
+[doctest] run with "--help" for options
+===============================================================================
+[doctest] test cases: 1 | 1 passed | 0 failed | 4 skipped
+[doctest] assertions: 0 | 0 passed | 0 failed |
+[doctest] Status: SUCCESS!
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"GET /v1/notes HTTP integration" end time: Aug 08 23:52 CEST
+"GET /v1/notes HTTP integration" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Aug 08 23:52 CEST

@@ -1,5 +1,5 @@
-if(EXISTS "/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests_tests-b858cb2.cmake")
-  include("/home/dennieseth/dev/assembled-board/worktrees/T-0044/server/build2/server_tests_tests-b858cb2.cmake")
+if(EXISTS "/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests_tests-b858cb2.cmake")
+  include("/home/dennieseth/dev/assembled-board/worktrees/T-0046/server/build2/server_tests_tests-b858cb2.cmake")
 else()
   add_test(server_tests_NOT_BUILT-b858cb2 server_tests_NOT_BUILT-b858cb2)
 endif()
