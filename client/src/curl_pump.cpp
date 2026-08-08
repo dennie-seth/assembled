@@ -120,8 +120,7 @@ void CurlPump::_bind_methods() {
     ClassDB::bind_method(D_METHOD("enqueue_get", "url"), &CurlPump::enqueue_get);
     ClassDB::bind_method(D_METHOD("get_running_count"), &CurlPump::get_running_count);
 
-    ADD_PROPERTY(PropertyInfo(Variant::INT, "running_count"), "",
-                 "get_running_count");
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "running_count"), "", "get_running_count");
 }
 
 } // namespace godot
