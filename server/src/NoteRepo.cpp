@@ -77,7 +77,7 @@ std::vector<NoteRecord> PgNoteRepo::fetch(int16_t archetype_id, int16_t anchor_t
 
 std::vector<NoteRecord> PgNoteRepo::fetchRanked(int16_t archetype_id, int16_t anchor_tag,
                                                 int limit) {
-    const int clamped = (limit < 1) ? 1 : (limit > kMaxNotesLimit ? kMaxNotesLimit : limit);
+    const int32_t clamped = (limit < 1) ? 1 : (limit > kMaxNotesLimit ? kMaxNotesLimit : limit);
 
     const auto rows =
         client_->execSqlSync("SELECT id, author_token, archetype_id, anchor_tag, template_id, "
