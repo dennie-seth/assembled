@@ -409,6 +409,19 @@ async function handleRunTask(orchestrator, id, res) {
     throw new HttpError(409, `Task ${id} already has an active run`);
   }
 
+  // A run moves the card to in-progress the same way a manual PATCH does -- reuse the
+  // same dependency/cycle guard handlePatchTask applies there, so the Run/Re-run button
+  // can't start work whose own dependencies aren't resolved just because it bypasses
+  // the PATCH route (docs/board-invariants.md RUN-3 / LC-5).
+  try {
+    await assertCanMoveToInProgress(orchestrator.store, id);
+  } catch (err) {
+    if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError) {
+      throw new HttpError(409, err.message);
+    }
+    throw err;
+  }
+
   // Fire-and-forget: a run (implementer + reviewer) can take minutes. The
   // client follows progress over the board WS, not this response.
   orchestrator.runCard(id).catch(async (err) => {
