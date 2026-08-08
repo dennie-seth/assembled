@@ -15,6 +15,10 @@
 
 namespace assembled_server {
 
+/// Maximum number of notes returned by a single fetchRanked call (T-0046).
+/// Requests with a larger limit are silently clamped to this value.
+inline constexpr int kMaxNotesLimit = 100;
+
 /// A note as returned by the repository (read model).
 struct NoteRecord {
     std::string id;                      ///< UUID primary key (hex string).
@@ -56,6 +60,13 @@ class INoteRepo {
     /// No radius parameter — lookup is equality on (archetype_id, anchor_tag).
     virtual std::vector<NoteRecord> fetch(int16_t archetype_id, int16_t anchor_tag) = 0;
 
+    /// Returns notes at the given anchor ordered by rating DESC (score).
+    /// @param limit  Maximum results to return; clamped to kMaxNotesLimit.
+    ///               Returns an empty vector when no notes exist — not an error.
+    /// No radius parameter — lookup is equality on (archetype_id, anchor_tag).
+    virtual std::vector<NoteRecord> fetchRanked(int16_t archetype_id, int16_t anchor_tag,
+                                                int limit) = 0;
+
     /// Increments the note's rating by 1.
     /// @throws drogon::orm::DrogonDbException if the note is not found or on
     ///         any DB error.
@@ -70,6 +81,8 @@ class PgNoteRepo : public INoteRepo {
 
     std::string create(const CreateNoteParams &params) override;
     std::vector<NoteRecord> fetch(int16_t archetype_id, int16_t anchor_tag) override;
+    std::vector<NoteRecord> fetchRanked(int16_t archetype_id, int16_t anchor_tag,
+                                        int limit) override;
     void rate(const std::string &note_id) override;
 
   private:

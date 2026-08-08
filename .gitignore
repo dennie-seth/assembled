@@ -28,6 +28,8 @@ build/
 # a second local build dir alongside server/build/) — "build/" above only
 # matches a dir literally named "build", not variants like "build2".
 build*/
+build2/
+build_verify/
 cmake-build-*/
 *.o
 *.os
