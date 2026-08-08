@@ -397,8 +397,8 @@ describe("renderBoard per-column sort control", () => {
   });
 });
 
-describe("renderBoard unblocked badge", () => {
-  it("renders an unblocked badge on a card whose all dependencies are done", () => {
+describe("renderBoard dependency status badge (ready/blocked, mutually exclusive)", () => {
+  it("renders a ready badge on a card whose all dependencies are done", () => {
     const root = document.createElement("div");
     const dep = task({ id: "T-0001", status: "done" });
     const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
@@ -406,9 +406,10 @@ describe("renderBoard unblocked badge", () => {
 
     const badge = root.querySelector('.card[data-id="T-0002"] .card-unblocked-badge');
     expect(badge).not.toBeNull();
+    expect(root.querySelector('.card[data-id="T-0002"] .card-blocked-badge')).toBeNull();
   });
 
-  it("renders an unblocked badge on a card whose all dependencies are retired", () => {
+  it("renders a ready badge on a card whose all dependencies are retired", () => {
     const root = document.createElement("div");
     const dep = task({ id: "T-0001", status: "retired" });
     const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
@@ -418,7 +419,7 @@ describe("renderBoard unblocked badge", () => {
     expect(badge).not.toBeNull();
   });
 
-  it("renders an unblocked badge when dependencies mix done and retired", () => {
+  it("renders a ready badge when dependencies mix done and retired", () => {
     const root = document.createElement("div");
     const dep1 = task({ id: "T-0001", status: "done" });
     const dep2 = task({ id: "T-0002", status: "retired" });
@@ -429,24 +430,26 @@ describe("renderBoard unblocked badge", () => {
     expect(badge).not.toBeNull();
   });
 
-  it("does not render an unblocked badge when a dependency is not done or retired", () => {
+  it("renders a blocked badge (not a ready badge) when a dependency is not done or retired", () => {
     const root = document.createElement("div");
     const dep = task({ id: "T-0001", status: "in-progress" });
     const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
     renderBoard(root, [dep, t], { onDrop: vi.fn(), onCardClick: vi.fn() });
 
     expect(root.querySelector('.card[data-id="T-0002"] .card-unblocked-badge')).toBeNull();
+    expect(root.querySelector('.card[data-id="T-0002"] .card-blocked-badge')).not.toBeNull();
   });
 
-  it("does not render an unblocked badge on a card with no dependencies", () => {
+  it("renders a ready badge (not a blocked badge) on a card with no dependencies", () => {
     const root = document.createElement("div");
     const t = task({ id: "T-0001", status: "ready", depends_on: [] });
     renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
 
-    expect(root.querySelector('.card[data-id="T-0001"] .card-unblocked-badge')).toBeNull();
+    expect(root.querySelector('.card[data-id="T-0001"] .card-unblocked-badge')).not.toBeNull();
+    expect(root.querySelector('.card[data-id="T-0001"] .card-blocked-badge')).toBeNull();
   });
 
-  it("the unblocked badge has an accessible title or aria-label", () => {
+  it("the ready badge has an accessible title or aria-label", () => {
     const root = document.createElement("div");
     const dep = task({ id: "T-0001", status: "done" });
     const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
@@ -454,6 +457,49 @@ describe("renderBoard unblocked badge", () => {
 
     const badge = root.querySelector('.card[data-id="T-0002"] .card-unblocked-badge');
     expect(badge.title || badge.getAttribute("aria-label")).toBeTruthy();
+  });
+
+  it("the blocked badge has an accessible title or aria-label", () => {
+    const root = document.createElement("div");
+    const dep = task({ id: "T-0001", status: "in-progress" });
+    const t = task({ id: "T-0002", status: "ready", depends_on: ["T-0001"] });
+    renderBoard(root, [dep, t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0002"] .card-blocked-badge');
+    expect(badge.title || badge.getAttribute("aria-label")).toBeTruthy();
+  });
+
+  it("never renders both the blocked badge and the ready badge on the same card, and always renders exactly one", () => {
+    const root = document.createElement("div");
+    const tasks = [
+      task({ id: "T-0001", status: "backlog", depends_on: [] }),
+      task({ id: "T-0002", status: "backlog", depends_on: ["T-0001"] }),
+      task({ id: "T-0003", status: "backlog", depends_on: ["T-0099"] })
+    ];
+    renderBoard(root, tasks, { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    for (const t of tasks) {
+      const card = root.querySelector(`.card[data-id="${t.id}"]`);
+      const hasReady = card.querySelector(".card-unblocked-badge") !== null;
+      const hasBlocked = card.querySelector(".card-blocked-badge") !== null;
+      expect(hasReady && hasBlocked).toBe(false);
+      expect(hasReady || hasBlocked).toBe(true);
+    }
+  });
+
+  it("regression (T-0045-style double-dot): a card whose own dependencies are done but which blocks a downstream task shows only the ready badge, never a red/blocked-looking indicator alongside it", () => {
+    const root = document.createElement("div");
+    const dep = task({ id: "T-0044", status: "done" });
+    const t = task({ id: "T-0045", status: "backlog", depends_on: ["T-0044"] });
+    const downstream = task({ id: "T-0063", status: "backlog", depends_on: ["T-0045"] });
+    renderBoard(root, [dep, t, downstream], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const card = root.querySelector('.card[data-id="T-0045"]');
+    expect(card.querySelector(".card-unblocked-badge")).not.toBeNull();
+    expect(card.querySelector(".card-blocked-badge")).toBeNull();
+    // previously, this card also rendered the downstream "blocks" badge as the ⛔ glyph,
+    // which reads as a second, red "blocked" indicator right next to the green ready one
+    expect(card.textContent).not.toContain("⛔");
   });
 });
 
