@@ -96,8 +96,7 @@ int CurlPump::get_running_count() const { return running_; }
 // Private helpers
 // ---------------------------------------------------------------------------
 
-size_t CurlPump::discard_write(void * /*buf*/, size_t size, size_t nmemb,
-                                void * /*userdata*/) {
+size_t CurlPump::discard_write(void * /*buf*/, size_t size, size_t nmemb, void * /*userdata*/) {
     return size * nmemb;
 }
 

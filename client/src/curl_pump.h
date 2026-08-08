@@ -93,8 +93,7 @@ class CurlPump : public Node {
     std::vector<InFlight> in_flight_;
 
     /// Discard-all write callback (response body not needed by this layer).
-    static size_t discard_write(void *buf, size_t size, size_t nmemb,
-                                void *userdata);
+    static size_t discard_write(void *buf, size_t size, size_t nmemb, void *userdata);
 
     /// Remove a completed easy handle from the multi and free all resources.
     void cleanup_easy(CURL *easy);
