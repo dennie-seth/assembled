@@ -1,38 +1,153 @@
-GET /health returns 200 with {"status":"ok"} 1 0.0330909
-migrations apply against a live Postgres 1 0.0473563
-T-0043 header: word count matches design spec (02-notes-system.md §2) 1 0.00502412
-T-0043 header: template count matches design spec 1 0.00466388
-T-0043 header: archetype count 1 0.0044039
-T-0043 header: anchor_tag count 1 0.00433047
-T-0043 header: word category distribution (02-notes-system.md §2) 1 0.00428595
-T-0043 header: word IDs are unique 1 0.00407147
-T-0043 header: template IDs are unique 1 0.00442821
-T-0043 header: template slots are in {0, 1, 2} 1 0.0042268
-T-0043 header: anchor_tags reference valid archetype IDs 1 0.00434125
-T-0043 header: anchor_tag (archetype_id, tag) pairs are unique 1 0.00452547
-T-0043 DB parity: note_templates row count 1 0.0161483
-T-0043 DB parity: note_templates IDs match shared header 1 0.0153926
-T-0043 DB parity: note_words row count 1 0.0141919
-T-0043 DB parity: note_words IDs match shared header 1 0.015561
-T-0043 DB parity: note_words categories match shared header 1 0.0155984
-T-0043 DB parity: archetype row count 1 0.0160989
-T-0043 DB parity: archetype IDs match shared header 1 0.0159359
-T-0043 DB parity: anchor_tag row count 1 0.0151597
-T-0043 DB parity: anchor_tag pairs match shared header 1 0.0161564
-server CI toolchain is wired 1 0.00523337
-SeedPhrase wordlist has exactly 256 entries 1 0.00484909
-SeedPhrase::generate produces 8 words all from the wordlist 1 0.00453313
-SeedPhrase::generate produces varied output across calls 1 0.0044418
-SeedPhrase::deriveToken is deterministic 1 0.00550339
-SeedPhrase::deriveToken differs for different phrases 1 0.00568971
-SeedPhrase::deriveToken output is not the phrase itself 1 0.00558933
-RateLimiter allows requests within the limit 1 0.00493662
-RateLimiter blocks the request that exceeds the limit 1 0.00496975
-RateLimiter tracks limits per-IP independently 1 0.00505197
-identity table has no phrase column 1 0.0228519
-POST /v1/identity HTTP integration 1 0.0261214
-PgNoteRepo CRUD round-trip 1 0.0216274
-PgNoteRepo rejects bad template_id via FK 1 0.0198678
-PgNoteRepo rejects bad slot_a via FK 1 0.0180368
-NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius 1 0.005013
+GET 0 0
+migrations 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+server 0 0
+SeedPhrase 0 0
+SeedPhrase::generate 0 8
+SeedPhrase::generate 0 0
+SeedPhrase::deriveToken 0 0
+SeedPhrase::deriveToken 0 0
+SeedPhrase::deriveToken 0 0
+RateLimiter 0 0
+RateLimiter 0 0
+RateLimiter 0 0
+identity 0 0
+POST 0 0
+PgNoteRepo 0 0
+PgNoteRepo 0 0
+PgNoteRepo 0 0
+NoteRepo 0 0
+GET 0 0
+migrations 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+server 0 0
+SeedPhrase 0 0
+SeedPhrase::generate 0 8
+SeedPhrase::generate 0 0
+SeedPhrase::deriveToken 0 0
+SeedPhrase::deriveToken 0 0
+SeedPhrase::deriveToken 0 0
+RateLimiter 0 0
+RateLimiter 0 0
+RateLimiter 0 0
+identity 0 0
+POST 0 0
+PgNoteRepo 0 0
+PgNoteRepo 0 0
+PgNoteRepo 0 0
+NoteRepo 0 0
+POST 0 0
+POST 0 0
+GET 0 0
+migrations 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+T-0043 0 0
+server 0 0
+SeedPhrase 0 0
+SeedPhrase::generate 0 8
+SeedPhrase::generate 0 0
+SeedPhrase::deriveToken 0 0
+SeedPhrase::deriveToken 0 0
+SeedPhrase::deriveToken 0 0
+RateLimiter 0 0
+RateLimiter 0 0
+RateLimiter 0 0
+identity 0 0
+POST 0 0
+PgNoteRepo 0 0
+PgNoteRepo 0 0
+PgNoteRepo 0 0
+NoteRepo 0 0
+POST 0 0
+GET /health returns 200 with {"status":"ok"} 1 0.0123388
+migrations apply against a live Postgres 1 0.00494064
+T-0043 header: word count matches design spec (02-notes-system.md §2) 1 0.00486217
+T-0043 header: template count matches design spec 1 0.0049232
+T-0043 header: archetype count 1 0.00529005
+T-0043 header: anchor_tag count 1 0.00501699
+T-0043 header: word category distribution (02-notes-system.md §2) 1 0.00508684
+T-0043 header: word IDs are unique 1 0.00495593
+T-0043 header: template IDs are unique 1 0.0049023
+T-0043 header: template slots are in {0, 1, 2} 1 0.0050684
+T-0043 header: anchor_tags reference valid archetype IDs 1 0.00520277
+T-0043 header: anchor_tag (archetype_id, tag) pairs are unique 1 0.00540188
+T-0043 DB parity: note_templates row count 1 0.00520559
+T-0043 DB parity: note_templates IDs match shared header 1 0.00531368
+T-0043 DB parity: note_words row count 1 0.00515394
+T-0043 DB parity: note_words IDs match shared header 1 0.00515006
+T-0043 DB parity: note_words categories match shared header 1 0.00577333
+T-0043 DB parity: archetype row count 1 0.00503092
+T-0043 DB parity: archetype IDs match shared header 1 0.0048801
+T-0043 DB parity: anchor_tag row count 1 0.00527729
+T-0043 DB parity: anchor_tag pairs match shared header 1 0.00502041
+server CI toolchain is wired 1 0.00492987
+SeedPhrase wordlist has exactly 256 entries 1 0.00527992
+SeedPhrase::generate produces 8 words all from the wordlist 1 0.00509086
+SeedPhrase::generate produces varied output across calls 1 0.00509759
+SeedPhrase::deriveToken is deterministic 1 0.00594645
+SeedPhrase::deriveToken differs for different phrases 1 0.0059241
+SeedPhrase::deriveToken output is not the phrase itself 1 0.00611984
+RateLimiter allows requests within the limit 1 0.00501711
+RateLimiter blocks the request that exceeds the limit 1 0.00488997
+RateLimiter tracks limits per-IP independently 1 0.00512258
+identity table has no phrase column 1 0.00524036
+POST /v1/identity HTTP integration 1 0.00508992
+PgNoteRepo CRUD round-trip 1 0.00512553
+PgNoteRepo rejects bad template_id via FK 1 0.00508407
+PgNoteRepo rejects bad slot_a via FK 1 0.00507963
+NoteRepo fetch is keyed on (archetype_id, anchor_tag) — no radius 1 0.00547577
+POST /v1/notes HTTP integration 1 0.00502551
 ---
