@@ -59,6 +59,9 @@ describe("POST /api/tasks/:id/run — async failure surfacing", () => {
     const task = await createTask({ status: "ready" });
     const res = await fetch(`${baseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
     expect(res.status).toBe(202);
+    // Drain the async rejection handler before afterEach tears down tmpDir,
+    // otherwise the in-flight store write races with fs.rm cleanup.
+    await vi.waitFor(() => expect(broadcastCalls.length).toBeGreaterThan(0));
   });
 
   it("persists blocked status on the card when runCard rejects", async () => {
