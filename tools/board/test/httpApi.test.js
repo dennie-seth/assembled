@@ -496,6 +496,70 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
     await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
   });
 
+  // RUN-3 / LC-5 (docs/board-invariants.md): the Run/Re-run button hits this route
+  // directly, bypassing the PATCH-to-in-progress path that "PATCH /api/tasks/:id
+  // dependency guard" above tests. A ready card with unmet own dependencies renders
+  // the red "blocked" dot (computeDependencyStatus in board.js) -- the Run button
+  // must not be able to start work the dot says isn't ready.
+  describe("dependency guard on run (RUN-3 / LC-5)", () => {
+    it("returns 409 running a ready card whose own dependency is not done", async () => {
+      const dep = await createTask({ status: "backlog" });
+      const task = await createTask({ status: "ready", depends_on: [dep.id] });
+
+      const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+
+      expect(res.status).toBe(409);
+      const payload = await res.json();
+      expect(payload.error).toMatch(new RegExp(dep.id));
+      expect(orchestrator.isRunning(task.id)).toBe(false);
+    });
+
+    it("returns 409 re-running a blocked card whose own dependency is not done", async () => {
+      const dep = await createTask({ status: "in-progress" });
+      const task = await createTask({ status: "blocked", depends_on: [dep.id] });
+
+      const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+
+      expect(res.status).toBe(409);
+      expect(orchestrator.isRunning(task.id)).toBe(false);
+    });
+
+    it("returns 409 running a card whose dependency graph has a cycle", async () => {
+      const a = await createTask({ status: "ready" });
+      const b = await createTask({ status: "ready", depends_on: [a.id] });
+      await fetch(`${orchBaseUrl}/api/tasks/${a.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ depends_on: [b.id] })
+      });
+
+      const res = await fetch(`${orchBaseUrl}/api/tasks/${a.id}/run`, { method: "POST" });
+
+      expect(res.status).toBe(409);
+      const payload = await res.json();
+      expect(payload.error).toMatch(/cycle/i);
+    });
+
+    it("allows running a ready card once its own dependency is done", async () => {
+      const dep = await createTask({ status: "done" });
+      const task = await createTask({ status: "ready", depends_on: [dep.id] });
+
+      const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+
+      expect(res.status).toBe(202);
+      await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
+    });
+
+    it("allows running a card with no dependencies (unaffected by the guard)", async () => {
+      const task = await createTask({ status: "ready", depends_on: [] });
+
+      const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+
+      expect(res.status).toBe(202);
+      await vi.waitFor(() => expect(orchestrator.isRunning(task.id)).toBe(true));
+    });
+  });
+
   it("returns 409 when running a card that already has an active run", async () => {
     const task = await createTask({ status: "ready" });
     await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
