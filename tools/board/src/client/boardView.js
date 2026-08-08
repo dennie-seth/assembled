@@ -1,4 +1,4 @@
-import { STATUSES, groupTasksByStatus, computeBlockerCounts, sortTasks, SORT_KEYS } from "./board.js";
+import { STATUSES, groupTasksByStatus, computeBlockerCounts, computeUnblockedIds, sortTasks, SORT_KEYS } from "./board.js";
 
 export const BATCH_SIZE = 20;
 
@@ -36,6 +36,17 @@ function actionButton(className, label, onClick) {
   return button;
 }
 
+function unblockedBadgeFor(isUnblocked) {
+  if (!isUnblocked) return null;
+  const badge = document.createElement("span");
+  badge.className = "card-unblocked-badge";
+  const label = "All dependencies complete — ready to run";
+  badge.textContent = "🟢";
+  badge.title = label;
+  badge.setAttribute("aria-label", label);
+  return badge;
+}
+
 function blockerBadgeFor(blockCount) {
   if (!blockCount) return null;
   const badge = document.createElement("span");
@@ -62,7 +73,7 @@ function attemptsBadgeFor(task) {
   return badge;
 }
 
-function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
+function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, unblockedIds) {
   const card = document.createElement("div");
   card.className = "card";
   card.draggable = true;
@@ -84,6 +95,11 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
   const badge = blockerBadgeFor(blockerCounts?.get(task.id) ?? 0);
   if (badge) {
     titleRow.appendChild(badge);
+  }
+
+  const unblockedBadge = unblockedBadgeFor(unblockedIds?.has(task.id) ?? false);
+  if (unblockedBadge) {
+    titleRow.appendChild(unblockedBadge);
   }
 
   const attemptsBadge = attemptsBadgeFor(task);
@@ -130,7 +146,7 @@ function sortSelectFor(status, sortKey, onSortChange) {
   return select;
 }
 
-function renderColumn(status, tasks, callbacks, blockerCounts) {
+function renderColumn(status, tasks, callbacks, blockerCounts, unblockedIds) {
   const column = document.createElement("div");
   column.className = "column";
   column.dataset.status = status;
@@ -168,7 +184,7 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
   const visibleCount = callbacks.columnBatch?.get(status) ?? BATCH_SIZE;
   const sorted = sortTasks(tasks, sortKey);
   for (const task of sorted.slice(0, visibleCount)) {
-    list.appendChild(renderCard(task, callbacks, blockerCounts));
+    list.appendChild(renderCard(task, callbacks, blockerCounts, unblockedIds));
   }
   if (sorted.length > visibleCount && callbacks.onShowMore) {
     const sentinel = document.createElement("div");
@@ -187,6 +203,7 @@ export function renderBoard(root, tasks, callbacks) {
 
   const grouped = groupTasksByStatus(tasks);
   const blockerCounts = computeBlockerCounts(tasks);
+  const unblockedIds = computeUnblockedIds(tasks);
   root.replaceChildren();
 
   if (callbacks.error) {
@@ -200,7 +217,7 @@ export function renderBoard(root, tasks, callbacks) {
   board.className = "board";
 
   for (const status of STATUSES) {
-    board.appendChild(renderColumn(status, grouped.get(status) ?? [], callbacks, blockerCounts));
+    board.appendChild(renderColumn(status, grouped.get(status) ?? [], callbacks, blockerCounts, unblockedIds));
   }
 
   root.appendChild(board);
