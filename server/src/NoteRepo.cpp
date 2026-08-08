@@ -92,11 +92,11 @@ std::vector<NoteRecord> PgNoteRepo::fetchRanked(int16_t archetype_id, int16_t an
     result.reserve(static_cast<std::size_t>(rows.size()));
     for (const auto &row : rows) {
         NoteRecord n;
-        n.id           = row["id"].as<std::string>();
+        n.id = row["id"].as<std::string>();
         n.author_token = row["author_token"].as<std::string>();
         n.archetype_id = row["archetype_id"].as<int16_t>();
-        n.anchor_tag   = row["anchor_tag"].as<int16_t>();
-        n.template_id  = row["template_id"].as<int16_t>();
+        n.anchor_tag = row["anchor_tag"].as<int16_t>();
+        n.template_id = row["template_id"].as<int16_t>();
 
         if (!row["slot_a"].isNull())
             n.slot_a = row["slot_a"].as<int16_t>();

@@ -19,8 +19,7 @@ constexpr int kDefaultLimit = 20;
 
 /// Parse a required SMALLINT query parameter.
 /// @returns the parsed value, or std::nullopt if missing/invalid.
-std::optional<int16_t> parseSmallInt(const drogon::HttpRequestPtr &req,
-                                     const std::string &name) {
+std::optional<int16_t> parseSmallInt(const drogon::HttpRequestPtr &req, const std::string &name) {
     const auto &param = req->getParameter(name);
     if (param.empty())
         return std::nullopt;
@@ -37,7 +36,7 @@ void NoteController::listNotes(const drogon::HttpRequestPtr &req,
                                std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
     // 1. Parse required parameters.
     const auto archetype_id = parseSmallInt(req, "archetype_id");
-    const auto anchor_tag   = parseSmallInt(req, "anchor_tag");
+    const auto anchor_tag = parseSmallInt(req, "anchor_tag");
 
     if (!archetype_id || !anchor_tag) {
         auto resp = drogon::HttpResponse::newHttpResponse();
@@ -82,10 +81,10 @@ void NoteController::listNotes(const drogon::HttpRequestPtr &req,
     Json::Value body(Json::arrayValue);
     for (const auto &n : notes) {
         Json::Value obj;
-        obj["id"]           = n.id;
+        obj["id"] = n.id;
         obj["archetype_id"] = n.archetype_id;
-        obj["anchor_tag"]   = n.anchor_tag;
-        obj["template_id"]  = n.template_id;
+        obj["anchor_tag"] = n.anchor_tag;
+        obj["template_id"] = n.template_id;
 
         if (n.slot_a.has_value())
             obj["slot_a"] = n.slot_a.value();
