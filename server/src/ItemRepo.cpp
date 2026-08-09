@@ -162,7 +162,7 @@ UseResult PgItemRepo::use(const UseParams &params) {
         "), "
         "unlock_upsert AS ( "
         "    INSERT INTO unlock (token, variant_id, tag, expires_at) "
-        "    SELECT $6, $7::smallint, $8::smallint, now() + ($9 * INTERVAL '1 second') "
+        "    SELECT $6, $7::smallint, $8::smallint, now() + ($9::int * INTERVAL '1 second') "
         "    FROM updated "
         "    ON CONFLICT (token, variant_id, tag) "
         "        DO UPDATE SET expires_at = EXCLUDED.expires_at "
