@@ -113,3 +113,12 @@ add_executable(notes_handler_tests
 )
 target_link_libraries(notes_handler_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(notes_handler_tests)
+
+# T-0093: SessionLeaseRepo tests — heartbeat, TTL, evict-on-takeover (INV-11).
+# Separate binary: no drogon::app() singleton contention risk.
+# session_lease_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(session_lease_tests
+  test/session_lease_test.cpp
+)
+target_link_libraries(session_lease_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(session_lease_tests)
