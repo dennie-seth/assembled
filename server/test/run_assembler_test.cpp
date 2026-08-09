@@ -347,9 +347,8 @@ TEST_CASE("assemble: teardown — remove all test data from DB") {
     REQUIRE(db.has_value());
 
     // Call for each test token so run rows are also cleaned up.
-    for (const auto *tok :
-         {"test-run-asm-t1", "test-run-asm-t2", "test-run-asm-t3", "test-run-asm-t4",
-          "test-run-asm-t5"}) {
+    for (const auto *tok : {"test-run-asm-t1", "test-run-asm-t2", "test-run-asm-t3",
+                            "test-run-asm-t4", "test-run-asm-t5"}) {
         cleanupTestData(db->getClient(), tok, 50, 80, 50, 66);
     }
 }
