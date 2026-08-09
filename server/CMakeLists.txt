@@ -49,6 +49,7 @@ add_library(assembled_server_lib OBJECT
   src/NoteRepo.cpp
   src/NoteController.cpp
   src/SessionLeaseRepo.cpp
+  src/ItemRepo.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -123,3 +124,13 @@ add_executable(session_lease_tests
 )
 target_link_libraries(session_lease_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(session_lease_tests)
+
+# T-0096: Two-player economy integration test (INV-1/2/3).
+# Exercises the full A-leaves-X / B-takes-X scenario against real repo code.
+# Separate binary: no drogon::app() singleton contention risk.
+# item_economy_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(item_economy_tests
+  test/item_economy_test.cpp
+)
+target_link_libraries(item_economy_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(item_economy_tests)
