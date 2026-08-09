@@ -50,6 +50,7 @@ add_library(assembled_server_lib OBJECT
   src/NoteController.cpp
   src/SessionLeaseRepo.cpp
   src/ItemRepo.cpp
+  src/RunAssembler.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -145,3 +146,13 @@ add_executable(item_use_transmute_tests
 )
 target_link_libraries(item_use_transmute_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(item_use_transmute_tests)
+
+# T-0123: RunAssembler tests — 3-archetype selection, V-9 eligibility gating,
+# 18-room cap, and run/run_variant/archetype_seen recording.
+# Separate binary: no drogon::app() singleton contention risk.
+# run_assembler_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(run_assembler_tests
+  test/run_assembler_test.cpp
+)
+target_link_libraries(run_assembler_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(run_assembler_tests)
