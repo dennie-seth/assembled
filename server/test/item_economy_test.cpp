@@ -55,11 +55,10 @@ void seedItemType(const drogon::orm::DbClientPtr &db, int16_t id, int16_t rarity
 /// Returns the newly minted UUID.
 std::string seedHeldItem(const drogon::orm::DbClientPtr &db, int16_t type_id,
                          const std::string &holder_token) {
-    auto result = db->execSqlSync(
-        "INSERT INTO item_instance (type_id, holder, bleed_at) "
-        "VALUES ($1, $2, now() + INTERVAL '1 hour') "
-        "RETURNING id",
-        type_id, holder_token);
+    auto result = db->execSqlSync("INSERT INTO item_instance (type_id, holder, bleed_at) "
+                                  "VALUES ($1, $2, now() + INTERVAL '1 hour') "
+                                  "RETURNING id",
+                                  type_id, holder_token);
     return result[0][0].as<std::string>();
 }
 
@@ -79,11 +78,11 @@ void assertInv1(const drogon::orm::DbClientPtr &db, const std::string &item_id,
 /// changed from @p expected.
 void assertInv3(const drogon::orm::DbClientPtr &db, int16_t type_id, int32_t expected,
                 const char *context) {
-    auto r = db->execSqlSync("SELECT COUNT(*)::int AS c FROM item_instance WHERE type_id = $1",
-                             type_id);
+    auto r =
+        db->execSqlSync("SELECT COUNT(*)::int AS c FROM item_instance WHERE type_id = $1", type_id);
     const int32_t cnt = r[0]["c"].as<int32_t>();
-    CHECK_MESSAGE(cnt == expected, "INV-3 violated at " << context << ": count=" << cnt
-                                                        << " expected=" << expected);
+    CHECK_MESSAGE(cnt == expected,
+                  "INV-3 violated at " << context << ": count=" << cnt << " expected=" << expected);
 }
 
 } // namespace
@@ -139,8 +138,8 @@ TEST_CASE("two-player economy: A leaves, B takes, C loses (INV-1/2/3)") {
 
     // A no longer holds X.
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT holder FROM item_instance WHERE id = $1", item_id);
+        auto r =
+            db->getClient()->execSqlSync("SELECT holder FROM item_instance WHERE id = $1", item_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["holder"].isNull()); // A's grip is gone
     }
@@ -186,8 +185,8 @@ TEST_CASE("two-player economy: A leaves, B takes, C loses (INV-1/2/3)") {
 
     // C does not hold X: holder is still B.
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT holder FROM item_instance WHERE id = $1", item_id);
+        auto r =
+            db->getClient()->execSqlSync("SELECT holder FROM item_instance WHERE id = $1", item_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["holder"].as<std::string>() == token_b);
     }
@@ -309,8 +308,8 @@ TEST_CASE("custody_depth strictly increases on each transfer (INV-5)") {
     CHECK(tr.new_custody_depth == 2);
 
     // Depth in the DB must equal 2.
-    auto r = db->getClient()->execSqlSync(
-        "SELECT custody_depth FROM item_instance WHERE id = $1", item_id);
+    auto r = db->getClient()->execSqlSync("SELECT custody_depth FROM item_instance WHERE id = $1",
+                                          item_id);
     REQUIRE(!r.empty());
     CHECK(r[0]["custody_depth"].as<int32_t>() == 2);
 }

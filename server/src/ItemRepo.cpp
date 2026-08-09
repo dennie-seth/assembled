@@ -24,11 +24,11 @@ namespace assembled_server {
 PgItemRepo::PgItemRepo(drogon::orm::DbClientPtr client) : client_(std::move(client)) {}
 
 std::optional<ItemRecord> PgItemRepo::find(const std::string &item_id) {
-    auto result = client_->execSqlSync(
-        "SELECT id, type_id, holder, hosted_by, anchor_arch, anchor_tag, "
-        "       custody_depth, version "
-        "FROM item_instance WHERE id = $1",
-        item_id);
+    auto result =
+        client_->execSqlSync("SELECT id, type_id, holder, hosted_by, anchor_arch, anchor_tag, "
+                             "       custody_depth, version "
+                             "FROM item_instance WHERE id = $1",
+                             item_id);
 
     if (result.empty()) {
         return std::nullopt;
@@ -66,20 +66,20 @@ int32_t PgItemRepo::countByType(int16_t type_id) {
 TransferResult PgItemRepo::leave(const LeaveParams &params) {
     // Atomic CAS: clear holder, set hosted_by + anchor, bump version + depth.
     // Matches only when version == expected_version AND holder == holder_token.
-    auto result = client_->execSqlSync(
-        "UPDATE item_instance "
-        "SET holder        = NULL, "
-        "    hosted_by     = $1, "
-        "    anchor_arch   = $2, "
-        "    anchor_tag    = $3, "
-        "    version       = version + 1, "
-        "    custody_depth = custody_depth + 1 "
-        "WHERE id      = $4 "
-        "  AND version = $5 "
-        "  AND holder  = $6 "
-        "RETURNING version, custody_depth",
-        params.hosted_by_token, params.anchor_arch, params.anchor_tag, params.item_id,
-        params.expected_version, params.holder_token);
+    auto result =
+        client_->execSqlSync("UPDATE item_instance "
+                             "SET holder        = NULL, "
+                             "    hosted_by     = $1, "
+                             "    anchor_arch   = $2, "
+                             "    anchor_tag    = $3, "
+                             "    version       = version + 1, "
+                             "    custody_depth = custody_depth + 1 "
+                             "WHERE id      = $4 "
+                             "  AND version = $5 "
+                             "  AND holder  = $6 "
+                             "RETURNING version, custody_depth",
+                             params.hosted_by_token, params.anchor_arch, params.anchor_tag,
+                             params.item_id, params.expected_version, params.holder_token);
 
     if (result.empty()) {
         // CAS miss: version mismatch or holder mismatch.
@@ -94,19 +94,18 @@ TransferResult PgItemRepo::take(const TakeParams &params) {
     // Atomic CAS: set holder, clear hosted_by + anchor, bump version + depth.
     // Matches only when version == expected_version AND holder IS NULL
     // (item is actually at an anchor, not already taken by someone else).
-    auto result = client_->execSqlSync(
-        "UPDATE item_instance "
-        "SET holder        = $1, "
-        "    hosted_by     = NULL, "
-        "    anchor_arch   = NULL, "
-        "    anchor_tag    = NULL, "
-        "    version       = version + 1, "
-        "    custody_depth = custody_depth + 1 "
-        "WHERE id      = $2 "
-        "  AND version = $3 "
-        "  AND holder IS NULL "
-        "RETURNING version, custody_depth",
-        params.taker_token, params.item_id, params.expected_version);
+    auto result = client_->execSqlSync("UPDATE item_instance "
+                                       "SET holder        = $1, "
+                                       "    hosted_by     = NULL, "
+                                       "    anchor_arch   = NULL, "
+                                       "    anchor_tag    = NULL, "
+                                       "    version       = version + 1, "
+                                       "    custody_depth = custody_depth + 1 "
+                                       "WHERE id      = $2 "
+                                       "  AND version = $3 "
+                                       "  AND holder IS NULL "
+                                       "RETURNING version, custody_depth",
+                                       params.taker_token, params.item_id, params.expected_version);
 
     if (result.empty()) {
         // CAS miss: version mismatch or item already held.
