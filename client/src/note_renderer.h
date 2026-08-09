@@ -51,8 +51,7 @@ class NoteRenderer : public RefCounted {
      *                       by templates 13 and 15); pass "" otherwise.
      * @return Rendered display string, or "" if any localization key is absent.
      */
-    String render(int p_template_id, int p_slot_a, int p_slot_b,
-                  const String &p_item_ref) const;
+    String render(int p_template_id, int p_slot_a, int p_slot_b, const String &p_item_ref) const;
 
     /**
      * @brief Verify that the localization table covers all shipped IDs.
