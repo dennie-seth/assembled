@@ -149,11 +149,26 @@ class NoteClient : public Node {
      */
     int rate_note(const String &note_id, int val);
 
+    /**
+     * @brief Request a new identity phrase from the server (first-run flow).
+     *
+     * Sends `POST /v1/identity` with an empty JSON body.  The server generates
+     * a seed phrase, derives the identity token from it, stores the token only,
+     * and returns the phrase once.  The client must persist the phrase locally
+     * (see IdentityStore) — the server discards it immediately.
+     *
+     * Emits `identity_received(state, http_status, phrase)` on completion.
+     * On any non-OK state, phrase is an empty string.
+     *
+     * @return Request ID or -1 on immediate failure.
+     */
+    int request_identity();
+
   protected:
     static void _bind_methods();
 
   private:
-    enum class RequestKind { FETCH_NOTES, POST_NOTE, RATE_NOTE };
+    enum class RequestKind { FETCH_NOTES, POST_NOTE, RATE_NOTE, IDENTITY };
 
     /// Heap-allocated per-transfer state.  Address is stable (never moves after
     /// push_back) so write-callback userdata pointers remain valid.

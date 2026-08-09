@@ -144,9 +144,32 @@ int NoteClient::rate_note(const String &note_id, int val) {
     return enqueue_request(url, "POST", body, RequestKind::RATE_NOTE);
 }
 
+int NoteClient::request_identity() {
+    std::string url = base_url_ + "/v1/identity";
+    return enqueue_request(url, "POST", "{}", RequestKind::IDENTITY);
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+/// Extract the value of the "phrase" key from a JSON object string of the
+/// form {"phrase":"word1 word2 ... word8"}.  Returns an empty string if the
+/// key is absent or the JSON is malformed.  This intentionally avoids pulling
+/// in a JSON library for a single well-typed server response.
+static std::string extract_phrase(const std::string &json) {
+    const char *key = "\"phrase\":\"";
+    auto pos = json.find(key);
+    if (pos == std::string::npos) {
+        return "";
+    }
+    pos += std::string(key).size();
+    auto end = json.find('"', pos);
+    if (end == std::string::npos) {
+        return "";
+    }
+    return json.substr(pos, end - pos);
+}
 
 int NoteClient::enqueue_request(const std::string &url, const std::string &method,
                                 const std::string &body, RequestKind kind) {
@@ -245,6 +268,16 @@ void NoteClient::complete_request(const InFlight &req, CURLcode result) {
     case RequestKind::RATE_NOTE:
         emit_signal("note_rated", req.request_id, state, status_int);
         break;
+    case RequestKind::IDENTITY: {
+        // Phrase is only meaningful on a successful response; empty string on
+        // any error state so callers can unconditionally check phrase.is_empty().
+        std::string phrase;
+        if (state == STATE_OK) {
+            phrase = extract_phrase(req.response_body);
+        }
+        emit_signal("identity_received", state, status_int, String(phrase.c_str()));
+        break;
+    }
     }
 }
 
@@ -300,6 +333,7 @@ void NoteClient::_bind_methods() {
         D_METHOD("post_note", "archetype_id", "anchor_tag", "template_id", "slots", "item_ref"),
         &NoteClient::post_note);
     ClassDB::bind_method(D_METHOD("rate_note", "note_id", "val"), &NoteClient::rate_note);
+    ClassDB::bind_method(D_METHOD("request_identity"), &NoteClient::request_identity);
 
     // Signals
     ADD_SIGNAL(MethodInfo("notes_fetched", PropertyInfo(Variant::INT, "request_id"),
@@ -313,6 +347,9 @@ void NoteClient::_bind_methods() {
     ADD_SIGNAL(MethodInfo("note_rated", PropertyInfo(Variant::INT, "request_id"),
                           PropertyInfo(Variant::INT, "state"),
                           PropertyInfo(Variant::INT, "http_status")));
+    ADD_SIGNAL(MethodInfo("identity_received", PropertyInfo(Variant::INT, "state"),
+                          PropertyInfo(Variant::INT, "http_status"),
+                          PropertyInfo(Variant::STRING, "phrase")));
 
     // State enum constants — accessible in GDScript as NoteClient.STATE_*
     BIND_CONSTANT(STATE_OK);
