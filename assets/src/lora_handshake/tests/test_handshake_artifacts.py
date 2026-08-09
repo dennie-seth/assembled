@@ -25,7 +25,7 @@ import json
 import pathlib
 import re
 
-REPO = pathlib.Path(__file__).parents[5]  # worktree root
+REPO = pathlib.Path(__file__).parents[4]  # worktree root (assets/src/lora_handshake/tests/ → 4 up)
 
 RECIPE = REPO / "assets/src/concept/signal_tower_material_sheet_lora.recipe.json"
 GENERATED_PNG = REPO / "assets/src/concept/signal_tower_material_sheet_lora.png"

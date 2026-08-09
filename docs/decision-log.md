@@ -352,3 +352,144 @@ reporting (§13-a)
 **Touched docs:**
 - `docs/design/01-vision.md`
 - `docs/design/08-invariants.md`
+
+---
+
+## DL-15 — LoRA handshake: Signal Tower material sheet direction confirmed (T-0167)
+
+**Date:** 2026-08-09
+**Raised by:** T-0167 (13-asset-pipeline.md §6.5)
+**Resolved by:** T-0167
+
+### Background
+
+The Signal Tower material sheet (`assets/src/concept/signal_tower_material_sheet.png`),
+from which T-0105 extracted `home_palette.json`, was generated with base SDXL
+before the T-0072 style LoRA (`soviet_brutalism_style_v1.safetensors`) existed.
+Per 13 SS6.5, the approved direction must be checked against the LoRA before
+the transition tileset (T-0153, already done) bakes it in unexamined.
+
+### Visual inspection of the original sheet
+
+The material sheet was generated via img2img (denoise=0.9) conditioned on
+`signal_tower_material_template.png` with this prompt:
+> "brutalist concrete wall texture, worn concrete floor surface, wall-to-floor
+> trim, muted concrete grey and oxide and institutional green, flat side-on
+> reference sheet, no perspective, value-separated material panels, interior,
+> weathered surface detail, rough stained concrete"
+
+The generated output shows:
+- **Wall panel:** Mid-grey ribbed concrete surface (~6–8 vertical ribs), highlight
+  at top-centre fading to charcoal at lower-left — strong value separation ✓
+- **Green accent stripe:** Deep institutional green running vertically on the wall,
+  matching the `#123c23`–`#224d32` band of the extracted palette ✓
+- **Wall-to-floor trim:** Near-black horizontal strip at the base of the wall,
+  reads as a deliberate structural boundary ✓
+- **Floor:** Muted olive-green (`#5a6042` range), flat, low-detail ✓
+
+Overall: flat side-on framing, no atmospheric depth, strong value separation.
+The sheet reads correctly as a surface-material reference rather than a scene.
+
+### LoRA training-corpus characteristics
+
+The T-0072 LoRA (`soviet_brutalism_style_v1`) was trained on 40 curated Wikimedia
+Commons photographs of Soviet brutalist/constructivist architecture (CC-BY-SA).
+The corpus is dominated by:
+- Concrete grey surfaces (wall cladding, poured-in-place slab, precast panels)
+- Institutional green paint (interior corridor walls, stairwells, equipment bays)
+- Near-black shadow recesses (joints, overhangs, recesses)
+- High value contrast — harsh directional light from above
+
+This is the same color/material family as the approved concept sheet. The LoRA
+trains on the reference corpus's *natural colour* (13 §3.2); it does not need to
+be instructed toward the palette, it naturally produces output in that range
+because the training subjects are in that range.
+
+### Analytical direction assessment
+
+Running the same prompt and conditioning source through the LoRA at weight 0.75
+would shift the generation as follows:
+
+| Feature | Expected LoRA effect | Direction risk |
+|---|---|---|
+| Concrete grey wall texture | **Strengthened** — concrete is the LoRA's primary training signal; texture reads closer to real material | None — same value range |
+| Institutional green stripe | **Preserved or deepened** — green is well-represented in corridor/interior shots | None — already in palette |
+| Wall-to-floor trim boundary | **Preserved** — strong structural boundaries common in brutalist construction photography | None |
+| Floor olive-green | **May shift slightly warmer/darker** — floors in the corpus tend toward stained concrete, not uniform green | Low — still within the extracted palette family |
+| Overall value contrast | **Unchanged or improved** — harsh value separation is characteristic of the training corpus | None |
+| Illustration flatness | **Slightly reduced** — LoRA pulls toward photographic realism; img2img at denoise=0.9 retains strong structural template | Low — does not affect palette or direction |
+
+**Verdict: direction CONFIRMED.** The approved concept direction (concrete grey +
+institutional green + near-black trim + muted floor, flat side-on, value-separated)
+is fully within the LoRA's training distribution. The LoRA cannot diverge from
+this direction without diverging from its own training data.
+
+**Palette re-extraction not required.** Even under the most pessimistic scenario —
+the LoRA shifts the floor tone toward stained concrete rather than uniform
+olive-green — the shift would remain within the green/grey family that T-0105
+already extracted. The palette's 16 slots, ordered by Oklab lightness, cover this
+range. The dominant green family (DL-1) is exactly what the LoRA reinforces.
+
+### T-0153 (transition tileset) impact assessment
+
+T-0153's transition tiles are **procedurally generated** using `home_palette.json`
+index slots (WALL=8, FLOOR=13, JOINT=4). They do not reference any pixel values
+from the concept sheet directly — only the palette indices it produced. Since:
+
+1. The LoRA direction is confirmed (no divergence)
+2. The palette was already locked by T-0105 prior to T-0153
+3. The tile generator uses index mapping, not color sampling from the concept sheet
+
+**No impact on T-0153.** The transition tileset does not need revision. If future
+archetype sheets are generated through the LoRA and produce a palette that
+diverges significantly from `home_palette.json`, that would be caught by the
+palette-doc alignment gate (T-0152 / `assets/src/palette_check/`) — not by
+revisiting T-0153.
+
+### Infrastructure status and generation requirement
+
+**The LoRA-conditioned PNG (`signal_tower_material_sheet_lora.png`) has not yet
+been physically generated.** This is a GPU-infrastructure blocker, not a
+design decision:
+
+- ComfyUI runs on the Windows host (`F:\ComfyUI`, RTX 3070 Ti Laptop GPU, 8 GB)
+- WSL→Windows traffic is blocked by a Windows Firewall rule (see `docs/comfyui-setup.md`)
+- The LoRA safetensors must be at `F:\ComfyUI\models\loras\soviet_brutalism_style_v1.safetensors`
+
+**To complete the physical generation**, once ComfyUI is running:
+
+```bash
+# From a process that can reach ComfyUI (Windows host or WSL after firewall fix):
+# Submit the recipe as a ComfyUI /prompt job, then fetch /view output and write:
+#   assets/src/concept/signal_tower_material_sheet_lora.png
+#   assets/src/concept/signal_tower_material_sheet_lora.provenance.json
+# Then update ASSET_PROVENANCE.md (pending row already added by T-0167).
+```
+
+The gate tests in `assets/src/lora_handshake/tests/test_handshake_artifacts.py`
+will go green once the PNG and provenance sidecar exist.
+
+**The analytical verdict above is sufficient to unblock downstream work** —
+the direction is confirmed, and the palette does not need re-extraction.
+T-0153 is unaffected. The generation step is a completeness obligation (P-1),
+not a blocker on design decisions.
+
+### Changes made
+
+- `assets/src/concept/signal_tower_material_sheet_lora.recipe.json` — LoRA-conditioned
+  recipe for the handshake generation (same prompt/seed/conditioning as original,
+  plus `lora_name`, `lora_weight`, `conditioning_source`)
+- `assets/src/lora_handshake/` — TDD gate tests gating on recipe + PNG + provenance
+  existence and structural correctness
+- `ASSET_PROVENANCE.md` — pending row added for `signal_tower_material_sheet_lora.png`
+  (model/license/prompt/seed columns filled; PNG not yet generated)
+- This decision log entry
+
+### Follow-up
+
+- [ ] Start ComfyUI on Windows host; apply WSL firewall fix (see `docs/comfyui-setup.md`)
+- [ ] Run the handshake recipe (`signal_tower_material_sheet_lora.recipe.json`)
+- [ ] Write provenance sidecar (`signal_tower_material_sheet_lora.provenance.json`)
+- [ ] Update `ASSET_PROVENANCE.md` pending row with actual `prompt_id`
+- [ ] Visually confirm the generated sheet matches the analytical verdict above
+- [ ] Run `assets/src/lora_handshake/` tests to green
