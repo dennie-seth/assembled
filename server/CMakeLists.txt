@@ -134,3 +134,14 @@ add_executable(item_economy_tests
 )
 target_link_libraries(item_economy_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(item_economy_tests)
+
+# T-0095: use() and transmute() integration tests (INV-2/INV-3/INV-5).
+# Tests the hold→anchor transfer with unlock side-effect (use) and the
+# two-item-in one-item-out atomic transmutation (transmute).
+# Separate binary: no drogon::app() singleton contention risk.
+# item_use_transmute_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(item_use_transmute_tests
+  test/item_use_transmute_test.cpp
+)
+target_link_libraries(item_use_transmute_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(item_use_transmute_tests)

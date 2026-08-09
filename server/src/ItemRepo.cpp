@@ -116,4 +116,110 @@ TransferResult PgItemRepo::take(const TakeParams &params) {
                           result[0]["custody_depth"].as<int32_t>()};
 }
 
+UseResult PgItemRepo::use(const UseParams &params) {
+    if (!params.unlock.has_value()) {
+        // No unlock side-effect: identical to leave().
+        auto result =
+            client_->execSqlSync("UPDATE item_instance "
+                                 "SET holder        = NULL, "
+                                 "    hosted_by     = $1, "
+                                 "    anchor_arch   = $2, "
+                                 "    anchor_tag    = $3, "
+                                 "    version       = version + 1, "
+                                 "    custody_depth = custody_depth + 1 "
+                                 "WHERE id      = $4 "
+                                 "  AND version = $5 "
+                                 "  AND holder  = $6 "
+                                 "RETURNING version, custody_depth",
+                                 params.hosted_by_token, params.anchor_arch, params.anchor_tag,
+                                 params.item_id, params.expected_version, params.holder_token);
+
+        if (result.empty()) {
+            return UseResult{TransferStatus::Lost, 0, 0, false};
+        }
+        return UseResult{TransferStatus::Won, result[0]["version"].as<int32_t>(),
+                         result[0]["custody_depth"].as<int32_t>(), false};
+    }
+
+    // Unlock side-effect: atomically move the item AND upsert the unlock row.
+    // The INSERT in unlock_upsert selects FROM updated, so it only fires when the
+    // CAS UPDATE matched (updated is non-empty); if the CAS missed, both the item
+    // row and the unlock row are left untouched.
+    const auto &ul = *params.unlock;
+    auto result = client_->execSqlSync(
+        "WITH updated AS ( "
+        "    UPDATE item_instance "
+        "    SET holder        = NULL, "
+        "        hosted_by     = $1, "
+        "        anchor_arch   = $2, "
+        "        anchor_tag    = $3, "
+        "        version       = version + 1, "
+        "        custody_depth = custody_depth + 1 "
+        "    WHERE id      = $4 "
+        "      AND version = $5 "
+        "      AND holder  = $6 "
+        "    RETURNING version, custody_depth "
+        "), "
+        "unlock_upsert AS ( "
+        "    INSERT INTO unlock (token, variant_id, tag, expires_at) "
+        "    SELECT $6, $7::smallint, $8::smallint, now() + ($9::int * INTERVAL '1 second') "
+        "    FROM updated "
+        "    ON CONFLICT (token, variant_id, tag) "
+        "        DO UPDATE SET expires_at = EXCLUDED.expires_at "
+        "    RETURNING 1 AS wrote "
+        ") "
+        "SELECT u.version, u.custody_depth, "
+        "       (SELECT COUNT(*) > 0 FROM unlock_upsert) AS unlock_written "
+        "FROM updated u",
+        params.hosted_by_token, params.anchor_arch, params.anchor_tag, params.item_id,
+        params.expected_version, params.holder_token, ul.variant_id, ul.tag, ul.ttl_seconds);
+
+    if (result.empty()) {
+        return UseResult{TransferStatus::Lost, 0, 0, false};
+    }
+    return UseResult{TransferStatus::Won, result[0]["version"].as<int32_t>(),
+                     result[0]["custody_depth"].as<int32_t>(),
+                     result[0]["unlock_written"].as<bool>()};
+}
+
+TransmuteResult PgItemRepo::transmute(const TransmuteParams &params) {
+    // Three steps in one transaction: CAS-delete A, CAS-delete B, mint new item.
+    // If either CAS fails, rollback restores the deleted item(s).
+    auto txn = client_->newTransaction();
+
+    // Step 1: CAS-delete item A, capturing its type_id for the new item.
+    auto del_a = txn->execSqlSync("DELETE FROM item_instance "
+                                  "WHERE id = $1 AND version = $2 AND holder = $3 "
+                                  "RETURNING type_id",
+                                  params.item_id_a, params.expected_version_a, params.holder_token);
+
+    if (del_a.empty()) {
+        txn->rollback();
+        return TransmuteResult{TransferStatus::Lost, ""};
+    }
+
+    const int16_t type_id_a = del_a[0]["type_id"].as<int16_t>();
+
+    // Step 2: CAS-delete item B.
+    auto del_b = txn->execSqlSync("DELETE FROM item_instance "
+                                  "WHERE id = $1 AND version = $2 AND holder = $3 "
+                                  "RETURNING id",
+                                  params.item_id_b, params.expected_version_b, params.holder_token);
+
+    if (del_b.empty()) {
+        // CAS miss on B — rollback undoes the delete of A.
+        txn->rollback();
+        return TransmuteResult{TransferStatus::Lost, ""};
+    }
+
+    // Step 3: Mint one new item with type_id from A, held by the same identity.
+    auto ins = txn->execSqlSync("INSERT INTO item_instance (type_id, holder, bleed_at) "
+                                "VALUES ($1, $2, now() + INTERVAL '1 hour') "
+                                "RETURNING id",
+                                type_id_a, params.holder_token);
+
+    // Transaction auto-commits when txn goes out of scope (no rollback called).
+    return TransmuteResult{TransferStatus::Won, ins[0]["id"].as<std::string>()};
+}
+
 } // namespace assembled_server
