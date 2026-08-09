@@ -1,11 +1,257 @@
 #!/usr/bin/env python
 """Builds the assembled client GDExtension against the vendored godot-cpp
-submodule (pinned to godot-4.5-stable — see docs/ci-notes.md for the
-version-compatibility rationale)."""
+submodule (pinned to godot-4.5-stable) and a vendored libcurl static library
+(T-0062).
 
+libcurl vendoring
+-----------------
+libcurl is NOT expected as a system package (no `apt install libcurl4-dev`).
+Instead, SConstruct auto-vendors it under `client/vendor/curl/`:
+
+  1. On first build (or when vendor/curl/ is absent / stale), this script
+     downloads the pinned curl source tarball from curl.se using Python's
+     standard `urllib.request`.
+  2. It configures and builds a *minimal* static libcurl (HTTP only, no SSL,
+     no protocols the game will never use) via CMake — CMake is already
+     available wherever the server is built (docs/PLAN.md Phase 4).
+  3. The built install tree (`vendor/curl/`) is cached and reused on
+     subsequent builds; the tarball and extracted source are also retained
+     under `vendor/` so a network outage after the first run is never fatal.
+
+All `vendor/` artefacts (tarball, extracted source, built install) are
+gitignored (see root `.gitignore`); only `vendor/curl.version` (the version
+pin, a plain text file) is committed.
+
+To force a re-vendor (e.g. after bumping CURL_VERSION): delete
+`vendor/curl/` and re-run `scons`.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
+
+# ---------------------------------------------------------------------------
+# Pinned libcurl version — bump here and delete vendor/curl/ to re-vendor.
+# ---------------------------------------------------------------------------
+CURL_VERSION = "8.11.1"
+CURL_TARBALL = f"curl-{CURL_VERSION}.tar.gz"
+CURL_TARBALL_URL = f"https://curl.se/download/{CURL_TARBALL}"
+# SHA-256 integrity check (curl.se publishes these alongside the tarballs).
+CURL_SHA256 = "4e30b4e9e7fd0e7ed47da5a8ba2b6fce9b1f5ab8e8b4d1c56c02cc95dcc1d9a7"
+
+VENDOR_DIR = os.path.abspath("vendor")
+CURL_TARBALL_PATH = os.path.join(VENDOR_DIR, CURL_TARBALL)
+CURL_SRC_DIR = os.path.join(VENDOR_DIR, f"curl-{CURL_VERSION}")
+CURL_PREFIX = os.path.join(VENDOR_DIR, "curl")
+CURL_LIB_DIR = os.path.join(CURL_PREFIX, "lib")
+# curl's CMake build names the static lib "libcurl" on every platform
+# (PREFIX "" OUTPUT_NAME "libcurl" in lib/CMakeLists.txt) — CMake then
+# appends the platform's static-lib suffix: ".a" via Unix Makefiles/Ninja,
+# ".lib" via MSVC. Check both; whichever exists is this platform's build.
+CURL_STATIC_LIB_UNIX = os.path.join(CURL_LIB_DIR, "libcurl.a")
+CURL_STATIC_LIB_WINDOWS = os.path.join(CURL_LIB_DIR, "libcurl.lib")
+CURL_INCLUDE_DIR = os.path.join(CURL_PREFIX, "include")
+# Written after a successful fPIC build so we can detect stale (non-fPIC) builds.
+CURL_PIC_STAMP = os.path.join(CURL_PREFIX, ".built_pic")
+
+
+def _vendor_curl():
+    """Download, configure, and install a minimal static libcurl."""
+    os.makedirs(VENDOR_DIR, exist_ok=True)
+
+    # 1. Download tarball (skip if already present).
+    if not os.path.exists(CURL_TARBALL_PATH):
+        print(f"[curl vendor] Downloading libcurl {CURL_VERSION} from curl.se ...")
+        try:
+            urllib.request.urlretrieve(CURL_TARBALL_URL, CURL_TARBALL_PATH)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[curl vendor] ERROR: download failed -- {exc}\n"
+                f"  Manual fix: download {CURL_TARBALL_URL}\n"
+                f"  and place it at {CURL_TARBALL_PATH}, then re-run scons.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"[curl vendor] Downloaded -> {CURL_TARBALL_PATH}")
+
+    # 2. Extract source (skip if already present).
+    if not os.path.exists(CURL_SRC_DIR):
+        print(f"[curl vendor] Extracting {CURL_TARBALL} ...")
+        with tarfile.open(CURL_TARBALL_PATH) as tf:
+            tf.extractall(VENDOR_DIR)
+        print(f"[curl vendor] Extracted -> {CURL_SRC_DIR}")
+
+    # 3. Configure + build + install via CMake.
+    build_dir = os.path.join(CURL_SRC_DIR, "_build")
+    os.makedirs(build_dir, exist_ok=True)
+
+    print(f"[curl vendor] CMake configure (HTTP-only static, no SSL) ...")
+    subprocess.check_call(
+        [
+            "cmake",
+            CURL_SRC_DIR,
+            # Force the single-config Ninja generator on every platform.
+            # Without this, Windows defaults to the multi-config Visual
+            # Studio generator, which nests build output under a per-config
+            # subdir (_build/lib/Release/libcurl.lib) and requires --config
+            # on both `cmake --build` and `cmake --install` to resolve it.
+            # Ninja gives one flat, deterministic output layout everywhere
+            # (matching what Unix Makefiles already gave Linux), so the
+            # install step and CURL_STATIC_LIB_* paths above stay valid
+            # cross-platform with no per-platform branching. CI installs
+            # ninja via `pip install ninja` before invoking scons.
+            "-G",
+            "Ninja",
+            f"-DCMAKE_INSTALL_PREFIX={CURL_PREFIX}",
+            "-DCMAKE_BUILD_TYPE=Release",
+            # Position-independent code is required when linking a static lib
+            # into a shared library (.so / .dll).  Without this the linker
+            # rejects the object files with "recompile with -fPIC".
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+            # Match godot-cpp's MSVC runtime library choice (tools/windows.py:
+            # /MT — static release CRT — is its default whenever debug_crt
+            # isn't explicitly requested, regardless of the scons
+            # template_debug/template_release target). Without this, CMake's
+            # own MSVC default (/MD, the *dynamic* CRT) makes curl.lib
+            # reference MSVCRT while godot-cpp's objects reference LIBCMT;
+            # godot-cpp also sets LINKFLAGS=["/WX"], which promotes the
+            # resulting LNK4098 "defaultlib conflicts" warning into a hard
+            # LNK1218 build failure. A no-op cache variable on non-MSVC
+            # generators (harmless "unused variable" warning only).
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+            # Static library only — no shared lib dependency at runtime.
+            "-DBUILD_SHARED_LIBS=OFF",
+            # Don't build the curl CLI tool — we only need the library.
+            "-DBUILD_CURL_EXE=OFF",
+            # No SSL: the game server is local-network only (plain HTTP).
+            # Enabling SSL would pull in OpenSSL/mbedTLS system dependencies,
+            # defeating the purpose of vendoring.
+            "-DCURL_ENABLE_SSL=OFF",
+            "-DCURL_USE_OPENSSL=OFF",
+            "-DCURL_USE_WOLFSSL=OFF",
+            "-DCURL_USE_GNUTLS=OFF",
+            "-DCURL_USE_MBEDTLS=OFF",
+            # No zlib: curl's CMake auto-detects a system zlib (CURL_ZLIB
+            # defaults to AUTO) and, if found, links it into libcurl for
+            # HTTP content-decoding — which is how the Linux build ended up
+            # needing an explicit "z" link (inflateEnd undefined symbol)
+            # even though SSL is off. System zlib availability differs by
+            # platform (present on Linux runners, not guaranteed on
+            # Windows), so disable it outright for a deterministic build
+            # that never references zlib symbols on any platform.
+            "-DCURL_ZLIB=OFF",
+            # Disable protocols the game will never use.
+            "-DCURL_DISABLE_FTP=ON",
+            "-DCURL_DISABLE_FILE=ON",
+            "-DCURL_DISABLE_LDAP=ON",
+            "-DCURL_DISABLE_DICT=ON",
+            "-DCURL_DISABLE_TELNET=ON",
+            "-DCURL_DISABLE_TFTP=ON",
+            "-DCURL_DISABLE_RTSP=ON",
+            "-DCURL_DISABLE_POP3=ON",
+            "-DCURL_DISABLE_IMAP=ON",
+            "-DCURL_DISABLE_SMTP=ON",
+            "-DCURL_DISABLE_GOPHER=ON",
+            "-DCURL_DISABLE_MQTT=ON",
+            "-DCURL_DISABLE_MANUAL=ON",
+            "-DENABLE_MANUAL=OFF",
+        ],
+        cwd=build_dir,
+    )
+
+    jobs = str(os.cpu_count() or 4)
+    print(f"[curl vendor] Building with {jobs} parallel jobs ...")
+    subprocess.check_call(["cmake", "--build", ".", f"-j{jobs}"], cwd=build_dir)
+
+    print("[curl vendor] Installing ...")
+    subprocess.check_call(["cmake", "--install", "."], cwd=build_dir)
+
+    # Write a stamp so _curl_needs_rebuild() knows this install was built
+    # with -fPIC (cmake's CMakeCache.txt entry type varies across versions,
+    # making direct cache text inspection unreliable as a freshness check).
+    with open(CURL_PIC_STAMP, "w") as fh:
+        fh.write(f"curl-{CURL_VERSION}-pic\n")
+
+    print(f"[curl vendor] Done -- {CURL_LIB_DIR}")
+
+
+def _curl_needs_rebuild() -> bool:
+    """Return True if curl must be (re)vendored.
+
+    Checks two conditions:
+    1. The static library is absent.
+    2. The library was built WITHOUT position-independent code (-fPIC), which
+       causes a linker error when linked into a shared object.  Detected via
+       CURL_PIC_STAMP — a sentinel file written only by a successful fPIC build.
+       (Inspecting CMakeCache.txt for the flag is unreliable because cmake's
+       cache type for `-DNAME=ON` is STRING, not BOOL, across cmake versions.)
+    """
+    if not os.path.exists(CURL_STATIC_LIB_UNIX) and not os.path.exists(
+        CURL_STATIC_LIB_WINDOWS
+    ):
+        return True
+    if not os.path.exists(CURL_PIC_STAMP):
+        print(
+            "[curl vendor] Stale build detected: not built with -fPIC.\n"
+            "  Removing old install + build tree and rebuilding ..."
+        )
+        shutil.rmtree(os.path.join(CURL_SRC_DIR, "_build"), ignore_errors=True)
+        shutil.rmtree(CURL_PREFIX, ignore_errors=True)
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Vendor curl if the built static library is absent or stale.
+# ---------------------------------------------------------------------------
+if _curl_needs_rebuild():
+    _vendor_curl()
+
+# ---------------------------------------------------------------------------
+# Build the GDExtension
+# ---------------------------------------------------------------------------
 env = SConscript("godot-cpp/SConstruct")
 
-env.Append(CPPPATH=["src/"])
+env.Append(CPPPATH=["src/", CURL_INCLUDE_DIR])
+env.Append(LIBPATH=[CURL_LIB_DIR])
+# Link the static libcurl directly so no system curl is needed at runtime.
+#
+# The library filename is "libcurl" on every platform (see
+# CURL_STATIC_LIB_* above), but SCons resolves LIBS entries differently per
+# toolchain: the gnu/Unix linker (Linux) prepends "lib" and appends a
+# suffix itself, so LIBS=["curl"] correctly resolves to "libcurl.a". MSVC's
+# linker (Windows) does neither — LIBS=["curl"] would look for "curl.lib",
+# which doesn't exist; it must be given the actual basename "libcurl".
+if env["platform"] == "windows":
+    env.Append(LIBS=["libcurl"])
+    # curl's own CMakeLists.txt unconditionally links these system libs on
+    # WIN32 (ws2_32 for Winsock, bcrypt for its Windows random-number
+    # generator) — since we link the flat static lib via SCons rather than
+    # consuming curl's exported CMake target, that dependency doesn't
+    # propagate automatically and must be added here too.
+    env.Append(LIBS=["ws2_32", "bcrypt", "advapi32"])
+    # advapi32: curl_ntlm_core.c (NTLM auth) and its md4/md5/sha256 fallback
+    # hashers call the legacy Windows CryptoAPI (CryptAcquireContextA,
+    # CryptCreateHash, CryptHashData, CryptGetHashParam, CryptDestroyHash,
+    # CryptImportKey, CryptEncrypt, CryptDestroyKey, CryptReleaseContext —
+    # all declared in wincrypt.h). Those symbols live in advapi32.lib, not
+    # ws2_32 or bcrypt, and CMake's exported curl target doesn't propagate
+    # here for the same reason noted above — must be added explicitly.
+    # Without this, curl.h's CURL_EXTERN macro expands to
+    # __declspec(dllimport) on Windows (it can't tell we're linking a
+    # static .lib, not a DLL's import .lib), so the compiler emits
+    # __imp_-prefixed references for every curl_* call -- which nothing
+    # provides, since there's no DLL/import lib, only the static one --
+    # and the link fails with LNK2019 "unresolved external symbol
+    # __imp_curl_*". Defining CURL_STATICLIB makes CURL_EXTERN expand to
+    # nothing, matching how the static lib was actually built.
+    env.Append(CPPDEFINES=["CURL_STATICLIB"])
+else:
+    env.Append(LIBS=["curl"])
+
 sources = Glob("src/*.cpp")
 
 library = env.SharedLibrary(

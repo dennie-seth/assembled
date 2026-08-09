@@ -16,6 +16,16 @@ client/bin/
 client/godot-cpp/bin/
 .sconsign.dblite
 
+# libcurl vendor build cache (T-0062): downloaded tarball, extracted source,
+# and the cmake install tree are all reproducible — only curl.version is source.
+client/vendor/curl-*/
+client/vendor/*.tar.gz
+client/vendor/curl/
+# One-off verify debug helpers, not part of the project.
+client/vendor_clean.py
+commit_msg.txt
+run_clang_format.sh
+
 # ci-client.yml's import/smoke/export step logs (local repro artifacts,
 # CI keeps its own via the Actions log — not source)
 client/import.log
