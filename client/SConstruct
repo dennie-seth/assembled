@@ -111,6 +111,17 @@ def _vendor_curl():
             # into a shared library (.so / .dll).  Without this the linker
             # rejects the object files with "recompile with -fPIC".
             "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+            # Match godot-cpp's MSVC runtime library choice (tools/windows.py:
+            # /MT — static release CRT — is its default whenever debug_crt
+            # isn't explicitly requested, regardless of the scons
+            # template_debug/template_release target). Without this, CMake's
+            # own MSVC default (/MD, the *dynamic* CRT) makes curl.lib
+            # reference MSVCRT while godot-cpp's objects reference LIBCMT;
+            # godot-cpp also sets LINKFLAGS=["/WX"], which promotes the
+            # resulting LNK4098 "defaultlib conflicts" warning into a hard
+            # LNK1218 build failure. A no-op cache variable on non-MSVC
+            # generators (harmless "unused variable" warning only).
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
             # Static library only — no shared lib dependency at runtime.
             "-DBUILD_SHARED_LIBS=OFF",
             # Don't build the curl CLI tool — we only need the library.
