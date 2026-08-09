@@ -166,6 +166,25 @@ jobs:
           echo "::error::CurlPump timing test did not print T-0062 PASS (godot exit $status)"
           exit 1
 
+      # T-0064: verify NoteRenderer renders all 20 templates and catches
+      # missing localization keys loudly (returns "" + logs error).
+      - name: NoteRenderer rendering test (T-0064)
+        shell: bash
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/test_note_renderer.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee note_renderer.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'T-0064 PASS' note_renderer.log; then
+            echo "NoteRenderer test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::NoteRenderer test did not print T-0064 PASS (godot exit $status)"
+          exit 1
+
       # Same abort-on-exit class can hit export (also editor-only
       # machinery under headless) — gate on the exported artifacts
       # actually existing and being non-empty, not on Godot's exit code.
@@ -300,6 +319,24 @@ jobs:
             exit 0
           fi
           echo "::error::CurlPump timing test did not print T-0062 PASS (godot exit $status)"
+          exit 1
+
+      # T-0064: verify NoteRenderer renders all 20 templates and catches
+      # missing localization keys loudly (returns "" + logs error).
+      - name: NoteRenderer rendering test (T-0064)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/test_note_renderer.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee note_renderer.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'T-0064 PASS' note_renderer.log; then
+            echo "NoteRenderer test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::NoteRenderer test did not print T-0064 PASS (godot exit $status)"
           exit 1
 
       - name: Export Linux
