@@ -46,6 +46,15 @@ jobs:
         with:
           python-version: "3.x"
 
+      # T-0062: client/SConstruct's vendored-curl CMake configure forces
+      # `-G Ninja` (single-config, deterministic output layout — see the
+      # comment there). Unlike the default multi-config "Visual Studio"
+      # generator, Ninja doesn't locate the MSVC toolset itself — it needs
+      # cl.exe (and the matching INCLUDE/LIB/PATH) already set up in the
+      # environment, same as running from a "Developer Command Prompt".
+      # This action does that setup for the rest of the job.
+      - uses: ilammy/msvc-dev-cmd@v1
+
       # SCons content-addressed cache dir (T-0034), so a source-identical
       # rebuild reuses prior objects instead of recompiling godot-cpp. This
       # is the slow leg of the job (~10-15 min cold) — expected.
@@ -57,6 +66,11 @@ jobs:
             scons-cache-windows-godot-cpp-${{ env.GODOT_CPP_REF }}-
 
       - run: pip install scons
+
+      # See the ilammy/msvc-dev-cmd comment above: client/SConstruct's
+      # vendored-curl build uses `-G Ninja`, so Ninja itself must also be on
+      # PATH. Installed via the PyPI wheel, same pattern as scons above.
+      - run: pip install ninja
 
       - name: Build assembled_client GDExtension (template_debug, MSVC)
         working-directory: ${{ env.CLIENT_DIR }}
@@ -203,6 +217,13 @@ jobs:
             scons-cache-linux-godot-cpp-${{ env.GODOT_CPP_REF }}-
 
       - run: pip install scons
+
+      # T-0062: client/SConstruct's vendored-curl CMake configure forces
+      # `-G Ninja` on every platform for a deterministic, single-config
+      # output layout (see the comment there and the matching step in
+      # windows-export above). Installed explicitly rather than relying on
+      # the runner image shipping it, so both jobs behave identically.
+      - run: pip install ninja
 
       - name: Build assembled_client GDExtension (template_debug)
         working-directory: ${{ env.CLIENT_DIR }}

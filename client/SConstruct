@@ -46,7 +46,13 @@ VENDOR_DIR = os.path.abspath("vendor")
 CURL_TARBALL_PATH = os.path.join(VENDOR_DIR, CURL_TARBALL)
 CURL_SRC_DIR = os.path.join(VENDOR_DIR, f"curl-{CURL_VERSION}")
 CURL_PREFIX = os.path.join(VENDOR_DIR, "curl")
-CURL_STATIC_LIB = os.path.join(CURL_PREFIX, "lib", "libcurl.a")
+CURL_LIB_DIR = os.path.join(CURL_PREFIX, "lib")
+# curl's CMake build names the static lib "libcurl" on every platform
+# (PREFIX "" OUTPUT_NAME "libcurl" in lib/CMakeLists.txt) — CMake then
+# appends the platform's static-lib suffix: ".a" via Unix Makefiles/Ninja,
+# ".lib" via MSVC. Check both; whichever exists is this platform's build.
+CURL_STATIC_LIB_UNIX = os.path.join(CURL_LIB_DIR, "libcurl.a")
+CURL_STATIC_LIB_WINDOWS = os.path.join(CURL_LIB_DIR, "libcurl.lib")
 CURL_INCLUDE_DIR = os.path.join(CURL_PREFIX, "include")
 # Written after a successful fPIC build so we can detect stale (non-fPIC) builds.
 CURL_PIC_STAMP = os.path.join(CURL_PREFIX, ".built_pic")
@@ -87,6 +93,18 @@ def _vendor_curl():
         [
             "cmake",
             CURL_SRC_DIR,
+            # Force the single-config Ninja generator on every platform.
+            # Without this, Windows defaults to the multi-config Visual
+            # Studio generator, which nests build output under a per-config
+            # subdir (_build/lib/Release/libcurl.lib) and requires --config
+            # on both `cmake --build` and `cmake --install` to resolve it.
+            # Ninja gives one flat, deterministic output layout everywhere
+            # (matching what Unix Makefiles already gave Linux), so the
+            # install step and CURL_STATIC_LIB_* paths above stay valid
+            # cross-platform with no per-platform branching. CI installs
+            # ninja via `pip install ninja` before invoking scons.
+            "-G",
+            "Ninja",
             f"-DCMAKE_INSTALL_PREFIX={CURL_PREFIX}",
             "-DCMAKE_BUILD_TYPE=Release",
             # Position-independent code is required when linking a static lib
@@ -105,6 +123,15 @@ def _vendor_curl():
             "-DCURL_USE_WOLFSSL=OFF",
             "-DCURL_USE_GNUTLS=OFF",
             "-DCURL_USE_MBEDTLS=OFF",
+            # No zlib: curl's CMake auto-detects a system zlib (CURL_ZLIB
+            # defaults to AUTO) and, if found, links it into libcurl for
+            # HTTP content-decoding — which is how the Linux build ended up
+            # needing an explicit "z" link (inflateEnd undefined symbol)
+            # even though SSL is off. System zlib availability differs by
+            # platform (present on Linux runners, not guaranteed on
+            # Windows), so disable it outright for a deterministic build
+            # that never references zlib symbols on any platform.
+            "-DCURL_ZLIB=OFF",
             # Disable protocols the game will never use.
             "-DCURL_DISABLE_FTP=ON",
             "-DCURL_DISABLE_FILE=ON",
@@ -137,7 +164,7 @@ def _vendor_curl():
     with open(CURL_PIC_STAMP, "w") as fh:
         fh.write(f"curl-{CURL_VERSION}-pic\n")
 
-    print(f"[curl vendor] Done -- {CURL_STATIC_LIB}")
+    print(f"[curl vendor] Done -- {CURL_LIB_DIR}")
 
 
 def _curl_needs_rebuild() -> bool:
@@ -151,7 +178,9 @@ def _curl_needs_rebuild() -> bool:
        (Inspecting CMakeCache.txt for the flag is unreliable because cmake's
        cache type for `-DNAME=ON` is STRING, not BOOL, across cmake versions.)
     """
-    if not os.path.exists(CURL_STATIC_LIB):
+    if not os.path.exists(CURL_STATIC_LIB_UNIX) and not os.path.exists(
+        CURL_STATIC_LIB_WINDOWS
+    ):
         return True
     if not os.path.exists(CURL_PIC_STAMP):
         print(
@@ -176,16 +205,25 @@ if _curl_needs_rebuild():
 env = SConscript("godot-cpp/SConstruct")
 
 env.Append(CPPPATH=["src/", CURL_INCLUDE_DIR])
-env.Append(LIBPATH=[os.path.join(CURL_PREFIX, "lib")])
+env.Append(LIBPATH=[CURL_LIB_DIR])
 # Link the static libcurl directly so no system curl is needed at runtime.
-env.Append(LIBS=["curl"])
-if env["platform"] != "windows":
-    # Even with SSL disabled, the vendored curl static lib still references
-    # zlib symbols (e.g. inflateEnd) for HTTP content decoding. Without
-    # explicitly linking zlib, the linked .so loads with an unresolved
-    # "undefined symbol: inflateEnd". Scoped to non-Windows: Windows' zlib
-    # linkage (lib name / vcpkg vs. static) hasn't been verified yet.
-    env.Append(LIBS=["z"])
+#
+# The library filename is "libcurl" on every platform (see
+# CURL_STATIC_LIB_* above), but SCons resolves LIBS entries differently per
+# toolchain: the gnu/Unix linker (Linux) prepends "lib" and appends a
+# suffix itself, so LIBS=["curl"] correctly resolves to "libcurl.a". MSVC's
+# linker (Windows) does neither — LIBS=["curl"] would look for "curl.lib",
+# which doesn't exist; it must be given the actual basename "libcurl".
+if env["platform"] == "windows":
+    env.Append(LIBS=["libcurl"])
+    # curl's own CMakeLists.txt unconditionally links these system libs on
+    # WIN32 (ws2_32 for Winsock, bcrypt for its Windows random-number
+    # generator) — since we link the flat static lib via SCons rather than
+    # consuming curl's exported CMake target, that dependency doesn't
+    # propagate automatically and must be added here too.
+    env.Append(LIBS=["ws2_32", "bcrypt"])
+else:
+    env.Append(LIBS=["curl"])
 
 sources = Glob("src/*.cpp")
 
