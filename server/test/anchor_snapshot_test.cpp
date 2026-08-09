@@ -72,7 +72,7 @@ std::string seedOffering(const drogon::orm::DbClientPtr &db, const std::string &
     auto r =
         db->execSqlSync("INSERT INTO offering "
                         "(item_instance, wants_type, anchor_arch, anchor_tag, author, expires_at) "
-                        "VALUES ($1, $2::uuid, $3, $4, $5, now() + INTERVAL '1 hour') "
+                        "VALUES ($1::uuid, $2, $3, $4, $5, now() + INTERVAL '1 hour') "
                         "RETURNING id",
                         item_id, wants_type, arch, tag, author);
     return r[0][0].as<std::string>();
@@ -148,8 +148,7 @@ TEST_CASE("snapshot: empty anchor returns three empty arrays") {
         "DELETE FROM item_instance WHERE hosted_by = $1 AND anchor_arch = 1 AND anchor_tag = 1",
         caller);
     db->getClient()->execSqlSync(
-        "DELETE FROM notes WHERE author_token = $1 AND archetype_id = 1 AND anchor_tag = 1",
-        caller);
+        "DELETE FROM notes WHERE archetype_id = 1 AND anchor_tag = 1");
 
     assembled_server::PgAnchorRepo repo(db->getClient());
     const auto snap = repo.snapshot(caller, 1, 1);
