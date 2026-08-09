@@ -73,9 +73,10 @@ void NoteClient::tick(double /*delta*/) {
     }
 
     for (const Done &d : done) {
-        auto it = std::find_if(
-            in_flight_.begin(), in_flight_.end(),
-            [&d](const std::unique_ptr<InFlight> &e) { return e->easy == d.easy; });
+        auto it = std::find_if(in_flight_.begin(), in_flight_.end(),
+                               [&d](const std::unique_ptr<InFlight> &e) {
+                                   return e->easy == d.easy;
+                               });
         if (it != in_flight_.end()) {
             complete_request(**it, d.result);
         }
@@ -87,9 +88,7 @@ void NoteClient::tick(double /*delta*/) {
 // Config
 // ---------------------------------------------------------------------------
 
-void NoteClient::set_base_url(const String &url) {
-    base_url_ = std::string(url.utf8().get_data());
-}
+void NoteClient::set_base_url(const String &url) { base_url_ = std::string(url.utf8().get_data()); }
 
 String NoteClient::get_base_url() const { return String(base_url_.c_str()); }
 
@@ -119,8 +118,8 @@ int NoteClient::fetch_notes(int archetype_id, int anchor_tag, int limit) {
     return enqueue_request(url, "GET", "", RequestKind::FETCH_NOTES);
 }
 
-int NoteClient::post_note(int archetype_id, int anchor_tag, int template_id,
-                           const Array &slots, const String &item_ref) {
+int NoteClient::post_note(int archetype_id, int anchor_tag, int template_id, const Array &slots,
+                          const String &item_ref) {
     std::string body = "{\"archetype\":" + std::to_string(archetype_id) +
                        ",\"tag\":" + std::to_string(anchor_tag) +
                        ",\"template_id\":" + std::to_string(template_id) + ",\"slots\":[";
@@ -151,7 +150,7 @@ int NoteClient::rate_note(const String &note_id, int val) {
 // ---------------------------------------------------------------------------
 
 int NoteClient::enqueue_request(const std::string &url, const std::string &method,
-                                  const std::string &body, RequestKind kind) {
+                                const std::string &body, RequestKind kind) {
     if (!multi_) {
         return -1;
     }
@@ -186,8 +185,7 @@ int NoteClient::enqueue_request(const std::string &url, const std::string &metho
     if (method == "POST") {
         // Mutations additionally carry the lease ID (docs/design/03-net-protocol.md §2).
         if (!lease_id_.empty()) {
-            raw->headers =
-                curl_slist_append(raw->headers, ("X-Lease-Id: " + lease_id_).c_str());
+            raw->headers = curl_slist_append(raw->headers, ("X-Lease-Id: " + lease_id_).c_str());
         }
         raw->headers = curl_slist_append(raw->headers, "Content-Type: application/json");
     }
@@ -305,18 +303,15 @@ void NoteClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("rate_note", "note_id", "val"), &NoteClient::rate_note);
 
     // Signals
-    ADD_SIGNAL(MethodInfo("notes_fetched",
-                          PropertyInfo(Variant::INT, "request_id"),
+    ADD_SIGNAL(MethodInfo("notes_fetched", PropertyInfo(Variant::INT, "request_id"),
                           PropertyInfo(Variant::INT, "state"),
                           PropertyInfo(Variant::INT, "http_status"),
                           PropertyInfo(Variant::STRING, "body")));
-    ADD_SIGNAL(MethodInfo("note_posted",
-                          PropertyInfo(Variant::INT, "request_id"),
+    ADD_SIGNAL(MethodInfo("note_posted", PropertyInfo(Variant::INT, "request_id"),
                           PropertyInfo(Variant::INT, "state"),
                           PropertyInfo(Variant::INT, "http_status"),
                           PropertyInfo(Variant::STRING, "body")));
-    ADD_SIGNAL(MethodInfo("note_rated",
-                          PropertyInfo(Variant::INT, "request_id"),
+    ADD_SIGNAL(MethodInfo("note_rated", PropertyInfo(Variant::INT, "request_id"),
                           PropertyInfo(Variant::INT, "state"),
                           PropertyInfo(Variant::INT, "http_status")));
 

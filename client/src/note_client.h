@@ -134,8 +134,8 @@ class NoteClient : public Node {
      *                      an empty string when unused.
      * @return              Request ID or -1 on immediate failure.
      */
-    int post_note(int archetype_id, int anchor_tag, int template_id,
-                  const Array &slots, const String &item_ref);
+    int post_note(int archetype_id, int anchor_tag, int template_id, const Array &slots,
+                  const String &item_ref);
 
     /**
      * @brief Rate an existing note.
@@ -159,9 +159,9 @@ class NoteClient : public Node {
     /// push_back) so write-callback userdata pointers remain valid.
     struct InFlight {
         CURL *easy = nullptr;
-        std::string url;          ///< kept alive because CURLOPT_URL doesn't copy
-        std::string request_body; ///< POST body (must outlive transfer)
-        std::string response_body;///< accumulated via write callback
+        std::string url;           ///< kept alive because CURLOPT_URL doesn't copy
+        std::string request_body;  ///< POST body (must outlive transfer)
+        std::string response_body; ///< accumulated via write callback
         curl_slist *headers = nullptr;
         int request_id = 0;
         RequestKind kind = RequestKind::FETCH_NOTES;
@@ -185,8 +185,8 @@ class NoteClient : public Node {
      * @param kind   Request classification for signal routing.
      * @return       Request ID or -1 on curl initialisation failure.
      */
-    int enqueue_request(const std::string &url, const std::string &method,
-                        const std::string &body, RequestKind kind);
+    int enqueue_request(const std::string &url, const std::string &method, const std::string &body,
+                        RequestKind kind);
 
     /**
      * @brief Determine state and emit the completion signal for `req`.
