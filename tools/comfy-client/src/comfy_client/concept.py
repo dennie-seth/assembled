@@ -32,8 +32,12 @@ from comfy_client.base_url import resolve_base_url
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.provenance import build_provenance_record
 from comfy_client.recipe import Recipe
-from comfy_client.workflow import render_img2img_lora_workflow, render_img2img_workflow, render_workflow
-from comfy_client.workflow import workflow_hash as compute_workflow_hash
+from comfy_client.workflow import (
+    render_img2img_lora_workflow,
+    render_img2img_workflow,
+    render_workflow,
+    workflow_hash as compute_workflow_hash,
+)
 
 DEFAULT_CONCEPT_DIR = Path("assets/src/concept")
 
