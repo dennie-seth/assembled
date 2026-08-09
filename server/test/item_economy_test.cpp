@@ -111,6 +111,9 @@ TEST_CASE("two-player economy: A leaves, B takes, C loses (INV-1/2/3)") {
     constexpr int16_t kTypeId = 99; // test-only type; unlikely to collide
     seedItemType(db->getClient(), kTypeId, 0);
 
+    // ── Cleanup: remove any leftover rows from prior runs ─────────────────────
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1", kTypeId);
+
     // ── Seed: A holds item X ──────────────────────────────────────────────────
     const std::string item_id = seedHeldItem(db->getClient(), kTypeId, token_a);
 
@@ -218,6 +221,9 @@ TEST_CASE("concurrent take: exactly one of two takers wins (INV-2)") {
     constexpr int16_t kTypeId = 98;
     seedItemType(db->getClient(), kTypeId, 0);
 
+    // Cleanup: remove any leftover rows from prior runs.
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1", kTypeId);
+
     // owner leaves an item at anchor (1, 2) in p1's universe
     const std::string item_id = seedHeldItem(db->getClient(), kTypeId, token_owner);
 
@@ -279,6 +285,9 @@ TEST_CASE("custody_depth strictly increases on each transfer (INV-5)") {
 
     constexpr int16_t kTypeId = 97;
     seedItemType(db->getClient(), kTypeId, 0);
+
+    // Cleanup: remove any leftover rows from prior runs.
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1", kTypeId);
 
     const std::string item_id = seedHeldItem(db->getClient(), kTypeId, token_a);
 
