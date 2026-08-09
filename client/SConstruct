@@ -222,6 +222,15 @@ if env["platform"] == "windows":
     # consuming curl's exported CMake target, that dependency doesn't
     # propagate automatically and must be added here too.
     env.Append(LIBS=["ws2_32", "bcrypt"])
+    # Without this, curl.h's CURL_EXTERN macro expands to
+    # __declspec(dllimport) on Windows (it can't tell we're linking a
+    # static .lib, not a DLL's import .lib), so the compiler emits
+    # __imp_-prefixed references for every curl_* call -- which nothing
+    # provides, since there's no DLL/import lib, only the static one --
+    # and the link fails with LNK2019 "unresolved external symbol
+    # __imp_curl_*". Defining CURL_STATICLIB makes CURL_EXTERN expand to
+    # nothing, matching how the static lib was actually built.
+    env.Append(CPPDEFINES=["CURL_STATICLIB"])
 else:
     env.Append(LIBS=["curl"])
 
