@@ -43,7 +43,7 @@ struct AnchorOfferingRecord {
     int16_t wants_type{};
     int16_t anchor_arch{};
     int16_t anchor_tag{};
-    std::string author; ///< Token of the identity that created the offering.
+    std::string author;     ///< Token of the identity that created the offering.
     std::string expires_at; ///< ISO 8601 timestamp string from Postgres.
 };
 

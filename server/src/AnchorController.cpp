@@ -35,10 +35,9 @@ static drogon::HttpResponsePtr makeError(drogon::HttpStatusCode status, int code
 
 } // namespace
 
-void AnchorController::getSnapshot(
-    const drogon::HttpRequestPtr &req,
-    std::function<void(const drogon::HttpResponsePtr &)> &&callback,
-    const std::string &archetype, const std::string &tag) {
+void AnchorController::getSnapshot(const drogon::HttpRequestPtr &req,
+                                   std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                   const std::string &archetype, const std::string &tag) {
     auto cb = std::move(callback);
 
     // ── 1. Parse path parameters ──────────────────────────────────────────────
@@ -83,8 +82,7 @@ void AnchorController::getSnapshot(
     // running it on the Drogon IO loop thread would stall other in-flight
     // requests.  A detached worker holds no Drogon resources and is safe.
     std::thread(
-        [archetype_id, anchor_tag, caller_token,
-         cb](drogon::orm::DbClientPtr client) mutable {
+        [archetype_id, anchor_tag, caller_token, cb](drogon::orm::DbClientPtr client) mutable {
             try {
                 PgAnchorRepo repo(client);
                 const auto snap = repo.snapshot(caller_token, archetype_id, anchor_tag);

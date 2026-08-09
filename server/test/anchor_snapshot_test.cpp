@@ -50,34 +50,31 @@ void seedIdentity(const drogon::orm::DbClientPtr &db, const std::string &token) 
 }
 
 void seedItemType(const drogon::orm::DbClientPtr &db, int16_t id) {
-    db->execSqlSync("INSERT INTO item_type (id, rarity) VALUES ($1, 0) ON CONFLICT DO NOTHING",
-                    id);
+    db->execSqlSync("INSERT INTO item_type (id, rarity) VALUES ($1, 0) ON CONFLICT DO NOTHING", id);
 }
 
 /// Insert an item_instance anchored at (arch, tag) in the given universe.
 /// Returns the newly minted UUID.
 std::string seedAnchoredItem(const drogon::orm::DbClientPtr &db, int16_t type_id,
                              const std::string &hosted_by, int16_t arch, int16_t tag) {
-    auto r = db->execSqlSync(
-        "INSERT INTO item_instance "
-        "(type_id, hosted_by, anchor_arch, anchor_tag, bleed_at) "
-        "VALUES ($1, $2, $3, $4, now() + INTERVAL '1 hour') "
-        "RETURNING id",
-        type_id, hosted_by, arch, tag);
+    auto r = db->execSqlSync("INSERT INTO item_instance "
+                             "(type_id, hosted_by, anchor_arch, anchor_tag, bleed_at) "
+                             "VALUES ($1, $2, $3, $4, now() + INTERVAL '1 hour') "
+                             "RETURNING id",
+                             type_id, hosted_by, arch, tag);
     return r[0][0].as<std::string>();
 }
 
 /// Insert an offering for the given item_instance at (arch, tag) by author.
 /// Returns the newly minted offering UUID.
 std::string seedOffering(const drogon::orm::DbClientPtr &db, const std::string &item_id,
-                         int16_t wants_type, int16_t arch, int16_t tag,
-                         const std::string &author) {
-    auto r = db->execSqlSync(
-        "INSERT INTO offering "
-        "(item_instance, wants_type, anchor_arch, anchor_tag, author, expires_at) "
-        "VALUES ($1, $2::uuid, $3, $4, $5, now() + INTERVAL '1 hour') "
-        "RETURNING id",
-        item_id, wants_type, arch, tag, author);
+                         int16_t wants_type, int16_t arch, int16_t tag, const std::string &author) {
+    auto r =
+        db->execSqlSync("INSERT INTO offering "
+                        "(item_instance, wants_type, anchor_arch, anchor_tag, author, expires_at) "
+                        "VALUES ($1, $2::uuid, $3, $4, $5, now() + INTERVAL '1 hour') "
+                        "RETURNING id",
+                        item_id, wants_type, arch, tag, author);
     return r[0][0].as<std::string>();
 }
 
@@ -144,10 +141,9 @@ TEST_CASE("snapshot: empty anchor returns three empty arrays") {
     seedIdentity(db->getClient(), caller);
 
     // Anchor (HOSPITAL=1, tag=1) exists in the seed; ensure it's clean.
-    db->getClient()->execSqlSync(
-        "DELETE FROM offering WHERE anchor_arch = 1 AND anchor_tag = 1 "
-        "AND author = $1",
-        caller);
+    db->getClient()->execSqlSync("DELETE FROM offering WHERE anchor_arch = 1 AND anchor_tag = 1 "
+                                 "AND author = $1",
+                                 caller);
     db->getClient()->execSqlSync(
         "DELETE FROM item_instance WHERE hosted_by = $1 AND anchor_arch = 1 AND anchor_tag = 1",
         caller);
@@ -367,8 +363,8 @@ TEST_CASE("snapshot: item cannot appear in both items[] and offerings[] simultan
                     "VALUES ($1::uuid, $2, 2, 1, $3, now() + INTERVAL '1 hour') "
                     "ON CONFLICT (item_instance) DO NOTHING",
                     item_id, kWantsType, offerer);
-                db->getClient()->execSqlSync(
-                    "DELETE FROM offering WHERE item_instance = $1::uuid", item_id);
+                db->getClient()->execSqlSync("DELETE FROM offering WHERE item_instance = $1::uuid",
+                                             item_id);
             } catch (...) {
                 // Swallow — a concurrent delete can cause FK conflicts.
             }
@@ -472,8 +468,8 @@ TEST_CASE("HTTP GET /v1/anchors/{arch}/{tag} returns 200 with three arrays") {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    auto client = drogon::HttpClient::newHttpClient("http://127.0.0.1:" +
-                                                    std::to_string(kAnchorTestPort));
+    auto client =
+        drogon::HttpClient::newHttpClient("http://127.0.0.1:" + std::to_string(kAnchorTestPort));
 
     auto sendGet = [&](const std::string &path,
                        const std::string &token) -> std::pair<drogon::HttpStatusCode, Json::Value> {

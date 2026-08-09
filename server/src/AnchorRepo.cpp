@@ -62,15 +62,14 @@ AnchorSnapshot PgAnchorRepo::snapshot(const std::string &caller_token, int16_t a
     // expires_at > now() filters out any stale rows the sweep has not yet
     // cleaned up.  The caller's universe is irrelevant here — offerings are
     // the single genuine contention point and visible to everyone.
-    const auto offer_rows =
-        txn->execSqlSync("SELECT id, item_instance::text AS item_instance_id, "
-                         "       wants_type, anchor_arch, anchor_tag, "
-                         "       author, expires_at::text AS expires_at "
-                         "FROM offering "
-                         "WHERE anchor_arch = $1 "
-                         "  AND anchor_tag  = $2 "
-                         "  AND expires_at  > now()",
-                         archetype_id, anchor_tag);
+    const auto offer_rows = txn->execSqlSync("SELECT id, item_instance::text AS item_instance_id, "
+                                             "       wants_type, anchor_arch, anchor_tag, "
+                                             "       author, expires_at::text AS expires_at "
+                                             "FROM offering "
+                                             "WHERE anchor_arch = $1 "
+                                             "  AND anchor_tag  = $2 "
+                                             "  AND expires_at  > now()",
+                                             archetype_id, anchor_tag);
 
     result.offerings.reserve(static_cast<std::size_t>(offer_rows.size()));
     for (const auto &row : offer_rows) {
@@ -89,15 +88,14 @@ AnchorSnapshot PgAnchorRepo::snapshot(const std::string &caller_token, int16_t a
     // is_broadcast = true notes have no anchor (04-data-model.md §5) and
     // surface via a separate path (T-0117); they must not appear here.
     // NoteRecord.author_token maps to notes.author_token.
-    const auto note_rows =
-        txn->execSqlSync("SELECT id, author_token, archetype_id, anchor_tag, "
-                         "       template_id, slot_a, slot_b, item_ref, rating "
-                         "FROM notes "
-                         "WHERE archetype_id = $1 "
-                         "  AND anchor_tag   = $2 "
-                         "  AND is_broadcast = false "
-                         "ORDER BY rating DESC",
-                         archetype_id, anchor_tag);
+    const auto note_rows = txn->execSqlSync("SELECT id, author_token, archetype_id, anchor_tag, "
+                                            "       template_id, slot_a, slot_b, item_ref, rating "
+                                            "FROM notes "
+                                            "WHERE archetype_id = $1 "
+                                            "  AND anchor_tag   = $2 "
+                                            "  AND is_broadcast = false "
+                                            "ORDER BY rating DESC",
+                                            archetype_id, anchor_tag);
 
     result.notes.reserve(static_cast<std::size_t>(note_rows.size()));
     for (const auto &row : note_rows) {
