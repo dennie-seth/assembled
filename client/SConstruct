@@ -232,7 +232,14 @@ if env["platform"] == "windows":
     # generator) — since we link the flat static lib via SCons rather than
     # consuming curl's exported CMake target, that dependency doesn't
     # propagate automatically and must be added here too.
-    env.Append(LIBS=["ws2_32", "bcrypt"])
+    env.Append(LIBS=["ws2_32", "bcrypt", "advapi32"])
+    # advapi32: curl_ntlm_core.c (NTLM auth) and its md4/md5/sha256 fallback
+    # hashers call the legacy Windows CryptoAPI (CryptAcquireContextA,
+    # CryptCreateHash, CryptHashData, CryptGetHashParam, CryptDestroyHash,
+    # CryptImportKey, CryptEncrypt, CryptDestroyKey, CryptReleaseContext —
+    # all declared in wincrypt.h). Those symbols live in advapi32.lib, not
+    # ws2_32 or bcrypt, and CMake's exported curl target doesn't propagate
+    # here for the same reason noted above — must be added explicitly.
     # Without this, curl.h's CURL_EXTERN macro expands to
     # __declspec(dllimport) on Windows (it can't tell we're linking a
     # static .lib, not a DLL's import .lib), so the compiler emits
