@@ -27,7 +27,8 @@ std::string toLibpqConnInfo(const std::string &url) {
     std::string port = m[4].matched ? m[4].str() : "5432";
     std::string dbname = m[5].str();
 
-    std::string connInfo = "host=" + host + " port=" + port + " dbname=" + dbname + " user=" + user;
+    std::string connInfo = "host=" + host + " port=" + port + " dbname=" + dbname +
+                          " user=" + user + " connect_timeout=10";
     if (!password.empty()) {
         connInfo += " password=" + password;
     }
