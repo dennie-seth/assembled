@@ -84,6 +84,16 @@ any change. Key points, in priority order:
   side-panel to "scroll right and left" shipped with Acceptance testing
   only that `overflow-x: auto` was set, not that scrolling actually
   reached every column in both directions).
+- **Always add and self-verify an Edge cases block — a strong expectation,
+  not a gate.** Every `## Acceptance` section gets a `**Edge cases:**`
+  bold-label block (not a heading — see `.claude/rules/planner.md`) with
+  its own `- [ ]` items naming the boundary values, missing/invalid input,
+  failure paths, and concurrent/duplicate cases this specific card actually
+  has to handle. The self-check step verifies the block is present,
+  concrete, and card-specific before handing off. This does not block the
+  card from moving to `in-progress` and is not machine-checked like the
+  diff guard below — it's baked into the planner's own drafting and
+  self-check discipline.
 - **ID allocation is gap-tolerant, never reused.** New cards get the next
   `T-NNNN` after the highest id currently present in `tasks/` — mirrors
   `tools/board/src/lib/idAllocator.js`'s algorithm. Never renumber or reuse
