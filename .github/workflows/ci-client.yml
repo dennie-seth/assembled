@@ -7,10 +7,11 @@ on:
       - "client/**"
       - ".github/workflows/ci-client.yml"
   push:
-    branches: [develop, main]
+    branches: [develop, main, "feature/**"]
     paths:
       - "client/**"
       - ".github/workflows/ci-client.yml"
+  workflow_dispatch:
 
 concurrency:
   group: ci-client-${{ github.workflow }}-${{ github.ref }}
