@@ -91,26 +91,26 @@ const std::unordered_map<int, const char *> kWordStrings = {
 /// Placeholders: {A} = slot_a word, {B} = slot_b word, {I} = item_ref string.
 /// Fixed-phrase templates have no placeholders.
 const std::unordered_map<int, const char *> kTemplatePatterns = {
-    {1, "{A} {B}"}, // ACTION QUALIFIER
-    {2, "{A} {B}"}, // HAZARD DIRECTION
-    {3, "{A} {B}"}, // OBJECT DIRECTION
-    {4, "{A} {B}"}, // ACTION DIRECTION
-    {5, "{A}"}, // HAZARD
-    {6, "{A}"}, // ACTION
-    {7, "{A}"}, // DIRECTION
-    {8, "{A} here"}, // OBJECT here
-    {9, "try {A} {B}"}, // try ACTION QUALIFIER
-    {10, "beware {A} {B}"}, // beware HAZARD DIRECTION
-    {11, "{A}, {B}"}, // QUALIFIER, ACTION
-    {12, "I need help {A}"}, // I need help DIRECTION
-    {13, "I need {I}"}, // I need ITEM_REF
-    {14, "something is wrong"}, // fixed phrase
-    {15, "{A} opens with {I}"}, // OBJECT opens with ITEM_REF
-    {16, "go {A}"}, // go DIRECTION
-    {17, "{A} {B}"}, // ACTION OBJECT  ("the" is in the OBJECT word)
-    {18, "{A} {B}"}, // OBJECT QUALIFIER
-    {19, "watch for {A}"}, // watch for HAZARD
-    {20, "safe passage"}, // fixed phrase
+    {1, "{A} {B}"},
+    {2, "{A} {B}"},
+    {3, "{A} {B}"},
+    {4, "{A} {B}"},
+    {5, "{A}"},
+    {6, "{A}"},
+    {7, "{A}"},
+    {8, "{A} here"},
+    {9, "try {A} {B}"},
+    {10, "beware {A} {B}"},
+    {11, "{A}, {B}"},
+    {12, "I need help {A}"},
+    {13, "I need {I}"},
+    {14, "something is wrong"},
+    {15, "{A} opens with {I}"},
+    {16, "go {A}"},
+    {17, "{A} {B}"},
+    {18, "{A} {B}"},
+    {19, "watch for {A}"},
+    {20, "safe passage"},
 };
 
 /// Substitute all occurrences of @p token in @p src with @p value.
