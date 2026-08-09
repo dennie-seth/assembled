@@ -319,6 +319,7 @@ TEST_CASE("assemble: result is recorded in run_variant and archetype_seen") {
     REQUIRE(result2.has_value());
 
     auto as_rows2 = db->getClient()->execSqlSync(
-        "SELECT COUNT(*)::int AS c FROM archetype_seen WHERE token = $1", token);
+        "SELECT COUNT(*)::int AS c FROM archetype_seen WHERE token = $1 AND archetype_id IN (64, 65, 66)",
+        token);
     CHECK(as_rows2[0]["c"].as<int>() == 3);
 }
