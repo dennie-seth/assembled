@@ -51,6 +51,8 @@ add_library(assembled_server_lib OBJECT
   src/SessionLeaseRepo.cpp
   src/ItemRepo.cpp
   src/RunAssembler.cpp
+  src/AnchorRepo.cpp
+  src/AnchorController.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -156,3 +158,15 @@ add_executable(run_assembler_tests
 )
 target_link_libraries(run_assembler_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(run_assembler_tests)
+
+# T-0124: anchor snapshot tests — room-entry GET /v1/anchors/{arch}/{tag}.
+# Tests: single-transaction snapshot (items/offerings/notes), concurrent
+# offering race never produces a torn read, broadcasts excluded, HTTP handler.
+# Separate binary: spins up its own drogon::app() on port 18090; must not
+# share the singleton with other test binaries.
+# anchor_snapshot_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(anchor_snapshot_tests
+  test/anchor_snapshot_test.cpp
+)
+target_link_libraries(anchor_snapshot_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(anchor_snapshot_tests)
