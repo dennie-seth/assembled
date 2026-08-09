@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "lora-handshake"
+version = "0.1.0"
+description = "T-0167 gate tests — LoRA handshake artifact checks (13-asset-pipeline.md §6.5)"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
