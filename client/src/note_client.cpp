@@ -73,10 +73,9 @@ void NoteClient::tick(double /*delta*/) {
     }
 
     for (const Done &d : done) {
-        auto it = std::find_if(in_flight_.begin(), in_flight_.end(),
-                               [&d](const std::unique_ptr<InFlight> &e) {
-                                   return e->easy == d.easy;
-                               });
+        auto it =
+            std::find_if(in_flight_.begin(), in_flight_.end(),
+                         [&d](const std::unique_ptr<InFlight> &e) { return e->easy == d.easy; });
         if (it != in_flight_.end()) {
             complete_request(**it, d.result);
         }
@@ -179,8 +178,8 @@ int NoteClient::enqueue_request(const std::string &url, const std::string &metho
 
     // Auth headers — present on every request.
     if (!auth_token_.empty()) {
-        raw->headers = curl_slist_append(raw->headers,
-                                         ("Authorization: Bearer " + auth_token_).c_str());
+        raw->headers =
+            curl_slist_append(raw->headers, ("Authorization: Bearer " + auth_token_).c_str());
     }
     if (method == "POST") {
         // Mutations additionally carry the lease ID (docs/design/03-net-protocol.md §2).
