@@ -65,8 +65,15 @@ void seedVariant(const drogon::orm::DbClientPtr &db, int16_t id, int16_t archety
 void cleanupTestData(const drogon::orm::DbClientPtr &db, const std::string &token,
                      int16_t variant_lo, int16_t variant_hi, int16_t arch_lo, int16_t arch_hi) {
     // Order respects FK constraints: dependents before parents.
+    // Delete by range first to catch cross-token rows: a prior test's assembly may
+    // have selected archetypes/variants from this range (all test archetypes share
+    // the same DB), so we cannot limit these deletes to a single token.
+    db->execSqlSync("DELETE FROM run_variant WHERE variant_id BETWEEN $1 AND $2", variant_lo,
+                    variant_hi);
     db->execSqlSync("DELETE FROM run_variant WHERE run_id IN (SELECT id FROM run WHERE token = $1)",
                     token);
+    db->execSqlSync("DELETE FROM archetype_seen WHERE archetype_id BETWEEN $1 AND $2", arch_lo,
+                    arch_hi);
     db->execSqlSync("DELETE FROM archetype_seen WHERE token = $1", token);
     db->execSqlSync("DELETE FROM run WHERE token = $1", token);
     db->execSqlSync("DELETE FROM unlock WHERE variant_id BETWEEN $1 AND $2", variant_lo,
@@ -266,8 +273,12 @@ TEST_CASE("assemble: result is recorded in run_variant and archetype_seen") {
     runner.applyPending(db->getClient());
 
     const std::string token = "test-run-asm-t5";
-    // Archetypes 64-66, variants 78-80.
-    cleanupTestData(db->getClient(), token, 78, 80, 64, 66);
+    // Widen cleanup to the full test range (50-80 / 50-66) so archetypes seeded by
+    // earlier test cases are removed before assembly runs.  Without this, the
+    // assembler could draw from the shared pool (archetypes 50-63 still in the DB
+    // after tests t1-t4), producing archetype_seen rows outside {64,65,66} and
+    // causing the idempotency count to come up short.
+    cleanupTestData(db->getClient(), token, 50, 80, 50, 66);
 
     seedArchetype(db->getClient(), 64);
     seedArchetype(db->getClient(), 65);
@@ -318,8 +329,9 @@ TEST_CASE("assemble: result is recorded in run_variant and archetype_seen") {
     auto result2 = assembler.assemble({token, 0});
     REQUIRE(result2.has_value());
 
-    auto as_rows2 = db->getClient()->execSqlSync(
-        "SELECT COUNT(*)::int AS c FROM archetype_seen WHERE token = $1 AND archetype_id IN (64, 65, 66)",
-        token);
+    auto as_rows2 =
+        db->getClient()->execSqlSync("SELECT COUNT(*)::int AS c FROM archetype_seen WHERE token = "
+                                     "$1 AND archetype_id IN (64, 65, 66)",
+                                     token);
     CHECK(as_rows2[0]["c"].as<int>() == 3);
 }
