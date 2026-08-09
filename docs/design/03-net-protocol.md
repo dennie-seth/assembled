@@ -159,6 +159,62 @@ One call per room entry returns everything at that anchor. This is the request t
 
 **The response must be one consistent snapshot — a single transaction.** Three separate queries let the sweep interleave and produce a torn view: an item listed as loose while it is already backing an offering.
 
+#### Response shape (T-0124)
+
+```
+Authorization: Bearer <token>   // caller's universe determines items[] visibility
+
+200 {
+  "items": [
+    {
+      "id":            "<uuid>",
+      "type_id":       <int>,
+      "custody_depth": <int>,
+      "version":       <int>,
+      "bleed_at":      "<timestamptz>"
+    }, ...
+  ],
+  "offerings": [
+    {
+      "id":            "<uuid>",
+      "item_instance": "<uuid>",   // the escrowed item_instance UUID
+      "wants_type":    <int>,
+      "anchor_arch":   <int>,
+      "anchor_tag":    <int>,
+      "author":        "<token>",
+      "expires_at":    "<timestamptz>"
+    }, ...
+  ],
+  "notes": [
+    {
+      "id":          "<uuid>",
+      "archetype_id": <int>,
+      "anchor_tag":  <int>,
+      "template_id": <int>,
+      "slot_a":      <int> | null,
+      "slot_b":      <int> | null,
+      "item_ref":    "<string>" | null,
+      "rating":      <int>
+    }, ...
+  ]
+}
+
+400  { "error": 2004 }   // UNKNOWN_ANCHOR — path params not valid integers
+401  { "error": 1001 }   // UNKNOWN_TOKEN  — missing or malformed Bearer header
+503                      // DATABASE_URL not configured
+```
+
+**items[]** — `item_instance` rows where `hosted_by = caller_token`, anchored at this
+position, `holder IS NULL`, and NOT backed by an open offering. Items in escrow
+appear only in `offerings[]` — never in both arrays in the same snapshot.
+
+**offerings[]** — open `offering` rows at this anchor (`expires_at > now()`), globally
+visible to all callers regardless of `hosted_by`. Sorted by creation order (insertion).
+
+**notes[]** — `notes` rows at this anchor with `is_broadcast = false`, ordered by
+`rating DESC`. Broadcast/petition notes (`is_broadcast = true`) have no anchor and
+surface through a separate path (T-0117).
+
 ### Escrow
 
 ```
@@ -215,3 +271,4 @@ Exact ceilings: **open (NP-1)**.
 |---|---|---|
 | 2026-08-02 | Initial — receipts with client-minted IDs, enum error codes, lease on mutations, no push, offline persists nothing | Claude, rev. pending |
 | 2026-08-02 | v2: hosting model folded into §3/§5 — items hosted per-universe, offerings global, three visibility classes in one snapshot; escrow row-lock documented; **NP-2 resolved** | Claude, rev. pending |
+| 2026-08-09 | v3: T-0124 — added full response shape for `GET /v1/anchors/{archetype}/{tag}` including field-level docs, error codes, and the items/offerings/notes visibility semantics | Claude, rev. pending |
