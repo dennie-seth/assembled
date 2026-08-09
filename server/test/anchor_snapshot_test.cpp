@@ -147,8 +147,7 @@ TEST_CASE("snapshot: empty anchor returns three empty arrays") {
     db->getClient()->execSqlSync(
         "DELETE FROM item_instance WHERE hosted_by = $1 AND anchor_arch = 1 AND anchor_tag = 1",
         caller);
-    db->getClient()->execSqlSync(
-        "DELETE FROM notes WHERE archetype_id = 1 AND anchor_tag = 1");
+    db->getClient()->execSqlSync("DELETE FROM notes WHERE archetype_id = 1 AND anchor_tag = 1");
 
     assembled_server::PgAnchorRepo repo(db->getClient());
     const auto snap = repo.snapshot(caller, 1, 1);
