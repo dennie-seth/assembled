@@ -65,8 +65,8 @@ void seedVariant(const drogon::orm::DbClientPtr &db, int16_t id, int16_t archety
 void cleanupTestData(const drogon::orm::DbClientPtr &db, const std::string &token,
                      int16_t variant_lo, int16_t variant_hi, int16_t arch_lo, int16_t arch_hi) {
     // Order respects FK constraints: dependents before parents.
-    db->execSqlSync(
-        "DELETE FROM run_variant WHERE run_id IN (SELECT id FROM run WHERE token = $1)", token);
+    db->execSqlSync("DELETE FROM run_variant WHERE run_id IN (SELECT id FROM run WHERE token = $1)",
+                    token);
     db->execSqlSync("DELETE FROM archetype_seen WHERE token = $1", token);
     db->execSqlSync("DELETE FROM run WHERE token = $1", token);
     db->execSqlSync("DELETE FROM unlock WHERE variant_id BETWEEN $1 AND $2", variant_lo,
@@ -293,9 +293,10 @@ TEST_CASE("assemble: result is recorded in run_variant and archetype_seen") {
     // Each selected variant_id must appear in run_variant.
     for (const auto &sel : result->selections) {
         auto check = db->getClient()->execSqlSync(
-            "SELECT 1 FROM run_variant WHERE run_id = $1::uuid AND variant_id = $2",
-            result->run_id, sel.variant_id);
-        CHECK_MESSAGE(!check.empty(), "variant_id " << sel.variant_id << " missing from run_variant");
+            "SELECT 1 FROM run_variant WHERE run_id = $1::uuid AND variant_id = $2", result->run_id,
+            sel.variant_id);
+        CHECK_MESSAGE(!check.empty(),
+                      "variant_id " << sel.variant_id << " missing from run_variant");
     }
 
     // archetype_seen: exactly 3 rows for this token (one per assembled archetype).

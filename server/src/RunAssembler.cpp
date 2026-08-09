@@ -51,12 +51,11 @@ std::optional<RunRecord> PgRunAssembler::assemble(const AssembleParams &params) 
     // Query eligible variants in random order (ORDER BY RANDOM() satisfies the
     // "two consecutive assemblies can differ" acceptance criterion without any
     // application-layer shuffle).
-    auto rows =
-        client_->execSqlSync("SELECT v.archetype_id, v.id AS variant_id, v.room_count "
-                             "FROM variant v "
-                             "WHERE v.unlock_population <= $1 "
-                             "ORDER BY RANDOM()",
-                             params.population);
+    auto rows = client_->execSqlSync("SELECT v.archetype_id, v.id AS variant_id, v.room_count "
+                                     "FROM variant v "
+                                     "WHERE v.unlock_population <= $1 "
+                                     "ORDER BY RANDOM()",
+                                     params.population);
 
     // Group by archetype_id, preserving the random first-encounter order so
     // that both the archetype sequence and the within-archetype variant order
@@ -67,8 +66,8 @@ std::optional<RunRecord> PgRunAssembler::assemble(const AssembleParams &params) 
     for (size_t i = 0; i < rows.size(); ++i) {
         VariantRow vr;
         vr.archetype_id = rows[i]["archetype_id"].as<int16_t>();
-        vr.variant_id   = rows[i]["variant_id"].as<int16_t>();
-        vr.room_count   = rows[i]["room_count"].as<int16_t>();
+        vr.variant_id = rows[i]["variant_id"].as<int16_t>();
+        vr.room_count = rows[i]["room_count"].as<int16_t>();
 
         if (by_arch.find(vr.archetype_id) == by_arch.end()) {
             arch_order.push_back(vr.archetype_id);
@@ -122,12 +121,11 @@ std::optional<RunRecord> PgRunAssembler::assemble(const AssembleParams &params) 
         txn->execSqlSync("INSERT INTO run_variant (run_id, variant_id) VALUES ($1::uuid, $2)",
                          run_id, sel.variant_id);
 
-        txn->execSqlSync(
-            "INSERT INTO archetype_seen (token, archetype_id, last_seen_at) "
-            "VALUES ($1, $2, now()) "
-            "ON CONFLICT (token, archetype_id) "
-            "DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at",
-            params.token, sel.archetype_id);
+        txn->execSqlSync("INSERT INTO archetype_seen (token, archetype_id, last_seen_at) "
+                         "VALUES ($1, $2, now()) "
+                         "ON CONFLICT (token, archetype_id) "
+                         "DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at",
+                         params.token, sel.archetype_id);
     }
 
     return RunRecord{run_id, std::move(selections)};
