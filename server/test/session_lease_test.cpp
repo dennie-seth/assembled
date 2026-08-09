@@ -42,8 +42,8 @@ constexpr std::chrono::milliseconds kExpiryMargin{500};
 
 /// Seed a bare identity row so FK constraints on session_lease are satisfied.
 void seedIdentity(const drogon::orm::DbClientPtr &db, const std::string &token) {
-    db->execSqlSync(
-        "INSERT INTO identity (token) VALUES ($1) ON CONFLICT (token) DO NOTHING", token);
+    db->execSqlSync("INSERT INTO identity (token) VALUES ($1) ON CONFLICT (token) DO NOTHING",
+                    token);
 }
 
 } // namespace

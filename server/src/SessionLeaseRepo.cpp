@@ -49,8 +49,7 @@ std::string generateUuid() {
 
 } // namespace
 
-SessionLeaseRepo::SessionLeaseRepo(drogon::orm::DbClientPtr client)
-    : client_(std::move(client)) {}
+SessionLeaseRepo::SessionLeaseRepo(drogon::orm::DbClientPtr client) : client_(std::move(client)) {}
 
 LeaseResult SessionLeaseRepo::acquire(const std::string &token, std::chrono::seconds ttl) {
     const std::string lease_id = generateUuid();
@@ -59,13 +58,12 @@ LeaseResult SessionLeaseRepo::acquire(const std::string &token, std::chrono::sec
     // UPSERT: one row per identity (INV-11).  ON CONFLICT overwrites the old
     // lease_id and expires_at, which is the eviction mechanism: the previous
     // client's lease_id is gone, so its next heartbeat returns false.
-    client_->execSqlSync(
-        "INSERT INTO session_lease (token, lease_id, expires_at) "
-        "VALUES ($1, $2, now() + ($3::bigint * INTERVAL '1 second')) "
-        "ON CONFLICT (token) DO UPDATE SET "
-        "    lease_id   = EXCLUDED.lease_id, "
-        "    expires_at = EXCLUDED.expires_at",
-        token, lease_id, ttl_str);
+    client_->execSqlSync("INSERT INTO session_lease (token, lease_id, expires_at) "
+                         "VALUES ($1, $2, now() + ($3::bigint * INTERVAL '1 second')) "
+                         "ON CONFLICT (token) DO UPDATE SET "
+                         "    lease_id   = EXCLUDED.lease_id, "
+                         "    expires_at = EXCLUDED.expires_at",
+                         token, lease_id, ttl_str);
 
     const auto expires_at = std::chrono::system_clock::now() + ttl;
     return {lease_id, expires_at};
@@ -77,21 +75,21 @@ bool SessionLeaseRepo::heartbeat(const std::string &token, const std::string &le
 
     // Only extend if the lease_id matches and the row has not yet expired.
     // A mismatch means takeover; an expired row means the TTL ran out.
-    const auto result = client_->execSqlSync(
-        "UPDATE session_lease "
-        "SET expires_at = now() + ($3::bigint * INTERVAL '1 second') "
-        "WHERE token = $1 AND lease_id = $2 AND expires_at > now()",
-        token, lease_id, ttl_str);
+    const auto result =
+        client_->execSqlSync("UPDATE session_lease "
+                             "SET expires_at = now() + ($3::bigint * INTERVAL '1 second') "
+                             "WHERE token = $1 AND lease_id = $2 AND expires_at > now()",
+                             token, lease_id, ttl_str);
 
     return result.affectedRows() > 0;
 }
 
 bool SessionLeaseRepo::isAlive(const std::string &token, const std::string &lease_id) {
-    const auto result = client_->execSqlSync(
-        "SELECT 1 FROM session_lease "
-        "WHERE token = $1 AND lease_id = $2 AND expires_at > now() "
-        "LIMIT 1",
-        token, lease_id);
+    const auto result =
+        client_->execSqlSync("SELECT 1 FROM session_lease "
+                             "WHERE token = $1 AND lease_id = $2 AND expires_at > now() "
+                             "LIMIT 1",
+                             token, lease_id);
 
     return !result.empty();
 }

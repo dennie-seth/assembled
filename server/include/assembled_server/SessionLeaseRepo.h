@@ -45,8 +45,7 @@ class SessionLeaseRepo {
     /// @param ttl       new TTL measured from now.
     /// @return true if the heartbeat was accepted; false if the lease was
     ///         evicted by a takeover or has already expired.
-    bool heartbeat(const std::string &token, const std::string &lease_id,
-                   std::chrono::seconds ttl);
+    bool heartbeat(const std::string &token, const std::string &lease_id, std::chrono::seconds ttl);
 
     /// @return true if @p lease_id is still the live lease for @p token and
     ///         has not expired; false otherwise.
