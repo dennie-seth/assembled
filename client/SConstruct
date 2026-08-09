@@ -86,14 +86,32 @@ def _vendor_curl():
 
     # 3. Configure + build + install via CMake.
     build_dir = os.path.join(CURL_SRC_DIR, "_build")
+
+    # Prefer Ninja (single-config, deterministic output — see the long comment
+    # just below) when it is on PATH; fall back to Unix Makefiles on dev
+    # machines where ninja has not been installed.  CI always installs ninja
+    # via `pip install ninja` before invoking scons, so CI is unaffected.
+    _ninja = shutil.which("ninja") or shutil.which("ninja-build")
+    cmake_gen = "Ninja" if _ninja else "Unix Makefiles"
+
+    # If a stale build dir exists with a different cached generator (e.g. a
+    # failed Ninja configure followed by a make-only run), wipe it so cmake
+    # does not error with "generator does not match previously used generator".
+    cmake_cache = os.path.join(build_dir, "CMakeCache.txt")
+    if os.path.exists(cmake_cache):
+        with open(cmake_cache) as _f:
+            if f"CMAKE_GENERATOR:INTERNAL={cmake_gen}" not in _f.read():
+                print(f"[curl vendor] CMake generator mismatch in {build_dir}; cleaning ...")
+                shutil.rmtree(build_dir)
+
     os.makedirs(build_dir, exist_ok=True)
 
-    print(f"[curl vendor] CMake configure (HTTP-only static, no SSL) ...")
+    print(f"[curl vendor] CMake configure (HTTP-only static, no SSL, generator={cmake_gen}) ...")
     subprocess.check_call(
         [
             "cmake",
             CURL_SRC_DIR,
-            # Force the single-config Ninja generator on every platform.
+            # Prefer the single-config Ninja generator on every platform.
             # Without this, Windows defaults to the multi-config Visual
             # Studio generator, which nests build output under a per-config
             # subdir (_build/lib/Release/libcurl.lib) and requires --config
@@ -103,8 +121,9 @@ def _vendor_curl():
             # install step and CURL_STATIC_LIB_* paths above stay valid
             # cross-platform with no per-platform branching. CI installs
             # ninja via `pip install ninja` before invoking scons.
+            # Unix Makefiles is used as a fallback when ninja is absent.
             "-G",
-            "Ninja",
+            cmake_gen,
             f"-DCMAKE_INSTALL_PREFIX={CURL_PREFIX}",
             "-DCMAKE_BUILD_TYPE=Release",
             # Position-independent code is required when linking a static lib
