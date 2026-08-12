@@ -1,0 +1,43 @@
+# WSL-native LoRA training stack — pinned to exact versions verified working
+# on this GPU (RTX 3070 Ti Laptop, 8GB VRAM, driver 581.57 / CUDA 13.0) as
+# of 2026-08-12. Installed by setup-training-env.sh into a dedicated venv
+# on the Linux filesystem (never /mnt/*, per assembled's WSL-UNC-ownership
+# convention) — NOT into this package's own pyproject.toml dev install,
+# since these are GPU-specific cu12x wheels that don't belong in a plain
+# CPU-only editable dev environment (see pyproject.toml's [project] comment).
+#
+# This is a deliberate exception to .claude/rules/python.md's "no bare
+# requirements.txt, pin deps in pyproject.toml" convention: that rule is
+# about this package's own reproducibility-validating deps (pytest/ruff);
+# a multi-GB CUDA/ML training stack is a different kind of dependency,
+# same rationale ComfyUI's own requirements.txt already uses
+# (docs/comfyui-setup.md).
+#
+# torch/torchvision are installed separately first, from the PyTorch cu121
+# index (not PyPI) — see setup-training-env.sh. Listed here for the record:
+#   torch==2.5.1+cu121
+#   torchvision==0.20.1+cu121
+#
+# Everything below is kohya sd-scripts' own requirements.txt
+# (https://github.com/kohya-ss/sd-scripts, commit 37a1cbbc5725ed2a3575506e7bd2001c9908ac92),
+# pinned to what actually resolved on 2026-08-12:
+accelerate==1.6.0
+transformers==4.54.1
+diffusers[torch]==0.32.1
+ftfy==6.3.1
+opencv-python==4.10.0.84
+einops==0.7.0
+bitsandbytes==0.50.0
+lion-pytorch==0.2.3
+schedulefree==1.4
+pytorch-optimizer==3.10.0
+prodigy-plus-schedule-free==1.9.2
+prodigyopt==1.1.2
+tensorboard==2.21.0
+safetensors==0.4.5
+toml==0.10.2
+voluptuous==0.15.2
+huggingface-hub==0.34.3
+imagesize==1.4.1
+rich==14.1.0
+sentencepiece==0.2.1

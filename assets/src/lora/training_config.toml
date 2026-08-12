@@ -6,13 +6,17 @@
 #    colour. Brutalist reference is already concrete, oxide, and institutional
 #    green, so output lands near the home palette without being instructed to."
 #
-# Run: python -m lora_train.fetch --download          # populate refs/
-#      python -m lora_train.caption                   # write per-image captions
-#      accelerate launch train_network.py --config training_config.toml
+# Run: python -m lora_train.fetch --download          # populate refs/ + captions
+#      python -m lora_train.train                      # train (WSL-native, see
+#                                                        # setup-training-env.sh)
 #
 # IMPORTANT: concept art does NOT train this LoRA (13-asset-pipeline.md §6.11).
 # Training data is assets/src/lora/refs/ (external reference corpus), not
 # anything under assets/src/concept/.
+#
+# NOTE: this is an SDXL checkpoint, so lora_train.train invokes kohya
+# sd-scripts' `sdxl_train_network.py` (not the SD1.5 `train_network.py`
+# an earlier revision of this comment named).
 
 [model]
 # SD XL 1.0 base; CreativeML Open RAIL++-M is on the assets.md allowlist.
