@@ -119,16 +119,25 @@ doesn't overwrite what's already correct on disk).
   deliverable.** The real deliverable is produced by re-running T-0072 on
   the board with the full `training_config.toml` epoch count.
 
-## Deploy gap (not wired)
+## Deploy to ComfyUI (automated)
 
 `training_config.toml`'s `output.dir = "assets/final/lora"` is
 repo-relative by design (`config.py`'s validator requires
 `output_dir.startswith("assets/final/")`) — training writes into the git
-repo, not directly to ComfyUI. Nothing currently copies the trained
-`.safetensors` into `F:\ComfyUI\models\loras\`
-(`/mnt/f/ComfyUI/models/loras/` from WSL, confirmed writable). Until that
-copy step is automated, deploying a trained LoRA into ComfyUI is a manual
-one-liner after training:
+repo, not directly to ComfyUI. `lora_train.train.main` now copies the
+result there itself: after `accelerate launch sdxl_train_network.py`
+exits 0, `deploy_to_comfyui()` validates `assets/final/lora/<output_name>.safetensors`
+(non-empty, actually loads via `safetensors.safe_open`) and, if valid,
+copies it into the ComfyUI loras directory — default
+`/mnt/f/ComfyUI/models/loras/` (`F:\ComfyUI\models\loras\`, confirmed
+writable from both the Windows side and the `~/dev/lora-train-venv`
+python), overridable via `LORA_COMFYUI_LORAS_DIR`. The target directory
+is created if missing. A copy failure (missing/invalid source, disk
+error) is logged to stderr and returns `None` — it does **not** fail the
+training run itself, since a good weight file sitting in `assets/final/`
+is still a successful outcome even if the copy hiccups.
+
+Manual equivalent, if ever needed:
 
 ```
 cp assets/final/lora/soviet_brutalism_style_v1.safetensors /mnt/f/ComfyUI/models/loras/
