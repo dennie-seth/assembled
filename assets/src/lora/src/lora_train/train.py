@@ -23,8 +23,9 @@ their output once up front means only the U-Net stays resident during the
 training loop itself).
 
 Environment (WSL-native training stack, see setup-training-env.sh):
-    LORA_SD_SCRIPTS_DIR   default: ~/dev/sd-scripts
-    LORA_CHECKPOINT_PATH  default: /mnt/f/ComfyUI/models/checkpoints/<base_checkpoint>
+    LORA_SD_SCRIPTS_DIR      default: ~/dev/sd-scripts
+    LORA_CHECKPOINT_PATH     default: /mnt/f/ComfyUI/models/checkpoints/<base_checkpoint>
+    LORA_COMFYUI_LORAS_DIR   default: /mnt/f/ComfyUI/models/loras
 """
 
 from __future__ import annotations
@@ -32,13 +33,16 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 
 from lora_train.config import TrainingConfig, load_config
 
 _DEFAULT_SD_SCRIPTS_DIR = pathlib.Path.home() / "dev" / "sd-scripts"
 _DEFAULT_CHECKPOINT_ROOT = pathlib.Path("/mnt/f/ComfyUI/models/checkpoints")
+_DEFAULT_COMFYUI_LORAS_DIR = pathlib.Path("/mnt/f/ComfyUI/models/loras")
 
 
 def resolve_sd_scripts_dir() -> pathlib.Path:
@@ -50,6 +54,67 @@ def resolve_checkpoint_path(config: TrainingConfig) -> pathlib.Path:
     if override:
         return pathlib.Path(override)
     return _DEFAULT_CHECKPOINT_ROOT / config.base_checkpoint
+
+
+def resolve_comfyui_loras_dir() -> pathlib.Path:
+    override = os.environ.get("LORA_COMFYUI_LORAS_DIR")
+    if override:
+        return pathlib.Path(override)
+    return _DEFAULT_COMFYUI_LORAS_DIR
+
+
+def _validate_safetensors(path: pathlib.Path) -> tuple[bool, str]:
+    """Check that `path` is a non-empty file that actually loads as safetensors.
+
+    Uses the `safetensors` package (present in the training venv per
+    training-requirements.txt, not this package's own lightweight dev deps)
+    imported lazily so this module still imports cleanly outside that venv.
+    """
+    if not path.exists():
+        return False, f"file not found: {path}"
+    if path.stat().st_size == 0:
+        return False, f"file is empty: {path}"
+    try:
+        from safetensors import safe_open
+    except ModuleNotFoundError as exc:
+        return False, f"safetensors package not importable: {exc}"
+    try:
+        with safe_open(str(path), framework="pt") as f:
+            keys = list(f.keys())
+    except Exception as exc:  # noqa: BLE001 - report any load failure, don't crash the run
+        return False, f"failed to load as safetensors: {exc}"
+    if not keys:
+        return False, "safetensors file has zero tensors"
+    return True, f"valid safetensors ({len(keys)} tensors)"
+
+
+def deploy_to_comfyui(
+    output_path: pathlib.Path,
+    target_dir: pathlib.Path | None = None,
+    *,
+    validate: Callable[[pathlib.Path], tuple[bool, str]] = _validate_safetensors,
+) -> pathlib.Path | None:
+    """Copy a validated trained LoRA into the ComfyUI loras directory.
+
+    Returns the destination path on success, or None on any failure (missing/
+    invalid source file, copy error) -- logged to stderr, never raised, so a
+    deploy hiccup never fails the training run that produced a good weight file.
+    """
+    if target_dir is None:
+        target_dir = resolve_comfyui_loras_dir()
+    is_valid, message = validate(output_path)
+    if not is_valid:
+        print(f"[deploy] skipping ComfyUI copy: {message}", file=sys.stderr)
+        return None
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        dest = target_dir / output_path.name
+        shutil.copy2(output_path, dest)
+    except OSError as exc:
+        print(f"[deploy] failed to copy {output_path} -> {target_dir}: {exc}", file=sys.stderr)
+        return None
+    print(f"[deploy] {message}: copied {output_path} -> {dest}")
+    return dest
 
 
 def build_dataset_toml(config: TrainingConfig, refs_dir: pathlib.Path) -> str:
@@ -184,6 +249,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     result = subprocess.run(cmd, cwd=sd_scripts_dir)
+    if result.returncode == 0:
+        trained_path = output_dir / f"{config.output_name}.{config.output_format}"
+        deploy_to_comfyui(trained_path)
     return result.returncode
 
 
