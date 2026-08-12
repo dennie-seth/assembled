@@ -4,9 +4,12 @@ version = "0.1.0"
 description = "SDXL style LoRA corpus curation and training tooling (T-0072, 13-asset-pipeline.md §3.2)"
 requires-python = ">=3.11"
 # No generative-model or GPU deps here — this package handles corpus
-# curation, manifest validation, and config validation only.
-# The actual training run (accelerate launch train_network.py) depends on
-# diffusers + accelerate + bitsandbytes, installed separately on the GPU box.
+# curation, manifest validation, config validation, and building the
+# sd-scripts CLI invocation. The actual training run (accelerate launch
+# sdxl_train_network.py) needs a CUDA torch + kohya sd-scripts stack,
+# which is WSL-native but deliberately kept out of this package's own
+# deps (GPU-specific cu12x wheels don't belong in a plain editable dev
+# install) — see setup-training-env.sh + training-requirements.txt.
 dependencies = []
 
 [project.optional-dependencies]
@@ -17,6 +20,7 @@ dev = [
 
 [project.scripts]
 lora-fetch = "lora_train.fetch:main"
+lora-train = "lora_train.train:main"
 
 [build-system]
 requires = ["setuptools>=68"]
