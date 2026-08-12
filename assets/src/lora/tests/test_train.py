@@ -15,7 +15,9 @@ from lora_train.config import TrainingConfig
 from lora_train.train import (
     build_dataset_toml,
     build_train_args,
+    deploy_to_comfyui,
     resolve_checkpoint_path,
+    resolve_comfyui_loras_dir,
     resolve_sd_scripts_dir,
 )
 
@@ -134,3 +136,97 @@ def test_resolve_checkpoint_path_honours_env_override(monkeypatch):
 def test_resolve_sd_scripts_dir_honours_env_override(monkeypatch):
     monkeypatch.setenv("LORA_SD_SCRIPTS_DIR", "/custom/sd-scripts")
     assert resolve_sd_scripts_dir() == pathlib.Path("/custom/sd-scripts")
+
+
+def test_resolve_comfyui_loras_dir_uses_default(monkeypatch):
+    monkeypatch.delenv("LORA_COMFYUI_LORAS_DIR", raising=False)
+    path = resolve_comfyui_loras_dir()
+    assert str(path) in ("/mnt/f/ComfyUI/models/loras", "\\mnt\\f\\ComfyUI\\models\\loras")
+
+
+def test_resolve_comfyui_loras_dir_honours_env_override(monkeypatch):
+    monkeypatch.setenv("LORA_COMFYUI_LORAS_DIR", "/custom/loras")
+    assert resolve_comfyui_loras_dir() == pathlib.Path("/custom/loras")
+
+
+def _always_valid(_path: pathlib.Path) -> tuple[bool, str]:
+    return True, "valid safetensors (2958 tensors)"
+
+
+def _always_invalid(_path: pathlib.Path) -> tuple[bool, str]:
+    return False, "safetensors file has zero tensors"
+
+
+def test_deploy_to_comfyui_copies_valid_file(tmp_path):
+    source_dir = tmp_path / "final"
+    source_dir.mkdir()
+    source = source_dir / "soviet_brutalism_style_v1.safetensors"
+    source.write_bytes(b"fake-but-nonempty-weights")
+    target_dir = tmp_path / "loras"
+
+    dest = deploy_to_comfyui(source, target_dir, validate=_always_valid)
+
+    assert dest == target_dir / "soviet_brutalism_style_v1.safetensors"
+    assert dest.read_bytes() == source.read_bytes()
+
+
+def test_deploy_to_comfyui_creates_missing_target_dir(tmp_path):
+    source = tmp_path / "soviet_brutalism_style_v1.safetensors"
+    source.write_bytes(b"fake-weights")
+    target_dir = tmp_path / "does" / "not" / "exist" / "yet"
+    assert not target_dir.exists()
+
+    dest = deploy_to_comfyui(source, target_dir, validate=_always_valid)
+
+    assert target_dir.is_dir()
+    assert dest is not None
+    assert dest.exists()
+
+
+def test_deploy_to_comfyui_skips_copy_when_invalid(tmp_path):
+    source = tmp_path / "soviet_brutalism_style_v1.safetensors"
+    source.write_bytes(b"not-really-safetensors")
+    target_dir = tmp_path / "loras"
+
+    dest = deploy_to_comfyui(source, target_dir, validate=_always_invalid)
+
+    assert dest is None
+    assert not target_dir.exists()
+
+
+def test_deploy_to_comfyui_default_validate_rejects_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.safetensors"
+    target_dir = tmp_path / "loras"
+
+    dest = deploy_to_comfyui(missing, target_dir)
+
+    assert dest is None
+    assert not target_dir.exists()
+
+
+def test_deploy_to_comfyui_default_validate_rejects_empty_file(tmp_path):
+    empty = tmp_path / "empty.safetensors"
+    empty.write_bytes(b"")
+    target_dir = tmp_path / "loras"
+
+    dest = deploy_to_comfyui(empty, target_dir)
+
+    assert dest is None
+    assert not target_dir.exists()
+
+
+def test_deploy_to_comfyui_reports_copy_failure_without_raising(tmp_path, monkeypatch):
+    import lora_train.train as train_mod
+
+    source = tmp_path / "soviet_brutalism_style_v1.safetensors"
+    source.write_bytes(b"fake-weights")
+    target_dir = tmp_path / "loras"
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(train_mod.shutil, "copy2", _boom)
+
+    dest = deploy_to_comfyui(source, target_dir, validate=_always_valid)
+
+    assert dest is None
