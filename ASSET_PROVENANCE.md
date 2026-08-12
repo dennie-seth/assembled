@@ -13,11 +13,4 @@ next to each asset under `assets/final/` — this table is the index/summary.
 | `assets/final/tiles/signal_tower_concrete_wall_16px.png` | `sd_xl_base_1.0.safetensors` | CreativeML Open RAIL++-M | "flat brutalist concrete wall texture, straight-on orthographic surface photograph, uniform tileable pattern, muted concrete grey with subtle oxide rust stains and institutional green patina, weathered stained surface detail, interior industrial concrete panel, even lighting, no border" | 4201 |
 | `assets/final/tiles/signal_tower_concrete_wall_floor_transitions_16px.png` | N/A — procedurally generated (T-0153), not AI-generated | N/A | 64×32 indexed PNG (mode P), 8 transition tiles (wall, floor, wall→floor vertical/horizontal, corners TL/TR/BL/BR) composed from home palette indices using `assets/src/tiles/src/tile_gen/transition_sheet.py`. All tiles satisfy T-0102's seamlessness and transition-adjacency gate checks (12/12 pass). | Deterministic — seed N/A; output is fully determined by palette slot indices (WALL=8, FLOOR=13, JOINT=4 from `assets/final/palette/home_palette.json`) and tile layout constants in `transition_sheet.py` |
 
-**Not yet produced:** `assets/final/lora/soviet_brutalism_style_v1.safetensors`
-(T-0072) has **not been trained**. The curated 44-image reference corpus
-(`assets/src/lora/corpus.json`, CC-BY-SA-4.0/3.0) and the committed
-training config (`assets/src/lora/training_config.toml`) both exist, but
-no training run has produced weights and no file exists under
-`assets/final/lora/`. T-0072 is reopened (`ready`); this row will be
-added back, with real model/license/prompt/seed fields, once an actual
-training run commits real weights.
+| `assets/final/lora/soviet_brutalism_style_v1.safetensors` | `sd_xl_base_1.0.safetensors` | CreativeML Open RAIL++-M | Soviet brutalism / constructivist architecture style LoRA trained on 44 Wikimedia Commons reference images (CC0 / CC-BY-4.0 / CC-BY-SA-3.0 / CC-BY-SA-4.0) curated in `assets/src/lora/corpus.json`. kohya sd-scripts `sdxl_train_network.py`, rank=16 alpha=8, 10 epochs, 440 steps, AdamW8bit, fp16, 1024 px, gradient_checkpointing + sdpa + cache_latents. Full config in `assets/src/lora/training_config.toml`. | N/A (deterministic from corpus + training_config.toml; no sampling seed) |
