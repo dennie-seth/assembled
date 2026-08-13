@@ -77,19 +77,22 @@ int32_t countInstancesAt(const drogon::orm::DbClientPtr &db, int16_t type_id,
     return r[0]["c"].as<int32_t>();
 }
 
-/// Delete item_types (and their instances) that belong to OTHER test files — i.e. any type_id
-/// outside the 201–206 range reserved for this file.  Limiting the spawner to only 201–206
-/// prevents it from processing leftover types from item_economy_test (97–99),
-/// item_use_transmute_test (71–83), anchor_snapshot_test (91–96), etc., which would otherwise
-/// make aggregate spawned_count unpredictable and inflate per-tick insert counts dramatically
-/// (the root cause of test #84 running for 282 s in the first review pass).
+/// Delete ALL item_types (and their dependents) so the spawner processes only the single
+/// type seeded by the calling test case.  This prevents:
+///   (a) Foreign-test types (item_economy_test 97–99, anchor_snapshot_test 91–96, etc.) from
+///       inflating the spawner's per-tick work.
+///   (b) Leftover 201–206 types from prior test cases blowing up insert counts at large P:
+///       at P=1000 with k_c=10, cap=10 000 per common type; prior-seeded types caused
+///       test #84 to take 282 s in the first review pass.
 ///
-/// FK order: offering → item_instance → item_type.
-void deleteNonTestItemTypes(const drogon::orm::DbClientPtr &db) {
-    db->execSqlSync("DELETE FROM offering WHERE item_instance IN "
-                    "(SELECT id FROM item_instance WHERE type_id < 201 OR type_id > 206)");
-    db->execSqlSync("DELETE FROM item_instance WHERE type_id < 201 OR type_id > 206");
-    db->execSqlSync("DELETE FROM item_type WHERE id < 201 OR id > 206");
+/// FK chain (dependents first): offering → item_instance → item_type,
+///                               type_census → item_type,
+///                               offering.wants_type → item_type.
+void deleteAllItemTypes(const drogon::orm::DbClientPtr &db) {
+    db->execSqlSync("DELETE FROM offering");
+    db->execSqlSync("DELETE FROM item_instance");
+    db->execSqlSync("DELETE FROM type_census");
+    db->execSqlSync("DELETE FROM item_type");
 }
 
 /// Shared test anchor — seeded by migration 003: archetype=HOSPITAL(1), tag=entrance(1).
@@ -150,15 +153,11 @@ TEST_CASE("spawner respects hard cap for common tier — INV-6") {
     const std::string universe = "test-spawner-cap-common-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
 
-    // Restrict spawner to this test file's reserved type IDs (201–206) so it doesn't process
-    // leftover types from other test binaries and inflate spawned_count unpredictably.
-    deleteNonTestItemTypes(db->getClient());
-
+    // Wipe item_type (+ dependents) so spawner only processes kTypeId — prevents
+    // leftover types from prior runs from exhausting the cap before we count.
+    deleteAllItemTypes(db->getClient());
     constexpr int16_t kTypeId = 201; // common
     seedItemType(db->getClient(), kTypeId, 0);
-    // Scope DELETE to this process's universe so parallel runs don't stomp each other.
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
-                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 5.0f;
@@ -195,12 +194,9 @@ TEST_CASE("spawner cap is respected under rapid population growth — INV-6") {
     const std::string universe = "test-spawner-growth-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
 
-    deleteNonTestItemTypes(db->getClient());
-
+    deleteAllItemTypes(db->getClient());
     constexpr int16_t kTypeId = 202; // common
     seedItemType(db->getClient(), kTypeId, 0);
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
-                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 5.0f;
@@ -235,12 +231,9 @@ TEST_CASE("spawner tops up floor for gating-set types — INV-7") {
     const std::string universe = "test-spawner-floor-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
 
-    deleteNonTestItemTypes(db->getClient());
-
+    deleteAllItemTypes(db->getClient());
     constexpr int16_t kTypeId = 203; // common, gating
     seedItemType(db->getClient(), kTypeId, 0);
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
-                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 10.0f;
@@ -280,12 +273,9 @@ TEST_CASE("unique tier cap is population-independent — INV-6") {
     const std::string universe = "test-spawner-unique-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
 
-    deleteNonTestItemTypes(db->getClient());
-
+    deleteAllItemTypes(db->getClient());
     constexpr int16_t kTypeId = 204; // unique
     seedItemType(db->getClient(), kTypeId, 2);
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
-                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 10.0f;
@@ -327,15 +317,10 @@ TEST_CASE("spawner uses the pluggable rate model — not a hardcoded count") {
     const std::string universe = "test-spawner-ratemodel-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
 
-    // Remove types from other test files so the spawner only processes 201–206, keeping
-    // spawned_count predictable and avoiding the 282-s overrun seen for other test cases.
-    deleteNonTestItemTypes(db->getClient());
-
+    // Wipe item_type (+ dependents) so spawner only processes kTypeId.
+    deleteAllItemTypes(db->getClient());
     constexpr int16_t kTypeId = 205; // common
     seedItemType(db->getClient(), kTypeId, 0);
-    // Scope to this universe so a concurrent ctest process doesn't delete our rows.
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
-                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 20.0f; // cap = 40 at P=2 — well above the fixed 3
