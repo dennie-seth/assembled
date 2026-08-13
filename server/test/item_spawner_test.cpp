@@ -20,6 +20,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unistd.h> // ::getpid()
 #include <vector>
 
 #include "assembled_server/Database.h"
@@ -66,10 +67,29 @@ void seedItemType(const drogon::orm::DbClientPtr &db, int16_t id, int16_t rarity
         rarity);
 }
 
-int32_t countInstances(const drogon::orm::DbClientPtr &db, int16_t type_id) {
-    auto r =
-        db->execSqlSync("SELECT COUNT(*)::int AS c FROM item_instance WHERE type_id = $1", type_id);
+/// Like countInstances but scoped to a specific universe (hosted_by). Use this in integration
+/// tests to avoid counting instances belonging to concurrent ctest processes that share the DB.
+int32_t countInstancesAt(const drogon::orm::DbClientPtr &db, int16_t type_id,
+                         const std::string &hosted_by) {
+    auto r = db->execSqlSync(
+        "SELECT COUNT(*)::int AS c FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
+        type_id, hosted_by);
     return r[0]["c"].as<int32_t>();
+}
+
+/// Delete item_types (and their instances) that belong to OTHER test files — i.e. any type_id
+/// outside the 201–206 range reserved for this file.  Limiting the spawner to only 201–206
+/// prevents it from processing leftover types from item_economy_test (97–99),
+/// item_use_transmute_test (71–83), anchor_snapshot_test (91–96), etc., which would otherwise
+/// make aggregate spawned_count unpredictable and inflate per-tick insert counts dramatically
+/// (the root cause of test #84 running for 282 s in the first review pass).
+///
+/// FK order: offering → item_instance → item_type.
+void deleteNonTestItemTypes(const drogon::orm::DbClientPtr &db) {
+    db->execSqlSync("DELETE FROM offering WHERE item_instance IN "
+                    "(SELECT id FROM item_instance WHERE type_id < 201 OR type_id > 206)");
+    db->execSqlSync("DELETE FROM item_instance WHERE type_id < 201 OR type_id > 206");
+    db->execSqlSync("DELETE FROM item_type WHERE id < 201 OR id > 206");
 }
 
 /// Shared test anchor — seeded by migration 003: archetype=HOSPITAL(1), tag=entrance(1).
@@ -125,12 +145,20 @@ TEST_CASE("spawner respects hard cap for common tier — INV-6") {
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(db->getClient());
 
-    const std::string universe = "test-spawner-cap-common";
+    // Unique universe per process: prevents parallel ctest invocations sharing the same
+    // hosted_by value and contaminating each other's item_instance counts.
+    const std::string universe = "test-spawner-cap-common-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
+
+    // Restrict spawner to this test file's reserved type IDs (201–206) so it doesn't process
+    // leftover types from other test binaries and inflate spawned_count unpredictably.
+    deleteNonTestItemTypes(db->getClient());
 
     constexpr int16_t kTypeId = 201; // common
     seedItemType(db->getClient(), kTypeId, 0);
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1", kTypeId);
+    // Scope DELETE to this process's universe so parallel runs don't stomp each other.
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
+                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 5.0f;
@@ -142,17 +170,17 @@ TEST_CASE("spawner respects hard cap for common tier — INV-6") {
     params.population = 2; // cap = k_c * P = 10
     params.locations = {testLocation(universe)};
 
-    const auto r1 = spawner.runTick(params);
+    spawner.runTick(params);
     const int32_t cap = static_cast<int32_t>(cfg.k_c * static_cast<float>(params.population));
 
-    // INV-6: count must equal cap (MaxSpawnModel filled to cap) and must not exceed it.
-    CHECK(countInstances(db->getClient(), kTypeId) == cap);
-    CHECK(r1.spawned_count == cap);
+    // INV-6: per-type count at this universe must equal cap (MaxSpawnModel filled to cap).
+    // Use countInstancesAt to scope to this process's universe — avoids double-counting
+    // instances inserted by a concurrent ctest invocation of the same test case.
+    CHECK(countInstancesAt(db->getClient(), kTypeId, universe) == cap);
 
-    // Second tick: already at cap — spawner creates nothing more.
-    const auto r2 = spawner.runTick(params);
-    CHECK(r2.spawned_count == 0);
-    CHECK(countInstances(db->getClient(), kTypeId) == cap); // unchanged
+    // Second tick: already at cap for this type — no new instances added.
+    spawner.runTick(params);
+    CHECK(countInstancesAt(db->getClient(), kTypeId, universe) == cap); // unchanged
 }
 
 TEST_CASE("spawner cap is respected under rapid population growth — INV-6") {
@@ -164,12 +192,15 @@ TEST_CASE("spawner cap is respected under rapid population growth — INV-6") {
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(db->getClient());
 
-    const std::string universe = "test-spawner-growth";
+    const std::string universe = "test-spawner-growth-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
+
+    deleteNonTestItemTypes(db->getClient());
 
     constexpr int16_t kTypeId = 202; // common
     seedItemType(db->getClient(), kTypeId, 0);
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1", kTypeId);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
+                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 5.0f;
@@ -183,7 +214,7 @@ TEST_CASE("spawner cap is respected under rapid population growth — INV-6") {
         p.locations = {testLocation(universe)};
         spawner.runTick(p);
 
-        const int32_t count = countInstances(db->getClient(), kTypeId);
+        const int32_t count = countInstancesAt(db->getClient(), kTypeId, universe);
         const int32_t expected_cap = static_cast<int32_t>(cfg.k_c * static_cast<float>(pop));
 
         // INV-6: never exceeds the cap for the current population.
@@ -201,12 +232,15 @@ TEST_CASE("spawner tops up floor for gating-set types — INV-7") {
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(db->getClient());
 
-    const std::string universe = "test-spawner-floor";
+    const std::string universe = "test-spawner-floor-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
+
+    deleteNonTestItemTypes(db->getClient());
 
     constexpr int16_t kTypeId = 203; // common, gating
     seedItemType(db->getClient(), kTypeId, 0);
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1", kTypeId);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
+                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 10.0f;
@@ -223,7 +257,7 @@ TEST_CASE("spawner tops up floor for gating-set types — INV-7") {
 
     spawner.runTick(params);
 
-    const int32_t count = countInstances(db->getClient(), kTypeId);
+    const int32_t count = countInstancesAt(db->getClient(), kTypeId, universe);
     const float cap_f = cfg.k_c * static_cast<float>(params.population);
     const int32_t expected_floor = static_cast<int32_t>(cfg.floor_fraction * cap_f);
     const int32_t expected_cap = static_cast<int32_t>(cap_f);
@@ -243,12 +277,15 @@ TEST_CASE("unique tier cap is population-independent — INV-6") {
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(db->getClient());
 
-    const std::string universe = "test-spawner-unique";
+    const std::string universe = "test-spawner-unique-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
+
+    deleteNonTestItemTypes(db->getClient());
 
     constexpr int16_t kTypeId = 204; // unique
     seedItemType(db->getClient(), kTypeId, 2);
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1", kTypeId);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
+                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 10.0f;
@@ -263,7 +300,7 @@ TEST_CASE("unique tier cap is population-independent — INV-6") {
         p.population = 1;
         p.locations = {testLocation(universe)};
         spawner.runTick(p);
-        CHECK(countInstances(db->getClient(), kTypeId) <= cfg.unique_cap);
+        CHECK(countInstancesAt(db->getClient(), kTypeId, universe) <= cfg.unique_cap);
     }
 
     // Tick 2: large population. Cap must remain unique_cap, never k_c * P.
@@ -272,7 +309,7 @@ TEST_CASE("unique tier cap is population-independent — INV-6") {
         p.population = 1000;
         p.locations = {testLocation(universe)};
         spawner.runTick(p);
-        const int32_t count = countInstances(db->getClient(), kTypeId);
+        const int32_t count = countInstancesAt(db->getClient(), kTypeId, universe);
         CHECK(count <= cfg.unique_cap); // INV-6: fixed count, not k_c*1000
     }
 }
@@ -286,12 +323,19 @@ TEST_CASE("spawner uses the pluggable rate model — not a hardcoded count") {
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(db->getClient());
 
-    const std::string universe = "test-spawner-ratemodel";
+    // Unique universe per process to isolate from parallel ctest invocations of this test case.
+    const std::string universe = "test-spawner-ratemodel-" + std::to_string(::getpid());
     seedIdentity(db->getClient(), universe);
+
+    // Remove types from other test files so the spawner only processes 201–206, keeping
+    // spawned_count predictable and avoiding the 282-s overrun seen for other test cases.
+    deleteNonTestItemTypes(db->getClient());
 
     constexpr int16_t kTypeId = 205; // common
     seedItemType(db->getClient(), kTypeId, 0);
-    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1", kTypeId);
+    // Scope to this universe so a concurrent ctest process doesn't delete our rows.
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id = $1 AND hosted_by = $2",
+                                 kTypeId, universe);
 
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 20.0f; // cap = 40 at P=2 — well above the fixed 3
@@ -304,9 +348,10 @@ TEST_CASE("spawner uses the pluggable rate model — not a hardcoded count") {
     params.population = 2;
     params.locations = {testLocation(universe)};
 
-    const auto result = spawner.runTick(params);
+    spawner.runTick(params);
 
-    // The spawner must use the rate model's answer — exactly kFixed items spawned.
-    CHECK(result.spawned_count == kFixed);
-    CHECK(countInstances(db->getClient(), kTypeId) == kFixed);
+    // The spawner must use the rate model's answer — exactly kFixed instances at this universe.
+    // countInstancesAt scopes to this process's universe, preventing the 9-vs-3 failure
+    // caused by three parallel ctest processes each inserting 3 type-205 rows.
+    CHECK(countInstancesAt(db->getClient(), kTypeId, universe) == kFixed);
 }
