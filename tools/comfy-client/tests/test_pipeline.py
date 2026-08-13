@@ -129,3 +129,36 @@ def test_generate_checkpoint_dir_hash_overrides_recipe_model_hash(tmp_path):
     result = generate(recipe, out_dir=tmp_path / "out", client=client, checkpoint_dir=ckpt_dir)
 
     assert result.provenance.model_hash == file_hash
+
+
+# ---- T-0075: ASSET_PROVENANCE.md auto-writer --------------------------------
+
+
+def _make_provenance_md(tmp_path):
+    """Minimal ASSET_PROVENANCE.md with the required table header."""
+    md = tmp_path / "ASSET_PROVENANCE.md"
+    md.write_text(
+        "# Asset Provenance\n\n"
+        "| Asset | Model | License | Prompt | Seed |\n"
+        "|---|---|---|---|---|\n"
+    )
+    return md
+
+
+def test_generate_appends_provenance_entry_to_md(tmp_path, sample_recipe):
+    """generate() auto-appends a provenance row to ASSET_PROVENANCE.md (T-0075)."""
+    md = _make_provenance_md(tmp_path)
+    generate(sample_recipe, out_dir=tmp_path / "out", client=FakeClient(), provenance_md=md)
+
+    text = md.read_text()
+    assert sample_recipe.checkpoint in text
+    assert str(sample_recipe.seed) in text
+    assert sample_recipe.prompt in text or sample_recipe.prompt[:30] in text
+
+
+def test_generate_provenance_md_defaults_to_none_without_breaking(tmp_path, sample_recipe):
+    """When provenance_md=None (default), generate() skips the write rather than crashing."""
+    # Default invocation with no provenance_md should not raise even though
+    # ASSET_PROVENANCE.md doesn't exist in tmp_path.
+    result = generate(sample_recipe, out_dir=tmp_path, client=FakeClient())
+    assert result.path.exists()
