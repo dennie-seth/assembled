@@ -50,6 +50,7 @@ add_library(assembled_server_lib OBJECT
   src/NoteController.cpp
   src/SessionLeaseRepo.cpp
   src/ItemRepo.cpp
+  src/ItemSpawner.cpp
   src/RunAssembler.cpp
   src/AnchorRepo.cpp
   src/AnchorController.cpp
@@ -172,6 +173,18 @@ add_executable(anchor_snapshot_tests
 )
 target_link_libraries(anchor_snapshot_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(anchor_snapshot_tests)
+
+# T-0128: Spontaneous item spawner tests — rarity-cap enforcement (INV-6, INV-7).
+# Tests: hard cap respected per tier, cap held under rapid population growth,
+# gating-type floor top-up, unique tier is population-independent, pluggable
+# rate model is used by the spawner.
+# Separate binary: no drogon::app() singleton contention risk.
+# item_spawner_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(item_spawner_tests
+  test/item_spawner_test.cpp
+)
+target_link_libraries(item_spawner_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(item_spawner_tests)
 
 # T-0126: Transfer receipts — idempotent leave/use/take/transmute.
 # Verifies receipt creation, idempotent replay, concurrent slot-claim safety,
