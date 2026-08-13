@@ -1,0 +1,22 @@
+{
+  "model": "sd_xl_base_1.0.safetensors",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "prompt": "brutalist concrete wall texture, worn concrete floor surface, wall-to-floor trim, muted concrete grey and oxide and institutional green, flat side-on reference sheet, no perspective, value-separated material panels, interior, weathered surface detail, rough stained concrete",
+  "negative_prompt": "equipment, control panel, machinery, switches, buttons, sky, perspective, three-quarter view, isometric, vanishing point, text, watermark, glow, blurry, low quality, character, creature, smooth, flat colour, solid colour",
+  "seed": 3101,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "dfdaf577623cdd3b84496a0c63c7099e22403165fd3ebcc6401c6a94103c3f33",
+  "prompt_id": "437d1d57-0543-4e81-9384-5da7a5f5ce43",
+  "concept_hash": "61de4b16d30b8b61edc33109a4007ade5453565a183a67d195184371a8c13540",
+  "denoise": 0.9,
+  "conditioning_source": "assets/src/concept/signal_tower_material_template.png",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.75,
+  "lora_license": "CreativeML Open RAIL++-M",
+  "base_concept_hash": "9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460",
+  "output_sha256": "0366e6c1176b5f0cbd61e234e5fe44ba097472db855d260ca485ed041bf4880d"
+}
