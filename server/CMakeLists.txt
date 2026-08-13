@@ -53,6 +53,7 @@ add_library(assembled_server_lib OBJECT
   src/RunAssembler.cpp
   src/AnchorRepo.cpp
   src/AnchorController.cpp
+  src/SweepWorker.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -170,3 +171,12 @@ add_executable(anchor_snapshot_tests
 )
 target_link_libraries(anchor_snapshot_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(anchor_snapshot_tests)
+
+# T-0125: sweep worker tests — advisory lock, SKIP LOCKED, bleed, collapse,
+# retention, census.  Separate binary: no drogon::app() singleton risk.
+# sweep_worker_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(sweep_worker_tests
+  test/sweep_worker_test.cpp
+)
+target_link_libraries(sweep_worker_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(sweep_worker_tests)
