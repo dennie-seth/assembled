@@ -37,8 +37,8 @@ namespace {
 /// Stress-tests the spawner's cap clamp: always asks for as many as possible.
 class MaxSpawnModel : public assembled_server::ISpawnRateModel {
   public:
-    int32_t spawnsNeeded(int16_t /*rarity*/, int32_t current_count, int32_t cap,
-                          int32_t /*floor*/, bool /*is_gating*/) const override {
+    int32_t spawnsNeeded(int16_t /*rarity*/, int32_t current_count, int32_t cap, int32_t /*floor*/,
+                         bool /*is_gating*/) const override {
         return cap - current_count;
     }
 };
@@ -67,8 +67,8 @@ void seedItemType(const drogon::orm::DbClientPtr &db, int16_t id, int16_t rarity
 }
 
 int32_t countInstances(const drogon::orm::DbClientPtr &db, int16_t type_id) {
-    auto r = db->execSqlSync("SELECT COUNT(*)::int AS c FROM item_instance WHERE type_id = $1",
-                              type_id);
+    auto r =
+        db->execSqlSync("SELECT COUNT(*)::int AS c FROM item_instance WHERE type_id = $1", type_id);
     return r[0]["c"].as<int32_t>();
 }
 
@@ -136,8 +136,7 @@ TEST_CASE("spawner respects hard cap for common tier — INV-6") {
     cfg.k_c = 5.0f;
 
     // MaxSpawnModel fills to cap every tick; spawner must clamp.
-    assembled_server::ItemSpawner spawner(db->getClient(), cfg,
-                                          std::make_shared<MaxSpawnModel>());
+    assembled_server::ItemSpawner spawner(db->getClient(), cfg, std::make_shared<MaxSpawnModel>());
 
     assembled_server::SpawnTickParams params;
     params.population = 2; // cap = k_c * P = 10
@@ -175,8 +174,7 @@ TEST_CASE("spawner cap is respected under rapid population growth — INV-6") {
     assembled_server::SpawnerConfig cfg;
     cfg.k_c = 5.0f;
 
-    assembled_server::ItemSpawner spawner(db->getClient(), cfg,
-                                          std::make_shared<MaxSpawnModel>());
+    assembled_server::ItemSpawner spawner(db->getClient(), cfg, std::make_shared<MaxSpawnModel>());
 
     // Simulate population doubling across three ticks.
     for (int32_t pop : {1, 2, 3}) {
@@ -189,9 +187,8 @@ TEST_CASE("spawner cap is respected under rapid population growth — INV-6") {
         const int32_t expected_cap = static_cast<int32_t>(cfg.k_c * static_cast<float>(pop));
 
         // INV-6: never exceeds the cap for the current population.
-        CHECK_MESSAGE(count <= expected_cap,
-                      "cap violated at P=" << pop << ": count=" << count
-                                           << " cap=" << expected_cap);
+        CHECK_MESSAGE(count <= expected_cap, "cap violated at P=" << pop << ": count=" << count
+                                                                  << " cap=" << expected_cap);
     }
 }
 
@@ -220,7 +217,7 @@ TEST_CASE("spawner tops up floor for gating-set types — INV-7") {
                                           std::make_shared<assembled_server::FloorTopUpModel>());
 
     assembled_server::SpawnTickParams params;
-    params.population = 2;           // cap = 20, floor = 10
+    params.population = 2; // cap = 20, floor = 10
     params.locations = {testLocation(universe)};
     params.gating_types = {kTypeId}; // mark as progression-critical
 
@@ -258,8 +255,7 @@ TEST_CASE("unique tier cap is population-independent — INV-6") {
     cfg.k_r = 1.0f;
     cfg.unique_cap = 2; // fixed count regardless of population
 
-    assembled_server::ItemSpawner spawner(db->getClient(), cfg,
-                                          std::make_shared<MaxSpawnModel>());
+    assembled_server::ItemSpawner spawner(db->getClient(), cfg, std::make_shared<MaxSpawnModel>());
 
     // Tick 1: small population. Unique cap fills to 2.
     {

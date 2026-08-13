@@ -21,8 +21,8 @@ namespace assembled_server {
 
 // ── FloorTopUpModel ──────────────────────────────────────────────────────────
 
-int32_t FloorTopUpModel::spawnsNeeded(int16_t /*rarity*/, int32_t current_count,
-                                       int32_t cap, int32_t floor, bool is_gating) const {
+int32_t FloorTopUpModel::spawnsNeeded(int16_t /*rarity*/, int32_t current_count, int32_t cap,
+                                      int32_t floor, bool is_gating) const {
     if (current_count >= cap)
         return 0;
     if (is_gating && current_count < floor) {
@@ -35,7 +35,7 @@ int32_t FloorTopUpModel::spawnsNeeded(int16_t /*rarity*/, int32_t current_count,
 // ── ItemSpawner ──────────────────────────────────────────────────────────────
 
 ItemSpawner::ItemSpawner(drogon::orm::DbClientPtr client, SpawnerConfig config,
-                          std::shared_ptr<ISpawnRateModel> rate_model)
+                         std::shared_ptr<ISpawnRateModel> rate_model)
     : client_(std::move(client)), config_(config), rate_model_(std::move(rate_model)) {
     if (!rate_model_) {
         throw std::invalid_argument("ItemSpawner: rate_model must not be null");
@@ -64,12 +64,11 @@ int32_t ItemSpawner::computeFloor(int32_t cap, bool is_gating) const {
 void ItemSpawner::spawnOne(const SpawnLocation &loc, int16_t type_id, int16_t /*rarity*/) {
     // Inserts a world-anchored item_instance (holder=NULL, hosted_by set, depth=0).
     // bleed_at: 72h world/escrow timer (07-items-economy.md §5 — two-timer model).
-    client_->execSqlSync(
-        "INSERT INTO item_instance "
-        "  (type_id, holder, hosted_by, anchor_arch, anchor_tag, custody_depth, "
-        "   bleed_at) "
-        "VALUES ($1, NULL, $2, $3, $4, 0, now() + INTERVAL '72 hours')",
-        type_id, loc.hosted_by, loc.archetype_id, loc.anchor_tag);
+    client_->execSqlSync("INSERT INTO item_instance "
+                         "  (type_id, holder, hosted_by, anchor_arch, anchor_tag, custody_depth, "
+                         "   bleed_at) "
+                         "VALUES ($1, NULL, $2, $3, $4, 0, now() + INTERVAL '72 hours')",
+                         type_id, loc.hosted_by, loc.archetype_id, loc.anchor_tag);
 }
 
 SpawnTickResult ItemSpawner::runTick(const SpawnTickParams &params) {
@@ -101,8 +100,7 @@ SpawnTickResult ItemSpawner::runTick(const SpawnTickParams &params) {
             continue;
         }
 
-        int32_t to_spawn =
-            rate_model_->spawnsNeeded(rarity, current, cap, floor, is_gating);
+        int32_t to_spawn = rate_model_->spawnsNeeded(rarity, current, cap, floor, is_gating);
 
         // Hard clamp: INV-6 must hold regardless of what the rate model returns.
         to_spawn = std::min(to_spawn, cap - current);

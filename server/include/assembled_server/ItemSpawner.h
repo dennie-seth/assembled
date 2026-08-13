@@ -29,9 +29,9 @@ namespace assembled_server {
 
 /// Configuration for the per-tier cap formula (07-items-economy.md §2).
 struct SpawnerConfig {
-    float k_c{10.0f};          ///< Common cap multiplier: cap = k_c * P.
-    float k_r{1.0f};           ///< Rare cap multiplier:   cap = k_r * P.
-    int32_t unique_cap{1};     ///< Unique count: fixed, population-independent.
+    float k_c{10.0f};           ///< Common cap multiplier: cap = k_c * P.
+    float k_r{1.0f};            ///< Rare cap multiplier:   cap = k_r * P.
+    int32_t unique_cap{1};      ///< Unique count: fixed, population-independent.
     float floor_fraction{0.5f}; ///< floor = floor_fraction * cap (for gating types, INV-7).
 };
 
@@ -61,8 +61,8 @@ class ISpawnRateModel {
     /// @param floor         Minimum for gating-set types (0 when not gating).
     /// @param is_gating     True if this type is in the progression-critical set.
     /// @return Desired spawn count (may be clamped by the spawner to cap−current).
-    virtual int32_t spawnsNeeded(int16_t rarity, int32_t current_count, int32_t cap,
-                                  int32_t floor, bool is_gating) const = 0;
+    virtual int32_t spawnsNeeded(int16_t rarity, int32_t current_count, int32_t cap, int32_t floor,
+                                 bool is_gating) const = 0;
 };
 
 /// Simple floor top-up model: spawns exactly enough to reach floor for gating
@@ -72,7 +72,7 @@ class ISpawnRateModel {
 class FloorTopUpModel : public ISpawnRateModel {
   public:
     int32_t spawnsNeeded(int16_t rarity, int32_t current_count, int32_t cap, int32_t floor,
-                          bool is_gating) const override;
+                         bool is_gating) const override;
 };
 
 /// Parameters for one spawner tick.
