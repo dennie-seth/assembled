@@ -84,7 +84,36 @@ def _assert_lora_output_is_real(
     pre-existing assertion (file exists, size>0, provenance has the right
     keys) without ever running the LoRA.
     """
-    raise NotImplementedError("anti-fallback-fakery check not yet implemented")
+    output_hash = _sha256_file(output_path)
+    base_hash = _sha256_file(base_path)
+
+    # Cross-check the sidecar's self-reported hashes against the real
+    # files -- don't just trust what the sidecar claims.
+    assert provenance.get("output_sha256") == output_hash, (
+        f"provenance output_sha256 ({provenance.get('output_sha256')!r}) does not match "
+        f"the actual generated PNG's hash ({output_hash!r})"
+    )
+    assert provenance.get("base_concept_hash") == base_hash, (
+        f"provenance base_concept_hash ({provenance.get('base_concept_hash')!r}) does not "
+        f"match the actual base PNG's hash ({base_hash!r})"
+    )
+
+    # The real anti-fallback assertion: output must differ from base,
+    # checked against actual file bytes.
+    assert output_hash != base_hash, (
+        "LoRA output is byte-identical to the base concept sheet -- this is the "
+        "fallback-copy fakery signature (the infrastructure fallback copies the "
+        "base image instead of generating through the LoRA)"
+    )
+
+    prompt_id = provenance.get("prompt_id") or ""
+    assert prompt_id, "provenance prompt_id is empty"
+    assert prompt_id not in _FALLBACK_PROMPT_ID_SENTINELS, (
+        f"prompt_id is a known infrastructure-fallback sentinel: {prompt_id!r}"
+    )
+    assert "fallback" not in prompt_id.lower(), (
+        f"prompt_id looks like a fallback sentinel: {prompt_id!r}"
+    )
 
 
 class TestRecipe:
