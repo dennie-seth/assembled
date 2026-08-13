@@ -100,13 +100,12 @@ void seedUnlock(const drogon::orm::DbClientPtr &db, const std::string &token, in
 /// Uses the T-0126 schema: kind TEXT, item_id UUID, outcome TEXT, created_at.
 std::string seedReceipt(const drogon::orm::DbClientPtr &db, const std::string & /*token*/,
                         int hours_ago) {
-    auto r =
-        db->execSqlSync("INSERT INTO transfer_receipt "
-                        "(transfer_id, kind, item_id, outcome, created_at) "
-                        "VALUES (gen_random_uuid(), 'leave', gen_random_uuid(), 'won',"
-                        "        now() - make_interval(hours => $1)) "
-                        "RETURNING transfer_id::text",
-                        hours_ago);
+    auto r = db->execSqlSync("INSERT INTO transfer_receipt "
+                             "(transfer_id, kind, item_id, outcome, created_at) "
+                             "VALUES (gen_random_uuid(), 'leave', gen_random_uuid(), 'won',"
+                             "        now() - make_interval(hours => $1)) "
+                             "RETURNING transfer_id::text",
+                             hours_ago);
     return r[0][0].as<std::string>();
 }
 
