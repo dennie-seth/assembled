@@ -58,8 +58,8 @@ void seedIdentity(const drogon::orm::DbClientPtr &db, const std::string &token) 
 }
 
 void seedItemType(const drogon::orm::DbClientPtr &db, int16_t id, int16_t rarity = 0) {
-    db->execSqlSync(
-        "INSERT INTO item_type (id, rarity) VALUES ($1, $2) ON CONFLICT DO NOTHING", id, rarity);
+    db->execSqlSync("INSERT INTO item_type (id, rarity) VALUES ($1, $2) ON CONFLICT DO NOTHING", id,
+                    rarity);
 }
 
 /// Insert an item_instance anchored at (arch, tag) in the given universe.
@@ -88,15 +88,14 @@ std::string seedHeldItem(const drogon::orm::DbClientPtr &db, int16_t type_id,
 /// Insert an offering for the given item_instance.
 /// Returns the newly minted offering UUID.
 std::string seedOffering(const drogon::orm::DbClientPtr &db, const std::string &item_id,
-                         int16_t wants_type, int16_t arch, int16_t tag,
-                         const std::string &author,
+                         int16_t wants_type, int16_t arch, int16_t tag, const std::string &author,
                          const std::string &expires_offset = "1 hour") {
-    auto r = db->execSqlSync(
-        "INSERT INTO offering "
-        "(item_instance, wants_type, anchor_arch, anchor_tag, author, expires_at) "
-        "VALUES ($1::uuid, $2, $3, $4, $5, now() + $6::interval) "
-        "RETURNING id",
-        item_id, wants_type, arch, tag, author, expires_offset);
+    auto r =
+        db->execSqlSync("INSERT INTO offering "
+                        "(item_instance, wants_type, anchor_arch, anchor_tag, author, expires_at) "
+                        "VALUES ($1::uuid, $2, $3, $4, $5, now() + $6::interval) "
+                        "RETURNING id",
+                        item_id, wants_type, arch, tag, author, expires_offset);
     return r[0][0].as<std::string>();
 }
 
@@ -135,19 +134,17 @@ TEST_CASE("both-hold and neither-hold are structurally impossible (INV-1)") {
 
     // ── both-hold: holder AND hosted_by both non-null → CHECK rejects it ──────
     REQUIRE_THROWS_AS(
-        db->getClient()->execSqlSync(
-            "INSERT INTO item_instance (type_id, holder, hosted_by, anchor_arch, anchor_tag, bleed_at) "
-            "VALUES ($1, $2, $3, 1, 1, now() + INTERVAL '1 hour')",
-            kType, tok_a, tok_b),
+        db->getClient()->execSqlSync("INSERT INTO item_instance (type_id, holder, hosted_by, "
+                                     "anchor_arch, anchor_tag, bleed_at) "
+                                     "VALUES ($1, $2, $3, 1, 1, now() + INTERVAL '1 hour')",
+                                     kType, tok_a, tok_b),
         drogon::orm::DrogonDbException);
 
     // ── neither-hold: holder IS NULL AND hosted_by IS NULL → CHECK rejects it ─
-    REQUIRE_THROWS_AS(
-        db->getClient()->execSqlSync(
-            "INSERT INTO item_instance (type_id, bleed_at) "
-            "VALUES ($1, now() + INTERVAL '1 hour')",
-            kType),
-        drogon::orm::DrogonDbException);
+    REQUIRE_THROWS_AS(db->getClient()->execSqlSync("INSERT INTO item_instance (type_id, bleed_at) "
+                                                   "VALUES ($1, now() + INTERVAL '1 hour')",
+                                                   kType),
+                      drogon::orm::DrogonDbException);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,21 +163,20 @@ TEST_CASE("claim: offered item and payment item transfer atomically (INV-4/INV-5
 
     // ── Identities ────────────────────────────────────────────────────────────
     const std::string author = "test-escrow-happy-author";
-    const std::string taker  = "test-escrow-happy-taker";
+    const std::string taker = "test-escrow-happy-taker";
     seedIdentity(db->getClient(), author);
     seedIdentity(db->getClient(), taker);
 
     // ── Item types ────────────────────────────────────────────────────────────
-    constexpr int16_t kOfferedType  = 181;
-    constexpr int16_t kPaymentType  = 182;
+    constexpr int16_t kOfferedType = 181;
+    constexpr int16_t kPaymentType = 182;
     seedItemType(db->getClient(), kOfferedType);
     seedItemType(db->getClient(), kPaymentType);
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
-    db->getClient()->execSqlSync(
-        "DELETE FROM offering WHERE author IN ($1, $2)", author, taker);
-    db->getClient()->execSqlSync(
-        "DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOfferedType, kPaymentType);
+    db->getClient()->execSqlSync("DELETE FROM offering WHERE author IN ($1, $2)", author, taker);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)",
+                                 kOfferedType, kPaymentType);
 
     // ── Seed: offered item anchored at (1,1) in author's universe ─────────────
     const std::string offered_id = seedAnchoredItem(db->getClient(), kOfferedType, author, 1, 1);
@@ -189,8 +185,8 @@ TEST_CASE("claim: offered item and payment item transfer atomically (INV-4/INV-5
     const std::string payment_id = seedHeldItem(db->getClient(), kPaymentType, taker);
 
     // ── Seed: offering ────────────────────────────────────────────────────────
-    const std::string offering_id = seedOffering(
-        db->getClient(), offered_id, kPaymentType, 1, 1, author);
+    const std::string offering_id =
+        seedOffering(db->getClient(), offered_id, kPaymentType, 1, 1, author);
 
     // ── Verify initial state ──────────────────────────────────────────────────
     assertInv1(db->getClient(), offered_id, "before claim (offered)");
@@ -200,8 +196,8 @@ TEST_CASE("claim: offered item and payment item transfer atomically (INV-4/INV-5
     assembled_server::PgOfferingRepo repo(db->getClient());
 
     assembled_server::ClaimParams params;
-    params.offering_id     = offering_id;
-    params.taker_token     = taker;
+    params.offering_id = offering_id;
+    params.taker_token = taker;
     params.payment_item_id = payment_id;
 
     const auto result = repo.claim(params);
@@ -211,18 +207,18 @@ TEST_CASE("claim: offered item and payment item transfer atomically (INV-4/INV-5
     CHECK(result.author_token == author);
 
     // INV-5: versions incremented
-    CHECK(result.offered_version == 1);  // was 0, now 1
-    CHECK(result.offered_depth   == 1);  // custody_depth incremented
-    CHECK(result.payment_version == 1);  // was 0, now 1
-    CHECK(result.payment_depth   == 1);
+    CHECK(result.offered_version == 1); // was 0, now 1
+    CHECK(result.offered_depth == 1);   // custody_depth incremented
+    CHECK(result.payment_version == 1); // was 0, now 1
+    CHECK(result.payment_depth == 1);
 
     // ── Verify post-claim state ───────────────────────────────────────────────
 
     // Offered item now held by taker (atomic release)
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT holder, hosted_by, anchor_arch, anchor_tag "
-            "FROM item_instance WHERE id = $1", offered_id);
+        auto r = db->getClient()->execSqlSync("SELECT holder, hosted_by, anchor_arch, anchor_tag "
+                                              "FROM item_instance WHERE id = $1",
+                                              offered_id);
         REQUIRE(!r.empty());
         CHECK(!r[0]["holder"].isNull());
         CHECK(r[0]["holder"].as<std::string>() == taker);
@@ -233,8 +229,8 @@ TEST_CASE("claim: offered item and payment item transfer atomically (INV-4/INV-5
 
     // Payment item now held by author (atomic payment)
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT holder FROM item_instance WHERE id = $1", payment_id);
+        auto r = db->getClient()->execSqlSync("SELECT holder FROM item_instance WHERE id = $1",
+                                              payment_id);
         REQUIRE(!r.empty());
         CHECK(!r[0]["holder"].isNull());
         CHECK(r[0]["holder"].as<std::string>() == author);
@@ -242,8 +238,8 @@ TEST_CASE("claim: offered item and payment item transfer atomically (INV-4/INV-5
 
     // Offering row deleted
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT 1 FROM offering WHERE id = $1::uuid", offering_id);
+        auto r =
+            db->getClient()->execSqlSync("SELECT 1 FROM offering WHERE id = $1::uuid", offering_id);
         CHECK(r.empty());
     }
 
@@ -282,7 +278,7 @@ TEST_CASE("INV-4: no partial state observable mid-transaction from concurrent re
     runner.applyPending(claim_db->getClient());
 
     const std::string author = "test-escrow-atomic-author";
-    const std::string taker  = "test-escrow-atomic-taker";
+    const std::string taker = "test-escrow-atomic-taker";
     seedIdentity(claim_db->getClient(), author);
     seedIdentity(claim_db->getClient(), taker);
 
@@ -291,15 +287,15 @@ TEST_CASE("INV-4: no partial state observable mid-transaction from concurrent re
     seedItemType(claim_db->getClient(), kOffType);
     seedItemType(claim_db->getClient(), kPayType);
 
-    claim_db->getClient()->execSqlSync(
-        "DELETE FROM offering WHERE author IN ($1, $2)", author, taker);
-    claim_db->getClient()->execSqlSync(
-        "DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType, kPayType);
+    claim_db->getClient()->execSqlSync("DELETE FROM offering WHERE author IN ($1, $2)", author,
+                                       taker);
+    claim_db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)",
+                                       kOffType, kPayType);
 
-    const std::string offered_id  = seedAnchoredItem(claim_db->getClient(), kOffType, author, 1, 1);
-    const std::string payment_id  = seedHeldItem(claim_db->getClient(), kPayType, taker);
-    const std::string offering_id = seedOffering(
-        claim_db->getClient(), offered_id, kPayType, 1, 1, author);
+    const std::string offered_id = seedAnchoredItem(claim_db->getClient(), kOffType, author, 1, 1);
+    const std::string payment_id = seedHeldItem(claim_db->getClient(), kPayType, taker);
+    const std::string offering_id =
+        seedOffering(claim_db->getClient(), offered_id, kPayType, 1, 1, author);
 
     // ── Open REPEATABLE READ snapshot BEFORE the claim ────────────────────────
     auto snap_txn = reader_db->getClient()->newTransaction();
@@ -308,8 +304,8 @@ TEST_CASE("INV-4: no partial state observable mid-transaction from concurrent re
     // Baseline read within the snapshot
     auto snap_before_offered = snap_txn->execSqlSync(
         "SELECT holder, hosted_by FROM item_instance WHERE id = $1", offered_id);
-    auto snap_before_payment = snap_txn->execSqlSync(
-        "SELECT holder FROM item_instance WHERE id = $1", payment_id);
+    auto snap_before_payment =
+        snap_txn->execSqlSync("SELECT holder FROM item_instance WHERE id = $1", payment_id);
 
     // Offered item: at anchor (holder IS NULL)
     REQUIRE(!snap_before_offered.empty());
@@ -321,8 +317,8 @@ TEST_CASE("INV-4: no partial state observable mid-transaction from concurrent re
     // ── Execute claim on a separate DB connection (commits successfully) ───────
     assembled_server::PgOfferingRepo repo(claim_db->getClient());
     assembled_server::ClaimParams params;
-    params.offering_id     = offering_id;
-    params.taker_token     = taker;
+    params.offering_id = offering_id;
+    params.taker_token = taker;
     params.payment_item_id = payment_id;
     const auto claim_result = repo.claim(params);
     REQUIRE(claim_result.error == assembled_server::ClaimError::None);
@@ -334,8 +330,8 @@ TEST_CASE("INV-4: no partial state observable mid-transaction from concurrent re
     // committed for the snapshot to "partially see".
     auto snap_after_offered = snap_txn->execSqlSync(
         "SELECT holder, hosted_by FROM item_instance WHERE id = $1", offered_id);
-    auto snap_after_payment = snap_txn->execSqlSync(
-        "SELECT holder FROM item_instance WHERE id = $1", payment_id);
+    auto snap_after_payment =
+        snap_txn->execSqlSync("SELECT holder FROM item_instance WHERE id = $1", payment_id);
 
     // Snapshot still sees: offered item at anchor (not yet transferred to taker)
     REQUIRE(!snap_after_offered.empty());
@@ -357,10 +353,10 @@ TEST_CASE("INV-4: no partial state observable mid-transaction from concurrent re
 
     // Both in new state — the transition was all-or-nothing
     REQUIRE(!final_offered.empty());
-    CHECK(final_offered[0]["holder"].as<std::string>() == taker);   // now with taker
+    CHECK(final_offered[0]["holder"].as<std::string>() == taker); // now with taker
 
     REQUIRE(!final_payment.empty());
-    CHECK(final_payment[0]["holder"].as<std::string>() == author);  // now with author
+    CHECK(final_payment[0]["holder"].as<std::string>() == author); // now with author
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -383,7 +379,7 @@ TEST_CASE("concurrent claim: FOR UPDATE serializes claimers — exactly one wins
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(db->getClient());
 
-    const std::string author  = "test-escrow-conc-author";
+    const std::string author = "test-escrow-conc-author";
     const std::string taker_b = "test-escrow-conc-b";
     const std::string taker_c = "test-escrow-conc-c";
     seedIdentity(db->getClient(), author);
@@ -395,15 +391,15 @@ TEST_CASE("concurrent claim: FOR UPDATE serializes claimers — exactly one wins
     seedItemType(db->getClient(), kOffType);
     seedItemType(db->getClient(), kPayType);
 
-    db->getClient()->execSqlSync(
-        "DELETE FROM offering WHERE author = $1", author);
-    db->getClient()->execSqlSync(
-        "DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType, kPayType);
+    db->getClient()->execSqlSync("DELETE FROM offering WHERE author = $1", author);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType,
+                                 kPayType);
 
-    const std::string offered_id  = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
-    const std::string pay_b_id    = seedHeldItem(db->getClient(), kPayType, taker_b);
-    const std::string pay_c_id    = seedHeldItem(db->getClient(), kPayType, taker_c);
-    const std::string offering_id = seedOffering(db->getClient(), offered_id, kPayType, 1, 1, author);
+    const std::string offered_id = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
+    const std::string pay_b_id = seedHeldItem(db->getClient(), kPayType, taker_b);
+    const std::string pay_c_id = seedHeldItem(db->getClient(), kPayType, taker_c);
+    const std::string offering_id =
+        seedOffering(db->getClient(), offered_id, kPayType, 1, 1, author);
 
     // ── Two separate DB connections simulate two concurrent clients ───────────
     auto db_b = assembled_server::Database::fromEnv();
@@ -417,8 +413,8 @@ TEST_CASE("concurrent claim: FOR UPDATE serializes claimers — exactly one wins
     std::thread thread_b([&]() {
         assembled_server::PgOfferingRepo repo(db_b->getClient());
         assembled_server::ClaimParams p;
-        p.offering_id     = offering_id;
-        p.taker_token     = taker_b;
+        p.offering_id = offering_id;
+        p.taker_token = taker_b;
         p.payment_item_id = pay_b_id;
         result_b = repo.claim(p);
     });
@@ -426,8 +422,8 @@ TEST_CASE("concurrent claim: FOR UPDATE serializes claimers — exactly one wins
     std::thread thread_c([&]() {
         assembled_server::PgOfferingRepo repo(db_c->getClient());
         assembled_server::ClaimParams p;
-        p.offering_id     = offering_id;
-        p.taker_token     = taker_c;
+        p.offering_id = offering_id;
+        p.taker_token = taker_c;
         p.payment_item_id = pay_c_id;
         result_c = repo.claim(p);
     });
@@ -436,9 +432,8 @@ TEST_CASE("concurrent claim: FOR UPDATE serializes claimers — exactly one wins
     thread_c.join();
 
     // Exactly one of the two claims succeeds
-    const int wins =
-        (result_b.error == assembled_server::ClaimError::None ? 1 : 0) +
-        (result_c.error == assembled_server::ClaimError::None ? 1 : 0);
+    const int wins = (result_b.error == assembled_server::ClaimError::None ? 1 : 0) +
+                     (result_c.error == assembled_server::ClaimError::None ? 1 : 0);
     CHECK(wins == 1);
 
     // The losing claim gets OfferingExpiredOrMissing (offering row was deleted)
@@ -453,8 +448,8 @@ TEST_CASE("concurrent claim: FOR UPDATE serializes claimers — exactly one wins
     assertInv1(db->getClient(), offered_id, "after concurrent claims (offered)");
 
     // Offering row is gone
-    auto r = db->getClient()->execSqlSync(
-        "SELECT 1 FROM offering WHERE id = $1::uuid", offering_id);
+    auto r =
+        db->getClient()->execSqlSync("SELECT 1 FROM offering WHERE id = $1::uuid", offering_id);
     CHECK(r.empty());
 }
 
@@ -473,7 +468,7 @@ TEST_CASE("claim expired offering returns OfferingExpiredOrMissing, items unchan
     runner.applyPending(db->getClient());
 
     const std::string author = "test-escrow-exp-author";
-    const std::string taker  = "test-escrow-exp-taker";
+    const std::string taker = "test-escrow-exp-taker";
     seedIdentity(db->getClient(), author);
     seedIdentity(db->getClient(), taker);
 
@@ -482,22 +477,21 @@ TEST_CASE("claim expired offering returns OfferingExpiredOrMissing, items unchan
     seedItemType(db->getClient(), kOffType);
     seedItemType(db->getClient(), kPayType);
 
-    db->getClient()->execSqlSync(
-        "DELETE FROM offering WHERE author = $1", author);
-    db->getClient()->execSqlSync(
-        "DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType, kPayType);
+    db->getClient()->execSqlSync("DELETE FROM offering WHERE author = $1", author);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType,
+                                 kPayType);
 
-    const std::string offered_id  = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
-    const std::string payment_id  = seedHeldItem(db->getClient(), kPayType, taker);
+    const std::string offered_id = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
+    const std::string payment_id = seedHeldItem(db->getClient(), kPayType, taker);
 
     // Offering already expired (expires_at in the past)
-    const std::string offering_id = seedOffering(
-        db->getClient(), offered_id, kPayType, 1, 1, author, "-1 second");
+    const std::string offering_id =
+        seedOffering(db->getClient(), offered_id, kPayType, 1, 1, author, "-1 second");
 
     assembled_server::PgOfferingRepo repo(db->getClient());
     assembled_server::ClaimParams params;
-    params.offering_id     = offering_id;
-    params.taker_token     = taker;
+    params.offering_id = offering_id;
+    params.taker_token = taker;
     params.payment_item_id = payment_id;
 
     const auto result = repo.claim(params);
@@ -515,8 +509,8 @@ TEST_CASE("claim expired offering returns OfferingExpiredOrMissing, items unchan
 
     // Payment item still held by taker
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT holder FROM item_instance WHERE id = $1", payment_id);
+        auto r = db->getClient()->execSqlSync("SELECT holder FROM item_instance WHERE id = $1",
+                                              payment_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["holder"].as<std::string>() == taker);
     }
@@ -542,31 +536,30 @@ TEST_CASE("claim type mismatch: rollback leaves both items unchanged (INV-4)") {
     runner.applyPending(db->getClient());
 
     const std::string author = "test-escrow-mismatch-author";
-    const std::string taker  = "test-escrow-mismatch-taker";
+    const std::string taker = "test-escrow-mismatch-taker";
     seedIdentity(db->getClient(), author);
     seedIdentity(db->getClient(), taker);
 
-    constexpr int16_t kOffType   = 175;
-    constexpr int16_t kWantType  = 176; // offering wants this
+    constexpr int16_t kOffType = 175;
+    constexpr int16_t kWantType = 176;  // offering wants this
     constexpr int16_t kWrongType = 177; // taker presents this — wrong
     seedItemType(db->getClient(), kOffType);
     seedItemType(db->getClient(), kWantType);
     seedItemType(db->getClient(), kWrongType);
 
-    db->getClient()->execSqlSync(
-        "DELETE FROM offering WHERE author = $1", author);
-    db->getClient()->execSqlSync(
-        "DELETE FROM item_instance WHERE type_id IN ($1, $2, $3)", kOffType, kWantType, kWrongType);
+    db->getClient()->execSqlSync("DELETE FROM offering WHERE author = $1", author);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2, $3)",
+                                 kOffType, kWantType, kWrongType);
 
-    const std::string offered_id  = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
+    const std::string offered_id = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
     const std::string wrong_pay_id = seedHeldItem(db->getClient(), kWrongType, taker);
-    const std::string offering_id  = seedOffering(
-        db->getClient(), offered_id, kWantType, 1, 1, author);
+    const std::string offering_id =
+        seedOffering(db->getClient(), offered_id, kWantType, 1, 1, author);
 
     assembled_server::PgOfferingRepo repo(db->getClient());
     assembled_server::ClaimParams params;
-    params.offering_id     = offering_id;
-    params.taker_token     = taker;
+    params.offering_id = offering_id;
+    params.taker_token = taker;
     params.payment_item_id = wrong_pay_id;
 
     const auto result = repo.claim(params);
@@ -593,8 +586,8 @@ TEST_CASE("claim type mismatch: rollback leaves both items unchanged (INV-4)") {
 
     // Offering still exists
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT 1 FROM offering WHERE id = $1::uuid", offering_id);
+        auto r =
+            db->getClient()->execSqlSync("SELECT 1 FROM offering WHERE id = $1::uuid", offering_id);
         CHECK(!r.empty());
     }
 
@@ -618,8 +611,8 @@ TEST_CASE("claim payment not held: returns PaymentNotHeld, items unchanged") {
     runner.applyPending(db->getClient());
 
     const std::string author = "test-escrow-notheld-author";
-    const std::string taker  = "test-escrow-notheld-taker";
-    const std::string other  = "test-escrow-notheld-other";
+    const std::string taker = "test-escrow-notheld-taker";
+    const std::string other = "test-escrow-notheld-other";
     seedIdentity(db->getClient(), author);
     seedIdentity(db->getClient(), taker);
     seedIdentity(db->getClient(), other);
@@ -629,21 +622,20 @@ TEST_CASE("claim payment not held: returns PaymentNotHeld, items unchanged") {
     seedItemType(db->getClient(), kOffType);
     seedItemType(db->getClient(), kPayType);
 
-    db->getClient()->execSqlSync(
-        "DELETE FROM offering WHERE author = $1", author);
-    db->getClient()->execSqlSync(
-        "DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType, kPayType);
+    db->getClient()->execSqlSync("DELETE FROM offering WHERE author = $1", author);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType,
+                                 kPayType);
 
     const std::string offered_id = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
     // Payment item held by OTHER, not by taker
     const std::string not_held_id = seedHeldItem(db->getClient(), kPayType, other);
-    const std::string offering_id = seedOffering(
-        db->getClient(), offered_id, kPayType, 1, 1, author);
+    const std::string offering_id =
+        seedOffering(db->getClient(), offered_id, kPayType, 1, 1, author);
 
     assembled_server::PgOfferingRepo repo(db->getClient());
     assembled_server::ClaimParams params;
-    params.offering_id     = offering_id;
-    params.taker_token     = taker;
+    params.offering_id = offering_id;
+    params.taker_token = taker;
     params.payment_item_id = not_held_id; // held by other, not taker
 
     const auto result = repo.claim(params);
@@ -651,16 +643,16 @@ TEST_CASE("claim payment not held: returns PaymentNotHeld, items unchanged") {
 
     // Offered item still at anchor
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT holder FROM item_instance WHERE id = $1", offered_id);
+        auto r = db->getClient()->execSqlSync("SELECT holder FROM item_instance WHERE id = $1",
+                                              offered_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["holder"].isNull());
     }
 
     // Offering still exists
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT 1 FROM offering WHERE id = $1::uuid", offering_id);
+        auto r =
+            db->getClient()->execSqlSync("SELECT 1 FROM offering WHERE id = $1::uuid", offering_id);
         CHECK(!r.empty());
     }
 }
@@ -694,7 +686,7 @@ TEST_CASE("CAS-on-version guard: claim reads and verifies offered item version (
     runner.applyPending(db->getClient());
 
     const std::string author = "test-escrow-cas-author";
-    const std::string taker  = "test-escrow-cas-taker";
+    const std::string taker = "test-escrow-cas-taker";
     seedIdentity(db->getClient(), author);
     seedIdentity(db->getClient(), taker);
 
@@ -703,28 +695,27 @@ TEST_CASE("CAS-on-version guard: claim reads and verifies offered item version (
     seedItemType(db->getClient(), kOffType);
     seedItemType(db->getClient(), kPayType);
 
-    db->getClient()->execSqlSync(
-        "DELETE FROM offering WHERE author = $1", author);
-    db->getClient()->execSqlSync(
-        "DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType, kPayType);
+    db->getClient()->execSqlSync("DELETE FROM offering WHERE author = $1", author);
+    db->getClient()->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)", kOffType,
+                                 kPayType);
 
-    const std::string offered_id  = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
-    const std::string payment_id  = seedHeldItem(db->getClient(), kPayType, taker);
-    const std::string offering_id = seedOffering(
-        db->getClient(), offered_id, kPayType, 1, 1, author);
+    const std::string offered_id = seedAnchoredItem(db->getClient(), kOffType, author, 1, 1);
+    const std::string payment_id = seedHeldItem(db->getClient(), kPayType, taker);
+    const std::string offering_id =
+        seedOffering(db->getClient(), offered_id, kPayType, 1, 1, author);
 
     // Verify initial version is 0
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT version FROM item_instance WHERE id = $1", offered_id);
+        auto r = db->getClient()->execSqlSync("SELECT version FROM item_instance WHERE id = $1",
+                                              offered_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["version"].as<int32_t>() == 0);
     }
 
     assembled_server::PgOfferingRepo repo(db->getClient());
     assembled_server::ClaimParams params;
-    params.offering_id     = offering_id;
-    params.taker_token     = taker;
+    params.offering_id = offering_id;
+    params.taker_token = taker;
     params.payment_item_id = payment_id;
 
     const auto result = repo.claim(params);
@@ -735,8 +726,8 @@ TEST_CASE("CAS-on-version guard: claim reads and verifies offered item version (
 
     // Verify directly in DB
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT version FROM item_instance WHERE id = $1", offered_id);
+        auto r = db->getClient()->execSqlSync("SELECT version FROM item_instance WHERE id = $1",
+                                              offered_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["version"].as<int32_t>() == 1);
     }
@@ -748,8 +739,8 @@ TEST_CASE("CAS-on-version guard: claim reads and verifies offered item version (
 
     assembled_server::PgOfferingRepo repo2(db2->getClient());
     assembled_server::ClaimParams params2;
-    params2.offering_id     = offering_id;
-    params2.taker_token     = taker;
+    params2.offering_id = offering_id;
+    params2.taker_token = taker;
     params2.payment_item_id = payment2_id;
 
     const auto result2 = repo2.claim(params2);

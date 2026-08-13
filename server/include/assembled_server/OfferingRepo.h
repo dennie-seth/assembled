@@ -39,11 +39,11 @@ namespace assembled_server {
 
 /// Outcome of a claim attempt.
 enum class ClaimError {
-    None,                    ///< Claim succeeded; both transfers committed.
+    None,                     ///< Claim succeeded; both transfers committed.
     OfferingExpiredOrMissing, ///< Offering not found or past expires_at (3004/3003).
-    PaymentNotHeld,          ///< payment_item_id not in taker's inventory (3002).
-    PaymentTypeMismatch,     ///< Payment item type != offering.wants_type (3005).
-    CasLost,                 ///< CAS miss on offered or payment item (3001).
+    PaymentNotHeld,           ///< payment_item_id not in taker's inventory (3002).
+    PaymentTypeMismatch,      ///< Payment item type != offering.wants_type (3005).
+    CasLost,                  ///< CAS miss on offered or payment item (3001).
 };
 
 /// Parameters for IOfferingRepo::claim.

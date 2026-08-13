@@ -85,8 +85,8 @@ void OfferingController::claim(const drogon::HttpRequestPtr &req,
                 PgOfferingRepo repo(client);
 
                 ClaimParams params;
-                params.offering_id     = offering;
-                params.taker_token     = taker_token;
+                params.offering_id = offering;
+                params.taker_token = taker_token;
                 params.payment_item_id = payment_item_id;
 
                 const ClaimResult result = repo.claim(params);
@@ -115,13 +115,13 @@ void OfferingController::claim(const drogon::HttpRequestPtr &req,
 
                 // ── Success: build receipt ────────────────────────────────────
                 Json::Value receipt(Json::objectValue);
-                receipt["offered_item_id"]  = result.offered_item_id;
-                receipt["offered_version"]  = result.offered_version;
-                receipt["offered_depth"]    = result.offered_depth;
-                receipt["payment_version"]  = result.payment_version;
-                receipt["payment_depth"]    = result.payment_depth;
-                receipt["author"]           = result.author_token;
-                receipt["outcome"]          = "won";
+                receipt["offered_item_id"] = result.offered_item_id;
+                receipt["offered_version"] = result.offered_version;
+                receipt["offered_depth"] = result.offered_depth;
+                receipt["payment_version"] = result.payment_version;
+                receipt["payment_depth"] = result.payment_depth;
+                receipt["author"] = result.author_token;
+                receipt["outcome"] = "won";
 
                 auto resp = drogon::HttpResponse::newHttpJsonResponse(receipt);
                 resp->setStatusCode(drogon::k200OK);
