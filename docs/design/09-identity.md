@@ -1,6 +1,6 @@
 # 09 — Identity & Sessions
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v2, locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v3, locked
 > Related: `02-notes-system.md`, `08-invariants.md`, `PLAN.md` T-0066
 
 ---
@@ -119,11 +119,10 @@ Entropy target: 8 words from a 256-word list = 64 bits. Ample against online gue
 |---|---|
 | S-1 | Lease TTL and heartbeat interval |
 | S-2 | Wordlist: size, source, exact entropy budget |
-| S-3 | Phrase file format — plain text? Does the client offer clipboard export? |
 | S-4 | Does the client keep a phrase after voluntary "start a new universe"? |
 | S-5 | Rate-limit policy on derivation attempts (anti-brute-force) |
 
-**Resolved:** S-6 — same phrase opens the next universe (§3a).
+**Resolved:** S-6 — same phrase opens the next universe (§3a). **S-3** — no manual export step; the phrase is auto-saved to a plain text file the instant it's generated, at New Game (`18-first-run.md` §2, §9). Full first-run sequence, including the phrase-reveal screen's copy and required acknowledgment, is in `18-first-run.md`.
 
 ---
 
@@ -136,3 +135,4 @@ Entropy target: 8 words from a 256-word list = 64 bits. Ample against online gue
 | 2026-08-01 | NEW-1 cross-ref: reconnect-within-TTL resumes run seamlessly (§3) | Claude, rev. @DennieSeth |
 | 2026-08-01 | First-universe grace multiplier set to ~1.5× nominal (§3a) | Claude, rev. @DennieSeth |
 | 2026-08-02 | v2: status line corrected | Claude, rev. pending |
+| 2026-08-03 | v3: **S-3 resolved** — auto-saved plain text file, no manual export/clipboard step. Full first-run sequence spun out to `18-first-run.md` | Claude, rev. @DennieSeth |

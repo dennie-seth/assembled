@@ -70,7 +70,8 @@ describe("resolveVerifyRoutes", () => {
       "tools/palette-extract",
       "tools/sim",
       "assets/src/audio",
-      "assets/src/lora"
+      "assets/src/lora",
+      "assets/src/tiles"
     ];
     for (const root of roots) {
       const routes = resolveVerifyRoutes([`${root}/tests/test_smoke.py`]);

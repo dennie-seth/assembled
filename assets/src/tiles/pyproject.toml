@@ -1,0 +1,35 @@
+[project]
+name = "tile-gen"
+version = "0.1.0"
+description = "Transition tile sheet generator and gate integration tests (T-0153, docs/design/13-asset-pipeline.md §3.4)"
+requires-python = ">=3.12"
+dependencies = [
+  "pillow==12.3.0",
+  "numpy==2.5.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.14.4",
+]
+
+[project.scripts]
+generate-transition-sheet = "tile_gen.transition_sheet:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

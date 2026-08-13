@@ -46,6 +46,16 @@ add_library(assembled_server_lib OBJECT
   src/SeedPhrase.cpp
   src/RateLimiter.cpp
   src/IdentityController.cpp
+  src/NoteRepo.cpp
+  src/NoteController.cpp
+  src/SessionLeaseRepo.cpp
+  src/ItemRepo.cpp
+  src/ItemSpawner.cpp
+  src/RunAssembler.cpp
+  src/AnchorRepo.cpp
+  src/AnchorController.cpp
+  src/TransferReceiptRepo.cpp
+  src/SweepWorker.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -83,3 +93,115 @@ add_executable(identity_tests
 )
 target_link_libraries(identity_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(identity_tests)
+
+# T-0044: NoteRepo tests in a separate binary — keeps a clean singleton
+# state (same rationale as identity_tests vs server_tests).
+# note_repo_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(note_repo_tests
+  test/note_repo_test.cpp
+)
+target_link_libraries(note_repo_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(note_repo_tests)
+
+# T-0045: NoteController HTTP handler tests — separate binary (same
+# singleton rationale as above).
+# note_handler_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(note_handler_tests
+  test/note_handler_test.cpp
+)
+target_link_libraries(note_handler_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(note_handler_tests)
+
+# T-0046: GET /v1/notes — tag equality + ranking tests.
+# Separate binary: spins up a drogon::app() instance; must not share the
+# singleton with other test binaries.
+# notes_handler_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(notes_handler_tests
+  test/notes_handler_test.cpp
+)
+target_link_libraries(notes_handler_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(notes_handler_tests)
+
+# T-0093: SessionLeaseRepo tests — heartbeat, TTL, evict-on-takeover (INV-11).
+# Separate binary: no drogon::app() singleton contention risk.
+# session_lease_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(session_lease_tests
+  test/session_lease_test.cpp
+)
+target_link_libraries(session_lease_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(session_lease_tests)
+
+# T-0096: Two-player economy integration test (INV-1/2/3).
+# Exercises the full A-leaves-X / B-takes-X scenario against real repo code.
+# Separate binary: no drogon::app() singleton contention risk.
+# item_economy_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(item_economy_tests
+  test/item_economy_test.cpp
+)
+target_link_libraries(item_economy_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(item_economy_tests)
+
+# T-0095: use() and transmute() integration tests (INV-2/INV-3/INV-5).
+# Tests the hold→anchor transfer with unlock side-effect (use) and the
+# two-item-in one-item-out atomic transmutation (transmute).
+# Separate binary: no drogon::app() singleton contention risk.
+# item_use_transmute_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(item_use_transmute_tests
+  test/item_use_transmute_test.cpp
+)
+target_link_libraries(item_use_transmute_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(item_use_transmute_tests)
+
+# T-0123: RunAssembler tests — 3-archetype selection, V-9 eligibility gating,
+# 18-room cap, and run/run_variant/archetype_seen recording.
+# Separate binary: no drogon::app() singleton contention risk.
+# run_assembler_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(run_assembler_tests
+  test/run_assembler_test.cpp
+)
+target_link_libraries(run_assembler_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(run_assembler_tests)
+
+# T-0124: anchor snapshot tests — room-entry GET /v1/anchors/{arch}/{tag}.
+# Tests: single-transaction snapshot (items/offerings/notes), concurrent
+# offering race never produces a torn read, broadcasts excluded, HTTP handler.
+# Separate binary: spins up its own drogon::app() on port 18090; must not
+# share the singleton with other test binaries.
+# anchor_snapshot_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(anchor_snapshot_tests
+  test/anchor_snapshot_test.cpp
+)
+target_link_libraries(anchor_snapshot_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(anchor_snapshot_tests)
+
+# T-0128: Spontaneous item spawner tests — rarity-cap enforcement (INV-6, INV-7).
+# Tests: hard cap respected per tier, cap held under rapid population growth,
+# gating-type floor top-up, unique tier is population-independent, pluggable
+# rate model is used by the spawner.
+# Separate binary: no drogon::app() singleton contention risk.
+# item_spawner_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(item_spawner_tests
+  test/item_spawner_test.cpp
+)
+target_link_libraries(item_spawner_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(item_spawner_tests)
+
+# T-0126: Transfer receipts — idempotent leave/use/take/transmute.
+# Verifies receipt creation, idempotent replay, concurrent slot-claim safety,
+# and expired-receipt refresh semantics.
+# Separate binary: no drogon::app() singleton contention risk.
+# transfer_receipt_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(transfer_receipt_tests
+  test/transfer_receipt_test.cpp
+)
+target_link_libraries(transfer_receipt_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(transfer_receipt_tests)
+
+# T-0125: sweep worker tests — advisory lock, SKIP LOCKED, bleed, collapse,
+# retention, census.  Separate binary: no drogon::app() singleton risk.
+# sweep_worker_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(sweep_worker_tests
+  test/sweep_worker_test.cpp
+)
+target_link_libraries(sweep_worker_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(sweep_worker_tests)

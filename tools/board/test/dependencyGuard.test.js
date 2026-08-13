@@ -91,6 +91,23 @@ describe("assertCanMoveToInProgress", () => {
     expect(err).toBeInstanceOf(DependencyCycleError);
   });
 
+  it("resolves without error when all dependencies are retired", async () => {
+    const store = makeStore([
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "retired" })
+    ]);
+    await expect(assertCanMoveToInProgress(store, "T-0001")).resolves.toBeUndefined();
+  });
+
+  it("resolves without error when dependencies mix done and retired", async () => {
+    const store = makeStore([
+      task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
+      task({ id: "T-0002", status: "done" }),
+      task({ id: "T-0003", status: "retired" })
+    ]);
+    await expect(assertCanMoveToInProgress(store, "T-0001")).resolves.toBeUndefined();
+  });
+
   it("does not flag a diamond dependency graph (shared dep, no cycle) as a cycle", async () => {
     const store = makeStore([
       task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),

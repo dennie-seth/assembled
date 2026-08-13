@@ -491,6 +491,69 @@ describe("createApp handleSocketMessage", () => {
   });
 });
 
+// DOT-7 (docs/board-invariants.md): a dependency edit on one card must not leave a
+// STALE badge on a different, related card. render() rebuilds the whole board from
+// the current `tasks` array on every call, recomputing computeBlockerCounts and
+// computeDependencyStatus fresh -- these tests pin that down as an explicit,
+// cross-card regression rather than relying on it being an incidental side effect
+// of the render architecture (T-0096/T-0095 field report, 2026-08-09).
+describe("createApp dependency badge propagation across cards", () => {
+  it("clears a card's blocker badge when a DIFFERENT card's dependency on it is removed via a socket event", async () => {
+    const dependedOn = task({ id: "T-0096", title: "Integration test", status: "ready", depends_on: [] });
+    const dependent = task({ id: "T-0095", title: "CAS transfer", status: "ready", depends_on: ["T-0096"] });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([dependedOn, dependent])
+    });
+    await app.init();
+
+    let badge = boardRoot.querySelector('.card[data-id="T-0096"] .card-blocker-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.title || badge.getAttribute("aria-label")).toMatch(/blocks 1 task/i);
+
+    // T-0095 (not T-0096) is the one that changes -- it drops T-0096 from its own
+    // depends_on. T-0096 itself is untouched by this event.
+    app.handleSocketMessage({ type: "changed", id: "T-0095", task: { ...dependent, depends_on: [] } });
+
+    badge = boardRoot.querySelector('.card[data-id="T-0096"] .card-blocker-badge');
+    expect(badge).toBeNull();
+  });
+
+  it("updates a card's own dependency dot when its depends_on is emptied via a socket event", async () => {
+    const dependent = task({ id: "T-0001", title: "A", status: "ready", depends_on: ["T-0002"] });
+    const dependedOn = task({ id: "T-0002", title: "B", status: "backlog", depends_on: [] });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([dependent, dependedOn])
+    });
+    await app.init();
+
+    let card = boardRoot.querySelector('.card[data-id="T-0001"]');
+    expect(card.querySelector(".card-blocked-badge")).not.toBeNull();
+    expect(card.querySelector(".card-unblocked-badge")).toBeNull();
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...dependent, depends_on: [] } });
+
+    card = boardRoot.querySelector('.card[data-id="T-0001"]');
+    expect(card.querySelector(".card-blocked-badge")).toBeNull();
+    expect(card.querySelector(".card-unblocked-badge")).not.toBeNull();
+  });
+
+  it("clears a card's blocker badge when a dependency is removed via the local Save path (no socket round-trip)", async () => {
+    const dependedOn = task({ id: "T-0096", title: "Integration test", status: "ready", depends_on: [] });
+    const dependent = task({ id: "T-0095", title: "CAS transfer", status: "ready", depends_on: ["T-0096"] });
+    const patchTaskImpl = vi.fn().mockResolvedValue({ ...dependent, depends_on: [] });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([dependedOn, dependent]),
+      patchTaskImpl
+    });
+    await app.init();
+    expect(boardRoot.querySelector('.card[data-id="T-0096"] .card-blocker-badge')).not.toBeNull();
+
+    await app.handleSave("T-0095", { depends_on: [] });
+
+    expect(boardRoot.querySelector('.card[data-id="T-0096"] .card-blocker-badge')).toBeNull();
+  });
+});
+
 describe("createApp stale state when selected task is removed externally", () => {
   it("hides the side panel when the selected task is removed via a socket removed event", async () => {
     const t = task({ id: "T-0001" });
@@ -600,6 +663,47 @@ describe("createApp card detail wiring", () => {
     app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...t, title: "Externally renamed" } });
 
     expect(detailRoot.querySelector(".detail-title").value).toBe("Externally renamed");
+  });
+
+  it("does not clobber an unsaved dependency selection when a socket 'changed' event arrives for the open card (T-0151)", async () => {
+    // Reported live: "when I'm trying to add a dependency and scroll down to save the
+    // task, the dependency gets removed before I even have a chance to save it." A card
+    // under active agent work re-broadcasts "changed" frequently enough (e.g. its
+    // `attempts` counter) to land squarely in that scroll-to-Save window.
+    const t = task({ id: "T-0001", depends_on: [] });
+    const other = task({ id: "T-0002", title: "Blocked-on candidate" });
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t, other]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    const depsSelect = detailRoot.querySelector(".detail-deps-edit .deps-picker-select");
+    depsSelect.value = "T-0002";
+    depsSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(detailRoot.querySelectorAll(".detail-deps-edit .deps-chip").length).toBe(1);
+
+    app.handleSocketMessage({ type: "changed", id: "T-0001", task: { ...t, attempts: 1 } });
+
+    const chips = detailRoot.querySelectorAll(".detail-deps-edit .deps-chip");
+    expect(chips.length).toBe(1);
+    expect(chips[0].dataset.id).toBe("T-0002");
+  });
+
+  it("does not clobber an unsaved dependency selection when a socket 'added' event arrives for a different card", async () => {
+    const t = task({ id: "T-0001", depends_on: [] });
+    const other = task({ id: "T-0002", title: "Blocked-on candidate" });
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t, other]) });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    const depsSelect = detailRoot.querySelector(".detail-deps-edit .deps-picker-select");
+    depsSelect.value = "T-0002";
+    depsSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    app.handleSocketMessage({ type: "added", id: "T-0003", task: task({ id: "T-0003", title: "New card" }) });
+
+    const chips = detailRoot.querySelectorAll(".detail-deps-edit .deps-chip");
+    expect(chips.length).toBe(1);
+    expect(chips[0].dataset.id).toBe("T-0002");
   });
 });
 
@@ -769,6 +873,46 @@ describe("createApp create-card wiring", () => {
 
     expect(app.getError()).toMatch(/title is required/);
     expect(createFormRoot.hidden).toBe(false);
+  });
+
+  it("does not duplicate the card when the WS added-echo for the same id arrives before the create POST resolves (race)", async () => {
+    const created = task({ id: "T-0002", title: "Brand new" });
+    let resolveCreate;
+    const createTaskImpl = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        })
+    );
+    const { app, boardRoot } = makeApp({ createTaskImpl });
+    await app.init();
+    app.handleToggleCreateForm();
+
+    const submitPromise = app.handleCreateSubmit({ title: "Brand new", phase: 1 });
+    // The server broadcasts the "added" event to all clients, including the one that
+    // submitted the create -- it can reach this client over the socket before the HTTP
+    // POST promise resolves.
+    app.handleSocketMessage({ type: "added", id: "T-0002", task: created });
+    resolveCreate(created);
+    await submitPromise;
+
+    expect(app.getTasks().filter((t) => t.id === "T-0002")).toHaveLength(1);
+    expect(boardRoot.querySelectorAll('.card[data-id="T-0002"]')).toHaveLength(1);
+  });
+
+  it("does not duplicate the card when the WS added-echo for the same id arrives after the create POST resolves", async () => {
+    const created = task({ id: "T-0002", title: "Brand new" });
+    const { app, boardRoot } = makeApp({
+      createTaskImpl: vi.fn().mockResolvedValue(created)
+    });
+    await app.init();
+    app.handleToggleCreateForm();
+
+    await app.handleCreateSubmit({ title: "Brand new", phase: 1 });
+    app.handleSocketMessage({ type: "added", id: "T-0002", task: created });
+
+    expect(app.getTasks().filter((t) => t.id === "T-0002")).toHaveLength(1);
+    expect(boardRoot.querySelectorAll('.card[data-id="T-0002"]')).toHaveLength(1);
   });
 
   it("closes the form without creating anything on handleCancelCreate", async () => {

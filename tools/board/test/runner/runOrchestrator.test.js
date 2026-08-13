@@ -1413,6 +1413,47 @@ describe("RunOrchestrator.runCard — unassigned cards (agent: null) route throu
     expect(buildPromptFn).not.toHaveBeenCalled();
   });
 
+  it("passes the card's comments to buildPlannerPromptFn so a comment on an unassigned card reaches the planner", async () => {
+    const comments = [{ author: "Dennie", text: "This card also needs a CLI flag.", timestamp: "2026-08-05T12:00:00.000Z" }];
+    const store = makeStore([makeUnassignedTask({ comments })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const buildPlannerPromptFn = vi.fn(() => "planner prompt");
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn(),
+      buildPlannerPromptFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    expect(buildPlannerPromptFn).toHaveBeenCalledWith(expect.objectContaining({ comments }));
+
+    plannerChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("passes an empty comments array to buildPlannerPromptFn when the card has none", async () => {
+    const store = makeStore([makeUnassignedTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const buildPlannerPromptFn = vi.fn(() => "planner prompt");
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn(),
+      buildPlannerPromptFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const plannerChild = await nthChild(runner, 1);
+    expect(buildPlannerPromptFn).toHaveBeenCalledWith(expect.objectContaining({ comments: [] }));
+
+    plannerChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
   it("broadcasts run-event with phase='planning' for events from the planner", async () => {
     const store = makeStore([makeUnassignedTask()]);
     const git = makeGit();

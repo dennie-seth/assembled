@@ -1,4 +1,4 @@
-import { STATUSES, groupTasksByStatus, computeBlockerCounts, sortTasks, SORT_KEYS } from "./board.js";
+import { STATUSES, groupTasksByStatus, computeBlockerCounts, computeDependencyStatus, sortTasks, SORT_KEYS } from "./board.js";
 
 export const BATCH_SIZE = 20;
 
@@ -36,12 +36,30 @@ function actionButton(className, label, onClick) {
   return button;
 }
 
+// Single derived per-card indicator, driven entirely by computeDependencyStatus so a card
+// can never end up rendering both a "blocked" and a "ready" badge at once (see board.js).
+function dependencyStatusBadgeFor(status) {
+  const isBlocked = status === "blocked";
+  const badge = document.createElement("span");
+  badge.className = isBlocked ? "card-blocked-badge" : "card-unblocked-badge";
+  const label = isBlocked
+    ? "Blocked — has unresolved dependencies"
+    : "All dependencies complete — ready to run";
+  badge.textContent = isBlocked ? "🔴" : "🟢";
+  badge.title = label;
+  badge.setAttribute("aria-label", label);
+  return badge;
+}
+
+// Unrelated to the above: this reports downstream impact (other tasks waiting on this one),
+// not whether this task's own dependencies are satisfied. Deliberately not red/dot-shaped so
+// it can never be mistaken for the blocked/ready pair above.
 function blockerBadgeFor(blockCount) {
   if (!blockCount) return null;
   const badge = document.createElement("span");
   badge.className = "card-blocker-badge";
   const label = `Blocks ${blockCount} task${blockCount === 1 ? "" : "s"}`;
-  badge.textContent = "⛔";
+  badge.textContent = "🔗";
   badge.title = label;
   badge.setAttribute("aria-label", label);
   return badge;
@@ -62,7 +80,7 @@ function attemptsBadgeFor(task) {
   return badge;
 }
 
-function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
+function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, dependencyStatus) {
   const card = document.createElement("div");
   card.className = "card";
   card.draggable = true;
@@ -85,6 +103,9 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts) {
   if (badge) {
     titleRow.appendChild(badge);
   }
+
+  const depBadge = dependencyStatusBadgeFor(dependencyStatus?.get(task.id));
+  titleRow.appendChild(depBadge);
 
   const attemptsBadge = attemptsBadgeFor(task);
   if (attemptsBadge) {
@@ -130,7 +151,7 @@ function sortSelectFor(status, sortKey, onSortChange) {
   return select;
 }
 
-function renderColumn(status, tasks, callbacks, blockerCounts) {
+function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus) {
   const column = document.createElement("div");
   column.className = "column";
   column.dataset.status = status;
@@ -168,7 +189,7 @@ function renderColumn(status, tasks, callbacks, blockerCounts) {
   const visibleCount = callbacks.columnBatch?.get(status) ?? BATCH_SIZE;
   const sorted = sortTasks(tasks, sortKey);
   for (const task of sorted.slice(0, visibleCount)) {
-    list.appendChild(renderCard(task, callbacks, blockerCounts));
+    list.appendChild(renderCard(task, callbacks, blockerCounts, dependencyStatus));
   }
   if (sorted.length > visibleCount && callbacks.onShowMore) {
     const sentinel = document.createElement("div");
@@ -187,6 +208,7 @@ export function renderBoard(root, tasks, callbacks) {
 
   const grouped = groupTasksByStatus(tasks);
   const blockerCounts = computeBlockerCounts(tasks);
+  const dependencyStatus = computeDependencyStatus(tasks);
   root.replaceChildren();
 
   if (callbacks.error) {
@@ -200,7 +222,7 @@ export function renderBoard(root, tasks, callbacks) {
   board.className = "board";
 
   for (const status of STATUSES) {
-    board.appendChild(renderColumn(status, grouped.get(status) ?? [], callbacks, blockerCounts));
+    board.appendChild(renderColumn(status, grouped.get(status) ?? [], callbacks, blockerCounts, dependencyStatus));
   }
 
   root.appendChild(board);

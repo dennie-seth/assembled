@@ -1,0 +1,77 @@
+{
+  "prompt": {
+    "4": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "sd_xl_base_1.0.safetensors"
+      }
+    },
+    "12": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["4", 0],
+        "clip": ["4", 1],
+        "lora_name": "soviet_brutalism_style_v1.safetensors",
+        "strength_model": 0.75,
+        "strength_clip": 0.75
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "brutalist concrete wall texture, worn concrete floor surface, wall-to-floor trim, muted concrete grey and oxide and institutional green, flat side-on reference sheet, no perspective, value-separated material panels, interior, weathered surface detail, rough stained concrete",
+        "clip": ["12", 1]
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "equipment, control panel, machinery, switches, buttons, sky, perspective, three-quarter view, isometric, vanishing point, text, watermark, glow, blurry, low quality, character, creature, smooth, flat colour, solid colour",
+        "clip": ["12", 1]
+      }
+    },
+    "10": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "signal_tower_material_template.png"
+      }
+    },
+    "11": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": ["10", 0],
+        "vae": ["4", 2]
+      }
+    },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 3101,
+        "steps": 30,
+        "cfg": 7.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 0.9,
+        "model": ["12", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["11", 0]
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["3", 0],
+        "vae": ["4", 2]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "signal_tower_material_sheet_lora",
+        "images": ["8", 0]
+      }
+    }
+  },
+  "client_id": "t0167-handshake"
+}

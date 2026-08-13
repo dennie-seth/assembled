@@ -67,15 +67,18 @@ body {
   padding-bottom: 0.5rem;
 }
 
-/* When the side-panel is open it physically overlays the right side of the
-   board. Even with few columns that don't naturally overflow the viewport,
-   padding-right equal to the panel width guarantees the board's scrollable
-   content extends past the overlay — so every column is reachable by
-   scrolling right. Mathematical proof: at max scroll the last column's right
-   edge lands at clientWidth - paddingRight = clientWidth - panelWidth, which
-   is exactly the panel's left edge (fully clear, not behind it). */
-body:has(#side-panel:not([hidden])) .board {
-  padding-right: 28rem;
+/* When the side-panel is open, shrink the board's own box (reflow) instead
+   of padding its scrollable content — padding only helps once you scroll
+   there, it does nothing for columns already onscreen at the current
+   scroll position, which end up painted under the fixed panel. margin-right
+   pulls the board's visible right edge in to meet the panel's left edge.
+   Gated to viewports >= 28rem: below that the panel itself switches to its
+   min(28rem, 100%) full-width mode and already covers the entire board, so
+   shrinking it too would just waste space once the panel closes. */
+@media (min-width: 28rem) {
+  body:has(#side-panel:not([hidden])) .board {
+    margin-right: 28rem;
+  }
 }
 
 .column {
@@ -115,7 +118,9 @@ body:has(#side-panel:not([hidden])) .board {
   font-weight: 600;
 }
 
-.card-blocker-badge {
+.card-blocker-badge,
+.card-blocked-badge,
+.card-unblocked-badge {
   font-size: 0.75rem;
   cursor: help;
 }

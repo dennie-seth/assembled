@@ -10,6 +10,7 @@ import {
 } from "../lib/dependencyGuard.js";
 import { listAssignableAgents } from "../lib/agentCatalog.js";
 import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
+import { appendNote } from "../runner/runOrchestrator.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
@@ -127,6 +128,39 @@ function resolveAttachmentPath(cardAttachmentsDir, filename) {
   const dirResolved = path.resolve(cardAttachmentsDir) + path.sep;
   if (!resolved.startsWith(dirResolved)) return null;
   return resolved;
+}
+
+/** Resolves `id`'s attachment directory to a path guaranteed to live inside `root`, or null. */
+function resolveCardAttachmentsDir(root, id) {
+  if (typeof id !== "string" || id.length === 0) return null;
+  const resolved = path.resolve(root, id);
+  const rootResolved = path.resolve(root) + path.sep;
+  if (!resolved.startsWith(rootResolved)) return null;
+  return resolved;
+}
+
+/**
+ * Best-effort removal of a card's on-disk attachment directory, called after the store's row
+ * delete has already committed (see handleDeleteTask): a filesystem failure here must never
+ * block or appear to fail the delete the user asked for -- it only risks leaving an orphaned
+ * directory behind for the periodic integrity checker to flag, which beats refusing to delete a
+ * card because of an unrelated disk/permission problem. Skips entirely (no warning) when the
+ * server wasn't given enough config to know where attachments would live -- that's a handful of
+ * tests that construct a bare server without tasksDir/dataDir, not a real deployment.
+ */
+async function removeCardAttachments({ taskStoreKind, tasksDir, dataDir, id }) {
+  if (taskStoreKind === "db" ? !dataDir : !tasksDir) return;
+  const root = attachmentsRootDir({ taskStoreKind, tasksDir, dataDir });
+  const dir = resolveCardAttachmentsDir(root, id);
+  if (!dir) {
+    console.warn(`Board: refusing to remove attachments for invalid task id "${id}"`);
+    return;
+  }
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`Board: failed to remove attachments directory for ${id} (leaving it orphaned):`, err.message);
+  }
 }
 
 /** Sniffs `buffer`'s real type and rejects active markup (SVG/HTML) regardless of what the uploader claimed. */
@@ -341,10 +375,14 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     hub.broadcast({ type: "changed", id, task: updated });
   }
 
-  // Done-triggered pullDevelop exists to fetch code that card commits (this repo's own, and
-  // others') had pushed -- meaningless in db mode, since card writes never touch git there
-  // (docs/design/cards-to-database.md, Phase 2).
-  if (taskStoreKind !== "db" && updated.status === "done" && repoRoot) {
+  // Done-triggered pullDevelop exists to fetch code that OTHER merged PRs have pushed to
+  // origin/develop, so it must fire in every task-store mode: `repoRoot` is still a real
+  // git checkout of develop even in db mode (docs/design/cards-to-database.md, Phase 2
+  // keeps tasks/ git-tracked alongside the DB). Whether *this card's own write* touches
+  // git is unrelated and handled separately above -- conflating the two previously gated
+  // this off entirely in db mode, silently killing the live board's only auto-deploy path
+  // after the 2026-08-07 cutover (docs/board-invariants.md PULL-1).
+  if (updated.status === "done" && repoRoot) {
     // Fire-and-forget: pull (and any restart it triggers) must not block this response.
     pullDevelop({ repoRoot })
       .then((result) => {
@@ -375,10 +413,37 @@ async function handleRunTask(orchestrator, id, res) {
     throw new HttpError(409, `Task ${id} already has an active run`);
   }
 
+  // A run moves the card to in-progress the same way a manual PATCH does -- reuse the
+  // same dependency/cycle guard handlePatchTask applies there, so the Run/Re-run button
+  // can't start work whose own dependencies aren't resolved just because it bypasses
+  // the PATCH route (docs/board-invariants.md RUN-3 / LC-5).
+  try {
+    await assertCanMoveToInProgress(orchestrator.store, id);
+  } catch (err) {
+    if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError) {
+      throw new HttpError(409, err.message);
+    }
+    throw err;
+  }
+
   // Fire-and-forget: a run (implementer + reviewer) can take minutes. The
   // client follows progress over the board WS, not this response.
-  orchestrator.runCard(id).catch((err) => {
+  orchestrator.runCard(id).catch(async (err) => {
     console.error(`Agent Runner: run failed for ${id}:`, err);
+    try {
+      const current = await orchestrator.store.get(id);
+      if (current) {
+        const updated = await orchestrator.store.update(id, {
+          status: "blocked",
+          body: appendNote(current.body ?? "", "Run Failed", err.message),
+        });
+        if (orchestrator.hub) {
+          orchestrator.hub.broadcast({ type: "changed", id, task: updated });
+        }
+      }
+    } catch (e2) {
+      console.error(`Agent Runner: failed to persist run failure for ${id}:`, e2);
+    }
   });
 
   sendJson(res, 202, task);
@@ -715,7 +780,7 @@ async function handleExportDone(store, res) {
   res.end(text);
 }
 
-async function handleDeleteTask(store, id, res, taskStoreKind, hub) {
+async function handleDeleteTask(store, id, res, taskStoreKind, hub, tasksDir, dataDir) {
   const task = await store.get(id);
   if (!task) {
     throw new HttpError(404, `Task ${id} not found`);
@@ -724,6 +789,7 @@ async function handleDeleteTask(store, id, res, taskStoreKind, hub) {
     throw new HttpError(409, `Cannot delete ${id}: status is "${task.status}" (active run)`);
   }
   await store.remove(id);
+  await removeCardAttachments({ taskStoreKind, tasksDir, dataDir, id });
   if (taskStoreKind === "db" && hub) {
     hub.broadcast({ type: "removed", id, task: null });
   }
@@ -801,7 +867,7 @@ export function createRequestListener({
         );
       }
       if (idMatch && req.method === "DELETE") {
-        return await handleDeleteTask(store, idMatch[1], res, taskStoreKind, hub);
+        return await handleDeleteTask(store, idMatch[1], res, taskStoreKind, hub, tasksDir, dataDir);
       }
       if (runMatch && req.method === "POST") {
         return await handleRunTask(orchestrator, runMatch[1], res);

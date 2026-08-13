@@ -1,6 +1,6 @@
 # 05 — Art Direction
 
-> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v3, direction + tile size + palette process locked
+> **Author:** Claude (Opus 5) · **Reviewed:** @DennieSeth · **Status:** v4, direction + tile size + palette process locked; §3 reconciled against shipped palette (T-0152)
 > Related: `01-vision.md` §8, `PLAN.md` Phase 6, `13-asset-pipeline.md` §6, `14-vertical-slice.md`
 
 ---
@@ -35,17 +35,19 @@ The reference was chosen for the game, but it happens to be unusually favourable
 
 Derived from the reference, not invented:
 - Concrete greys — the structural base, widest range
-- Oxide and rust — the only warm notes
 - Institutional green and ochre — interiors, corridors, the specific palette of a state that painted everything the same colour
+- Oxide and rust — warm notes; **archetype-dependent**. Interior archetypes (e.g. Signal Tower) have no oxide/rust surface: the material is painted concrete and institutional green throughout. Oxide/rust is expected in industrial, surface, and exterior archetypes where weathering is architecturally present.
 - Deep shadow — near-black, not black
 
-**Exact hex set is resolved as a process, not a fixed list (V-5, `13-asset-pipeline.md` §6).** The direction determines the family (above); the count and exact values are *extracted* from the first approved concept sheet (T-0104/T-0105) rather than chosen abstractly.
+**The hex set is extracted, not chosen (V-5 resolved).** A concept sheet is generated with base SDXL, curated, and approved for *direction* by a human; the palette is then clustered out of that sheet into N colours ordered as a value ramp, and emitted as the LUT (**T-0105**, `13-asset-pipeline.md` §6.6). The result is derived from a full-colour image already reviewed and accepted, rather than picked from swatches and hoped to survive contact with generated output.
+
+**Shipped Signal Tower palette — locked (T-0105):** Institutional green is the dominant family (6 of 16 slots). **No warm notes are present** — no oxide/rust was extracted from the interior concept sheet. Concrete greys fill the remainder. The chroma swap mechanic (`01` §8) is calibrated against this muted-green baseline: even moderate green saturation (chroma 27–43 in the shipped palette) reads as "wrong" relative to foreign palette slots that exceed it. The mechanic holds; the calibration threshold targets the muted-green baseline rather than a concrete-and-oxide baseline. See Decision Log DL-1 (`docs/decision-log.md`) for the full rationale.
 
 ### Foreign universes — chroma
 
 Anything that bled in renders in **its own palette**, and further travel means more chromatic violence (`01-vision.md` §8).
 
-Against a concrete-and-oxide home, even mild saturation reads as *wrong*. The reference makes the mechanic louder for free — a foreign object does not need to be neon to be alarming, which leaves headroom for late-game chaos.
+Against a muted home (concrete greys, institutional greens; oxide/rust in surface archetypes only), even mild saturation reads as *wrong*. The reference makes the mechanic louder for free — a foreign object does not need to be neon to be alarming, which leaves headroom for late-game chaos.
 
 Implementation: palette-index shader, `origin_palette` on the row. One dial serves fiction, readability, and threat display simultaneously.
 
@@ -71,13 +73,13 @@ The cost is a half-tile band — 216 ÷ 16 = 13.5. **Rooms are authored on a 24�
 
 | # | Question | Blocks |
 |---|---|---|
-| ~~**V-5**~~ | ~~Palette: colour count + hex values~~ — resolved as a process, extracted from the first approved concept sheet (`13-asset-pipeline.md` §6) | — |
+| **~~V-5~~** | Palette: colour count + hex values — **resolved.** Extracted from an approved concept sheet by T-0105 (§3, `13-asset-pipeline.md` §6.6) | — |
 | A-2 | Asset inventory estimate: tiles / props / characters / VFX / UI | Phase 6 scope |
 | A-3 | Variant authoring budget — how many hours is a second Hospital? | V-9 release schedule |
 | A-4 | Chroma-intensity shader ramp vs. collapse proximity (`01-vision.md` §8) | Phase 6 |
 | A-5 | Bleed-alpha shader ramp — held/world timer proximity, contour-only at expiry (`07-items-economy.md` §5, `11-moment-to-moment.md` §6) | Phase 6 |
 
-**The quantizer (T-0073) now unblocks per-archetype, on that archetype's concept approval** — not on a single global V-5 decision. The first archetype through is the Signal Tower (`14-vertical-slice.md`).
+**Nothing blocks the art pipeline now.** V-5 was the last one and it is an extraction rather than a decision. Phase 6 order: **T-0104** (concept sheet) → concept review → **T-0105** (palette) → T-0072 (LoRA, parallel — it was always palette-agnostic, `13-asset-pipeline.md` §3.2) → T-0102 (validation gate) → T-0073.
 
 ---
 
@@ -88,3 +90,4 @@ The cost is a half-tile band — 216 ÷ 16 = 13.5. **Rooms are authored on a 24�
 | 2026-08-01 | Initial — direction locked, numbers open | Claude (Opus 5), rev. @DennieSeth |
 | 2026-08-02 | v2: **A-1 resolved — 16px tiles**, 24×14 authoring grid, 8px band; pipeline split out to `13-asset-pipeline.md` | Claude, rev. pending |
 | 2026-08-02 | v3: **V-5 resolved as a process** — palette extracted from the first approved concept sheet rather than chosen abstractly (`13-asset-pipeline.md` §6); quantizer now unblocks per-archetype | Claude, rev. pending |
+| 2026-08-08 | v4: **T-0152 reconciliation** — §3 amended to reflect shipped Signal Tower palette (green-dominant, no warm notes present); oxide/rust clarified as archetype-dependent, not universal; chroma calibration note added; Decision Log DL-1 created | Claude, rev. pending |

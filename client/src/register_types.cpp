@@ -7,6 +7,9 @@
 #include <godot_cpp/godot.hpp>
 
 #include "assembled_ping.h"
+#include "curl_pump.h"
+#include "note_client.h"
+#include "note_renderer.h"
 
 using namespace godot;
 
@@ -16,6 +19,9 @@ void initialize_assembled_module(ModuleInitializationLevel p_level) {
     }
 
     GDREGISTER_CLASS(AssembledPing);
+    GDREGISTER_CLASS(CurlPump);
+    GDREGISTER_CLASS(NoteClient);
+    GDREGISTER_CLASS(NoteRenderer);
 }
 
 void uninitialize_assembled_module(ModuleInitializationLevel p_level) {

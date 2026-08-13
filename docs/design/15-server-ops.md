@@ -40,6 +40,8 @@ This is the pattern already used elsewhere in the plan: `TaskStore` iface with o
 
 > **Shard assignment is a gameplay parameter, not an ops parameter.** Common and rare caps scale with shard population, and INV-7/INV-8 depend on enough supply and enough players to deliver it. Too many thin shards starves everyone simultaneously — a drought produced by deployment policy rather than by design. The orchestrator must bias toward **fewer, fuller shards**, and shard population floor belongs in the sim (T-0099) alongside the economy constants.
 
+**Status 2026-08-04:** round 2 gives a provisional floor around P=20 with headroom suggested above P=50, but the number rests on unswept constants (`k_r`, `unique_count`) and three seeds in an 8×-variance band. **The directional guidance — fewer, fuller shards — stands. The specific numbers do not.** Do not encode a threshold in the orchestrator until round 3 reports the floor as a function of E-4.
+
 ### Schema consequences
 
 ```sql
@@ -110,7 +112,7 @@ Identity is free to mint and carries no PII, so there is no account friction to 
 
 | # | Question | Blocks |
 |---|---|---|
-| **OPS-1** | Shard population floor — below which INV-7/INV-8 fail | **sim (T-0099)** |
+| **OPS-1** | Shard population floor — below which INV-7/INV-8 fail. **T-0099 round 2 produced a candidate (P=20 hard floor, target ≥50) — do not adopt yet.** The floor is a function of `k_r` and `unique_count`, neither of which has been swept (E-4), so changing them moves it. Three seeds also cannot locate it: `inv7_tick_fraction` spans 0.024→0.192 across seeds 42/43/44 at P=30, in the transition zone itself. Needs T-0130 (E-4 sweep) and ≥30 seeds, reported **as a curve over `k_r` and `unique_count`**, not a single number | **sim round 3**; gates §3's shard-assignment policy |
 | **OPS-2** | Unique lease TTL, and reclaim policy for a dead shard | authority impl |
 | **OPS-3** | Note replication lag budget — what is acceptable before "the network is the world" feels false? | federation |
 | **OPS-4** | Leader election for the sweep singleton — advisory lock, or external coordination? | multi-node |

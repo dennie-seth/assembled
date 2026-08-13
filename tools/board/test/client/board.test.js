@@ -5,6 +5,7 @@ import {
   buildStatusPatch,
   applyTaskEvent,
   computeBlockerCounts,
+  computeDependencyStatus,
   sortTasks
 } from "../../src/client/board.js";
 
@@ -85,6 +86,62 @@ describe("applyTaskEvent", () => {
     const tasks = [task({ id: "T-0001", title: "Old" })];
     applyTaskEvent(tasks, { type: "changed", id: "T-0001", task: task({ id: "T-0001", title: "New" }) });
     expect(tasks[0].title).toBe("Old");
+  });
+
+  // WS-5..8 (docs/board-invariants.md): a realtime transport can redeliver or reorder
+  // events (reconnect replaying a backlog, two tabs, a slow WS racing an HTTP response).
+  // applyTaskEvent must stay correct under all of these, not just the single-application,
+  // in-order case the tests above cover.
+
+  it("WS-5: upserts (does not duplicate) when an added event arrives for an id already in the list", () => {
+    const tasks = [task({ id: "T-0001", title: "Old" })];
+    const replay = task({ id: "T-0001", title: "Old" });
+    const next = applyTaskEvent(tasks, { type: "added", id: "T-0001", task: replay });
+    expect(next).toHaveLength(1);
+    expect(next).toEqual([replay]);
+  });
+
+  it("WS-6: applying the same changed event twice is idempotent", () => {
+    const tasks = [task({ id: "T-0001", title: "Old" })];
+    const event = { type: "changed", id: "T-0001", task: task({ id: "T-0001", title: "New" }) };
+    const once = applyTaskEvent(tasks, event);
+    const twice = applyTaskEvent(once, event);
+    expect(twice).toHaveLength(1);
+    expect(twice).toEqual(once);
+  });
+
+  it("WS-7: a removed event for an id not in the list is a safe no-op", () => {
+    const tasks = [task({ id: "T-0001" }), task({ id: "T-0002" })];
+    const next = applyTaskEvent(tasks, { type: "removed", id: "T-0099", task: null });
+    expect(next).toEqual(tasks);
+  });
+
+  it("WS-8: an out-of-order changed event for an id not yet applied still lands the task", () => {
+    // Simulates a "changed" for a card arriving before the "added" that introduced it --
+    // applyTaskEvent doesn't distinguish added/changed once past the removed check, so
+    // both fall through to the same replace-if-present-else-append logic.
+    const tasks = [task({ id: "T-0001" })];
+    const outOfOrder = task({ id: "T-0002", title: "Arrived early" });
+    const next = applyTaskEvent(tasks, { type: "changed", id: "T-0002", task: outOfOrder });
+    expect(next).toEqual([tasks[0], outOfOrder]);
+  });
+
+  it("WS: a sequence of duplicate and out-of-order events converges to the same state as the clean sequence", () => {
+    const added = task({ id: "T-0001", title: "First" });
+    const changed = task({ id: "T-0001", title: "Second" });
+
+    let clean = [];
+    clean = applyTaskEvent(clean, { type: "added", id: "T-0001", task: added });
+    clean = applyTaskEvent(clean, { type: "changed", id: "T-0001", task: changed });
+
+    let noisy = [];
+    noisy = applyTaskEvent(noisy, { type: "added", id: "T-0001", task: added });
+    noisy = applyTaskEvent(noisy, { type: "added", id: "T-0001", task: added }); // duplicate
+    noisy = applyTaskEvent(noisy, { type: "changed", id: "T-0001", task: changed });
+    noisy = applyTaskEvent(noisy, { type: "changed", id: "T-0001", task: changed }); // duplicate
+    noisy = applyTaskEvent(noisy, { type: "removed", id: "T-0099", task: null }); // unrelated no-op
+
+    expect(noisy).toEqual(clean);
   });
 });
 
@@ -198,5 +255,92 @@ describe("sortTasks", () => {
     ];
     expect(sortTasks(tasks, "oldest").map((x) => x.id)).toEqual(["T-0001", "T-0002", "T-0003"]);
     expect(sortTasks(tasks, "newest").map((x) => x.id)).toEqual(["T-0001", "T-0002", "T-0003"]);
+  });
+});
+
+describe("computeDependencyStatus", () => {
+  it("marks a task with no dependencies as ready", () => {
+    const tasks = [task({ id: "T-0001", depends_on: [] }), task({ id: "T-0002", depends_on: [] })];
+    const status = computeDependencyStatus(tasks);
+    expect(status.get("T-0001")).toBe("ready");
+    expect(status.get("T-0002")).toBe("ready");
+  });
+
+  it("marks a task ready when all its dependencies are done", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "done" })
+    ];
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("ready");
+  });
+
+  it("marks a task ready when all its dependencies are retired", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "retired" })
+    ];
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("ready");
+  });
+
+  it("marks a task ready when dependencies mix done and retired", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
+      task({ id: "T-0002", status: "done" }),
+      task({ id: "T-0003", status: "retired" })
+    ];
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("ready");
+  });
+
+  it("marks a task blocked when a dependency is not done or retired", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "in-progress" })
+    ];
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("blocked");
+  });
+
+  it("marks a task blocked when any dependency is not yet terminal even if others are done", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
+      task({ id: "T-0002", status: "done" }),
+      task({ id: "T-0003", status: "ready" })
+    ];
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("blocked");
+  });
+
+  it("marks a task blocked when a dependency id is missing from the task list", () => {
+    const tasks = [task({ id: "T-0001", depends_on: ["T-0099"] })];
+    expect(computeDependencyStatus(tasks).get("T-0001")).toBe("blocked");
+  });
+
+  it("returns a Map (not a Set)", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002"] }),
+      task({ id: "T-0002", status: "done" })
+    ];
+    expect(computeDependencyStatus(tasks)).toBeInstanceOf(Map);
+  });
+
+  it("assigns every task exactly one of 'blocked' or 'ready', never both, never neither", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: [] }),
+      task({ id: "T-0002", depends_on: ["T-0001"] }),
+      task({ id: "T-0003", depends_on: ["T-0099"] }),
+      task({ id: "T-0004", status: "done", depends_on: [] })
+    ];
+    const status = computeDependencyStatus(tasks);
+    for (const t of tasks) {
+      expect(["blocked", "ready"]).toContain(status.get(t.id));
+    }
+    expect(status.size).toBe(tasks.length);
+  });
+
+  it("a task's own dependency status is independent of whether other tasks depend on it (T-0045-style: own deps done, and it blocks a downstream task)", () => {
+    const tasks = [
+      task({ id: "T-0044", status: "done", depends_on: [] }),
+      task({ id: "T-0045", depends_on: ["T-0044"] }),
+      task({ id: "T-0063", depends_on: ["T-0045"] })
+    ];
+    expect(computeDependencyStatus(tasks).get("T-0045")).toBe("ready");
   });
 });

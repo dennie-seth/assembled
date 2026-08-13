@@ -112,31 +112,36 @@ struct TemplateDef {
     /// slot_a is used for slots >= 1; slot_b for slots == 2.
     /// item_ref is a separate column on `notes` and not counted here.
     int16_t slots;
+    /// Expected WordCategory (as int16_t) for slot_a; 0 when slots < 1.
+    int16_t slot_a_category;
+    /// Expected WordCategory (as int16_t) for slot_b; 0 when slots < 2.
+    int16_t slot_b_category;
 };
 
 /// 20 note templates shipped at launch (02-notes-system.md §2 / §3).
 /// Templates that reference ITEM_REF use the `notes.item_ref` column, not a word slot.
+/// Category codes: 1=DIRECTION 2=HAZARD 3=ACTION 4=OBJECT 5=QUALIFIER 0=N/A.
 inline constexpr std::array<TemplateDef, 20> kTemplates = {{
-    {1, 2},  // "{ACTION} {QUALIFIER}"
-    {2, 2},  // "{HAZARD} {DIRECTION}"
-    {3, 2},  // "{OBJECT} {DIRECTION}"
-    {4, 2},  // "{ACTION} {DIRECTION}"
-    {5, 1},  // "{HAZARD}"
-    {6, 1},  // "{ACTION}"
-    {7, 1},  // "{DIRECTION}"
-    {8, 1},  // "{OBJECT} here"
-    {9, 2},  // "try {ACTION} {QUALIFIER}"
-    {10, 2}, // "beware {HAZARD} {DIRECTION}"
-    {11, 2}, // "{QUALIFIER}, {ACTION}"
-    {12, 1}, // "I need help {DIRECTION}"
-    {13, 0}, // "I need {ITEM_REF}"              — item_ref column only
-    {14, 0}, // "something is wrong"             — fixed phrase
-    {15, 1}, // "{OBJECT} opens with {ITEM_REF}" — slot_a=OBJECT + item_ref
-    {16, 1}, // "go {DIRECTION}"
-    {17, 2}, // "{ACTION} the {OBJECT}"
-    {18, 2}, // "{OBJECT} {QUALIFIER}"
-    {19, 1}, // "watch for {HAZARD}"
-    {20, 0}, // "safe passage"                   — fixed phrase
+    {1,  2, 3, 5}, // "{ACTION} {QUALIFIER}"
+    {2,  2, 2, 1}, // "{HAZARD} {DIRECTION}"
+    {3,  2, 4, 1}, // "{OBJECT} {DIRECTION}"
+    {4,  2, 3, 1}, // "{ACTION} {DIRECTION}"
+    {5,  1, 2, 0}, // "{HAZARD}"
+    {6,  1, 3, 0}, // "{ACTION}"
+    {7,  1, 1, 0}, // "{DIRECTION}"
+    {8,  1, 4, 0}, // "{OBJECT} here"
+    {9,  2, 3, 5}, // "try {ACTION} {QUALIFIER}"
+    {10, 2, 2, 1}, // "beware {HAZARD} {DIRECTION}"
+    {11, 2, 5, 3}, // "{QUALIFIER}, {ACTION}"
+    {12, 1, 1, 0}, // "I need help {DIRECTION}"
+    {13, 0, 0, 0}, // "I need {ITEM_REF}"              — item_ref column only
+    {14, 0, 0, 0}, // "something is wrong"             — fixed phrase
+    {15, 1, 4, 0}, // "{OBJECT} opens with {ITEM_REF}" — slot_a=OBJECT + item_ref
+    {16, 1, 1, 0}, // "go {DIRECTION}"
+    {17, 2, 3, 4}, // "{ACTION} the {OBJECT}"
+    {18, 2, 4, 5}, // "{OBJECT} {QUALIFIER}"
+    {19, 1, 2, 0}, // "watch for {HAZARD}"
+    {20, 0, 0, 0}, // "safe passage"                   — fixed phrase
 }};
 
 // ─── Archetypes ────────────────────────────────────────────────────────────────

@@ -321,6 +321,35 @@ describe("buildPlannerPrompt — card-expansion prompt for unassigned cards", ()
     const prompt = buildPlannerPrompt({ task });
     expect(prompt.split("<<<TASK_BODY:END>>>").length - 1).toBe(1);
   });
+
+  it("includes a human comments section when comments are provided", () => {
+    const comments = [
+      { author: "Dennie", text: "This should also cover the null-agent case.", timestamp: "2026-08-05T12:00:00.000Z" }
+    ];
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF, comments });
+    expect(prompt).toContain("## Human comments on this card");
+    expect(prompt).toContain("This should also cover the null-agent case.");
+    expect(prompt).toContain("Dennie");
+  });
+
+  it("renders multiple comments in order", () => {
+    const comments = [
+      { author: "Dennie", text: "First issue", timestamp: "2026-08-05T12:00:00.000Z" },
+      { author: "Dennie", text: "Second issue", timestamp: "2026-08-05T13:00:00.000Z" }
+    ];
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF, comments });
+    expect(prompt.indexOf("First issue")).toBeLessThan(prompt.indexOf("Second issue"));
+  });
+
+  it("omits the human comments section entirely when there are no comments", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF, comments: [] });
+    expect(prompt).not.toContain("## Human comments on this card");
+  });
+
+  it("works with no comments argument at all (defaults to none)", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).not.toContain("## Human comments on this card");
+  });
 });
 
 describe("buildPlannerPrompt -- deliverable_type and hardened acceptance criteria (T-0136 lesson)", () => {
@@ -373,5 +402,55 @@ describe("buildPlannerPrompt -- acceptance completeness self-check (T-0141 lesso
   it("ends the self-check with an explicit would-this-fully-solve-the-story question", () => {
     const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
     expect(prompt.toLowerCase()).toContain("completely solved");
+  });
+});
+
+describe("buildPlannerPrompt -- edge cases as an explicit, verified part of Acceptance", () => {
+  it("instructs the planner to add an Edge cases block inside ## Acceptance", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toContain("**Edge cases:**");
+    expect(prompt.toLowerCase()).toContain("within ## acceptance");
+  });
+
+  it("tells the planner to use a bold label, not a heading, because the reviewer's AC parser stops at the first heading", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("never a");
+    expect(prompt.toLowerCase()).toContain("heading");
+    expect(prompt.toLowerCase()).toContain("stops at the first heading");
+  });
+
+  it("guides the planner to derive card-specific edge cases rather than generic boilerplate", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("not from a generic boilerplate list");
+    expect(prompt.toLowerCase()).toContain("boundary/limit values");
+    expect(prompt.toLowerCase()).toContain("concurrent or duplicate operations");
+  });
+
+  it("tells the planner to omit inapplicable edge-case categories instead of inventing meaningless items", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("skip a category that genuinely does not apply");
+  });
+
+  it("extends the self-check step to verify the Edge cases block itself, not just author it", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("then verify the **edge cases:** block you wrote in step 4 the same way");
+    expect(prompt.toLowerCase()).toContain("concrete, card-specific condition");
+  });
+
+  it("tells the planner to remove edge cases that don't apply rather than leave unverifiable placeholders", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("remove an edge case that doesn't genuinely apply");
+  });
+
+  it("folds edge cases into the final would-this-fully-solve-the-story question", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("including every edge case");
+    expect(prompt.toLowerCase()).toContain("its boundaries and when something goes wrong");
+  });
+
+  it("does not gate the planner workflow behind edge cases -- no new blocking verb like 'must not proceed' or 'block'", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).not.toContain("block the card");
+    expect(prompt.toLowerCase()).not.toContain("must not proceed");
   });
 });

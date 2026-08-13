@@ -30,7 +30,7 @@ def recipe_path(tmp_path):
 
 
 def test_generate_command_prints_json_result(monkeypatch, capsys, tmp_path, recipe_path):
-    recipe = Recipe(prompt="a derelict signal tower", seed=42)
+    recipe = Recipe(prompt="a derelict signal tower", seed=42, model_hash="a" * 64)
     out_path = tmp_path / "signal_tower_p1.png"
     out_path.write_bytes(b"data")
     fake_result = GenerationResult(
@@ -71,7 +71,7 @@ def test_generate_requires_recipe_argument():
 
 
 def test_concept_command_prints_json_result(monkeypatch, capsys, tmp_path, recipe_path):
-    recipe = Recipe(prompt="a derelict signal tower", seed=42)
+    recipe = Recipe(prompt="a derelict signal tower", seed=42, model_hash="a" * 64)
     out_path = tmp_path / "assembled.png"
     out_path.write_bytes(b"data")
     fake_result = ConceptResult(
@@ -117,7 +117,7 @@ def test_concept_requires_recipe_argument():
 def test_concept_command_with_init_image_calls_conditioned_path(
     monkeypatch, capsys, tmp_path, recipe_path
 ):
-    recipe = Recipe(prompt="a derelict signal tower", seed=42, denoise=0.65)
+    recipe = Recipe(prompt="a derelict signal tower", seed=42, denoise=0.65, model_hash="a" * 64)
     out_path = tmp_path / "assembled.png"
     out_path.write_bytes(b"data")
     fake_result = ConceptResult(

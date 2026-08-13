@@ -68,6 +68,30 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   bidirectional-scroll requirement itself shipped broken. A behavioral
   criterion would instead read "with the panel open, every column remains
   reachable by scrolling both left and right, regardless of column count."
+- **Every card's `## Acceptance` gets an explicit `**Edge cases:**` block —
+  a strong expectation, not a hard gate.** Right after drafting the main
+  criteria, add a bold-label `**Edge cases:**` line (never a `#`/`##`/`###`
+  heading — `parseAcceptanceCriteria`
+  (`tools/board/src/lib/acceptanceCriteria.js`) stops scanning `##
+  Acceptance` at the first heading of *any* level, so a markdown
+  subheading here would silently drop every item under it from the
+  reviewer's acceptance-criteria audit) followed by its own `- [ ]`
+  checklist items, one per edge case, boundary condition, or failure mode
+  this specific card's own logic has to handle. Derive them from the card
+  — boundary/limit values, missing/null/malformed input, an error or
+  failure path, concurrent or duplicate operations on shared state, invalid
+  input — not from a generic boilerplate list; skip a category that
+  genuinely doesn't apply rather than inventing a meaningless item. The
+  planner's own step-5 self-check (`buildPlannerPrompt`'s
+  `PLANNER_EXPANSION_WORKFLOW`) then verifies the block the same way it
+  verifies story coverage: present, concrete, card-specific, tied to a
+  checkable criterion. This is deliberately **not** a new machine-checked
+  gate like `plannerDiffGuard.js` — there is no VALIDATION check that FAILs
+  a card for a missing or thin Edge cases block, and the implementer is
+  never blocked from starting a card that lacks one. Once written inside
+  `## Acceptance`, edge cases are ordinary criteria to the reviewer's
+  existing `buildAcceptanceCriteriaSection` audit (`reviewerPrompt.js`) —
+  no separate enforcement mechanism was added or is needed.
 
 ## Grounding in docs
 

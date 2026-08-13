@@ -7,10 +7,11 @@ on:
       - "client/**"
       - ".github/workflows/ci-client.yml"
   push:
-    branches: [develop, main]
+    branches: [develop, main, "feature/**"]
     paths:
       - "client/**"
       - ".github/workflows/ci-client.yml"
+  workflow_dispatch:
 
 concurrency:
   group: ci-client-${{ github.workflow }}-${{ github.ref }}
@@ -46,6 +47,15 @@ jobs:
         with:
           python-version: "3.x"
 
+      # T-0062: client/SConstruct's vendored-curl CMake configure forces
+      # `-G Ninja` (single-config, deterministic output layout — see the
+      # comment there). Unlike the default multi-config "Visual Studio"
+      # generator, Ninja doesn't locate the MSVC toolset itself — it needs
+      # cl.exe (and the matching INCLUDE/LIB/PATH) already set up in the
+      # environment, same as running from a "Developer Command Prompt".
+      # This action does that setup for the rest of the job.
+      - uses: ilammy/msvc-dev-cmd@v1
+
       # SCons content-addressed cache dir (T-0034), so a source-identical
       # rebuild reuses prior objects instead of recompiling godot-cpp. This
       # is the slow leg of the job (~10-15 min cold) — expected.
@@ -57,6 +67,11 @@ jobs:
             scons-cache-windows-godot-cpp-${{ env.GODOT_CPP_REF }}-
 
       - run: pip install scons
+
+      # See the ilammy/msvc-dev-cmd comment above: client/SConstruct's
+      # vendored-curl build uses `-G Ninja`, so Ninja itself must also be on
+      # PATH. Installed via the PyPI wheel, same pattern as scons above.
+      - run: pip install ninja
 
       - name: Build assembled_client GDExtension (template_debug, MSVC)
         working-directory: ${{ env.CLIENT_DIR }}
@@ -133,6 +148,44 @@ jobs:
           echo "::error::smoke test did not print SMOKE TEST PASS (godot exit $status)"
           exit 1
 
+      # T-0062: verify CurlPump.tick() is non-blocking — 100 calls with an
+      # in-flight GET to a closed local port must complete in < 500 ms total.
+      - name: CurlPump non-blocking timing test (T-0062)
+        shell: bash
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/test_curl_pump_timing.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee timing.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'T-0062 PASS' timing.log; then
+            echo "CurlPump timing test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::CurlPump timing test did not print T-0062 PASS (godot exit $status)"
+          exit 1
+
+      # T-0064: verify NoteRenderer renders all 20 templates and catches
+      # missing localization keys loudly (returns "" + logs error).
+      - name: NoteRenderer rendering test (T-0064)
+        shell: bash
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/test_note_renderer.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee note_renderer.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'T-0064 PASS' note_renderer.log; then
+            echo "NoteRenderer test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::NoteRenderer test did not print T-0064 PASS (godot exit $status)"
+          exit 1
+
       # Same abort-on-exit class can hit export (also editor-only
       # machinery under headless) — gate on the exported artifacts
       # actually existing and being non-empty, not on Godot's exit code.
@@ -184,6 +237,13 @@ jobs:
             scons-cache-linux-godot-cpp-${{ env.GODOT_CPP_REF }}-
 
       - run: pip install scons
+
+      # T-0062: client/SConstruct's vendored-curl CMake configure forces
+      # `-G Ninja` on every platform for a deterministic, single-config
+      # output layout (see the comment there and the matching step in
+      # windows-export above). Installed explicitly rather than relying on
+      # the runner image shipping it, so both jobs behave identically.
+      - run: pip install ninja
 
       - name: Build assembled_client GDExtension (template_debug)
         working-directory: ${{ env.CLIENT_DIR }}
@@ -242,6 +302,42 @@ jobs:
             exit 0
           fi
           echo "::error::smoke test did not print SMOKE TEST PASS (godot exit $status)"
+          exit 1
+
+      # T-0062: verify CurlPump.tick() is non-blocking — 100 calls with an
+      # in-flight GET to a closed local port must complete in < 500 ms total.
+      - name: CurlPump non-blocking timing test (T-0062)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/test_curl_pump_timing.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee timing.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'T-0062 PASS' timing.log; then
+            echo "CurlPump timing test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::CurlPump timing test did not print T-0062 PASS (godot exit $status)"
+          exit 1
+
+      # T-0064: verify NoteRenderer renders all 20 templates and catches
+      # missing localization keys loudly (returns "" + logs error).
+      - name: NoteRenderer rendering test (T-0064)
+        working-directory: ${{ env.CLIENT_DIR }}
+        run: |
+          set -o pipefail
+          if godot --headless --script tests/test_note_renderer.gd 2>&1 | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tee note_renderer.log; then
+            status=0
+          else
+            status=$?
+          fi
+          if grep -qF 'T-0064 PASS' note_renderer.log; then
+            echo "NoteRenderer test passed (godot exit $status)"
+            exit 0
+          fi
+          echo "::error::NoteRenderer test did not print T-0064 PASS (godot exit $status)"
           exit 1
 
       - name: Export Linux

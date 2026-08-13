@@ -10,6 +10,21 @@ over HTTP. See `docs/env-inventory.md` for the original probe that flagged
 "no GPU passthrough in WSL" and "tight VRAM headroom" — both still apply;
 ComfyUI runs on the Windows host directly for that reason.
 
+**Update 2026-08-12 — WSL GPU passthrough now confirmed working.** The
+"no GPU passthrough in WSL" premise above was re-checked for T-0072's LoRA
+training work and no longer holds: `nvidia-smi` inside WSL (Ubuntu-24.04)
+sees the RTX 3070 Ti directly, and `torch.cuda.is_available()` is `True`
+in a WSL-native venv (see `assets/src/lora/setup-training-env.sh` and
+`docs/lora-training-env.md`). This doesn't move ComfyUI itself off the
+Windows host — no reason to disturb a working generation setup — but it
+does mean the **training** half of the pipeline (T-0072's `sdxl_train_network.py`
+run) no longer needs a manual Windows step: it runs natively inside WSL,
+reading the checkpoint from `/mnt/f/ComfyUI/models/checkpoints/` and
+writing the trained LoRA back to the repo's `assets/final/lora/`. VRAM
+headroom is still genuinely tight (see `docs/lora-training-env.md`'s smoke
+test — training peaked at ~8.0/8.19 GB) — that part of the original flag
+stands.
+
 ## Install
 
 - Path: `F:\ComfyUI` (cloned from `https://github.com/comfyanonymous/ComfyUI`,

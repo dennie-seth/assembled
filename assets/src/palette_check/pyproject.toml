@@ -1,0 +1,26 @@
+[project]
+name = "palette-check"
+version = "0.1.0"
+description = "Palette-to-doc alignment checks (T-0152, 05-art-direction.md §3)"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",
+    "ruff==0.11.2",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

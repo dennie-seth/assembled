@@ -18,6 +18,63 @@ const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 // does not restore anything so a legitimate server-side change still wins.
 const SELECTABLE_INPUT_TYPES = new Set(["text", "search", "url", "tel", "password"]);
 
+// The focus-capture mechanism above only protects whichever single field currently has
+// focus, so it never covered the deps picker (a compound <select>-plus-chips widget with
+// no `data-detail-field` of its own) or the priority/status/agent selects, and it loses a
+// field's edit the moment focus moves elsewhere (e.g. typing a title, then clicking into
+// the deps picker to add a dependency) -- reported live as "when I'm trying to add a
+// dependency and scroll down to save the task, the dependency gets removed before I even
+// have a chance to save it." captureDirtyFields fixes this by diffing each editable
+// field's *current* DOM value against `previousTask` (the task object the still-open panel
+// was last built from, stashed on `root.__lastTask`) rather than relying on focus: any
+// field whose live value has drifted from that baseline is a local, unsaved edit and gets
+// carried into the rebuild verbatim; untouched fields keep reading straight from the new
+// `task`, so a legitimate incoming change to a field the user didn't touch still lands.
+function captureDirtyFields(root, previousTask) {
+  if (!previousTask) return {};
+  const dirty = {};
+
+  const titleEl = root.querySelector(".detail-title");
+  if (titleEl && titleEl.value !== previousTask.title) {
+    dirty.title = titleEl.value;
+  }
+
+  const priorityEl = root.querySelector(".detail-priority");
+  if (priorityEl && priorityEl.value !== previousTask.priority) {
+    dirty.priority = priorityEl.value;
+  }
+
+  const statusEl = root.querySelector(".detail-status");
+  if (statusEl && statusEl.value !== previousTask.status) {
+    dirty.status = statusEl.value;
+  }
+
+  const agentEl = root.querySelector(".detail-agent");
+  if (agentEl && agentEl.value !== (previousTask.agent ?? UNASSIGNED_AGENT_VALUE)) {
+    dirty.agent = agentEl.value;
+  }
+
+  const phaseEl = root.querySelector(".detail-phase");
+  if (phaseEl && phaseEl.value !== String(previousTask.phase)) {
+    dirty.phase = phaseEl.value;
+  }
+
+  const chipIds = Array.from(root.querySelectorAll(".detail-deps-edit .deps-chip")).map(
+    (chip) => chip.dataset.id
+  );
+  const previousDeps = previousTask.depends_on ?? [];
+  if (JSON.stringify(chipIds) !== JSON.stringify(previousDeps)) {
+    dirty.dependsOn = chipIds;
+  }
+
+  const bodyEl = root.querySelector(".detail-body-edit");
+  if (bodyEl && bodyEl.value !== previousTask.body) {
+    dirty.body = bodyEl.value;
+  }
+
+  return dirty;
+}
+
 function supportsSelectionRange(el) {
   if (el.tagName === "TEXTAREA") return true;
   if (el.tagName === "INPUT") return SELECTABLE_INPUT_TYPES.has(el.type);
@@ -315,11 +372,13 @@ export function renderDetailPanel(
   const previousTaskId = root.dataset.taskId ?? null;
   const isSameTask = task && previousTaskId === String(task.id);
   const focusState = isSameTask ? captureFocusState(root) : null;
+  const dirty = isSameTask ? captureDirtyFields(root, root.__lastTask ?? null) : {};
 
   root.replaceChildren();
 
   if (!task) {
     delete root.dataset.taskId;
+    delete root.__lastTask;
     root.hidden = true;
     return;
   }
@@ -338,22 +397,22 @@ export function renderDetailPanel(
   const titleInput = document.createElement("input");
   titleInput.type = "text";
   titleInput.className = "detail-title";
-  titleInput.value = task.title;
+  titleInput.value = dirty.title !== undefined ? dirty.title : task.title;
   titleInput.dataset.detailField = "title";
 
-  const prioritySelect = selectFor(PRIORITIES, task.priority);
+  const prioritySelect = selectFor(PRIORITIES, dirty.priority !== undefined ? dirty.priority : task.priority);
   prioritySelect.className = "detail-priority";
 
-  const statusSelect = selectFor(STATUSES, task.status);
+  const statusSelect = selectFor(STATUSES, dirty.status !== undefined ? dirty.status : task.status);
   statusSelect.className = "detail-status";
 
-  const agentSelect = agentSelectFor(agentOptions, task.agent);
+  const agentSelect = agentSelectFor(agentOptions, dirty.agent !== undefined ? dirty.agent : task.agent);
   agentSelect.className = "detail-agent";
 
   const phaseInput = document.createElement("input");
   phaseInput.type = "number";
   phaseInput.className = "detail-phase";
-  phaseInput.value = String(task.phase);
+  phaseInput.value = dirty.phase !== undefined ? dirty.phase : String(task.phase);
   phaseInput.dataset.detailField = "phase";
 
   const depsEl = document.createElement("div");
@@ -363,7 +422,7 @@ export function renderDetailPanel(
 
   const depsPicker = createDepsPicker({
     availableTasks: allTasks,
-    selectedIds: task.depends_on,
+    selectedIds: dirty.dependsOn !== undefined ? dirty.dependsOn : task.depends_on,
     excludeId: task.id
   });
   depsPicker.element.classList.add("detail-deps-edit");
@@ -376,7 +435,7 @@ export function renderDetailPanel(
 
   const bodyTextarea = document.createElement("textarea");
   bodyTextarea.className = "detail-body-edit";
-  bodyTextarea.value = task.body;
+  bodyTextarea.value = dirty.body !== undefined ? dirty.body : task.body;
   bodyTextarea.dataset.detailField = "body";
 
   const saveBtn = document.createElement("button");
@@ -431,4 +490,5 @@ export function renderDetailPanel(
 
   root.appendChild(panel);
   restoreFocusState(root, focusState);
+  root.__lastTask = task;
 }

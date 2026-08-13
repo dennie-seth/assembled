@@ -1,7 +1,7 @@
 {
   "model": "sd_xl_base_1.0.safetensors",
   "model_license": "CreativeML Open RAIL++-M",
-  "model_hash": null,
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
   "prompt": "detailed pixel art game concept, 16-bit, side view, abandoned Soviet brutalist broadcast and signal tower exterior, tall weathered concrete cylinder tower, external steel stairs and ladders zigzagging up the facade, rusted antenna array and dish at the top, oxide and rust streaks bleeding down concrete, institutional green painted railings and pipework, overcast fog, dark dense pine forest silhouette in background, muted oppressive desaturated palette, side-scroller game key art, crisp pixel clusters, limited colour palette, no text, no watermark",
   "negative_prompt": "blurry, low quality, text, watermark, signature, cartoon, cheerful, bright saturated colors, people, characters, photorealistic, 3d render, smooth gradient, anti-aliased, modern architecture, sci-fi neon, fantasy",
   "seed": 1041,
@@ -10,6 +10,5 @@
   "width": 1024,
   "height": 1024,
   "workflow_hash": "508cf6daa4bc69d42872a99587f9db201eb5ffda98f54d2b6ea7e760a0f626ce",
-  "prompt_id": "e4b74bc9-87cf-424f-82eb-4cb8db55bbb1",
-  "concept_hash": "415dfc31f00a4178aab2966d48c60843d007ca401406b7c6452ea64da2a5d9a5"
+  "prompt_id": "e4b74bc9-87cf-424f-82eb-4cb8db55bbb1"
 }

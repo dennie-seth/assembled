@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily backup of the assembled board SQLite DB
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=120
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
