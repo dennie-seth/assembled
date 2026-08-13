@@ -53,6 +53,7 @@ add_library(assembled_server_lib OBJECT
   src/RunAssembler.cpp
   src/AnchorRepo.cpp
   src/AnchorController.cpp
+  src/TransferReceiptRepo.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -170,3 +171,14 @@ add_executable(anchor_snapshot_tests
 )
 target_link_libraries(anchor_snapshot_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(anchor_snapshot_tests)
+
+# T-0126: Transfer receipts — idempotent leave/use/take/transmute.
+# Verifies receipt creation, idempotent replay, concurrent slot-claim safety,
+# and expired-receipt refresh semantics.
+# Separate binary: no drogon::app() singleton contention risk.
+# transfer_receipt_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(transfer_receipt_tests
+  test/transfer_receipt_test.cpp
+)
+target_link_libraries(transfer_receipt_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(transfer_receipt_tests)
