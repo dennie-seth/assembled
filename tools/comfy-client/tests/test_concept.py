@@ -13,7 +13,11 @@ import pytest
 from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
-from comfy_client.concept import generate_concept, generate_concept_conditioned
+from comfy_client.concept import (
+    generate_concept,
+    generate_concept_conditioned,
+    generate_concept_conditioned_lora,
+)
 from comfy_client.recipe import Recipe
 
 
@@ -200,5 +204,99 @@ def test_generate_concept_conditioned_refuses_disallowed_checkpoint_before_any_c
     with pytest.raises(CheckpointNotAllowedError):
         generate_concept_conditioned(
             recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
+        )
+    assert client.calls == []
+
+
+# ---- LoRA-conditioned concept generation (T-0167) ---------------------------
+
+
+def test_generate_concept_conditioned_lora_writes_png_and_provenance_sidecar(
+    tmp_path, sample_recipe, init_image_path
+):
+    client = FakeConditionedClient()
+    result = generate_concept_conditioned_lora(
+        sample_recipe,
+        init_image_path=init_image_path,
+        lora_name="soviet_brutalism_style_v1",
+        lora_weight=0.75,
+        lora_license="CreativeML Open RAIL++-M",
+        base_concept_path=init_image_path,
+        out_dir=tmp_path,
+        client=client,
+    )
+    assert result.path.exists()
+    assert result.path.read_bytes() == b"PNGDATA"
+    sidecar = tmp_path / f"{sample_recipe.name}.provenance.json"
+    assert sidecar.exists()
+
+
+def test_generate_concept_conditioned_lora_provenance_has_lora_keys(
+    tmp_path, sample_recipe, init_image_path
+):
+    import hashlib
+    import json
+
+    client = FakeConditionedClient()
+    result = generate_concept_conditioned_lora(
+        sample_recipe,
+        init_image_path=init_image_path,
+        lora_name="soviet_brutalism_style_v1",
+        lora_weight=0.75,
+        lora_license="CreativeML Open RAIL++-M",
+        base_concept_path=init_image_path,
+        out_dir=tmp_path,
+        client=client,
+    )
+    prov = result.provenance
+    assert prov.lora_name == "soviet_brutalism_style_v1"
+    assert prov.lora_weight == 0.75
+    assert prov.lora_license == "CreativeML Open RAIL++-M"
+    expected_base_hash = hashlib.sha256(b"TEMPLATEBYTES").hexdigest()
+    assert prov.base_concept_hash == expected_base_hash
+
+    sidecar = tmp_path / f"{sample_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["lora_name"] == "soviet_brutalism_style_v1"
+    assert on_disk["lora_weight"] == 0.75
+    assert on_disk["lora_license"] == "CreativeML Open RAIL++-M"
+    assert on_disk["base_concept_hash"] == expected_base_hash
+
+
+def test_generate_concept_conditioned_lora_uses_lora_workflow(
+    tmp_path, sample_recipe, init_image_path
+):
+    client = FakeConditionedClient(uploaded_name="template_00001.png")
+    generate_concept_conditioned_lora(
+        sample_recipe,
+        init_image_path=init_image_path,
+        lora_name="soviet_brutalism_style_v1",
+        lora_weight=0.75,
+        lora_license="CreativeML Open RAIL++-M",
+        base_concept_path=init_image_path,
+        out_dir=tmp_path,
+        client=client,
+    )
+    # The submitted workflow should include a LoraLoader node ("12")
+    submitted_graph = client.calls[1][1]
+    assert "12" in submitted_graph
+    assert submitted_graph["12"]["class_type"] == "LoraLoader"
+    assert submitted_graph["12"]["inputs"]["lora_name"] == "soviet_brutalism_style_v1"
+    assert submitted_graph["12"]["inputs"]["strength_model"] == 0.75
+
+
+def test_generate_concept_conditioned_lora_refuses_disallowed_checkpoint(tmp_path, init_image_path):
+    recipe = Recipe(prompt="x", seed=1, checkpoint="not_on_allowlist.safetensors")
+    client = FakeConditionedClient()
+    with pytest.raises(CheckpointNotAllowedError):
+        generate_concept_conditioned_lora(
+            recipe,
+            init_image_path=init_image_path,
+            lora_name="test_lora",
+            lora_weight=0.75,
+            lora_license="CreativeML Open RAIL++-M",
+            base_concept_path=init_image_path,
+            out_dir=tmp_path,
+            client=client,
         )
     assert client.calls == []
