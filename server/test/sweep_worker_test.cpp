@@ -98,7 +98,7 @@ void seedUnlock(const drogon::orm::DbClientPtr &db, const std::string &token, in
 
 /// Seed a transfer_receipt with an age of @p hours_ago hours.
 std::string seedReceipt(const drogon::orm::DbClientPtr &db, const std::string &token,
-                        double hours_ago) {
+                        int hours_ago) {
     auto r =
         db->execSqlSync("INSERT INTO transfer_receipt "
                         "(token, item_instance, kind, outcome, created_at) "
@@ -196,8 +196,12 @@ TEST_CASE("sweep bleed: row locked by another session is skipped (SKIP LOCKED)")
     CHECK(skipped.unlanded == 0);
 
     // Release db1's lock by letting txn go out of scope → auto-rollback.
-    // After rollback, the row is unlocked and worker_b can process it.
     txn.reset();
+    // Drogon's transaction destructor queues the ROLLBACK on its internal
+    // io_loop asynchronously.  db1's pool has one connection; by issuing a
+    // no-op query we block until that connection is returned to the pool —
+    // i.e., until Postgres has confirmed the ROLLBACK and released the lock.
+    db1->getClient()->execSqlSync("SELECT 1");
 
     const auto processed = worker_b.runBleed();
     CHECK(processed.landed + processed.unlanded >= 1);
@@ -346,9 +350,9 @@ TEST_CASE("sweep retention: transfer receipts older than 72h are purged") {
     seedIdentity(db->getClient(), kAlice);
 
     // Old receipt (73 h ago) — must be purged.
-    const std::string old_id = seedReceipt(db->getClient(), kAlice, 73.0);
+    const std::string old_id = seedReceipt(db->getClient(), kAlice, 73);
     // Recent receipt (1 h ago) — must be retained.
-    const std::string new_id = seedReceipt(db->getClient(), kAlice, 1.0);
+    const std::string new_id = seedReceipt(db->getClient(), kAlice, 1);
 
     assembled_server::PgSweepWorker worker(db->getClient(), kTestShard);
     const int32_t purged = worker.runRetention();
