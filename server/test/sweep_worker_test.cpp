@@ -56,11 +56,10 @@ const std::string kBob = "test-sweep-bob";
 // ── Seed helpers ──────────────────────────────────────────────────────────────
 
 void seedIdentity(const drogon::orm::DbClientPtr &db, const std::string &token) {
-    db->execSqlSync(
-        "INSERT INTO identity (token, collapse_expires_at) "
-        "VALUES ($1, now() + INTERVAL '21 days') "
-        "ON CONFLICT (token) DO NOTHING",
-        token);
+    db->execSqlSync("INSERT INTO identity (token, collapse_expires_at) "
+                    "VALUES ($1, now() + INTERVAL '21 days') "
+                    "ON CONFLICT (token) DO NOTHING",
+                    token);
 }
 
 void seedItemType(const drogon::orm::DbClientPtr &db, int16_t id, int16_t rarity) {
@@ -82,16 +81,15 @@ std::string seedExpiredHeldItem(const drogon::orm::DbClientPtr &db, int16_t type
 }
 
 /// Seed a variant (needed for unlock rows in the collapse test).
-void seedVariant(const drogon::orm::DbClientPtr &db, int16_t variant_id,
-                 int16_t archetype_id) {
+void seedVariant(const drogon::orm::DbClientPtr &db, int16_t variant_id, int16_t archetype_id) {
     db->execSqlSync("INSERT INTO variant (id, archetype_id) VALUES ($1, $2) "
                     "ON CONFLICT (id) DO NOTHING",
                     variant_id, archetype_id);
 }
 
 /// Seed an unlock row for @p token that has not yet expired.
-void seedUnlock(const drogon::orm::DbClientPtr &db, const std::string &token,
-                int16_t variant_id, int16_t tag) {
+void seedUnlock(const drogon::orm::DbClientPtr &db, const std::string &token, int16_t variant_id,
+                int16_t tag) {
     db->execSqlSync("INSERT INTO unlock (token, variant_id, tag, expires_at) "
                     "VALUES ($1, $2, $3, now() + INTERVAL '1 day') "
                     "ON CONFLICT (token, variant_id, tag) DO NOTHING",
@@ -101,12 +99,12 @@ void seedUnlock(const drogon::orm::DbClientPtr &db, const std::string &token,
 /// Seed a transfer_receipt with an age of @p hours_ago hours.
 std::string seedReceipt(const drogon::orm::DbClientPtr &db, const std::string &token,
                         double hours_ago) {
-    auto r = db->execSqlSync(
-        "INSERT INTO transfer_receipt "
-        "(token, item_instance, kind, outcome, created_at) "
-        "VALUES ($1, gen_random_uuid(), 0, 0, now() - make_interval(hours => $2)) "
-        "RETURNING transfer_id::text",
-        token, hours_ago);
+    auto r =
+        db->execSqlSync("INSERT INTO transfer_receipt "
+                        "(token, item_instance, kind, outcome, created_at) "
+                        "VALUES ($1, gen_random_uuid(), 0, 0, now() - make_interval(hours => $2)) "
+                        "RETURNING transfer_id::text",
+                        token, hours_ago);
     return r[0][0].as<std::string>();
 }
 
@@ -117,8 +115,8 @@ void cleanup(const drogon::orm::DbClientPtr &db) {
                     "WHERE token IN ($1, $2)",
                     kAlice, kBob);
     // items (via shard or type)
-    db->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)",
-                    kTypeCommon, kTypeUnique);
+    db->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)", kTypeCommon,
+                    kTypeUnique);
     // unlocks
     db->execSqlSync("DELETE FROM unlock WHERE variant_id = $1", kTestVariant);
     // variant
@@ -127,8 +125,7 @@ void cleanup(const drogon::orm::DbClientPtr &db) {
     // append-only and small in tests)
     db->execSqlSync("DELETE FROM economy_ledger WHERE spawned = 0 AND transmute_sink = 0");
     // type_census rows for test types
-    db->execSqlSync("DELETE FROM type_census WHERE type_id IN ($1, $2)",
-                    kTypeCommon, kTypeUnique);
+    db->execSqlSync("DELETE FROM type_census WHERE type_id IN ($1, $2)", kTypeCommon, kTypeUnique);
 }
 
 } // namespace
@@ -181,15 +178,15 @@ TEST_CASE("sweep bleed: row locked by another session is skipped (SKIP LOCKED)")
 
     seedIdentity(db1->getClient(), kAlice);
     seedItemType(db1->getClient(), kTypeCommon, 0);
-    const std::string item_id = seedExpiredHeldItem(db1->getClient(), kTypeCommon, kAlice, kTestShard);
+    const std::string item_id =
+        seedExpiredHeldItem(db1->getClient(), kTypeCommon, kAlice, kTestShard);
 
     // db1 opens a transaction and locks the bleed row.
     auto txn = db1->getClient()->newTransaction();
-    auto locked = txn->execSqlSync(
-        "SELECT id FROM item_instance "
-        "WHERE bleed_at < now() AND shard_id = $1 "
-        "FOR UPDATE",
-        kTestShard);
+    auto locked = txn->execSqlSync("SELECT id FROM item_instance "
+                                   "WHERE bleed_at < now() AND shard_id = $1 "
+                                   "FOR UPDATE",
+                                   kTestShard);
     REQUIRE_MESSAGE(!locked.empty(), "sanity: bleed row must exist before SKIP LOCKED test");
 
     // Worker B (db2) runs bleed — the locked row must be skipped, not blocked.
@@ -256,8 +253,7 @@ TEST_CASE("sweep bleed: expired unique item always re-anchors (never deleted)") 
 
     seedIdentity(db->getClient(), kBob);
     seedItemType(db->getClient(), kTypeUnique, 2); // rarity 2 = unique
-    const std::string item_id =
-        seedExpiredHeldItem(db->getClient(), kTypeUnique, kBob, kTestShard);
+    const std::string item_id = seedExpiredHeldItem(db->getClient(), kTypeUnique, kBob, kTestShard);
 
     assembled_server::PgSweepWorker worker(db->getClient(), kTestShard);
     const auto result = worker.runBleed();
@@ -266,8 +262,8 @@ TEST_CASE("sweep bleed: expired unique item always re-anchors (never deleted)") 
     CHECK(result.unlanded == 0);
 
     // The unique item must still exist.
-    auto row = db->getClient()->execSqlSync(
-        "SELECT id FROM item_instance WHERE id = $1::uuid", item_id);
+    auto row =
+        db->getClient()->execSqlSync("SELECT id FROM item_instance WHERE id = $1::uuid", item_id);
     CHECK(!row.empty());
 }
 
@@ -345,8 +341,8 @@ TEST_CASE("sweep retention: transfer receipts older than 72h are purged") {
     runner.applyPending(db->getClient());
 
     // Cleanup before seeding to avoid leftover state.
-    db->getClient()->execSqlSync("DELETE FROM transfer_receipt WHERE token IN ($1, $2)",
-                                 kAlice, kBob);
+    db->getClient()->execSqlSync("DELETE FROM transfer_receipt WHERE token IN ($1, $2)", kAlice,
+                                 kBob);
     seedIdentity(db->getClient(), kAlice);
 
     // Old receipt (73 h ago) — must be purged.
@@ -402,8 +398,8 @@ TEST_CASE("sweep census: type_census is upserted with live item counts") {
     CHECK(updated >= 1);
 
     // type_census must reflect the live count for our test type.
-    auto row = db->getClient()->execSqlSync(
-        "SELECT live_count FROM type_census WHERE type_id = $1", kTypeCommon);
+    auto row = db->getClient()->execSqlSync("SELECT live_count FROM type_census WHERE type_id = $1",
+                                            kTypeCommon);
     REQUIRE(!row.empty());
     CHECK(row[0]["live_count"].as<int32_t>() >= 2);
 }

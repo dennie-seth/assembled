@@ -40,9 +40,8 @@ bool PgSweepWorker::tryAcquireLock() {
     if (lock_held_) {
         return true; // already held by this instance — don't double-acquire
     }
-    auto result = client_->execSqlSync(
-        "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
-        static_cast<int64_t>(shard_id_));
+    auto result = client_->execSqlSync("SELECT pg_try_advisory_lock($1::bigint) AS acquired",
+                                       static_cast<int64_t>(shard_id_));
     lock_held_ = result[0]["acquired"].as<bool>();
     return lock_held_;
 }
@@ -51,8 +50,7 @@ void PgSweepWorker::releaseLock() {
     if (!lock_held_) {
         return;
     }
-    client_->execSqlSync("SELECT pg_advisory_unlock($1::bigint)",
-                         static_cast<int64_t>(shard_id_));
+    client_->execSqlSync("SELECT pg_advisory_unlock($1::bigint)", static_cast<int64_t>(shard_id_));
     lock_held_ = false;
 }
 
@@ -154,10 +152,9 @@ BleedResult PgSweepWorker::runBleed() {
     // Append to economy_ledger for INV-3 audit (04-data-model.md §7).
     // Only write when there is something to record.
     if (res.unlanded > 0) {
-        client_->execSqlSync(
-            "INSERT INTO economy_ledger (at, spawned, unlanded, transmute_sink) "
-            "VALUES (now(), 0, $1, 0)",
-            res.unlanded);
+        client_->execSqlSync("INSERT INTO economy_ledger (at, spawned, unlanded, transmute_sink) "
+                             "VALUES (now(), 0, $1, 0)",
+                             res.unlanded);
     }
 
     return res;
@@ -215,13 +212,12 @@ int32_t PgSweepWorker::runCollapse() {
 // The created_at index (migration 012) keeps this fast.
 
 int32_t PgSweepWorker::runRetention() {
-    auto result = client_->execSqlSync(
-        "WITH deleted AS ("
-        "    DELETE FROM transfer_receipt"
-        "    WHERE created_at < now() - INTERVAL '72 hours'"
-        "    RETURNING transfer_id"
-        ")"
-        "SELECT COUNT(*)::int AS purged FROM deleted");
+    auto result = client_->execSqlSync("WITH deleted AS ("
+                                       "    DELETE FROM transfer_receipt"
+                                       "    WHERE created_at < now() - INTERVAL '72 hours'"
+                                       "    RETURNING transfer_id"
+                                       ")"
+                                       "SELECT COUNT(*)::int AS purged FROM deleted");
 
     if (result.empty()) {
         return 0;

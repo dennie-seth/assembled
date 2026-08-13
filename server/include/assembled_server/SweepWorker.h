@@ -43,9 +43,9 @@ struct BleedResult {
 struct SweepResult {
     bool lock_acquired{false}; ///< False → another session owns this shard's lock.
     BleedResult bleed;
-    int32_t collapsed{};         ///< Identity universes collapsed and reset.
-    int32_t receipts_purged{};   ///< transfer_receipt rows older than 72 h deleted.
-    int32_t census_updated{};    ///< type_census rows upserted.
+    int32_t collapsed{};       ///< Identity universes collapsed and reset.
+    int32_t receipts_purged{}; ///< transfer_receipt rows older than 72 h deleted.
+    int32_t census_updated{};  ///< type_census rows upserted.
 };
 
 /// Abstract interface for the per-shard sweep worker.
