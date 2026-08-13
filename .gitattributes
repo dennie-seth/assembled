@@ -42,6 +42,13 @@
 # Git LFS — audio finals are large regardless of art direction, so LFS from day one.
 assets/final/audio/** filter=lfs diff=lfs merge=lfs -text
 
+# Git LFS — trained model weights (e.g. T-0072's SDXL LoRA) exceed GitHub's
+# 100MB per-blob limit. Scoped to assets/final/ so ordinary source/config
+# (training_config.toml, corpus.json, etc.) never gets swept into LFS.
+assets/final/lora/*.safetensors filter=lfs diff=lfs merge=lfs -text
+assets/final/**/*.ckpt filter=lfs diff=lfs merge=lfs -text
+assets/final/**/*.pt filter=lfs diff=lfs merge=lfs -text
+
 # develop's committed blob for this file has 2 stray NUL bytes baked into a
 # string literal (pre-existing, unrelated to any single branch) that trip
 # git's NUL-byte binary-diff heuristic on either side of a comparison. Force

@@ -142,3 +142,24 @@ Manual equivalent, if ever needed:
 ```
 cp assets/final/lora/soviet_brutalism_style_v1.safetensors /mnt/f/ComfyUI/models/loras/
 ```
+
+## Git LFS (2026-08-13)
+
+A trained SDXL LoRA (`soviet_brutalism_style_v1.safetensors`, 218MB) is
+well over GitHub's 100MB per-blob limit — the first real T-0072 training
+run committed fine locally but `git push` was rejected outright ("this
+exceeds GitHub's file size limit... Try Git LFS"), landing the card in
+`blocked` even though training itself had already succeeded.
+
+`.gitattributes` now tracks `assets/final/lora/*.safetensors` (plus
+`assets/final/**/*.ckpt` and `*.pt` for other trained-weight formats)
+via Git LFS, and `git lfs install` has been run for the WSL user, which
+also wires the `pre-push` LFS hook into this repo's shared git-common-dir
+(`~/dev/assembled/.git`) — every worktree picks it up automatically, no
+per-worktree setup needed. As a result, the `assets` agent's ordinary
+end-of-task `git add` / `git commit` / `git push` on its feature branch
+needs no code changes: a `.safetensors` under `assets/final/lora/` is
+transparently swapped for an LFS pointer at commit time and the real
+blob is uploaded to LFS storage on push. Future full training runs
+should push cleanly; if a push is ever rejected again, check `git lfs
+env` and `git lfs ls-files` before assuming it's the same 100MB issue.
