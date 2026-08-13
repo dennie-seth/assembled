@@ -71,8 +71,8 @@ TEST_CASE("PgNoteRepo CRUD round-trip") {
     }
     CHECK(found);
 
-    // Rate: increments rating by 1.
-    repo.rate(note_id);
+    // Rate: +1 vote from the author token.
+    repo.rate(note_id, "test-token-note-crud", 1);
     const auto notes2 = repo.fetch(1, 1);
     for (const auto &n : notes2) {
         if (n.id == note_id) {

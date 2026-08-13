@@ -162,6 +162,16 @@ add_executable(run_assembler_tests
 target_link_libraries(run_assembler_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(run_assembler_tests)
 
+# T-0047: Note rating tests — one vote per player, idempotent upsert, score
+# accuracy, and POST /v1/notes/{id}/rate HTTP integration.
+# Separate binary: spins up its own drogon::app() on port 18091.
+# note_rating_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(note_rating_tests
+  test/note_rating_test.cpp
+)
+target_link_libraries(note_rating_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(note_rating_tests)
+
 # T-0124: anchor snapshot tests — room-entry GET /v1/anchors/{arch}/{tag}.
 # Tests: single-transaction snapshot (items/offerings/notes), concurrent
 # offering race never produces a torn read, broadcasts excluded, HTTP handler.
