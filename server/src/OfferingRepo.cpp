@@ -161,7 +161,18 @@ ClaimResult PgOfferingRepo::claim(const ClaimParams &params) {
     // The offering is no longer claimable once both transfers succeed.
     txn->execSqlSync("DELETE FROM offering WHERE id = $1::uuid", params.offering_id);
 
-    // Transaction auto-commits when txn goes out of scope (no rollback called).
+    // Commit explicitly and synchronously before returning.
+    //
+    // Drogon's Transaction destructor issues COMMIT asynchronously (via a
+    // callback), meaning the commit might not be flushed to Postgres before
+    // claim() returns if we rely on scope-exit auto-commit.  Issuing an
+    // explicit synchronous COMMIT here guarantees the custody changes are
+    // visible to any reader by the time claim() returns — satisfying INV-4's
+    // "no partial state observable mid-transaction from a concurrent reader"
+    // acceptance criterion.  The destructor checks isCommitedOrRolledBack_
+    // and skips the auto-commit, so there is no double-COMMIT.
+    txn->execSqlSync("COMMIT");
+
     ClaimResult result;
     result.error = ClaimError::None;
     result.offered_item_id = offered_item_id;
