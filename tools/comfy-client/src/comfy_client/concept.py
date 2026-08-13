@@ -32,8 +32,12 @@ from comfy_client.base_url import resolve_base_url
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.provenance import build_provenance_record
 from comfy_client.recipe import Recipe
-from comfy_client.workflow import render_img2img_workflow, render_workflow
-from comfy_client.workflow import workflow_hash as compute_workflow_hash
+from comfy_client.workflow import (
+    render_img2img_lora_workflow,
+    render_img2img_workflow,
+    render_workflow,
+    workflow_hash,
+)
 
 DEFAULT_CONCEPT_DIR = Path("assets/src/concept")
 
@@ -96,6 +100,22 @@ def build_conditioned_concept_provenance_record(
 
 
 @dataclass(frozen=True)
+class LoraConditionedConceptProvenanceRecord(ConditionedConceptProvenanceRecord):
+    """Extends `ConditionedConceptProvenanceRecord` for LoRA-conditioned runs
+    (T-0167 handshake, `13-asset-pipeline.md` §6.5).
+
+    `base_concept_hash` is the sha256 of the reference concept sheet the LoRA
+    generation is being compared against -- it ties this generation back to the
+    approved direction so reviewers can check divergence.
+    """
+
+    lora_name: str
+    lora_weight: float
+    lora_license: str
+    base_concept_hash: str
+
+
+@dataclass(frozen=True)
 class ConceptResult:
     path: Path
     prompt_id: str
@@ -116,7 +136,7 @@ def generate_concept(
     assert_checkpoint_allowed(recipe.checkpoint)
 
     graph = render_workflow(recipe)
-    graph_hash = compute_workflow_hash(graph)
+    graph_hash = workflow_hash(graph)
 
     gen_client = client or ComfyUIClient(base_url=resolve_base_url())
 
@@ -171,7 +191,7 @@ def generate_concept_conditioned(
 
     uploaded = gen_client.upload_image(init_bytes, filename=init_path.name)
     graph = render_img2img_workflow(recipe, init_image_name=uploaded["name"])
-    graph_hash = compute_workflow_hash(graph)
+    graph_hash = workflow_hash(graph)
 
     job_id = gen_client.submit(graph)
     job_result = gen_client.wait_for_completion(
@@ -193,5 +213,78 @@ def generate_concept_conditioned(
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
     provenance_path.write_text(json.dumps(concept_provenance_to_dict(provenance), indent=2))
+
+    return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
+
+
+def generate_concept_conditioned_lora(
+    recipe: Recipe,
+    init_image_path: str | Path,
+    lora_name: str,
+    lora_weight: float,
+    lora_license: str,
+    base_concept_path: str | Path,
+    out_dir: str | Path = DEFAULT_CONCEPT_DIR,
+    client: ComfyUIClient | None = None,
+    timeout: float = 300.0,
+    poll_interval: float = 1.0,
+) -> ConceptResult:
+    """LoRA-conditioned img2img concept generation (T-0167, `13-asset-pipeline.md` §6.5).
+
+    Like `generate_concept_conditioned` but inserts a LoRA between the
+    checkpoint and the sampler/CLIP nodes. `base_concept_path` is the
+    approved reference sheet this LoRA run is being compared against;
+    its sha256 is stored as `base_concept_hash` in the provenance so
+    reviewers can confirm the LoRA generation's lineage. `concept_hash`
+    (inherited from ConditionedConceptProvenanceRecord) is the sha256 of
+    `init_image_path` (the conditioning template), same as the non-LoRA path.
+    """
+    assert_checkpoint_allowed(recipe.checkpoint)
+
+    init_path = Path(init_image_path)
+    init_bytes = init_path.read_bytes()
+    conditioning_hash = hashlib.sha256(init_bytes).hexdigest()
+
+    base_path = Path(base_concept_path)
+    base_concept_hash = hashlib.sha256(base_path.read_bytes()).hexdigest()
+
+    gen_client = client or ComfyUIClient(base_url=resolve_base_url())
+
+    uploaded = gen_client.upload_image(init_bytes, filename=init_path.name)
+    graph = render_img2img_lora_workflow(
+        recipe,
+        init_image_name=uploaded["name"],
+        lora_name=lora_name,
+        lora_weight=lora_weight,
+    )
+    graph_hash = workflow_hash(graph)
+
+    job_id = gen_client.submit(graph)
+    job_result = gen_client.wait_for_completion(
+        job_id, timeout=timeout, poll_interval=poll_interval
+    )
+    raw_bytes = gen_client.fetch_output(job_result)
+
+    out_dir_path = Path(out_dir)
+    out_dir_path.mkdir(parents=True, exist_ok=True)
+    image_path = out_dir_path / f"{recipe.name}.png"
+    image_path.write_bytes(raw_bytes)
+
+    base_prov = build_conditioned_concept_provenance_record(
+        recipe,
+        workflow_hash=graph_hash,
+        prompt_id=job_id,
+        concept_hash=conditioning_hash,
+        conditioning_source=str(init_path),
+    )
+    provenance = LoraConditionedConceptProvenanceRecord(
+        **asdict(base_prov),
+        lora_name=lora_name,
+        lora_weight=lora_weight,
+        lora_license=lora_license,
+        base_concept_hash=base_concept_hash,
+    )
+    provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
+    provenance_path.write_text(json.dumps(asdict(provenance), indent=2))
 
     return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)

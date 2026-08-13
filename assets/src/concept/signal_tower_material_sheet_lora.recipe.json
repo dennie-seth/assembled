@@ -1,0 +1,21 @@
+{
+  "name": "signal_tower_material_sheet_lora",
+  "description": "T-0167 LoRA handshake — signal_tower_material_sheet regenerated through the T-0072 soviet_brutalism_style_v1 LoRA. Same prompt + seed + conditioning as the original (seed 3101, img2img from signal_tower_material_template.png) to isolate the LoRA's effect. Direction check per 13-asset-pipeline.md §6.5.",
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora_name": "soviet_brutalism_style_v1",
+  "lora_weight": 0.75,
+  "lora_license": "CreativeML Open RAIL++-M",
+  "prompt": "brutalist concrete wall texture, worn concrete floor surface, wall-to-floor trim, muted concrete grey and oxide and institutional green, flat side-on reference sheet, no perspective, value-separated material panels, interior, weathered surface detail, rough stained concrete",
+  "negative_prompt": "equipment, control panel, machinery, switches, buttons, sky, perspective, three-quarter view, isometric, vanishing point, text, watermark, glow, blurry, low quality, character, creature, smooth, flat colour, solid colour",
+  "seed": 3101,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "denoise": 0.9,
+  "conditioning_source": "assets/src/concept/signal_tower_material_template.png",
+  "compare_against": "assets/src/concept/signal_tower_material_sheet.png",
+  "_infra_note": "Requires ComfyUI running on Windows host with soviet_brutalism_style_v1.safetensors in models/loras/. WSL→Windows firewall rule must be open (see docs/comfyui-setup.md). From WSL: POST http://<windows-gateway>:8188/prompt with this recipe as the workflow parameters."
+}
