@@ -13,5 +13,8 @@ dev = [
     "pytest==8.3.5",
 ]
 
+[tool.setuptools]
+py-modules = ["run_handshake", "generate_stdlib"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -36,7 +36,7 @@ from comfy_client.workflow import (
     render_img2img_lora_workflow,
     render_img2img_workflow,
     render_workflow,
-    workflow_hash as compute_workflow_hash,
+    workflow_hash,
 )
 
 DEFAULT_CONCEPT_DIR = Path("assets/src/concept")
@@ -136,7 +136,7 @@ def generate_concept(
     assert_checkpoint_allowed(recipe.checkpoint)
 
     graph = render_workflow(recipe)
-    graph_hash = compute_workflow_hash(graph)
+    graph_hash = workflow_hash(graph)
 
     gen_client = client or ComfyUIClient(base_url=resolve_base_url())
 
@@ -191,7 +191,7 @@ def generate_concept_conditioned(
 
     uploaded = gen_client.upload_image(init_bytes, filename=init_path.name)
     graph = render_img2img_workflow(recipe, init_image_name=uploaded["name"])
-    graph_hash = compute_workflow_hash(graph)
+    graph_hash = workflow_hash(graph)
 
     job_id = gen_client.submit(graph)
     job_result = gen_client.wait_for_completion(
@@ -257,7 +257,7 @@ def generate_concept_conditioned_lora(
         lora_name=lora_name,
         lora_weight=lora_weight,
     )
-    graph_hash = compute_workflow_hash(graph)
+    graph_hash = workflow_hash(graph)
 
     job_id = gen_client.submit(graph)
     job_result = gen_client.wait_for_completion(
