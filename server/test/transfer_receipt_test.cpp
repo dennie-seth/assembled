@@ -259,8 +259,8 @@ TEST_CASE("idempotent leave: Won path records receipt") {
 
     // Item version in DB must be 1.
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT version FROM item_instance WHERE id = $1", item_id);
+        auto r = db->getClient()->execSqlSync("SELECT version FROM item_instance WHERE id = $1",
+                                              item_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["version"].as<int32_t>() == 1);
     }
@@ -310,8 +310,8 @@ TEST_CASE("idempotent leave: repeat transfer_id returns stored Won without re-ru
 
     // Item version must still be 1, not 2 — CAS ran exactly once.
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT version FROM item_instance WHERE id = $1", item_id);
+        auto r = db->getClient()->execSqlSync("SELECT version FROM item_instance WHERE id = $1",
+                                              item_id);
         REQUIRE(!r.empty());
         CHECK_MESSAGE(r[0]["version"].as<int32_t>() == 1,
                       "CAS ran more than once: version should be 1 but is "
@@ -364,8 +364,8 @@ TEST_CASE("concurrent simulation: exactly one tryClaimSlot wins; other gets stor
 
     // Exactly one CAS — item version must be 1, not 2.
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT version FROM item_instance WHERE id = $1", item_id);
+        auto r = db->getClient()->execSqlSync("SELECT version FROM item_instance WHERE id = $1",
+                                              item_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["version"].as<int32_t>() == 1);
     }
@@ -549,8 +549,8 @@ TEST_CASE("idempotent leave: expired receipt (>72h) is treated as fresh transfer
 
     // item_b version must be 1 (fresh CAS ran).
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT version FROM item_instance WHERE id = $1", item_b);
+        auto r =
+            db->getClient()->execSqlSync("SELECT version FROM item_instance WHERE id = $1", item_b);
         REQUIRE(!r.empty());
         CHECK(r[0]["version"].as<int32_t>() == 1);
     }

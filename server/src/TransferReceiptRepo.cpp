@@ -61,12 +61,12 @@ PgTransferReceiptRepo::PgTransferReceiptRepo(drogon::orm::DbClientPtr client)
     : client_(std::move(client)) {}
 
 std::optional<ReceiptRecord> PgTransferReceiptRepo::find(const std::string &transfer_id) {
-    auto result = client_->execSqlSync(
-        "SELECT transfer_id, kind, item_id, outcome, "
-        "       new_version, new_custody_depth, new_item_id, created_at "
-        "FROM transfer_receipt "
-        "WHERE transfer_id = $1 AND bleed_at > now()",
-        transfer_id);
+    auto result =
+        client_->execSqlSync("SELECT transfer_id, kind, item_id, outcome, "
+                             "       new_version, new_custody_depth, new_item_id, created_at "
+                             "FROM transfer_receipt "
+                             "WHERE transfer_id = $1 AND bleed_at > now()",
+                             transfer_id);
 
     if (result.empty()) {
         return std::nullopt;
@@ -75,32 +75,31 @@ std::optional<ReceiptRecord> PgTransferReceiptRepo::find(const std::string &tran
 }
 
 bool PgTransferReceiptRepo::tryClaimSlot(const std::string &transfer_id, const std::string &kind,
-                                          const std::string &item_id) {
+                                         const std::string &item_id) {
     auto txn = client_->newTransaction();
 
     // Remove any expired receipt for this transfer_id so it does not block
     // the INSERT that follows.  Idempotent: no-op if there is nothing expired.
-    txn->execSqlSync(
-        "DELETE FROM transfer_receipt WHERE transfer_id = $1 AND bleed_at < now()",
-        transfer_id);
+    txn->execSqlSync("DELETE FROM transfer_receipt WHERE transfer_id = $1 AND bleed_at < now()",
+                     transfer_id);
 
     // Atomically claim the slot.  ON CONFLICT DO NOTHING leaves a live receipt
     // untouched — the RETURNING clause is empty iff a live receipt already exists.
-    auto result = txn->execSqlSync(
-        "INSERT INTO transfer_receipt (transfer_id, kind, item_id, outcome) "
-        "VALUES ($1, $2, $3, 'pending') "
-        "ON CONFLICT (transfer_id) DO NOTHING "
-        "RETURNING transfer_id",
-        transfer_id, kind, item_id);
+    auto result =
+        txn->execSqlSync("INSERT INTO transfer_receipt (transfer_id, kind, item_id, outcome) "
+                         "VALUES ($1, $2, $3, 'pending') "
+                         "ON CONFLICT (transfer_id) DO NOTHING "
+                         "RETURNING transfer_id",
+                         transfer_id, kind, item_id);
 
     // Transaction auto-commits when txn goes out of scope.
     return !result.empty(); // true = we own the slot
 }
 
 void PgTransferReceiptRepo::recordWon(const std::string &transfer_id,
-                                       std::optional<int32_t> new_version,
-                                       std::optional<int32_t> new_custody_depth,
-                                       std::optional<std::string> new_item_id) {
+                                      std::optional<int32_t> new_version,
+                                      std::optional<int32_t> new_custody_depth,
+                                      std::optional<std::string> new_item_id) {
     // Four-way dispatch based on which optional fields are present.
     // transmute: new_item_id set, version/depth null.
     // leave/use/take: version+depth set, new_item_id null.
@@ -113,37 +112,33 @@ void PgTransferReceiptRepo::recordWon(const std::string &transfer_id,
             transfer_id, *new_version, *new_custody_depth, *new_item_id);
     } else if (new_item_id.has_value()) {
         // Transmute: only new_item_id is meaningful.
-        client_->execSqlSync(
-            "UPDATE transfer_receipt "
-            "SET outcome = 'won', new_item_id = $2 "
-            "WHERE transfer_id = $1",
-            transfer_id, *new_item_id);
+        client_->execSqlSync("UPDATE transfer_receipt "
+                             "SET outcome = 'won', new_item_id = $2 "
+                             "WHERE transfer_id = $1",
+                             transfer_id, *new_item_id);
     } else if (new_version.has_value()) {
         // leave/use/take: version and depth, no new_item_id.
-        client_->execSqlSync(
-            "UPDATE transfer_receipt "
-            "SET outcome = 'won', new_version = $2, new_custody_depth = $3 "
-            "WHERE transfer_id = $1",
-            transfer_id, *new_version, *new_custody_depth);
+        client_->execSqlSync("UPDATE transfer_receipt "
+                             "SET outcome = 'won', new_version = $2, new_custody_depth = $3 "
+                             "WHERE transfer_id = $1",
+                             transfer_id, *new_version, *new_custody_depth);
     } else {
         // Won with no fields (shouldn't happen in practice; record outcome only).
-        client_->execSqlSync(
-            "UPDATE transfer_receipt SET outcome = 'won' WHERE transfer_id = $1",
-            transfer_id);
+        client_->execSqlSync("UPDATE transfer_receipt SET outcome = 'won' WHERE transfer_id = $1",
+                             transfer_id);
     }
 }
 
 void PgTransferReceiptRepo::recordLost(const std::string &transfer_id) {
-    client_->execSqlSync(
-        "UPDATE transfer_receipt SET outcome = 'lost' WHERE transfer_id = $1",
-        transfer_id);
+    client_->execSqlSync("UPDATE transfer_receipt SET outcome = 'lost' WHERE transfer_id = $1",
+                         transfer_id);
 }
 
 // ── Idempotent transfer wrappers ──────────────────────────────────────────────
 
 ReceiptRecord PgTransferReceiptRepo::idempotentLeave(const std::string &transfer_id,
-                                                      IItemRepo &item_repo,
-                                                      const LeaveParams &params) {
+                                                     IItemRepo &item_repo,
+                                                     const LeaveParams &params) {
     // Fast path: live final receipt already exists — replay it.
     auto existing = find(transfer_id);
     if (existing && existing->outcome != ReceiptOutcome::Pending) {
@@ -153,8 +148,9 @@ ReceiptRecord PgTransferReceiptRepo::idempotentLeave(const std::string &transfer
     // Claim slot.  On conflict (live receipt exists) return whatever is stored.
     const bool claimed = tryClaimSlot(transfer_id, "leave", params.item_id);
     if (!claimed) {
-        return find(transfer_id).value_or(
-            ReceiptRecord{transfer_id, "leave", params.item_id, ReceiptOutcome::Pending, {}, {}, {}});
+        return find(transfer_id)
+            .value_or(ReceiptRecord{
+                transfer_id, "leave", params.item_id, ReceiptOutcome::Pending, {}, {}, {}});
     }
 
     // Execute CAS.
@@ -162,7 +158,8 @@ ReceiptRecord PgTransferReceiptRepo::idempotentLeave(const std::string &transfer
     if (result.status == TransferStatus::Won) {
         recordWon(transfer_id, std::optional<int32_t>{result.new_version},
                   std::optional<int32_t>{result.new_custody_depth});
-        return ReceiptRecord{transfer_id, "leave", params.item_id, ReceiptOutcome::Won,
+        return ReceiptRecord{transfer_id,        "leave",
+                             params.item_id,     ReceiptOutcome::Won,
                              result.new_version, result.new_custody_depth};
     }
     recordLost(transfer_id);
@@ -170,8 +167,8 @@ ReceiptRecord PgTransferReceiptRepo::idempotentLeave(const std::string &transfer
 }
 
 ReceiptRecord PgTransferReceiptRepo::idempotentTake(const std::string &transfer_id,
-                                                     IItemRepo &item_repo,
-                                                     const TakeParams &params) {
+                                                    IItemRepo &item_repo,
+                                                    const TakeParams &params) {
     auto existing = find(transfer_id);
     if (existing && existing->outcome != ReceiptOutcome::Pending) {
         return *existing;
@@ -179,15 +176,17 @@ ReceiptRecord PgTransferReceiptRepo::idempotentTake(const std::string &transfer_
 
     const bool claimed = tryClaimSlot(transfer_id, "take", params.item_id);
     if (!claimed) {
-        return find(transfer_id).value_or(
-            ReceiptRecord{transfer_id, "take", params.item_id, ReceiptOutcome::Pending, {}, {}, {}});
+        return find(transfer_id)
+            .value_or(ReceiptRecord{
+                transfer_id, "take", params.item_id, ReceiptOutcome::Pending, {}, {}, {}});
     }
 
     const auto result = item_repo.take(params);
     if (result.status == TransferStatus::Won) {
         recordWon(transfer_id, std::optional<int32_t>{result.new_version},
                   std::optional<int32_t>{result.new_custody_depth});
-        return ReceiptRecord{transfer_id, "take", params.item_id, ReceiptOutcome::Won,
+        return ReceiptRecord{transfer_id,        "take",
+                             params.item_id,     ReceiptOutcome::Won,
                              result.new_version, result.new_custody_depth};
     }
     recordLost(transfer_id);
@@ -195,8 +194,7 @@ ReceiptRecord PgTransferReceiptRepo::idempotentTake(const std::string &transfer_
 }
 
 ReceiptRecord PgTransferReceiptRepo::idempotentUse(const std::string &transfer_id,
-                                                    IItemRepo &item_repo,
-                                                    const UseParams &params) {
+                                                   IItemRepo &item_repo, const UseParams &params) {
     auto existing = find(transfer_id);
     if (existing && existing->outcome != ReceiptOutcome::Pending) {
         return *existing;
@@ -204,15 +202,17 @@ ReceiptRecord PgTransferReceiptRepo::idempotentUse(const std::string &transfer_i
 
     const bool claimed = tryClaimSlot(transfer_id, "use", params.item_id);
     if (!claimed) {
-        return find(transfer_id).value_or(
-            ReceiptRecord{transfer_id, "use", params.item_id, ReceiptOutcome::Pending, {}, {}, {}});
+        return find(transfer_id)
+            .value_or(ReceiptRecord{
+                transfer_id, "use", params.item_id, ReceiptOutcome::Pending, {}, {}, {}});
     }
 
     const auto result = item_repo.use(params);
     if (result.status == TransferStatus::Won) {
         recordWon(transfer_id, std::optional<int32_t>{result.new_version},
                   std::optional<int32_t>{result.new_custody_depth});
-        return ReceiptRecord{transfer_id, "use", params.item_id, ReceiptOutcome::Won,
+        return ReceiptRecord{transfer_id,        "use",
+                             params.item_id,     ReceiptOutcome::Won,
                              result.new_version, result.new_custody_depth};
     }
     recordLost(transfer_id);
@@ -220,8 +220,8 @@ ReceiptRecord PgTransferReceiptRepo::idempotentUse(const std::string &transfer_i
 }
 
 ReceiptRecord PgTransferReceiptRepo::idempotentTransmute(const std::string &transfer_id,
-                                                          IItemRepo &item_repo,
-                                                          const TransmuteParams &params) {
+                                                         IItemRepo &item_repo,
+                                                         const TransmuteParams &params) {
     auto existing = find(transfer_id);
     if (existing && existing->outcome != ReceiptOutcome::Pending) {
         return *existing;
@@ -229,8 +229,9 @@ ReceiptRecord PgTransferReceiptRepo::idempotentTransmute(const std::string &tran
 
     const bool claimed = tryClaimSlot(transfer_id, "transmute", params.item_id_a);
     if (!claimed) {
-        return find(transfer_id).value_or(ReceiptRecord{transfer_id, "transmute", params.item_id_a,
-                                                         ReceiptOutcome::Pending, {}, {}, {}});
+        return find(transfer_id)
+            .value_or(ReceiptRecord{
+                transfer_id, "transmute", params.item_id_a, ReceiptOutcome::Pending, {}, {}, {}});
     }
 
     const auto result = item_repo.transmute(params);
@@ -239,8 +240,8 @@ ReceiptRecord PgTransferReceiptRepo::idempotentTransmute(const std::string &tran
         // only the new item UUID is meaningful.  Pass nullopt for version/depth.
         recordWon(transfer_id, std::nullopt, std::nullopt,
                   std::optional<std::string>{result.new_item_id});
-        return ReceiptRecord{transfer_id, "transmute", params.item_id_a, ReceiptOutcome::Won, {},
-                             {}, result.new_item_id};
+        return ReceiptRecord{transfer_id, "transmute", params.item_id_a,  ReceiptOutcome::Won,
+                             {},          {},          result.new_item_id};
     }
     recordLost(transfer_id);
     return ReceiptRecord{transfer_id, "transmute", params.item_id_a, ReceiptOutcome::Lost, {}, {}};

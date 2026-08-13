@@ -37,7 +37,7 @@ enum class ReceiptOutcome {
 /// Stored record from the transfer_receipt table.
 struct ReceiptRecord {
     std::string transfer_id;
-    std::string kind;            ///< "leave" | "use" | "take" | "transmute"
+    std::string kind; ///< "leave" | "use" | "take" | "transmute"
     std::string item_id;
     ReceiptOutcome outcome{ReceiptOutcome::Pending};
     std::optional<int32_t> new_version;       ///< Set on Won leave/use/take.
@@ -73,8 +73,7 @@ class ITransferReceiptRepo {
     /// @param new_version       Set for leave/use/take; nullopt for transmute.
     /// @param new_custody_depth Set for leave/use/take; nullopt for transmute.
     /// @param new_item_id       Set for Won transmute only; nullopt otherwise.
-    virtual void recordWon(const std::string &transfer_id,
-                           std::optional<int32_t> new_version,
+    virtual void recordWon(const std::string &transfer_id, std::optional<int32_t> new_version,
                            std::optional<int32_t> new_custody_depth,
                            std::optional<std::string> new_item_id = std::nullopt) = 0;
 
@@ -110,8 +109,7 @@ class PgTransferReceiptRepo : public ITransferReceiptRepo {
     bool tryClaimSlot(const std::string &transfer_id, const std::string &kind,
                       const std::string &item_id) override;
 
-    void recordWon(const std::string &transfer_id,
-                   std::optional<int32_t> new_version,
+    void recordWon(const std::string &transfer_id, std::optional<int32_t> new_version,
                    std::optional<int32_t> new_custody_depth,
                    std::optional<std::string> new_item_id = std::nullopt) override;
 
@@ -121,10 +119,10 @@ class PgTransferReceiptRepo : public ITransferReceiptRepo {
                                   const LeaveParams &params) override;
 
     ReceiptRecord idempotentTake(const std::string &transfer_id, IItemRepo &item_repo,
-                                  const TakeParams &params) override;
+                                 const TakeParams &params) override;
 
     ReceiptRecord idempotentUse(const std::string &transfer_id, IItemRepo &item_repo,
-                                 const UseParams &params) override;
+                                const UseParams &params) override;
 
     ReceiptRecord idempotentTransmute(const std::string &transfer_id, IItemRepo &item_repo,
                                       const TransmuteParams &params) override;
