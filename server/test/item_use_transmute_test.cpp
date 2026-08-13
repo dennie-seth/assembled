@@ -47,8 +47,8 @@ void seedIdentity(const drogon::orm::DbClientPtr &db, const std::string &token) 
 }
 
 void seedItemType(const drogon::orm::DbClientPtr &db, int16_t id, int16_t rarity = 0) {
-    db->execSqlSync(
-        "INSERT INTO item_type (id, rarity) VALUES ($1, $2) ON CONFLICT DO NOTHING", id, rarity);
+    db->execSqlSync("INSERT INTO item_type (id, rarity) VALUES ($1, $2) ON CONFLICT DO NOTHING", id,
+                    rarity);
 }
 
 /// Seed a variant row (archetype 1 = HOSPITAL, seeded in 003).
@@ -67,22 +67,21 @@ std::string seedHeldItem(const drogon::orm::DbClientPtr &db, int16_t type_id,
 }
 
 int32_t countByType(const drogon::orm::DbClientPtr &db, int16_t type_id) {
-    auto r = db->execSqlSync("SELECT COUNT(*)::int AS c FROM item_instance WHERE type_id = $1",
-                             type_id);
+    auto r =
+        db->execSqlSync("SELECT COUNT(*)::int AS c FROM item_instance WHERE type_id = $1", type_id);
     return r[0]["c"].as<int32_t>();
 }
 
-bool unlockExists(const drogon::orm::DbClientPtr &db, const std::string &token,
-                  int16_t variant_id, int16_t tag) {
-    auto r = db->execSqlSync(
-        "SELECT 1 FROM unlock WHERE token=$1 AND variant_id=$2 AND tag=$3 LIMIT 1", token,
-        variant_id, tag);
+bool unlockExists(const drogon::orm::DbClientPtr &db, const std::string &token, int16_t variant_id,
+                  int16_t tag) {
+    auto r =
+        db->execSqlSync("SELECT 1 FROM unlock WHERE token=$1 AND variant_id=$2 AND tag=$3 LIMIT 1",
+                        token, variant_id, tag);
     return !r.empty();
 }
 
 bool itemExists(const drogon::orm::DbClientPtr &db, const std::string &item_id) {
-    auto r =
-        db->execSqlSync("SELECT 1 FROM item_instance WHERE id=$1 LIMIT 1", item_id);
+    auto r = db->execSqlSync("SELECT 1 FROM item_instance WHERE id=$1 LIMIT 1", item_id);
     return !r.empty();
 }
 
@@ -193,8 +192,8 @@ TEST_CASE("use: item moves held→anchor without writing an unlock row when no r
 
     // Item moved to anchor.
     {
-        auto r = db->getClient()->execSqlSync("SELECT holder FROM item_instance WHERE id=$1",
-                                              item_id);
+        auto r =
+            db->getClient()->execSqlSync("SELECT holder FROM item_instance WHERE id=$1", item_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["holder"].isNull());
     }
@@ -240,8 +239,8 @@ TEST_CASE("use: stale expected_version returns Lost and does not move item") {
 
     // Item still held by holder.
     {
-        auto r = db->getClient()->execSqlSync(
-            "SELECT holder FROM item_instance WHERE id=$1", item_id);
+        auto r =
+            db->getClient()->execSqlSync("SELECT holder FROM item_instance WHERE id=$1", item_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["holder"].as<std::string>() == token_holder);
     }
