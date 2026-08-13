@@ -54,6 +54,8 @@ add_library(assembled_server_lib OBJECT
   src/RunAssembler.cpp
   src/AnchorRepo.cpp
   src/AnchorController.cpp
+  src/TransferReceiptRepo.cpp
+  src/SweepWorker.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -183,3 +185,23 @@ add_executable(item_spawner_tests
 )
 target_link_libraries(item_spawner_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(item_spawner_tests)
+
+# T-0126: Transfer receipts — idempotent leave/use/take/transmute.
+# Verifies receipt creation, idempotent replay, concurrent slot-claim safety,
+# and expired-receipt refresh semantics.
+# Separate binary: no drogon::app() singleton contention risk.
+# transfer_receipt_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(transfer_receipt_tests
+  test/transfer_receipt_test.cpp
+)
+target_link_libraries(transfer_receipt_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(transfer_receipt_tests)
+
+# T-0125: sweep worker tests — advisory lock, SKIP LOCKED, bleed, collapse,
+# retention, census.  Separate binary: no drogon::app() singleton risk.
+# sweep_worker_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(sweep_worker_tests
+  test/sweep_worker_test.cpp
+)
+target_link_libraries(sweep_worker_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(sweep_worker_tests)
