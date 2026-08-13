@@ -118,7 +118,7 @@ TEST_CASE("receipt: recordWon is reflected in find with Won outcome") {
     assembled_server::PgTransferReceiptRepo repo(db->getClient());
 
     REQUIRE(repo.tryClaimSlot(tid, "take", fake_item));
-    repo.recordWon(tid, 5, 10);
+    repo.recordWon(tid, std::optional<int32_t>{5}, std::optional<int32_t>{10});
 
     auto r = repo.find(tid);
     REQUIRE(r.has_value());
