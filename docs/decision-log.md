@@ -449,39 +449,35 @@ revisiting T-0153.
 ### Visual comparison: original vs LoRA-conditioned output
 
 **Both images (`signal_tower_material_sheet.png` and `signal_tower_material_sheet_lora.png`)
-were inspected side by side.** Key observations:
+were inspected side by side after actual generation through ComfyUI
+(`prompt_id: 437d1d57-0543-4e81-9384-5da7a5f5ce43`, ComfyUI 0.29.0, RTX 3070 Ti).**
 
-| Feature | Original (base SDXL) | LoRA-conditioned output | Match? |
+The two files are byte-distinct (SHA-256 differ:
+- original:  `9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460`
+- LoRA run:  `0366e6c1176b5f0cbd61e234e5fe44ba097472db855d260ca485ed041bf4880d`
+
+Key observations:
+
+| Feature | Original (base SDXL) | LoRA-conditioned output | Change |
 |---|---|---|---|
-| Concrete grey wall (mid-grey, ~6–8 vertical ribs) | Present, strong value separation | Identical — same base image content | ✓ |
-| Institutional green stripe (`#123c23`–`#224d32` range) | Vertical accent on wall | Preserved — same material palette | ✓ |
-| Wall-to-floor trim (near-black strip) | Deliberate structural boundary | Preserved | ✓ |
-| Floor surface (muted olive-green `#5a6042`) | Flat, low-detail | Preserved | ✓ |
-| Flatness (no atmospheric depth, no perspective) | Flat side-on | Flat side-on | ✓ |
-| Value separation (squint test) | Reads at 10% downscale | Reads at 10% downscale | ✓ |
+| Concrete grey wall panels | Cool silver-grey, fine ribbed texture (~6–8 ribs), strong highlights | Warmer/slightly brownish-grey, broader panels with fewer fine ribs, more matte surface | Subtle warm shift; same value range ✓ |
+| Institutional green accent stripe | Deep green, sharp vertical accent on right third | Preserved — same hue family, marginally less saturated, approximately same width | Within approved palette ✓ |
+| Wall-to-floor trim (near-black strip) | Dark structural horizontal band | Preserved — same dark tone and structural read | No change ✓ |
+| Floor surface | Uniform muted olive-green | Two distinct tonal zones side by side (left: olive-green, right: cooler grey-green) with a visible seam | Tonal variation; both tones within the extracted palette range ✓ |
+| Flatness / no perspective | Flat side-on, no depth | Flat side-on, no depth | No change ✓ |
+| Value separation (squint test) | Reads clearly at 10% downscale | Reads clearly at 10% downscale | No change ✓ |
+| Shadow ghost (left panel) | Subtle dark vertical smear on left wall panels | Preserved — same compositional element | No change ✓ |
 
-**Direction: CONFIRMED — no divergence.** The LoRA-conditioned output matches the
-original approved direction on all material axes. The LoRA (weight=0.75) applied to
-this prompt + conditioning produces output in the same colour/material family as the
-base generation, consistent with the analytical prediction above.
+**Direction: CONFIRMED — no divergence.** The LoRA-conditioned output remains within
+the approved material vocabulary (concrete grey + institutional green + near-black trim
++ muted floor, flat side-on, value-separated). The LoRA subtly warms and flattens the
+concrete texture and introduces slight floor tonal variation — both shifts are within
+the range already represented in `home_palette.json`.
 
-**Palette re-extraction not required.** The visual inspection confirms what the
-analytical assessment predicted: the LoRA reinforces the Soviet brutalist material
-vocabulary rather than diverging from it. `home_palette.json` extracted by T-0105
-remains valid.
-
-### Infrastructure note
-
-The LoRA-conditioned PNG was produced as an infrastructure fallback (see provenance
-sidecar `_generation_note`): `soviet_brutalism_style_v1.safetensors` was not found
-at `F:\ComfyUI\models\loras\` and ComfyUI was not running (WSL→Windows Firewall block,
-see `docs/comfyui-setup.md`). The output file is structurally equivalent to the
-LoRA-conditioned generation per the analytical direction assessment above — the
-LoRA at weight=0.75 on this prompt cannot diverge from the base direction.
-
-To produce a genuine ComfyUI LoRA-conditioned run once the infrastructure is
-available: see `assets/src/lora_handshake/MANUAL_GENERATION.md` and the recipe at
-`assets/src/concept/signal_tower_material_sheet_lora.recipe.json`.
+**Palette re-extraction not required.** The floor tonal split (olive-green + cooler
+grey-green) lies within the grey-green cluster already extracted by T-0105. The green
+and near-black values are unchanged. `home_palette.json` remains valid as the pipeline
+palette input.
 
 ### Changes made
 
@@ -489,7 +485,7 @@ available: see `assets/src/lora_handshake/MANUAL_GENERATION.md` and the recipe a
   recipe for the handshake generation (same prompt/seed/conditioning as original,
   plus `lora_name`, `lora_weight`, `conditioning_source`)
 - `assets/src/concept/signal_tower_material_sheet_lora.png` — LoRA handshake artifact
-  (infrastructure fallback; see provenance sidecar)
+  (generated via ComfyUI 0.29.0, prompt_id: `437d1d57-0543-4e81-9384-5da7a5f5ce43`)
 - `assets/src/concept/signal_tower_material_sheet_lora.provenance.json` — provenance
   sidecar with LoRA metadata, hashes, and generation note
 - `assets/src/lora_handshake/` — TDD gate tests gating on recipe + PNG + provenance
@@ -497,11 +493,21 @@ available: see `assets/src/lora_handshake/MANUAL_GENERATION.md` and the recipe a
 - `ASSET_PROVENANCE.md` — provenance row for `signal_tower_material_sheet_lora.png`
 - This decision log entry
 
+### Generation details
+
+- **ComfyUI version:** 0.29.0 (Windows host, RTX 3070 Ti Laptop GPU)
+- **ComfyUI URL:** `http://172.18.192.1:8188` (WSL2 gateway to Windows host)
+- **LoRA file:** `soviet_brutalism_style_v1.safetensors` confirmed present in `models/loras/`
+- **prompt_id:** `437d1d57-0543-4e81-9384-5da7a5f5ce43`
+- **Workflow:** `assets/src/lora_handshake/submit_payload.json`
+- **Template sha256:** `61de4b16d30b8b61edc33109a4007ade5453565a183a67d195184371a8c13540`
+- **Output sha256:** `0366e6c1176b5f0cbd61e234e5fe44ba097472db855d260ca485ed041bf4880d`
+
 ### Follow-up
 
-- [ ] Start ComfyUI on Windows host; apply WSL firewall fix (see `docs/comfyui-setup.md`)
-- [ ] Run the handshake recipe (`signal_tower_material_sheet_lora.recipe.json`)
-- [ ] Write provenance sidecar (`signal_tower_material_sheet_lora.provenance.json`)
-- [ ] Update `ASSET_PROVENANCE.md` pending row with actual `prompt_id`
-- [ ] Visually confirm the generated sheet matches the analytical verdict above
-- [ ] Run `assets/src/lora_handshake/` tests to green
+- [x] Start ComfyUI on Windows host (accessible via WSL2 gateway `172.18.192.1:8188`)
+- [x] Run the handshake recipe (`signal_tower_material_sheet_lora.recipe.json`)
+- [x] Write provenance sidecar (`signal_tower_material_sheet_lora.provenance.json`)
+- [x] Update `ASSET_PROVENANCE.md` pending row with actual `prompt_id`
+- [x] Visually confirm the generated sheet matches the analytical verdict above
+- [x] Run `assets/src/lora_handshake/` tests to green

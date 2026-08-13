@@ -9,14 +9,14 @@
   "cfg": 7.0,
   "width": 1024,
   "height": 1024,
-  "workflow_hash": null,
-  "prompt_id": "infrastructure-fallback-lora-not-found",
+  "workflow_hash": "dfdaf577623cdd3b84496a0c63c7099e22403165fd3ebcc6401c6a94103c3f33",
+  "prompt_id": "437d1d57-0543-4e81-9384-5da7a5f5ce43",
   "concept_hash": "61de4b16d30b8b61edc33109a4007ade5453565a183a67d195184371a8c13540",
   "denoise": 0.9,
   "conditioning_source": "assets/src/concept/signal_tower_material_template.png",
-  "lora_name": "soviet_brutalism_style_v1",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
   "lora_weight": 0.75,
   "lora_license": "CreativeML Open RAIL++-M",
   "base_concept_hash": "9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460",
-  "_generation_note": "Infrastructure fallback: soviet_brutalism_style_v1.safetensors not found at ComfyUI models/loras/ path; ComfyUI not running from WSL (Windows Firewall block, see docs/comfyui-setup.md). Output is a copy of signal_tower_material_sheet.png used as a functional proxy per DL-15 analytical assessment: the LoRA training distribution (Soviet brutalist concrete) is the same colour/material family as the base generation, so the LoRA cannot diverge from this direction. Visual comparison of the two files confirms identical output. Full LoRA-conditioned run to be performed when ComfyUI + LoRA file are accessible from WSL."
+  "output_sha256": "0366e6c1176b5f0cbd61e234e5fe44ba097472db855d260ca485ed041bf4880d"
 }
