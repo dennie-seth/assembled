@@ -89,8 +89,9 @@ def generate(
 
     provenance = build_provenance_record(recipe, request_hash=req_hash, job_id=job_id)
 
-    if provenance_md is not None:
-        append_provenance_entry(final_path, provenance_to_dict(provenance), provenance_md=provenance_md)
+    append_provenance_entry(
+        final_path, provenance_to_dict(provenance), provenance_md=provenance_md
+    )
 
     return GenerationResult(path=final_path, job_id=job_id, provenance=provenance)
 
@@ -137,7 +138,8 @@ def generate_texture(
 
     provenance = build_texture_provenance_record(recipe, request_hash=req_hash, job_id=job_id)
 
-    if provenance_md is not None:
-        append_provenance_entry(final_path, provenance_to_dict(provenance), provenance_md=provenance_md)
+    append_provenance_entry(
+        final_path, provenance_to_dict(provenance), provenance_md=provenance_md
+    )
 
     return GenerationResult(path=final_path, job_id=job_id, provenance=provenance)

@@ -156,9 +156,13 @@ def test_generate_appends_provenance_entry_to_md(tmp_path, sample_recipe):
     assert sample_recipe.prompt in text or sample_recipe.prompt[:30] in text
 
 
-def test_generate_provenance_md_defaults_to_none_without_breaking(tmp_path, sample_recipe):
-    """When provenance_md=None (default), generate() skips the write rather than crashing."""
-    # Default invocation with no provenance_md should not raise even though
-    # ASSET_PROVENANCE.md doesn't exist in tmp_path.
+def test_generate_writes_provenance_to_default_path_when_not_explicit(tmp_path, sample_recipe):
+    """When provenance_md is not passed, generate() writes to ASSET_PROVENANCE.md in CWD.
+
+    The autouse _default_provenance_md fixture creates the file and sets CWD to tmp_path,
+    so the default Path('ASSET_PROVENANCE.md') resolves there (T-0075 criterion 1 & 3).
+    """
     result = generate(sample_recipe, out_dir=tmp_path, client=FakeClient())
     assert result.path.exists()
+    prov_text = (tmp_path / "ASSET_PROVENANCE.md").read_text()
+    assert sample_recipe.checkpoint in prov_text

@@ -26,6 +26,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# gen-client-base is a sibling monorepo package; add its src tree to sys.path for pytest runs.
+# Install it editably first if you need it outside of pytest: pip install -e ../gen-client-base
+pythonpath = ["../gen-client-base/src"]
 
 [tool.ruff]
 line-length = 100

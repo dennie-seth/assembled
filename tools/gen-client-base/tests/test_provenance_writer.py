@@ -78,11 +78,11 @@ def test_append_inserts_row_inside_the_table(tmp_path):
     append_provenance_entry("new.png", _make_full_record(), provenance_md=md)
 
     lines = md.read_text().splitlines()
-    table_lines = [l for l in lines if l.startswith("|")]
+    table_lines = [ln for ln in lines if ln.startswith("|")]
     # header + separator + old row + new row = 4 pipe lines, all consecutive
     assert len(table_lines) >= 4
     # They must all appear without a blank line between them
-    first_pipe = next(i for i, l in enumerate(lines) if l.startswith("|"))
+    first_pipe = next(i for i, ln in enumerate(lines) if ln.startswith("|"))
     for i in range(first_pipe, first_pipe + len(table_lines)):
         assert lines[i].startswith("|"), f"Gap in table at line {i}: {lines[i]!r}"
 
@@ -112,7 +112,7 @@ def test_append_escapes_pipe_characters_in_prompt(tmp_path):
     text = md.read_text()
     # The prompt cell should not contain a raw unescaped pipe (only \\| is ok)
     # Find the row that contains our asset
-    row = next(l for l in text.splitlines() if "wall.png" in l)
+    row = next(ln for ln in text.splitlines() if "wall.png" in ln)
     # Remove the leading/trailing pipes and the first/last columns
     # then check no raw pipe remains where the prompt would be
     assert r"\|" in row, "Pipe in prompt must be escaped as \\|"
@@ -122,7 +122,7 @@ def test_append_truncates_very_long_prompt(tmp_path):
     md = _make_provenance_md(tmp_path)
     long_prompt = "x" * 200
     append_provenance_entry("wall.png", _make_full_record(prompt=long_prompt), provenance_md=md)
-    row = next(l for l in md.read_text().splitlines() if "wall.png" in l)
+    row = next(ln for ln in md.read_text().splitlines() if "wall.png" in ln)
     # Truncated row should contain the ellipsis and not the full 200-char prompt
     assert "…" in row
     assert "x" * 200 not in row

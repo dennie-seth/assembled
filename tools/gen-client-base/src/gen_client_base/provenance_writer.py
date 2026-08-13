@@ -94,7 +94,7 @@ def append_provenance_entry(
     lines = text.splitlines(keepends=True)
 
     # Find the header line index.
-    header_idx = next(i for i, l in enumerate(lines) if _SENTINEL in l)
+    header_idx = next(i for i, line in enumerate(lines) if _SENTINEL in line)
 
     # Walk forward from the header; find the last consecutive | line.
     last_table_idx = header_idx
