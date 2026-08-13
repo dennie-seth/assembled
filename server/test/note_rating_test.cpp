@@ -53,8 +53,7 @@ TEST_CASE("PgNoteRepo rate — idempotent on same value") {
     // Seed test identity and clean any leftover notes.
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('test-tok-0047-idem') ON CONFLICT DO NOTHING");
-    db->getClient()->execSqlSync(
-        "DELETE FROM notes WHERE author_token = 'test-tok-0047-idem'");
+    db->getClient()->execSqlSync("DELETE FROM notes WHERE author_token = 'test-tok-0047-idem'");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
@@ -93,10 +92,10 @@ TEST_CASE("PgNoteRepo rate — idempotent on same value") {
     CHECK(rating_after_second == rating_after_first);
 
     // Exactly one row in note_votes, not two.
-    const auto rows = db->getClient()->execSqlSync(
-        "SELECT COUNT(*) FROM note_votes "
-        "WHERE note_id = $1::uuid AND voter = 'test-tok-0047-idem'",
-        note_id);
+    const auto rows =
+        db->getClient()->execSqlSync("SELECT COUNT(*) FROM note_votes "
+                                     "WHERE note_id = $1::uuid AND voter = 'test-tok-0047-idem'",
+                                     note_id);
     CHECK(rows[0][0].as<int>() == 1);
 }
 
@@ -114,8 +113,7 @@ TEST_CASE("PgNoteRepo rate — changing vote overwrites, does not add a second r
 
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('test-tok-0047-chg') ON CONFLICT DO NOTHING");
-    db->getClient()->execSqlSync(
-        "DELETE FROM notes WHERE author_token = 'test-tok-0047-chg'");
+    db->getClient()->execSqlSync("DELETE FROM notes WHERE author_token = 'test-tok-0047-chg'");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
@@ -145,10 +143,10 @@ TEST_CASE("PgNoteRepo rate — changing vote overwrites, does not add a second r
     CHECK(rating == -1);
 
     // Still only one row in note_votes.
-    const auto rows = db->getClient()->execSqlSync(
-        "SELECT COUNT(*) FROM note_votes "
-        "WHERE note_id = $1::uuid AND voter = 'test-tok-0047-chg'",
-        note_id);
+    const auto rows =
+        db->getClient()->execSqlSync("SELECT COUNT(*) FROM note_votes "
+                                     "WHERE note_id = $1::uuid AND voter = 'test-tok-0047-chg'",
+                                     note_id);
     CHECK(rows[0][0].as<int>() == 1);
 }
 
@@ -168,8 +166,7 @@ TEST_CASE("PgNoteRepo rate — score reflects current tally correctly") {
         "INSERT INTO identity (token) VALUES ('test-tok-0047-ta') ON CONFLICT DO NOTHING");
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('test-tok-0047-tb') ON CONFLICT DO NOTHING");
-    db->getClient()->execSqlSync(
-        "DELETE FROM notes WHERE author_token = 'test-tok-0047-ta'");
+    db->getClient()->execSqlSync("DELETE FROM notes WHERE author_token = 'test-tok-0047-ta'");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
@@ -220,8 +217,7 @@ TEST_CASE("POST /v1/notes/{id}/rate HTTP integration") {
 
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('test-tok-0047-http') ON CONFLICT DO NOTHING");
-    db->getClient()->execSqlSync(
-        "DELETE FROM notes WHERE author_token = 'test-tok-0047-http'");
+    db->getClient()->execSqlSync("DELETE FROM notes WHERE author_token = 'test-tok-0047-http'");
 
     // Create a note to rate via HTTP. STATION/tracks (2, 3) — unique per suite.
     assembled_server::PgNoteRepo repo(db->getClient());
@@ -242,11 +238,12 @@ TEST_CASE("POST /v1/notes/{id}/rate HTTP integration") {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    auto client = drogon::HttpClient::newHttpClient(
-        "http://127.0.0.1:" + std::to_string(kNoteRatingTestPort));
+    auto client = drogon::HttpClient::newHttpClient("http://127.0.0.1:" +
+                                                    std::to_string(kNoteRatingTestPort));
 
-    auto sendRate = [&](const std::string &id, int val, const std::string &token)
-        -> std::pair<drogon::HttpStatusCode, Json::Value> {
+    auto sendRate =
+        [&](const std::string &id, int val,
+            const std::string &token) -> std::pair<drogon::HttpStatusCode, Json::Value> {
         Json::Value body;
         body["val"] = val;
         auto req = drogon::HttpRequest::newHttpJsonRequest(body);

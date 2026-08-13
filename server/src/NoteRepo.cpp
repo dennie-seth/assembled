@@ -119,13 +119,12 @@ std::vector<NoteRecord> PgNoteRepo::fetchRanked(int16_t archetype_id, int16_t an
 void PgNoteRepo::rate(const std::string &note_id, const std::string &voter, int16_t val) {
     // Upsert: insert the vote or overwrite it if val changed.
     // The WHERE clause in DO UPDATE makes same-val a no-op at the row level.
-    client_->execSqlSync(
-        "INSERT INTO note_votes (note_id, voter, val) "
-        "VALUES ($1::uuid, $2, $3::smallint) "
-        "ON CONFLICT (note_id, voter) DO UPDATE "
-        "SET val = EXCLUDED.val "
-        "WHERE note_votes.val != EXCLUDED.val",
-        note_id, voter, val);
+    client_->execSqlSync("INSERT INTO note_votes (note_id, voter, val) "
+                         "VALUES ($1::uuid, $2, $3::smallint) "
+                         "ON CONFLICT (note_id, voter) DO UPDATE "
+                         "SET val = EXCLUDED.val "
+                         "WHERE note_votes.val != EXCLUDED.val",
+                         note_id, voter, val);
 
     // Recompute the denormalized score from the authoritative votes table.
     client_->execSqlSync(
