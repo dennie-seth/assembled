@@ -30,3 +30,6 @@ CREATE TABLE IF NOT EXISTS transfer_receipt (
     bleed_at          TIMESTAMPTZ  NOT NULL DEFAULT now() + INTERVAL '72 hours',
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS transfer_receipt_created_at_idx
+    ON transfer_receipt (created_at);

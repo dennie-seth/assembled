@@ -9,10 +9,6 @@
 --   identity.first_universe       — grace-period flag (10-time-and-progression.md
 --                                   §5).  True until the first collapse.
 --
---   transfer_receipt              — idempotency receipt for custody transfers
---                                   (T-0126).  Retention 72h, swept by the
---                                   sweep worker (04-data-model.md §7).
---
 --   type_census                   — live item count per type_id; refreshed by
 --                                   the census phase every sweep cycle for
 --                                   INV-6 / INV-7 monitoring.
@@ -35,26 +31,10 @@ ALTER TABLE identity
 
 -- ─── transfer_receipt ─────────────────────────────────────────────────────────
 --
--- Primary key on the client-minted transfer_id is the idempotency guarantee:
--- a retry collides and returns the stored row instead of re-running the CAS
--- (03-net-protocol.md §4).  Retention 72 h, swept by the sweep worker.
+-- transfer_receipt is defined and owned by migration 013_transfer_receipts.sql
+-- (T-0126).  This migration (012) does not create it; only the sweep worker's
+-- runRetention() reads and deletes from it after 013 has run.
 --
--- kind:    0=leave | 1=use | 2=take | 3=transmute | 4=claim
--- outcome: 0=won | 1=lost
--- reason:  error enum (non-null only on lost)
-
-CREATE TABLE IF NOT EXISTS transfer_receipt (
-    transfer_id   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    token         TEXT        NOT NULL REFERENCES identity(token),
-    item_instance UUID        NOT NULL,
-    kind          SMALLINT    NOT NULL,
-    outcome       SMALLINT    NOT NULL,
-    reason        SMALLINT    NULL,
-    custody_depth INT         NULL,
-    bleed_at      TIMESTAMPTZ NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- ─── type_census ──────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS type_census (
@@ -86,5 +66,4 @@ CREATE INDEX IF NOT EXISTS item_instance_type_id_idx
 CREATE INDEX IF NOT EXISTS identity_collapse_expires_at_idx
     ON identity (collapse_expires_at);
 
-CREATE INDEX IF NOT EXISTS transfer_receipt_created_at_idx
-    ON transfer_receipt (created_at);
+-- transfer_receipt_created_at_idx is defined in 013_transfer_receipts.sql (T-0126).

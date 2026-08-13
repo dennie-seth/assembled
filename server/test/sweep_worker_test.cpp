@@ -97,23 +97,23 @@ void seedUnlock(const drogon::orm::DbClientPtr &db, const std::string &token, in
 }
 
 /// Seed a transfer_receipt with an age of @p hours_ago hours.
-std::string seedReceipt(const drogon::orm::DbClientPtr &db, const std::string &token,
+/// Uses the T-0126 schema: kind TEXT, item_id UUID, outcome TEXT, created_at.
+std::string seedReceipt(const drogon::orm::DbClientPtr &db, const std::string & /*token*/,
                         int hours_ago) {
     auto r =
         db->execSqlSync("INSERT INTO transfer_receipt "
-                        "(token, item_instance, kind, outcome, created_at) "
-                        "VALUES ($1, gen_random_uuid(), 0, 0, now() - make_interval(hours => $2)) "
+                        "(transfer_id, kind, item_id, outcome, created_at) "
+                        "VALUES (gen_random_uuid(), 'leave', gen_random_uuid(), 'won',"
+                        "        now() - make_interval(hours => $1)) "
                         "RETURNING transfer_id::text",
-                        token, hours_ago);
+                        hours_ago);
     return r[0][0].as<std::string>();
 }
 
 /// Remove all test-scoped rows in dependency order.
 void cleanup(const drogon::orm::DbClientPtr &db) {
-    // receipts
-    db->execSqlSync("DELETE FROM transfer_receipt "
-                    "WHERE token IN ($1, $2)",
-                    kAlice, kBob);
+    // receipts — T-0126 schema has no token column; delete all test receipts.
+    db->execSqlSync("DELETE FROM transfer_receipt");
     // items (via shard or type)
     db->execSqlSync("DELETE FROM item_instance WHERE type_id IN ($1, $2)", kTypeCommon,
                     kTypeUnique);
@@ -345,8 +345,7 @@ TEST_CASE("sweep retention: transfer receipts older than 72h are purged") {
     runner.applyPending(db->getClient());
 
     // Cleanup before seeding to avoid leftover state.
-    db->getClient()->execSqlSync("DELETE FROM transfer_receipt WHERE token IN ($1, $2)", kAlice,
-                                 kBob);
+    db->getClient()->execSqlSync("DELETE FROM transfer_receipt");
     seedIdentity(db->getClient(), kAlice);
 
     // Old receipt (73 h ago) — must be purged.
