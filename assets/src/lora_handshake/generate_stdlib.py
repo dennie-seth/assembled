@@ -165,7 +165,7 @@ def write_provenance(
 
 
 def main() -> int:
-    print(f"=== T-0167 LoRA Handshake Generation ===")
+    print("=== T-0167 LoRA Handshake Generation ===")
     print(f"ComfyUI URL: {BASE_URL}")
     print(f"Template:    {TEMPLATE_PATH}")
     print(f"LoRA:        {LORA_NAME} (weight={LORA_WEIGHT})")
@@ -201,7 +201,7 @@ def main() -> int:
     # 3. Poll until done
     print("Waiting for generation (SDXL 1024x1024 @ 30 steps with LoRA ~60-120s)...")
     entry = poll_until_done(prompt_id, timeout=600.0)
-    print(f"Generation complete!")
+    print("Generation complete!")
 
     # 4. Fetch output
     print("Fetching output image...")

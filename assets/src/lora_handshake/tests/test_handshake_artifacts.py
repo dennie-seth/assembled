@@ -34,7 +34,9 @@ ASSET_PROVENANCE_MD = REPO / "ASSET_PROVENANCE.md"
 DECISION_LOG_MD = REPO / "docs/decision-log.md"
 
 # Required top-level keys in every recipe (base fields + LoRA extension).
-_RECIPE_BASE_KEYS = {"prompt", "negative_prompt", "seed", "steps", "cfg", "width", "height", "checkpoint"}
+_RECIPE_BASE_KEYS = {
+    "prompt", "negative_prompt", "seed", "steps", "cfg", "width", "height", "checkpoint"
+}
 _RECIPE_LORA_KEYS = {"lora_name", "lora_weight"}
 
 # Required keys in the provenance sidecar that are specific to LoRA runs.
@@ -136,7 +138,8 @@ class TestProvenanceSidecar:
         if "lora_license" not in data:
             return  # covered by test_provenance_has_lora_keys
         # The T-0072 LoRA is CreativeML Open RAIL++-M (base inherits this).
-        assert "creativeml" in data["lora_license"].lower() or "openrail" in data["lora_license"].lower(), (
+        lora_lic = data["lora_license"].lower()
+        assert "creativeml" in lora_lic or "openrail" in lora_lic, (
             f"lora_license not on allowlist: {data['lora_license']!r}\n"
             "Only Apache-2.0 / OpenRAIL / CC0-derived models are permitted."
         )

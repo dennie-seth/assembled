@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 [project.optional-dependencies]
 dev = [
     "pytest==8.3.5",
+    "ruff==0.14.4",
 ]
 
 [tool.setuptools]
