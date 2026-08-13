@@ -28,12 +28,14 @@
 
 namespace assembled_server {
 
-/// /v1/notes — note composition (POST, T-0045) and retrieval (GET, T-0046).
+/// /v1/notes — note composition (POST, T-0045), retrieval (GET, T-0046),
+/// and rating (POST /v1/notes/{id}/rate, T-0047).
 class NoteController : public drogon::HttpController<NoteController> {
   public:
     METHOD_LIST_BEGIN
     ADD_METHOD_TO(NoteController::createNote, "/v1/notes", drogon::Post);
     ADD_METHOD_TO(NoteController::listNotes, "/v1/notes", drogon::Get);
+    ADD_METHOD_TO(NoteController::rateNote, "/v1/notes/{1}/rate", drogon::Post);
     METHOD_LIST_END
 
     /// @param req      POST /v1/notes with JSON body and Authorization: Bearer header.
@@ -55,6 +57,23 @@ class NoteController : public drogon::HttpController<NoteController> {
     ///                  - 503 if no DATABASE_URL is configured.
     void listNotes(const drogon::HttpRequestPtr &req,
                    std::function<void(const drogon::HttpResponsePtr &)> &&callback);
+
+    /// POST /v1/notes/{id}/rate (T-0047).
+    ///
+    /// Body: { "val": 1 } or { "val": -1 }.
+    /// One vote per (note_id, voter): same val is idempotent, different val
+    /// overwrites.  notes.rating is updated to SUM(val) over note_votes.
+    ///
+    /// @param req      POST with JSON body and Authorization: Bearer header.
+    /// @param callback invoked with:
+    ///                 - 200 on success or idempotent no-op.
+    ///                 - 400 JSON {"error":2005} if val is not +1 or -1.
+    ///                 - 401 JSON {"error":1001} if Authorization is absent/malformed.
+    ///                 - 503 if no DATABASE_URL is configured.
+    /// @param id       Note UUID from the path segment.
+    void rateNote(const drogon::HttpRequestPtr &req,
+                  std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                  const std::string &id);
 };
 
 } // namespace assembled_server

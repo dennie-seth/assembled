@@ -116,8 +116,33 @@ std::vector<NoteRecord> PgNoteRepo::fetchRanked(int16_t archetype_id, int16_t an
     return result;
 }
 
-void PgNoteRepo::rate(const std::string &note_id) {
-    client_->execSqlSync("UPDATE notes SET rating = rating + 1 WHERE id = $1::uuid", note_id);
+void PgNoteRepo::rate(const std::string &note_id, const std::string &voter, int16_t val) {
+    // Upsert: insert the vote or overwrite it if val changed.
+    // The WHERE clause in DO UPDATE makes same-val a no-op at the row level.
+    client_->execSqlSync(
+        "INSERT INTO note_votes (note_id, voter, val) "
+        "VALUES ($1::uuid, $2, $3::smallint) "
+        "ON CONFLICT (note_id, voter) DO UPDATE "
+        "SET val = EXCLUDED.val "
+        "WHERE note_votes.val != EXCLUDED.val",
+        note_id, voter, val);
+
+    // Recompute the denormalized score from the authoritative votes table.
+    client_->execSqlSync(
+        "UPDATE notes "
+        "SET rating = (SELECT COALESCE(SUM(val), 0) FROM note_votes WHERE note_id = $1::uuid) "
+        "WHERE id = $1::uuid",
+        note_id);
+
+    // Bleed-timer seam (T-0098 / docs/design/02-notes-system.md §7,
+    // docs/design/07-items-economy.md §5):
+    //   After this point, fetch notes.author_token for note_id and call into
+    //   the bleed-timer repo to update the author's held-bleed multiplier based
+    //   on the new score.
+    // MUST NOT touch identity.collapse_expires_at
+    //   (docs/design/10-time-and-progression.md §5) — that clock is
+    //   intentionally immune to rating to prevent solo players from extending
+    //   their own collapse window indefinitely.
 }
 
 } // namespace assembled_server
