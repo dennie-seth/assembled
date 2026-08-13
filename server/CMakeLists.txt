@@ -53,6 +53,8 @@ add_library(assembled_server_lib OBJECT
   src/RunAssembler.cpp
   src/AnchorRepo.cpp
   src/AnchorController.cpp
+  src/OfferingRepo.cpp
+  src/OfferingController.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -170,3 +172,16 @@ add_executable(anchor_snapshot_tests
 )
 target_link_libraries(anchor_snapshot_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(anchor_snapshot_tests)
+
+# T-0097: offering escrow tests — atomic pay-and-release (INV-4).
+# Tests: happy-path claim, REPEATABLE READ atomicity proof, concurrent-claimer
+# race (FOR UPDATE serialisation), expiry, type mismatch, payment-not-held,
+# rollback leaves no partial state, CAS-on-version guard, structural
+# impossibility of both-hold and neither-hold states.
+# Separate binary: no drogon::app() singleton contention risk.
+# offering_escrow_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(offering_escrow_tests
+  test/offering_escrow_test.cpp
+)
+target_link_libraries(offering_escrow_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(offering_escrow_tests)
