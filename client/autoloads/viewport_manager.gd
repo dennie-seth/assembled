@@ -1,4 +1,3 @@
-class_name ViewportManager
 extends Node
 ## T-0172: Integer-scale viewport manager.
 ##
