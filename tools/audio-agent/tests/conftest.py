@@ -1,20 +1,39 @@
 """Shared fixtures: a sample recipe and its rendered request, so client/pipeline
 tests don't need to hand-build one."""
 
-from __future__ import annotations
+import io
 
+import numpy as np
 import pytest
+import soundfile as sf
 
 from audio_agent.recipe import MusicRecipe
 from audio_agent.request import render_request
 from audio_agent.texture_recipe import TextureRecipe
 from audio_agent.texture_request import render_texture_request
 
+_SAMPLE_RATE = 44100
+
 _PROVENANCE_HEADER = (
     "# Asset Provenance\n\n"
     "| Asset | Model | License | Prompt | Seed |\n"
     "|---|---|---|---|---|\n"
 )
+
+
+def _make_sine_wav_bytes(freq: float = 440.0, duration_s: float = 0.5) -> bytes:
+    """Tiny valid WAV file for use as a FakeClient audio payload."""
+    t = np.linspace(0, duration_s, int(_SAMPLE_RATE * duration_s), endpoint=False)
+    samples = (0.3 * np.sin(2 * np.pi * freq * t)).astype(np.float64)
+    buffer = io.BytesIO()
+    sf.write(buffer, samples, _SAMPLE_RATE, subtype="PCM_16", format="WAV")
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def fake_wav_bytes() -> bytes:
+    """A minimal valid WAV payload for use as generated audio in pipeline tests."""
+    return _make_sine_wav_bytes()
 
 
 @pytest.fixture(autouse=True)

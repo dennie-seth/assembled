@@ -1,10 +1,17 @@
-"""Generation pipeline: license gate -> generate (under gpu_lock) -> save ->
-descend seam -> provenance -- the T-0082 handoff point for T-0083 (descend)
-and T-0102 (validate), which this task deliberately doesn't implement.
-Mirrors tools/comfy-client/tests/test_pipeline.py. `generate_texture`
-(T-0081, Stable Audio Open) mirrors `generate` (ACE-Step) below it."""
+"""Generation pipeline: license gate -> generate (under gpu_lock) -> descend ->
+provenance -- the T-0082 handoff that T-0083 now fulfils with the real descent
+chain. `generate_texture` (T-0081, Stable Audio Open) mirrors `generate`
+(ACE-Step) below it.
+
+descend() is mocked in these tests (via `_mock_descend` autouse fixture) to
+keep the pipeline tests focused on the T-0082 generation flow -- orchestration,
+license gate, GPU lock, provenance -- rather than the descent DSP that has its
+own test file (test_descend.py, T-0083).
+"""
 
 from __future__ import annotations
+
+from unittest import mock
 
 import pytest
 from gen_client_base.client import GenerationClient
@@ -34,6 +41,23 @@ class FakeClient(GenerationClient):
         return self.audio_bytes
 
 
+@pytest.fixture(autouse=True)
+def _mock_descend(monkeypatch):
+    """Mock the real descent chain (T-0083) so pipeline tests remain focused on
+    the generation flow (T-0082): license gate, GPU lock, provenance.
+
+    The mock is a passthrough -- it writes no Ogg, just returns the raw path --
+    so pipeline tests can assert on the raw WAV bytes written by the generator
+    without needing valid audio content in FakeClient.audio_bytes.
+    """
+    import audio_agent.pipeline as pipeline_mod
+
+    def passthrough(raw_path, *, bus_value, loopable, target_lufs, crossfade_s=0.064):
+        return raw_path
+
+    monkeypatch.setattr(pipeline_mod, "descend", passthrough)
+
+
 def test_generate_saves_raw_output_and_returns_result(tmp_path, sample_recipe):
     client = FakeClient()
     result = generate(
@@ -46,6 +70,24 @@ def test_generate_saves_raw_output_and_returns_result(tmp_path, sample_recipe):
     assert result.job_id.startswith(sample_recipe.name)
     assert result.job_id.endswith(".wav")
     assert [c[0] for c in client.calls] == ["submit", "wait", "fetch"]
+
+
+def test_generate_calls_descend_with_bus_and_loopable(tmp_path, sample_recipe, fake_wav_bytes):
+    """Pipeline passes bus_value and loopable to descend (T-0083 integration)."""
+    with mock.patch("audio_agent.pipeline.descend") as mock_descend:
+        mock_descend.side_effect = lambda raw, **kw: raw
+        generate(
+            sample_recipe,
+            out_dir=tmp_path,
+            client=FakeClient(fake_wav_bytes),
+            lock_path=tmp_path / "gpu.lock",
+        )
+
+    mock_descend.assert_called_once()
+    _, kwargs = mock_descend.call_args
+    assert kwargs["bus_value"] == "Music"
+    assert kwargs["loopable"] is True
+    assert kwargs["target_lufs"] == -23.0
 
 
 def test_generate_submits_the_recipe_rendered_as_a_request(tmp_path, sample_recipe):
@@ -119,7 +161,29 @@ def test_generate_texture_saves_raw_output_and_returns_result(tmp_path, sample_t
     assert [c[0] for c in client.calls] == ["submit", "wait", "fetch"]
 
 
-def test_generate_texture_submits_the_recipe_rendered_as_a_request(tmp_path, sample_texture_recipe):
+def test_generate_texture_calls_descend_with_bus_and_loopable(
+    tmp_path, sample_texture_recipe, fake_wav_bytes
+):
+    """Pipeline passes bus_value and loopable=False (World SFX) to descend."""
+    with mock.patch("audio_agent.pipeline.descend") as mock_descend:
+        mock_descend.side_effect = lambda raw, **kw: raw
+        generate_texture(
+            sample_texture_recipe,
+            out_dir=tmp_path,
+            client=FakeClient(fake_wav_bytes),
+            lock_path=tmp_path / "gpu.lock",
+        )
+
+    mock_descend.assert_called_once()
+    _, kwargs = mock_descend.call_args
+    assert kwargs["bus_value"] == "World SFX"
+    assert kwargs["loopable"] is False
+    assert kwargs["target_lufs"] == -18.0
+
+
+def test_generate_texture_submits_the_recipe_rendered_as_a_request(
+    tmp_path, sample_texture_recipe
+):
     client = FakeClient()
     generate_texture(
         sample_texture_recipe, out_dir=tmp_path, client=client, lock_path=tmp_path / "gpu.lock"

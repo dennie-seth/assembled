@@ -21,7 +21,7 @@ from gen_client_base.provenance_writer import append_provenance_entry
 
 from audio_agent.audio_client import AudioClient
 from audio_agent.base_url import resolve_base_url
-from audio_agent.descend import descend_stub
+from audio_agent.descend import BUS_TARGET_LUFS, LOOPABLE_BUSES, descend
 from audio_agent.gpu_lock import DEFAULT_LOCK_PATH, gpu_lock
 from audio_agent.provenance import (
     ProvenanceRecord,
@@ -84,8 +84,13 @@ def generate(
     raw_path = out_dir_path / job_id
     raw_path.write_bytes(raw_bytes)
 
-    # TODO(T-0083): real descent chain (trim/loop-fold/normalize) replaces this seam.
-    final_path = descend_stub(raw_path)
+    bus_value = recipe.bus.value
+    final_path = descend(
+        raw_path,
+        bus_value=bus_value,
+        loopable=bus_value in LOOPABLE_BUSES,
+        target_lufs=BUS_TARGET_LUFS[bus_value],
+    )
 
     provenance = build_provenance_record(recipe, request_hash=req_hash, job_id=job_id)
 
@@ -133,8 +138,13 @@ def generate_texture(
     raw_path = out_dir_path / job_id
     raw_path.write_bytes(raw_bytes)
 
-    # TODO(T-0083): real descent chain (trim/loop-fold/normalize) replaces this seam.
-    final_path = descend_stub(raw_path)
+    bus_value = recipe.bus.value
+    final_path = descend(
+        raw_path,
+        bus_value=bus_value,
+        loopable=bus_value in LOOPABLE_BUSES,
+        target_lufs=BUS_TARGET_LUFS[bus_value],
+    )
 
     provenance = build_texture_provenance_record(recipe, request_hash=req_hash, job_id=job_id)
 
