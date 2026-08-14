@@ -6,6 +6,7 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
+#include "anchor_registry.h"
 #include "assembled_ping.h"
 #include "curl_pump.h"
 #include "note_client.h"
@@ -18,6 +19,7 @@ void initialize_assembled_module(ModuleInitializationLevel p_level) {
         return;
     }
 
+    GDREGISTER_CLASS(AnchorRegistry);
     GDREGISTER_CLASS(AssembledPing);
     GDREGISTER_CLASS(CurlPump);
     GDREGISTER_CLASS(NoteClient);
