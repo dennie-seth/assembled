@@ -22,7 +22,7 @@ Vector2 AnchorRegistry::resolve(int archetype_id, int tag) const {
     auto it = anchors_.find(make_key(archetype_id, tag));
     ERR_FAIL_COND_V_MSG(it == anchors_.end(), Vector2(),
                         String("AnchorRegistry: no anchor registered for archetype=") +
-                        String::num_int64(archetype_id) + " tag=" + String::num_int64(tag));
+                            String::num_int64(archetype_id) + " tag=" + String::num_int64(tag));
     return it->second;
 }
 
