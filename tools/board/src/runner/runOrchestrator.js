@@ -16,6 +16,10 @@ import {
   diffPlannerFileView,
   applyPlannerFileViewDiff
 } from "./plannerFileView.js";
+import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
+import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
+import { findExistingRemediationCard, draftRemediationCard } from "../lib/escalationRemediation.js";
+import { createCard as createCardDefault } from "./cardCreation.js";
 
 /**
  * Hard cap on total implementer/reviewer runs a card can consume across its bounded
@@ -79,6 +83,7 @@ export class RunOrchestrator {
     rulesDir = path.join(repoRoot, ".claude", "rules"),
     baseBranch = "develop",
     taskStoreKind = "fs",
+    idAllocator,
     loadAgentDefFn = loadAgentDef,
     loadRulesFn = loadRules,
     resolveAllowedToolsFn = resolveAllowedTools,
@@ -89,6 +94,7 @@ export class RunOrchestrator {
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
     clearRunStateFn = clearRunState,
+    createCardFn = createCardDefault,
     now = () => new Date(),
     onIdle = () => {}
   }) {
@@ -107,6 +113,7 @@ export class RunOrchestrator {
     this.rulesDir = rulesDir;
     this.baseBranch = baseBranch;
     this.taskStoreKind = taskStoreKind;
+    this.idAllocator = idAllocator;
     this.loadAgentDefFn = loadAgentDefFn;
     this.loadRulesFn = loadRulesFn;
     this.resolveAllowedToolsFn = resolveAllowedToolsFn;
@@ -117,6 +124,7 @@ export class RunOrchestrator {
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
     this.clearRunStateFn = clearRunStateFn;
+    this.createCardFn = createCardFn;
     this.now = now;
     this.onIdle = onIdle;
     this.activeRuns = new Map();
@@ -185,6 +193,14 @@ export class RunOrchestrator {
     }
     if (task.status !== "ready" && task.status !== "review" && task.status !== "blocked") {
       throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready", "review", or "blocked"`);
+    }
+    // "dispatch" is the escalation flow's non-executable sentinel (see escalationRemediation.js
+    // / taskParser.js's ASSIGNABLE_AGENT_NAMES comment): this is the pick-up loop's chokepoint --
+    // every run, manual or automated, passes through runCard() -- so refusing it here is what
+    // guarantees a remediation card surfaces in `ready` for a human/Dispatch to grab and never
+    // gets auto-run.
+    if (task.agent === "dispatch") {
+      throw new Error(`Cannot run ${taskId}: assigned to "dispatch" -- awaiting human/Dispatch pickup, not eligible for automated runs`);
     }
     // Guards re-entrancy across the whole runCard span, including the auto-retry loop's
     // FAIL -> next-attempt gap where the phase-level activeRuns map is momentarily empty
@@ -260,13 +276,14 @@ export class RunOrchestrator {
     const effectiveAgent = task.agent ?? "generic";
 
     let currentReused = reused;
+    const attemptRecords = [];
     for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
       // Re-fetch: a prior attempt in this same loop may have appended a FAIL note to the
       // body (read by the implementer's "continuing existing work" prompt on the retry).
       const liveTask = await this.store.get(taskId);
       await this._updateAndBroadcast(taskId, { attempts: attempt });
 
-      const { stop, verdict } = await this._runAttempt(
+      const { stop, verdict, events } = await this._runAttempt(
         taskId,
         liveTask,
         effectiveAgent,
@@ -282,9 +299,14 @@ export class RunOrchestrator {
         return;
       }
 
+      attemptRecords.push({ attempt, notes: verdict.notes, events });
+
       const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
       await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !isFinalAttempt);
-      if (isFinalAttempt) return;
+      if (isFinalAttempt) {
+        await this._escalateIfGenuineBlocker(taskId, attemptRecords, runLog);
+        return;
+      }
 
       // Every attempt after the first resumes the same worktree/branch, regardless of
       // whether addWorktree itself had to reuse it (a first attempt can start fresh).
@@ -373,7 +395,7 @@ export class RunOrchestrator {
       return { stop: true };
     }
 
-    return { stop: false, verdict };
+    return { stop: false, verdict, events: [...implementerResult.events, ...reviewerResult.events] };
   }
 
   /**
@@ -599,6 +621,98 @@ export class RunOrchestrator {
       status: retrying ? "in-progress" : "blocked",
       body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying))
     });
+  }
+
+  /**
+   * Escalation step, fired once at the exhaustion boundary of the auto-retry loop (the 5th
+   * consecutive FAIL that just set the card to `blocked` -- see docs/design/escalation-workflow.md).
+   *
+   * First checks whether the run(s) failed because of an Anthropic token/usage/weekly/rate limit
+   * -- a transient environmental stop, not a genuine blocker -- by scanning every attempt's raw
+   * NDJSON events for a usage-limit signature (usageLimitDetector.js). If so, this is a no-op:
+   * no report, no remediation card, the card is simply left `blocked` for a normal later re-run.
+   *
+   * Otherwise, deterministically builds a structured blocker report from the reviewer FAIL
+   * verdicts the card actually accumulated across its exhausted attempts (blockerReport.js -- no
+   * extra `claude` invocation; see that module's docstring for why), appends it to the card as a
+   * comment, then hands off to remediation-card creation: de-dupes against an already-open
+   * remediation card for this same blocked card (escalationRemediation.js), creates a new one in
+   * `ready` status owned by the non-executable `agent: "dispatch"` sentinel when none exists yet
+   * (reusing cardCreation.js's `createCard`, the same direct-to-store path flow-stats
+   * self-improvement uses -- not a live planner agent run, since that would require its own
+   * worktree/branch/PR and could never land a `ready` card on the live board immediately), and
+   * wires the original card's `depends_on` to the remediation card either way (idempotent).
+   *
+   * Best-effort end to end: any failure here (a missing store.list in a lightweight caller, a
+   * create failure) is caught and logged, never rethrown -- the card is already correctly
+   * `blocked` by the time this runs, and escalation is additive, not load-bearing for that.
+   */
+  async _escalateIfGenuineBlocker(taskId, attemptRecords, runLog) {
+    try {
+      const allEvents = attemptRecords.flatMap((r) => r.events ?? []);
+      if (eventsContainUsageLimitSignature(allEvents)) {
+        await this._logEscalation(
+          taskId,
+          runLog,
+          "Escalation skipped: usage/rate-limit signature detected in the run output -- treated as a transient stop, card left blocked for a normal later re-run."
+        );
+        return;
+      }
+
+      const task = await this.store.get(taskId);
+      const report = buildBlockerReport({ task, attemptRecords, attemptCount: attemptRecords.length });
+      await this._appendComment(taskId, "assembled-board", formatBlockerReportComment(report));
+
+      const tasks = await this.store.list();
+      let remediation = findExistingRemediationCard(tasks, taskId);
+      if (!remediation) {
+        const fields = draftRemediationCard({ task, report, attemptCount: attemptRecords.length, now: this.now });
+        remediation = await this.createCardFn({
+          store: this.store,
+          idAllocator: this.idAllocator,
+          repoRoot: this.repoRoot,
+          tasksDir: this.tasksDir,
+          fields,
+          taskStoreKind: this.taskStoreKind,
+          hub: this.hub
+        });
+        await this._logEscalation(
+          taskId,
+          runLog,
+          `Escalation: created remediation card ${remediation.id} (agent: dispatch) and linked it as a dependency.`
+        );
+      } else {
+        await this._logEscalation(
+          taskId,
+          runLog,
+          `Escalation: remediation card ${remediation.id} already exists for ${taskId} -- skipping creation, ensuring the dependency link.`
+        );
+      }
+
+      await this._linkDependsOn(taskId, remediation.id);
+    } catch (err) {
+      console.warn(`Board: escalation failed for ${taskId} (card remains blocked, no report/remediation created):`, err.message);
+      await this._logEscalation(taskId, runLog, `Escalation failed: ${err.message}`).catch(() => {});
+    }
+  }
+
+  async _appendComment(taskId, author, text) {
+    const current = await this.store.get(taskId);
+    const comments = [...(current.comments ?? []), { author, text, timestamp: this.now().toISOString() }];
+    return this._updateAndBroadcast(taskId, { comments });
+  }
+
+  async _linkDependsOn(taskId, dependencyId) {
+    const current = await this.store.get(taskId);
+    const existing = current.depends_on ?? [];
+    if (existing.includes(dependencyId)) return current;
+    return this._updateAndBroadcast(taskId, { depends_on: [...existing, dependencyId] });
+  }
+
+  async _logEscalation(taskId, runLog, message) {
+    const event = { type: "escalation", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "escalation", event });
   }
 
   async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false) {

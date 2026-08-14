@@ -409,6 +409,12 @@ async function handleRunTask(orchestrator, id, res) {
   if (!RUNNABLE_STATUSES.has(task.status)) {
     throw new HttpError(409, `Cannot run ${id}: status is "${task.status}", expected "ready", "review", or "blocked"`);
   }
+  // Mirrors RunOrchestrator.runCard's own "dispatch" guard (belt and suspenders, see
+  // docs/design/escalation-workflow.md): a clean 409 here instead of letting the run's
+  // fire-and-forget .catch() below turn it into a "Run Failed" note.
+  if (task.agent === "dispatch") {
+    throw new HttpError(409, `Cannot run ${id}: assigned to "dispatch" -- awaiting human/Dispatch pickup, not eligible for automated runs`);
+  }
   if (orchestrator.isRunning(id)) {
     throw new HttpError(409, `Task ${id} already has an active run`);
   }
