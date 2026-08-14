@@ -6,8 +6,6 @@ for archetype and tag IDs is shared/note_templates.hpp; this module reads it
 so the checker never has a private copy.
 """
 
-from __future__ import annotations
-
 import re
 
 
