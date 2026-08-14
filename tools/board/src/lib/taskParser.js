@@ -17,7 +17,13 @@ const ID_RE = /^T-\d{4}$/;
 const CREATED_RE = /^\d{4}-\d{2}-\d{2}$/;
 const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked", "retired"];
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
-export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio", "planner"];
+// "dispatch" is a non-executable sentinel: a valid agent field value with no
+// .claude/agents/dispatch.md definition, so listAssignableAgents' directory-intersection keeps
+// it out of the manual New Card dropdown automatically. Cards land here only via
+// RunOrchestrator's escalation flow when a card's auto-retry cap exhausts on a genuine blocker,
+// and the runner's pick-up loop (RunOrchestrator.runCard) explicitly refuses to run them --
+// see docs/design/escalation-workflow.md.
+export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio", "planner", "dispatch"];
 const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
 const OPTIONAL_FIELDS = ["branch", "commit", "pr"];
 const DELIVERABLE_TYPES = ["code", "artifact"];

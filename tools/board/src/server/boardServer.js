@@ -74,6 +74,7 @@ export async function startBoardServer({
     agentsDir,
     rulesDir: path.join(REPO_ROOT, ".claude", "rules"),
     taskStoreKind,
+    idAllocator,
     onIdle: () => restartCoordinator.notifyIdle()
   });
   const orphanReaper = createOrphanReaper({
