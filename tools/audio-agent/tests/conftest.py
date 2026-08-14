@@ -14,6 +14,12 @@ from audio_agent.texture_request import render_texture_request
 
 _SAMPLE_RATE = 44100
 
+_PROVENANCE_HEADER = (
+    "# Asset Provenance\n\n"
+    "| Asset | Model | License | Prompt | Seed |\n"
+    "|---|---|---|---|---|\n"
+)
+
 
 def _make_sine_wav_bytes(freq: float = 440.0, duration_s: float = 0.5) -> bytes:
     """Tiny valid WAV file for use as a FakeClient audio payload."""
@@ -28,6 +34,17 @@ def _make_sine_wav_bytes(freq: float = 440.0, duration_s: float = 0.5) -> bytes:
 def fake_wav_bytes() -> bytes:
     """A minimal valid WAV payload for use as generated audio in pipeline tests."""
     return _make_sine_wav_bytes()
+
+
+@pytest.fixture(autouse=True)
+def _default_provenance_md(tmp_path, monkeypatch):
+    """Create ASSET_PROVENANCE.md in tmp_path and patch CWD so generate() defaults to it.
+
+    Ensures every generate() call writes provenance even when tests don't pass
+    provenance_md= explicitly (T-0075: provenance is non-optional).
+    """
+    (tmp_path / "ASSET_PROVENANCE.md").write_text(_PROVENANCE_HEADER)
+    monkeypatch.chdir(tmp_path)
 
 
 @pytest.fixture

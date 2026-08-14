@@ -1,0 +1,59 @@
+name: ci-tag-gate
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "tools/tag-gate/**"
+      - "shared/note_templates.hpp"
+      - "shared/variants.json"
+      - ".github/workflows/ci-tag-gate.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "tools/tag-gate/**"
+      - "shared/note_templates.hpp"
+      - "shared/variants.json"
+      - ".github/workflows/ci-tag-gate.yml"
+
+concurrency:
+  group: ci-tag-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/tag-gate
+
+jobs:
+  lint-test:
+    name: lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      - run: ruff check .
+
+      - run: pytest -q
+
+  check:
+    name: anchor-tag completeness (INV-12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e "."
+        working-directory: tools/tag-gate
+
+      - name: Run tag-gate against shared catalogue
+        run: tag-gate
+        working-directory: .
