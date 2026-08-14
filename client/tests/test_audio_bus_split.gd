@@ -19,6 +19,10 @@ extends SceneTree
 ##   godot --headless --script tests/test_audio_bus_split.gd
 ## from client/. Exit 0 on PASS, 1 on any failure.
 
+## audio_router.gd loaded by path — avoids the class_name/autoload conflict.
+## (Godot 4 disallows class_name that shadows an autoload singleton name.)
+const _ROUTER_SCRIPT: GDScript = preload("res://audio_router.gd")
+
 const EXPECTED_BUSES: Array[String] = [
 	"Ambience",
 	"Music",
@@ -28,6 +32,11 @@ const EXPECTED_BUSES: Array[String] = [
 
 func _init() -> void:
 	var failures: Array[String] = []
+
+	# Set up buses via AudioRouter exactly as the autoload does at runtime.
+	# This makes the test independent of SceneTree-vs-autoload startup order.
+	var router: Node = _ROUTER_SCRIPT.new()
+	router.setup_buses()
 
 	# ── 1. All four buses exist ────────────────────────────────────────────
 	for bus_name: String in EXPECTED_BUSES:
@@ -90,8 +99,6 @@ func _init() -> void:
 			)
 
 	# ── 5. AudioRouter.route_player() routes by metadata bus name ─────────
-	var router: AudioRouter = AudioRouter.new()
-
 	var player: AudioStreamPlayer = AudioStreamPlayer.new()
 	router.route_player(player, &"Gameplay SFX")
 	if player.bus != &"Gameplay SFX":
@@ -147,7 +154,7 @@ func _init() -> void:
 		)
 	player3.free()
 
-	router.free()
+	router.free()  # Clean up the router instance created at the top of _init()
 
 	# ── Report ────────────────────────────────────────────────────────────
 	if failures.is_empty():
