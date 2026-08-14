@@ -83,7 +83,7 @@ func _test_watcher(WatcherEntity: Resource, SightConeSensor: Resource, failures:
 	if sensor == null:
 		failures.append("WatcherEntity.sensor is null — must carry a SightConeSensor")
 		return
-	if not (sensor is SightConeSensor):
+	if not (sensor.get_script() == SightConeSensor):
 		failures.append("WatcherEntity.sensor must be a SightConeSensor instance")
 
 	# Detection parameters — use T-0174 defaults: range=6t×16=96px, cone_half=45°
@@ -132,7 +132,7 @@ func _test_sound(SoundEntity: Resource, SoundRadiusSensor: Resource, failures: A
 	if sensor == null:
 		failures.append("SoundEntity.sensor is null — must carry a SoundRadiusSensor")
 		return
-	if not (sensor is SoundRadiusSensor):
+	if not (sensor.get_script() == SoundRadiusSensor):
 		failures.append("SoundEntity.sensor must be a SoundRadiusSensor instance")
 
 	# T-0174 defaults: run_radius=5t×16=80px, walk_radius=1.5t×16=24px
@@ -174,7 +174,7 @@ func _test_still_air(StillAirEntity: Resource, ProximityPatrolSensor: Resource, 
 	if sensor == null:
 		failures.append("StillAirEntity.sensor is null — must carry a ProximityPatrolSensor")
 		return
-	if not (sensor is ProximityPatrolSensor):
+	if not (sensor.get_script() == ProximityPatrolSensor):
 		failures.append("StillAirEntity.sensor must be a ProximityPatrolSensor instance")
 
 	# T-0174 defaults: catch_radius=1.5t×16=24px

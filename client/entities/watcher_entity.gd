@@ -9,11 +9,13 @@ extends RefCounted
 
 const HAZARD_LABEL: StringName = &"the watcher"
 
+const _SightConeSensor = preload("res://sensors/sight_cone_sensor.gd")
+
 ## The single sensor attached to this entity. No other detection logic present.
-var sensor: SightConeSensor
+var sensor: _SightConeSensor
 
 func _init() -> void:
-	sensor = SightConeSensor.new()
+	sensor = _SightConeSensor.new()
 
 ## Returns true if this entity's sight cone detects the player.
 ## Entirely delegated to [sensor] — no detection logic in this method.

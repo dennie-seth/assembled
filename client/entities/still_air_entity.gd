@@ -10,11 +10,13 @@ extends RefCounted
 
 const HAZARD_LABEL: StringName = &"the still air"
 
+const _ProximityPatrolSensor = preload("res://sensors/proximity_patrol_sensor.gd")
+
 ## The single sensor attached to this entity. No other detection logic present.
-var sensor: ProximityPatrolSensor
+var sensor: _ProximityPatrolSensor
 
 func _init() -> void:
-	sensor = ProximityPatrolSensor.new()
+	sensor = _ProximityPatrolSensor.new()
 
 ## Returns true if the player is within this entity's patrol detection radius.
 ## Entirely delegated to [sensor] — no detection logic in this method.

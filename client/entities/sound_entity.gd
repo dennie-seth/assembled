@@ -9,11 +9,13 @@ extends RefCounted
 
 const HAZARD_LABEL: StringName = &"the sound"
 
+const _SoundRadiusSensor = preload("res://sensors/sound_radius_sensor.gd")
+
 ## The single sensor attached to this entity. No other detection logic present.
-var sensor: SoundRadiusSensor
+var sensor: _SoundRadiusSensor
 
 func _init() -> void:
-	sensor = SoundRadiusSensor.new()
+	sensor = _SoundRadiusSensor.new()
 
 ## Returns true if this entity hears the player's movement noise.
 ## Entirely delegated to [sensor] — no detection logic in this method.
