@@ -54,6 +54,7 @@ TICKS_PER_RUN: int = 200
 UNIQUE_COUNT: int = 5
 CHAIN_KEY_CROSSINGS_REQUIRED: int = 2
 CHAIN_KEY_MODE: str = "destroy"
+N_EXIT: int = 3  # distinct unique types held simultaneously to complete (T-0130)
 
 # P-invariance test threshold: CV of median rooms-per-run across P values.
 # Below this the distribution is considered P-invariant for reporting purposes.
@@ -114,6 +115,7 @@ def _run_one_point(
     chain_key_mode: str = CHAIN_KEY_MODE,
     chain_key_crossings_required: int = CHAIN_KEY_CROSSINGS_REQUIRED,
     unique_count: int = UNIQUE_COUNT,
+    n_exit: int = N_EXIT,
 ) -> dict[str, Any]:
     """Run one (population, seed) combination for exactly one universe.
 
@@ -131,8 +133,11 @@ def _run_one_point(
     @param chain_key_crossings_required Number of tears an agent must cross to complete
                                        their chain-key progression (12-tears.md §3a).
     @param unique_count                Fixed absolute count of unique instances in the world.
-    @return                            Dict with "chain_crossings" and "rooms_per_run" lists,
-                                       one entry per non-QUIT agent.
+    @param n_exit                      Distinct unique types held simultaneously to complete
+                                       (01-vision.md §5, T-0130).  Zero means disabled.
+    @return                            Dict with "chain_crossings", "rooms_per_run" lists,
+                                       and "completion_rate" (fraction completed), one entry
+                                       per non-QUIT agent for the list fields.
     """
     # Scale world size with population so the spawn loop can produce k_c*P items
     # within the compressed test window.  num_anchors is the per-tick spawn
@@ -155,14 +160,18 @@ def _run_one_point(
         collapse_duration=ticks + 1,
         first_universe_multiplier=1.0,
         num_anchors=num_anchors,
+        n_exit=n_exit,
     )
     engine = SimEngine(cfg, seed=seed)
     engine.run(ticks)
 
     agents = [a for a in engine.state.agents.values() if a.state != AgentState.QUIT]
+    completed = sum(1 for a in agents if a.is_complete)
+    completion_rate = float(completed) / len(agents) if agents else 0.0
     return {
         "chain_crossings": [a.chain_progress for a in agents],
         "rooms_per_run": [a.items_received for a in agents],
+        "completion_rate": completion_rate,
     }
 
 
@@ -181,6 +190,7 @@ def run_chain_key_population_sweep(
     chain_key_mode: str = CHAIN_KEY_MODE,
     chain_key_crossings_required: int = CHAIN_KEY_CROSSINGS_REQUIRED,
     unique_count: int = UNIQUE_COUNT,
+    n_exit: int = N_EXIT,
 ) -> list[dict[str, Any]]:
     """Sweep chain-key and rooms metrics across P ∈ population_range.
 
@@ -198,6 +208,8 @@ def run_chain_key_population_sweep(
     @param chain_key_mode           "destroy" or "transfer".
     @param chain_key_crossings_required  Crossings needed to complete chain progression.
     @param unique_count             Fixed absolute count of unique item instances.
+    @param n_exit                   Distinct unique types held simultaneously to complete
+                                    (01-vision.md §5, T-0130).
     @return                         One row per population value.
     """
     rows: list[dict[str, Any]] = []
@@ -205,6 +217,7 @@ def run_chain_key_population_sweep(
     for P in population_range:
         all_crossings: list[float] = []
         all_rooms: list[float] = []
+        all_completion_rates: list[float] = []
         seed_list = [seed + i for i in range(seeds_per_point)]
 
         for s in seed_list:
@@ -216,12 +229,15 @@ def run_chain_key_population_sweep(
                 chain_key_mode=chain_key_mode,
                 chain_key_crossings_required=chain_key_crossings_required,
                 unique_count=unique_count,
+                n_exit=n_exit,
             )
             all_crossings.extend(float(x) for x in result["chain_crossings"])
             all_rooms.extend(float(x) for x in result["rooms_per_run"])
+            all_completion_rates.append(result["completion_rate"])
 
         crossing_stats = _iqr_stats(all_crossings)
         rooms_stats = _iqr_stats(all_rooms)
+        completion_stats = _iqr_stats(all_completion_rates)
 
         rows.append(
             {
@@ -236,6 +252,10 @@ def run_chain_key_population_sweep(
                 "rooms_per_run_q1": rooms_stats["q1"],
                 "rooms_per_run_q3": rooms_stats["q3"],
                 "rooms_per_run_iqr": rooms_stats["iqr"],
+                "completion_rate_median": completion_stats["median"],
+                "completion_rate_q1": completion_stats["q1"],
+                "completion_rate_q3": completion_stats["q3"],
+                "completion_rate_iqr": completion_stats["iqr"],
                 "n_agents_total": len(all_crossings),
                 "seeds": seed_list,
                 "ticks_per_run": ticks_per_run,

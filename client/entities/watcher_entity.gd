@@ -20,6 +20,9 @@ func _init() -> void:
 ## @param entity_pos World position of this entity.
 ## @param entity_facing Normalized direction this entity is facing.
 ## @param player_pos World position of the player.
-## @param player_in_cover True when the player is behind cover.
+## @param player_in_cover True when the player is behind cover (injected as occluder_fn).
 func is_detecting(entity_pos: Vector2, entity_facing: Vector2, player_pos: Vector2, player_in_cover: bool) -> bool:
-	return sensor.detect(entity_pos, entity_facing, player_pos, player_in_cover)
+	sensor.entity_position = entity_pos
+	sensor.entity_facing_angle = entity_facing.angle()
+	sensor.occluder_fn = func(_a: Vector2, _b: Vector2) -> bool: return player_in_cover
+	return sensor.check(player_pos)

@@ -467,6 +467,15 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
     expect(payload.error).toMatch(/ready/i);
   });
 
+  it("returns 409 when running a card assigned to the dispatch escalation sentinel", async () => {
+    const task = await createTask({ status: "ready", agent: "dispatch" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/dispatch/i);
+    expect(orchestrator.isRunning(task.id)).toBe(false);
+  });
+
   it("returns 409 when running a retired task", async () => {
     const task = await createTask({ status: "retired" });
     const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });

@@ -21,4 +21,5 @@ func _init() -> void:
 ## @param entity_pos World position of this entity.
 ## @param player_pos World position of the player.
 func is_detecting(entity_pos: Vector2, player_pos: Vector2) -> bool:
-	return sensor.detect(entity_pos, player_pos)
+	sensor.entity_position = entity_pos
+	return sensor.check(player_pos)

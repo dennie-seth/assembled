@@ -14,13 +14,14 @@ from pathlib import Path
 
 from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import assert_checkpoint_allowed
+from gen_client_base.provenance_writer import append_provenance_entry
 
 from comfy_client.base_url import resolve_base_url
 from comfy_client.checkpoint_hash import hash_checkpoint_file
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.descend import descend_stub
 from comfy_client.errors import MissingModelHashError
-from comfy_client.provenance import ProvenanceRecord, build_provenance_record
+from comfy_client.provenance import ProvenanceRecord, build_provenance_record, provenance_to_dict
 from comfy_client.recipe import Recipe
 from comfy_client.workflow import render_workflow
 from comfy_client.workflow import workflow_hash as compute_workflow_hash
@@ -42,6 +43,7 @@ def generate(
     timeout: float = 300.0,
     poll_interval: float = 1.0,
     checkpoint_dir: Path | str | None = None,
+    provenance_md: Path | None = None,
 ) -> GenerationResult:
     """recipe -> generate -> descend(stub) -> provenance.
 
@@ -91,5 +93,9 @@ def generate(
     final_path = descend_stub(raw_path)
 
     provenance = build_provenance_record(recipe, workflow_hash=graph_hash, prompt_id=job_id)
+
+    append_provenance_entry(
+        final_path, provenance_to_dict(provenance), provenance_md=provenance_md
+    )
 
     return GenerationResult(path=final_path, prompt_id=job_id, provenance=provenance)

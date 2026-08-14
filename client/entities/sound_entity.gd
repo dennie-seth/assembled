@@ -21,4 +21,6 @@ func _init() -> void:
 ## @param player_pos World position of the player.
 ## @param player_running True when the player is running.
 func is_detecting(entity_pos: Vector2, player_pos: Vector2, player_running: bool) -> bool:
-	return sensor.detect(entity_pos, player_pos, player_running)
+	sensor.entity_position = entity_pos
+	sensor.update_movement_state(player_running)
+	return sensor.check(player_pos)
