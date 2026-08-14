@@ -1,0 +1,36 @@
+[project]
+name = "sprite-packer"
+version = "0.1.0"
+description = "Sprite-sheet packer -> Godot .tres atlas (CI build step, T-0074, docs/design/13-asset-pipeline.md §3.6)"
+requires-python = ">=3.12"
+dependencies = [
+  "pillow==12.3.0",
+  "rectpack==0.2.2",
+  "numpy==2.5.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.14.4",
+]
+
+[project.scripts]
+pack-sprites = "sprite_packer.packer:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
