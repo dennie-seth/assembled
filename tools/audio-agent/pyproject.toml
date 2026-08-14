@@ -5,6 +5,10 @@ description = "ACE-Step HTTP client + recipe->request layer driving the AudioAge
 requires-python = ">=3.12"
 dependencies = [
   "requests==2.32.3",
+  "numpy==2.5.1",
+  "scipy==1.18.0",
+  "soundfile==0.14.0",
+  "pyloudnorm==0.2.0",
 ]
 
 [project.optional-dependencies]
