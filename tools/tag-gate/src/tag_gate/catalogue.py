@@ -8,7 +8,6 @@ so the checker never has a private copy.
 
 import re
 
-
 # Matches individual {archetype_id, tag} entries inside kAnchorTags.
 # Handles optional trailing comma and whitespace.  Comments after // are ignored
 # because the regex stops at the closing brace.
