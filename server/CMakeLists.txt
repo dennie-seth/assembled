@@ -50,11 +50,14 @@ add_library(assembled_server_lib OBJECT
   src/NoteController.cpp
   src/SessionLeaseRepo.cpp
   src/ItemRepo.cpp
+  src/ItemSpawner.cpp
   src/RunAssembler.cpp
   src/AnchorRepo.cpp
   src/AnchorController.cpp
   src/OfferingRepo.cpp
   src/OfferingController.cpp
+  src/TransferReceiptRepo.cpp
+  src/SweepWorker.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -161,6 +164,16 @@ add_executable(run_assembler_tests
 target_link_libraries(run_assembler_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(run_assembler_tests)
 
+# T-0047: Note rating tests — one vote per player, idempotent upsert, score
+# accuracy, and POST /v1/notes/{id}/rate HTTP integration.
+# Separate binary: spins up its own drogon::app() on port 18091.
+# note_rating_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(note_rating_tests
+  test/note_rating_test.cpp
+)
+target_link_libraries(note_rating_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(note_rating_tests)
+
 # T-0124: anchor snapshot tests — room-entry GET /v1/anchors/{arch}/{tag}.
 # Tests: single-transaction snapshot (items/offerings/notes), concurrent
 # offering race never produces a torn read, broadcasts excluded, HTTP handler.
@@ -185,3 +198,35 @@ add_executable(offering_escrow_tests
 )
 target_link_libraries(offering_escrow_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(offering_escrow_tests)
+
+# T-0128: Spontaneous item spawner tests — rarity-cap enforcement (INV-6, INV-7).
+# Tests: hard cap respected per tier, cap held under rapid population growth,
+# gating-type floor top-up, unique tier is population-independent, pluggable
+# rate model is used by the spawner.
+# Separate binary: no drogon::app() singleton contention risk.
+# item_spawner_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(item_spawner_tests
+  test/item_spawner_test.cpp
+)
+target_link_libraries(item_spawner_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(item_spawner_tests)
+
+# T-0126: Transfer receipts — idempotent leave/use/take/transmute.
+# Verifies receipt creation, idempotent replay, concurrent slot-claim safety,
+# and expired-receipt refresh semantics.
+# Separate binary: no drogon::app() singleton contention risk.
+# transfer_receipt_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(transfer_receipt_tests
+  test/transfer_receipt_test.cpp
+)
+target_link_libraries(transfer_receipt_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(transfer_receipt_tests)
+
+# T-0125: sweep worker tests — advisory lock, SKIP LOCKED, bleed, collapse,
+# retention, census.  Separate binary: no drogon::app() singleton risk.
+# sweep_worker_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(sweep_worker_tests
+  test/sweep_worker_test.cpp
+)
+target_link_libraries(sweep_worker_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(sweep_worker_tests)
