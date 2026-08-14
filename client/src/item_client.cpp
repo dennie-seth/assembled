@@ -72,9 +72,9 @@ void ItemClient::tick(double /*delta*/) {
     }
 
     for (const Done &d : done) {
-        auto it = std::find_if(
-            in_flight_.begin(), in_flight_.end(),
-            [&d](const std::unique_ptr<InFlight> &e) { return e->easy == d.easy; });
+        auto it =
+            std::find_if(in_flight_.begin(), in_flight_.end(),
+                         [&d](const std::unique_ptr<InFlight> &e) { return e->easy == d.easy; });
         if (it != in_flight_.end()) {
             complete_request(**it, d.result);
         }
@@ -86,9 +86,7 @@ void ItemClient::tick(double /*delta*/) {
 // Config
 // ---------------------------------------------------------------------------
 
-void ItemClient::set_base_url(const String &url) {
-    base_url_ = std::string(url.utf8().get_data());
-}
+void ItemClient::set_base_url(const String &url) { base_url_ = std::string(url.utf8().get_data()); }
 
 String ItemClient::get_base_url() const { return String(base_url_.c_str()); }
 
@@ -115,24 +113,20 @@ int ItemClient::get_timeout_ms() const { return static_cast<int>(timeout_ms_); }
 int ItemClient::take_item(const String &item_id, int archetype, int tag) {
     const std::string tid = make_uuid_v4();
     const std::string url = base_url_ + "/v1/transfers";
-    const std::string body =
-        "{\"transfer_id\":\"" + tid + "\","
-        "\"kind\":\"take\","
-        "\"item_id\":\"" + std::string(item_id.utf8().get_data()) + "\","
-        "\"anchor\":{\"archetype\":" + std::to_string(archetype) +
-        ",\"tag\":" + std::to_string(tag) + "}}";
+    const std::string body = "{\"transfer_id\":\"" + tid + "\"," "\"kind\":\"take\","
+                             "\"item_id\":\"" + std::string(item_id.utf8().get_data()) + "\","
+                             "\"anchor\":{\"archetype\":" + std::to_string(archetype) +
+                             ",\"tag\":" + std::to_string(tag) + "}}";
     return enqueue_request(url, "POST", body, RequestKind::TAKE, tid);
 }
 
 int ItemClient::leave_item(const String &item_id, int archetype, int tag) {
     const std::string tid = make_uuid_v4();
     const std::string url = base_url_ + "/v1/transfers";
-    const std::string body =
-        "{\"transfer_id\":\"" + tid + "\","
-        "\"kind\":\"leave\","
-        "\"item_id\":\"" + std::string(item_id.utf8().get_data()) + "\","
-        "\"anchor\":{\"archetype\":" + std::to_string(archetype) +
-        ",\"tag\":" + std::to_string(tag) + "}}";
+    const std::string body = "{\"transfer_id\":\"" + tid + "\"," "\"kind\":\"leave\","
+                             "\"item_id\":\"" + std::string(item_id.utf8().get_data()) + "\","
+                             "\"anchor\":{\"archetype\":" + std::to_string(archetype) +
+                             ",\"tag\":" + std::to_string(tag) + "}}";
     return enqueue_request(url, "POST", body, RequestKind::LEAVE, tid);
 }
 
@@ -166,11 +160,8 @@ std::string ItemClient::make_uuid_v4() {
     // Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
     std::snprintf(buf, sizeof(buf),
                   "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                  b[0], b[1], b[2], b[3],
-                  b[4], b[5],
-                  b[6], b[7],
-                  b[8], b[9],
-                  b[10], b[11], b[12], b[13], b[14], b[15]);
+                  b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12],
+                  b[13], b[14], b[15]);
     return std::string(buf);
 }
 
@@ -205,14 +196,13 @@ int ItemClient::enqueue_request(const std::string &url, const std::string &metho
     curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, timeout_ms_);
 
     if (!auth_token_.empty()) {
-        raw->headers = curl_slist_append(
-            raw->headers, ("Authorization: Bearer " + auth_token_).c_str());
+        raw->headers =
+            curl_slist_append(raw->headers, ("Authorization: Bearer " + auth_token_).c_str());
     }
     if (method == "POST") {
         // Mutations carry the lease ID (03-net-protocol.md §2).
         if (!lease_id_.empty()) {
-            raw->headers =
-                curl_slist_append(raw->headers, ("X-Lease-Id: " + lease_id_).c_str());
+            raw->headers = curl_slist_append(raw->headers, ("X-Lease-Id: " + lease_id_).c_str());
         }
         raw->headers = curl_slist_append(raw->headers, "Content-Type: application/json");
     }
@@ -223,8 +213,7 @@ int ItemClient::enqueue_request(const std::string &url, const std::string &metho
     if (method == "POST") {
         curl_easy_setopt(easy, CURLOPT_POST, 1L);
         curl_easy_setopt(easy, CURLOPT_POSTFIELDS, raw->request_body.c_str());
-        curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE,
-                         static_cast<long>(raw->request_body.size()));
+        curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE, static_cast<long>(raw->request_body.size()));
     }
 
     const CURLMcode rc = curl_multi_add_handle(multi_, easy);
@@ -264,8 +253,8 @@ void ItemClient::complete_request(const InFlight &req, CURLcode result) {
         }
     }
 
-    const String body = String::utf8(req.response_body.c_str(),
-                                     static_cast<int>(req.response_body.size()));
+    const String body =
+        String::utf8(req.response_body.c_str(), static_cast<int>(req.response_body.size()));
     const int status_int = static_cast<int>(http_status);
     const String tid = String(req.transfer_id.c_str());
 
@@ -275,9 +264,8 @@ void ItemClient::complete_request(const InFlight &req, CURLcode result) {
 void ItemClient::cleanup_easy(CURL *easy) {
     curl_multi_remove_handle(multi_, easy);
 
-    auto it = std::find_if(
-        in_flight_.begin(), in_flight_.end(),
-        [easy](const std::unique_ptr<InFlight> &e) { return e->easy == easy; });
+    auto it = std::find_if(in_flight_.begin(), in_flight_.end(),
+                           [easy](const std::unique_ptr<InFlight> &e) { return e->easy == easy; });
     if (it != in_flight_.end()) {
         if ((*it)->headers) {
             curl_slist_free_all((*it)->headers);
@@ -314,8 +302,7 @@ void ItemClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_timeout_ms"), &ItemClient::get_timeout_ms);
 
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "base_url"), "set_base_url", "get_base_url");
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "auth_token"), "set_auth_token",
-                 "get_auth_token");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "auth_token"), "set_auth_token", "get_auth_token");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "lease_id"), "set_lease_id", "get_lease_id");
     ADD_PROPERTY(PropertyInfo(Variant::INT, "timeout_ms"), "set_timeout_ms", "get_timeout_ms");
 
@@ -328,13 +315,11 @@ void ItemClient::_bind_methods() {
                          &ItemClient::retry_transfer);
 
     // Signal: transfer_completed(request_id, state, http_status, body, transfer_id)
-    ADD_SIGNAL(MethodInfo(
-        "transfer_completed",
-        PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::INT, "state"),
-        PropertyInfo(Variant::INT, "http_status"),
-        PropertyInfo(Variant::STRING, "body"),
-        PropertyInfo(Variant::STRING, "transfer_id")));
+    ADD_SIGNAL(MethodInfo("transfer_completed", PropertyInfo(Variant::INT, "request_id"),
+                          PropertyInfo(Variant::INT, "state"),
+                          PropertyInfo(Variant::INT, "http_status"),
+                          PropertyInfo(Variant::STRING, "body"),
+                          PropertyInfo(Variant::STRING, "transfer_id")));
 
     // State enum constants — accessible in GDScript as ItemClient.STATE_*
     BIND_CONSTANT(STATE_OK);

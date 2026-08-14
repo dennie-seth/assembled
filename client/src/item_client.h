@@ -226,8 +226,7 @@ class ItemClient : public Node {
      * @return             Request ID or -1 on curl initialisation failure.
      */
     int enqueue_request(const std::string &url, const std::string &method,
-                        const std::string &body, RequestKind kind,
-                        const std::string &transfer_id);
+                        const std::string &body, RequestKind kind, const std::string &transfer_id);
 
     /**
      * @brief Determine state and emit `transfer_completed` for `req`.
