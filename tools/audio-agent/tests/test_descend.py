@@ -13,8 +13,6 @@ These tests are written before the implementation (TDD). They cover:
   (not the pre-encode source) and fails on a detectable click/pop
 """
 
-from __future__ import annotations
-
 import io
 
 import numpy as np

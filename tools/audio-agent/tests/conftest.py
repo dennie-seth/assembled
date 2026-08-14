@@ -1,8 +1,6 @@
 """Shared fixtures: a sample recipe and its rendered request, so client/pipeline
 tests don't need to hand-build one."""
 
-from __future__ import annotations
-
 import io
 
 import numpy as np
