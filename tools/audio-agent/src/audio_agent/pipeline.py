@@ -17,6 +17,7 @@ from pathlib import Path
 
 from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import assert_checkpoint_allowed
+from gen_client_base.provenance_writer import append_provenance_entry
 
 from audio_agent.audio_client import AudioClient
 from audio_agent.base_url import resolve_base_url
@@ -26,6 +27,7 @@ from audio_agent.provenance import (
     ProvenanceRecord,
     build_provenance_record,
     build_texture_provenance_record,
+    provenance_to_dict,
 )
 from audio_agent.recipe import MusicRecipe
 from audio_agent.request import DEFAULT_CHECKPOINT_PATH, render_request
@@ -55,6 +57,7 @@ def generate(
     poll_interval: float = 1.0,
     lock_path: Path = DEFAULT_LOCK_PATH,
     lock_timeout: float | None = None,
+    provenance_md: Path | None = None,
 ) -> GenerationResult:
     """recipe -> generate(under gpu_lock) -> descend(stub) -> provenance.
 
@@ -86,6 +89,10 @@ def generate(
 
     provenance = build_provenance_record(recipe, request_hash=req_hash, job_id=job_id)
 
+    append_provenance_entry(
+        final_path, provenance_to_dict(provenance), provenance_md=provenance_md
+    )
+
     return GenerationResult(path=final_path, job_id=job_id, provenance=provenance)
 
 
@@ -97,6 +104,7 @@ def generate_texture(
     poll_interval: float = 1.0,
     lock_path: Path = DEFAULT_LOCK_PATH,
     lock_timeout: float | None = None,
+    provenance_md: Path | None = None,
 ) -> GenerationResult:
     """recipe -> generate(under gpu_lock) -> descend(stub) -> provenance, the
     Stable Audio Open (T-0081) sibling of `generate()` (ACE-Step, T-0082).
@@ -129,5 +137,9 @@ def generate_texture(
     final_path = descend_stub(raw_path)
 
     provenance = build_texture_provenance_record(recipe, request_hash=req_hash, job_id=job_id)
+
+    append_provenance_entry(
+        final_path, provenance_to_dict(provenance), provenance_md=provenance_md
+    )
 
     return GenerationResult(path=final_path, job_id=job_id, provenance=provenance)

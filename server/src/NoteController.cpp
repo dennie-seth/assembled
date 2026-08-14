@@ -276,4 +276,67 @@ void NoteController::listNotes(const drogon::HttpRequestPtr &req,
     callback(drogon::HttpResponse::newHttpJsonResponse(body));
 }
 
+void NoteController::rateNote(const drogon::HttpRequestPtr &req,
+                              std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                              const std::string &id) {
+    auto cb = std::move(callback);
+
+    // ── 1. Auth header ────────────────────────────────────────────────────────
+    const std::string auth = req->getHeader("Authorization");
+    if (auth.size() < 8 || auth.compare(0, 7, "Bearer ") != 0) {
+        cb(makeError(drogon::k401Unauthorized, 1001)); // UNKNOWN_TOKEN
+        return;
+    }
+    const std::string token = auth.substr(7);
+
+    // ── 2. Parse JSON body ────────────────────────────────────────────────────
+    auto body = req->getJsonObject();
+    if (!body || !body->isMember("val") || !(*body)["val"].isIntegral()) {
+        cb(makeError(drogon::k400BadRequest, 2005)); // INVALID_RATING_VAL
+        return;
+    }
+    const int rawVal = (*body)["val"].asInt();
+    if (rawVal != 1 && rawVal != -1) {
+        cb(makeError(drogon::k400BadRequest, 2005)); // INVALID_RATING_VAL
+        return;
+    }
+    const auto val = static_cast<int16_t>(rawVal);
+
+    // ── 3. DB client (lazy init, shared across requests) ──────────────────────
+    static std::once_flag rateDbFlag;
+    static drogon::orm::DbClientPtr rateDbClient;
+    std::call_once(rateDbFlag, []() {
+        auto db = Database::fromEnv();
+        if (db)
+            rateDbClient = db->getClient();
+    });
+
+    if (!rateDbClient) {
+        auto resp = drogon::HttpResponse::newHttpResponse();
+        resp->setStatusCode(drogon::k503ServiceUnavailable);
+        cb(resp);
+        return;
+    }
+
+    // ── 4. Upsert vote in a worker thread ─────────────────────────────────────
+    // PgNoteRepo::rate is a blocking call; run it off the Drogon IO thread.
+    std::thread(
+        [id, token, val, cb](drogon::orm::DbClientPtr client) mutable {
+            try {
+                PgNoteRepo repo(client);
+                repo.rate(id, token, val);
+
+                auto resp = drogon::HttpResponse::newHttpResponse();
+                resp->setStatusCode(drogon::k200OK);
+                cb(resp);
+            } catch (const drogon::orm::DrogonDbException &) {
+                auto resp = drogon::HttpResponse::newHttpResponse();
+                resp->setStatusCode(drogon::k500InternalServerError);
+                cb(resp);
+            }
+        },
+        rateDbClient)
+        .detach();
+}
+
 } // namespace assembled_server

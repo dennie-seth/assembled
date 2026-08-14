@@ -180,3 +180,64 @@ def test_generate_texture_acquires_and_releases_the_gpu_lock(tmp_path, sample_te
 
     with gpu_lock(lock_path, timeout=1.0):
         pass
+
+
+# ---- T-0075: ASSET_PROVENANCE.md auto-writer --------------------------------
+
+
+def _make_provenance_md(tmp_path):
+    """Minimal ASSET_PROVENANCE.md with the required table header."""
+    md = tmp_path / "ASSET_PROVENANCE.md"
+    md.write_text(
+        "# Asset Provenance\n\n"
+        "| Asset | Model | License | Prompt | Seed |\n"
+        "|---|---|---|---|---|\n"
+    )
+    return md
+
+
+def test_generate_appends_provenance_entry_to_md(tmp_path, sample_recipe):
+    """generate() auto-appends a provenance row to ASSET_PROVENANCE.md (T-0075)."""
+    md = _make_provenance_md(tmp_path)
+    generate(
+        sample_recipe,
+        out_dir=tmp_path / "out",
+        client=FakeClient(),
+        lock_path=tmp_path / "gpu.lock",
+        provenance_md=md,
+    )
+
+    text = md.read_text()
+    assert sample_recipe.checkpoint in text
+    assert str(sample_recipe.seed) in text
+    assert sample_recipe.prompt in text or sample_recipe.prompt[:30] in text
+
+
+def test_generate_texture_appends_provenance_entry_to_md(tmp_path, sample_texture_recipe):
+    """generate_texture() auto-appends a provenance row to ASSET_PROVENANCE.md (T-0075)."""
+    md = _make_provenance_md(tmp_path)
+    generate_texture(
+        sample_texture_recipe,
+        out_dir=tmp_path / "out",
+        client=FakeClient(),
+        lock_path=tmp_path / "gpu.lock",
+        provenance_md=md,
+    )
+
+    text = md.read_text()
+    assert sample_texture_recipe.checkpoint in text
+    assert str(sample_texture_recipe.seed) in text
+
+
+def test_generate_writes_provenance_to_default_path_when_not_explicit(tmp_path, sample_recipe):
+    """When provenance_md is not passed, generate() writes to ASSET_PROVENANCE.md in CWD.
+
+    The autouse _default_provenance_md fixture creates the file and sets CWD to tmp_path,
+    so the default Path('ASSET_PROVENANCE.md') resolves there (T-0075 criterion 1 & 3).
+    """
+    result = generate(
+        sample_recipe, out_dir=tmp_path, client=FakeClient(), lock_path=tmp_path / "gpu.lock"
+    )
+    assert result.path.exists()
+    prov_text = (tmp_path / "ASSET_PROVENANCE.md").read_text()
+    assert sample_recipe.checkpoint in prov_text

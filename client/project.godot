@@ -15,8 +15,13 @@ config/description="Assembled — client dev-env + GDExtension proof-of-life (Ph
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.5")
 
+[audio]
+
+buses/default_bus_layout="res://audio_bus_layout.tres"
+
 [autoload]
 
+AudioRouter="*res://audio_router.gd"
 ViewportManager="*res://autoloads/viewport_manager.gd"
 
 [display]
