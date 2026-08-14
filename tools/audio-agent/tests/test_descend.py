@@ -16,7 +16,6 @@ These tests are written before the implementation (TDD). They cover:
 import io
 
 import numpy as np
-import pyloudnorm as pyln
 import pytest
 import soundfile as sf
 
@@ -28,7 +27,6 @@ from audio_agent.descend import (
     remove_dc_offset,
     trim_silence,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -172,6 +170,8 @@ def test_encode_ogg_soundfile_format_is_ogg_vorbis():
 
 def test_loudness_normalize_hits_target_lufs():
     """After normalization, measured LUFS is within 1 dB of target."""
+    import pyloudnorm as pyln
+
     samples = _sine(440, 2.0, amplitude=0.05)
     target = -23.0
     normalized = loudness_normalize(samples, _SAMPLE_RATE, target_lufs=target)
@@ -281,6 +281,8 @@ def test_descend_ogg_is_valid_vorbis(tmp_path):
 
 def test_descend_normalizes_to_target_lufs(tmp_path):
     """descend() output meets EBU R128 target within 2 dB tolerance."""
+    import pyloudnorm as pyln
+
     wav_path = tmp_path / "raw.wav"
     _write_wav(wav_path, _sine(440, 1.0, amplitude=0.05))
 
