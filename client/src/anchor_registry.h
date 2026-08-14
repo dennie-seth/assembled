@@ -101,8 +101,7 @@ class AnchorRegistry : public RefCounted {
     /// Both values are small integers (max 6 / max 6 in kAnchorTags), so
     /// there is no risk of collision within the contracted range.
     static int32_t make_key(int archetype_id, int tag) {
-        return (static_cast<int32_t>(archetype_id) << 16) |
-               (static_cast<int32_t>(tag) & 0xFFFF);
+        return (static_cast<int32_t>(archetype_id) << 16) | (static_cast<int32_t>(tag) & 0xFFFF);
     }
 
     std::unordered_map<int32_t, Vector2> anchors_;

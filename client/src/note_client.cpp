@@ -150,8 +150,8 @@ int NoteClient::request_identity() {
 }
 
 int NoteClient::fetch_anchor_snapshot(int archetype_id, int tag) {
-    std::string url = base_url_ + "/v1/anchors/" + std::to_string(archetype_id) + "/" +
-                      std::to_string(tag);
+    std::string url =
+        base_url_ + "/v1/anchors/" + std::to_string(archetype_id) + "/" + std::to_string(tag);
     return enqueue_request(url, "GET", "", RequestKind::FETCH_ANCHOR_SNAPSHOT);
 }
 
@@ -343,9 +343,8 @@ void NoteClient::_bind_methods() {
         &NoteClient::post_note);
     ClassDB::bind_method(D_METHOD("rate_note", "note_id", "val"), &NoteClient::rate_note);
     ClassDB::bind_method(D_METHOD("request_identity"), &NoteClient::request_identity);
-    ClassDB::bind_method(
-        D_METHOD("fetch_anchor_snapshot", "archetype_id", "tag"),
-        &NoteClient::fetch_anchor_snapshot);
+    ClassDB::bind_method(D_METHOD("fetch_anchor_snapshot", "archetype_id", "tag"),
+                         &NoteClient::fetch_anchor_snapshot);
 
     // Signals
     ADD_SIGNAL(MethodInfo("notes_fetched", PropertyInfo(Variant::INT, "request_id"),

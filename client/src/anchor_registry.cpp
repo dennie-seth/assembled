@@ -20,10 +20,9 @@ bool AnchorRegistry::has_anchor(int archetype_id, int tag) const {
 
 Vector2 AnchorRegistry::resolve(int archetype_id, int tag) const {
     auto it = anchors_.find(make_key(archetype_id, tag));
-    ERR_FAIL_COND_V_MSG(
-        it == anchors_.end(), Vector2(),
-        String("AnchorRegistry: no anchor registered for archetype=") +
-            String::num_int64(archetype_id) + " tag=" + String::num_int64(tag));
+    ERR_FAIL_COND_V_MSG(it == anchors_.end(), Vector2(),
+                        String("AnchorRegistry: no anchor registered for archetype=") +
+                        String::num_int64(archetype_id) + " tag=" + String::num_int64(tag));
     return it->second;
 }
 
@@ -45,16 +44,13 @@ bool AnchorRegistry::validate_required_tags(int archetype_id, const Array &requi
 // ---------------------------------------------------------------------------
 
 void AnchorRegistry::_bind_methods() {
-    ClassDB::bind_method(
-        D_METHOD("register_anchor", "archetype_id", "tag", "position"),
-        &AnchorRegistry::register_anchor);
+    ClassDB::bind_method(D_METHOD("register_anchor", "archetype_id", "tag", "position"),
+                         &AnchorRegistry::register_anchor);
     ClassDB::bind_method(D_METHOD("has_anchor", "archetype_id", "tag"),
                          &AnchorRegistry::has_anchor);
-    ClassDB::bind_method(D_METHOD("resolve", "archetype_id", "tag"),
-                         &AnchorRegistry::resolve);
-    ClassDB::bind_method(
-        D_METHOD("validate_required_tags", "archetype_id", "required_tags"),
-        &AnchorRegistry::validate_required_tags);
+    ClassDB::bind_method(D_METHOD("resolve", "archetype_id", "tag"), &AnchorRegistry::resolve);
+    ClassDB::bind_method(D_METHOD("validate_required_tags", "archetype_id", "required_tags"),
+                         &AnchorRegistry::validate_required_tags);
 }
 
 } // namespace godot
