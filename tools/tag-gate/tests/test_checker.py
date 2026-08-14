@@ -5,8 +5,6 @@ inline HPP text rather than parsing the real shared/note_templates.hpp so the
 suite is hermetic and does not break when the catalogue grows.
 """
 
-import pytest
-
 from tag_gate.catalogue import parse_anchor_tags
 from tag_gate.checker import check_tag_completeness
 
