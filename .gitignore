@@ -87,6 +87,13 @@ tasks/.id-allocator.json
 # matches at any depth, root included.
 **/assets/out/
 
+# Packed sprite atlases: CI build artifacts, not authored source (T-0074).
+# docs/design/13-asset-pipeline.md §3.6: atlases are build artifacts, never committed.
+# Individual sprites live in assets/final/; the packer runs in CI and writes
+# to the client's import tree (client/assets/tiles/) or a configurable out_dir.
+client/assets/tiles/*_atlas.png
+client/assets/tiles/*_atlas.tres
+
 # Env / secrets
 .env
 .env.*
