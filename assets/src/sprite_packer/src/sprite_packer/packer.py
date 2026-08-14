@@ -214,7 +214,7 @@ def _write_tres(
         "",
         "[resource]",
         f"tile_size = {TILE_SIZE}",
-        f'atlas = ExtResource("1")',
+        'atlas = ExtResource("1")',
     ]
     for name in sorted(regions):
         x, y, w, h = regions[name]
