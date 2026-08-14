@@ -10,7 +10,6 @@ from audio_agent.request import render_request
 from audio_agent.texture_recipe import TextureRecipe
 from audio_agent.texture_request import render_texture_request
 
-
 _PROVENANCE_HEADER = (
     "# Asset Provenance\n\n"
     "| Asset | Model | License | Prompt | Seed |\n"
