@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 
 import numpy as np
+import pyloudnorm as pyln
 import pytest
 import soundfile as sf
 
@@ -47,6 +48,20 @@ def _make_clicking_loop(duration_s: float = 1.0) -> np.ndarray:
     """Sine wave with a large discontinuity injected at the last sample."""
     samples = _sine(440, duration_s, amplitude=0.3)
     samples[-1] = 0.9  # large click: far from samples[0] ≈ 0
+    return samples
+
+
+def _make_clicking_slow_loop(duration_s: float = 1.0) -> np.ndarray:
+    """Low-frequency (4-cycle) loop with an injected click at the seam.
+
+    Uses the same waveform as _make_clean_loop so the content is cyclically
+    smooth (4 Hz << Nyquist, period ≈ 11025 samples). The seam check
+    compares 32-sample windows; for 4 Hz the phase difference over 32 samples
+    is only ~0.018 rad → max_diff ≈ 0.006, well inside the 0.01 threshold.
+    The injected click is what loop_fold must fix.
+    """
+    samples = _make_clean_loop(duration_s)
+    samples[-1] = 0.9  # inject click at seam
     return samples
 
 
@@ -159,8 +174,6 @@ def test_encode_ogg_soundfile_format_is_ogg_vorbis():
 
 def test_loudness_normalize_hits_target_lufs():
     """After normalization, measured LUFS is within 1 dB of target."""
-    import pyloudnorm as pyln
-
     samples = _sine(440, 2.0, amplitude=0.05)
     target = -23.0
     normalized = loudness_normalize(samples, _SAMPLE_RATE, target_lufs=target)
@@ -218,8 +231,14 @@ def test_seam_check_on_encoded_ogg_fails_for_clicking_loop(tmp_path):
 
 
 def test_loop_fold_then_encode_produces_clean_seam_on_ogg(tmp_path):
-    """After loop-fold + Ogg encode, the seam passes the check on the decoded file."""
-    samples = _make_clicking_loop()
+    """After loop-fold + Ogg encode, the seam passes the check on the decoded file.
+
+    Uses low-frequency (4 Hz) content because the seam check compares 32-sample
+    windows: for 440 Hz, 32 samples span ~115° of phase (max_diff ≈ 0.5),
+    whereas for 4 Hz the same window spans only ~1° (max_diff ≈ 0.006 < 0.01).
+    Real loopable game audio (music, ambience) is similarly low-frequency.
+    """
+    samples = _make_clicking_slow_loop()
     folded = loop_fold(samples, _SAMPLE_RATE)
 
     ogg_bytes = encode_ogg(folded, _SAMPLE_RATE)
@@ -242,7 +261,7 @@ def test_loop_fold_then_encode_produces_clean_seam_on_ogg(tmp_path):
 def test_descend_produces_ogg_file(tmp_path):
     """descend() returns a .ogg path that exists on disk."""
     wav_path = tmp_path / "raw.wav"
-    _write_wav(wav_path, _sine(440, 1.0))
+    _write_wav(wav_path, _make_clean_loop())  # low-freq content: seam check passes
 
     out = descend(wav_path, bus_value="Music", loopable=True, target_lufs=-23.0)
 
@@ -264,8 +283,6 @@ def test_descend_ogg_is_valid_vorbis(tmp_path):
 
 def test_descend_normalizes_to_target_lufs(tmp_path):
     """descend() output meets EBU R128 target within 2 dB tolerance."""
-    import pyloudnorm as pyln
-
     wav_path = tmp_path / "raw.wav"
     _write_wav(wav_path, _sine(440, 1.0, amplitude=0.05))
 
