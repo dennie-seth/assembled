@@ -7,7 +7,6 @@ so the checker never has a private copy.
 """
 
 from __future__ import annotations
-
 import re
 
 
