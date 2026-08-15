@@ -16,6 +16,11 @@
 ## Author: Claude
 extends Node2D
 
+## Preload controller scripts so their class_name declarations are indexed
+## before any type-hinted variable in this file is resolved.
+const _PlayerScript: GDScript = preload("res://scripts/player_controller.gd")
+const _WatcherScript: GDScript = preload("res://scripts/watcher_controller.gd")
+
 ## Tile grid constants — single source of truth for authored layout.
 const TILE_SIZE: int = 16
 const GRID_COLS: int = 24
@@ -27,9 +32,9 @@ const ITEM_NONE: int = -1
 ## Debug grant item ID (matches T-0171 deterministic grant, compiled out in release).
 const DEBUG_ITEM_ID: int = 42
 
-## Node references built in _ready.
-var _player: PlayerController
-var _watcher: WatcherController
+## Node references built in _ready (CharacterBody2D base; concrete type set at runtime).
+var _player: CharacterBody2D  ## PlayerController instance
+var _watcher: CharacterBody2D  ## WatcherController instance
 var _hiding_logic: RefCounted
 var _door_logic: RefCounted
 var _anchor_logic: RefCounted
@@ -187,7 +192,7 @@ func _build_item_door() -> void:
 ## Watcher: patrols cols 14–18 (5-tile span = 80 px) on row 6 centre.
 ## Slow patrol speed, wide sight cone, cover_rects wired to the cover column.
 func _build_watcher() -> void:
-	_watcher = load("res://scripts/watcher_controller.gd").new()
+	_watcher = _WatcherScript.new()
 	_watcher.name = "Watcher"
 	_watcher.patrol_left = _pxc(14, 6).x
 	_watcher.patrol_right = _pxc(18, 6).x
@@ -198,7 +203,7 @@ func _build_watcher() -> void:
 
 ## Player: spawns at col 2, row 6 (left side, middle height).
 func _build_player() -> void:
-	_player = load("res://scripts/player_controller.gd").new()
+	_player = _PlayerScript.new()
 	_player.name = "Player"
 	_player.position = _pxc(2, 6)
 	add_child(_player)
