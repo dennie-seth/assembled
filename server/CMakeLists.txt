@@ -53,6 +53,7 @@ add_library(assembled_server_lib OBJECT
   src/RunAssembler.cpp
   src/AnchorRepo.cpp
   src/AnchorController.cpp
+  src/UnlockRepo.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -170,3 +171,13 @@ add_executable(anchor_snapshot_tests
 )
 target_link_libraries(anchor_snapshot_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(anchor_snapshot_tests)
+
+# T-0127: UnlockRepo tests — tier-appropriate expiry, expired-row-as-absent
+# invariant, and unique-keyed unlock persistence across session boundaries.
+# Separate binary: no drogon::app() singleton contention risk.
+# unlock_persistence_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(unlock_persistence_tests
+  test/unlock_persistence_test.cpp
+)
+target_link_libraries(unlock_persistence_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(unlock_persistence_tests)
