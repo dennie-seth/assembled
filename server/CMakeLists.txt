@@ -65,6 +65,10 @@ target_include_directories(assembled_server_lib PUBLIC include ${CMAKE_SOURCE_DI
 target_link_libraries(assembled_server_lib PUBLIC Drogon::Drogon OpenSSL::Crypto)
 target_compile_definitions(assembled_server_lib PUBLIC
   ASSEMBLED_MIGRATIONS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/migrations"
+  # T-0171: debugGrant API compiled in for every non-Release config so dev
+  # and test builds can seed items without touching the live economy.
+  # Release builds omit the define → the symbol never enters the binary.
+  $<$<NOT:$<CONFIG:Release>>:ASSEMBLED_DEBUG_GRANT>
 )
 
 # T-0040/T-0050 proof-of-life: real server binary serving GET /health.
@@ -230,3 +234,16 @@ add_executable(sweep_worker_tests
 )
 target_link_libraries(sweep_worker_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(sweep_worker_tests)
+
+# T-0171: debugGrant tests — only built for non-Release configs.
+# In Release builds ASSEMBLED_DEBUG_GRANT is undefined, the grant API is
+# compiled out of assembled_server_lib, and this target does not exist.
+# item_grant_test.cpp contains a static_assert that fires if someone
+# somehow links the binary without the define.
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+  add_executable(item_grant_tests
+    test/item_grant_test.cpp
+  )
+  target_link_libraries(item_grant_tests PRIVATE assembled_server_lib doctest::doctest)
+  doctest_discover_tests(item_grant_tests)
+endif()
