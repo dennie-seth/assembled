@@ -225,8 +225,8 @@ class ItemClient : public Node {
      * @param transfer_id  The UUID to echo back in the completion signal.
      * @return             Request ID or -1 on curl initialisation failure.
      */
-    int enqueue_request(const std::string &url, const std::string &method,
-                        const std::string &body, RequestKind kind, const std::string &transfer_id);
+    int enqueue_request(const std::string &url, const std::string &method, const std::string &body,
+                        RequestKind kind, const std::string &transfer_id);
 
     /**
      * @brief Determine state and emit `transfer_completed` for `req`.

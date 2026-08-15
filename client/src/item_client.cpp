@@ -113,9 +113,9 @@ int ItemClient::get_timeout_ms() const { return static_cast<int>(timeout_ms_); }
 int ItemClient::take_item(const String &item_id, int archetype, int tag) {
     const std::string tid = make_uuid_v4();
     const std::string url = base_url_ + "/v1/transfers";
-    const std::string body = "{\"transfer_id\":\"" + tid + "\"," "\"kind\":\"take\","
-                             "\"item_id\":\"" + std::string(item_id.utf8().get_data()) + "\","
-                             "\"anchor\":{\"archetype\":" + std::to_string(archetype) +
+    const std::string body = "{\"transfer_id\":\"" + tid + "\",\"kind\":\"take\",\"item_id\":\"" +
+                             std::string(item_id.utf8().get_data()) +
+                             "\",\"anchor\":{\"archetype\":" + std::to_string(archetype) +
                              ",\"tag\":" + std::to_string(tag) + "}}";
     return enqueue_request(url, "POST", body, RequestKind::TAKE, tid);
 }
@@ -123,9 +123,9 @@ int ItemClient::take_item(const String &item_id, int archetype, int tag) {
 int ItemClient::leave_item(const String &item_id, int archetype, int tag) {
     const std::string tid = make_uuid_v4();
     const std::string url = base_url_ + "/v1/transfers";
-    const std::string body = "{\"transfer_id\":\"" + tid + "\"," "\"kind\":\"leave\","
-                             "\"item_id\":\"" + std::string(item_id.utf8().get_data()) + "\","
-                             "\"anchor\":{\"archetype\":" + std::to_string(archetype) +
+    const std::string body = "{\"transfer_id\":\"" + tid + "\",\"kind\":\"leave\",\"item_id\":\"" +
+                             std::string(item_id.utf8().get_data()) +
+                             "\",\"anchor\":{\"archetype\":" + std::to_string(archetype) +
                              ",\"tag\":" + std::to_string(tag) + "}}";
     return enqueue_request(url, "POST", body, RequestKind::LEAVE, tid);
 }
@@ -311,8 +311,7 @@ void ItemClient::_bind_methods() {
                          &ItemClient::take_item);
     ClassDB::bind_method(D_METHOD("leave_item", "item_id", "archetype", "tag"),
                          &ItemClient::leave_item);
-    ClassDB::bind_method(D_METHOD("retry_transfer", "transfer_id"),
-                         &ItemClient::retry_transfer);
+    ClassDB::bind_method(D_METHOD("retry_transfer", "transfer_id"), &ItemClient::retry_transfer);
 
     // Signal: transfer_completed(request_id, state, http_status, body, transfer_id)
     ADD_SIGNAL(MethodInfo("transfer_completed", PropertyInfo(Variant::INT, "request_id"),
