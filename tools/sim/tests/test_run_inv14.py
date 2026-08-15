@@ -21,8 +21,11 @@ from sim.run_inv14 import (
     SEEDS_PER_POINT,
     _iqr_stats,
     _run_one_point,
+    _run_one_point_ttc,
+    monotonicity_verdict,
     p_invariance_verdict,
     run_chain_key_population_sweep,
+    run_inv14_ttc_sweep,
 )
 
 # ---------------------------------------------------------------------------
@@ -393,3 +396,249 @@ class TestProductionConstants:
             f"rooms-per-run unexpectedly P-variant: {verdict['verdict']}, "
             f"CV={verdict['cv']:.3f}, medians={verdict['median_rooms_by_population']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# _run_one_point_ttc  (T-0133: tick-by-tick completion tracking)
+# ---------------------------------------------------------------------------
+
+
+class TestRunOnePointTtc:
+    def test_returns_required_fields(self):
+        result = _run_one_point_ttc(population=5, ticks=50, seed=1)
+        assert "completion_ticks" in result
+        assert isinstance(result["completion_ticks"], list)
+
+    def test_completion_ticks_length_matches_population(self):
+        result = _run_one_point_ttc(population=8, ticks=50, seed=1)
+        assert len(result["completion_ticks"]) == 8
+
+    def test_completion_tick_is_positive_or_none(self):
+        result = _run_one_point_ttc(population=5, ticks=100, seed=1)
+        for t in result["completion_ticks"]:
+            assert t is None or t >= 1
+
+    def test_no_completion_when_chain_key_disabled(self):
+        """chain_key_enabled=False means chain_progress stays 0 — no completions."""
+        result = _run_one_point_ttc(population=5, ticks=200, seed=1, chain_key_enabled=False)
+        assert all(t is None for t in result["completion_ticks"])
+
+    def test_some_complete_small_pop_long_run(self):
+        """P=2, unique_count=5, crossings_required=1, 300 ticks: expect at least one
+        completion (unique pool >> crossings required, run long enough)."""
+        result = _run_one_point_ttc(
+            population=2,
+            ticks=300,
+            seed=1,
+            chain_key_crossings_required=1,
+            unique_count=5,
+        )
+        completions = [t for t in result["completion_ticks"] if t is not None]
+        assert len(completions) > 0, "expected ≥1 completion: P=2, unique_count=5, 300 ticks"
+
+    def test_deterministic_for_fixed_seed(self):
+        kwargs = dict(population=5, ticks=100, seed=7)
+        r1 = _run_one_point_ttc(**kwargs)
+        r2 = _run_one_point_ttc(**kwargs)
+        assert r1["completion_ticks"] == r2["completion_ticks"]
+
+    def test_completion_tick_bounded_by_ticks(self):
+        """No completion tick should exceed the run length."""
+        ticks = 80
+        result = _run_one_point_ttc(population=5, ticks=ticks, seed=2)
+        for t in result["completion_ticks"]:
+            assert t is None or t <= ticks
+
+
+# ---------------------------------------------------------------------------
+# run_inv14_ttc_sweep  (T-0133: population sweep of time-to-completion)
+# ---------------------------------------------------------------------------
+
+
+class TestRunInv14TtcSweep:
+    def test_returns_one_row_per_population(self):
+        rows = run_inv14_ttc_sweep(
+            population_range=[2, 20],
+            ticks_per_run=50,
+            seed=1,
+            seeds_per_point=2,
+        )
+        assert len(rows) == 2
+
+    def test_each_row_has_required_fields(self):
+        rows = run_inv14_ttc_sweep(
+            population_range=[10],
+            ticks_per_run=60,
+            seed=1,
+            seeds_per_point=2,
+        )
+        row = rows[0]
+        required = [
+            "population",
+            "median_ttc",
+            "q1_ttc",
+            "q3_ttc",
+            "iqr_ttc",
+            "fraction_completed",
+            "n_agents_total",
+            "n_completed",
+            "seeds",
+            "ticks_per_run",
+        ]
+        for field in required:
+            assert field in row, f"missing field: {field}"
+
+    def test_fraction_completed_in_range(self):
+        rows = run_inv14_ttc_sweep(
+            population_range=[5],
+            ticks_per_run=60,
+            seed=1,
+            seeds_per_point=2,
+        )
+        assert 0.0 <= rows[0]["fraction_completed"] <= 1.0
+
+    def test_population_recorded_correctly(self):
+        rows = run_inv14_ttc_sweep(
+            population_range=[3, 15],
+            ticks_per_run=50,
+            seed=1,
+            seeds_per_point=2,
+        )
+        assert rows[0]["population"] == 3
+        assert rows[1]["population"] == 15
+
+    def test_deterministic_for_fixed_seed(self):
+        kwargs = dict(
+            population_range=[5, 20],
+            ticks_per_run=60,
+            seed=3,
+            seeds_per_point=2,
+        )
+        rows1 = run_inv14_ttc_sweep(**kwargs)
+        rows2 = run_inv14_ttc_sweep(**kwargs)
+        for r1, r2 in zip(rows1, rows2):
+            assert r1["fraction_completed"] == pytest.approx(r2["fraction_completed"])
+            assert r1["median_ttc"] == pytest.approx(r2["median_ttc"] or 0.0)
+
+    def test_iqr_bounds_consistent_when_completions_exist(self):
+        """q1 ≤ median ≤ q3 and iqr = q3 - q1, for populations where completions occur."""
+        rows = run_inv14_ttc_sweep(
+            population_range=[2],
+            ticks_per_run=300,
+            seed=1,
+            seeds_per_point=5,
+            chain_key_crossings_required=1,
+            unique_count=5,
+        )
+        row = rows[0]
+        if row["fraction_completed"] > 0:
+            assert row["q1_ttc"] <= row["median_ttc"]
+            assert row["median_ttc"] <= row["q3_ttc"]
+            assert row["iqr_ttc"] == pytest.approx(row["q3_ttc"] - row["q1_ttc"])
+
+    def test_n_agents_total_matches_seeds_times_population(self):
+        """n_agents_total = seeds_per_point × population (no joins/quits)."""
+        pop, seeds = 10, 3
+        rows = run_inv14_ttc_sweep(
+            population_range=[pop],
+            ticks_per_run=50,
+            seed=1,
+            seeds_per_point=seeds,
+        )
+        assert rows[0]["n_agents_total"] == pop * seeds
+
+    def test_zero_completions_gives_none_stats(self):
+        """When nobody completes, median_ttc/q1/q3/iqr must all be None."""
+        rows = run_inv14_ttc_sweep(
+            population_range=[5],
+            ticks_per_run=1,   # absurdly short: impossible to complete
+            seed=1,
+            seeds_per_point=2,
+        )
+        row = rows[0]
+        assert row["fraction_completed"] == pytest.approx(0.0)
+        assert row["median_ttc"] is None
+        assert row["q1_ttc"] is None
+        assert row["q3_ttc"] is None
+        assert row["iqr_ttc"] is None
+
+
+# ---------------------------------------------------------------------------
+# monotonicity_verdict  (T-0133: explicit monotonicity answer)
+# ---------------------------------------------------------------------------
+
+
+class TestMonotonicityVerdict:
+    def _make_ttc_rows(self, pop_medians: dict) -> list[dict]:
+        return [
+            {
+                "population": p,
+                "median_ttc": m,
+                "q1_ttc": m * 0.8 if m is not None else None,
+                "q3_ttc": m * 1.2 if m is not None else None,
+                "iqr_ttc": m * 0.4 if m is not None else None,
+                "fraction_completed": 1.0 if m is not None else 0.0,
+                "n_agents_total": p * 3,
+                "n_completed": p * 3 if m is not None else 0,
+                "seeds": [1, 2, 3],
+                "ticks_per_run": 200,
+            }
+            for p, m in pop_medians.items()
+        ]
+
+    def test_returns_required_fields(self):
+        rows = self._make_ttc_rows({2: 10.0, 20: 20.0, 200: 30.0})
+        v = monotonicity_verdict(rows)
+        assert "monotonic" in v
+        assert "direction" in v
+        assert "verdict" in v
+        assert "median_ttc_by_population" in v
+
+    def test_strictly_increasing_is_monotonic(self):
+        rows = self._make_ttc_rows({2: 10.0, 20: 20.0, 200: 30.0})
+        v = monotonicity_verdict(rows)
+        assert v["monotonic"] is True
+        assert v["direction"] == "increasing"
+
+    def test_strictly_decreasing_is_monotonic(self):
+        rows = self._make_ttc_rows({2: 30.0, 20: 20.0, 200: 10.0})
+        v = monotonicity_verdict(rows)
+        assert v["monotonic"] is True
+        assert v["direction"] == "decreasing"
+
+    def test_non_monotonic_detected(self):
+        rows = self._make_ttc_rows({2: 10.0, 20: 30.0, 200: 15.0})
+        v = monotonicity_verdict(rows)
+        assert v["monotonic"] is False
+        assert "non-monotonic" in v["direction"]
+
+    def test_verdict_string_non_empty(self):
+        rows = self._make_ttc_rows({2: 10.0, 20: 20.0, 200: 30.0})
+        v = monotonicity_verdict(rows)
+        assert isinstance(v["verdict"], str) and len(v["verdict"]) > 0
+
+    def test_single_point_trivially_monotonic(self):
+        rows = self._make_ttc_rows({20: 10.0})
+        v = monotonicity_verdict(rows)
+        assert v["monotonic"] is True
+
+    def test_median_ttc_recorded_per_population(self):
+        rows = self._make_ttc_rows({2: 5.0, 20: 10.0})
+        v = monotonicity_verdict(rows)
+        assert v["median_ttc_by_population"][2] == pytest.approx(5.0)
+        assert v["median_ttc_by_population"][20] == pytest.approx(10.0)
+
+    def test_none_ttc_rows_skipped_in_analysis(self):
+        """Populations where nobody completed (median_ttc=None) are excluded from
+        the monotonicity check but still appear in median_ttc_by_population."""
+        rows = self._make_ttc_rows({2: None, 20: 10.0, 200: 20.0})
+        v = monotonicity_verdict(rows)
+        # Should not crash; the two non-None points are increasing.
+        assert v["monotonic"] is True
+        assert v["median_ttc_by_population"][2] is None
+
+    def test_all_none_is_trivially_monotonic(self):
+        """If no population completed, the direction is indeterminate but monotonic."""
+        rows = self._make_ttc_rows({2: None, 20: None})
+        v = monotonicity_verdict(rows)
+        assert v["monotonic"] is True
