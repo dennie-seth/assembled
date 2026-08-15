@@ -41,8 +41,8 @@ void seedIdentity(const drogon::orm::DbClientPtr &db, const std::string &token) 
 
 /// Seed a variant row (archetype 1 = HOSPITAL, seeded in 003_seed_vocab).
 void seedVariant(const drogon::orm::DbClientPtr &db, int16_t id) {
-    db->execSqlSync(
-        "INSERT INTO variant (id, archetype_id) VALUES ($1, 1) ON CONFLICT DO NOTHING", id);
+    db->execSqlSync("INSERT INTO variant (id, archetype_id) VALUES ($1, 1) ON CONFLICT DO NOTHING",
+                    id);
 }
 
 /// Insert an unlock row with a caller-supplied expires_at expression (raw SQL
@@ -61,8 +61,8 @@ void insertUnlockRaw(const drogon::orm::DbClientPtr &db, const std::string &toke
                     token, variant_id, tag);
 }
 
-void deleteUnlock(const drogon::orm::DbClientPtr &db, const std::string &token,
-                  int16_t variant_id, int16_t tag) {
+void deleteUnlock(const drogon::orm::DbClientPtr &db, const std::string &token, int16_t variant_id,
+                  int16_t tag) {
     db->execSqlSync("DELETE FROM unlock WHERE token=$1 AND variant_id=$2 AND tag=$3", token,
                     variant_id, tag);
 }

@@ -38,12 +38,11 @@ PgUnlockRepo::PgUnlockRepo(drogon::orm::DbClientPtr client) : client_(std::move(
 bool PgUnlockRepo::isValid(const std::string &token, int16_t variant_id, int16_t tag) {
     // Filter expires_at > now() so an expired row is treated as absent.
     // LIMIT 1 is safe: the PK (token, variant_id, tag) guarantees at most one row.
-    auto result = client_->execSqlSync(
-        "SELECT 1 FROM unlock "
-        "WHERE token = $1 AND variant_id = $2 AND tag = $3 "
-        "  AND expires_at > now() "
-        "LIMIT 1",
-        token, variant_id, tag);
+    auto result = client_->execSqlSync("SELECT 1 FROM unlock "
+                                       "WHERE token = $1 AND variant_id = $2 AND tag = $3 "
+                                       "  AND expires_at > now() "
+                                       "LIMIT 1",
+                                       token, variant_id, tag);
     return !result.empty();
 }
 
