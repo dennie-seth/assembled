@@ -159,9 +159,9 @@ std::string ItemClient::make_uuid_v4() {
     char buf[37];
     // Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
     std::snprintf(buf, sizeof(buf),
-                  "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                  b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12],
-                  b[13], b[14], b[15]);
+                  "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0],
+                  b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
+                  b[14], b[15]);
     return std::string(buf);
 }
 
