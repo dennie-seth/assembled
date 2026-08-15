@@ -25,6 +25,9 @@ client/vendor/curl/
 client/vendor_clean.py
 commit_msg.txt
 run_clang_format.sh
+run_clang_format.py
+run_fmt.sh
+fmt.py
 server/run_tests.sh
 
 # ci-client.yml's import/smoke/export step logs (local repro artifacts,
@@ -86,6 +89,13 @@ tasks/.id-allocator.json
 # tools/comfy-client/assets/out/, tools/asset-gate test scratch). "**/"
 # matches at any depth, root included.
 **/assets/out/
+
+# Packed sprite atlases: CI build artifacts, not authored source (T-0074).
+# docs/design/13-asset-pipeline.md §3.6: atlases are build artifacts, never committed.
+# Individual sprites live in assets/final/; the packer runs in CI and writes
+# to the client's import tree (client/assets/tiles/) or a configurable out_dir.
+client/assets/tiles/*_atlas.png
+client/assets/tiles/*_atlas.tres
 
 # Env / secrets
 .env

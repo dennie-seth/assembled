@@ -25,6 +25,24 @@ class FakeClock:
         self.t += seconds
 
 
+_PROVENANCE_HEADER = (
+    "# Asset Provenance\n\n"
+    "| Asset | Model | License | Prompt | Seed |\n"
+    "|---|---|---|---|---|\n"
+)
+
+
+@pytest.fixture(autouse=True)
+def _default_provenance_md(tmp_path, monkeypatch):
+    """Create ASSET_PROVENANCE.md in tmp_path and patch CWD so generate() defaults to it.
+
+    Ensures every generate() call writes provenance even when tests don't pass
+    provenance_md= explicitly (T-0075: provenance is non-optional).
+    """
+    (tmp_path / "ASSET_PROVENANCE.md").write_text(_PROVENANCE_HEADER)
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def fake_clock() -> FakeClock:
     return FakeClock()

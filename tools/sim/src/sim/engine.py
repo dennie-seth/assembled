@@ -434,6 +434,18 @@ class SimEngine:
                         bleed_dur = int(bleed_dur * cfg.unique_held_bleed_multiplier)
                     item.bleed_at = self._state.tick + bleed_dur
 
+                # Exit condition: mark complete if now holding N_exit distinct
+                # unique type_ids simultaneously (01-vision.md §5, T-0130).
+                if not agent.is_complete and cfg.n_exit > 0:
+                    held_unique_types = {
+                        it.type_id
+                        for it in self._state.items.values()
+                        if it.holder == agent.agent_id and it.rarity == Rarity.UNIQUE
+                    }
+                    if len(held_unique_types) >= cfg.n_exit:
+                        agent.is_complete = True
+                        agent.completed_at = self._state.tick
+
     def _consume_chain_key(
         self, agent: Agent, item: ItemInstance, world_items: list[ItemInstance]
     ) -> None:

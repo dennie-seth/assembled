@@ -41,6 +41,11 @@ describe("listAssignableAgents", () => {
     expect(await listAssignableAgents(tmpDir)).toEqual(["infra"]);
   });
 
+  it("excludes dispatch (a valid task agent value, but a non-executable escalation sentinel with no agent definition file)", async () => {
+    await writeAgentFiles(["infra", "reviewer"]);
+    expect(await listAssignableAgents(tmpDir)).toEqual(["infra"]);
+  });
+
   it("ignores non-.md files", async () => {
     await writeAgentFiles(["infra"]);
     await fs.writeFile(path.join(tmpDir, "README.txt"), "not an agent", "utf8");
