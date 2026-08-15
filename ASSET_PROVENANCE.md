@@ -12,12 +12,15 @@ next to each asset under `assets/final/` — this table is the index/summary.
 | `assets/final/palette/home_palette.png` (+ `.json`) | N/A — extracted (T-0105), not generated | N/A | Clustered from `assets/src/concept/signal_tower_material_sheet.png` (N=16, see `home_palette.json`'s `_comment`/`source`) | N/A (deterministic, seed=42 in `palette_extract.extract`) |
 | `assets/final/tiles/signal_tower_concrete_wall_16px.png` | `sd_xl_base_1.0.safetensors` | CreativeML Open RAIL++-M | "flat brutalist concrete wall texture, straight-on orthographic surface photograph, uniform tileable pattern, muted concrete grey with subtle oxide rust stains and institutional green patina, weathered stained surface detail, interior industrial concrete panel, even lighting, no border" | 4201 |
 | `assets/final/tiles/signal_tower_concrete_wall_floor_transitions_16px.png` | N/A — procedurally generated (T-0153), not AI-generated | N/A | 64×32 indexed PNG (mode P), 8 transition tiles (wall, floor, wall→floor vertical/horizontal, corners TL/TR/BL/BR) composed from home palette indices using `assets/src/tiles/src/tile_gen/transition_sheet.py`. All tiles satisfy T-0102's seamlessness and transition-adjacency gate checks (12/12 pass). | Deterministic — seed N/A; output is fully determined by palette slot indices (WALL=8, FLOOR=13, JOINT=4 from `assets/final/palette/home_palette.json`) and tile layout constants in `transition_sheet.py` |
+| `assets/src/concept/signal_tower_material_sheet_lora.png` (T-0167 LoRA handshake) | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (T-0072) | CreativeML Open RAIL++-M (base + LoRA; LoRA training refs CC-BY-SA-4.0/3.0) | "brutalist concrete wall texture, worn concrete floor surface, wall-to-floor trim, muted concrete grey and oxide and institutional green, flat side-on reference sheet, no perspective, value-separated material panels, interior, weathered surface detail, rough stained concrete" — img2img (denoise=0.9) from `signal_tower_material_template.png`, LoRA weight=0.75 | 3101 (same as original `signal_tower_material_sheet.png` to isolate LoRA effect); recipe at `assets/src/concept/signal_tower_material_sheet_lora.recipe.json`; `prompt_id`: 437d1d57-0543-4e81-9384-5da7a5f5ce43; sha256: 0366e6c1… (sidecar: `signal_tower_material_sheet_lora.provenance.json`) |
+| `assets/final/lora/soviet_brutalism_style_v1.safetensors` (Git LFS) | SDXL style LoRA, base `sd_xl_base_1.0.safetensors`, trained via the WSL-native kohya sd-scripts stack (see `docs/lora-training-env.md`); rank=16, alpha=8, target modules `to_q`/`to_k`/`to_v`/`to_out.0` (`assets/src/lora/training_config.toml`) | CreativeML Open RAIL++-M (base checkpoint) + CC-BY-SA-4.0/3.0 (44-image reference corpus, `assets/src/lora/corpus.json`) | Trained (not prompted) — style LoRA fit to the full 44-image Soviet brutalist/constructivist reference corpus, 10 epochs / 440 steps, `1.0e-4` learning rate, `AdamW8bit`, resolution 1024, `fp16` | N/A (training run, not a single-seed generation) |
 
-**Not yet produced:** `assets/final/lora/soviet_brutalism_style_v1.safetensors`
-(T-0072) has **not been trained**. The curated 44-image reference corpus
-(`assets/src/lora/corpus.json`, CC-BY-SA-4.0/3.0) and the committed
-training config (`assets/src/lora/training_config.toml`) both exist, but
-no training run has produced weights and no file exists under
-`assets/final/lora/`. T-0072 is reopened (`ready`); this row will be
-added back, with real model/license/prompt/seed fields, once an actual
-training run commits real weights.
+**Trained and deployed (2026-08-12):** `assets/final/lora/soviet_brutalism_style_v1.safetensors`
+(T-0072) completed a full training run — 10/10 epochs, 440/440 steps,
+2026-08-12 11:15–14:15 UTC — producing a valid 218MB SDXL LoRA (2958
+tensors), verified by loading it. Deployed to
+`F:\ComfyUI\models\loras\soviet_brutalism_style_v1.safetensors`. The file
+is tracked via Git LFS (`.gitattributes`: `assets/final/lora/*.safetensors`)
+since it exceeds GitHub's 100MB per-blob limit — the earlier `blocked`
+status on T-0072 was solely this push-size rejection, not a training
+failure; no re-train was needed once LFS was set up.

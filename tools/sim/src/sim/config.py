@@ -121,6 +121,13 @@ class SimConfig:
     unlock_scope: str = "per_run"
 
     # ------------------------------------------------------------------
+    # Exit condition — 01-vision.md §5, T-0130
+    # An identity completes the moment it simultaneously holds n_exit
+    # distinct unique type_ids.  Zero means disabled (no one ever completes).
+    # ------------------------------------------------------------------
+    n_exit: int = 3
+
+    # ------------------------------------------------------------------
     # Chain-tear key consumption — open question (12 §3a, 07 §2)
     # When enabled, a unique picked up by an agent still short of
     # chain_key_crossings_required is spent to cross a chain tear

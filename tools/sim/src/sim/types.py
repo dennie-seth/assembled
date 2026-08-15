@@ -81,6 +81,8 @@ class Agent:
     ticks_active: int = 0         # run-scoped active ticks; reset on collapse (INV-9)
     chain_progress: int = 0       # uniques consumed to cross chain tears (12 §3a)
     vocabulary: set[int] = field(default_factory=set)  # identity-level: type_ids ever held
+    is_complete: bool = False       # True once exit condition achieved (01-vision.md §5)
+    completed_at: int | None = None  # sim tick of first completion; identity-level
 
 
 @dataclass
