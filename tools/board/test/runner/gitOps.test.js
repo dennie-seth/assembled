@@ -14,6 +14,9 @@ import {
   getHeadCommit,
   pullDevelop,
   mergeNoFF,
+  fetch,
+  mergeDevelop,
+  mergeStatus,
   commitTaskFile,
   commitPaths,
   autoCommitCardsOnCreateFromEnv,
@@ -522,6 +525,154 @@ describe("mergeNoFF", () => {
 
   it("rejects with a descriptive error when the branch does not exist on origin", async () => {
     await expect(mergeNoFF({ repoRoot, branch: "nonexistent-branch" })).rejects.toThrow(/nonexistent-branch|git/i);
+  });
+});
+
+describe("fetch", () => {
+  it("updates origin's remote-tracking refs in the worktree without touching the working tree", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0200");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0200", baseBranch: "develop" });
+
+    const cloneDir = path.join(tmpDir, "other-clone-fetch");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: new commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(fetch({ worktreeDir })).resolves.not.toThrow();
+
+    const { stdout: log } = await git(["log", "--oneline", "origin/develop"], worktreeDir);
+    expect(log).toContain("upstream: new commit");
+    // Working tree/branch itself is untouched -- fetch never merges.
+    const { stdout: branchLog } = await git(["log", "--oneline", "feature/T-0200"], worktreeDir);
+    expect(branchLog).not.toContain("upstream: new commit");
+  });
+});
+
+describe("mergeDevelop", () => {
+  it("merges origin/<baseBranch> into the branch cleanly when there's no conflict -- conflicted:false, changed:true", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0201");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0201", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "feature.txt"), "feature work\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: feature work" });
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergedevelop-clean");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: new commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await fetch({ worktreeDir });
+    const result = await mergeDevelop({ worktreeDir, baseBranch: "develop" });
+
+    expect(result).toMatchObject({ conflicted: false, changed: true });
+    const { stdout: log } = await git(["log", "--oneline", "-5"], worktreeDir);
+    expect(log).toContain("upstream: new commit");
+    expect(log).toContain("feat: feature work");
+    const upstreamFile = await fs.readFile(path.join(worktreeDir, "upstream.txt"), "utf8");
+    expect(upstreamFile).toBe("from upstream\n");
+    const { stdout: status } = await git(["status", "--porcelain"], worktreeDir);
+    expect(status.trim()).toBe("");
+  });
+
+  it("returns changed:false when the branch already contains everything on origin/<baseBranch>", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0202");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0202", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "feature.txt"), "feature work\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: feature work" });
+
+    await fetch({ worktreeDir });
+    const result = await mergeDevelop({ worktreeDir, baseBranch: "develop" });
+
+    expect(result).toMatchObject({ conflicted: false, changed: false });
+  });
+
+  it("detects a real conflict without aborting -- conflicted:true, names the file, and includes the conflict hunk text, leaving the worktree mid-merge for manual resolution", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0203");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0203", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "conflict.txt"), "branch version\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: branch change" });
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergedevelop-conflict");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "conflict.txt"), "upstream version\n", "utf8");
+    await git(["add", "conflict.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: conflicting change"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await fetch({ worktreeDir });
+    const result = await mergeDevelop({ worktreeDir, baseBranch: "develop" });
+
+    expect(result.conflicted).toBe(true);
+    expect(result.conflictedFiles).toEqual(["conflict.txt"]);
+    expect(result.hunks["conflict.txt"]).toContain("<<<<<<<");
+    expect(result.hunks["conflict.txt"]).toContain("branch version");
+    expect(result.hunks["conflict.txt"]).toContain("upstream version");
+    expect(result.hunks["conflict.txt"]).toContain(">>>>>>>");
+
+    // Left mid-merge on purpose -- never auto-abort a real conflict, an agent resolves it in place.
+    const { stdout: mergeHead } = await git(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], worktreeDir).catch(
+      (err) => ({ stdout: "", err })
+    );
+    expect(mergeHead.trim()).not.toBe("");
+  });
+
+  it("rejects (does not silently report conflicted) when the merge fails for a reason other than a content conflict", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0204");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0204", baseBranch: "develop" });
+
+    await expect(mergeDevelop({ worktreeDir, baseBranch: "nonexistent-branch" })).rejects.toThrow(/git/i);
+  });
+});
+
+describe("mergeStatus", () => {
+  it("returns an empty array on a clean worktree", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0205");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0205", baseBranch: "develop" });
+
+    await expect(mergeStatus({ worktreeDir })).resolves.toEqual([]);
+  });
+
+  it("lists unmerged files during an active conflicted merge, and clears once resolved and staged", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0206");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0206", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "conflict.txt"), "branch version\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: branch change" });
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergestatus-conflict");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "conflict.txt"), "upstream version\n", "utf8");
+    await git(["add", "conflict.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: conflicting change"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await fetch({ worktreeDir });
+    await mergeDevelop({ worktreeDir, baseBranch: "develop" });
+
+    await expect(mergeStatus({ worktreeDir })).resolves.toEqual(["conflict.txt"]);
+
+    await fs.writeFile(path.join(worktreeDir, "conflict.txt"), "resolved version\n", "utf8");
+    await git(["add", "conflict.txt"], worktreeDir);
+
+    await expect(mergeStatus({ worktreeDir })).resolves.toEqual([]);
   });
 });
 
