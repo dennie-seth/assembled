@@ -23,9 +23,8 @@
 // This static_assert fires at compile time if someone misconfigures CMake
 // and links this test without defining ASSEMBLED_DEBUG_GRANT.
 #ifndef ASSEMBLED_DEBUG_GRANT
-static_assert(false,
-              "item_grant_test.cpp built without ASSEMBLED_DEBUG_GRANT — "
-              "CMakeLists.txt conditional definition is broken");
+static_assert(false, "item_grant_test.cpp built without ASSEMBLED_DEBUG_GRANT — "
+                     "CMakeLists.txt conditional definition is broken");
 #endif
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
@@ -72,24 +71,26 @@ void assertInv1(const drogon::orm::DbClientPtr &db, const std::string &item_id,
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 TEST_CASE("debugGrant: mints a new item_instance held by the requested identity") {
-    const char *db_url = std::getenv("DATABASE_URL");
-    if (!db_url) {
+    if (!std::getenv("DATABASE_URL")) {
         MESSAGE("DATABASE_URL not set — skipping DB assertions (build-only run)");
         return;
     }
 
-    auto db = assembled_server::makeDbClient(db_url);
-    assembled_server::MigrationRunner runner(db);
-    runner.run(ASSEMBLED_MIGRATIONS_DIR);
+    auto db = assembled_server::Database::fromEnv();
+    REQUIRE(db.has_value());
+    auto client = db->getClient();
+
+    assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
+    runner.applyPending(client);
 
     constexpr int16_t TYPE_ID = 171;
     const std::string HOLDER = "grant_test_identity_token";
 
-    seedItemType(db, TYPE_ID, /*rarity=*/0);
-    seedIdentity(db, HOLDER);
+    seedItemType(client, TYPE_ID, /*rarity=*/0);
+    seedIdentity(client, HOLDER);
 
     // Count before grant.
-    assembled_server::PgItemRepo repo(db);
+    assembled_server::PgItemRepo repo(client);
     const int32_t before = repo.countByType(TYPE_ID);
 
     // Act: grant a new item to HOLDER.
@@ -106,7 +107,7 @@ TEST_CASE("debugGrant: mints a new item_instance held by the requested identity"
     CHECK(repo.countByType(TYPE_ID) == before + 1);
 
     // INV-1: the new item has exactly one custody holder.
-    assertInv1(db, result.new_item_id, "after debugGrant");
+    assertInv1(client, result.new_item_id, "after debugGrant");
 
     // The item is held by the requested identity, not anchored.
     auto rec = repo.find(result.new_item_id);
@@ -118,23 +119,25 @@ TEST_CASE("debugGrant: mints a new item_instance held by the requested identity"
 }
 
 TEST_CASE("debugGrant: grants unique (rarity=2) item bypassing economy") {
-    const char *db_url = std::getenv("DATABASE_URL");
-    if (!db_url) {
+    if (!std::getenv("DATABASE_URL")) {
         MESSAGE("DATABASE_URL not set — skipping DB assertions (build-only run)");
         return;
     }
 
-    auto db = assembled_server::makeDbClient(db_url);
-    assembled_server::MigrationRunner runner(db);
-    runner.run(ASSEMBLED_MIGRATIONS_DIR);
+    auto db = assembled_server::Database::fromEnv();
+    REQUIRE(db.has_value());
+    auto client = db->getClient();
+
+    assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
+    runner.applyPending(client);
 
     constexpr int16_t TYPE_ID = 172; // unique rarity
     const std::string HOLDER = "grant_test_identity_unique";
 
-    seedItemType(db, TYPE_ID, /*rarity=*/2);
-    seedIdentity(db, HOLDER);
+    seedItemType(client, TYPE_ID, /*rarity=*/2);
+    seedIdentity(client, HOLDER);
 
-    assembled_server::PgItemRepo repo(db);
+    assembled_server::PgItemRepo repo(client);
     const int32_t before = repo.countByType(TYPE_ID);
 
     assembled_server::GrantParams params;
@@ -145,7 +148,7 @@ TEST_CASE("debugGrant: grants unique (rarity=2) item bypassing economy") {
 
     CHECK_FALSE(result.new_item_id.empty());
     CHECK(repo.countByType(TYPE_ID) == before + 1);
-    assertInv1(db, result.new_item_id, "after debugGrant unique");
+    assertInv1(client, result.new_item_id, "after debugGrant unique");
 
     auto rec = repo.find(result.new_item_id);
     REQUIRE(rec.has_value());

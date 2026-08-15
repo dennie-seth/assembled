@@ -222,7 +222,6 @@ TransmuteResult PgItemRepo::transmute(const TransmuteParams &params) {
     return TransmuteResult{TransferStatus::Won, ins[0]["id"].as<std::string>()};
 }
 
-
 #ifdef ASSEMBLED_DEBUG_GRANT
 GrantResult PgItemRepo::debugGrant(const GrantParams &params) {
     // Insert directly into item_instance with the caller as holder.
