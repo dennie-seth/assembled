@@ -1,4 +1,3 @@
-class_name ArchetypeTagSet
 ## Collection of RoomTagDef entries for one archetype, with INV-12-class validation.
 ##
 ## Holds the full declared anchor tag set — every named room, plus any
@@ -6,11 +5,14 @@ class_name ArchetypeTagSet
 ## and validation methods that mirror the INV-12 build checks described in
 ## docs/design/16-level-design.md §4.
 ##
+## Use preload("res://archetype_tag_set.gd") to reference this type.
 ## Author: Claude
+
+const _RTD := preload("res://room_tag_def.gd")
 
 ## Integer archetype ID (matches assembled::ArchetypeId in shared/note_templates.hpp).
 var archetype_id: int
-## All declared room tag definitions for this archetype (Array of RoomTagDef).
+## All declared room tag definitions for this archetype (Array of RoomTagDef instances).
 var rooms: Array
 
 
@@ -25,12 +27,12 @@ func _init(p_id: int, p_rooms: Array) -> void:
 ## Returns all NAMED-anchor rooms carrying the given role flag.
 ## Only NAMED anchors are eligible for Gate/Hazard/Transit roles;
 ## system-facing anchors (CLIMAX, TEAR, MUSIC_CUE) are excluded.
-## @param role  A RoomTagDef.RoomRole enum value.
+## @param role  A RoomTagDef.RoomRole enum value (GATE, HAZARD, or TRANSIT).
 ## @return      Array of matching RoomTagDef instances; empty if none.
 func rooms_with_role(role: int) -> Array:
 	var result: Array = []
 	for room: Object in rooms:
-		if room.anchor_kind == RoomTagDef.AnchorKind.NAMED and room.has_role(role):
+		if room.anchor_kind == _RTD.AnchorKind.NAMED and room.has_role(role):
 			result.append(room)
 	return result
 
@@ -49,23 +51,22 @@ func find_anchor(kind: int) -> Object:
 ##   - Tear count must be exactly 1 (16 §2: "exactly one per archetype").
 ##   - Climax count must be at most 1 (16 §2: "at most one per archetype").
 ##   - MusicCue count must be at most 1.
-## Returns an Array[String] of error messages; empty means PASS.
+## Returns an Array of error strings; empty means PASS.
 ## Note: zero Climax rooms is valid for archetypes that do not declare one.
 ## Use validate_required_anchors() to enforce presence of declared anchors.
 func validate() -> Array:
-	var errors: Array[String] = []
+	var errors: Array = []
 	var tear_count: int = 0
 	var climax_count: int = 0
 	var music_cue_count: int = 0
 
 	for room: Object in rooms:
-		match room.anchor_kind:
-			RoomTagDef.AnchorKind.TEAR:
-				tear_count += 1
-			RoomTagDef.AnchorKind.CLIMAX:
-				climax_count += 1
-			RoomTagDef.AnchorKind.MUSIC_CUE:
-				music_cue_count += 1
+		if room.anchor_kind == _RTD.AnchorKind.TEAR:
+			tear_count += 1
+		elif room.anchor_kind == _RTD.AnchorKind.CLIMAX:
+			climax_count += 1
+		elif room.anchor_kind == _RTD.AnchorKind.MUSIC_CUE:
+			music_cue_count += 1
 
 	if tear_count != 1:
 		errors.append(
@@ -87,10 +88,10 @@ func validate() -> Array:
 ## Schema validation — checks that every required anchor kind is present.
 ## This is the INV-12-class check for system-facing anchors: if an archetype
 ## declares Climax or MusicCue, every variant of that archetype must include it.
-## @param kinds  Array of RoomTagDef.AnchorKind values that must be present.
-## @return       Array[String] of error messages; empty means PASS.
+## @param kinds  Array of RoomTagDef.AnchorKind int values that must be present.
+## @return       Array of error strings; empty means PASS.
 func validate_required_anchors(kinds: Array) -> Array:
-	var errors: Array[String] = []
+	var errors: Array = []
 	for kind: int in kinds:
 		if find_anchor(kind) == null:
 			errors.append(
@@ -105,7 +106,7 @@ func validate_required_anchors(kinds: Array) -> Array:
 ## for making the 0-Gate state visible rather than silent.
 func has_gate() -> bool:
 	for room: Object in rooms:
-		if room.anchor_kind == RoomTagDef.AnchorKind.NAMED and room.has_role(RoomTagDef.RoomRole.GATE):
+		if room.anchor_kind == _RTD.AnchorKind.NAMED and room.has_role(_RTD.RoomRole.GATE):
 			return true
 	return false
 
@@ -117,12 +118,11 @@ func has_gate() -> bool:
 func audit_gate_count() -> String:
 	var count: int = 0
 	for room: Object in rooms:
-		if room.anchor_kind == RoomTagDef.AnchorKind.NAMED and room.has_role(RoomTagDef.RoomRole.GATE):
+		if room.anchor_kind == _RTD.AnchorKind.NAMED and room.has_role(_RTD.RoomRole.GATE):
 			count += 1
 	if count == 0:
 		return (
-			"0 Gate rooms in archetype %d — verify intentional "
-			"(contributes nothing to unique-keyed unlock economy; 16-level-design.md §2)"
-			% archetype_id
-		)
+			"0 Gate rooms in archetype %d — verify intentional"
+			+ " (contributes nothing to unique-keyed unlock economy; 16-level-design.md §2)"
+		) % archetype_id
 	return "%d Gate room(s) in archetype %d" % [count, archetype_id]

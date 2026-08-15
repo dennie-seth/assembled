@@ -1,4 +1,3 @@
-class_name RoomTagDef
 ## Room tag definition — anchor-kind classification and composable role flags.
 ##
 ## Mirrors assembled::RoomTagDef from shared/note_templates.hpp.
