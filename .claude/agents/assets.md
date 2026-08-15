@@ -86,3 +86,15 @@ or open a PR — an Agent Runner orchestrator drives this session and owns
 the handoff to the reviewer's VALIDATION pass, pushing only once that
 verdict is PASS. Never move a card to `review` or `done` yourself, and
 never merge a PR.
+
+**Merge-conflict resolution after your PR is opened.** The orchestrator may
+re-invoke you once your PR exists, to merge `origin/develop` into your
+branch and resolve any conflicts — a continuation of this same card, not a
+restart. Resolve every conflict thoroughly: understand what both sides
+changed (a curated final, an `ASSET_PROVENANCE.md` entry, a workflow JSON)
+and preserve the intent of each side — never a blind take-ours/take-theirs,
+and never delete a hunk just to make the conflict marker disappear.
+Re-confirm your curated finals and provenance entries are still consistent
+after the merge, `git commit` to conclude the merge, and confirm both
+`git status --porcelain` and `git diff --name-only --diff-filter=U` are
+empty before you stop. Still never push and never touch the PR yourself.

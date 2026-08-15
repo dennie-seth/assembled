@@ -1,6 +1,6 @@
 import path from "node:path";
 import { NdjsonEventParser } from "./streamParser.js";
-import { buildPrompt, buildPlannerPrompt, resolveRulesForPaths } from "./promptBuilder.js";
+import { buildPrompt, buildPlannerPrompt, buildMergeConflictPrompt, resolveRulesForPaths } from "./promptBuilder.js";
 import { buildReviewerPrompt } from "./reviewerPrompt.js";
 import { extractVerdictFromEvents } from "./verdict.js";
 import { loadAgentDef, loadRules } from "./configLoader.js";
@@ -90,6 +90,7 @@ export class RunOrchestrator {
     buildPromptFn = buildPrompt,
     buildPlannerPromptFn = buildPlannerPrompt,
     buildReviewerPromptFn = buildReviewerPrompt,
+    buildMergeConflictPromptFn = buildMergeConflictPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
@@ -120,6 +121,7 @@ export class RunOrchestrator {
     this.buildPromptFn = buildPromptFn;
     this.buildPlannerPromptFn = buildPlannerPromptFn;
     this.buildReviewerPromptFn = buildReviewerPromptFn;
+    this.buildMergeConflictPromptFn = buildMergeConflictPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
@@ -295,7 +297,7 @@ export class RunOrchestrator {
       if (stop) return;
 
       if (verdict.verdict === "PASS") {
-        await this._handlePass(taskId, liveTask, worktreeDir, branch, verdict, runLog, currentReused);
+        await this._handlePass(taskId, liveTask, worktreeDir, branch, verdict, runLog, currentReused, effectiveAgent);
         return;
       }
 
@@ -715,7 +717,7 @@ export class RunOrchestrator {
     this.hub.broadcast({ type: "run-event", id: taskId, phase: "escalation", event });
   }
 
-  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false) {
+  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false, effectiveAgent = task.agent ?? "generic") {
     let commit;
     try {
       await this.git.commitAll({
@@ -734,6 +736,20 @@ export class RunOrchestrator {
 
     const prUrl = await this._openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog });
 
+    // Every card/flow that ends up with an open PR must keep that branch in sync with
+    // origin/develop before it's left for a human -- see _syncBranchWithDevelop's docstring.
+    // Scoped to prUrl truthy (a PR actually exists, whether freshly opened or reused) since a
+    // card with no PR (gh unavailable, autoOpenPr disabled) has nothing to keep in sync yet.
+    const syncOutcome = prUrl
+      ? await this._syncBranchWithDevelop({ taskId, task, effectiveAgent, worktreeDir, branch, runLog })
+      : { ok: true };
+
+    if (syncOutcome.skip) {
+      // A cancel fired mid conflict-resolution phase -- cancelRun() already finalized the
+      // card's status and removed the worktree; nothing further to do here.
+      return;
+    }
+
     try {
       await this.git.removeWorktree({ repoRoot: this.repoRoot, worktreeDir });
     } catch {
@@ -749,7 +765,124 @@ export class RunOrchestrator {
       patch.pr = prUrl;
       patch.body = appendNote(body, "PR", prUrl);
     }
+
+    if (!syncOutcome.ok) {
+      // The PR exists but the branch could not be brought in sync with develop -- surface it
+      // explicitly rather than silently settling the card into review with a stale/conflicted
+      // branch (see docs/design and the "many cards bounce back stale" motivation for this step).
+      patch.status = "blocked";
+      patch.body = appendNote(patch.body, "Blocked", `develop sync: ${syncOutcome.reason}`);
+      await this._appendComment(
+        taskId,
+        "assembled-board",
+        `Merge-develop enforcement could not complete automatically for ${branch}: ${syncOutcome.reason} ` +
+          `The PR (${prUrl ?? "n/a"}) is still open but its branch has unresolved conflicts against origin/${this.baseBranch} -- manual resolution required before this card can proceed to review.`
+      );
+    }
+
     await this._updateAndBroadcast(taskId, patch);
+  }
+
+  /**
+   * Enforcement step: every card that reaches an open PR must have origin/${this.baseBranch}
+   * merged into its branch before it's left for a human, so a card doesn't bounce back to
+   * in-progress purely because its branch went stale against develop while it sat in review.
+   * Runs in the same worktree `_handlePass` is about to remove, right after the PR is opened.
+   *
+   * A clean merge (or a no-op when the branch already has everything on develop) just pushes
+   * the result (or doesn't, if nothing changed) and returns `{ ok: true }`.
+   *
+   * A real conflict is never resolved mechanically -- no automatic take-ours/take-theirs, no
+   * discarding either side. Instead it's handed back to the same agent that implemented the
+   * card (`effectiveAgent`) as one more run phase, with the conflicted files and their conflict
+   * markers in the prompt (see buildMergeConflictPromptFn / gitOps.mergeDevelop's conflict
+   * shape). Only once that phase exits cleanly *and* a fresh check confirms every conflict is
+   * actually resolved and committed does this push and return `{ ok: true }`; a crash, or an
+   * agent that stops without fully resolving, returns `{ ok: false, reason }` instead -- the
+   * caller surfaces that on the card rather than pushing a broken merge.
+   *
+   * Git-level failures unrelated to a real conflict (fetch/merge erroring for some other reason,
+   * e.g. network trouble) degrade gracefully: logged and treated as best-effort skip (`{ ok:
+   * true }`), the same "never fail the run over an infra hiccup" posture `_updateAndBroadcast`'s
+   * commit step and `_openPullRequest` already take -- only a genuine, detected conflict (or a
+   * failure to resolve one) is a reason to hold the card back.
+   */
+  async _syncBranchWithDevelop({ taskId, task, effectiveAgent, worktreeDir, branch, runLog }) {
+    let mergeResult;
+    try {
+      await this.git.fetch({ worktreeDir });
+      mergeResult = await this.git.mergeDevelop({ worktreeDir, baseBranch: this.baseBranch });
+    } catch (err) {
+      await this._logFinalize(taskId, runLog, `develop sync skipped: git fetch/merge failed: ${err.message}`);
+      return { ok: true };
+    }
+
+    if (!mergeResult.conflicted) {
+      if (!mergeResult.changed) {
+        await this._logFinalize(taskId, runLog, `${branch} already up to date with origin/${this.baseBranch}.`);
+        return { ok: true };
+      }
+      try {
+        await this.git.push({ worktreeDir, branch });
+      } catch (err) {
+        return { ok: false, reason: `merged origin/${this.baseBranch} cleanly but push failed: ${err.message}` };
+      }
+      await this._logFinalize(taskId, runLog, `Merged origin/${this.baseBranch} into ${branch} (clean) and pushed.`);
+      return { ok: true };
+    }
+
+    await this._logFinalize(
+      taskId,
+      runLog,
+      `Merge conflicts against origin/${this.baseBranch} in: ${mergeResult.conflictedFiles.join(", ")} -- handing back to ${effectiveAgent} for resolution.`
+    );
+
+    const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const prompt = this.buildMergeConflictPromptFn({
+      task,
+      agentDef,
+      baseBranch: this.baseBranch,
+      branch,
+      conflictedFiles: mergeResult.conflictedFiles,
+      hunks: mergeResult.hunks
+    });
+
+    const result = await this._runPhase({
+      taskId,
+      task,
+      phase: "merge-conflict",
+      prompt,
+      allowedTools,
+      worktreeDir,
+      model: agentDef.model,
+      runLog
+    });
+
+    if (result.cancelled) {
+      return { ok: true, skip: true };
+    }
+    if (result.exitCode !== 0) {
+      return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
+    }
+
+    const stillUnresolved = await this.git.mergeStatus({ worktreeDir });
+    const dirty = await this.git.hasUncommittedChanges({ worktreeDir });
+    if (stillUnresolved.length > 0 || dirty) {
+      const detail = stillUnresolved.length > 0 ? stillUnresolved.join(", ") : "uncommitted merge state";
+      return {
+        ok: false,
+        reason: `merge conflicts against origin/${this.baseBranch} were not fully resolved (${detail}) -- left for manual resolution, branch not pushed.`
+      };
+    }
+
+    try {
+      await this.git.push({ worktreeDir, branch });
+    } catch (err) {
+      return { ok: false, reason: `merge conflicts resolved but push failed: ${err.message}` };
+    }
+    await this._logFinalize(taskId, runLog, `Resolved merge conflicts against origin/${this.baseBranch} and pushed.`);
+    return { ok: true };
   }
 
   /**
