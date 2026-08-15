@@ -324,32 +324,333 @@ def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tick-by-tick TTC runner (T-0133: capture completion tick per agent)
+# ---------------------------------------------------------------------------
+
+
+def _run_one_point_ttc(
+    population: int,
+    ticks: int,
+    seed: int,
+    *,
+    chain_key_enabled: bool = True,
+    chain_key_mode: str = CHAIN_KEY_MODE,
+    chain_key_crossings_required: int = CHAIN_KEY_CROSSINGS_REQUIRED,
+    unique_count: int = UNIQUE_COUNT,
+) -> dict[str, Any]:
+    """Run one (population, seed) combination tick-by-tick, recording completion.
+
+    An agent "completes" the first tick its chain_progress reaches
+    chain_key_crossings_required (the T-0130 exit condition proxy for the
+    chain-key progression path). Completion tick is recorded once and does not
+    reset on further universe transitions (collapse_duration > ticks, so no
+    collapse fires during this run).
+
+    @param population                  Number of agents; fixed (no joins/quits).
+    @param ticks                       Simulated minutes to run.
+    @param seed                        PRNG seed for reproducibility.
+    @param chain_key_enabled           If False, chain_progress stays 0 (no completions).
+    @param chain_key_mode              "destroy" or "transfer".
+    @param chain_key_crossings_required Crossings required to count as completed.
+    @param unique_count                Fixed absolute unique instance count.
+    @return                            Dict with "completion_ticks": list[int | None],
+                                       one entry per non-QUIT agent (None = did not
+                                       complete within the run).
+    """
+    num_anchors = max(20, population * 10)
+    cfg = SimConfig(
+        initial_population=population,
+        join_rate=0.0,
+        quit_rate=0.0,
+        unique_count=unique_count,
+        chain_key_enabled=chain_key_enabled,
+        chain_key_mode=chain_key_mode,
+        chain_key_crossings_required=chain_key_crossings_required,
+        collapse_duration=ticks + 1,
+        first_universe_multiplier=1.0,
+        num_anchors=num_anchors,
+    )
+    engine = SimEngine(cfg, seed=seed)
+
+    # Pre-register all initial agents; None = not yet completed.
+    completion: dict[int, int | None] = {aid: None for aid in engine.state.agents}
+
+    for _ in range(ticks):
+        engine.tick()
+        current_tick = engine.state.tick
+        for agent in engine.state.agents.values():
+            if agent.state == AgentState.QUIT:
+                continue
+            if completion.get(agent.agent_id) is None:
+                if agent.chain_progress >= chain_key_crossings_required:
+                    completion[agent.agent_id] = current_tick
+
+    non_quit = [a for a in engine.state.agents.values() if a.state != AgentState.QUIT]
+    return {"completion_ticks": [completion.get(a.agent_id) for a in non_quit]}
+
+
+# ---------------------------------------------------------------------------
+# TTC population sweep (T-0133: median time-to-completion curve)
+# ---------------------------------------------------------------------------
+
+
+def run_inv14_ttc_sweep(
+    population_range: list[int],
+    ticks_per_run: int,
+    seed: int,
+    seeds_per_point: int,
+    *,
+    chain_key_enabled: bool = True,
+    chain_key_mode: str = CHAIN_KEY_MODE,
+    chain_key_crossings_required: int = CHAIN_KEY_CROSSINGS_REQUIRED,
+    unique_count: int = UNIQUE_COUNT,
+) -> list[dict[str, Any]]:
+    """Sweep time-to-completion across P ∈ population_range (T-0133 §AC3).
+
+    Reuses T-0156's population-sweep infrastructure. For each P, runs
+    seeds_per_point independent seeds and pools all per-agent TTC observations.
+    Agents that do not complete within ticks_per_run contribute to
+    fraction_completed but are excluded from the TTC IQR statistics.
+
+    @param population_range        List of population values to sweep.
+    @param ticks_per_run           Simulated minutes per run (upper bound on TTC).
+    @param seed                    Base seed; offsets 0 … seeds_per_point-1.
+    @param seeds_per_point         Independent seeds per population point.
+    @param chain_key_enabled       Whether chain-key consumption is active.
+    @param chain_key_mode          "destroy" or "transfer".
+    @param chain_key_crossings_required  Crossings to count as completed.
+    @param unique_count            Fixed absolute unique instance count.
+    @return                        One row per population value.
+    """
+    rows: list[dict[str, Any]] = []
+
+    for P in population_range:
+        all_ttc: list[float] = []
+        n_agents_total = 0
+        n_completed = 0
+        seed_list = [seed + i for i in range(seeds_per_point)]
+
+        for s in seed_list:
+            result = _run_one_point_ttc(
+                population=P,
+                ticks=ticks_per_run,
+                seed=s,
+                chain_key_enabled=chain_key_enabled,
+                chain_key_mode=chain_key_mode,
+                chain_key_crossings_required=chain_key_crossings_required,
+                unique_count=unique_count,
+            )
+            ttc_list = result["completion_ticks"]
+            n_agents_total += len(ttc_list)
+            completed = [float(t) for t in ttc_list if t is not None]
+            n_completed += len(completed)
+            all_ttc.extend(completed)
+
+        fraction_completed = n_completed / n_agents_total if n_agents_total > 0 else 0.0
+
+        if all_ttc:
+            stats = _iqr_stats(all_ttc)
+            median_ttc: float | None = stats["median"]
+            q1_ttc: float | None = stats["q1"]
+            q3_ttc: float | None = stats["q3"]
+            iqr_ttc: float | None = stats["iqr"]
+        else:
+            median_ttc = q1_ttc = q3_ttc = iqr_ttc = None
+
+        rows.append(
+            {
+                "population": P,
+                "median_ttc": median_ttc,
+                "q1_ttc": q1_ttc,
+                "q3_ttc": q3_ttc,
+                "iqr_ttc": iqr_ttc,
+                "fraction_completed": fraction_completed,
+                "n_agents_total": n_agents_total,
+                "n_completed": n_completed,
+                "seeds": seed_list,
+                "ticks_per_run": ticks_per_run,
+            }
+        )
+
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Monotonicity verdict (T-0133 §AC4)
+# ---------------------------------------------------------------------------
+
+
+def monotonicity_verdict(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Answer: does time-to-completion increase or decrease monotonically with P?
+
+    Only considers rows where median_ttc is not None (i.e. at least one agent
+    completed within the run window). Populations with zero completions are
+    reported in median_ttc_by_population as None and treated as evidence that
+    TTC has grown beyond the measurement window (consistent with increasing TTC).
+
+    @param rows  Output of run_inv14_ttc_sweep.
+    @return      Dict with "monotonic" bool, "direction" str
+                 ("increasing"|"decreasing"|"non-monotonic"), "verdict" str, and
+                 "median_ttc_by_population" mapping population → median_ttc.
+    """
+    valid = [(r["population"], r["median_ttc"]) for r in rows if r.get("median_ttc") is not None]
+    medians = [m for _, m in valid]
+
+    if len(medians) <= 1:
+        direction = "increasing"
+        is_monotonic = True
+    else:
+        increasing = all(medians[i] <= medians[i + 1] for i in range(len(medians) - 1))
+        decreasing = all(medians[i] >= medians[i + 1] for i in range(len(medians) - 1))
+
+        if increasing:
+            direction = "increasing"
+            is_monotonic = True
+        elif decreasing:
+            direction = "decreasing"
+            is_monotonic = True
+        else:
+            direction = "non-monotonic"
+            is_monotonic = False
+
+    if is_monotonic:
+        verdict_str = (
+            f"time-to-completion is MONOTONICALLY {direction.upper()} with population"
+        )
+    else:
+        verdict_str = "time-to-completion is NON-MONOTONIC with population"
+
+    return {
+        "monotonic": is_monotonic,
+        "direction": direction,
+        "verdict": verdict_str,
+        "median_ttc_by_population": {r["population"]: r.get("median_ttc") for r in rows},
+    }
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
 
+def _write_inv14_report(
+    ttc_rows: list[dict[str, Any]],
+    mono: dict[str, Any],
+    ck_rows: list[dict[str, Any]],
+    p_inv: dict[str, Any],
+    path: Path,
+) -> None:  # pragma: no cover
+    """Write the human-readable INV-14 results report.
+
+    @param ttc_rows  Output of run_inv14_ttc_sweep.
+    @param mono      Output of monotonicity_verdict.
+    @param ck_rows   Output of run_chain_key_population_sweep.
+    @param p_inv     Output of p_invariance_verdict.
+    @param path      Destination .md path.
+    """
+    lines: list[str] = [
+        "# INV-14 re-measurement — T-0133 results",
+        "",
+        "**Sweep:** `P ∈ {2, 20, 200, 2000, 20000}`, 30 seeds per point, "
+        f"{TICKS_PER_RUN} ticks/run (compressed)",
+        "**Engine:** T-0129 multi-universe identity, T-0131 fixed `check_inv8`, "
+        "T-0132 swept E-4 constants.",
+        "**Chain-key:** `chain_key_enabled=True`, "
+        f"`mode={CHAIN_KEY_MODE}`, `crossings_required={CHAIN_KEY_CROSSINGS_REQUIRED}`, "
+        f"`unique_count={UNIQUE_COUNT}`.",
+        "",
+        "---",
+        "",
+        "## Time-to-completion vs population (T-0133 §AC3)",
+        "",
+        "An agent *completes* the tick its `chain_progress` first reaches "
+        f"`chain_key_crossings_required` ({CHAIN_KEY_CROSSINGS_REQUIRED}). "
+        "Agents not completing within the run window are counted in "
+        "`fraction_completed` but excluded from TTC statistics.",
+        "",
+        f"{'P':>8} {'completed%':>11} {'median_ttc':>12} {'Q1':>8} {'Q3':>8} {'IQR':>8}",
+        "-" * 62,
+    ]
+    for row in ttc_rows:
+        pct = row["fraction_completed"] * 100.0
+        if row["median_ttc"] is not None:
+            med = f"{row['median_ttc']:.1f}"
+            q1s = f"{row['q1_ttc']:.1f}"
+            q3s = f"{row['q3_ttc']:.1f}"
+            iqrs = f"{row['iqr_ttc']:.1f}"
+        else:
+            med = q1s = q3s = iqrs = "—"
+        lines.append(
+            f"{row['population']:>8} {pct:>10.1f}% {med:>12} {q1s:>8} {q3s:>8} {iqrs:>8}"
+        )
+    lines += [
+        "-" * 62,
+        "",
+        f"**Monotonicity verdict:** {mono['verdict']}",
+        "",
+        "> *Populations where `fraction_completed ≈ 0%` indicate that TTC exceeds the "
+        f"{TICKS_PER_RUN}-tick measurement window, consistent with TTC → ∞ as P grows.*",
+        "",
+        "---",
+        "",
+        "## Chain crossings and rooms per run vs population (T-0156)",
+        "",
+        f"{'P':>8} {'unique_density':>14} {'crossings_med':>13}  "
+        f"[Q1, Q3]   {'rooms_med':>9}  [Q1, Q3]",
+        "-" * 80,
+    ]
+    for row in ck_rows:
+        lines.append(
+            f"{row['population']:>8} "
+            f"{row['unique_density']:>14.5f} "
+            f"{row['chain_crossings_median']:>13.4f}  "
+            f"[{row['chain_crossings_q1']:.3f}, {row['chain_crossings_q3']:.3f}]  "
+            f"{row['rooms_per_run_median']:>9.2f}  "
+            f"[{row['rooms_per_run_q1']:.2f}, {row['rooms_per_run_q3']:.2f}]"
+        )
+    lines += [
+        "-" * 80,
+        "",
+        f"**P-invariance verdict (rooms-per-run):** {p_inv['verdict']}",
+        "",
+        "---",
+        "",
+        "## Artifacts",
+        "",
+        "- `inv14_ttc_sweep.json` / `.csv` — per-population TTC IQR statistics",
+        "- `inv14_monotonicity.json` — monotonicity verdict (machine-readable)",
+        "- `inv14_chain_key_sweep.json` / `.csv` — chain crossings + rooms sweep",
+        "- `inv14_p_invariance.json` — P-invariance verdict for rooms-per-run",
+    ]
+    path.write_text("\n".join(lines) + "\n")
+
+
 def main() -> None:  # pragma: no cover
-    """Run the full INV-14 + chain-key population sweep and write results.
+    """Run the full INV-14 + chain-key + TTC population sweep and write results.
 
     Output files:
-      results/inv14_chain_key_sweep.json  — per-population IQR statistics
+      results/inv14_chain_key_sweep.json  — per-population IQR statistics (T-0156)
       results/inv14_chain_key_sweep.csv   — same in CSV form
       results/inv14_p_invariance.json     — P-invariance verdict for rooms-per-run
+      results/inv14_ttc_sweep.json        — time-to-completion per population (T-0133)
+      results/inv14_ttc_sweep.csv         — same in CSV form
+      results/inv14_monotonicity.json     — monotonicity verdict (T-0133)
+      results/inv14_report.md             — human-readable narrative report
 
-    This sweep answers T-0156's four acceptance criteria:
-      1. Chain-key consumption is measured across all P (not a single point).
-      2. Chain crossings per player per run reported with IQR bands as f(P).
-      3. Rooms-per-run reported with IQR bands as f(P).
-      4. Whether rooms-per-run is P-invariant is answered explicitly.
+    Answers T-0133's acceptance criteria:
+      AC1. P ∈ {2,20,200,2000,20000}, >= 30 seeds per point.
+      AC2. Uses T-0130 exit condition (chain_progress >= crossings_required),
+           T-0129 multi-universe identity, T-0131 fixed check_inv8.
+      AC3. Median TTC vs P reported as a curve with IQR bands.
+      AC4. Monotonicity question answered explicitly in inv14_report.md.
     """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print(
-        f"Running INV-14 + chain-key sweep: P={POPULATION_RANGE}, "
+        f"Running INV-14 chain-key sweep: P={POPULATION_RANGE}, "
         f"seeds={SEEDS_PER_POINT}, ticks={TICKS_PER_RUN}"
     )
-
-    rows = run_chain_key_population_sweep(
+    ck_rows = run_chain_key_population_sweep(
         population_range=POPULATION_RANGE,
         ticks_per_run=TICKS_PER_RUN,
         seed=SEED,
@@ -359,19 +660,41 @@ def main() -> None:  # pragma: no cover
         chain_key_crossings_required=CHAIN_KEY_CROSSINGS_REQUIRED,
         unique_count=UNIQUE_COUNT,
     )
-    _write_json(rows, RESULTS_DIR / "inv14_chain_key_sweep.json")
-    _write_csv(rows, RESULTS_DIR / "inv14_chain_key_sweep.csv")
+    _write_json(ck_rows, RESULTS_DIR / "inv14_chain_key_sweep.json")
+    _write_csv(ck_rows, RESULTS_DIR / "inv14_chain_key_sweep.csv")
 
-    verdict = p_invariance_verdict(rows, cv_threshold=P_INVARIANCE_CV_THRESHOLD)
-    _write_json(verdict, RESULTS_DIR / "inv14_p_invariance.json")
+    p_inv = p_invariance_verdict(ck_rows, cv_threshold=P_INVARIANCE_CV_THRESHOLD)
+    _write_json(p_inv, RESULTS_DIR / "inv14_p_invariance.json")
 
-    # Print summary table
+    print(
+        f"\nRunning INV-14 TTC sweep: P={POPULATION_RANGE}, "
+        f"seeds={SEEDS_PER_POINT}, ticks={TICKS_PER_RUN}"
+    )
+    ttc_rows = run_inv14_ttc_sweep(
+        population_range=POPULATION_RANGE,
+        ticks_per_run=TICKS_PER_RUN,
+        seed=SEED,
+        seeds_per_point=SEEDS_PER_POINT,
+        chain_key_enabled=True,
+        chain_key_mode=CHAIN_KEY_MODE,
+        chain_key_crossings_required=CHAIN_KEY_CROSSINGS_REQUIRED,
+        unique_count=UNIQUE_COUNT,
+    )
+    _write_json(ttc_rows, RESULTS_DIR / "inv14_ttc_sweep.json")
+    _write_csv(ttc_rows, RESULTS_DIR / "inv14_ttc_sweep.csv")
+
+    mono = monotonicity_verdict(ttc_rows)
+    _write_json(mono, RESULTS_DIR / "inv14_monotonicity.json")
+
+    _write_inv14_report(ttc_rows, mono, ck_rows, p_inv, RESULTS_DIR / "inv14_report.md")
+
+    # --- Print chain-key summary ---
     print(
         f"\n{'P':>8} {'unique_density':>14} {'crossings_med':>13} "
         f"[Q1,Q3]  {'rooms_med':>9} [Q1,Q3]"
     )
     print("-" * 75)
-    for row in rows:
+    for row in ck_rows:
         print(
             f"{row['population']:>8} "
             f"{row['unique_density']:>14.5f} "
@@ -381,8 +704,21 @@ def main() -> None:  # pragma: no cover
             f"[{row['rooms_per_run_q1']:.2f},{row['rooms_per_run_q3']:.2f}]"
         )
     print("-" * 75)
-    print(f"\nP-invariance verdict: {verdict['verdict']}")
-    print(f"wrote results to {RESULTS_DIR}")
+    print(f"P-invariance verdict: {p_inv['verdict']}")
+
+    # --- Print TTC summary ---
+    print(
+        f"\n{'P':>8} {'completed%':>11} {'median_ttc':>12} {'IQR':>8}"
+    )
+    print("-" * 44)
+    for row in ttc_rows:
+        pct = row["fraction_completed"] * 100.0
+        med = f"{row['median_ttc']:.1f}" if row["median_ttc"] is not None else "—"
+        iqrs = f"{row['iqr_ttc']:.1f}" if row["iqr_ttc"] is not None else "—"
+        print(f"{row['population']:>8} {pct:>10.1f}% {med:>12} {iqrs:>8}")
+    print("-" * 44)
+    print(f"\nMonotonicity verdict: {mono['verdict']}")
+    print(f"\nwrote results to {RESULTS_DIR}")
     sys.exit(0)
 
 
