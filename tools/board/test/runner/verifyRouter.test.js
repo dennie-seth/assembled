@@ -58,6 +58,7 @@ describe("resolveVerifyRoutes", () => {
     expect(route.command).toContain("python3 -m venv .venv");
     expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
     expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check --fix .");
     expect(route.command).toContain(".venv/bin/ruff check .");
   });
 
@@ -87,6 +88,7 @@ describe("resolveVerifyRoutes", () => {
     expect(route.command).toContain("python3 -m venv .venv");
     expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
     expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check --fix .");
     expect(route.command).toContain(".venv/bin/ruff check .");
   });
 
