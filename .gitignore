@@ -25,6 +25,9 @@ client/vendor/curl/
 client/vendor_clean.py
 commit_msg.txt
 run_clang_format.sh
+run_clang_format.py
+run_fmt.sh
+fmt.py
 server/run_tests.sh
 
 # ci-client.yml's import/smoke/export step logs (local repro artifacts,
