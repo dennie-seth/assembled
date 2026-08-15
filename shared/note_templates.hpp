@@ -154,10 +154,11 @@ enum class ArchetypeId : int16_t {
     BRIDGE = 3,
     MARKET = 4,
     ARCHIVE = 5,
+    SIGNAL_TOWER = 6, ///< Vertical slice archetype (14-vertical-slice.md).
 };
 
 /// Flat array of archetype IDs for iteration (SQL seed, parity test).
-inline constexpr std::array<int16_t, 5> kArchetypeIds = {1, 2, 3, 4, 5};
+inline constexpr std::array<int16_t, 6> kArchetypeIds = {1, 2, 3, 4, 5, 6};
 
 // ─── Anchor tags ───────────────────────────────────────────────────────────────
 
@@ -169,8 +170,10 @@ struct AnchorTagDef {
 
 /// All anchor tags shipped at launch (04-data-model.md §2).
 /// Tags are scoped per archetype: the same tag integer can appear under
-/// different archetypes.  24 tags total across 5 archetypes.
-inline constexpr std::array<AnchorTagDef, 24> kAnchorTags = {{
+/// different archetypes.  31 tags total across 6 archetypes.
+/// Only NAMED room anchors appear here — system-facing anchors (Tear, Climax,
+/// MusicCue) are defined in kSignalTowerRoomTags, not kAnchorTags.
+inline constexpr std::array<AnchorTagDef, 31> kAnchorTags = {{
     // HOSPITAL (archetype 1): 5 tags
     {1, 1}, // entrance
     {1, 2}, // ward_north
@@ -200,6 +203,70 @@ inline constexpr std::array<AnchorTagDef, 24> kAnchorTags = {{
     {5, 4}, // vault
     {5, 5}, // rooftop
     {5, 6}, // basement
+    // SIGNAL_TOWER (archetype 6): 7 named-room tags for note placement.
+    // System-facing anchors (tear/climax/music_cue) are in kSignalTowerRoomTags.
+    {6, 1}, // ground_relay
+    {6, 2}, // records_room
+    {6, 3}, // power_substation
+    {6, 4}, // equipment_floor
+    {6, 5}, // storage_cache
+    {6, 6}, // antenna_shaft
+    {6, 7}, // broadcast_deck
+}};
+
+// ─── Room-type authoring metadata ─────────────────────────────────────────────
+
+/// Anchor kind — system-facing classification of a declared anchor tag.
+/// Climax and Tear are system-facing: the runtime finds them generically across
+/// any archetype without per-archetype hardcoding.  Named anchors are
+/// author-facing and receive player notes.  (16-level-design.md §1.)
+/// Values are stable integers — never renumber, only extend.
+enum class AnchorKind : int8_t {
+    NAMED     = 0, ///< Ordinary named room anchor; receives player notes.
+    CLIMAX    = 1, ///< Dedicated climax anchor; at most 1 per archetype (16 §2).
+    TEAR      = 2, ///< Dedicated tear anchor; exactly 1 per archetype (16 §2).
+    MUSIC_CUE = 3, ///< Dedicated music-cue anchor; at most 1 per archetype.
+};
+
+/// Room role flags — author-facing, composable bitmask (16-level-design.md §1).
+/// A room may carry multiple roles simultaneously (e.g. Gate|Hazard).
+/// Gate and Hazard attach to a room's own named tag; Tear and Climax use
+/// dedicated AnchorKind values instead of role flags.
+namespace RoomRole {
+    constexpr uint8_t NONE    = 0; ///< No special role (pure Transit).
+    constexpr uint8_t GATE    = 1; ///< Required progression gating.
+    constexpr uint8_t HAZARD  = 2; ///< Entity-capable slot; sensor-category slot.
+    constexpr uint8_t TRANSIT = 4; ///< Connective tissue; no special content.
+} // namespace RoomRole
+
+/// Room tag definition — extends AnchorTagDef with anchor-kind and role metadata.
+/// The single source of truth for what system-facing role each anchor carries.
+struct RoomTagDef {
+    int16_t     archetype_id; ///< Archetype this tag belongs to.
+    int16_t     tag_id;       ///< Integer tag ID (matches kAnchorTags.tag for NAMED kind).
+    const char* tag_name;     ///< Human-readable slug for tooling/debugging.
+    AnchorKind  anchor_kind;  ///< System-facing anchor classification.
+    uint8_t     roles;        ///< Bitmask of RoomRole flags (author-facing).
+};
+
+/// All 10 declared anchor tags for signal_tower (archetype 6).
+/// 7 named rooms + tear + climax + music_cue.
+/// See docs/design/14-vertical-slice.md §2 and docs/design/16-level-design.md §5.
+///
+/// Fixed across every variant — INV-12 build check applies to all entries
+/// (16 §4: "The anchor tag set — every named room, plus Tear / Climax /
+/// music_cue if declared").
+inline constexpr std::array<RoomTagDef, 10> kSignalTowerRoomTags = {{
+    {6, 1,  "ground_relay",     AnchorKind::NAMED,     RoomRole::TRANSIT},
+    {6, 2,  "records_room",     AnchorKind::NAMED,     RoomRole::GATE},
+    {6, 3,  "power_substation", AnchorKind::NAMED,     RoomRole::GATE | RoomRole::HAZARD},
+    {6, 4,  "equipment_floor",  AnchorKind::NAMED,     RoomRole::HAZARD},
+    {6, 5,  "storage_cache",    AnchorKind::NAMED,     RoomRole::TRANSIT},
+    {6, 6,  "antenna_shaft",    AnchorKind::NAMED,     RoomRole::HAZARD},
+    {6, 7,  "broadcast_deck",   AnchorKind::NAMED,     RoomRole::TRANSIT},
+    {6, 8,  "tear",             AnchorKind::TEAR,      RoomRole::NONE},
+    {6, 9,  "climax",           AnchorKind::CLIMAX,    RoomRole::NONE},
+    {6, 10, "music_cue",        AnchorKind::MUSIC_CUE, RoomRole::NONE},
 }};
 
 } // namespace assembled
