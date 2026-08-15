@@ -152,7 +152,7 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
       command:
         `cd ${pkgDir} && python3 -m venv .venv && ` +
         `.venv/bin/pip install -e ".[dev]" && ` +
-        `.venv/bin/pytest && .venv/bin/ruff check .`
+        `.venv/bin/pytest && .venv/bin/ruff check --fix . && .venv/bin/ruff check .`
     });
   }
   return routes;
