@@ -25,9 +25,11 @@ func _init() -> void:
 	failures += _test_hiding_spot_logic()
 	failures += _test_item_door_logic()
 	failures += _test_item_anchor_logic()
+	failures += _test_scene_exists()
+	failures += _test_controller_scripts_exist()
 
 	if failures.is_empty():
-		print("T-0184 PASS: blockout room logic verified (6 groups)")
+		print("T-0184 PASS: blockout room logic verified (8 groups)")
 		quit(0)
 	else:
 		for f: String in failures:
@@ -345,4 +347,52 @@ func _test_item_anchor_logic() -> Array[String]:
 	if repick != 42:
 		failures.append("item_anchor: second pick_up() after place_item() must return 42")
 
+	return failures
+
+
+# ── Scene existence ────────────────────────────────────────────────────────────
+## Verifies that the authored blockout room scene file exists and loads as a
+## PackedScene — the core deliverable the VALIDATION pass checks for.
+
+func _test_scene_exists() -> Array[String]:
+	var failures: Array[String] = []
+	if not FileAccess.file_exists("res://scenes/blockout_room.tscn"):
+		failures.append("blockout_room.tscn: scene file must exist at res://scenes/blockout_room.tscn")
+		return failures
+	var packed: PackedScene = load("res://scenes/blockout_room.tscn") as PackedScene
+	if packed == null:
+		failures.append("blockout_room.tscn: must load as a valid PackedScene")
+		return failures
+	var room: Node = packed.instantiate()
+	if room == null:
+		failures.append("blockout_room.tscn: instantiate() must return a non-null Node")
+		return failures
+	room.free()
+	return failures
+
+
+# ── Controller scripts exist ───────────────────────────────────────────────────
+## Verifies that PlayerController and WatcherController scripts exist —
+## these drive the scene's player and watcher entities.
+
+func _test_controller_scripts_exist() -> Array[String]:
+	var failures: Array[String] = []
+	var player_script: GDScript = _load_or_fail("res://scripts/player_controller.gd", failures)
+	var watcher_script: GDScript = _load_or_fail("res://scripts/watcher_controller.gd", failures)
+	var room_script: GDScript = _load_or_fail("res://scripts/blockout_room.gd", failures)
+	# Verify player_controller instantiates (extends CharacterBody2D).
+	if player_script != null:
+		var pc: Node = player_script.new()
+		if not pc is CharacterBody2D:
+			failures.append("player_controller: must extend CharacterBody2D")
+		pc.free()
+	# Verify watcher_controller instantiates (extends CharacterBody2D).
+	if watcher_script != null:
+		var wc: Node = watcher_script.new()
+		if not wc is CharacterBody2D:
+			failures.append("watcher_controller: must extend CharacterBody2D")
+		wc.free()
+	# Room script existence is already checked by _load_or_fail.
+	if room_script != null:
+		pass
 	return failures
