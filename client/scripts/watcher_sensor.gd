@@ -19,7 +19,8 @@ func is_player_in_cone(watcher_pos: Vector2, facing: Vector2, player_pos: Vector
 		return true
 	var cos_angle: float = delta.normalized().dot(facing.normalized())
 	var cos_half: float = cos(deg_to_rad(cone_half_angle))
-	return cos_angle >= cos_half
+	# 1e-5 tolerance guards float32 rounding on exact boundary angles.
+	return cos_angle >= cos_half - 1e-5
 
 ## Returns true if the watcher can detect the player, considering both cone
 ## geometry and cover rectangles blocking line-of-sight.
