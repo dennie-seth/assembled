@@ -314,11 +314,10 @@ void ItemClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("retry_transfer", "transfer_id"), &ItemClient::retry_transfer);
 
     // Signal: transfer_completed(request_id, state, http_status, body, transfer_id)
-    ADD_SIGNAL(MethodInfo("transfer_completed", PropertyInfo(Variant::INT, "request_id"),
-                          PropertyInfo(Variant::INT, "state"),
-                          PropertyInfo(Variant::INT, "http_status"),
-                          PropertyInfo(Variant::STRING, "body"),
-                          PropertyInfo(Variant::STRING, "transfer_id")));
+    ADD_SIGNAL(MethodInfo(
+        "transfer_completed", PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::INT, "state"), PropertyInfo(Variant::INT, "http_status"),
+        PropertyInfo(Variant::STRING, "body"), PropertyInfo(Variant::STRING, "transfer_id")));
 
     // State enum constants — accessible in GDScript as ItemClient.STATE_*
     BIND_CONSTANT(STATE_OK);
