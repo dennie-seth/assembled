@@ -57,7 +57,7 @@ func _test_sight_cone_resolves_without_naming_watcher() -> Array[String]:
 			"sight_cone_no_name: room.sensor_category encodes 'watcher' — room is naming the entity directly"
 		)
 
-	var entity: EntityDef = HazardResolver.resolve(room, 0)
+	var entity := HazardResolver.resolve(room, 0)
 	if entity == null:
 		failures.append("sight_cone_no_name: resolve() returned null for SIGHT_CONE")
 		return failures
@@ -91,7 +91,7 @@ func _test_all_categories_resolve_to_matching_entity() -> Array[String]:
 		var room := HazardRoom.new()
 		room.sensor_category = cat
 
-		var entity: EntityDef = HazardResolver.resolve(room, 0)
+		var entity := HazardResolver.resolve(room, 0)
 		if entity == null:
 			failures.append("all_categories: resolve() returned null for category %d" % cat)
 			continue
@@ -116,7 +116,7 @@ func _test_roster_swap_does_not_touch_room_data() -> Array[String]:
 	room.sensor_category = HazardRoom.SensorCategory.SIGHT_CONE
 
 	# Default roster: SIGHT_CONE → "watcher".
-	var default_entity: EntityDef = HazardResolver.resolve(room, 0)
+	var default_entity := HazardResolver.resolve(room, 0)
 	if default_entity == null:
 		failures.append("roster_swap: default resolve() returned null")
 		return failures
@@ -129,11 +129,11 @@ func _test_roster_swap_does_not_touch_room_data() -> Array[String]:
 	# Swapped roster: replace the SIGHT_CONE entity with a hypothetical "seeker".
 	# The room's sensor_category stays untouched.
 	var swapped_roster := EntityRoster.new()
-	swapped_roster.register("seeker",    HazardRoom.SensorCategory.SIGHT_CONE,      "The Seeker")
-	swapped_roster.register("sound",     HazardRoom.SensorCategory.SOUND_RADIUS,    "The Sound")
+	swapped_roster.register("seeker",    HazardRoom.SensorCategory.SIGHT_CONE,       "The Seeker")
+	swapped_roster.register("sound",     HazardRoom.SensorCategory.SOUND_RADIUS,     "The Sound")
 	swapped_roster.register("still_air", HazardRoom.SensorCategory.PROXIMITY_PATROL, "The Still Air")
 
-	var swapped_entity: EntityDef = HazardResolver.resolve_with_roster(room, 0, swapped_roster)
+	var swapped_entity := HazardResolver.resolve_with_roster(room, 0, swapped_roster)
 	if swapped_entity == null:
 		failures.append("roster_swap: swapped resolve() returned null")
 		return failures
@@ -165,8 +165,8 @@ func _test_multiple_entities_per_category_resolved_by_seed() -> Array[String]:
 	var room := HazardRoom.new()
 	room.sensor_category = HazardRoom.SensorCategory.SIGHT_CONE
 
-	var entity_a: EntityDef = HazardResolver.resolve_with_roster(room, 0, expanded_roster)
-	var entity_b: EntityDef = HazardResolver.resolve_with_roster(room, 1, expanded_roster)
+	var entity_a := HazardResolver.resolve_with_roster(room, 0, expanded_roster)
+	var entity_b := HazardResolver.resolve_with_roster(room, 1, expanded_roster)
 
 	if entity_a == null or entity_b == null:
 		failures.append("multi_entity: resolve_with_roster returned null with expanded roster")
