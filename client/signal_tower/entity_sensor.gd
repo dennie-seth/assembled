@@ -8,6 +8,8 @@
 
 class_name EntitySensor
 
+const RoomTypes: GDScript = preload("res://signal_tower/room_types.gd")
+
 ## First-pass parameter table (14 §10) ─────────────────────────────────────
 
 ## Watcher — sight cone
