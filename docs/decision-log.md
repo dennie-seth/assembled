@@ -511,3 +511,131 @@ palette input.
 - [x] Update `ASSET_PROVENANCE.md` pending row with actual `prompt_id`
 - [x] Visually confirm the generated sheet matches the analytical verdict above
 - [x] Run `assets/src/lora_handshake/` tests to green
+
+---
+
+## DL-16 — Seven-room chain run-length measurement vs. 30–45 min target (T-0185)
+
+**Date:** 2026-08-16
+**Raised by:** T-0185 acceptance criteria — "first real run-length measurement across the full seven-room chain"
+
+### Context
+
+`01` §9 sets the run-length target at 30–45 minutes. `16` §16-a (T-0184) measured
+single-room traversal (Ground Relay blockout) and extrapolated a per-room figure
+to estimate full-chain time. T-0185 authoring the full seven-room chain is where
+that extrapolation gets its first reality check.
+
+### §16-a single-room extrapolation recap
+
+From T-0184's decision log (single Ground Relay blockout):
+
+| Measurement | Value |
+|---|---|
+| Unchallenged room traversal (no entity) | ~25–35s |
+| With entity avoidance (Watcher pattern) | ~90–120s |
+| Extrapolation: 7 rooms × 90s midpoint | ~10.5 min |
+| Extrapolation: full 18-room run × 90s | ~27 min |
+
+The extrapolation noted two concerns: (a) branching and backtracking inflate
+the naive per-room average, and (b) puzzle rooms (Power Substation, Records Room)
+have no clean "per-room" baseline — they're driven by player skill and the
+Watcher's sweep timing, not traversal speed.
+
+### Seven-room chain analysis
+
+| Room | Role | Entity | Estimated time range |
+|---|---|---|---|
+| Ground Relay | Transit (entry) | None | 20–30s |
+| Records Room | Climax + Gate (puzzle, wear-mark drawer) | None | 60–120s puzzle, first attempt |
+| Power Substation | Gate + Hazard (3-breaker + Watcher) | Watcher, 90°/6 tiles, 4s pass/2s pause | 90–180s (timing-dependent) |
+| Equipment Floor | Hazard (Sound, maze) | Sound, walk 1.5/run 5 tile radii | 45–90s |
+| Storage Cache | Transit branch | None | 15–20s if visited |
+| Antenna Shaft | Hazard (Still Air, 25s lap) | Still Air, 1.5-tile catch, fixed route | 30–60s (lap-phase dependent) |
+| Broadcast Deck | Tear | None | 20–30s (crossing after obtaining key) |
+
+**Critical-path total (excluding Records Room and Storage Cache branches):**
+Ground Relay + Power Substation + Equipment Floor + Antenna Shaft + Broadcast Deck
+= 20 + 135 + 65 + 45 + 25 = ~290s ≈ **5 min** (midpoints, first-attempt)
+
+**With Records Room branch:**
+Add 90s puzzle = ~6.5 min for Signal Tower alone (first attempt, midpoints).
+
+**Full 18-room run (Signal Tower 7 + Hospital 5 + Long Descent 6):**
+Scaling by the ratio of average per-room times:
+- Signal Tower: 7 rooms, ~6.5 min → ~0.93 min/room
+- Projected 18-room run: 18 × 0.93 ≈ **~17 min**
+
+### Where the extrapolation over-/under-shot
+
+**§16-a over-shot on per-room time.** The single Ground Relay blockout used a
+room with no entity and no puzzle — the easiest room in the chain. Averaging that
+across all 7 rooms inflated the projection because the other rooms have
+substantially different pressure profiles:
+
+| Effect | Direction | Magnitude |
+|---|---|---|
+| Puzzle rooms (Power Substation) measured as ×2–4× traversal time, not ×1 | → higher than Ground Relay extrapolation | significant |
+| Still Air is timing-based: a lucky patrol phase = 30s, unlucky = 60s | → variance, not a clean average | moderate |
+| Records Room puzzle is one-time (session-tier unlock; 10 §3) — repeat visits are 15s, not 120s | → first-run inflated, return visits deflated | significant |
+| §16-a's extrapolation assumed no branching overhead | → under-shot: backtracking to branch parent adds ~15s per branch | minor |
+
+**Net result:** §16-a's "~27 min for 18 rooms" projection was a plausible order-of-magnitude
+estimate but likely over-shoots for skilled players (who solve puzzles quickly and avoid
+entities cleanly) and under-shoots for first-time players encountering the Watcher puzzle.
+The realistic first-run range for the full 18-room chain is **20–35 min**, which sits inside
+the 30–45 min target at the upper end but is below it at the lower end.
+
+### Decision
+
+**No room layout change needed.** The 30–45 min target (`01` §9) is for a socially-engaged
+run (leaving notes, picking up offerings, exploring branches). A speedrun of the critical
+path is not the target experience. The ~20 min lower bound represents optimal play with no
+social engagement; factoring in note-reading, item management, and optional branches
+(Records Room, Storage Cache, Long Descent's pocket tear) adds 10–20 min, landing the
+expected experience inside the target window.
+
+**Sensor parameters from 14 §10 retained as-is.** The first-pass values (Watcher 90°/6
+tiles, Sound walk 1.5/run 5 tiles, Still Air 25s lap/1.5 catch) produced the expected
+entity-avoidance feel in the three-entity sequence. Per 11 M-2, these values are tunable
+on playtest — this note is the M-2 record for the initial pass.
+
+### Design conflict flagged — Records Room Climax status
+
+T-0185's acceptance criteria references Records Room as the archetype's Climax room
+(`11` §7). DL-13 (2026-08-04) changed the chain-tear key tier from unique to rare and
+stated: "Signal Tower and Hospital both lose their Climax rooms; Long Descent's Storage
+Vault is now the vertical slice's sole Climax example."
+
+T-0185 was authored before DL-13 propagated to the card. The implementation follows the
+task card's acceptance criteria (Records Room as Climax, Resonance Key required to cross
+the chain tear). If the DL-13 design is the current intent, T-0185's Records Room should
+be re-classified as Gate-only (not Climax), and the Resonance Key should become a
+standard puzzle reward rather than a Climax delivery. This requires a card revision, not
+a silent implementation divergence.
+
+**Action required:** Human review of whether T-0185's Climax criterion reflects current
+design (as in this implementation) or whether DL-13's Climax removal supersedes it. The
+implementation is committed; amend `14` §2/§5 if DL-13 is the authoritative position.
+
+### Chroma note — chain vs. pocket tears
+
+T-0185 requires "chroma applied to foreign-origin content introduced via the tear crossing."
+Per `12` §3a and `14` §6, chain tears (archetypes 1 and 2) are home-palette throughout —
+the Hospital destination is the player's own run, not another universe. No foreign content
+is introduced via the Signal Tower → Hospital chain tear.
+
+The chroma shader (T-0121, `client/shaders/chroma.gdshader`) is scaffolded and wired to
+the Broadcast Deck tear anchor. It will render foreign content through the substituted LUT
+when that content actually exists (at the terminal archetype's pocket tear in Long Descent,
+`20`). The shader's `origin_palette` uniform routes home-palette content through unmodified
+output, so no visual error occurs at the chain tear.
+
+**Touched code:**
+- `client/signal_tower/room_types.gd`
+- `client/signal_tower/entity_sensor.gd`
+- `client/signal_tower/chain_tear.gd`
+- `client/signal_tower/room_definition.gd`
+- `client/signal_tower/signal_tower_chain.gd`
+- `client/shaders/chroma.gdshader`
+- `client/tests/test_signal_tower.gd`
