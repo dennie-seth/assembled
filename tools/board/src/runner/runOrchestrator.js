@@ -627,6 +627,15 @@ export class RunOrchestrator {
     // `claude` child stays alive right along with it -- see DEFAULT_PHASE_TIMEOUT_MS's docstring.
     let timeoutTimer;
     const exitPromise = new Promise((resolve) => {
+      // A spawn failure (e.g. ENOENT) can fire before we get here -- the writeRunStateFn
+      // await above is a real window for it -- in which case ClaudeCliRunner.start() has
+      // already captured it onto `run.spawnError` (its own synchronous 'error' listener
+      // never misses it). Check that first so a fast failure doesn't wait for an 'error'
+      // event that already came and went.
+      if (run.spawnError) {
+        resolve({ exitCode: null, signal: null, spawnError: run.spawnError, timedOut: false });
+        return;
+      }
       child.once("exit", (code, sig) => resolve({ exitCode: code, signal: sig, spawnError: null, timedOut: false }));
       child.once("error", (err) => resolve({ exitCode: null, signal: null, spawnError: err, timedOut: false }));
     });

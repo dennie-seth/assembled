@@ -121,7 +121,19 @@ export class ClaudeCliRunner extends AgentRunner {
       // it treats the same as "no stdin input, use the prompt argument".
       stdio: ["ignore", "pipe", "pipe"]
     });
-    return { runId: task.id, child, invocation };
+    const run = { runId: task.id, child, invocation, spawnError: null };
+    // Attached synchronously, in the same tick as spawnFn() above -- Node delivers a spawn
+    // failure (e.g. ENOENT when `command` isn't resolvable on the child's PATH) as an async
+    // 'error' event, and an EventEmitter with zero listeners for 'error' at that moment throws
+    // it as an uncaught exception, crashing the whole board process over one card's run. Callers
+    // (runOrchestrator._runPhase) do async I/O -- writeRunStateFn -- between start() returning
+    // and attaching their own 'error' listener, which is a real window for a fast ENOENT to beat
+    // them to it. Capturing on `run` here means a caller can still observe the failure via
+    // `run.spawnError` even if its own listener attaches too late to catch the event itself.
+    child.on("error", (err) => {
+      run.spawnError = err;
+    });
+    return run;
   }
 
   observe(run) {

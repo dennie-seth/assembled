@@ -354,6 +354,46 @@ describe("ClaudeCliRunner.start / kill", () => {
     const [, , options] = spawnFn.mock.calls[0];
     expect(options.stdio[0]).toBe("ignore");
   });
+
+  it("start() attaches its own 'error' listener synchronously, so a spawn failure (e.g. ENOENT) never becomes an unlistened 'error' event that crashes the process", async () => {
+    // A real EventEmitter, not the fakeChild() stub -- fakeChild's `on` is a no-op vi.fn() that
+    // never actually registers anything, which would hide the exact failure mode this guards
+    // against (Node throwing synchronously when 'error' is emitted with zero real listeners).
+    const child = new EventEmitter();
+    child.stdout = {};
+    child.stderr = {};
+    child.kill = vi.fn();
+    const spawnFn = vi.fn(() => child);
+    const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
+
+    await runner.start({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt" });
+
+    // This incident: spawn('claude', ...) fails with ENOENT because `claude` isn't resolvable
+    // on the child's PATH, Node emits 'error' on the child asynchronously, and with no listener
+    // attached at that instant it throws as an uncaught exception -- taking the whole board
+    // server down over a single card's run. Proving this doesn't throw is the actual fix.
+    expect(() => child.emit("error", Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }))).not.toThrow();
+  });
+
+  it("captures a spawn error onto run.spawnError, so a caller whose own listener attaches too late (after async I/O) can still observe the failure", async () => {
+    const child = new EventEmitter();
+    child.stdout = {};
+    child.stderr = {};
+    child.kill = vi.fn();
+    const spawnFn = vi.fn(() => child);
+    const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
+
+    const run = await runner.start({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt" });
+    expect(run.spawnError).toBeNull();
+
+    // Simulates the error arriving before runOrchestrator._runPhase gets around to attaching
+    // its own 'error' listener (it does an async writeRunStateFn write in between) -- a real
+    // race, not a hypothetical one; see the T-0185 incident.
+    const err = Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" });
+    child.emit("error", err);
+
+    expect(run.spawnError).toBe(err);
+  });
 });
 
 describe("ClaudeCliRunner.kill process-group behavior (no orphans)", () => {

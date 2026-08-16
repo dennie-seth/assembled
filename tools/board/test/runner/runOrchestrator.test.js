@@ -668,6 +668,53 @@ describe("RunOrchestrator.runCard — runner failures become blocked, not a grad
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.body).toMatch(/verdict/i);
   });
+
+  it("an implementer spawn failure (e.g. ENOENT) blocks the card instead of crashing the board or hanging the run", async () => {
+    // T-0185 incident: spawn('claude', ...) failed with ENOENT (the CLI wasn't resolvable on
+    // the child's PATH) and the resulting unlistened child 'error' event crashed the whole
+    // board process. This exercises the orchestrator's own once("error", ...) listener (see
+    // _runPhase) -- the ordinary case where it attaches before the error fires.
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("error", Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }));
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/failed to start/i);
+    expect(finalTask.body).toMatch(/spawn claude enoent/i);
+  });
+
+  it("a spawn failure captured on run.spawnError before this orchestrator's own listener attaches still blocks the card promptly, not a hang until phaseTimeoutMs", async () => {
+    // Reproduces the actual race that caused the crash: ClaudeCliRunner.start() attaches its
+    // 'error' listener synchronously at spawn time, so a fast ENOENT can already be captured
+    // onto run.spawnError by the time _runPhase's own writeRunStateFn await finishes -- well
+    // before _runPhase gets around to attaching its own once("error", ...) listener, which
+    // would otherwise never see an event that already fired.
+    const spawnError = Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" });
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const spawnedChildren = [];
+    const start = vi.fn(async () => {
+      const child = fakeChildProcess();
+      spawnedChildren.push(child);
+      return { runId: "run", child, spawnError };
+    });
+    const runner = { start, kill: vi.fn((run) => run.child.kill()), spawnedChildren };
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    await orchestrator.runCard("T-0001");
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/failed to start/i);
+    expect(finalTask.body).toMatch(/spawn claude enoent/i);
+  });
 });
 
 describe("RunOrchestrator.runCard — phase-level timeout (hung child protection, T-0185)", () => {
