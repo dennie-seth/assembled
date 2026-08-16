@@ -2,6 +2,23 @@ const TASKS_PREFIX = "tasks/";
 const BOARD_PREFIX = "tools/board/";
 
 /**
+ * Wall-clock bound (in seconds, for the `timeout` coreutil) on a single headless Godot test
+ * invocation -- root-cause fix for T-0185: `test_signal_tower.gd` never called
+ * `get_tree().quit()`, and nothing downstream of the reviewer's own Bash tool call was watching
+ * for that, so the hang propagated all the way up (the `claude` child stayed alive right along
+ * with its grandchild, invisible to the phase-level timeout until that fired much later -- see
+ * `runOrchestrator.js`'s `DEFAULT_PHASE_TIMEOUT_MS`). 10 minutes is comfortably above every
+ * `client/tests/*.gd` script observed so far (all are synchronous, in-process assertions with
+ * no I/O -- `docs/ci-notes.md`'s CI runs finish each in well under a minute), while still being
+ * far short of `DEFAULT_PHASE_TIMEOUT_MS` so a hung test surfaces as a specific, actionable
+ * `timeout`-killed failure instead of a generic phase-timeout blocked reason. Kept in seconds
+ * (not ms) to match `timeout`'s own CLI argument.
+ */
+export const GODOT_HEADLESS_TIMEOUT_SECONDS = 600;
+
+const CLIENT_TEST_PATTERN = /^client\/tests\/([^/]+\.gd)$/;
+
+/**
  * `server/**` is the C++/Drogon backend, `shared/**` is co-owned wire
  * structs it depends on -- the same two prefixes `ci-server.yml` triggers
  * on. Both get the server-db-verify route below.
@@ -61,6 +78,15 @@ const PYTHON_PACKAGE_ROOTS = [
   "assets/src/tiles/"
 ];
 
+function detectChangedGodotTests(changedPaths) {
+  const matches = [];
+  for (const path of changedPaths) {
+    const match = CLIENT_TEST_PATTERN.exec(path);
+    if (match) matches.push({ path, fileName: match[1] });
+  }
+  return matches.sort((a, b) => a.path.localeCompare(b.path));
+}
+
 function detectPythonPackageRoots(changedPaths) {
   const touched = new Set();
   for (const path of changedPaths) {
@@ -96,16 +122,24 @@ function detectPythonPackageRoots(changedPaths) {
  * registered with `ctest` at all, then run the full suite -- the
  * code-enforced fix for the exact gap that let T-0043 through (DB tests
  * skipped locally with no Postgres, reviewer passed the card, CI then found
- * 10/22 failures against live Postgres). A diff touching several of these
- * routes at once returns all of them, one route per package for a
- * multi-package diff. Diffs outside all of these prefixes (client/**
- * godot-cpp, etc.) return no routes here -- their verification stays
+ * 10/22 failures against live Postgres). A changed `client/tests/*.gd` file runs
+ * `client-godot-verify` (one route per changed test file): `godot --headless --script
+ * tests/<file>.gd` wrapped in `timeout GODOT_HEADLESS_TIMEOUT_SECONDS` -- the code-enforced fix
+ * for T-0185, where a headless test that never called `get_tree().quit()` hung its `claude`
+ * parent (and everything watching it) indefinitely. Deliberately scoped to *changed* test files
+ * only, not every `client/**` diff -- there's no reliable way to infer which existing tests
+ * cover an arbitrary changed scene/GDExtension source file from the diff alone, and running the
+ * wrong ones would say nothing about what was actually changed (see this module's own docstring
+ * principle at the top of the `verify` skill). A diff touching several of these routes at once
+ * returns all of them, one route per package/test for a multi-match diff. Diffs outside all of
+ * these prefixes (client/** godot-cpp, etc.) return no routes here -- their verification stays
  * qualitatively described by the `verify` skill's table, unchanged.
  */
 export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" } = {}) {
   const touchesTasks = changedPaths.some((p) => p.startsWith(TASKS_PREFIX));
   const touchesBoard = changedPaths.some((p) => p.startsWith(BOARD_PREFIX));
   const pythonRoots = detectPythonPackageRoots(changedPaths);
+  const godotTests = detectChangedGodotTests(changedPaths);
 
   const routes = [];
   if (touchesTasks) {
@@ -153,6 +187,13 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
         `cd ${pkgDir} && python3 -m venv .venv && ` +
         `.venv/bin/pip install -e ".[dev]" && ` +
         `.venv/bin/pytest && .venv/bin/ruff check --fix . && .venv/bin/ruff check .`
+    });
+  }
+  for (const { path, fileName } of godotTests) {
+    routes.push({
+      id: `client-godot-verify:${path}`,
+      label: `Godot headless test (${path}, bounded by timeout)`,
+      command: `cd client && timeout ${GODOT_HEADLESS_TIMEOUT_SECONDS} godot --headless --script tests/${fileName}`
     });
   }
   return routes;

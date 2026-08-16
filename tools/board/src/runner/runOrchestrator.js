@@ -31,6 +31,29 @@ import { createCard as createCardDefault } from "./cardCreation.js";
  */
 export const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
+/**
+ * Wall-clock cap on a single run phase (implementer, reviewer, planner, or merge-conflict
+ * resolution -- anything routed through `_runPhase`). Root-cause fix for T-0185: two
+ * `godot --headless test_signal_tower.gd` subprocesses that never called `get_tree().quit()`
+ * kept their parent `claude` child alive forever, so the plain `await child.once("exit")` this
+ * used to be never resolved -- invisible to the orphan reaper too, since the card stayed in
+ * `activeCardIds` the whole time (see orphanReaper.js's own wedged-run cross-check for the
+ * complementary fix on that side). 40 minutes is deliberately generous: the longest legitimate
+ * phases observed are `server-db-verify`'s from-scratch `cmake --build` and a Python package's
+ * `pip install -e ".[dev]"` + `pytest` (verifyRouter.js), both well under 15 minutes; this
+ * leaves a wide margin before ever cutting off real work.
+ */
+export const DEFAULT_PHASE_TIMEOUT_MS = 40 * 60 * 1000;
+
+const PHASE_TIMEOUT_ENV_VAR = "PHASE_TIMEOUT_MS";
+
+/** PHASE_TIMEOUT_MS env var: overrides DEFAULT_PHASE_TIMEOUT_MS when set to a positive number. */
+function phaseTimeoutMsFromEnv() {
+  const raw = process.env[PHASE_TIMEOUT_ENV_VAR];
+  const parsed = Number(raw);
+  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PHASE_TIMEOUT_MS;
+}
+
 const AUTO_OPEN_PR_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
 
 /** AUTO_OPEN_PR env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable auto-PR on PASS. */
@@ -75,6 +98,7 @@ export class RunOrchestrator {
     github = githubOps,
     autoOpenPr = autoOpenPrFromEnv(),
     autoCaptureUncommitted = autoCaptureUncommittedFromEnv(),
+    phaseTimeoutMs = phaseTimeoutMsFromEnv(),
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
@@ -106,6 +130,7 @@ export class RunOrchestrator {
     this.github = github;
     this.autoOpenPr = autoOpenPr;
     this.autoCaptureUncommitted = autoCaptureUncommitted;
+    this.phaseTimeoutMs = phaseTimeoutMs;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
@@ -342,6 +367,10 @@ export class RunOrchestrator {
     if (implementerResult.cancelled) {
       return { stop: true };
     }
+    if (implementerResult.timedOut) {
+      await this._blocked(taskId, this._timeoutReason("implementer"));
+      return { stop: true };
+    }
     if (implementerResult.exitCode !== 0) {
       await this._blocked(taskId, this._crashReason("implementer", implementerResult));
       return { stop: true };
@@ -384,6 +413,10 @@ export class RunOrchestrator {
       runLog
     });
     if (reviewerResult.cancelled) {
+      return { stop: true };
+    }
+    if (reviewerResult.timedOut) {
+      await this._blocked(taskId, this._timeoutReason("reviewer"));
       return { stop: true };
     }
     if (reviewerResult.exitCode !== 0) {
@@ -448,6 +481,11 @@ export class RunOrchestrator {
 
     if (plannerResult.cancelled) {
       if (fileView) await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
+      return false;
+    }
+    if (plannerResult.timedOut) {
+      if (fileView) await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
+      await this._blocked(taskId, this._timeoutReason("planner"));
       return false;
     }
     if (plannerResult.exitCode !== 0) {
@@ -552,19 +590,51 @@ export class RunOrchestrator {
     });
 
     const child = run.child;
+    const onStdoutData = (chunk) => parser.push(chunk);
     if (child.stdout && typeof child.stdout.on === "function") {
-      child.stdout.on("data", (chunk) => parser.push(chunk));
+      child.stdout.on("data", onStdoutData);
     }
 
-    const [exitCode, signal, spawnError] = await new Promise((resolve) => {
-      child.once("exit", (code, sig) => resolve([code, sig, null]));
-      child.once("error", (err) => resolve([null, null, err]));
+    // Root-cause fix for T-0185: a hung grandchild (e.g. a headless Godot test that never calls
+    // `get_tree().quit()`) previously kept this `await` pending forever, since the parent
+    // `claude` child stays alive right along with it -- see DEFAULT_PHASE_TIMEOUT_MS's docstring.
+    let timeoutTimer;
+    const exitPromise = new Promise((resolve) => {
+      child.once("exit", (code, sig) => resolve({ exitCode: code, signal: sig, spawnError: null, timedOut: false }));
+      child.once("error", (err) => resolve({ exitCode: null, signal: null, spawnError: err, timedOut: false }));
     });
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutTimer = setTimeout(
+        () => resolve({ exitCode: null, signal: null, spawnError: null, timedOut: true }),
+        this.phaseTimeoutMs
+      );
+      if (typeof timeoutTimer.unref === "function") timeoutTimer.unref();
+    });
+
+    const result = await Promise.race([exitPromise, timeoutPromise]);
+    clearTimeout(timeoutTimer);
+
+    if (result.timedOut) {
+      // Stop streaming further output into an event log for a phase that's already being
+      // treated as over -- the kill below may take a moment (TERM-then-KILL escalation, see
+      // ClaudeCliRunner.kill) and the child can keep writing to stdout in the meantime.
+      if (child.stdout && typeof child.stdout.off === "function") {
+        child.stdout.off("data", onStdoutData);
+      }
+      this.runner.kill(run);
+    }
+
     parser.end();
     await appendChain;
 
     this.activeRuns.delete(taskId);
-    return { exitCode, signal, spawnError, events, cancelled: entry.cancelled };
+    return { ...result, events, cancelled: entry.cancelled };
+  }
+
+  /** Human-readable reason for a phase blocked by `DEFAULT_PHASE_TIMEOUT_MS` (or its override). */
+  _timeoutReason(phase) {
+    const minutes = Math.round(this.phaseTimeoutMs / 60_000);
+    return `${phase} run exceeded ${minutes} minute${minutes === 1 ? "" : "s"} and was terminated -- likely a hung subprocess`;
   }
 
   async cancelRun(taskId) {
@@ -861,6 +931,9 @@ export class RunOrchestrator {
 
     if (result.cancelled) {
       return { ok: true, skip: true };
+    }
+    if (result.timedOut) {
+      return { ok: false, reason: `${effectiveAgent} agent's ${this._timeoutReason("merge-conflict resolution")}` };
     }
     if (result.exitCode !== 0) {
       return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
