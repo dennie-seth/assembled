@@ -1,7 +1,7 @@
 ---
 name: client
 description: Implements the Godot 4.x client and GDExtension (client/**, shared/**). Use for game-side features, GDExtension bindings, and scene/UI work.
-tools: Read, Write, Edit, Grep, Glob, Bash(scons:*), Bash(godot --headless:*), Bash(git:*)
+tools: Read, Write, Edit, Grep, Glob, Bash(scons:*), Bash(cd client:*), Bash(timeout 600 godot --headless:*), Bash(godot --headless:*), Bash(git:*)
 model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
@@ -41,7 +41,11 @@ Follow the `tdd` skill: think through the design, write failing gdUnit4
 tests and commit them, implement to green and commit that immediately
 (before self-verify — see the `tdd` skill's commit step), self-verify with
 the `verify` skill (gdUnit4 + `godot --headless` export sanity + build),
-then stop once `git status --porcelain` is empty. Use the
+then stop once `git status --porcelain` is empty. Always run a `client/tests/*.gd`
+test file under `timeout 600` (`cd client && timeout 600 godot --headless
+--script tests/<file>.gd`), never bare — a test script that never calls
+`get_tree().quit()` hangs forever otherwise, with nothing downstream
+watching for it (T-0185). Use the
 `new-gdextension-class` skill to scaffold a registered class with its
 GDScript binding and test. Do NOT invoke the `open-review-pr` skill
 yourself and do NOT push or open a PR — an Agent Runner orchestrator drives

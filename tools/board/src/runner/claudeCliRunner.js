@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { AgentRunner } from "./agentRunner.js";
+import { DEFAULT_KILL_ESCALATION_MS } from "./runState.js";
 
 export const DEFAULT_ENV_ALLOWLIST = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TZ"];
 
@@ -127,19 +128,45 @@ export class ClaudeCliRunner extends AgentRunner {
     return run.child;
   }
 
-  kill(run) {
+  /**
+   * Sends SIGTERM to the child's whole process group (so a grandchild it spawned via its own
+   * Bash tool -- e.g. a hung `godot --headless` test -- dies too, not just the `claude` process
+   * itself), then escalates to SIGKILL after `escalationMs` if the child is still alive by then.
+   * The escalation matters: a subprocess that traps/ignores SIGTERM (or is stuck in an
+   * uninterruptible read) would otherwise wedge forever even after a "kill". Cancelled
+   * automatically if the child's own `exit` event fires first.
+   */
+  kill(run, { escalationMs = DEFAULT_KILL_ESCALATION_MS, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout } = {}) {
     const child = run && run.child ? run.child : run;
     if (!child || typeof child.kill !== "function") {
       return;
     }
-    if (typeof child.pid === "number") {
-      try {
-        process.kill(-child.pid, "SIGTERM");
-        return;
-      } catch {
-        // Not a process group leader (or already dead) -- fall back below.
+
+    const pid = typeof child.pid === "number" ? child.pid : null;
+    const sendSignal = (signal) => {
+      if (pid !== null) {
+        try {
+          process.kill(-pid, signal);
+          return;
+        } catch {
+          // Not a process group leader (or already dead) -- fall back below.
+        }
       }
+      try {
+        child.kill(signal);
+      } catch {
+        // Already dead -- nothing left to signal.
+      }
+    };
+
+    sendSignal("SIGTERM");
+
+    const escalationTimer = setTimeoutFn(() => sendSignal("SIGKILL"), escalationMs);
+    if (typeof escalationTimer.unref === "function") {
+      escalationTimer.unref();
     }
-    child.kill();
+    if (typeof child.once === "function") {
+      child.once("exit", () => clearTimeoutFn(escalationTimer));
+    }
   }
 }

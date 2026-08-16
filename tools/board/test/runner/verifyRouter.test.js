@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveVerifyRoutes, resolveDeliverableRoute } from "../../src/runner/verifyRouter.js";
+import { resolveVerifyRoutes, resolveDeliverableRoute, GODOT_HEADLESS_TIMEOUT_SECONDS } from "../../src/runner/verifyRouter.js";
 
 describe("resolveVerifyRoutes", () => {
   it("routes a tasks/-only diff to the backlog validator AND the planner diff guard, and nothing else", () => {
@@ -197,6 +197,53 @@ describe("resolveVerifyRoutes -- server-db-verify", () => {
   it("routes a diff touching server/** and tools/board/** to both server-db-verify and board-suite", () => {
     const routes = resolveVerifyRoutes(["server/src/main.cpp", "tools/board/src/lib/fsTaskStore.js"]);
     expect(routes.map((r) => r.id).sort()).toEqual(["board-suite", "server-db-verify"]);
+  });
+});
+
+describe("resolveVerifyRoutes -- client-godot-verify (T-0185: hung headless Godot tests)", () => {
+  it("routes a changed client/tests/*.gd file to a timeout-wrapped godot --headless run of that test", () => {
+    const routes = resolveVerifyRoutes(["client/tests/test_signal_tower.gd"]);
+    expect(routes.map((r) => r.id)).toEqual(["client-godot-verify:client/tests/test_signal_tower.gd"]);
+    const route = routes[0];
+    expect(route.command).toContain("cd client");
+    expect(route.command).toContain(`timeout ${GODOT_HEADLESS_TIMEOUT_SECONDS}`);
+    expect(route.command).toContain("godot --headless --script tests/test_signal_tower.gd");
+  });
+
+  it("a hung test script (never calls get_tree().quit()) is bounded by `timeout`, not left to hang the reviewer forever", () => {
+    const routes = resolveVerifyRoutes(["client/tests/test_signal_tower.gd"]);
+    // The `timeout` coreutil sends SIGTERM (then SIGKILL on a repeat -k) to the whole command
+    // if it hasn't exited by the deadline -- this is what actually bounds a script that never
+    // calls quit(), independent of anything upstream watching the reviewer's own process.
+    expect(routes[0].command).toMatch(/timeout \d+s? godot --headless/);
+  });
+
+  it("routes each changed client/tests/*.gd file to its own route -- a diff can touch more than one test", () => {
+    const routes = resolveVerifyRoutes(["client/tests/test_signal_tower.gd", "client/tests/test_room_objects.gd"]);
+    expect(routes.map((r) => r.id).sort()).toEqual([
+      "client-godot-verify:client/tests/test_room_objects.gd",
+      "client-godot-verify:client/tests/test_signal_tower.gd"
+    ]);
+  });
+
+  it("does not route a non-test client/** file (e.g. a scene script) -- no way to know which test(s) cover it", () => {
+    const routes = resolveVerifyRoutes(["client/room/lever.gd"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("does not route client/**/*.cpp (GDExtension C++) -- that's scons + clang-format, unrelated to headless Godot test hangs", () => {
+    const routes = resolveVerifyRoutes(["client/src/item_client.cpp"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("does not mistake a client/tests-prefixed-but-different path for a real test file", () => {
+    const routes = resolveVerifyRoutes(["client/tests-legacy/whatever.gd"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("only routes .gd files under client/tests/, not .tscn/.tres fixtures alongside them", () => {
+    const routes = resolveVerifyRoutes(["client/tests/fixtures/room.tscn"]);
+    expect(routes).toEqual([]);
   });
 });
 
