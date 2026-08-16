@@ -89,6 +89,21 @@ match the changed paths, plus `.claude/rules/conduct.md` unconditionally.
   test. (T-0132: the pip install grant used to be an exact-match string with
   no `:*` -- any chained, relative, or absolute invocation of it failed to
   match, so `python-verify` could never actually install the package.)
+- **A lint error is "pre-existing on develop" only if you actually ran
+  `ruff` against a clean `origin/develop` checkout of that same file and it
+  reported the same error there -- never because the diff's changed
+  line-ranges don't happen to overlap the error line.** A stray line added
+  or shifted anywhere in the file (e.g. an extra blank line) can trip
+  `ruff`'s import-sort/formatting rules at a line the diff never touches;
+  eyeballing hunk ranges will misattribute that as pre-existing when it
+  isn't. Check out or `git show origin/develop:<path>` the file, run
+  `.venv/bin/ruff check` on it, and compare output before waiving any lint
+  finding as already-broken on `develop` -- otherwise cite it as a FAIL like
+  any other lint error. (T-0075: a stray blank line introduced on the
+  feature branch tripped `ruff` I001 in `tools/audio-agent/tests/conftest.py`;
+  the file doesn't exist on `develop` at all, but the reviewer waived the
+  error as pre-existing after only checking that the diff's changed
+  line-ranges didn't include the error line.)
 - For a diff touching `server/**` or `shared/**` (see `SERVER_ROOTS` in
   `verifyRouter.js`), run the routed `server-db-verify` step yourself with
   Bash: `cd server`, bring up the compose Postgres (`docker compose up -d`,

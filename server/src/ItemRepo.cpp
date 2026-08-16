@@ -222,4 +222,17 @@ TransmuteResult PgItemRepo::transmute(const TransmuteParams &params) {
     return TransmuteResult{TransferStatus::Won, ins[0]["id"].as<std::string>()};
 }
 
+#ifdef ASSEMBLED_DEBUG_GRANT
+GrantResult PgItemRepo::debugGrant(const GrantParams &params) {
+    // Insert directly into item_instance with the caller as holder.
+    // bleed_at defaults to 90 minutes per the schema DEFAULT, which is fine
+    // for QA/test use; the economy bleed clock is irrelevant here.
+    auto result = client_->execSqlSync("INSERT INTO item_instance (type_id, holder) "
+                                       "VALUES ($1, $2) "
+                                       "RETURNING id",
+                                       params.type_id, params.holder_token);
+    return GrantResult{result[0]["id"].as<std::string>()};
+}
+#endif // ASSEMBLED_DEBUG_GRANT
+
 } // namespace assembled_server

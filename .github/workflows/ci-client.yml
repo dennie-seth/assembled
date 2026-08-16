@@ -12,6 +12,11 @@ on:
       - "client/**"
       - ".github/workflows/ci-client.yml"
   workflow_dispatch:
+  # Lets release.yml call this workflow on a version-tag push to reuse the
+  # windows-export/linux-export jobs verbatim instead of duplicating the
+  # godot-cpp build + headless export steps. Purely additive: doesn't change
+  # push/pull_request behavior above.
+  workflow_call:
 
 concurrency:
   group: ci-client-${{ github.workflow }}-${{ github.ref }}

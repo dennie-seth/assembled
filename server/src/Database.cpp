@@ -2,10 +2,33 @@
 
 #include <cstdlib>
 #include <regex>
+#include <vector>
 
 namespace assembled_server {
 
 namespace {
+
+/// drogon::orm::DbClientImpl owns a trantor::EventLoopThread whose destructor
+/// unconditionally joins its thread. If the last DbClientPtr reference is
+/// dropped from *inside* a callback running on that very thread (observed
+/// live via core dump: trantor::EventLoop::loop() ->
+/// drogon::orm::PgConnection::handleRead() -> ..._M_release_last_use_cold()
+/// -> ~DbClientImpl() -> ~EventLoopThread() -> thread::join()), the join is a
+/// self-join: it throws std::system_error(EDEADLK) out of a destructor,
+/// which is implicitly noexcept, so std::terminate() aborts the process.
+/// Every `Database` used to own the sole/last reference to its client and
+/// hit this nondeterministically at end-of-scope. Every production
+/// controller already sidesteps this by caching its DbClientPtr in a
+/// call_once static for the process lifetime (see e.g.
+/// OfferingController.cpp); do the same centrally here so no caller --
+/// including short-lived test binaries that don't do that caching -- can
+/// trigger the teardown race. The number of distinct connection strings
+/// used per process is small and bounded (one per call_once site / test
+/// binary), so leaking them for the process's lifetime is negligible.
+std::vector<drogon::orm::DbClientPtr> &keepAliveRegistry() {
+    static auto *registry = new std::vector<drogon::orm::DbClientPtr>();
+    return *registry;
+}
 
 /// Drogon's PgClient wants libpq keyword=value form
 /// (`host=... port=... dbname=... user=... password=...`), not a URI.
@@ -39,7 +62,9 @@ std::string toLibpqConnInfo(const std::string &url) {
 
 Database::Database(const std::string &connectionInfo, size_t connectionPoolSize)
     : client_(drogon::orm::DbClient::newPgClient(toLibpqConnInfo(connectionInfo),
-                                                 connectionPoolSize)) {}
+                                                 connectionPoolSize)) {
+    keepAliveRegistry().push_back(client_);
+}
 
 std::optional<Database> Database::fromEnv() {
     const char *url = std::getenv("DATABASE_URL");

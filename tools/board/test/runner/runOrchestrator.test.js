@@ -116,6 +116,10 @@ function makeGit(overrides = {}) {
     linkBoardNodeModules: vi.fn(async () => {}),
     commitTaskFile: vi.fn(async () => true),
     autoCommitCardsOnCreateFromEnv: vi.fn(() => true),
+    fetch: vi.fn(async () => {}),
+    mergeDevelop: vi.fn(async () => ({ conflicted: false, changed: false })),
+    mergeStatus: vi.fn(async () => []),
+    hasUncommittedChanges: vi.fn(async () => false),
     ...overrides
   };
 }
@@ -1026,6 +1030,224 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
     expect(github.createPr).not.toHaveBeenCalled();
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
+  });
+});
+
+describe("RunOrchestrator.runCard — finalize: merge origin/develop into the branch after a PR exists", () => {
+  function makeGithubWithPr(overrides = {}) {
+    return makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr: vi.fn(async () => "https://github.com/example/repo/pull/9"),
+      ...overrides
+    });
+  }
+
+  async function driveToPass(runner) {
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+  }
+
+  it("fetches and merges origin/develop into the branch once a PR exists, and pushes again when the merge produced new commits", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ mergeDevelop: vi.fn(async () => ({ conflicted: false, changed: true })) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(git.fetch).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001" });
+    expect(git.mergeDevelop).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001", baseBranch: "develop" });
+    expect(git.push).toHaveBeenCalledTimes(2);
+    expect(git.push).toHaveBeenNthCalledWith(2, { worktreeDir: "/repo/worktrees/T-0001", branch: "feature/T-0001" });
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("does not push again when the branch already contained everything on origin/develop (no-op merge)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ mergeDevelop: vi.fn(async () => ({ conflicted: false, changed: false })) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledTimes(1);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("skips the develop-sync step entirely when no PR was opened (gh unavailable)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: false, reason: "not-installed" })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(git.fetch).not.toHaveBeenCalled();
+    expect(git.mergeDevelop).not.toHaveBeenCalled();
+  });
+
+  it("on conflict, hands off to the owning agent (a third run phase) with the conflicted files and hunks instead of resolving mechanically", async () => {
+    const store = makeStore([baseTask({ agent: "server" })]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["server/src/handler.cpp"],
+      hunks: { "server/src/handler.cpp": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({
+      mergeDevelop: vi.fn(async () => conflictResult),
+      mergeStatus: vi.fn(async () => []),
+      hasUncommittedChanges: vi.fn(async () => false)
+    });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const buildMergeConflictPromptFn = vi.fn(() => "resolve these conflicts");
+    const orchestrator = makeOrchestrator({ store, git, runner, github, buildMergeConflictPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+
+    const conflictChild = await nthChild(runner, 3);
+    expect(runner.start).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ prompt: "resolve these conflicts", worktreeDir: "/repo/worktrees/T-0001" })
+    );
+    expect(buildMergeConflictPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseBranch: "develop",
+        branch: "feature/T-0001",
+        conflictedFiles: conflictResult.conflictedFiles,
+        hunks: conflictResult.hunks
+      })
+    );
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledTimes(2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("never resolves conflicts mechanically -- does not push and blocks the card (with the PR link preserved) when the agent leaves conflicts unresolved", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({
+      mergeDevelop: vi.fn(async () => conflictResult),
+      // Agent's phase exits 0 but never actually finished resolving -- still unmerged.
+      mergeStatus: vi.fn(async () => ["tools/board/src/thing.js"])
+    });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledTimes(1);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/9");
+    expect(finalTask.comments.some((c) => /unresolved|not.*resolved|conflict/i.test(c.text))).toBe(true);
+  });
+
+  it("blocks the card (PR link preserved) rather than pushing when the conflict-resolution agent crashes", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.emit("exit", 1, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledTimes(1);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/9");
+  });
+
+  it("uses the card's own agent (not the reviewer) to resolve conflicts, loading its agent def and allowed tools", async () => {
+    const store = makeStore([baseTask({ agent: "client" })]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["client/src/thing.gd"],
+      hunks: { "client/src/thing.gd": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const loadAgentDefFn = vi.fn((name) => (name === "reviewer" ? REVIEWER_DEF : { name, model: "sonnet", body: `# ${name}` }));
+    const resolveAllowedToolsFn = vi.fn((name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Edit", "Bash(git:*)"]));
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      github,
+      loadAgentDefFn,
+      resolveAllowedToolsFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await nthChild(runner, 3);
+
+    expect(loadAgentDefFn).toHaveBeenCalledWith("client", expect.anything());
+    expect(resolveAllowedToolsFn).toHaveBeenCalledWith("client", expect.anything());
+    expect(runner.start).toHaveBeenNthCalledWith(3, expect.objectContaining({ model: "sonnet" }));
+
+    runner.spawnedChildren[2].emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("never force-pushes and never auto-resolves by discarding either side -- the merge step itself must never mechanically choose ours/theirs", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    for (const call of git.push.mock.calls) {
+      expect(call[0].force).not.toBe(true);
+    }
   });
 });
 
