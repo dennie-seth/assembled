@@ -38,7 +38,16 @@ export class TaskWatcher extends EventEmitter {
       const task = parseTask(raw);
       this.emit("task-changed", { type, id, task });
     } catch (err) {
-      this.emit("error", err);
+      // EventEmitter throws synchronously when an 'error' event has no
+      // listener, which would turn right back into the unhandled rejection
+      // this catch exists to prevent. Only emit if someone's listening;
+      // otherwise fall back to the same warn-and-continue behavior
+      // boardServer.js's listener already does.
+      if (this.listenerCount("error") > 0) {
+        this.emit("error", err);
+      } else {
+        console.warn(`TaskWatcher: failed to parse ${file} (ignoring, next fs event will retry):`, err.message);
+      }
     }
   }
 
