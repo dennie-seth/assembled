@@ -152,6 +152,9 @@ function makeOrchestrator({ store, git, runner, hub, github, idAllocator, taskSt
     loadRulesFn: () => [{ name: "conduct", paths: ["**"], body: "TDD." }],
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
     createRunLogFn,
+    // Not exercising the harness-side verdict cross-check here (see verdictCrossCheck.test.js
+    // and runOrchestrator.test.js's dedicated describe block) -- default to a passthrough.
+    crossCheckVerdictFn: ({ verdict }) => verdict,
     ...overrides
   });
 }

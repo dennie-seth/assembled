@@ -3,6 +3,7 @@ import { NdjsonEventParser } from "./streamParser.js";
 import { buildPrompt, buildPlannerPrompt, buildMergeConflictPrompt, resolveRulesForPaths } from "./promptBuilder.js";
 import { buildReviewerPrompt } from "./reviewerPrompt.js";
 import { extractVerdictFromEvents } from "./verdict.js";
+import { crossCheckVerdict } from "./verdictCrossCheck.js";
 import { loadAgentDef, loadRules } from "./configLoader.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { createRunLog } from "./runLog.js";
@@ -116,6 +117,7 @@ export class RunOrchestrator {
     buildReviewerPromptFn = buildReviewerPrompt,
     buildMergeConflictPromptFn = buildMergeConflictPrompt,
     extractVerdictFn = extractVerdictFromEvents,
+    crossCheckVerdictFn = crossCheckVerdict,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
     clearRunStateFn = clearRunState,
@@ -148,6 +150,7 @@ export class RunOrchestrator {
     this.buildReviewerPromptFn = buildReviewerPromptFn;
     this.buildMergeConflictPromptFn = buildMergeConflictPromptFn;
     this.extractVerdictFn = extractVerdictFn;
+    this.crossCheckVerdictFn = crossCheckVerdictFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
     this.clearRunStateFn = clearRunStateFn;
@@ -424,10 +427,21 @@ export class RunOrchestrator {
       return { stop: true };
     }
 
-    const verdict = this.extractVerdictFn(reviewerResult.events);
-    if (!verdict) {
+    const selfReportedVerdict = this.extractVerdictFn(reviewerResult.events);
+    if (!selfReportedVerdict) {
       await this._blocked(taskId, "reviewer did not produce a machine-readable verdict");
       return { stop: true };
+    }
+
+    const verdict = this.crossCheckVerdictFn({
+      verdict: selfReportedVerdict,
+      events: reviewerResult.events,
+      changedPaths,
+      task,
+      baseBranch: this.baseBranch
+    });
+    if (verdict.downgraded) {
+      await this._logCrossCheck(taskId, runLog, verdict.notes);
     }
 
     return { stop: false, verdict, events: [...implementerResult.events, ...reviewerResult.events] };
@@ -559,6 +573,19 @@ export class RunOrchestrator {
     const event = { type: "capture", message };
     await runLog.append(event);
     this.hub.broadcast({ type: "run-event", id: taskId, phase: "capture", event });
+  }
+
+  /**
+   * Logs a harness-side verdict downgrade (crossCheckVerdictFn caught a self-reported PASS that
+   * the reviewer's own required commands don't back up). The downgraded verdict's `notes` --
+   * which already explain the mismatch -- flow into the card body through the normal FAIL path
+   * (`_handleFailValidation`/`_blocked`) right after this call, so this is purely for run-log/
+   * console visibility, not the only place the reason is surfaced.
+   */
+  async _logCrossCheck(taskId, runLog, message) {
+    const event = { type: "crosscheck", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "crosscheck", event });
   }
 
   _crashReason(phase, result) {
