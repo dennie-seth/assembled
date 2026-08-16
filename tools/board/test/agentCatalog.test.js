@@ -36,6 +36,11 @@ describe("listAssignableAgents", () => {
     expect(await listAssignableAgents(tmpDir)).toEqual(["infra", "planner"]);
   });
 
+  it("includes generic as an assignable agent (the default general-purpose implementer)", async () => {
+    await writeAgentFiles(["infra", "reviewer", "generic"]);
+    expect(await listAssignableAgents(tmpDir)).toEqual(["generic", "infra"]);
+  });
+
   it("excludes any file whose name is not a recognized assignable agent", async () => {
     await writeAgentFiles(["infra", "designer"]);
     expect(await listAssignableAgents(tmpDir)).toEqual(["infra"]);

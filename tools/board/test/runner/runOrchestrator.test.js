@@ -1734,6 +1734,90 @@ describe("RunOrchestrator.runCard — unassigned cards (agent: null) route throu
   });
 });
 
+describe("RunOrchestrator.runCard — a card explicitly assigned agent: 'generic' runs directly, no planner phase", () => {
+  const GENERIC_DEF = { name: "generic", model: "sonnet", body: "# generic\nGeneral-purpose implementer." };
+
+  function makeAgentDefFn() {
+    return vi.fn((name) => (name === "reviewer" ? REVIEWER_DEF : GENERIC_DEF));
+  }
+
+  it("runs the generic implementer directly then the reviewer -- two phases total, no planning phase", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Done. ${verdictBlock("PASS", "generic ran directly")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toContain("generic ran directly");
+  });
+
+  it("uses the generic agent def and model for the (only) implementation phase, loaded the same way a subsystem agent would be", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const loadAgentDefFn = makeAgentDefFn();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    expect(runner.start).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ model: GENERIC_DEF.model })
+    );
+    expect(loadAgentDefFn).toHaveBeenCalledWith("generic", expect.anything());
+
+    implChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("uses buildPromptFn (the standard implementer prompt), not buildPlannerPromptFn", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "implementer prompt");
+    const buildPlannerPromptFn = vi.fn(() => "planner prompt");
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn(),
+      buildPromptFn,
+      buildPlannerPromptFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await nthChild(runner, 1);
+
+    expect(buildPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: expect.objectContaining({ id: "T-0001", agent: "generic" }) })
+    );
+    expect(buildPlannerPromptFn).not.toHaveBeenCalled();
+
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 1, null);
+    await runPromise;
+  });
+});
+
 describe("RunOrchestrator — broadcasts an authoritative status change immediately (board must not depend solely on the file watcher)", () => {
   it("broadcasts a 'changed' event the moment the card moves ready -> in-progress", async () => {
     const store = makeStore([baseTask()]);

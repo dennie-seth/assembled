@@ -374,6 +374,14 @@ describe("buildPlannerPrompt -- deliverable_type and hardened acceptance criteri
   });
 });
 
+describe("buildPlannerPrompt -- agent assignment defaults to generic, never null", () => {
+  it("instructs the planner to set agent: generic when the work doesn't fit a specific subsystem, not to leave it null", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toContain("set agent to `generic`");
+    expect(prompt.toLowerCase()).not.toContain("leave agent as null");
+  });
+});
+
 describe("buildPlannerPrompt -- acceptance completeness self-check (T-0141 lesson)", () => {
   it("instructs the planner to enumerate every requirement the story implies and confirm each maps to a criterion", () => {
     const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
