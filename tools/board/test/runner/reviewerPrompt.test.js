@@ -253,6 +253,41 @@ describe("buildReviewerPrompt -- routed verification section", () => {
   });
 });
 
+describe("buildReviewerPrompt -- client-godot-verify route (T-0185: hung headless Godot tests)", () => {
+  it("tells the reviewer to run the timeout-wrapped godot command for a changed client/tests/*.gd file, and treat a timeout-kill as FAIL", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["client/tests/test_signal_tower.gd"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("cd client && timeout 600 godot --headless --script tests/test_signal_tower.gd");
+    expect(prompt).toContain("never drop it and run `godot --headless` bare");
+    expect(prompt).toContain("T-0185");
+    expect(prompt).toContain("is itself a FAIL");
+  });
+
+  it("lists one client-godot-verify command per changed test file", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["client/tests/test_signal_tower.gd", "client/tests/test_room_objects.gd"]
+    });
+    expect(prompt).toContain("tests/test_signal_tower.gd");
+    expect(prompt).toContain("tests/test_room_objects.gd");
+  });
+
+  it("does not add godot-route enforcement language for a diff with no changed client/tests/*.gd files", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["client/room/lever.gd"]
+    });
+    expect(prompt).not.toContain("client-godot-verify");
+    expect(prompt).not.toContain("never drop it and run `godot --headless` bare");
+  });
+});
+
 describe("buildReviewerPrompt -- acceptance criteria audit (green tests != acceptance met)", () => {
   it("lists each acceptance criterion parsed from the task body", () => {
     const task = {

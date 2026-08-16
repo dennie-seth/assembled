@@ -1,0 +1,77 @@
+[gd_resource type="AudioBusLayout" load_steps=3 format=3 uid="uid://d5w3kn8m2vx6c"]
+
+;; T-0103 (D-20): four-bus split — Ambience, Music, World SFX, Gameplay SFX.
+;;
+;; Ducking rules:
+;;   Ambience     — AudioEffectCompressor sidechained to "Music"; ducked when
+;;                  music plays.
+;;   Music        — no effects; drives the Ambience sidechain but is not itself
+;;                  ducked.
+;;   World SFX    — AudioEffectCompressor (no sidechain, high threshold, low
+;;                  ratio); lightly duckable via in-game signal but music does
+;;                  not touch it.
+;;   Gameplay SFX — no effects; never ducked under any condition.  Entity
+;;                  telegraphs route here so fairness is preserved.
+;;
+;; Bus names mirror the Bus enum in
+;; tools/audio-agent/src/audio_agent/bus.py (T-0082, single source of truth).
+
+;; --- Ambience compressor: triggered by the Music bus sidechain. -------------
+[sub_resource type="AudioEffectCompressor" id="AudioEffectCompressor_ambience"]
+threshold = -24.0
+ratio = 4.0
+attack_us = 20.0
+release_ms = 300.0
+mix = 1.0
+sidechain = &"Music"
+
+;; --- World SFX compressor: light, no sidechain (lightly duckable). ----------
+[sub_resource type="AudioEffectCompressor" id="AudioEffectCompressor_worldsfx"]
+threshold = -12.0
+ratio = 1.5
+attack_us = 20.0
+release_ms = 150.0
+mix = 1.0
+
+[resource]
+bus_count = 5
+
+bus/0/name = &"Master"
+bus/0/solo = false
+bus/0/mute = false
+bus/0/bypass_fx = false
+bus/0/volume_db = 0.0
+bus/0/send = &"Master"
+bus/0/effects = []
+
+bus/1/name = &"Music"
+bus/1/solo = false
+bus/1/mute = false
+bus/1/bypass_fx = false
+bus/1/volume_db = 0.0
+bus/1/send = &"Master"
+bus/1/effects = []
+
+bus/2/name = &"Ambience"
+bus/2/solo = false
+bus/2/mute = false
+bus/2/bypass_fx = false
+bus/2/volume_db = 0.0
+bus/2/send = &"Master"
+bus/2/effects = [SubResource("AudioEffectCompressor_ambience")]
+
+bus/3/name = &"World SFX"
+bus/3/solo = false
+bus/3/mute = false
+bus/3/bypass_fx = false
+bus/3/volume_db = 0.0
+bus/3/send = &"Master"
+bus/3/effects = [SubResource("AudioEffectCompressor_worldsfx")]
+
+bus/4/name = &"Gameplay SFX"
+bus/4/solo = false
+bus/4/mute = false
+bus/4/bypass_fx = false
+bus/4/volume_db = 0.0
+bus/4/send = &"Master"
+bus/4/effects = []

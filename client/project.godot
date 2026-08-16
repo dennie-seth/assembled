@@ -12,8 +12,27 @@ config_version=5
 
 config/name="assembled"
 config/description="Assembled — client dev-env + GDExtension proof-of-life (Phase 5 in progress)."
-run/main_scene="res://main.tscn"
+run/main_scene="res://scenes/blockout_room.tscn"
 config/features=PackedStringArray("4.5")
+
+[audio]
+
+buses/default_bus_layout="res://audio_bus_layout.tres"
+
+[autoload]
+
+AudioRouter="*res://audio_router.gd"
+ViewportManager="*res://autoloads/viewport_manager.gd"
+
+[display]
+
+window/size/viewport_width=384
+window/size/viewport_height=216
+window/size/window_width_override=1152
+window/size/window_height_override=648
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+window/stretch/scale_mode="integer"
 
 [rendering]
 

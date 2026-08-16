@@ -1,7 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { buildPrTitle, buildPrBody } from "../../src/runner/prBuilder.js";
 import { EventEmitter } from "node:events";
-import { RunOrchestrator, appendNote, MAX_AUTO_RETRY_ATTEMPTS } from "../../src/runner/runOrchestrator.js";
+import {
+  RunOrchestrator,
+  appendNote,
+  MAX_AUTO_RETRY_ATTEMPTS,
+  DEFAULT_PHASE_TIMEOUT_MS
+} from "../../src/runner/runOrchestrator.js";
 
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
@@ -116,6 +121,10 @@ function makeGit(overrides = {}) {
     linkBoardNodeModules: vi.fn(async () => {}),
     commitTaskFile: vi.fn(async () => true),
     autoCommitCardsOnCreateFromEnv: vi.fn(() => true),
+    fetch: vi.fn(async () => {}),
+    mergeDevelop: vi.fn(async () => ({ conflicted: false, changed: false })),
+    mergeStatus: vi.fn(async () => []),
+    hasUncommittedChanges: vi.fn(async () => false),
     ...overrides
   };
 }
@@ -548,6 +557,97 @@ describe("RunOrchestrator.runCard — runner failures become blocked, not a grad
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.body).toMatch(/verdict/i);
+  });
+});
+
+describe("RunOrchestrator.runCard — phase-level timeout (hung child protection, T-0185)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("exports a generous, named default phase timeout", () => {
+    expect(DEFAULT_PHASE_TIMEOUT_MS).toBeGreaterThanOrEqual(30 * 60 * 1000);
+    expect(DEFAULT_PHASE_TIMEOUT_MS).toBeLessThanOrEqual(45 * 60 * 1000);
+  });
+
+  it("kills the implementer's whole process group and blocks the card when the implementer phase exceeds phaseTimeoutMs, without retrying", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, phaseTimeoutMs: 1000, writeRunStateFn: vi.fn(async () => {}), clearRunStateFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.start).toHaveBeenCalledTimes(1);
+    const implChild = runner.spawnedChildren[0];
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/implementer/i);
+    expect(finalTask.body).toMatch(/timed? ?out|exceeded/i);
+    expect(finalTask.body).toContain("hung subprocess");
+
+    // A timeout is a hard stop, not a graded FAIL -- it must not feed the auto-retry loop.
+    expect(runner.start).toHaveBeenCalledTimes(1);
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+  });
+
+  it("kills the reviewer's whole process group and blocks the card when the reviewer phase exceeds phaseTimeoutMs", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, phaseTimeoutMs: 1000, writeRunStateFn: vi.fn(async () => {}), clearRunStateFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    const reviewChild = runner.spawnedChildren[1];
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: reviewChild }));
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/reviewer/i);
+    expect(finalTask.body).toMatch(/timed? ?out|exceeded/i);
+
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+  });
+
+  it("does not time out a phase that finishes comfortably inside phaseTimeoutMs", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, phaseTimeoutMs: 60_000, writeRunStateFn: vi.fn(async () => {}), clearRunStateFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(runner.kill).not.toHaveBeenCalled();
   });
 });
 
@@ -1026,6 +1126,224 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
     expect(github.createPr).not.toHaveBeenCalled();
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
+  });
+});
+
+describe("RunOrchestrator.runCard — finalize: merge origin/develop into the branch after a PR exists", () => {
+  function makeGithubWithPr(overrides = {}) {
+    return makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr: vi.fn(async () => "https://github.com/example/repo/pull/9"),
+      ...overrides
+    });
+  }
+
+  async function driveToPass(runner) {
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+  }
+
+  it("fetches and merges origin/develop into the branch once a PR exists, and pushes again when the merge produced new commits", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ mergeDevelop: vi.fn(async () => ({ conflicted: false, changed: true })) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(git.fetch).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001" });
+    expect(git.mergeDevelop).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001", baseBranch: "develop" });
+    expect(git.push).toHaveBeenCalledTimes(2);
+    expect(git.push).toHaveBeenNthCalledWith(2, { worktreeDir: "/repo/worktrees/T-0001", branch: "feature/T-0001" });
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("does not push again when the branch already contained everything on origin/develop (no-op merge)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit({ mergeDevelop: vi.fn(async () => ({ conflicted: false, changed: false })) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledTimes(1);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("skips the develop-sync step entirely when no PR was opened (gh unavailable)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: false, reason: "not-installed" })) });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(git.fetch).not.toHaveBeenCalled();
+    expect(git.mergeDevelop).not.toHaveBeenCalled();
+  });
+
+  it("on conflict, hands off to the owning agent (a third run phase) with the conflicted files and hunks instead of resolving mechanically", async () => {
+    const store = makeStore([baseTask({ agent: "server" })]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["server/src/handler.cpp"],
+      hunks: { "server/src/handler.cpp": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({
+      mergeDevelop: vi.fn(async () => conflictResult),
+      mergeStatus: vi.fn(async () => []),
+      hasUncommittedChanges: vi.fn(async () => false)
+    });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const buildMergeConflictPromptFn = vi.fn(() => "resolve these conflicts");
+    const orchestrator = makeOrchestrator({ store, git, runner, github, buildMergeConflictPromptFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+
+    const conflictChild = await nthChild(runner, 3);
+    expect(runner.start).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ prompt: "resolve these conflicts", worktreeDir: "/repo/worktrees/T-0001" })
+    );
+    expect(buildMergeConflictPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseBranch: "develop",
+        branch: "feature/T-0001",
+        conflictedFiles: conflictResult.conflictedFiles,
+        hunks: conflictResult.hunks
+      })
+    );
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledTimes(2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+  });
+
+  it("never resolves conflicts mechanically -- does not push and blocks the card (with the PR link preserved) when the agent leaves conflicts unresolved", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({
+      mergeDevelop: vi.fn(async () => conflictResult),
+      // Agent's phase exits 0 but never actually finished resolving -- still unmerged.
+      mergeStatus: vi.fn(async () => ["tools/board/src/thing.js"])
+    });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledTimes(1);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/9");
+    expect(finalTask.comments.some((c) => /unresolved|not.*resolved|conflict/i.test(c.text))).toBe(true);
+  });
+
+  it("blocks the card (PR link preserved) rather than pushing when the conflict-resolution agent crashes", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.emit("exit", 1, null);
+    await runPromise;
+
+    expect(git.push).toHaveBeenCalledTimes(1);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/9");
+  });
+
+  it("uses the card's own agent (not the reviewer) to resolve conflicts, loading its agent def and allowed tools", async () => {
+    const store = makeStore([baseTask({ agent: "client" })]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["client/src/thing.gd"],
+      hunks: { "client/src/thing.gd": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const loadAgentDefFn = vi.fn((name) => (name === "reviewer" ? REVIEWER_DEF : { name, model: "sonnet", body: `# ${name}` }));
+    const resolveAllowedToolsFn = vi.fn((name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Edit", "Bash(git:*)"]));
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      github,
+      loadAgentDefFn,
+      resolveAllowedToolsFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await nthChild(runner, 3);
+
+    expect(loadAgentDefFn).toHaveBeenCalledWith("client", expect.anything());
+    expect(resolveAllowedToolsFn).toHaveBeenCalledWith("client", expect.anything());
+    expect(runner.start).toHaveBeenNthCalledWith(3, expect.objectContaining({ model: "sonnet" }));
+
+    runner.spawnedChildren[2].emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("never force-pushes and never auto-resolves by discarding either side -- the merge step itself must never mechanically choose ours/theirs", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    for (const call of git.push.mock.calls) {
+      expect(call[0].force).not.toBe(true);
+    }
   });
 });
 
@@ -1509,6 +1827,90 @@ describe("RunOrchestrator.runCard — unassigned cards (agent: null) route throu
     expect(finalTask.status).toBe("review");
     expect(finalTask.body).toContain("generic agent delivered");
     expect(git.push).toHaveBeenCalled();
+  });
+});
+
+describe("RunOrchestrator.runCard — a card explicitly assigned agent: 'generic' runs directly, no planner phase", () => {
+  const GENERIC_DEF = { name: "generic", model: "sonnet", body: "# generic\nGeneral-purpose implementer." };
+
+  function makeAgentDefFn() {
+    return vi.fn((name) => (name === "reviewer" ? REVIEWER_DEF : GENERIC_DEF));
+  }
+
+  it("runs the generic implementer directly then the reviewer -- two phases total, no planning phase", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Done. ${verdictBlock("PASS", "generic ran directly")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toContain("generic ran directly");
+  });
+
+  it("uses the generic agent def and model for the (only) implementation phase, loaded the same way a subsystem agent would be", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const loadAgentDefFn = makeAgentDefFn();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    expect(runner.start).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ model: GENERIC_DEF.model })
+    );
+    expect(loadAgentDefFn).toHaveBeenCalledWith("generic", expect.anything());
+
+    implChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("uses buildPromptFn (the standard implementer prompt), not buildPlannerPromptFn", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "implementer prompt");
+    const buildPlannerPromptFn = vi.fn(() => "planner prompt");
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn(),
+      buildPromptFn,
+      buildPlannerPromptFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await nthChild(runner, 1);
+
+    expect(buildPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: expect.objectContaining({ id: "T-0001", agent: "generic" }) })
+    );
+    expect(buildPlannerPromptFn).not.toHaveBeenCalled();
+
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 1, null);
+    await runPromise;
   });
 });
 

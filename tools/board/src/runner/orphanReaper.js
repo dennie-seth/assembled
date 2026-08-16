@@ -1,6 +1,14 @@
 import path from "node:path";
 import { appendNote } from "./runOrchestrator.js";
-import { readRunState, isRunLive, isPidAlive, DEFAULT_HEARTBEAT_STALE_MS } from "./runState.js";
+import {
+  readRunState,
+  isRunLive,
+  isRunWedged,
+  isPidAlive,
+  killPidGroup,
+  DEFAULT_HEARTBEAT_STALE_MS,
+  DEFAULT_WEDGED_STALE_MS
+} from "./runState.js";
 import * as gitOps from "./gitOps.js";
 
 const ORPHAN_RECOVERY_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
@@ -13,6 +21,10 @@ const DEFAULT_GRACE_MS = 15_000;
 
 const RECOVERY_NOTE_TEXT =
   "run did not complete (board restarted or process ended before a verdict); reset to blocked for re-run.";
+
+const WEDGED_NOTE_TEXT =
+  "run's process was alive but its log stopped growing (wedged/hung subprocess, e.g. a headless " +
+  "test that never exited); process group killed, reset to blocked for re-run.";
 
 /** AUTO_RECOVER_ORPHANED_RUNS env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable orphan recovery. */
 export function orphanRecoveryEnabledFromEnv() {
@@ -43,10 +55,10 @@ async function commitReapedCard({ taskId, repoRoot, tasksDir, git, taskStoreKind
   }
 }
 
-async function reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }) {
+async function reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, noteText = RECOVERY_NOTE_TEXT) {
   const updated = await store.update(task.id, {
     status: "blocked",
-    body: appendNote(task.body, "Recovered", RECOVERY_NOTE_TEXT)
+    body: appendNote(task.body, "Recovered", noteText)
   });
   hub.broadcast({ type: "changed", id: task.id, task: updated });
   await commitReapedCard({ taskId: task.id, repoRoot, tasksDir, git, taskStoreKind });
@@ -97,9 +109,12 @@ export function createOrphanReaper({
   logger = console,
   runsDir = null,
   heartbeatStaleMs = DEFAULT_HEARTBEAT_STALE_MS,
+  wedgedStaleMs = DEFAULT_WEDGED_STALE_MS,
   isPidAliveFn = isPidAlive,
   readRunStateFn = readRunState,
   isRunLiveFn = isRunLive,
+  isRunWedgedFn = isRunWedged,
+  killPidGroupFn = killPidGroup,
   repoRoot = null,
   tasksDir = null,
   git = gitOps,
@@ -108,11 +123,32 @@ export function createOrphanReaper({
   const orphanSince = new Map();
   let timer = null;
 
-  /** No runsDir configured (e.g. legacy test callers) preserves the pre-fix behavior: always reap. */
-  async function isCardStillLive(taskId) {
-    if (!runsDir) return false;
+  /**
+   * Three-way liveness verdict for a card's recorded run: "dead" (no runstate, or a recorded
+   * pid that's actually gone -- reap immediately), "wedged" (recorded pid is alive, per
+   * `isRunLiveFn`, but its run log has gone stale well past `wedgedStaleMs` -- see
+   * `isRunWedged`'s own docstring for why this is a distinct condition from "dead"), or "alive"
+   * (genuinely still working). No runsDir configured (e.g. legacy test callers) preserves the
+   * pre-fix behavior: always "dead".
+   */
+  async function checkRunStatus(taskId) {
+    if (!runsDir) return "dead";
     const state = await readRunStateFn({ runsDir, taskId });
-    return isRunLiveFn({ state, now: now(), heartbeatStaleMs, isPidAliveFn });
+    const live = await isRunLiveFn({ state, now: now(), heartbeatStaleMs, isPidAliveFn });
+    if (!live) return "dead";
+    const wedged = await isRunWedgedFn({ state, now: now(), wedgedStaleMs });
+    return wedged ? "wedged" : "alive";
+  }
+
+  /** Best-effort: a kill failure must never crash the sweep/startup pass itself. */
+  async function killWedgedRun(taskId) {
+    const state = await readRunStateFn({ runsDir, taskId });
+    if (!state || typeof state.pid !== "number") return;
+    try {
+      await killPidGroupFn({ pid: state.pid });
+    } catch (err) {
+      logger.error(`assembled-board: failed to kill wedged run for ${taskId} (pid ${state.pid}): ${err.message}`);
+    }
   }
 
   function readopt(taskId) {
@@ -128,9 +164,20 @@ export function createOrphanReaper({
     const reaped = [];
     for (const task of tasks) {
       if (!ORPHANABLE_STATUSES.has(task.status)) continue;
-      if (await isCardStillLive(task.id)) {
+      const runStatus = await checkRunStatus(task.id);
+      if (runStatus === "alive") {
         readopt(task.id);
         logger.log(`assembled-board: card ${task.id} still has a live run (survived restart) -- re-adopted, not reaped`);
+        continue;
+      }
+      if (runStatus === "wedged") {
+        await killWedgedRun(task.id);
+        await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, WEDGED_NOTE_TEXT);
+        reaped.push(task.id);
+        logger.log(
+          `assembled-board: card ${task.id}'s recorded pid was alive but its run log was stale on startup -- ` +
+            `killed and reset to blocked (was ${task.status})`
+        );
         continue;
       }
       await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind });
@@ -148,8 +195,24 @@ export function createOrphanReaper({
 
     for (const task of tasks) {
       if (!ORPHANABLE_STATUSES.has(task.status)) continue;
+
       if (activeCardIds.has(task.id)) {
         orphanSince.delete(task.id);
+        // Still tracked as in-flight by this process -- normally left entirely alone. The one
+        // exception is exactly T-0185: a card whose own runCard() is genuinely still awaiting
+        // its child's exit, but that child (or a grandchild it spawned, e.g. a hung headless
+        // Godot test) is wedged. A phase-level timeout (runOrchestrator.js) should normally
+        // catch this on its own; this is the backstop for the gap while that timeout hasn't
+        // fired yet. Only the process is killed here, never the card's status -- once the kill
+        // lands, the owning runCard()'s own `_runPhase` observes the real exit and finishes the
+        // card through its normal crash-handling path, exactly like any other process death.
+        if (runsDir && (await checkRunStatus(task.id)) === "wedged") {
+          await killWedgedRun(task.id);
+          logger.log(
+            `assembled-board: card ${task.id} has a live pid but a stale run log while still tracked as active -- ` +
+              `treated as wedged, process group killed (its own run will observe the exit and finish handling it)`
+          );
+        }
         continue;
       }
 
@@ -159,10 +222,19 @@ export function createOrphanReaper({
       }
 
       if (now() - orphanSince.get(task.id) >= graceMs) {
-        if (await isCardStillLive(task.id)) {
+        const runStatus = await checkRunStatus(task.id);
+        if (runStatus === "alive") {
           readopt(task.id);
           stillCandidate.delete(task.id);
           logger.log(`assembled-board: card ${task.id} still has a live run (untracked by this process) -- re-adopted, not reaped`);
+          continue;
+        }
+        if (runStatus === "wedged") {
+          await killWedgedRun(task.id);
+          await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, WEDGED_NOTE_TEXT);
+          orphanSince.delete(task.id);
+          reaped.push(task.id);
+          logger.log(`assembled-board: card ${task.id}'s recorded pid was alive but its run log was stale -- killed and reset to blocked`);
           continue;
         }
         await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind });

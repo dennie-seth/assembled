@@ -5,7 +5,7 @@ import { renderCreateForm } from "../../src/client/createForm.js";
 function baseOpts(overrides = {}) {
   return {
     visible: true,
-    agentOptions: ["infra", "server"],
+    agentOptions: ["generic", "infra", "server"],
     availableTasks: [
       { id: "T-0001", title: "First task" },
       { id: "T-0002", title: "Second task" }
@@ -43,11 +43,23 @@ describe("renderCreateForm visibility", () => {
     expect(root.querySelector(".create-body")).not.toBeNull();
   });
 
-  it("populates the agent select with an unassigned option plus agentOptions", () => {
+  it("populates the agent select with exactly agentOptions -- no separate unassigned placeholder", () => {
     const root = document.createElement("div");
     renderCreateForm(root, baseOpts());
     const values = Array.from(root.querySelector(".create-agent").options).map((o) => o.value);
-    expect(values).toEqual(["", "infra", "server"]);
+    expect(values).toEqual(["generic", "infra", "server"]);
+  });
+
+  it("defaults the agent select to 'generic' when it's among agentOptions", () => {
+    const root = document.createElement("div");
+    renderCreateForm(root, baseOpts());
+    expect(root.querySelector(".create-agent").value).toBe("generic");
+  });
+
+  it("falls back to the first agent option when 'generic' is not among agentOptions", () => {
+    const root = document.createElement("div");
+    renderCreateForm(root, baseOpts({ agentOptions: ["infra", "server"] }));
+    expect(root.querySelector(".create-agent").value).toBe("infra");
   });
 
   it("populates the dependency picker dropdown with availableTasks as 'id — title'", () => {
@@ -141,7 +153,7 @@ describe("renderCreateForm submission", () => {
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ depends_on: ["T-0002"] }));
   });
 
-  it("maps the unassigned agent option to null", () => {
+  it("defaults to the generic agent when submitted without touching the agent select", () => {
     const root = document.createElement("div");
     const onCreate = vi.fn();
     renderCreateForm(root, baseOpts({ onCreate }));
@@ -151,8 +163,21 @@ describe("renderCreateForm submission", () => {
     root.querySelector(".create-submit").dispatchEvent(new Event("click", { bubbles: true }));
 
     expect(onCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ agent: null, depends_on: [] })
+      expect.objectContaining({ agent: "generic", depends_on: [] })
     );
+  });
+
+  it("omits the agent field entirely when the dropdown has no options (server-side default applies)", () => {
+    const root = document.createElement("div");
+    const onCreate = vi.fn();
+    renderCreateForm(root, baseOpts({ onCreate, agentOptions: [] }));
+
+    root.querySelector(".create-title").value = "New feature";
+    root.querySelector(".create-phase").value = "1";
+    root.querySelector(".create-submit").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onCreate).toHaveBeenCalledOnce();
+    expect(onCreate.mock.calls[0][0]).not.toHaveProperty("agent");
   });
 
   it("shows a validation error and does not call onCreate when title is empty", () => {

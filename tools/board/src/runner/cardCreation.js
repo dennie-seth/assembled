@@ -4,7 +4,7 @@ import { commitTaskFile, autoCommitCardsOnCreateFromEnv } from "./gitOps.js";
 const FIELD_DEFAULTS = {
   status: "backlog",
   priority: "P2",
-  agent: null,
+  agent: "generic",
   depends_on: [],
   body: ""
 };
