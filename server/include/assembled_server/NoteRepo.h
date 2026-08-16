@@ -67,10 +67,20 @@ class INoteRepo {
     virtual std::vector<NoteRecord> fetchRanked(int16_t archetype_id, int16_t anchor_tag,
                                                 int limit) = 0;
 
-    /// Increments the note's rating by 1.
-    /// @throws drogon::orm::DrogonDbException if the note is not found or on
-    ///         any DB error.
-    virtual void rate(const std::string &note_id) = 0;
+    /// Casts a +1 or -1 vote from voter on note_id.
+    ///
+    /// One vote per (note_id, voter): resubmitting the same val is a no-op;
+    /// a different val overwrites the existing vote.  notes.rating is updated
+    /// atomically to reflect SUM(val) over note_votes for this note.
+    ///
+    /// A clear seam is left after the DB write for a future bleed-timer hook
+    /// (docs/design/02-notes-system.md §7); see PgNoteRepo::rate.
+    ///
+    /// @param note_id  UUID of the note being rated.
+    /// @param voter    Identity token of the voter (must exist in identity).
+    /// @param val      +1 or -1.
+    /// @throws drogon::orm::DrogonDbException if the note or voter does not exist.
+    virtual void rate(const std::string &note_id, const std::string &voter, int16_t val) = 0;
 };
 
 /// Postgres implementation of INoteRepo backed by a synchronous Drogon DbClient.
@@ -83,7 +93,7 @@ class PgNoteRepo : public INoteRepo {
     std::vector<NoteRecord> fetch(int16_t archetype_id, int16_t anchor_tag) override;
     std::vector<NoteRecord> fetchRanked(int16_t archetype_id, int16_t anchor_tag,
                                         int limit) override;
-    void rate(const std::string &note_id) override;
+    void rate(const std::string &note_id, const std::string &voter, int16_t val) override;
 
   private:
     drogon::orm::DbClientPtr client_;

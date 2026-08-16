@@ -198,6 +198,62 @@ export async function mergeNoFF({ repoRoot, branch = "develop" }) {
   }
 }
 
+/** Fetches `origin` into a card worktree, updating its remote-tracking refs without touching the working tree or branch. */
+export async function fetch({ worktreeDir }) {
+  await git(["fetch", "origin"], worktreeDir);
+}
+
+/**
+ * Merges `origin/<baseBranch>` into a card worktree's current branch -- the "merge develop into
+ * my PR branch" enforcement step run right after a PR is opened (see runOrchestrator.js's
+ * `_syncBranchWithDevelop`). Unlike `mergeNoFF`/`pullDevelop`, a real content conflict is
+ * **never** auto-aborted: this always leaves the worktree exactly as `git merge` left it (mid-
+ * merge, conflict markers on disk, `MERGE_HEAD` present) so the owning agent can resolve it in
+ * place, rather than throwing the state away for a caller to retry blind.
+ *
+ * Returns `{ conflicted: false, changed }` on a clean merge (`changed` is false when the branch
+ * already contained everything on `origin/<baseBranch>` -- nothing to commit or push), or
+ * `{ conflicted: true, conflictedFiles, hunks }` when `git merge` stops on real conflicts --
+ * `hunks` maps each conflicted file's relative path to its on-disk conflict-marked content
+ * (`<<<<<<<`/`=======`/`>>>>>>>`), the same text an agent would see resolving it by hand, so the
+ * conflict-resolution prompt can be built from it directly without a second round trip.
+ *
+ * A merge failure that leaves no unmerged paths (`baseBranch` doesn't exist on origin, `git
+ * merge` itself errored before touching the tree) is not a conflict -- it rethrows instead of
+ * misreporting `conflicted: true` for something no amount of manual resolution would fix.
+ */
+export async function mergeDevelop({ worktreeDir, baseBranch = "develop" }) {
+  const { stdout: beforeOut } = await git(["rev-parse", "HEAD"], worktreeDir);
+  const before = beforeOut.trim();
+
+  try {
+    await git(["merge", "--no-edit", `origin/${baseBranch}`], worktreeDir);
+  } catch (err) {
+    const conflictedFiles = await mergeStatus({ worktreeDir });
+    if (conflictedFiles.length === 0) {
+      throw err;
+    }
+    const hunks = {};
+    for (const file of conflictedFiles) {
+      hunks[file] = await fs.readFile(path.join(worktreeDir, file), "utf8").catch(() => "");
+    }
+    return { conflicted: true, conflictedFiles, hunks };
+  }
+
+  const { stdout: afterOut } = await git(["rev-parse", "HEAD"], worktreeDir);
+  const after = afterOut.trim();
+  return { conflicted: false, changed: before !== after };
+}
+
+/** Relative paths of any currently-unmerged (conflicted) files in a worktree; empty once every conflict is resolved and staged. */
+export async function mergeStatus({ worktreeDir }) {
+  const { stdout } = await git(["diff", "--name-only", "--diff-filter=U"], worktreeDir);
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 /** Identity for commits the board tool makes on an agent's behalf rather than authored by the agent (see `commitAll`'s `author` param and `commitTaskFile`). */
 export const BOARD_COMMIT_AUTHOR = { name: "assembled-board", email: "board@localhost" };
 const AUTO_COMMIT_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);

@@ -46,6 +46,11 @@ describe("parseTask / serializeTask round-trip", () => {
     expect(parseTask(serializeTask(task))).toEqual(task);
   });
 
+  it("round-trips agent: dispatch (non-executable escalation hand-off sentinel)", () => {
+    const task = { ...VALID_TASK, agent: "dispatch", status: "ready" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
   it("round-trips unicode in title and body", () => {
     const task = {
       ...VALID_TASK,

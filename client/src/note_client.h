@@ -164,11 +164,27 @@ class NoteClient : public Node {
      */
     int request_identity();
 
+    /**
+     * @brief Fetch the anchor snapshot for a given (archetype, tag) pair.
+     *
+     * Sends `GET /v1/anchors/{archetype_id}/{tag}` (T-0124).  The response
+     * contains three visibility-class arrays: loose item_instance rows, open
+     * offerings, and notes at that anchor.
+     *
+     * Emits `anchor_snapshot_fetched(request_id, state, http_status, body)`
+     * on completion.  On any non-OK state, body is an empty string.
+     *
+     * @param archetype_id  Archetype ID (from shared/note_templates.hpp).
+     * @param tag           Anchor tag scoped to that archetype.
+     * @return              Request ID or -1 on immediate failure.
+     */
+    int fetch_anchor_snapshot(int archetype_id, int tag);
+
   protected:
     static void _bind_methods();
 
   private:
-    enum class RequestKind { FETCH_NOTES, POST_NOTE, RATE_NOTE, IDENTITY };
+    enum class RequestKind { FETCH_NOTES, POST_NOTE, RATE_NOTE, IDENTITY, FETCH_ANCHOR_SNAPSHOT };
 
     /// Heap-allocated per-transfer state.  Address is stable (never moves after
     /// push_back) so write-callback userdata pointers remain valid.

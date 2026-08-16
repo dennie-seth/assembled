@@ -1,6 +1,6 @@
 import path from "node:path";
 import { NdjsonEventParser } from "./streamParser.js";
-import { buildPrompt, buildPlannerPrompt, resolveRulesForPaths } from "./promptBuilder.js";
+import { buildPrompt, buildPlannerPrompt, buildMergeConflictPrompt, resolveRulesForPaths } from "./promptBuilder.js";
 import { buildReviewerPrompt } from "./reviewerPrompt.js";
 import { extractVerdictFromEvents } from "./verdict.js";
 import { loadAgentDef, loadRules } from "./configLoader.js";
@@ -16,6 +16,10 @@ import {
   diffPlannerFileView,
   applyPlannerFileViewDiff
 } from "./plannerFileView.js";
+import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
+import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
+import { findExistingRemediationCard, draftRemediationCard } from "../lib/escalationRemediation.js";
+import { createCard as createCardDefault } from "./cardCreation.js";
 
 /**
  * Hard cap on total implementer/reviewer runs a card can consume across its bounded
@@ -79,16 +83,19 @@ export class RunOrchestrator {
     rulesDir = path.join(repoRoot, ".claude", "rules"),
     baseBranch = "develop",
     taskStoreKind = "fs",
+    idAllocator,
     loadAgentDefFn = loadAgentDef,
     loadRulesFn = loadRules,
     resolveAllowedToolsFn = resolveAllowedTools,
     buildPromptFn = buildPrompt,
     buildPlannerPromptFn = buildPlannerPrompt,
     buildReviewerPromptFn = buildReviewerPrompt,
+    buildMergeConflictPromptFn = buildMergeConflictPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
     clearRunStateFn = clearRunState,
+    createCardFn = createCardDefault,
     now = () => new Date(),
     onIdle = () => {}
   }) {
@@ -107,16 +114,19 @@ export class RunOrchestrator {
     this.rulesDir = rulesDir;
     this.baseBranch = baseBranch;
     this.taskStoreKind = taskStoreKind;
+    this.idAllocator = idAllocator;
     this.loadAgentDefFn = loadAgentDefFn;
     this.loadRulesFn = loadRulesFn;
     this.resolveAllowedToolsFn = resolveAllowedToolsFn;
     this.buildPromptFn = buildPromptFn;
     this.buildPlannerPromptFn = buildPlannerPromptFn;
     this.buildReviewerPromptFn = buildReviewerPromptFn;
+    this.buildMergeConflictPromptFn = buildMergeConflictPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
     this.clearRunStateFn = clearRunStateFn;
+    this.createCardFn = createCardFn;
     this.now = now;
     this.onIdle = onIdle;
     this.activeRuns = new Map();
@@ -185,6 +195,14 @@ export class RunOrchestrator {
     }
     if (task.status !== "ready" && task.status !== "review" && task.status !== "blocked") {
       throw new Error(`Cannot run ${taskId}: status is "${task.status}", expected "ready", "review", or "blocked"`);
+    }
+    // "dispatch" is the escalation flow's non-executable sentinel (see escalationRemediation.js
+    // / taskParser.js's ASSIGNABLE_AGENT_NAMES comment): this is the pick-up loop's chokepoint --
+    // every run, manual or automated, passes through runCard() -- so refusing it here is what
+    // guarantees a remediation card surfaces in `ready` for a human/Dispatch to grab and never
+    // gets auto-run.
+    if (task.agent === "dispatch") {
+      throw new Error(`Cannot run ${taskId}: assigned to "dispatch" -- awaiting human/Dispatch pickup, not eligible for automated runs`);
     }
     // Guards re-entrancy across the whole runCard span, including the auto-retry loop's
     // FAIL -> next-attempt gap where the phase-level activeRuns map is momentarily empty
@@ -260,13 +278,14 @@ export class RunOrchestrator {
     const effectiveAgent = task.agent ?? "generic";
 
     let currentReused = reused;
+    const attemptRecords = [];
     for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
       // Re-fetch: a prior attempt in this same loop may have appended a FAIL note to the
       // body (read by the implementer's "continuing existing work" prompt on the retry).
       const liveTask = await this.store.get(taskId);
       await this._updateAndBroadcast(taskId, { attempts: attempt });
 
-      const { stop, verdict } = await this._runAttempt(
+      const { stop, verdict, events } = await this._runAttempt(
         taskId,
         liveTask,
         effectiveAgent,
@@ -278,13 +297,18 @@ export class RunOrchestrator {
       if (stop) return;
 
       if (verdict.verdict === "PASS") {
-        await this._handlePass(taskId, liveTask, worktreeDir, branch, verdict, runLog, currentReused);
+        await this._handlePass(taskId, liveTask, worktreeDir, branch, verdict, runLog, currentReused, effectiveAgent);
         return;
       }
 
+      attemptRecords.push({ attempt, notes: verdict.notes, events });
+
       const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
       await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !isFinalAttempt);
-      if (isFinalAttempt) return;
+      if (isFinalAttempt) {
+        await this._escalateIfGenuineBlocker(taskId, attemptRecords, runLog);
+        return;
+      }
 
       // Every attempt after the first resumes the same worktree/branch, regardless of
       // whether addWorktree itself had to reuse it (a first attempt can start fresh).
@@ -373,7 +397,7 @@ export class RunOrchestrator {
       return { stop: true };
     }
 
-    return { stop: false, verdict };
+    return { stop: false, verdict, events: [...implementerResult.events, ...reviewerResult.events] };
   }
 
   /**
@@ -601,7 +625,99 @@ export class RunOrchestrator {
     });
   }
 
-  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false) {
+  /**
+   * Escalation step, fired once at the exhaustion boundary of the auto-retry loop (the 5th
+   * consecutive FAIL that just set the card to `blocked` -- see docs/design/escalation-workflow.md).
+   *
+   * First checks whether the run(s) failed because of an Anthropic token/usage/weekly/rate limit
+   * -- a transient environmental stop, not a genuine blocker -- by scanning every attempt's raw
+   * NDJSON events for a usage-limit signature (usageLimitDetector.js). If so, this is a no-op:
+   * no report, no remediation card, the card is simply left `blocked` for a normal later re-run.
+   *
+   * Otherwise, deterministically builds a structured blocker report from the reviewer FAIL
+   * verdicts the card actually accumulated across its exhausted attempts (blockerReport.js -- no
+   * extra `claude` invocation; see that module's docstring for why), appends it to the card as a
+   * comment, then hands off to remediation-card creation: de-dupes against an already-open
+   * remediation card for this same blocked card (escalationRemediation.js), creates a new one in
+   * `ready` status owned by the non-executable `agent: "dispatch"` sentinel when none exists yet
+   * (reusing cardCreation.js's `createCard`, the same direct-to-store path flow-stats
+   * self-improvement uses -- not a live planner agent run, since that would require its own
+   * worktree/branch/PR and could never land a `ready` card on the live board immediately), and
+   * wires the original card's `depends_on` to the remediation card either way (idempotent).
+   *
+   * Best-effort end to end: any failure here (a missing store.list in a lightweight caller, a
+   * create failure) is caught and logged, never rethrown -- the card is already correctly
+   * `blocked` by the time this runs, and escalation is additive, not load-bearing for that.
+   */
+  async _escalateIfGenuineBlocker(taskId, attemptRecords, runLog) {
+    try {
+      const allEvents = attemptRecords.flatMap((r) => r.events ?? []);
+      if (eventsContainUsageLimitSignature(allEvents)) {
+        await this._logEscalation(
+          taskId,
+          runLog,
+          "Escalation skipped: usage/rate-limit signature detected in the run output -- treated as a transient stop, card left blocked for a normal later re-run."
+        );
+        return;
+      }
+
+      const task = await this.store.get(taskId);
+      const report = buildBlockerReport({ task, attemptRecords, attemptCount: attemptRecords.length });
+      await this._appendComment(taskId, "assembled-board", formatBlockerReportComment(report));
+
+      const tasks = await this.store.list();
+      let remediation = findExistingRemediationCard(tasks, taskId);
+      if (!remediation) {
+        const fields = draftRemediationCard({ task, report, attemptCount: attemptRecords.length, now: this.now });
+        remediation = await this.createCardFn({
+          store: this.store,
+          idAllocator: this.idAllocator,
+          repoRoot: this.repoRoot,
+          tasksDir: this.tasksDir,
+          fields,
+          taskStoreKind: this.taskStoreKind,
+          hub: this.hub
+        });
+        await this._logEscalation(
+          taskId,
+          runLog,
+          `Escalation: created remediation card ${remediation.id} (agent: dispatch) and linked it as a dependency.`
+        );
+      } else {
+        await this._logEscalation(
+          taskId,
+          runLog,
+          `Escalation: remediation card ${remediation.id} already exists for ${taskId} -- skipping creation, ensuring the dependency link.`
+        );
+      }
+
+      await this._linkDependsOn(taskId, remediation.id);
+    } catch (err) {
+      console.warn(`Board: escalation failed for ${taskId} (card remains blocked, no report/remediation created):`, err.message);
+      await this._logEscalation(taskId, runLog, `Escalation failed: ${err.message}`).catch(() => {});
+    }
+  }
+
+  async _appendComment(taskId, author, text) {
+    const current = await this.store.get(taskId);
+    const comments = [...(current.comments ?? []), { author, text, timestamp: this.now().toISOString() }];
+    return this._updateAndBroadcast(taskId, { comments });
+  }
+
+  async _linkDependsOn(taskId, dependencyId) {
+    const current = await this.store.get(taskId);
+    const existing = current.depends_on ?? [];
+    if (existing.includes(dependencyId)) return current;
+    return this._updateAndBroadcast(taskId, { depends_on: [...existing, dependencyId] });
+  }
+
+  async _logEscalation(taskId, runLog, message) {
+    const event = { type: "escalation", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "escalation", event });
+  }
+
+  async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false, effectiveAgent = task.agent ?? "generic") {
     let commit;
     try {
       await this.git.commitAll({
@@ -620,6 +736,20 @@ export class RunOrchestrator {
 
     const prUrl = await this._openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog });
 
+    // Every card/flow that ends up with an open PR must keep that branch in sync with
+    // origin/develop before it's left for a human -- see _syncBranchWithDevelop's docstring.
+    // Scoped to prUrl truthy (a PR actually exists, whether freshly opened or reused) since a
+    // card with no PR (gh unavailable, autoOpenPr disabled) has nothing to keep in sync yet.
+    const syncOutcome = prUrl
+      ? await this._syncBranchWithDevelop({ taskId, task, effectiveAgent, worktreeDir, branch, runLog })
+      : { ok: true };
+
+    if (syncOutcome.skip) {
+      // A cancel fired mid conflict-resolution phase -- cancelRun() already finalized the
+      // card's status and removed the worktree; nothing further to do here.
+      return;
+    }
+
     try {
       await this.git.removeWorktree({ repoRoot: this.repoRoot, worktreeDir });
     } catch {
@@ -635,7 +765,124 @@ export class RunOrchestrator {
       patch.pr = prUrl;
       patch.body = appendNote(body, "PR", prUrl);
     }
+
+    if (!syncOutcome.ok) {
+      // The PR exists but the branch could not be brought in sync with develop -- surface it
+      // explicitly rather than silently settling the card into review with a stale/conflicted
+      // branch (see docs/design and the "many cards bounce back stale" motivation for this step).
+      patch.status = "blocked";
+      patch.body = appendNote(patch.body, "Blocked", `develop sync: ${syncOutcome.reason}`);
+      await this._appendComment(
+        taskId,
+        "assembled-board",
+        `Merge-develop enforcement could not complete automatically for ${branch}: ${syncOutcome.reason} ` +
+          `The PR (${prUrl ?? "n/a"}) is still open but its branch has unresolved conflicts against origin/${this.baseBranch} -- manual resolution required before this card can proceed to review.`
+      );
+    }
+
     await this._updateAndBroadcast(taskId, patch);
+  }
+
+  /**
+   * Enforcement step: every card that reaches an open PR must have origin/${this.baseBranch}
+   * merged into its branch before it's left for a human, so a card doesn't bounce back to
+   * in-progress purely because its branch went stale against develop while it sat in review.
+   * Runs in the same worktree `_handlePass` is about to remove, right after the PR is opened.
+   *
+   * A clean merge (or a no-op when the branch already has everything on develop) just pushes
+   * the result (or doesn't, if nothing changed) and returns `{ ok: true }`.
+   *
+   * A real conflict is never resolved mechanically -- no automatic take-ours/take-theirs, no
+   * discarding either side. Instead it's handed back to the same agent that implemented the
+   * card (`effectiveAgent`) as one more run phase, with the conflicted files and their conflict
+   * markers in the prompt (see buildMergeConflictPromptFn / gitOps.mergeDevelop's conflict
+   * shape). Only once that phase exits cleanly *and* a fresh check confirms every conflict is
+   * actually resolved and committed does this push and return `{ ok: true }`; a crash, or an
+   * agent that stops without fully resolving, returns `{ ok: false, reason }` instead -- the
+   * caller surfaces that on the card rather than pushing a broken merge.
+   *
+   * Git-level failures unrelated to a real conflict (fetch/merge erroring for some other reason,
+   * e.g. network trouble) degrade gracefully: logged and treated as best-effort skip (`{ ok:
+   * true }`), the same "never fail the run over an infra hiccup" posture `_updateAndBroadcast`'s
+   * commit step and `_openPullRequest` already take -- only a genuine, detected conflict (or a
+   * failure to resolve one) is a reason to hold the card back.
+   */
+  async _syncBranchWithDevelop({ taskId, task, effectiveAgent, worktreeDir, branch, runLog }) {
+    let mergeResult;
+    try {
+      await this.git.fetch({ worktreeDir });
+      mergeResult = await this.git.mergeDevelop({ worktreeDir, baseBranch: this.baseBranch });
+    } catch (err) {
+      await this._logFinalize(taskId, runLog, `develop sync skipped: git fetch/merge failed: ${err.message}`);
+      return { ok: true };
+    }
+
+    if (!mergeResult.conflicted) {
+      if (!mergeResult.changed) {
+        await this._logFinalize(taskId, runLog, `${branch} already up to date with origin/${this.baseBranch}.`);
+        return { ok: true };
+      }
+      try {
+        await this.git.push({ worktreeDir, branch });
+      } catch (err) {
+        return { ok: false, reason: `merged origin/${this.baseBranch} cleanly but push failed: ${err.message}` };
+      }
+      await this._logFinalize(taskId, runLog, `Merged origin/${this.baseBranch} into ${branch} (clean) and pushed.`);
+      return { ok: true };
+    }
+
+    await this._logFinalize(
+      taskId,
+      runLog,
+      `Merge conflicts against origin/${this.baseBranch} in: ${mergeResult.conflictedFiles.join(", ")} -- handing back to ${effectiveAgent} for resolution.`
+    );
+
+    const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const prompt = this.buildMergeConflictPromptFn({
+      task,
+      agentDef,
+      baseBranch: this.baseBranch,
+      branch,
+      conflictedFiles: mergeResult.conflictedFiles,
+      hunks: mergeResult.hunks
+    });
+
+    const result = await this._runPhase({
+      taskId,
+      task,
+      phase: "merge-conflict",
+      prompt,
+      allowedTools,
+      worktreeDir,
+      model: agentDef.model,
+      runLog
+    });
+
+    if (result.cancelled) {
+      return { ok: true, skip: true };
+    }
+    if (result.exitCode !== 0) {
+      return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
+    }
+
+    const stillUnresolved = await this.git.mergeStatus({ worktreeDir });
+    const dirty = await this.git.hasUncommittedChanges({ worktreeDir });
+    if (stillUnresolved.length > 0 || dirty) {
+      const detail = stillUnresolved.length > 0 ? stillUnresolved.join(", ") : "uncommitted merge state";
+      return {
+        ok: false,
+        reason: `merge conflicts against origin/${this.baseBranch} were not fully resolved (${detail}) -- left for manual resolution, branch not pushed.`
+      };
+    }
+
+    try {
+      await this.git.push({ worktreeDir, branch });
+    } catch (err) {
+      return { ok: false, reason: `merge conflicts resolved but push failed: ${err.message}` };
+    }
+    await this._logFinalize(taskId, runLog, `Resolved merge conflicts against origin/${this.baseBranch} and pushed.`);
+    return { ok: true };
   }
 
   /**
