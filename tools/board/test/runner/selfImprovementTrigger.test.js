@@ -318,7 +318,7 @@ describe("createSelfImprovementLoop / sweepOnce", () => {
     expect(createCardFn).toHaveBeenCalledTimes(1);
     const [args] = createCardFn.mock.calls[0];
     expect(args.fields.status).toBe("backlog");
-    expect(args.fields.agent).toBeNull();
+    expect(args.fields.agent).toBe("generic");
     expect(result).toBe(created);
   });
 

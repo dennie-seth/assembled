@@ -41,14 +41,34 @@ describe("parseTask / serializeTask round-trip", () => {
     expect(parseTask(serializeTask(task))).toEqual(task);
   });
 
-  it("round-trips agent: null", () => {
+  it("serializes agent: null as-is, but coerces it back to 'generic' on the way back in (parser-level coercion, not a true round-trip)", () => {
     const task = { ...VALID_TASK, agent: null };
-    expect(parseTask(serializeTask(task))).toEqual(task);
+    const parsed = parseTask(serializeTask(task));
+    expect(parsed).toEqual({ ...task, agent: "generic" });
   });
 
   it("round-trips agent: dispatch (non-executable escalation hand-off sentinel)", () => {
     const task = { ...VALID_TASK, agent: "dispatch", status: "ready" };
     expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("round-trips agent: generic (default general-purpose implementer)", () => {
+    const task = { ...VALID_TASK, agent: "generic" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("coerces agent: null in the frontmatter to 'generic' on parse", () => {
+    const raw = frontmatter({ agent: null });
+    const parsed = parseTask(raw);
+    expect(parsed.agent).toBe("generic");
+  });
+
+  it("coerces a missing agent field to 'generic' on parse, instead of throwing", () => {
+    const raw = frontmatter();
+    const fieldLine = /^agent:.*$/m;
+    const stripped = raw.replace(fieldLine, "").replace(/\n{2,}/g, "\n");
+    const parsed = parseTask(stripped);
+    expect(parsed.agent).toBe("generic");
   });
 
   it("round-trips unicode in title and body", () => {
@@ -420,13 +440,14 @@ describe("parseTask malformed input", () => {
 });
 
 describe("parseTask missing/invalid fields", () => {
+  // "agent" is deliberately excluded here: unlike the other required fields, a missing
+  // agent no longer throws -- it's coerced to "generic" (see the coercion tests above).
   const REQUIRED_FIELDS = [
     "id",
     "title",
     "status",
     "priority",
     "phase",
-    "agent",
     "depends_on",
     "created"
   ];

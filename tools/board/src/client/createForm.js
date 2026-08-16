@@ -1,7 +1,7 @@
 import { createDepsPicker } from "./depsPicker.js";
 
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
-const UNASSIGNED_AGENT_VALUE = "";
+const DEFAULT_AGENT = "generic";
 
 function labeledField(labelText, input) {
   const wrapper = document.createElement("label");
@@ -12,17 +12,19 @@ function labeledField(labelText, input) {
   return wrapper;
 }
 
+// No "Unassigned" placeholder: a new card always gets a real agent, defaulting to the
+// generic catch-all implementer when the specific agent isn't picked (matching the board's
+// own server-side default -- see httpApi.js's DEFAULTS.agent).
 function agentSelectFor(agentOptions) {
   const select = document.createElement("select");
-  const unassigned = document.createElement("option");
-  unassigned.value = UNASSIGNED_AGENT_VALUE;
-  unassigned.textContent = "Unassigned";
-  select.appendChild(unassigned);
   for (const name of agentOptions) {
     const opt = document.createElement("option");
     opt.value = name;
     opt.textContent = name;
     select.appendChild(opt);
+  }
+  if (agentOptions.includes(DEFAULT_AGENT)) {
+    select.value = DEFAULT_AGENT;
   }
   return select;
 }
@@ -112,7 +114,9 @@ export function renderCreateForm(
     onCreate({
       title,
       phase,
-      agent: agentSelect.value === UNASSIGNED_AGENT_VALUE ? null : agentSelect.value,
+      // Omitted entirely (rather than sent as "") when the dropdown has no options at all --
+      // the board's create-task default (agent: "generic") applies server-side in that case.
+      ...(agentSelect.value ? { agent: agentSelect.value } : {}),
       priority: prioritySelect.value,
       depends_on: depsPicker.getSelected(),
       body: bodyTextarea.value

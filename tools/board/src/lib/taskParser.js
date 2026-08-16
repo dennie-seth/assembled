@@ -23,7 +23,7 @@ const PRIORITIES = ["P0", "P1", "P2", "P3"];
 // RunOrchestrator's escalation flow when a card's auto-retry cap exhausts on a genuine blocker,
 // and the runner's pick-up loop (RunOrchestrator.runCard) explicitly refuses to run them --
 // see docs/design/escalation-workflow.md.
-export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio", "planner", "dispatch"];
+export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "audio", "generic", "planner", "dispatch"];
 const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
 const OPTIONAL_FIELDS = ["branch", "commit", "pr"];
 const DELIVERABLE_TYPES = ["code", "artifact"];
@@ -151,6 +151,13 @@ export function parseTask(raw) {
   // YAML auto-parses unquoted ISO dates (the PLAN.md schema example) into Date objects.
   if (data.created instanceof Date) {
     data.created = data.created.toISOString().slice(0, 10);
+  }
+
+  // A missing or null agent means "no domain guessed" -- coerce it to the generic
+  // catch-all implementer here (before validation) rather than requiring every card
+  // to carry an explicit agent, or leaving it null forever.
+  if (!("agent" in data) || data.agent === null) {
+    data.agent = "generic";
   }
 
   validateTask(data);

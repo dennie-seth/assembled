@@ -48,7 +48,7 @@ const MARKUP_SNIFF_RE = /<\s*(?:svg|script|html|!doctype\s+html)/i;
 const DEFAULTS = {
   status: "backlog",
   priority: "P2",
-  agent: null,
+  agent: "generic",
   depends_on: [],
   body: ""
 };
