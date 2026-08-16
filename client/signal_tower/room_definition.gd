@@ -13,7 +13,7 @@ var display_name: String
 
 ## Author-facing roles (16 §1). Stored as String keys matching RoomTypes.Role
 ## enum names so callers can use has_role("HAZARD") without a preload chain.
-var _roles: Array[String] = []
+var _roles: Array = []
 
 ## True if this room was authoritatively given an EntitySensor instance.
 var has_entity: bool = false
@@ -22,7 +22,7 @@ var has_entity: bool = false
 var puzzle_locked: bool = false
 
 ## Items available in this room (drawn from existing spawn pool — 11 §6).
-var items: Array[String] = []
+var items: Array = []
 
 ## The entity sensor attached to this room (null if not a Hazard or no entity).
 var _sensor: Object = null   ## EntitySensor
@@ -30,8 +30,8 @@ var _sensor: Object = null   ## EntitySensor
 func _init(
 	p_tag: String,
 	p_name: String,
-	p_roles: Array[String],
-	p_items: Array[String] = []
+	p_roles: Array,
+	p_items: Array = []
 ) -> void:
 	anchor_tag = p_tag
 	display_name = p_name
