@@ -13,6 +13,10 @@ on:
       - "server/**"
       - "shared/**"
       - ".github/workflows/ci-server.yml"
+  # Lets release.yml call this workflow on a version-tag push to reuse the
+  # cmake build + ctest job verbatim instead of duplicating it. Purely
+  # additive: doesn't change push/pull_request behavior above.
+  workflow_call:
 
 concurrency:
   group: ci-server-${{ github.workflow }}-${{ github.ref }}

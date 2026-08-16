@@ -1,0 +1,94 @@
+name: release
+
+# Fires only on a version-tag push (e.g. v0.4.1) — never on branch push/PR,
+# so it can't interfere with ci-client.yml/ci-server.yml's own triggers.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Reuses ci-client.yml's windows-export + linux-export jobs as-is (see the
+  # workflow_call trigger added there) instead of duplicating the godot-cpp
+  # build / headless export steps. Produces the client-windows-export and
+  # client-linux-export artifacts this workflow downloads below.
+  build-client:
+    name: Build client (windows + linux exports)
+    uses: ./.github/workflows/ci-client.yml
+
+  # Reuses ci-server.yml's build-test job as-is. Produces the server-binary
+  # artifact downloaded below.
+  build-server:
+    name: Build server binary
+    uses: ./.github/workflows/ci-server.yml
+
+  publish-release:
+    name: Package + publish GitHub Release
+    needs: [build-client, build-server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows client export
+        uses: actions/download-artifact@v8
+        with:
+          name: client-windows-export
+          path: dist/windows
+
+      - name: Download Linux client export
+        uses: actions/download-artifact@v8
+        with:
+          name: client-linux-export
+          path: dist/linux
+
+      - name: Download server binary
+        uses: actions/download-artifact@v8
+        with:
+          name: server-binary
+          path: dist/server
+
+      # One tidy zip per platform rather than loose files, so a tester
+      # downloads a single asset. GitHub Actions artifact up/download
+      # doesn't reliably round-trip the Unix executable bit, so it's
+      # re-applied explicitly before zipping the Linux/server binaries.
+      - name: Package release assets
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p release
+
+          chmod +x dist/linux/assembled.x86_64
+          chmod +x dist/server/server dist/server/migrate
+
+          (cd dist/windows && zip -r "$GITHUB_WORKSPACE/release/assembled-windows-${TAG}.zip" .)
+          (cd dist/linux && zip -r "$GITHUB_WORKSPACE/release/assembled-linux-${TAG}.zip" .)
+          # -j: flatten to just the two runtime binaries, no server_tests.
+          zip -j "release/assembled-server-${TAG}.zip" dist/server/server dist/server/migrate
+
+          ls -la release
+
+      - name: Upload packaged release assets (debug)
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-${{ github.ref_name }}
+          path: release/*.zip
+          retention-days: 7
+
+      # Publishes a normal (non-draft, non-prerelease) release for a plain
+      # vX.Y.Z tag. To cut a draft instead (e.g. to review assets before
+      # they go public), change `draft: false` to `draft: true` here.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ github.ref_name }}
+          files: release/*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
