@@ -1,7 +1,13 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { buildPrTitle, buildPrBody } from "../../src/runner/prBuilder.js";
 import { EventEmitter } from "node:events";
-import { RunOrchestrator, appendNote, MAX_AUTO_RETRY_ATTEMPTS } from "../../src/runner/runOrchestrator.js";
+import {
+  RunOrchestrator,
+  appendNote,
+  MAX_AUTO_RETRY_ATTEMPTS,
+  DEFAULT_PHASE_TIMEOUT_MS
+} from "../../src/runner/runOrchestrator.js";
+import { crossCheckVerdict } from "../../src/runner/verdictCrossCheck.js";
 
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
@@ -101,6 +107,12 @@ function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], ...ov
     loadRulesFn: () => [{ name: "conduct", paths: ["**"], body: "TDD." }],
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
     createRunLogFn,
+    // Tests in this file aren't exercising the harness-side verdict cross-check (see
+    // verdictCrossCheck.test.js for that in isolation, and the dedicated describe block below
+    // for its wiring into the orchestrator) -- default to a passthrough so the fixture reviewer
+    // events here (which rarely include the real Bash tool_use/tool_result pairs a genuine
+    // verify route would produce) don't get spuriously downgraded out from under unrelated tests.
+    crossCheckVerdictFn: ({ verdict }) => verdict,
     ...overrides
   });
 }
@@ -193,6 +205,109 @@ describe("RunOrchestrator.runCard — happy path (PASS)", () => {
     expect(runEventMessages.every((m) => m.id === "T-0001")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "implementer")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "reviewer")).toBe(true);
+  });
+});
+
+describe("RunOrchestrator.runCard — harness-side verdict cross-check (real crossCheckVerdictFn)", () => {
+  /** verdictBlock's Bash tool_use companion: a real npm-test/eslint invocation with a tool_result. */
+  function boardSuiteBashCall(id = "bash-1") {
+    return [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id, name: "Bash", input: { command: "cd tools/board && npm test && npx eslint ." } }]
+        }
+      },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: "ok" }] } }
+    ];
+  }
+
+  it("downgrades a self-reported PASS to FAIL -- and auto-retries instead of moving to review -- when the required verify command never ran", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit(); // diffNames defaults to ["tools/board/src/thing.js"] -> requires board-suite
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, crossCheckVerdictFn: crossCheckVerdict });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    // Self-reports PASS, but never actually ran npm test / eslint via Bash.
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Looks fine. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    // The downgrade routes this into the auto-retry loop, not review -- a third child (the
+    // retried implementer) spawning is the observable proof PASS was not accepted.
+    await nthChild(runner, 3);
+
+    const midRetryTask = await store.get("T-0001");
+    expect(midRetryTask.status).toBe("in-progress");
+    expect(midRetryTask.status).not.toBe("review");
+    expect(midRetryTask.body).toContain("## Validation: FAIL");
+    expect(midRetryTask.body).toMatch(/downgraded by harness verdict cross-check/);
+    expect(midRetryTask.body).toMatch(/Board test\/lint suite/);
+    expect(git.push).not.toHaveBeenCalled();
+
+    // Let the retry finish (as a crash, for simplicity) so runPromise resolves.
+    runner.spawnedChildren[2].emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("keeps a self-reported PASS as PASS -- and moves the card to review -- when the required verify command actually ran and exited zero", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, crossCheckVerdictFn: crossCheckVerdict });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    for (const event of boardSuiteBashCall()) {
+      reviewChild.stdout.emit("data", ndjson(event));
+    }
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "ran npm test + eslint, both green"))));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toContain("ran npm test + eslint, both green");
+    expect(git.push).toHaveBeenCalled();
+  });
+
+  it("never upgrades a self-reported FAIL, even when the required verify command did run and pass", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, crossCheckVerdictFn: crossCheckVerdict });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    for (const event of boardSuiteBashCall()) {
+      reviewChild.stdout.emit("data", ndjson(event));
+    }
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "unrelated lint nit in the diff"))));
+    reviewChild.emit("exit", 0, null);
+
+    await nthChild(runner, 3);
+
+    const midRetryTask = await store.get("T-0001");
+    expect(midRetryTask.status).toBe("in-progress");
+    expect(midRetryTask.body).toContain("unrelated lint nit in the diff");
+    expect(midRetryTask.body).not.toMatch(/downgraded by harness verdict cross-check/);
+
+    runner.spawnedChildren[2].emit("exit", 1, null);
+    await runPromise;
   });
 });
 
@@ -552,6 +667,144 @@ describe("RunOrchestrator.runCard — runner failures become blocked, not a grad
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.body).toMatch(/verdict/i);
+  });
+
+  it("an implementer spawn failure (e.g. ENOENT) blocks the card instead of crashing the board or hanging the run", async () => {
+    // T-0185 incident: spawn('claude', ...) failed with ENOENT (the CLI wasn't resolvable on
+    // the child's PATH) and the resulting unlistened child 'error' event crashed the whole
+    // board process. This exercises the orchestrator's own once("error", ...) listener (see
+    // _runPhase) -- the ordinary case where it attaches before the error fires.
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("error", Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }));
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/failed to start/i);
+    expect(finalTask.body).toMatch(/spawn claude enoent/i);
+  });
+
+  it("a spawn failure captured on run.spawnError before this orchestrator's own listener attaches still blocks the card promptly, not a hang until phaseTimeoutMs", async () => {
+    // Reproduces the actual race that caused the crash: ClaudeCliRunner.start() attaches its
+    // 'error' listener synchronously at spawn time, so a fast ENOENT can already be captured
+    // onto run.spawnError by the time _runPhase's own writeRunStateFn await finishes -- well
+    // before _runPhase gets around to attaching its own once("error", ...) listener, which
+    // would otherwise never see an event that already fired.
+    const spawnError = Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" });
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const spawnedChildren = [];
+    const start = vi.fn(async () => {
+      const child = fakeChildProcess();
+      spawnedChildren.push(child);
+      return { runId: "run", child, spawnError };
+    });
+    const runner = { start, kill: vi.fn((run) => run.child.kill()), spawnedChildren };
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    await orchestrator.runCard("T-0001");
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/failed to start/i);
+    expect(finalTask.body).toMatch(/spawn claude enoent/i);
+  });
+});
+
+describe("RunOrchestrator.runCard — phase-level timeout (hung child protection, T-0185)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("exports a generous, named default phase timeout", () => {
+    expect(DEFAULT_PHASE_TIMEOUT_MS).toBeGreaterThanOrEqual(30 * 60 * 1000);
+    expect(DEFAULT_PHASE_TIMEOUT_MS).toBeLessThanOrEqual(45 * 60 * 1000);
+  });
+
+  it("kills the implementer's whole process group and blocks the card when the implementer phase exceeds phaseTimeoutMs, without retrying", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, phaseTimeoutMs: 1000, writeRunStateFn: vi.fn(async () => {}), clearRunStateFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.start).toHaveBeenCalledTimes(1);
+    const implChild = runner.spawnedChildren[0];
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/implementer/i);
+    expect(finalTask.body).toMatch(/timed? ?out|exceeded/i);
+    expect(finalTask.body).toContain("hung subprocess");
+
+    // A timeout is a hard stop, not a graded FAIL -- it must not feed the auto-retry loop.
+    expect(runner.start).toHaveBeenCalledTimes(1);
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+  });
+
+  it("kills the reviewer's whole process group and blocks the card when the reviewer phase exceeds phaseTimeoutMs", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, phaseTimeoutMs: 1000, writeRunStateFn: vi.fn(async () => {}), clearRunStateFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    const reviewChild = runner.spawnedChildren[1];
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: reviewChild }));
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/reviewer/i);
+    expect(finalTask.body).toMatch(/timed? ?out|exceeded/i);
+
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+  });
+
+  it("does not time out a phase that finishes comfortably inside phaseTimeoutMs", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, phaseTimeoutMs: 60_000, writeRunStateFn: vi.fn(async () => {}), clearRunStateFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(runner.kill).not.toHaveBeenCalled();
   });
 });
 
@@ -1731,6 +1984,90 @@ describe("RunOrchestrator.runCard — unassigned cards (agent: null) route throu
     expect(finalTask.status).toBe("review");
     expect(finalTask.body).toContain("generic agent delivered");
     expect(git.push).toHaveBeenCalled();
+  });
+});
+
+describe("RunOrchestrator.runCard — a card explicitly assigned agent: 'generic' runs directly, no planner phase", () => {
+  const GENERIC_DEF = { name: "generic", model: "sonnet", body: "# generic\nGeneral-purpose implementer." };
+
+  function makeAgentDefFn() {
+    return vi.fn((name) => (name === "reviewer" ? REVIEWER_DEF : GENERIC_DEF));
+  }
+
+  it("runs the generic implementer directly then the reviewer -- two phases total, no planning phase", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn()
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Done. ${verdictBlock("PASS", "generic ran directly")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toContain("generic ran directly");
+  });
+
+  it("uses the generic agent def and model for the (only) implementation phase, loaded the same way a subsystem agent would be", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const loadAgentDefFn = makeAgentDefFn();
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    expect(runner.start).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ model: GENERIC_DEF.model })
+    );
+    expect(loadAgentDefFn).toHaveBeenCalledWith("generic", expect.anything());
+
+    implChild.emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("uses buildPromptFn (the standard implementer prompt), not buildPlannerPromptFn", async () => {
+    const store = makeStore([baseTask({ agent: "generic" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const buildPromptFn = vi.fn(() => "implementer prompt");
+    const buildPlannerPromptFn = vi.fn(() => "planner prompt");
+    const orchestrator = makeOrchestrator({
+      store, git, runner,
+      loadAgentDefFn: makeAgentDefFn(),
+      buildPromptFn,
+      buildPlannerPromptFn
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await nthChild(runner, 1);
+
+    expect(buildPromptFn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: expect.objectContaining({ id: "T-0001", agent: "generic" }) })
+    );
+    expect(buildPlannerPromptFn).not.toHaveBeenCalled();
+
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 1, null);
+    await runPromise;
   });
 });
 

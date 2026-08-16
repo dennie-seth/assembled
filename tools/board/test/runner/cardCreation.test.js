@@ -102,7 +102,7 @@ describe("createCard", () => {
 
     expect(created.status).toBe("backlog");
     expect(created.priority).toBe("P2");
-    expect(created.agent).toBeNull();
+    expect(created.agent).toBe("generic");
     expect(created.depends_on).toEqual([]);
   });
 });

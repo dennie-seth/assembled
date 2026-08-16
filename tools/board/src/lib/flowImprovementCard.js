@@ -94,9 +94,10 @@ function directionLine(trigger) {
 
 /**
  * Turns computed flow stats + which trigger condition fired into a normal card's fields --
- * `status: "backlog"` and `agent: null` always, so this never auto-runs and never guesses whose
- * domain the fix belongs to (see docs/design/flow-stats-self-improvement.md). Pure function, no
- * I/O; `cardCreation.js`'s `createCard` is what actually writes it.
+ * `status: "backlog"` and `agent: "generic"` always, so this never auto-runs (status alone gates
+ * that -- runCard() only picks up ready/review/blocked) and never guesses which *specific*
+ * subsystem the fix belongs to (see docs/design/flow-stats-self-improvement.md). Pure function,
+ * no I/O; `cardCreation.js`'s `createCard` is what actually writes it.
  */
 export function draftImprovementCard({ stats, trigger, now = () => new Date() }) {
   const nowValue = now();
@@ -128,7 +129,7 @@ export function draftImprovementCard({ stats, trigger, now = () => new Date() })
     status: "backlog",
     priority: "P2",
     phase: 0,
-    agent: null,
+    agent: "generic",
     depends_on: [],
     deliverable_type: "code",
     body

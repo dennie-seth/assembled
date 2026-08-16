@@ -1,0 +1,119 @@
+name: latest-release
+
+# Fires on every push to develop, so the rolling "latest" pre-release always
+# reflects the newest develop commit — no version tag required. Completely
+# separate from release.yml, which only fires on a v* tag push: pushing the
+# "latest" tag from this workflow doesn't match release.yml's `tags: [v*]`
+# filter, so the two workflows never trigger each other.
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latest-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Reuses ci-client.yml/ci-server.yml exactly as release.yml does — same
+  # windows-export/linux-export/build-test jobs, zero duplicated build logic.
+  build-client:
+    name: Build client (windows + linux exports)
+    uses: ./.github/workflows/ci-client.yml
+
+  build-server:
+    name: Build server binary
+    uses: ./.github/workflows/ci-server.yml
+
+  publish-latest:
+    name: Package + publish rolling "latest" pre-release
+    needs: [build-client, build-server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Download Windows client export
+        uses: actions/download-artifact@v8
+        with:
+          name: client-windows-export
+          path: dist/windows
+
+      - name: Download Linux client export
+        uses: actions/download-artifact@v8
+        with:
+          name: client-linux-export
+          path: dist/linux
+
+      - name: Download server binary
+        uses: actions/download-artifact@v8
+        with:
+          name: server-binary
+          path: dist/server
+
+      # Fixed asset names (no tag/sha in the filename) so
+      # .../releases/download/latest/<name> is a stable URL testers can
+      # bookmark — every run overwrites the same three files rather than
+      # accumulating a new set per commit.
+      - name: Package release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+
+          chmod +x dist/linux/assembled.x86_64
+          chmod +x dist/server/server dist/server/migrate
+
+          (cd dist/windows && zip -r "$GITHUB_WORKSPACE/release/assembled-windows-latest.zip" .)
+          (cd dist/linux && zip -r "$GITHUB_WORKSPACE/release/assembled-linux-latest.zip" .)
+          # -j: flatten to just the two runtime binaries, no server_tests.
+          zip -j "release/assembled-server-latest.zip" dist/server/server dist/server/migrate
+
+          ls -la release
+
+      - name: Compute build metadata
+        run: |
+          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_ENV"
+
+      # The Releases API won't move an existing tag's ref for us — if
+      # `latest` already points at an older develop commit, action-gh-release
+      # below would happily attach fresh assets to a release whose tag still
+      # points at stale code. Force-moving the tag here first is what makes
+      # this a rolling tag instead of a one-time one.
+      - name: Move "latest" tag to this commit
+        run: |
+          git tag -f latest
+          git push origin latest --force
+
+      # Updates the existing "latest" release in place (same tag_name every
+      # run): replaces the same-named assets and rewrites the body rather
+      # than accumulating new releases. `prerelease: true` + `make_latest:
+      # false` are both deliberate: this keeps the release out of the repo's
+      # bare github.com/OWNER/REPO/releases/latest slot (GitHub only ever
+      # resolves that URL to the newest non-prerelease release), so a real
+      # `v*` tag from release.yml — v0.3.0 today — keeps that spot. The
+      # stable link for this build is the tag-scoped URL instead:
+      # github.com/OWNER/REPO/releases/tag/latest.
+      - name: Publish rolling "latest" pre-release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: latest
+          target_commitish: ${{ github.sha }}
+          name: "Latest build (develop @ ${{ env.SHORT_SHA }})"
+          body: |
+            Auto-updated pre-release build of `develop`, rebuilt and replaced on every merge to this branch. This is **not** a versioned release — see this repo's `v*` releases for those.
+
+            - Commit: ${{ github.sha }}
+            - Built: ${{ env.BUILD_DATE }}
+
+            Download the platform zip you need from the assets below.
+          files: release/*.zip
+          draft: false
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false

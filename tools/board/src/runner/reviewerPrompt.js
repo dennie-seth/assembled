@@ -35,6 +35,7 @@ function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
   const hasPythonRoute = routes.some((route) => route.id.startsWith("python-verify:"));
   const hasServerRoute = routes.some((route) => route.id === "server-db-verify");
   const hasDeliverableRoute = routes.some((route) => route.id === "deliverable-check");
+  const hasGodotRoute = routes.some((route) => route.id.startsWith("client-godot-verify:"));
 
   let enforcement = `Actually execute every command above yourself with Bash -- do not read the diff and infer whether tests would pass. A check you did not run is a FAIL, not an unverified pass.`;
   if (hasPythonRoute) {
@@ -42,6 +43,9 @@ function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
   }
   if (hasServerRoute) {
     enforcement += ` The server-db-verify route must actually bring up Postgres and run the DB-gated ctest cases against it, not skip them -- this is the exact T-0043 gap: those tests skipped locally with no DATABASE_URL, the reviewer passed the card anyway, and CI then found 10/22 failures against live Postgres. A DB-gated test that is skipped, or missing entirely from \`ctest -N\`'s registered list (which happens silently if DATABASE_URL wasn't set when the build last ran -- no "skipped" line, no nonzero exit), is a FAIL ("N DB-gated tests skipped: no DATABASE_URL/Postgres in reviewer env -- relying on CI is not a pass" is not a passing verdict). If you genuinely cannot bring up Postgres in this environment, that is also a FAIL, not grounds to pass on the strength of the rest of the suite going green.`;
+  }
+  if (hasGodotRoute) {
+    enforcement += ` Run each client-godot-verify command exactly as given, with the \`timeout\` wrapper intact -- never drop it and run \`godot --headless\` bare. A test script that never calls \`get_tree().quit()\` hangs the process indefinitely otherwise (T-0185); if \`timeout\` kills the run, that is itself a FAIL ("test hung / exceeded the timeout") and must be reported as such, not treated as an unverified pass.`;
   }
   if (hasDeliverableRoute) {
     enforcement += ` This card's \`deliverable_type\` is "artifact": its stated output is a produced file (an asset, a doc, an attached image, a generated artifact) -- not the code that could produce one. A green test suite for an uploader/fetcher/generator script is not evidence the file exists; run the Deliverable artifact check and treat a nonzero exit as a FAIL, naming exactly which artifact is missing, in your notes. This is the T-0136 gap: an uploader CLI shipped with fully mocked tests, ruff+pytest green, and not a single image was ever actually fetched or attached -- nothing at review time checked for the attachment itself, only that the surrounding code compiled and had (mocked) coverage.`;

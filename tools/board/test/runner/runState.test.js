@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +8,11 @@ import {
   clearRunState,
   isPidAlive,
   isRunLive,
-  DEFAULT_HEARTBEAT_STALE_MS
+  isRunWedged,
+  killPidGroup,
+  DEFAULT_HEARTBEAT_STALE_MS,
+  DEFAULT_WEDGED_STALE_MS,
+  DEFAULT_KILL_ESCALATION_MS
 } from "../../src/runner/runState.js";
 
 let tmpDir;
@@ -128,5 +132,104 @@ describe("isRunLive", () => {
       }
     });
     expect(live).toBe(false);
+  });
+});
+
+describe("isRunWedged", () => {
+  it("is false when there is no recorded state", async () => {
+    expect(await isRunWedged({ state: null })).toBe(false);
+  });
+
+  it("is false when the state has no runLogPath to check", async () => {
+    expect(await isRunWedged({ state: { pid: 4242 } })).toBe(false);
+  });
+
+  it("is true when the pid is alive but the run log hasn't grown within the stale window", async () => {
+    const now = Date.now();
+    const wedged = await isRunWedged({
+      state: { pid: 4242, runLogPath: "/x/T-0001.jsonl" },
+      now,
+      wedgedStaleMs: 1000,
+      statFn: async () => ({ mtimeMs: now - 5000 })
+    });
+    expect(wedged).toBe(true);
+  });
+
+  it("is false when the run log is still growing within the stale window", async () => {
+    const now = Date.now();
+    const wedged = await isRunWedged({
+      state: { pid: 4242, runLogPath: "/x/T-0001.jsonl" },
+      now,
+      wedgedStaleMs: 1000,
+      statFn: async () => ({ mtimeMs: now - 100 })
+    });
+    expect(wedged).toBe(false);
+  });
+
+  it("defaults wedgedStaleMs to DEFAULT_WEDGED_STALE_MS when not provided", async () => {
+    const now = Date.now();
+    const wedged = await isRunWedged({
+      state: { pid: 4242, runLogPath: "/x/T-0001.jsonl" },
+      now,
+      statFn: async () => ({ mtimeMs: now - (DEFAULT_WEDGED_STALE_MS + 1000) })
+    });
+    expect(wedged).toBe(true);
+  });
+
+  it("is false (never throws) when the run log can't be stat'd", async () => {
+    const wedged = await isRunWedged({
+      state: { pid: 4242, runLogPath: "/does/not/exist" },
+      wedgedStaleMs: 1000,
+      statFn: async () => {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+    });
+    expect(wedged).toBe(false);
+  });
+});
+
+describe("killPidGroup", () => {
+  it("does nothing when pid is not a number", async () => {
+    const killFn = vi.fn();
+    await killPidGroup({ pid: undefined, killFn });
+    expect(killFn).not.toHaveBeenCalled();
+  });
+
+  it("sends SIGTERM to the negative pid (process group) first", async () => {
+    const killFn = vi.fn();
+    await killPidGroup({ pid: 4242, killFn, isPidAliveFn: () => false, delayFn: async () => {} });
+    expect(killFn).toHaveBeenCalledWith(-4242, "SIGTERM");
+  });
+
+  it("falls back to a bare pid signal when the process-group kill throws (not a group leader)", async () => {
+    const killFn = vi.fn((pid) => {
+      if (pid < 0) throw new Error("ESRCH");
+    });
+    await killPidGroup({ pid: 4242, killFn, isPidAliveFn: () => false, delayFn: async () => {} });
+    expect(killFn).toHaveBeenCalledWith(-4242, "SIGTERM");
+    expect(killFn).toHaveBeenCalledWith(4242, "SIGTERM");
+  });
+
+  it("escalates to SIGKILL after escalationMs when the process is still alive", async () => {
+    const killFn = vi.fn();
+    const isPidAliveFn = vi.fn(() => true);
+    const delayFn = vi.fn(async () => {});
+
+    await killPidGroup({ pid: 4242, killFn, isPidAliveFn, delayFn, escalationMs: DEFAULT_KILL_ESCALATION_MS });
+
+    expect(delayFn).toHaveBeenCalledWith(DEFAULT_KILL_ESCALATION_MS);
+    expect(killFn).toHaveBeenCalledWith(-4242, "SIGTERM");
+    expect(killFn).toHaveBeenCalledWith(-4242, "SIGKILL");
+  });
+
+  it("does not escalate when the process already exited after SIGTERM", async () => {
+    const killFn = vi.fn();
+    const isPidAliveFn = vi.fn(() => false);
+    const delayFn = vi.fn(async () => {});
+
+    await killPidGroup({ pid: 4242, killFn, isPidAliveFn, delayFn });
+
+    expect(killFn).toHaveBeenCalledTimes(1);
+    expect(killFn).toHaveBeenCalledWith(-4242, "SIGTERM");
   });
 });

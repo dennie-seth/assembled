@@ -480,6 +480,195 @@ describe("liveness check (survives a process restart)", () => {
   });
 });
 
+describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "orphan-reaper-wedged-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  async function writeStaleLog(taskId, staleMs) {
+    const logPath = path.join(runsDir, `${taskId}.jsonl`);
+    await fs.writeFile(logPath, "{}\n", "utf8");
+    const staleTime = new Date(Date.now() - staleMs);
+    await fs.utimes(logPath, staleTime, staleTime);
+    return logPath;
+  }
+
+  describe("reapOnStartup", () => {
+    it("kills the process group and reaps a card whose pid is alive but whose run log has gone stale", async () => {
+      const store = makeStore([makeTask({ id: "T-0050", status: "in-progress" })]);
+      const hub = makeHub();
+      const logPath = await writeStaleLog("T-0050", 60 * 60_000);
+      await writeRunState({ runsDir, taskId: "T-0050", pid: 12345, runLogPath: logPath });
+      const killPidGroupFn = vi.fn(async () => {});
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds: new Set(),
+        enabled: true,
+        runsDir,
+        isPidAliveFn: (pid) => pid === 12345,
+        wedgedStaleMs: 45 * 60_000,
+        killPidGroupFn
+      });
+
+      const reaped = await reaper.reapOnStartup();
+
+      expect(reaped).toEqual(["T-0050"]);
+      expect(store._byId.get("T-0050").status).toBe("blocked");
+      expect(store._byId.get("T-0050").body).toMatch(/wedge|stale|hung/i);
+      expect(killPidGroupFn).toHaveBeenCalledWith(expect.objectContaining({ pid: 12345 }));
+    });
+
+    it("does NOT treat a pid-alive card as wedged when its run log is still fresh, and re-adopts it", async () => {
+      const store = makeStore([makeTask({ id: "T-0051", status: "in-progress" })]);
+      const hub = makeHub();
+      const logPath = await writeStaleLog("T-0051", 1000);
+      await writeRunState({ runsDir, taskId: "T-0051", pid: 12346, runLogPath: logPath });
+      const killPidGroupFn = vi.fn(async () => {});
+      const activeCardIds = new Set();
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds,
+        enabled: true,
+        runsDir,
+        isPidAliveFn: (pid) => pid === 12346,
+        wedgedStaleMs: 45 * 60_000,
+        killPidGroupFn
+      });
+
+      const reaped = await reaper.reapOnStartup();
+
+      expect(reaped).toEqual([]);
+      expect(store._byId.get("T-0051").status).toBe("in-progress");
+      expect(killPidGroupFn).not.toHaveBeenCalled();
+      expect(activeCardIds.has("T-0051")).toBe(true);
+    });
+  });
+
+  describe("sweepOnce", () => {
+    it("kills and reaps an absent-from-activeCardIds wedged card once grace elapses", async () => {
+      const store = makeStore([makeTask({ id: "T-0052", status: "validation" })]);
+      const hub = makeHub();
+      const logPath = await writeStaleLog("T-0052", 60 * 60_000);
+      await writeRunState({ runsDir, taskId: "T-0052", pid: 12347, runLogPath: logPath });
+      const killPidGroupFn = vi.fn(async () => {});
+      // Starts from a real epoch timestamp (not a small fake-clock offset like other tests
+      // here use) since isRunWedged compares this `now()` against the log file's *real*
+      // mtime -- mixing a tiny fake clock with a real mtime would make every staleness check
+      // spuriously see a huge (or negative) gap.
+      let clock = Date.now();
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds: new Set(),
+        enabled: true,
+        graceMs: 15_000,
+        runsDir,
+        isPidAliveFn: (pid) => pid === 12347,
+        wedgedStaleMs: 45 * 60_000,
+        killPidGroupFn,
+        now: () => clock
+      });
+
+      await reaper.sweepOnce();
+      clock += 15_000;
+      const reaped = await reaper.sweepOnce();
+
+      expect(reaped).toEqual(["T-0052"]);
+      expect(store._byId.get("T-0052").status).toBe("blocked");
+      expect(killPidGroupFn).toHaveBeenCalledWith(expect.objectContaining({ pid: 12347 }));
+    });
+
+    it(
+      "kills (but does NOT reap/reset status) a wedged card that IS still tracked in activeCardIds -- " +
+        "the T-0185 root cause: a live board process's own runCard() must finish handling the card once the kill lands",
+      async () => {
+        const store = makeStore([makeTask({ id: "T-0053", status: "validation" })]);
+        const hub = makeHub();
+        const logPath = await writeStaleLog("T-0053", 60 * 60_000);
+        await writeRunState({ runsDir, taskId: "T-0053", pid: 12348, runLogPath: logPath });
+        const killPidGroupFn = vi.fn(async () => {});
+        const activeCardIds = new Set(["T-0053"]);
+        const reaper = createOrphanReaper({
+          store,
+          hub,
+          activeCardIds,
+          enabled: true,
+          runsDir,
+          isPidAliveFn: (pid) => pid === 12348,
+          wedgedStaleMs: 45 * 60_000,
+          killPidGroupFn
+        });
+
+        const reaped = await reaper.sweepOnce();
+
+        expect(reaped).toEqual([]);
+        expect(store._byId.get("T-0053").status).toBe("validation");
+        expect(hub.broadcast).not.toHaveBeenCalled();
+        expect(killPidGroupFn).toHaveBeenCalledWith(expect.objectContaining({ pid: 12348 }));
+        expect(activeCardIds.has("T-0053")).toBe(true);
+      }
+    );
+
+    it("does NOT kill an activeCardIds-tracked card whose run log is still fresh (not wedged)", async () => {
+      const store = makeStore([makeTask({ id: "T-0054", status: "validation" })]);
+      const hub = makeHub();
+      const logPath = await writeStaleLog("T-0054", 1000);
+      await writeRunState({ runsDir, taskId: "T-0054", pid: 12349, runLogPath: logPath });
+      const killPidGroupFn = vi.fn(async () => {});
+      const activeCardIds = new Set(["T-0054"]);
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds,
+        enabled: true,
+        runsDir,
+        isPidAliveFn: (pid) => pid === 12349,
+        wedgedStaleMs: 45 * 60_000,
+        killPidGroupFn
+      });
+
+      await reaper.sweepOnce();
+
+      expect(killPidGroupFn).not.toHaveBeenCalled();
+      expect(store._byId.get("T-0054").status).toBe("validation");
+    });
+
+    it("does not attempt to kill anything when the card is not in activeCardIds and its pid is simply dead (existing dead-pid path, unaffected)", async () => {
+      const store = makeStore([makeTask({ id: "T-0055", status: "in-progress" })]);
+      const hub = makeHub();
+      await writeRunState({ runsDir, taskId: "T-0055", pid: 12350, runLogPath: path.join(runsDir, "T-0055.jsonl") });
+      const killPidGroupFn = vi.fn(async () => {});
+      let clock = 1000;
+      const reaper = createOrphanReaper({
+        store,
+        hub,
+        activeCardIds: new Set(),
+        enabled: true,
+        graceMs: 15_000,
+        runsDir,
+        isPidAliveFn: () => false,
+        killPidGroupFn,
+        now: () => clock
+      });
+
+      await reaper.sweepOnce();
+      clock += 15_000;
+      const reaped = await reaper.sweepOnce();
+
+      expect(reaped).toEqual(["T-0055"]);
+      expect(killPidGroupFn).not.toHaveBeenCalled();
+    });
+  });
+});
+
 describe("reapCard commits its status write to repoRoot", () => {
   // Regression coverage: recovery (reapOnStartup/sweepOnce) used to call `store.update()`
   // without committing, leaving repoRoot's working tree dirty exactly like the in-run status

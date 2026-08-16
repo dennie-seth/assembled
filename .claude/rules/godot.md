@@ -14,6 +14,14 @@ paths: ["client/**/*.gd", "client/**/*.tscn", "client/**/*.tres"]
   `_process` tick when a signal connection says the same thing declaratively.
 - Tests: gdUnit4. TDD non-negotiable — test file before implementation, same
   as `cpp.md`.
+- A `client/tests/*.gd` script is a `SceneTree`-extending script that must
+  call `quit(0)`/`quit(1)` (or `get_tree().quit(...)`) itself once it's
+  done — always run it under `timeout` (`cd client && timeout 600 godot
+  --headless --script tests/<file>.gd`), never bare. A script that never
+  calls quit hangs the whole `godot --headless` process forever, and
+  nothing downstream is watching for that specific failure mode (T-0185:
+  two such hangs kept their parent agent process alive indefinitely). See
+  `verifyRouter.js`'s `client-godot-verify` route and the `verify` skill.
 - Scene/node idioms: composition over deep inheritance chains; keep a
   scene's script focused on that scene's behavior, not shared logic (shared
   logic belongs in an autoload or a GDExtension class, not copy-pasted

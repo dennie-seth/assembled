@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Path-aware, read-only-on-source VALIDATION gate. Actually runs the changed subsystem's tests/lint/build (including venv+pytest+ruff for Python packages and a live-Postgres ctest run for server/**/shared/** -- unrun or skipped tests are a FAIL, not "unverified"), audits the diff against the relevant rules + conduct, and emits a PASS/FAIL verdict. Never writes production code, never merges, never moves a card to done.
-tools: Read, Grep, Glob, Bash(npx vitest:*), Bash(npx eslint:*), Bash(node tools/board/scripts/validateBacklog.js:*), Bash(node tools/board/scripts/checkPlannerDiffGuard.js:*), Bash(cmake:*), Bash(ctest:*), Bash(clang-format --dry-run:*), Bash(docker compose:*), Bash(gdUnit4:*), Bash(git diff:*), Bash(git log:*), Bash(cd server:*), Bash(export DATABASE_URL=*), Bash(DATABASE_URL=*), Bash(env DATABASE_URL=*), Bash(cd tools/asset-gate:*), Bash(cd tools/comfy-client:*), Bash(cd tools/audio-agent:*), Bash(cd tools/gen-client-base:*), Bash(cd tools/palette-extract:*), Bash(cd tools/sim:*), Bash(cd assets/src/audio:*), Bash(cd assets/src/lora:*), Bash(python3 -m venv:*), Bash(.venv/bin/pip install -e ".[dev]":*), Bash(.venv/bin/pytest:*), Bash(.venv/bin/ruff:*), Bash(godot --headless:*), Bash(scons:*), Bash(gh run list:*), Bash(gh run view:*), Bash(gh pr checks:*)
+tools: Read, Grep, Glob, Bash(npx vitest:*), Bash(npx eslint:*), Bash(node tools/board/scripts/validateBacklog.js:*), Bash(node tools/board/scripts/checkPlannerDiffGuard.js:*), Bash(cmake:*), Bash(ctest:*), Bash(clang-format --dry-run:*), Bash(docker compose:*), Bash(gdUnit4:*), Bash(git diff:*), Bash(git log:*), Bash(cd server:*), Bash(export DATABASE_URL=*), Bash(DATABASE_URL=*), Bash(env DATABASE_URL=*), Bash(cd tools/asset-gate:*), Bash(cd tools/comfy-client:*), Bash(cd tools/audio-agent:*), Bash(cd tools/gen-client-base:*), Bash(cd tools/palette-extract:*), Bash(cd tools/sim:*), Bash(cd assets/src/audio:*), Bash(cd assets/src/lora:*), Bash(python3 -m venv:*), Bash(.venv/bin/pip install -e ".[dev]":*), Bash(.venv/bin/pytest:*), Bash(.venv/bin/ruff:*), Bash(cd client:*), Bash(timeout 600 godot --headless:*), Bash(godot --headless:*), Bash(scons:*), Bash(gh run list:*), Bash(gh run view:*), Bash(gh pr checks:*)
 model: opus  # quality gate every card passes through -- strongest model; see docs/design/agent-runner.md#model-selection
 ---
 
@@ -89,6 +89,22 @@ match the changed paths, plus `.claude/rules/conduct.md` unconditionally.
   test. (T-0132: the pip install grant used to be an exact-match string with
   no `:*` -- any chained, relative, or absolute invocation of it failed to
   match, so `python-verify` could never actually install the package.)
+- For a diff touching one or more `client/tests/*.gd` files (see
+  `CLIENT_TEST_PATTERN` in `verifyRouter.js`), run the routed
+  `client-godot-verify` step yourself for **each** changed test file:
+  `cd client && timeout 600 godot --headless --script tests/<file>.gd`.
+  Always use the `timeout`-wrapped form, never a bare `godot --headless`
+  invocation of a test file, even though you also hold a plain
+  `Bash(godot --headless:*)` grant for other qualitative checks (e.g.
+  `--import`/`--export-release` sanity per the `verify` skill's table) --
+  a test script that never calls `get_tree().quit()` (T-0185: two
+  `test_signal_tower.gd` runs hung this way) would otherwise hang your own
+  process indefinitely with nothing downstream watching for it. `timeout`
+  killing the run before it finishes is itself a FAIL ("test hung / exceeded
+  600s"), not an "unverified" pass. `600` here must stay in sync with
+  `GODOT_HEADLESS_TIMEOUT_SECONDS` in `verifyRouter.js` and this file's own
+  `tools:` grant above -- if you ever see them disagree, that's a bug, not a
+  choice to make ad hoc.
 - **A lint error is "pre-existing on develop" only if you actually ran
   `ruff` against a clean `origin/develop` checkout of that same file and it
   reported the same error there -- never because the diff's changed
