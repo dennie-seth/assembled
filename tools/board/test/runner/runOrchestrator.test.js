@@ -7,6 +7,7 @@ import {
   MAX_AUTO_RETRY_ATTEMPTS,
   DEFAULT_PHASE_TIMEOUT_MS
 } from "../../src/runner/runOrchestrator.js";
+import { crossCheckVerdict } from "../../src/runner/verdictCrossCheck.js";
 
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
@@ -106,6 +107,12 @@ function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], ...ov
     loadRulesFn: () => [{ name: "conduct", paths: ["**"], body: "TDD." }],
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
     createRunLogFn,
+    // Tests in this file aren't exercising the harness-side verdict cross-check (see
+    // verdictCrossCheck.test.js for that in isolation, and the dedicated describe block below
+    // for its wiring into the orchestrator) -- default to a passthrough so the fixture reviewer
+    // events here (which rarely include the real Bash tool_use/tool_result pairs a genuine
+    // verify route would produce) don't get spuriously downgraded out from under unrelated tests.
+    crossCheckVerdictFn: ({ verdict }) => verdict,
     ...overrides
   });
 }
@@ -198,6 +205,109 @@ describe("RunOrchestrator.runCard — happy path (PASS)", () => {
     expect(runEventMessages.every((m) => m.id === "T-0001")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "implementer")).toBe(true);
     expect(runEventMessages.some((m) => m.phase === "reviewer")).toBe(true);
+  });
+});
+
+describe("RunOrchestrator.runCard — harness-side verdict cross-check (real crossCheckVerdictFn)", () => {
+  /** verdictBlock's Bash tool_use companion: a real npm-test/eslint invocation with a tool_result. */
+  function boardSuiteBashCall(id = "bash-1") {
+    return [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id, name: "Bash", input: { command: "cd tools/board && npm test && npx eslint ." } }]
+        }
+      },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: "ok" }] } }
+    ];
+  }
+
+  it("downgrades a self-reported PASS to FAIL -- and auto-retries instead of moving to review -- when the required verify command never ran", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit(); // diffNames defaults to ["tools/board/src/thing.js"] -> requires board-suite
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, crossCheckVerdictFn: crossCheckVerdict });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    // Self-reports PASS, but never actually ran npm test / eslint via Bash.
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Looks fine. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+
+    // The downgrade routes this into the auto-retry loop, not review -- a third child (the
+    // retried implementer) spawning is the observable proof PASS was not accepted.
+    await nthChild(runner, 3);
+
+    const midRetryTask = await store.get("T-0001");
+    expect(midRetryTask.status).toBe("in-progress");
+    expect(midRetryTask.status).not.toBe("review");
+    expect(midRetryTask.body).toContain("## Validation: FAIL");
+    expect(midRetryTask.body).toMatch(/downgraded by harness verdict cross-check/);
+    expect(midRetryTask.body).toMatch(/Board test\/lint suite/);
+    expect(git.push).not.toHaveBeenCalled();
+
+    // Let the retry finish (as a crash, for simplicity) so runPromise resolves.
+    runner.spawnedChildren[2].emit("exit", 1, null);
+    await runPromise;
+  });
+
+  it("keeps a self-reported PASS as PASS -- and moves the card to review -- when the required verify command actually ran and exited zero", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, crossCheckVerdictFn: crossCheckVerdict });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    for (const event of boardSuiteBashCall()) {
+      reviewChild.stdout.emit("data", ndjson(event));
+    }
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "ran npm test + eslint, both green"))));
+    reviewChild.emit("exit", 0, null);
+
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toContain("ran npm test + eslint, both green");
+    expect(git.push).toHaveBeenCalled();
+  });
+
+  it("never upgrades a self-reported FAIL, even when the required verify command did run and pass", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner, crossCheckVerdictFn: crossCheckVerdict });
+
+    const runPromise = orchestrator.runCard("T-0001");
+
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+
+    const reviewChild = await nthChild(runner, 2);
+    for (const event of boardSuiteBashCall()) {
+      reviewChild.stdout.emit("data", ndjson(event));
+    }
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "unrelated lint nit in the diff"))));
+    reviewChild.emit("exit", 0, null);
+
+    await nthChild(runner, 3);
+
+    const midRetryTask = await store.get("T-0001");
+    expect(midRetryTask.status).toBe("in-progress");
+    expect(midRetryTask.body).toContain("unrelated lint nit in the diff");
+    expect(midRetryTask.body).not.toMatch(/downgraded by harness verdict cross-check/);
+
+    runner.spawnedChildren[2].emit("exit", 1, null);
+    await runPromise;
   });
 });
 
