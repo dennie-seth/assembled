@@ -19,7 +19,7 @@ namespace assembled_server {
 namespace {
 
 /// Template IDs used for petition notes (02-notes-system.md §6).
-constexpr int16_t kTemplateIamNeed = 13;  ///< "I need {ITEM_REF}" — named-item petition.
+constexpr int16_t kTemplateIamNeed = 13;        ///< "I need {ITEM_REF}" — named-item petition.
 constexpr int16_t kTemplateSomethingWrong = 14; ///< "something is wrong" — general plea.
 
 /// Default petition rate limit: 2 per hour per token.  Strictly tighter than
@@ -70,14 +70,11 @@ RateLimiter &PetitionController::rateLimiter() {
     return *rateLimiter_;
 }
 
-void PetitionController::setRateLimiterForTesting(size_t maxRequests,
-                                                   std::chrono::seconds window) {
+void PetitionController::setRateLimiterForTesting(size_t maxRequests, std::chrono::seconds window) {
     rateLimiter_ = std::make_unique<RateLimiter>(maxRequests, window);
 }
 
-RateLimiter &PetitionController::rateLimiterForTesting() {
-    return rateLimiter();
-}
+RateLimiter &PetitionController::rateLimiterForTesting() { return rateLimiter(); }
 
 // ── POST /v1/petitions ────────────────────────────────────────────────────────
 

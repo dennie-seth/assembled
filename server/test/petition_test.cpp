@@ -25,6 +25,7 @@
 #include "assembled_server/MigrationRunner.h"
 #include "assembled_server/NoteRepo.h"
 #include "assembled_server/PetitionController.h"
+#include "assembled_server/RateLimiter.h"
 
 #ifndef ASSEMBLED_MIGRATIONS_DIR
 #error "ASSEMBLED_MIGRATIONS_DIR must be defined by CMake"
@@ -34,9 +35,9 @@ namespace {
 constexpr uint16_t kPetitionTestPort = 18094;
 
 /// Send POST /v1/petitions with optional JSON body and optional bearer token.
-std::pair<drogon::HttpStatusCode, Json::Value>
-sendPetitionPost(const drogon::HttpClientPtr &client, const Json::Value *body,
-                 const std::string &token) {
+std::pair<drogon::HttpStatusCode, Json::Value> sendPetitionPost(const drogon::HttpClientPtr &client,
+                                                                const Json::Value *body,
+                                                                const std::string &token) {
     drogon::HttpRequestPtr req;
     if (body) {
         req = drogon::HttpRequest::newHttpJsonRequest(*body);
@@ -99,11 +100,9 @@ sendPetitionGet(const drogon::HttpClientPtr &client) {
 TEST_CASE("PetitionController has POST and GET route methods") {
     // Type-check only: verify the method signatures exist in the compiled binary.
     using PostFn = void (assembled_server::PetitionController::*)(
-        const drogon::HttpRequestPtr &,
-        std::function<void(const drogon::HttpResponsePtr &)> &&);
+        const drogon::HttpRequestPtr &, std::function<void(const drogon::HttpResponsePtr &)> &&);
     using GetFn = void (assembled_server::PetitionController::*)(
-        const drogon::HttpRequestPtr &,
-        std::function<void(const drogon::HttpResponsePtr &)> &&);
+        const drogon::HttpRequestPtr &, std::function<void(const drogon::HttpResponsePtr &)> &&);
 
     static_cast<void>(static_cast<PostFn>(&assembled_server::PetitionController::createPetition));
     static_cast<void>(static_cast<GetFn>(&assembled_server::PetitionController::listPetitions));
@@ -120,16 +119,14 @@ TEST_CASE("PetitionController::setRateLimiterForTesting is callable") {
 // ── NoteRepo: createBroadcast / fetchBroadcast compile-time shape check ───────
 TEST_CASE("INoteRepo createBroadcast and fetchBroadcast signatures exist") {
     // Verify the interface methods are present in PgNoteRepo.
-    using CreateBroadcastFn =
-        std::string (assembled_server::PgNoteRepo::*)(
-            const assembled_server::CreateBroadcastParams &);
+    using CreateBroadcastFn = std::string (assembled_server::PgNoteRepo::*)(
+        const assembled_server::CreateBroadcastParams &);
     using FetchBroadcastFn =
         std::vector<assembled_server::NoteRecord> (assembled_server::PgNoteRepo::*)(int);
 
     static_cast<void>(
         static_cast<CreateBroadcastFn>(&assembled_server::PgNoteRepo::createBroadcast));
-    static_cast<void>(
-        static_cast<FetchBroadcastFn>(&assembled_server::PgNoteRepo::fetchBroadcast));
+    static_cast<void>(static_cast<FetchBroadcastFn>(&assembled_server::PgNoteRepo::fetchBroadcast));
     CHECK(true);
 }
 
@@ -155,8 +152,7 @@ TEST_CASE("POST and GET /v1/petitions HTTP integration") {
     // Identity WITHOUT unique tier (should be rejected with 403).
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('petition-tok-notier') ON CONFLICT DO NOTHING");
-    db->getClient()->execSqlSync(
-        "DELETE FROM petition_tier WHERE token = 'petition-tok-notier'");
+    db->getClient()->execSqlSync("DELETE FROM petition_tier WHERE token = 'petition-tok-notier'");
 
     // Clean up any broadcast notes from previous test runs.
     db->getClient()->execSqlSync(
@@ -165,8 +161,7 @@ TEST_CASE("POST and GET /v1/petitions HTTP integration") {
 
     // Set a generous petition rate limit for most of the test cases (reset
     // before the rate-limit sub-test below).
-    assembled_server::PetitionController::setRateLimiterForTesting(100,
-                                                                    std::chrono::seconds(60));
+    assembled_server::PetitionController::setRateLimiterForTesting(100, std::chrono::seconds(60));
 
     // ── Server ────────────────────────────────────────────────────────────
     std::thread serverThread([]() {
@@ -177,8 +172,8 @@ TEST_CASE("POST and GET /v1/petitions HTTP integration") {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    auto client = drogon::HttpClient::newHttpClient(
-        "http://127.0.0.1:" + std::to_string(kPetitionTestPort));
+    auto client =
+        drogon::HttpClient::newHttpClient("http://127.0.0.1:" + std::to_string(kPetitionTestPort));
 
     // ── Test 1: missing Authorization header → 401 ────────────────────────
     {
@@ -271,5 +266,5 @@ TEST_CASE("Petition rate limiter rejects when petition limit exceeded (unit)") {
     const std::string key = "petition-tok-ratelimit";
     CHECK(limiter.allow(key) == true);  // First petition: allowed.
     CHECK(limiter.allow(key) == false); // Second petition: rejected even though
-                                         // the general endpoint limit is not hit.
+                                        // the general endpoint limit is not hit.
 }
