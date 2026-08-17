@@ -59,6 +59,7 @@ add_library(assembled_server_lib OBJECT
   src/OfferingController.cpp
   src/TransferReceiptRepo.cpp
   src/SweepWorker.cpp
+  src/UniqueCustodyLog.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -251,6 +252,17 @@ doctest_discover_tests(sweep_worker_tests)
 # compiled out of assembled_server_lib, and this target does not exist.
 # item_grant_test.cpp contains a static_assert that fires if someone
 # somehow links the binary without the define.
+# T-0118: unique_custody_log tests — append-only custody history for unique items.
+# Tests: table schema, monotonic seq, currentCustody, custodyDepth = count(*),
+# duplicate-take detection (INV-2), and custodyAt past-instant reconstruction.
+# Separate binary: no drogon::app() singleton contention risk.
+# unique_custody_log_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(unique_custody_log_tests
+  test/unique_custody_log_test.cpp
+)
+target_link_libraries(unique_custody_log_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(unique_custody_log_tests)
+
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
   add_executable(item_grant_tests
     test/item_grant_test.cpp
