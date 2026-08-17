@@ -56,6 +56,43 @@ function phaseTimeoutMsFromEnv() {
 }
 
 /**
+ * Finer-grained belt-and-suspenders companion to DEFAULT_PHASE_TIMEOUT_MS, sized specifically for
+ * the stdin-hang bug (T-0117: a live run wedged 30+ minutes). Root cause, confirmed by inspecting
+ * the installed `@anthropic-ai/claude-code` CLI bundle (v2.1.78) directly: every Bash-tool command
+ * the agent runs is spawned by the CLI's own internal shell-execution code as
+ * `stdio: isNested ? ["pipe","pipe","pipe"] : ["pipe", snapshotFd, snapshotFd]` -- stdin is always
+ * a fresh, unwritten, never-closed OS pipe, never "ignore"/"inherit". A bare `grep pattern`,
+ * `read`, or `cat` with no input redirect blocks on that pipe forever. This is entirely internal
+ * to the CLI's own tool-execution machinery -- the board only spawns the outer `claude -p` process
+ * once per phase (see ClaudeCliRunner.start()'s own stdio: ["ignore", ...], which only prevents
+ * *that* process's own startup stdin probe from hanging) and has no spawn-option reach into what
+ * the CLI does internally per tool call. See `.claude/rules/conduct.md` for the agent-facing
+ * convention (`</dev/null` on any command that might read stdin) this can't itself enforce.
+ *
+ * Since the board can't close that inner stdin, this instead watches for the run going completely
+ * silent -- re-armed on every raw stdout chunk (see _runPhase) -- and treats
+ * inactivityTimeoutMs of dead air as wedged, killing the process group well under
+ * DEFAULT_PHASE_TIMEOUT_MS's 40-minute ceiling. 8 minutes is deliberately generous relative to
+ * legitimate quiet stretches observed in this repo's phases (verifyRouter.js's from-scratch
+ * `cmake --build` / `pip install -e ".[dev]"` are both well under that with no output gap anywhere
+ * near this size) while still being far tighter than the phase timeout. Unlike a phase timeout
+ * (always a hard block, see DEFAULT_PHASE_TIMEOUT_MS), an inactivity timeout during the
+ * implementer or reviewer phase is treated as a retryable FAIL -- see _runAttempt -- since a
+ * stdin-hang is a one-off incident in a single tool call, not evidence the whole approach is stuck
+ * the way exceeding the full phase budget is.
+ */
+export const DEFAULT_INACTIVITY_TIMEOUT_MS = 8 * 60 * 1000;
+
+const INACTIVITY_TIMEOUT_ENV_VAR = "INACTIVITY_TIMEOUT_MS";
+
+/** INACTIVITY_TIMEOUT_MS env var: overrides DEFAULT_INACTIVITY_TIMEOUT_MS when set to a positive number. */
+function inactivityTimeoutMsFromEnv() {
+  const raw = process.env[INACTIVITY_TIMEOUT_ENV_VAR];
+  const parsed = Number(raw);
+  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INACTIVITY_TIMEOUT_MS;
+}
+
+/**
  * Bounded retry window for `gh pr create` (GraphQL) on a PASS, before falling back to the REST
  * API -- sized off the 2026-08-17 incident where GraphQL alone returned "HTTP 503 ...
  * api.github.com/graphql" for several minutes while REST stayed reachable (reviewer PASSed
@@ -120,6 +157,7 @@ export class RunOrchestrator {
     autoOpenPr = autoOpenPrFromEnv(),
     autoCaptureUncommitted = autoCaptureUncommittedFromEnv(),
     phaseTimeoutMs = phaseTimeoutMsFromEnv(),
+    inactivityTimeoutMs = inactivityTimeoutMsFromEnv(),
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
@@ -154,6 +192,7 @@ export class RunOrchestrator {
     this.autoOpenPr = autoOpenPr;
     this.autoCaptureUncommitted = autoCaptureUncommitted;
     this.phaseTimeoutMs = phaseTimeoutMs;
+    this.inactivityTimeoutMs = inactivityTimeoutMs;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
@@ -393,6 +432,9 @@ export class RunOrchestrator {
       return { stop: true };
     }
     if (implementerResult.timedOut) {
+      if (implementerResult.timeoutKind === "inactivity") {
+        return { stop: false, verdict: this._inactivityVerdict("implementer"), events: implementerResult.events };
+      }
       await this._blocked(taskId, this._timeoutReason("implementer"));
       return { stop: true };
     }
@@ -441,6 +483,13 @@ export class RunOrchestrator {
       return { stop: true };
     }
     if (reviewerResult.timedOut) {
+      if (reviewerResult.timeoutKind === "inactivity") {
+        return {
+          stop: false,
+          verdict: this._inactivityVerdict("reviewer"),
+          events: [...implementerResult.events, ...reviewerResult.events]
+        };
+      }
       await this._blocked(taskId, this._timeoutReason("reviewer"));
       return { stop: true };
     }
@@ -521,7 +570,7 @@ export class RunOrchestrator {
     }
     if (plannerResult.timedOut) {
       if (fileView) await cleanupPlannerFileView({ worktreeDir, hiddenPaths: fileView.hiddenPaths });
-      await this._blocked(taskId, this._timeoutReason("planner"));
+      await this._blocked(taskId, this._timeoutReason("planner", plannerResult.timeoutKind));
       return false;
     }
     if (plannerResult.exitCode !== 0) {
@@ -639,7 +688,31 @@ export class RunOrchestrator {
     });
 
     const child = run.child;
-    const onStdoutData = (chunk) => parser.push(chunk);
+
+    // Inactivity watchdog (T-0117 stdin-hang hardening): re-armed on every raw stdout chunk, so a
+    // run that goes completely silent for inactivityTimeoutMs is treated as wedged and killed
+    // minutes in, rather than waiting out the full DEFAULT_PHASE_TIMEOUT_MS ceiling -- see that
+    // constant's docstring for the confirmed root cause (the CLI's own Bash-tool child processes
+    // always get a stdin pipe the board can't close). A no-arg armInactivityTimer() call always
+    // clears any previous timer first, so only the most recent chunk's deadline is ever live.
+    let inactivityTimer;
+    let resolveInactivity;
+    const inactivityPromise = new Promise((resolve) => {
+      resolveInactivity = resolve;
+    });
+    const armInactivityTimer = () => {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        resolveInactivity({ exitCode: null, signal: null, spawnError: null, timedOut: true, timeoutKind: "inactivity" });
+      }, this.inactivityTimeoutMs);
+      if (typeof inactivityTimer.unref === "function") inactivityTimer.unref();
+    };
+    armInactivityTimer();
+
+    const onStdoutData = (chunk) => {
+      armInactivityTimer();
+      parser.push(chunk);
+    };
     if (child.stdout && typeof child.stdout.on === "function") {
       child.stdout.on("data", onStdoutData);
     }
@@ -663,14 +736,15 @@ export class RunOrchestrator {
     });
     const timeoutPromise = new Promise((resolve) => {
       timeoutTimer = setTimeout(
-        () => resolve({ exitCode: null, signal: null, spawnError: null, timedOut: true }),
+        () => resolve({ exitCode: null, signal: null, spawnError: null, timedOut: true, timeoutKind: "phase" }),
         this.phaseTimeoutMs
       );
       if (typeof timeoutTimer.unref === "function") timeoutTimer.unref();
     });
 
-    const result = await Promise.race([exitPromise, timeoutPromise]);
+    const result = await Promise.race([exitPromise, timeoutPromise, inactivityPromise]);
     clearTimeout(timeoutTimer);
+    clearTimeout(inactivityTimer);
 
     if (result.timedOut) {
       // Stop streaming further output into an event log for a phase that's already being
@@ -689,10 +763,19 @@ export class RunOrchestrator {
     return { ...result, events, cancelled: entry.cancelled };
   }
 
-  /** Human-readable reason for a phase blocked by `DEFAULT_PHASE_TIMEOUT_MS` (or its override). */
-  _timeoutReason(phase) {
+  /** Human-readable reason for a phase terminated by the phase timeout or the inactivity watchdog. */
+  _timeoutReason(phase, kind = "phase") {
+    if (kind === "inactivity") {
+      const minutes = Math.round(this.inactivityTimeoutMs / 60_000);
+      return `${phase} run went silent for ${minutes} minute${minutes === 1 ? "" : "s"} with no new output and was terminated -- likely a stdin-hang or other hung child process (e.g. a bare grep/read/cat with no input redirect)`;
+    }
     const minutes = Math.round(this.phaseTimeoutMs / 60_000);
     return `${phase} run exceeded ${minutes} minute${minutes === 1 ? "" : "s"} and was terminated -- likely a hung subprocess`;
+  }
+
+  /** Synthetic FAIL verdict for an inactivity-timed-out implementer/reviewer phase -- feeds the normal auto-retry loop instead of hard-blocking, since a stdin-hang is a one-off tool-call incident, not evidence the whole attempt is unrecoverable. */
+  _inactivityVerdict(phase) {
+    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity") };
   }
 
   async cancelRun(taskId) {
@@ -991,7 +1074,7 @@ export class RunOrchestrator {
       return { ok: true, skip: true };
     }
     if (result.timedOut) {
-      return { ok: false, reason: `${effectiveAgent} agent's ${this._timeoutReason("merge-conflict resolution")}` };
+      return { ok: false, reason: `${effectiveAgent} agent's ${this._timeoutReason("merge-conflict resolution", result.timeoutKind)}` };
     }
     if (result.exitCode !== 0) {
       return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
