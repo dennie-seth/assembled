@@ -9,8 +9,6 @@ is hermetic and does not break when the real catalogue grows.
 
 from __future__ import annotations
 
-import pytest
-
 from locale_gate.catalogue import parse_loc_ids, parse_seed_wordlist, parse_template_slots
 from locale_gate.checker import (
     check_l1_coverage,
