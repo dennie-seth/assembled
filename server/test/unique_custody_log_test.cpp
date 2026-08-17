@@ -55,8 +55,8 @@ void clearLog(const drogon::orm::DbClientPtr &db, const std::string &unique_id) 
 /// Returns how many rows the DB sees for unique_id — bypasses the repo so
 /// any UPDATE-based mutation would be visible as a miscount.
 int64_t rawRowCount(const drogon::orm::DbClientPtr &db, const std::string &unique_id) {
-    auto r = db->execSqlSync(
-        "SELECT COUNT(*) AS c FROM unique_custody_log WHERE unique_id = $1", unique_id);
+    auto r = db->execSqlSync("SELECT COUNT(*) AS c FROM unique_custody_log WHERE unique_id = $1",
+                             unique_id);
     return r[0]["c"].as<int64_t>();
 }
 
@@ -77,11 +77,11 @@ TEST_CASE("unique_custody_log: table exists with correct column set") {
     assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
     runner.applyPending(client);
 
-    auto r = client->execSqlSync(
-        "SELECT column_name "
-        "FROM information_schema.columns "
-        "WHERE table_schema = 'public' AND table_name = 'unique_custody_log' "
-        "ORDER BY ordinal_position");
+    auto r =
+        client->execSqlSync("SELECT column_name "
+                            "FROM information_schema.columns "
+                            "WHERE table_schema = 'public' AND table_name = 'unique_custody_log' "
+                            "ORDER BY ordinal_position");
 
     std::vector<std::string> cols;
     for (const auto &row : r) {
@@ -89,8 +89,8 @@ TEST_CASE("unique_custody_log: table exists with correct column set") {
     }
 
     // Every column from 15-server-ops.md §9.2 must be present.
-    for (const char *required : {"unique_id", "seq", "holder", "hosted_by", "shard_id",
-                                  "lease_expires", "event", "at"}) {
+    for (const char *required :
+         {"unique_id", "seq", "holder", "hosted_by", "shard_id", "lease_expires", "event", "at"}) {
         CHECK_MESSAGE(std::find(cols.begin(), cols.end(), std::string(required)) != cols.end(),
                       "missing column: " << required);
     }

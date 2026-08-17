@@ -79,10 +79,10 @@ int64_t PgUniqueCustodyLog::append(const AppendParams &params) {
         "    (unique_id, seq, holder, hosted_by, shard_id, lease_expires, event) "
         "SELECT $1, "
         "       COALESCE((SELECT MAX(seq) FROM unique_custody_log WHERE unique_id = $1), 0) + 1, "
-        "       NULLIF($2, ''), "               // holder: '' -> NULL
-        "       NULLIF($3, ''), "               // hosted_by: '' -> NULL
-        "       NULLIF($4, '')::SMALLINT, "     // shard_id: '' -> NULL
-        "       NULLIF($5, '')::TIMESTAMPTZ, "  // lease_expires: '' -> NULL
+        "       NULLIF($2, ''), "              // holder: '' -> NULL
+        "       NULLIF($3, ''), "              // hosted_by: '' -> NULL
+        "       NULLIF($4, '')::SMALLINT, "    // shard_id: '' -> NULL
+        "       NULLIF($5, '')::TIMESTAMPTZ, " // lease_expires: '' -> NULL
         "       $6::SMALLINT "
         "RETURNING seq",
         params.unique_id, holder_arg, hosted_by_arg, shard_id_arg, lease_arg, event_val);
@@ -90,8 +90,7 @@ int64_t PgUniqueCustodyLog::append(const AppendParams &params) {
     return result[0]["seq"].as<int64_t>();
 }
 
-std::optional<CustodyEntry>
-PgUniqueCustodyLog::currentCustody(const std::string &unique_id) {
+std::optional<CustodyEntry> PgUniqueCustodyLog::currentCustody(const std::string &unique_id) {
     auto r = client_->execSqlSync(
         "SELECT unique_id, seq, holder, hosted_by, shard_id, lease_expires, event, "
         "       at::TEXT AS at "
@@ -107,8 +106,8 @@ PgUniqueCustodyLog::currentCustody(const std::string &unique_id) {
     return rowToEntry(r[0]);
 }
 
-std::optional<CustodyEntry>
-PgUniqueCustodyLog::custodyAt(const std::string &unique_id, const std::string &point_in_time) {
+std::optional<CustodyEntry> PgUniqueCustodyLog::custodyAt(const std::string &unique_id,
+                                                          const std::string &point_in_time) {
     auto r = client_->execSqlSync(
         "SELECT unique_id, seq, holder, hosted_by, shard_id, lease_expires, event, "
         "       at::TEXT AS at "
@@ -143,7 +142,7 @@ int64_t PgUniqueCustodyLog::duplicateTakeCount(const std::string &unique_id) {
         "    SELECT seq, event "
         "    FROM   unique_custody_log "
         "    WHERE  unique_id = $1 "
-        "      AND  event IN (2, 4, 5) "          // Take, Bleed, Release
+        "      AND  event IN (2, 4, 5) " // Take, Bleed, Release
         "), "
         "pairs AS ( "
         "    SELECT event, "
@@ -152,7 +151,7 @@ int64_t PgUniqueCustodyLog::duplicateTakeCount(const std::string &unique_id) {
         ") "
         "SELECT COUNT(*) AS violations "
         "FROM   pairs "
-        "WHERE  event = 2 AND next_event = 2",    // Take immediately followed by Take
+        "WHERE  event = 2 AND next_event = 2", // Take immediately followed by Take
         unique_id);
 
     return r[0]["violations"].as<int64_t>();

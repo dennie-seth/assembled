@@ -48,8 +48,9 @@ enum class CustodyEvent : int16_t {
 struct CustodyEntry {
     std::string unique_id;
     int64_t seq{};
-    std::optional<std::string> holder;    ///< Identity token of the holder, or nullopt.
-    std::optional<std::string> hosted_by; ///< Universe (identity token) that anchors it, or nullopt.
+    std::optional<std::string> holder; ///< Identity token of the holder, or nullopt.
+    std::optional<std::string>
+        hosted_by; ///< Universe (identity token) that anchors it, or nullopt.
     std::optional<int16_t> shard_id;
     std::optional<std::string> lease_expires; ///< ISO-8601 string, or nullopt.
     CustodyEvent event{CustodyEvent::Seed};
@@ -92,8 +93,8 @@ class IUniqueCustodyLog {
     /// latest row with `at <= point_in_time` — or `std::nullopt` if none.
     ///
     /// `point_in_time` is any TIMESTAMPTZ-parseable string (e.g. `now()::TEXT`).
-    virtual std::optional<CustodyEntry>
-    custodyAt(const std::string &unique_id, const std::string &point_in_time) = 0;
+    virtual std::optional<CustodyEntry> custodyAt(const std::string &unique_id,
+                                                  const std::string &point_in_time) = 0;
 
     /// Returns `COUNT(*)` of rows for `unique_id` — the custody depth without
     /// a separately maintained counter on `item_instance`.
