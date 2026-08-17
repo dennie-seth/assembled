@@ -1,0 +1,61 @@
+name: ci-locale-gate
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "tools/locale-gate/**"
+      - "shared/note_templates.hpp"
+      - "server/src/SeedPhrase.cpp"
+      - "client/locale/**"
+      - ".github/workflows/ci-locale-gate.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "tools/locale-gate/**"
+      - "shared/note_templates.hpp"
+      - "server/src/SeedPhrase.cpp"
+      - "client/locale/**"
+      - ".github/workflows/ci-locale-gate.yml"
+
+concurrency:
+  group: ci-locale-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/locale-gate
+
+jobs:
+  lint-test:
+    name: lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      - run: ruff check .
+
+      - run: pytest -q
+
+  check:
+    name: locale completeness (L-1…L-4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e "."
+        working-directory: tools/locale-gate
+
+      - name: Run locale-gate against shipped locales
+        run: locale-gate
+        working-directory: .
