@@ -13,21 +13,12 @@
 -- silently bypass the FK without being broadcast.
 --
 -- Idempotent: ALTER COLUMN ... DROP NOT NULL is a no-op when already nullable.
--- The CHECK constraint is guarded by a DO $$ block to avoid errors on re-run.
+-- ADD CONSTRAINT IF NOT EXISTS is a no-op when the constraint already exists (Postgres 9.6+).
 
 ALTER TABLE notes
     ALTER COLUMN archetype_id DROP NOT NULL,
     ALTER COLUMN anchor_tag   DROP NOT NULL;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'notes_anchor_coherence'
-          AND conrelid = 'notes'::regclass
-    ) THEN
-        ALTER TABLE notes
-            ADD CONSTRAINT notes_anchor_coherence
-            CHECK ((archetype_id IS NULL) = (anchor_tag IS NULL));
-    END IF;
-END $$;
+ALTER TABLE notes
+    ADD CONSTRAINT IF NOT EXISTS notes_anchor_coherence
+    CHECK ((archetype_id IS NULL) = (anchor_tag IS NULL));
