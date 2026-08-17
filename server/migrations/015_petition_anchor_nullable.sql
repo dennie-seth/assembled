@@ -13,12 +13,13 @@
 -- silently bypass the FK without being broadcast.
 --
 -- Idempotent: ALTER COLUMN ... DROP NOT NULL is a no-op when already nullable.
--- ADD CONSTRAINT IF NOT EXISTS is a no-op when the constraint already exists (Postgres 9.6+).
+-- ADD CONSTRAINT without IF NOT EXISTS is correct here: migrations run exactly once
+-- (version table prevents re-application), so idempotency on ADD CONSTRAINT is not needed.
 
 ALTER TABLE notes
     ALTER COLUMN archetype_id DROP NOT NULL,
     ALTER COLUMN anchor_tag   DROP NOT NULL;
 
 ALTER TABLE notes
-    ADD CONSTRAINT IF NOT EXISTS notes_anchor_coherence
+    ADD CONSTRAINT notes_anchor_coherence
     CHECK ((archetype_id IS NULL) = (anchor_tag IS NULL));
