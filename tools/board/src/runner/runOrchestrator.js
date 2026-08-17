@@ -55,6 +55,26 @@ function phaseTimeoutMsFromEnv() {
   return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PHASE_TIMEOUT_MS;
 }
 
+/**
+ * Bounded retry window for `gh pr create` (GraphQL) on a PASS, before falling back to the REST
+ * API -- sized off the 2026-08-17 incident where GraphQL alone returned "HTTP 503 ...
+ * api.github.com/graphql" for several minutes while REST stayed reachable (reviewer PASSed
+ * T-0117, PR-open failed, and the failure was silently swallowed -- a human had to notice the
+ * card stuck in `review` with no PR). 4 attempts, doubling from PR_OPEN_BACKOFF_BASE_MS and
+ * capped at PR_OPEN_BACKOFF_MAX_MS, totals at most ~1+2+4=7s of backoff -- long enough to ride
+ * out a brief blip, short enough not to hang a run over a real outage before trying REST.
+ */
+export const PR_OPEN_GRAPHQL_MAX_ATTEMPTS = 4;
+export const PR_OPEN_BACKOFF_BASE_MS = 1000;
+export const PR_OPEN_BACKOFF_MAX_MS = 8000;
+
+/**
+ * Smaller retry budget for the REST fallback itself -- REST stayed up throughout the incident
+ * that motivated this, so this is just insurance against a brief blip in REST too, not a second
+ * full retry cycle.
+ */
+export const PR_OPEN_REST_MAX_ATTEMPTS = 2;
+
 const AUTO_OPEN_PR_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
 
 /** AUTO_OPEN_PR env var: default ON; set to "0"/"false"/"off"/"no" (any case) to disable auto-PR on PASS. */
@@ -123,6 +143,7 @@ export class RunOrchestrator {
     clearRunStateFn = clearRunState,
     createCardFn = createCardDefault,
     now = () => new Date(),
+    sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     onIdle = () => {}
   }) {
     this.store = store;
@@ -156,6 +177,7 @@ export class RunOrchestrator {
     this.clearRunStateFn = clearRunStateFn;
     this.createCardFn = createCardFn;
     this.now = now;
+    this.sleepFn = sleepFn;
     this.onIdle = onIdle;
     this.activeRuns = new Map();
     // Tracks the full span of runCard() (worktree setup through cleanup), unlike
@@ -840,7 +862,7 @@ export class RunOrchestrator {
       return;
     }
 
-    const prUrl = await this._openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog });
+    const prUrl = await this._openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog, commit });
 
     // Every card/flow that ends up with an open PR must keep that branch in sync with
     // origin/develop before it's left for a human -- see _syncBranchWithDevelop's docstring.
@@ -995,13 +1017,18 @@ export class RunOrchestrator {
   }
 
   /**
-   * Finalize step: opens (or reuses) a GitHub PR for the just-pushed branch
-   * via the `gh` CLI. Degrades gracefully -- gh missing/unauthenticated, a
-   * disabled autoOpenPr flag, or a `gh pr create` failure all just skip PR
-   * creation and log why; none of them fail the run or block the card.
-   * Returns the PR URL on success, or null when no PR was opened.
+   * Finalize step: opens (or reuses) a GitHub PR for the just-pushed branch via the `gh` CLI.
+   * gh missing/unauthenticated, or a disabled autoOpenPr flag, just skip PR creation and log why
+   * (unchanged from before -- these are environment/config states, not GitHub outages). A `gh pr
+   * create` (GraphQL) failure is classified (see githubOps.classifyGhError): "already-exists"
+   * resolves via findExistingPr instead of erroring; "transient" (5xx, GraphQL outage, rate
+   * limiting) retries with backoff and then falls back to the REST API, which stayed up during
+   * the 2026-08-17 GraphQL-only outage that motivated this; "terminal" (auth/validation) fails
+   * immediately since retrying or falling back would just fail the same way. If every avenue is
+   * exhausted, this never returns silently -- see _recordPrOpenFailure. Never fails the run or
+   * blocks the card either way. Returns the PR URL on success, or null when no PR was opened.
    */
-  async _openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog }) {
+  async _openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog, commit }) {
     if (!this.autoOpenPr) {
       await this._logFinalize(taskId, runLog, "PR not opened: auto-open-pr disabled (AUTO_OPEN_PR)");
       return null;
@@ -1017,22 +1044,135 @@ export class RunOrchestrator {
       return null;
     }
 
-    try {
-      const existing = await this.github.findExistingPr({ worktreeDir, branch });
-      if (existing) {
-        await this._logFinalize(taskId, runLog, `PR already exists, reusing: ${existing}`);
-        return existing;
-      }
+    const existing = await this.github.findExistingPr({ worktreeDir, branch });
+    if (existing) {
+      await this._logFinalize(taskId, runLog, `PR already exists, reusing: ${existing}`);
+      return existing;
+    }
 
-      const title = buildPrTitle({ task });
-      const body = buildPrBody({ task, verdict });
-      const url = await this.github.createPr({ worktreeDir, base: this.baseBranch, head: branch, title, body });
+    const title = buildPrTitle({ task });
+    const body = buildPrBody({ task, verdict });
+    const createArgs = { worktreeDir, base: this.baseBranch, head: branch, title, body };
+
+    try {
+      const url = await this._createPrWithRetry({ taskId, runLog, ...createArgs });
       await this._logFinalize(taskId, runLog, `Opened PR: ${url}`);
       return url;
-    } catch (err) {
-      await this._logFinalize(taskId, runLog, `PR not opened: gh pr create failed: ${err.message}`);
-      return null;
+    } catch (graphqlErr) {
+      const resolved = await this._resolveAlreadyExists({ taskId, worktreeDir, branch, runLog, err: graphqlErr });
+      if (resolved !== undefined) return resolved;
+
+      if (graphqlErr.ghClassification !== "transient") {
+        return this._recordPrOpenFailure({ taskId, branch, commit, runLog, reason: graphqlErr.message });
+      }
+
+      await this._logFinalize(
+        taskId,
+        runLog,
+        `gh pr create exhausted ${PR_OPEN_GRAPHQL_MAX_ATTEMPTS} attempts (${graphqlErr.message}) -- falling back to the REST API.`
+      );
+
+      try {
+        const url = await this._createPrRestWithRetry({ taskId, runLog, ...createArgs });
+        await this._logFinalize(taskId, runLog, `Opened PR via REST fallback: ${url}`);
+        return url;
+      } catch (restErr) {
+        const resolvedRest = await this._resolveAlreadyExists({ taskId, worktreeDir, branch, runLog, err: restErr });
+        if (resolvedRest !== undefined) return resolvedRest;
+
+        return this._recordPrOpenFailure({
+          taskId,
+          branch,
+          commit,
+          runLog,
+          reason: `GraphQL failed (${graphqlErr.message}); REST fallback also failed (${restErr.message})`
+        });
+      }
     }
+  }
+
+  /** Retries `gh pr create` (GraphQL) through transient failures; throws the classified error once attempts are exhausted or the failure isn't transient. */
+  async _createPrWithRetry({ taskId, runLog, worktreeDir, base, head, title, body }) {
+    let lastErr;
+    for (let attempt = 1; attempt <= PR_OPEN_GRAPHQL_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.github.createPr({ worktreeDir, base, head, title, body });
+      } catch (err) {
+        lastErr = err;
+        if (err.ghClassification !== "transient" || attempt === PR_OPEN_GRAPHQL_MAX_ATTEMPTS) throw err;
+        const delay = Math.min(PR_OPEN_BACKOFF_BASE_MS * 2 ** (attempt - 1), PR_OPEN_BACKOFF_MAX_MS);
+        await this._logFinalize(
+          taskId,
+          runLog,
+          `gh pr create failed transiently (attempt ${attempt}/${PR_OPEN_GRAPHQL_MAX_ATTEMPTS}): ${err.message} -- retrying in ${delay}ms.`
+        );
+        await this.sleepFn(delay);
+      }
+    }
+    throw lastErr;
+  }
+
+  /** Same retry shape as _createPrWithRetry, scoped to the smaller REST fallback budget. */
+  async _createPrRestWithRetry({ taskId, runLog, worktreeDir, base, head, title, body }) {
+    let lastErr;
+    for (let attempt = 1; attempt <= PR_OPEN_REST_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.github.createPrRest({ worktreeDir, base, head, title, body });
+      } catch (err) {
+        lastErr = err;
+        if (err.ghClassification !== "transient" || attempt === PR_OPEN_REST_MAX_ATTEMPTS) throw err;
+        const delay = Math.min(PR_OPEN_BACKOFF_BASE_MS * 2 ** (attempt - 1), PR_OPEN_BACKOFF_MAX_MS);
+        await this._logFinalize(
+          taskId,
+          runLog,
+          `REST PR-open fallback failed transiently (attempt ${attempt}/${PR_OPEN_REST_MAX_ATTEMPTS}): ${err.message} -- retrying in ${delay}ms.`
+        );
+        await this.sleepFn(delay);
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
+   * When a createPr/createPrRest call fails with ghClassification "already-exists", gh has told
+   * us a PR is already open for this branch -- idempotent success, not an error. Looks it up
+   * (findExistingPr already falls back to REST itself if GraphQL is what's down) and returns its
+   * URL. Returns `undefined` (not null -- null is a valid "genuinely couldn't find it" outcome)
+   * when `err` isn't an already-exists error at all, so the caller can tell "not applicable" apart
+   * from "looked, found nothing".
+   */
+  async _resolveAlreadyExists({ taskId, worktreeDir, branch, runLog, err }) {
+    if (err.ghClassification !== "already-exists") return undefined;
+    const found = await this.github.findExistingPr({ worktreeDir, branch });
+    if (found) {
+      await this._logFinalize(taskId, runLog, `gh reported the PR already exists; reusing: ${found}`);
+      return found;
+    }
+    return null;
+  }
+
+  /**
+   * Ultimate PR-open failure: GraphQL retries (and, for transient failures, the REST fallback)
+   * are both exhausted. Root-cause fix for the T-0117 incident -- the old behavior just logged
+   * `gh pr create failed` to the run log and left the card in `review` with `pr: null`, with
+   * nothing on the card itself to say why, so a human had to go dig through run logs to notice.
+   * This still leaves the card in `review` (unchanged status/pr shape from before) -- `review`
+   * is one of runCard()'s own accepted starting statuses, so a later re-run retries PR-open
+   * without any new machinery -- but now appends a comment identifying exactly what happened
+   * (reviewer PASSed, branch pushed at `commit`, PR-open failed and why) so it's never a silent
+   * dead end.
+   */
+  async _recordPrOpenFailure({ taskId, branch, commit, runLog, reason }) {
+    await this._logFinalize(taskId, runLog, `PR not opened: gh pr create failed after retries + REST fallback: ${reason}`);
+    await this._appendComment(
+      taskId,
+      "assembled-board",
+      `Reviewer PASSed and \`${branch}\` was pushed at \`${commit}\`, but PR-open failed after retries and the REST ` +
+        `fallback (${reason}). This looks like a GitHub outage or transient failure, not a problem with the card's ` +
+        `work -- re-running this card will retry PR-open, or open it manually with ` +
+        `\`gh pr create --base ${this.baseBranch} --head ${branch}\`.`
+    );
+    return null;
   }
 
   async _logFinalize(taskId, runLog, message) {
