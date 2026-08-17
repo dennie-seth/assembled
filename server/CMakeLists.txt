@@ -59,6 +59,7 @@ add_library(assembled_server_lib OBJECT
   src/OfferingController.cpp
   src/TransferReceiptRepo.cpp
   src/SweepWorker.cpp
+  src/PetitionController.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -258,3 +259,14 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
   target_link_libraries(item_grant_tests PRIVATE assembled_server_lib doctest::doctest)
   doctest_discover_tests(item_grant_tests)
 endif()
+
+# T-0117: Broadcast petition tests — POST/GET /v1/petitions.
+# Tests: unique-tier gate (403/4002), item_type naming (N-5), rate limiting,
+# and GET listing of broadcast notes.
+# Separate binary: spins up its own drogon::app() on port 18094.
+# petition_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(petition_tests
+  test/petition_test.cpp
+)
+target_link_libraries(petition_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(petition_tests)

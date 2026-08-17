@@ -23,13 +23,26 @@ inline constexpr int kMaxNotesLimit = 100;
 struct NoteRecord {
     std::string id;                      ///< UUID primary key (hex string).
     std::string author_token;            ///< Derived identity token.
-    int16_t archetype_id{};              ///< World archetype (FK → anchor_tag).
-    int16_t anchor_tag{};                ///< Anchor within archetype (FK → anchor_tag).
+    int16_t archetype_id{};              ///< World archetype (FK → anchor_tag). 0 for broadcasts.
+    int16_t anchor_tag{};                ///< Anchor within archetype. 0 for broadcasts.
     int16_t template_id{};               ///< Note template (FK → note_templates).
     std::optional<int16_t> slot_a;       ///< First word slot (FK → note_words).
     std::optional<int16_t> slot_b;       ///< Second word slot (FK → note_words).
     std::optional<std::string> item_ref; ///< Server-assigned item key (nullable).
     int32_t rating{};                    ///< Aggregate rating.
+    bool is_broadcast{false};            ///< True for petition/broadcast notes (T-0117).
+};
+
+/// Parameters for INoteRepo::createBroadcast (T-0117).
+///
+/// Broadcast petition notes have no anchor (archetype_id/anchor_tag are NULL
+/// in the database).  Template selection follows 02-notes-system.md §6:
+///   template 13 ("I need {ITEM_REF}") when item_ref is set;
+///   template 14 ("something is wrong") otherwise.
+struct CreateBroadcastParams {
+    std::string author_token;            ///< Must exist in identity.token.
+    int16_t template_id{};               ///< Note template (FK → note_templates).
+    std::optional<std::string> item_ref; ///< Optional item-type reference for N-5.
 };
 
 /// Parameters for INoteRepo::create.
@@ -67,6 +80,18 @@ class INoteRepo {
     virtual std::vector<NoteRecord> fetchRanked(int16_t archetype_id, int16_t anchor_tag,
                                                 int limit) = 0;
 
+    /// Creates an anchorless broadcast petition note (is_broadcast = true).
+    ///
+    /// archetype_id and anchor_tag are stored as NULL in the DB (migration 015).
+    /// Returns the UUID of the new note.
+    /// @throws drogon::orm::DrogonDbException on DB error.
+    virtual std::string createBroadcast(const CreateBroadcastParams &params) = 0;
+
+    /// Returns all broadcast petition notes (is_broadcast = true) ordered by
+    /// rating DESC.  Clamped to kMaxNotesLimit.
+    /// Returns an empty vector when none exist — not an error.
+    virtual std::vector<NoteRecord> fetchBroadcast(int limit) = 0;
+
     /// Casts a +1 or -1 vote from voter on note_id.
     ///
     /// One vote per (note_id, voter): resubmitting the same val is a no-op;
@@ -93,6 +118,8 @@ class PgNoteRepo : public INoteRepo {
     std::vector<NoteRecord> fetch(int16_t archetype_id, int16_t anchor_tag) override;
     std::vector<NoteRecord> fetchRanked(int16_t archetype_id, int16_t anchor_tag,
                                         int limit) override;
+    std::string createBroadcast(const CreateBroadcastParams &params) override;
+    std::vector<NoteRecord> fetchBroadcast(int limit) override;
     void rate(const std::string &note_id, const std::string &voter, int16_t val) override;
 
   private:
