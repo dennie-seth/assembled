@@ -15,7 +15,9 @@ Python tooling (e.g. T-0101's deterministic synthesis script, T-0071's
   reproducibility — this tooling validates *determinism*, so its own
   dependency resolution should be deterministic too.
 - **Lint/format: `ruff`.** One tool, fast, no separate black/isort/flake8
-  stack. Run `ruff check .` before committing; CI enforces it.
+  stack. Run `ruff check --fix . && ruff check .` before committing — the
+  first pass auto-fixes all fixable issues (import order, blank lines, etc.),
+  the second verifies nothing unfixable remains; CI enforces it.
 - **TDD, same as the rest of the repo.** Test file committed before
   implementation. Fixtures are generated in-process (tiny synthetic
   PNG/WAV via PIL/numpy/soundfile) — never commit binary test fixtures.

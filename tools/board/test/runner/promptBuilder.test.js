@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildPrompt,
   buildPlannerPrompt,
+  buildMergeConflictPrompt,
   resolveRulesForTask,
   resolveRulesForPaths,
   matchesPattern,
@@ -373,6 +374,14 @@ describe("buildPlannerPrompt -- deliverable_type and hardened acceptance criteri
   });
 });
 
+describe("buildPlannerPrompt -- agent assignment defaults to generic, never null", () => {
+  it("instructs the planner to set agent: generic when the work doesn't fit a specific subsystem, not to leave it null", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toContain("set agent to `generic`");
+    expect(prompt.toLowerCase()).not.toContain("leave agent as null");
+  });
+});
+
 describe("buildPlannerPrompt -- acceptance completeness self-check (T-0141 lesson)", () => {
   it("instructs the planner to enumerate every requirement the story implies and confirm each maps to a criterion", () => {
     const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
@@ -452,5 +461,81 @@ describe("buildPlannerPrompt -- edge cases as an explicit, verified part of Acce
     const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
     expect(prompt.toLowerCase()).not.toContain("block the card");
     expect(prompt.toLowerCase()).not.toContain("must not proceed");
+  });
+});
+
+describe("buildMergeConflictPrompt", () => {
+  const CONFLICTED_FILES = ["tools/board/src/lib/fsTaskStore.js", "tools/board/src/runner/gitOps.js"];
+  const HUNKS = {
+    "tools/board/src/lib/fsTaskStore.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n",
+    "tools/board/src/runner/gitOps.js": "<<<<<<< HEAD\nfoo\n=======\nbar\n>>>>>>> origin/develop\n"
+  };
+
+  it("throws without a task", () => {
+    expect(() => buildMergeConflictPrompt({ agentDef: INFRA_AGENT_DEF })).toThrow(/task/i);
+  });
+
+  it("names the card, the branch, and the base branch it conflicts against", () => {
+    const prompt = buildMergeConflictPrompt({
+      task: TASK,
+      agentDef: INFRA_AGENT_DEF,
+      baseBranch: "develop",
+      branch: "feature/T-0099",
+      conflictedFiles: CONFLICTED_FILES,
+      hunks: HUNKS
+    });
+    expect(prompt).toContain("T-0099");
+    expect(prompt).toContain("feature/T-0099");
+    expect(prompt).toContain("origin/develop");
+  });
+
+  it("instructs thorough, non-mechanical resolution -- never a blind take-ours/take-theirs", () => {
+    const prompt = buildMergeConflictPrompt({
+      task: TASK,
+      agentDef: INFRA_AGENT_DEF,
+      branch: "feature/T-0099",
+      conflictedFiles: CONFLICTED_FILES,
+      hunks: HUNKS
+    });
+    expect(prompt.toLowerCase()).toContain("never blindly take-ours or take-theirs");
+    expect(prompt.toLowerCase()).toContain("preserve the intended behavior from each");
+  });
+
+  it("tells the agent to re-verify and commit to conclude the merge, and never to push or touch the PR", () => {
+    const prompt = buildMergeConflictPrompt({
+      task: TASK,
+      agentDef: INFRA_AGENT_DEF,
+      branch: "feature/T-0099",
+      conflictedFiles: CONFLICTED_FILES,
+      hunks: HUNKS
+    });
+    expect(prompt.toLowerCase()).toContain("re-run this subsystem's verify skill");
+    expect(prompt.toLowerCase()).toContain("git commit");
+    expect(prompt.toLowerCase()).toContain("do not push and do not open or touch the pr yourself");
+  });
+
+  it("lists every conflicted file and includes each one's conflict-marker hunk verbatim", () => {
+    const prompt = buildMergeConflictPrompt({
+      task: TASK,
+      agentDef: INFRA_AGENT_DEF,
+      branch: "feature/T-0099",
+      conflictedFiles: CONFLICTED_FILES,
+      hunks: HUNKS
+    });
+    for (const file of CONFLICTED_FILES) {
+      expect(prompt).toContain(file);
+      expect(prompt).toContain(HUNKS[file]);
+    }
+  });
+
+  it("includes the agent definition body when provided", () => {
+    const prompt = buildMergeConflictPrompt({
+      task: TASK,
+      agentDef: INFRA_AGENT_DEF,
+      branch: "feature/T-0099",
+      conflictedFiles: CONFLICTED_FILES,
+      hunks: HUNKS
+    });
+    expect(prompt).toContain("Implements board tooling.");
   });
 });

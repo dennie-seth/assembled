@@ -78,15 +78,15 @@ describe("draftImprovementCard", () => {
 
     expect(parsed.title).toBe(draft.title);
     expect(parsed.status).toBe("backlog");
-    expect(parsed.agent).toBeNull();
+    expect(parsed.agent).toBe("generic");
     expect(parsed.deliverable_type).toBe("code");
   });
 
-  it("always sets status: backlog and agent: null regardless of trigger reason", () => {
+  it("always sets status: backlog and agent: generic regardless of trigger reason", () => {
     const draft = draftImprovementCard({ stats: baseStats, trigger: retryCapTrigger });
 
     expect(draft.status).toBe("backlog");
-    expect(draft.agent).toBeNull();
+    expect(draft.agent).toBe("generic");
   });
 
   it("embeds a baseline-done marker and a proposed-at timestamp in the body", () => {

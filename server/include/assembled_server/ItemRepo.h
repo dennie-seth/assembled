@@ -113,6 +113,25 @@ struct TakeParams {
     int32_t expected_version{}; ///< CAS guard: must equal item_instance.version.
 };
 
+#ifdef ASSEMBLED_DEBUG_GRANT
+/// Parameters for IItemRepo::debugGrant — bypass-economy item mint.
+///
+/// Only compiled in non-Release builds (ASSEMBLED_DEBUG_GRANT is set by
+/// CMake only when CMAKE_BUILD_TYPE != Release).  The symbol does not exist
+/// in release binaries; an #ifdef guard in the source is sufficient because
+/// the repo is public and a runtime-only flag would be one fork away from
+/// an unlimited mint.
+struct GrantParams {
+    int16_t type_id{};        ///< Item type to mint.
+    std::string holder_token; ///< Identity token that will hold the new item.
+};
+
+/// Result returned by debugGrant().
+struct GrantResult {
+    std::string new_item_id; ///< UUID of the newly minted item_instance.
+};
+#endif // ASSEMBLED_DEBUG_GRANT
+
 /// Abstract repository interface for item custody transfers.
 ///
 /// All methods are synchronous; implementations throw
@@ -173,6 +192,18 @@ class IItemRepo {
     ///
     /// @return TransmuteResult with status and new_item_id (empty on Lost).
     virtual TransmuteResult transmute(const TransmuteParams &params) = 0;
+
+#ifdef ASSEMBLED_DEBUG_GRANT
+    /// Mints a new item_instance directly into an identity's hold, bypassing
+    /// all economy invariants (no CAS, no bleed-timer enforcement, no rarity
+    /// cap).  For QA seeding and deterministic test setup only.
+    ///
+    /// Compiled out of Release builds — ASSEMBLED_DEBUG_GRANT is undefined
+    /// when CMAKE_BUILD_TYPE=Release (see CMakeLists.txt).
+    ///
+    /// @return GrantResult containing the UUID of the newly minted instance.
+    virtual GrantResult debugGrant(const GrantParams &params) = 0;
+#endif // ASSEMBLED_DEBUG_GRANT
 };
 
 /// Postgres implementation of IItemRepo backed by a synchronous Drogon DbClient.
@@ -187,6 +218,10 @@ class PgItemRepo : public IItemRepo {
     TransferResult take(const TakeParams &params) override;
     UseResult use(const UseParams &params) override;
     TransmuteResult transmute(const TransmuteParams &params) override;
+
+#ifdef ASSEMBLED_DEBUG_GRANT
+    GrantResult debugGrant(const GrantParams &params) override;
+#endif // ASSEMBLED_DEBUG_GRANT
 
   private:
     drogon::orm::DbClientPtr client_;

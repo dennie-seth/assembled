@@ -54,6 +54,9 @@ add_library(assembled_server_lib OBJECT
   src/RunAssembler.cpp
   src/AnchorRepo.cpp
   src/AnchorController.cpp
+  src/UnlockRepo.cpp
+  src/OfferingRepo.cpp
+  src/OfferingController.cpp
   src/TransferReceiptRepo.cpp
   src/SweepWorker.cpp
 )
@@ -63,6 +66,10 @@ target_include_directories(assembled_server_lib PUBLIC include ${CMAKE_SOURCE_DI
 target_link_libraries(assembled_server_lib PUBLIC Drogon::Drogon OpenSSL::Crypto)
 target_compile_definitions(assembled_server_lib PUBLIC
   ASSEMBLED_MIGRATIONS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/migrations"
+  # T-0171: debugGrant API compiled in for every non-Release config so dev
+  # and test builds can seed items without touching the live economy.
+  # Release builds omit the define → the symbol never enters the binary.
+  $<$<NOT:$<CONFIG:Release>>:ASSEMBLED_DEBUG_GRANT>
 )
 
 # T-0040/T-0050 proof-of-life: real server binary serving GET /health.
@@ -162,6 +169,16 @@ add_executable(run_assembler_tests
 target_link_libraries(run_assembler_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(run_assembler_tests)
 
+# T-0047: Note rating tests — one vote per player, idempotent upsert, score
+# accuracy, and POST /v1/notes/{id}/rate HTTP integration.
+# Separate binary: spins up its own drogon::app() on port 18091.
+# note_rating_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(note_rating_tests
+  test/note_rating_test.cpp
+)
+target_link_libraries(note_rating_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(note_rating_tests)
+
 # T-0124: anchor snapshot tests — room-entry GET /v1/anchors/{arch}/{tag}.
 # Tests: single-transaction snapshot (items/offerings/notes), concurrent
 # offering race never produces a torn read, broadcasts excluded, HTTP handler.
@@ -173,6 +190,29 @@ add_executable(anchor_snapshot_tests
 )
 target_link_libraries(anchor_snapshot_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(anchor_snapshot_tests)
+
+# T-0127: UnlockRepo tests — tier-appropriate expiry, expired-row-as-absent
+# invariant, and unique-keyed unlock persistence across session boundaries.
+# Separate binary: no drogon::app() singleton contention risk.
+# unlock_persistence_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(unlock_persistence_tests
+  test/unlock_persistence_test.cpp
+)
+target_link_libraries(unlock_persistence_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(unlock_persistence_tests)
+
+# T-0097: offering escrow tests — atomic pay-and-release (INV-4).
+# Tests: happy-path claim, REPEATABLE READ atomicity proof, concurrent-claimer
+# race (FOR UPDATE serialisation), expiry, type mismatch, payment-not-held,
+# rollback leaves no partial state, CAS-on-version guard, structural
+# impossibility of both-hold and neither-hold states.
+# Separate binary: no drogon::app() singleton contention risk.
+# offering_escrow_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(offering_escrow_tests
+  test/offering_escrow_test.cpp
+)
+target_link_libraries(offering_escrow_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(offering_escrow_tests)
 
 # T-0128: Spontaneous item spawner tests — rarity-cap enforcement (INV-6, INV-7).
 # Tests: hard cap respected per tier, cap held under rapid population growth,
@@ -205,3 +245,16 @@ add_executable(sweep_worker_tests
 )
 target_link_libraries(sweep_worker_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(sweep_worker_tests)
+
+# T-0171: debugGrant tests — only built for non-Release configs.
+# In Release builds ASSEMBLED_DEBUG_GRANT is undefined, the grant API is
+# compiled out of assembled_server_lib, and this target does not exist.
+# item_grant_test.cpp contains a static_assert that fires if someone
+# somehow links the binary without the define.
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+  add_executable(item_grant_tests
+    test/item_grant_test.cpp
+  )
+  target_link_libraries(item_grant_tests PRIVATE assembled_server_lib doctest::doctest)
+  doctest_discover_tests(item_grant_tests)
+endif()

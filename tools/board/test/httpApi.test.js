@@ -82,6 +82,37 @@ describe("POST /api/tasks", () => {
     expect(task.depends_on).toEqual([]);
   });
 
+  it("defaults agent to 'generic' when not provided, never null", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody())
+    });
+    const task = await res.json();
+    expect(task.agent).toBe("generic");
+  });
+
+  it("defaults agent to 'generic' when explicitly sent as null", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody({ agent: null }))
+    });
+    const task = await res.json();
+    expect(task.agent).toBe("generic");
+  });
+
+  it("accepts an explicit agent: 'generic'", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody({ agent: "generic" }))
+    });
+    expect(res.status).toBe(201);
+    const task = await res.json();
+    expect(task.agent).toBe("generic");
+  });
+
   it("returns 400 when title is missing", async () => {
     const res = await fetch(`${baseUrl}/api/tasks`, {
       method: "POST",
@@ -169,6 +200,16 @@ describe("GET /api/agents", () => {
     const res = await fetch(`${baseUrl}/api/agents`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(["planner"]);
+  });
+
+  it("includes generic in the New Card agent dropdown source, same as any other implementer agent", async () => {
+    await fs.writeFile(path.join(agentsDir, "generic.md"), "---\nname: generic\n---\nbody", "utf8");
+    await fs.writeFile(path.join(agentsDir, "infra.md"), "---\nname: infra\n---\nbody", "utf8");
+    await fs.writeFile(path.join(agentsDir, "reviewer.md"), "---\nname: reviewer\n---\nbody", "utf8");
+
+    const res = await fetch(`${baseUrl}/api/agents`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(["generic", "infra"]);
   });
 
   it("returns 200 with an empty array when no agentsDir is configured on the server", async () => {
@@ -465,6 +506,15 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
     expect(res.status).toBe(409);
     const payload = await res.json();
     expect(payload.error).toMatch(/ready/i);
+  });
+
+  it("returns 409 when running a card assigned to the dispatch escalation sentinel", async () => {
+    const task = await createTask({ status: "ready", agent: "dispatch" });
+    const res = await fetch(`${orchBaseUrl}/api/tasks/${task.id}/run`, { method: "POST" });
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/dispatch/i);
+    expect(orchestrator.isRunning(task.id)).toBe(false);
   });
 
   it("returns 409 when running a retired task", async () => {

@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawn as nodeSpawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { AgentRunner } from "../../src/runner/agentRunner.js";
 import { ClaudeCliRunner } from "../../src/runner/claudeCliRunner.js";
+import { DEFAULT_KILL_ESCALATION_MS } from "../../src/runner/runState.js";
 
 const TASK = { id: "T-0099", agent: "infra" };
 
@@ -352,6 +354,46 @@ describe("ClaudeCliRunner.start / kill", () => {
     const [, , options] = spawnFn.mock.calls[0];
     expect(options.stdio[0]).toBe("ignore");
   });
+
+  it("start() attaches its own 'error' listener synchronously, so a spawn failure (e.g. ENOENT) never becomes an unlistened 'error' event that crashes the process", async () => {
+    // A real EventEmitter, not the fakeChild() stub -- fakeChild's `on` is a no-op vi.fn() that
+    // never actually registers anything, which would hide the exact failure mode this guards
+    // against (Node throwing synchronously when 'error' is emitted with zero real listeners).
+    const child = new EventEmitter();
+    child.stdout = {};
+    child.stderr = {};
+    child.kill = vi.fn();
+    const spawnFn = vi.fn(() => child);
+    const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
+
+    await runner.start({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt" });
+
+    // This incident: spawn('claude', ...) fails with ENOENT because `claude` isn't resolvable
+    // on the child's PATH, Node emits 'error' on the child asynchronously, and with no listener
+    // attached at that instant it throws as an uncaught exception -- taking the whole board
+    // server down over a single card's run. Proving this doesn't throw is the actual fix.
+    expect(() => child.emit("error", Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }))).not.toThrow();
+  });
+
+  it("captures a spawn error onto run.spawnError, so a caller whose own listener attaches too late (after async I/O) can still observe the failure", async () => {
+    const child = new EventEmitter();
+    child.stdout = {};
+    child.stderr = {};
+    child.kill = vi.fn();
+    const spawnFn = vi.fn(() => child);
+    const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
+
+    const run = await runner.start({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt" });
+    expect(run.spawnError).toBeNull();
+
+    // Simulates the error arriving before runOrchestrator._runPhase gets around to attaching
+    // its own 'error' listener (it does an async writeRunStateFn write in between) -- a real
+    // race, not a hypothetical one; see the T-0185 incident.
+    const err = Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" });
+    child.emit("error", err);
+
+    expect(run.spawnError).toBe(err);
+  });
 });
 
 describe("ClaudeCliRunner.kill process-group behavior (no orphans)", () => {
@@ -384,5 +426,79 @@ describe("ClaudeCliRunner.kill process-group behavior (no orphans)", () => {
     runner.kill({ child });
 
     expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("escalates to SIGKILL on the process group if the child hasn't exited within the escalation window", () => {
+    vi.useFakeTimers();
+    try {
+      const child = new EventEmitter();
+      child.pid = 5555;
+      child.kill = vi.fn();
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {});
+      const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+
+      runner.kill({ child });
+      expect(killSpy).toHaveBeenCalledWith(-5555, "SIGTERM");
+      expect(killSpy).not.toHaveBeenCalledWith(-5555, "SIGKILL");
+
+      vi.advanceTimersByTime(DEFAULT_KILL_ESCALATION_MS);
+
+      expect(killSpy).toHaveBeenCalledWith(-5555, "SIGKILL");
+      killSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the SIGKILL escalation once the child actually exits (from the initial SIGTERM)", () => {
+    vi.useFakeTimers();
+    try {
+      const child = new EventEmitter();
+      child.pid = 5556;
+      child.kill = vi.fn();
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {});
+      const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+
+      runner.kill({ child });
+      child.emit("exit", null, "SIGTERM");
+      killSpy.mockClear();
+
+      vi.advanceTimersByTime(DEFAULT_KILL_ESCALATION_MS);
+
+      expect(killSpy).not.toHaveBeenCalled();
+      killSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("really kills a process that ignores SIGTERM by escalating to SIGKILL on its process group", async () => {
+    // A forked grandchild (e.g. `sleep`) dies to plain SIGTERM regardless of the parent's own
+    // trap, so this has the group leader itself ignore TERM in a tight builtin loop (no fork) --
+    // the only way to reliably prove escalation is what saves it, verified by hand first. Prints
+    // "READY" only once the trap is actually installed, so the test never races bash's own
+    // startup (a raw pid-exists check says nothing about how far into the script it's gotten).
+    const child = nodeSpawn("bash", ["-c", "trap '' TERM; echo READY; while true; do :; done"], {
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    await new Promise((resolve) => {
+      child.stdout.on("data", (chunk) => {
+        if (chunk.toString().includes("READY")) resolve();
+      });
+    });
+    expect(isAlive(child.pid)).toBe(true);
+
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    // A generous escalation window (well above typical scheduler jitter in a loaded CI/WSL
+    // environment) so the "still alive" check below can't lose the race against the escalation
+    // timer itself.
+    runner.kill({ child }, { escalationMs: 2000 });
+
+    // Still alive shortly after SIGTERM (comfortably inside the escalation window) -- trapped, ignored.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(isAlive(child.pid)).toBe(true);
+
+    await vi.waitFor(() => expect(isAlive(child.pid)).toBe(false), { timeout: 8000 });
   });
 });
