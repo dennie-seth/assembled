@@ -13,12 +13,15 @@
 -- silently bypass the FK without being broadcast.
 --
 -- Idempotent: ALTER COLUMN ... DROP NOT NULL is a no-op when already nullable.
--- ADD CONSTRAINT without IF NOT EXISTS is correct here: migrations run exactly once
--- (version table prevents re-application), so idempotency on ADD CONSTRAINT is not needed.
+-- DROP CONSTRAINT IF EXISTS before ADD CONSTRAINT ensures the migration can be
+-- re-applied (e.g. migration_test drops schema_migrations and replays all migrations).
 
 ALTER TABLE notes
     ALTER COLUMN archetype_id DROP NOT NULL,
     ALTER COLUMN anchor_tag   DROP NOT NULL;
+
+ALTER TABLE notes
+    DROP CONSTRAINT IF EXISTS notes_anchor_coherence;
 
 ALTER TABLE notes
     ADD CONSTRAINT notes_anchor_coherence
