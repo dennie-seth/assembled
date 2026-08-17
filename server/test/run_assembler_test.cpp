@@ -326,13 +326,13 @@ TEST_CASE("assemble: result is recorded in run_variant and archetype_seen") {
     }
 
     // archetype_seen is idempotent: a second assembly upserts, not duplicates.
+    // Count all rows for this token (not hardcoded archetype IDs) so the check is
+    // robust regardless of which specific archetypes the assembler chose.
     auto result2 = assembler.assemble({token, 0});
     REQUIRE(result2.has_value());
 
-    auto as_rows2 =
-        db->getClient()->execSqlSync("SELECT COUNT(*)::int AS c FROM archetype_seen WHERE token = "
-                                     "$1 AND archetype_id IN (64, 65, 66)",
-                                     token);
+    auto as_rows2 = db->getClient()->execSqlSync(
+        "SELECT COUNT(*)::int AS c FROM archetype_seen WHERE token = $1", token);
     CHECK(as_rows2[0]["c"].as<int>() == 3);
 }
 
