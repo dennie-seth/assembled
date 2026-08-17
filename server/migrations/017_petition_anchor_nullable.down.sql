@@ -1,4 +1,4 @@
--- Revert 015_petition_anchor_nullable: restore NOT NULL on anchor columns.
+-- Revert 017_petition_anchor_nullable: restore NOT NULL on anchor columns.
 --
 -- Will fail if any is_broadcast=true (NULL-anchor) rows exist; purge those first.
 -- Idempotent: DROP CONSTRAINT IF EXISTS and SET NOT NULL are safe to re-run.
