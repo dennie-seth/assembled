@@ -61,7 +61,7 @@ const _WatcherScript: GDScript = preload("res://scripts/watcher_controller_sideo
 
 ## ── Node references ───────────────────────────────────────────────────────────
 var _player: CharacterBody2D
-var _watcher: CharacterBody2D
+var _watcher  ## WatcherControllerSideon instance
 
 var _hiding_spot: Node   ## HidingSpotV2 instance
 var _cover: Node         ## CoverBreakV2 instance
@@ -250,9 +250,9 @@ func _build_item_door() -> void:
 func _build_watcher() -> void:
 	_watcher = _WatcherScript.new()
 	_watcher.name = "Watcher"
-	(_watcher as WatcherControllerSideon).patrol_left_x  = _pxc_x(WATCHER_LEFT_COL)
-	(_watcher as WatcherControllerSideon).patrol_right_x = _pxc_x(WATCHER_RIGHT_COL)
-	(_watcher as WatcherControllerSideon).cover_props.append(_cover.get_cover_interval())
+	_watcher.patrol_left_x  = _pxc_x(WATCHER_LEFT_COL)
+	_watcher.patrol_right_x = _pxc_x(WATCHER_RIGHT_COL)
+	_watcher.cover_props.append(_cover.get_cover_interval())
 	_watcher.position = Vector2(_pxc_x(WATCHER_LEFT_COL), _px(0, 10).y + TILE_SIZE * 0.5)
 	add_child(_watcher)
 
@@ -298,7 +298,7 @@ func _build_hud() -> void:
 
 func _connect_signals() -> void:
 	_player.interact_pressed.connect(_on_player_interact)
-	(_watcher as WatcherControllerSideon).player_detected.connect(_on_player_detected)
+	_watcher.player_detected.connect(_on_player_detected)
 
 
 # ── Per-frame update ───────────────────────────────────────────────────────────
@@ -312,7 +312,7 @@ func _process(delta: float) -> void:
 	var player_plane_x: float = _player.position.x
 	var is_running: bool      = _player.is_making_noise()
 
-	var detected: bool = (_watcher as WatcherControllerSideon).check_player(
+	var detected: bool = _watcher.check_player(
 		player_plane_x, is_running, obstacles
 	)
 
@@ -351,7 +351,7 @@ func _on_player_interact() -> void:
 	if absf(player_x - _hiding_spot.plane_x) <= hiding_reach:
 		## Check detection state at entry moment — no i-frame.
 		var obstacles_entry: Array = []
-		var detected_at_entry: bool = (_watcher as WatcherControllerSideon).check_player(
+		var detected_at_entry: bool = _watcher.check_player(
 			player_x, _player.is_making_noise(), obstacles_entry
 		)
 		if detected_at_entry:

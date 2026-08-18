@@ -14,6 +14,8 @@
 class_name WatcherControllerSideon
 extends CharacterBody2D
 
+const _SensorScript: GDScript = preload("res://sensor.gd")
+
 ## Sight-cone tuning (§11 §4 v5).
 const SIGHT_RANGE_TILES: float     = 6.0
 ## Proximity catch radius: player must be very close to be caught without sight.
@@ -150,9 +152,9 @@ func check_player(player_plane_x: float, player_is_running: bool, obstacles: Arr
 	## Update sound sensor noise state each frame.
 	_sound.update_movement_state(player_is_running)
 
-	var sight_blocked: bool = Sensor.is_detection_blocked(Sensor.SIGHT, obstacles)
-	var sound_blocked: bool = Sensor.is_detection_blocked(Sensor.SOUND, obstacles)
-	var prox_blocked: bool  = Sensor.is_detection_blocked(Sensor.PROXIMITY, obstacles)
+	var sight_blocked: bool = _SensorScript.is_detection_blocked(_SensorScript.SIGHT, obstacles)
+	var sound_blocked: bool = _SensorScript.is_detection_blocked(_SensorScript.SOUND, obstacles)
+	var prox_blocked: bool  = _SensorScript.is_detection_blocked(_SensorScript.PROXIMITY, obstacles)
 
 	var detected: bool = false
 	if not sight_blocked and _sight.check(player_plane_x):
