@@ -82,8 +82,15 @@ def _generate_sheet() -> None:
     img.save(OUT_PATH)
 
 
+# Generate the synthetic sheet at conftest import time so the PNG exists
+# even when test collection is cut short (e.g. pytest.importorskip skips
+# the test module before any fixture has a chance to run).
+if not OUT_PATH.exists():
+    _generate_sheet()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def ensure_synth_sheet() -> None:
-    """Generate the synthetic idle sheet before any gate tests run (if absent)."""
-    if not OUT_PATH.exists():
+    """Re-generate the synthetic idle sheet if somehow absent at run time."""
+    if not OUT_PATH.exists():  # pragma: no cover
         _generate_sheet()
