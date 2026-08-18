@@ -1,0 +1,35 @@
+[project]
+name = "char-gen"
+version = "0.1.0"
+description = "Character generation spike: player idle sheet gate validation (T-0198, docs/design/13-asset-pipeline.md §3.5)"
+requires-python = ">=3.12"
+dependencies = [
+  "pillow==12.3.0",
+  "numpy==2.5.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.14.4",
+]
+
+[project.scripts]
+generate-synth-idle-sheet = "char_gen.synth_sheet:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
