@@ -12,19 +12,12 @@ extends SceneTree
 ##   M5. Cover vs hiding as two distinct guarantees       — yes (sound passes cover)
 ##   M6. Floor plane reads as room (not corridor)         — yes (aspect ratio 1.85:1)
 ##
-## INITIALLY FAILING assertions — corrected in the same commit as DL-18:
+## M2 initially asserted the OLD 14 §10 top-down estimate (~12 s cycle: "~4 s pass,
+## ~2 s pause at each end").  DL-18 voids that and records the measured 6 s cycle.
 ##
-##   M2: Asserts the OLD 14 §10 top-down patrol-cycle estimate (~12 s: "~4 s pass,
-##       ~2 s pause at each end" × 2 directions).  The measured value from the
-##       side-on blockout code is 6.0 s (3 s/direction, 0 s pause).  This FAILS
-##       until DL-18 and §10 are updated.
-##
-##   M4: Asserts the OPTIMISTIC hypothesis — player crosses from hiding spot
-##       (col 7, 120 px) to door (col 21, 344 px) without detection, starting
-##       the moment the Watcher turns left at col 18 (296 px).  The simulation
-##       finds sight-detection at t ≈ 0.83 s, when the player is at col 10.8
-##       (173 px), still 171 px short of the door.  This FAILS, confirming
-##       unavoidable detection; the assertion is corrected after DL-18.
+## M4 initially tested the OPTIMISTIC hypothesis (no detection during crossing).
+## The simulation confirmed unavoidable detection at t ≈ 0.83 s; DL-18 records
+## this as the finding and M4 now asserts detection occurs within [0.7, 1.0] s.
 ##
 ## Run headless (from client/):
 ##   cd client && timeout 600 godot --headless \
@@ -92,23 +85,22 @@ func _test_m1_cross_room_walk() -> Array[String]:
 	return failures
 
 
-## ── M2: Watcher patrol cycle (INITIALLY FAILING) ─────────────────────────────
+## ── M2: Watcher patrol cycle (DL-18 measured value) ─────────────────────────
 ## Blockout code: patrol span 6 tiles = 96 px / 32 px·s⁻¹ = 3.0 s per direction,
 ## 0 s pause at each end.  Full cycle = 6.0 s.
 ##
-## 14 §10 pre-DL-18 said "~4 s pass, ~2 s pause at each end" → implied 12 s cycle.
-## This test asserts the OLD 12 s value and FAILS, exposing the mismatch.
-## After DL-18 and §10 are updated, change 12.0 → 6.0 in the assertion.
+## 14 §10 top-down estimate ("~4 s pass, ~2 s pause at each end" → 12 s cycle)
+## is voided by DL-18.  This assertion now locks in the measured 6.0 s value.
 
 func _test_m2_patrol_cycle() -> Array[String]:
 	var failures: Array[String] = []
 	var patrol_span_px: float = WATCHER_RIGHT_X - WATCHER_LEFT_X  ## 96 px (6 tiles)
 	var cycle_s: float = 2.0 * patrol_span_px / PATROL_SPEED_PX_S  ## 6.0 s measured
-	## ── OLD TOP-DOWN VALUE (FAILS against actual 6 s) — change to 6.0 after DL-18 ──
-	if absf(cycle_s - 12.0) > 0.5:
+	## ── MEASURED VALUE (DL-18) ────────────────────────────────────────────────
+	if absf(cycle_s - 6.0) > 0.5:
 		failures.append(
-			"m2_patrol_cycle: old 14§10 estimate 12.0 s ≠ measured %.1f s — "
-			+ "void the top-down value and record 6.0 s in DL-18" % cycle_s
+			"m2_patrol_cycle: measured cycle must be 6.0 s (3 s/direction, 0 s pause); "
+			+ "got %.1f s — verify watcher_controller_sideon.gd PATROL_SPEED_TILES" % cycle_s
 		)
 	return failures
 
@@ -135,20 +127,16 @@ func _test_m3_warning_tiles() -> Array[String]:
 	return failures
 
 
-## ── M4: Unavoidable detection on crossing path (INITIALLY FAILING) ───────────
-## OPTIMISTIC HYPOTHESIS: player crosses from hiding (120 px) to door (344 px)
-## without detection, starting the moment the Watcher turns left at col 18 (296 px).
+## ── M4: Unavoidable detection on crossing path (DL-18 confirmed finding) ────
+## The simulation finds that crossing from hiding (120 px) to door (344 px),
+## starting the moment the Watcher turns left at col 18 (296 px), results in
+## sight-detection at t ≈ 0.83 s when the player reaches col 10.8 (≈ 173 px).
 ##
-## Simulation: player moves right at WALK_SPEED (64 px/s), watcher moves left at
-## PATROL_SPEED (32 px/s).  Once the player is past the cover right edge (160 px),
-## detection is tested each step using a SightConeSensorV2 (no cover registered,
-## since the player is now to the right of the cover).
+## Derivation: sight left edge = (296 − 32t) − 96 = 200 − 32t.
+## Player (past cover) = 120 + 64t (cover cleared at t = 0.625 s).
+## Detection when 200 − 32t ≤ 120 + 64t → t ≥ 80/96 ≈ 0.833 s.
 ##
-## MEASURED OUTCOME: detection triggers at t ≈ 0.83 s (player ≈ 173 px, col 10.8),
-## sight_edge = 200 − 32 × 0.833 = 173 px meets player position.
-##
-## The OPTIMISTIC assertion below (detected_at_t < 0, i.e. no detection) FAILS.
-## After DL-18: replace assertion with "detected_at_t in [0.7, 1.0] s".
+## This assertion now confirms detection occurs within the expected range.
 
 func _test_m4_crossing_detection() -> Array[String]:
 	var failures: Array[String] = []
@@ -181,13 +169,16 @@ func _test_m4_crossing_detection() -> Array[String]:
 
 	sight.free()
 
-	## ── OPTIMISTIC assertion (FAILS — confirms unavoidable detection) ──────────
-	## Replace this block with the confirmed-detection check after DL-18 is committed.
-	if detected_at_t >= 0.0:
+	## ── CONFIRMED FINDING (DL-18): detection occurs at t ≈ 0.83 s ─────────────
+	if detected_at_t < 0.0:
 		failures.append(
-			"m4_crossing_detection: OPTIMISTIC HYPOTHESIS FAILED — "
-			+ "sight detection at t=%.3f s (player ≈ %.1f px) before reaching door — "
-			+ "document in DL-18 and update this assertion" % [detected_at_t, player_x]
+			"m4_crossing_detection: detection must trigger during crossing "
+			+ "(DL-18 measured outcome — unavoidable detection confirmed)"
+		)
+	elif detected_at_t < 0.7 or detected_at_t > 1.0:
+		failures.append(
+			"m4_crossing_detection: detection time %.3f s outside expected [0.7, 1.0] s range "
+			+ "(DL-18 measured ≈ 0.83 s)" % detected_at_t
 		)
 	return failures
 

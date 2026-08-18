@@ -642,6 +642,95 @@ output, so no visual error occurs at the chain tear.
 
 ---
 
+## DL-18 — One-room blockout: six measures, top-down M-2 voided (T-0193)
+
+**Date:** 2026-08-18
+**Raised by:** T-0193 (§20-a2 — measurement pass following the T-0192 side-on rebuild)
+
+### Six measures from the T-0192 side-on one-room blockout
+
+All values derived analytically from committed blockout constants
+(`blockout_room_sideon.gd`, `watcher_controller_sideon.gd`, `player_controller.gd`).
+Layout: 24 × 13 tiles at 16 px/tile. Player walk 64 px/s (4 tiles/s); Watcher
+patrol 32 px/s (2 tiles/s). Sight range 6 tiles = 96 px.
+
+| # | Measure | Value |
+|---|---|---|
+| M1 | Cross-room walk time (spawn col 2 → door col 21, no entity) | **4.75 s** (304 px / 64 px·s⁻¹) |
+| M2 | Seconds with the Watcher (one full patrol cycle) | **6 s** (3 s/direction, 0 s pause — see detail) |
+| M3 | Tiles of warning at spawn | **4 tiles** uncovered · **6.5 tiles** behind cover |
+| M4 | Any unavoidable detection on the crossing path | **Yes** — detection at t ≈ 0.83 s (see detail) |
+| M5 | Cover vs hiding read as two distinct guarantees | **Yes** — sound passes through cover; hiding blocks all three |
+| M6 | Floor plane reads as room or corridor | **Room** — 24:13 ≈ 1.85:1 aspect, objects distributed across 17 columns |
+
+### M2 detail — patrol cycle
+
+Patrol span: col 12 → col 18 = 6 tiles = 96 px.
+Speed: 2 tiles/s = 32 px/s.
+Time per direction: 96 / 32 = **3.0 s**.
+Pause at ends: **0 s** — `watcher_controller_sideon.gd` reverses direction
+immediately on reaching a patrol boundary; no pause timer.
+Full cycle: 3 + 3 = **6.0 s**.
+
+`14` §10 (pre-DL-18): "~4 s pass, ~2 s pause at each end" → implied 12 s cycle.
+**Void.** That was a top-down design estimate; the blockout code has no pause and
+the patrol distance at 2 tiles/s yields 3 s, not 4 s.
+
+### M4 detail — unavoidable detection on the crossing path
+
+The player must move from behind the cover (col 9 right edge, 160 px) to the door
+(col 21, 344 px). Once past the cover, there is no intervening obstacle.
+
+When the Watcher turns left at col 18 (296 px) and the player exits the hiding
+spot (col 7, 120 px) simultaneously:
+
+- Player rightward: P(t) = 120 + 64t px
+- Watcher leftward: W(t) = 296 − 32t px
+- Watcher sight left edge: W(t) − 96 = 200 − 32t
+- Player clears cover right edge (160 px) at t = 0.625 s
+- After that, cover is to the player's left → cover no longer occludes the sight line
+- Sight edge reaches player when 200 − 32t = 120 + 64t → **t = 0.833 s**
+
+At t ≈ 0.83 s: player at ≈ 173 px (col 10.8), Watcher at ≈ 269 px. Distance = 96 px
+(at the 6-tile sight boundary). Cover interval [144, 160] is entirely to the left of
+the player — does not occlude. Detection triggers.
+
+**No safe crossing exists** in the current layout. Any attempt to walk from the hiding
+spot to the door results in sight detection at col ≈ 10.8, ≈ 171 px short of the door.
+Proximity catch (1.5 tiles = 24 px) additionally prevents "following the Watcher"
+through the patrol zone: a walking player (64 px/s) overtakes the Watcher (32 px/s)
+and enters the 24 px catch radius at t ≈ 1.75 s.
+
+**Design consequence for `14` §10:** the blockout confirms the Power Substation room
+requires either (a) a mid-zone alcove or secondary cover between the cover pillar and
+the far patrol boundary, or (b) the Watcher redesigned as a **fixed-position entity
+with a timed sweep** (as described in `14` §3: "fixed on a short catwalk") rather
+than a physical patrol that the player must physically pass. The physical-patrol model
+has no safe crossing window without a mid-zone safe point.
+
+### M5 detail — cover vs hiding distinction
+
+| Position | Sensor | Watcher | Detected? |
+|---|---|---|---|
+| Hiding spot (120 px), cover registered | Sight | Left patrol (200 px) | No — cover [144, 160] occludes |
+| Hiding spot (120 px), cover registered | Sound (run, 5-tile radius) | Left patrol (200 px) | Yes — distance 80 px = boundary |
+| Inside HidingSpotV2 | All three | Any | No — HidingSpotV2 blocks all |
+
+Cover (mid-grey visual) and hiding spot (dark blue-grey visual) are perceptually and
+functionally distinct. A player behind cover can still be detected by running.
+A player inside the hiding spot is safe from all three sensors. The two mechanics
+read as clearly separate guarantees in the blockout prototype.
+
+### Changes made
+
+- `docs/decision-log.md` — this entry (DL-18)
+- `docs/design/14-vertical-slice.md` §10 — Watcher sweep timing voided and
+  patrol-cycle value re-derived; cone-angle note added; M4 finding noted
+- `client/tests/test_T0193_blockout_measures.gd` — M2/M4 assertions updated
+  from failing (top-down hypothesis) to passing (measured outcome)
+
+---
+
 ## DL-17 — Climax rooms independent of chain-key tier (closes DL-16)
 
 **Date:** 2026-08-17
