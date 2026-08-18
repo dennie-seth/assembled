@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-18
+
+Side-on rebuild & broadcast systems: the room/movement/sensor stack is rebuilt for the side-on
+camera per the updated design (§11 v5) — floor-anchored plane runtime, a no-jump vertical player
+controller, a side-on sensor kit with horizontal-occlusion cover, and floor-anchored hiding spots
+replace their top-down predecessors. On the server, broadcast petitions and an append-only unique
+custody log land the remaining core economy/notes systems. The client also gains a build-time
+localization gate (`LocId` type-split wrapper plus L-1..L-4 checks) that turns a missed
+translation into a compile error instead of a raw id on screen. Board reliability work continues:
+the agent-run stdin-hang bug is hardened against, and auto-opened PRs retry with a REST fallback
+on transient GitHub failures.
+
+### Added
+
+- Broadcast petitions: `POST`/`GET /v1/petitions`, enforcing INV-8 reachability with a
+  per-player rate limit and an optional gating-item slot (T-0117).
+- Unique custody log: append-only `unique_custody_log` table plus `UniqueCustodyLog`
+  read/write path, replacing in-place custody updates for unique items per the
+  copy-on-write server-ops model (T-0118).
+- `LocId` wrapper and the `locale-gate` build-check tool (L-1..L-4): a POD-integer id type with
+  no `to_string()`, so an unresolved localization key fails the build instead of shipping
+  (T-0119).
+
+### Changed
+
+- Room/tile runtime, player controller, sensor kit, and hiding spots rebuilt for the side-on
+  camera (§11 v5), replacing the top-down versions: floor-anchored plane runtime (T-0187,
+  replaces T-0172), no-jump vertical player controller (T-0188, replaces T-0173),
+  horizontal-occlusion sight/sound sensor kit (T-0189, replaces T-0174), and floor-anchored
+  hiding spots with cover-break (T-0190, replaces T-0175).
+- Decision log DL-17: Climax rooms are independent of chain-key tier, closing DL-16.
+
+### Fixed
+
+- Agent runs are hardened against the stdin-hang bug in the board runner (T-0117).
+- Auto-opened PRs now retry with a REST fallback when GitHub's GraphQL API fails
+  transiently, instead of failing the run outright.
+
 ## [0.5.0] - 2026-08-17
 
 Signal Tower & board hardening: the biggest content and reliability release yet. On the game
