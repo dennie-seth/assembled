@@ -23,15 +23,15 @@ from pathlib import Path
 # Make asset_gate importable from the monorepo's tools/asset-gate package
 # without requiring `pip install -e tools/asset-gate` — conftest is loaded
 # before test modules, so this is in place before pytest.importorskip runs.
-_ASSET_GATE_SRC = Path(__file__).resolve().parents[5] / "tools" / "asset-gate" / "src"
+_ASSET_GATE_SRC = Path(__file__).resolve().parents[4] / "tools" / "asset-gate" / "src"
 if _ASSET_GATE_SRC.exists() and str(_ASSET_GATE_SRC) not in sys.path:
     sys.path.insert(0, str(_ASSET_GATE_SRC))
 
-import numpy as np
-import pytest
-from PIL import Image
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+from PIL import Image  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 OUT_PATH = REPO_ROOT / "assets" / "final" / "character" / "player_idle_sheet_v1.png"
 

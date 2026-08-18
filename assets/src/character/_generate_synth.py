@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 OUT_PATH = REPO_ROOT / "assets" / "final" / "character" / "player_idle_sheet_v1.png"
 
