@@ -12,16 +12,16 @@ from typing import Literal
 import numpy as np
 from PIL import Image
 
+from asset_gate.determinism import check_reproducible, image_bytes
+from asset_gate.palette import Palette
+from asset_gate.result import CheckResult
+
 try:
     from scipy import ndimage as _ndimage
 
     _HAS_SCIPY = True
 except ImportError:
     _HAS_SCIPY = False
-
-from asset_gate.determinism import check_reproducible, image_bytes  # noqa: E402
-from asset_gate.palette import Palette  # noqa: E402
-from asset_gate.result import CheckResult  # noqa: E402
 
 
 def _to_array(image: Image.Image) -> np.ndarray:
