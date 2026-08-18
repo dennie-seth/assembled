@@ -20,16 +20,20 @@ extends Node2D
 ## absent tiles in FLOOR_ROW are Drop gaps (02-hazard-vocabulary.md §2).
 ## floor_plane is populated at _ready() and exposed to the player controller.
 
+## Preloaded so the type is resolvable without needing the global class-name cache
+## (which is only populated by the Godot editor, not by headless runs on new files).
+const _FloorPlaneRuntimeScript: GDScript = preload("res://scenes/floor_plane_runtime.gd")
+
 ## Row index of the walkable floor plane in the 24×14 authored grid (0-indexed).
 ## Row 12 is the bottom gameplay row (row 13 is non-gameplay bleed).
 const FLOOR_ROW: int = 12
 
-## Populated at _ready() by scanning the FloorLayer TileMapLayer.
+## FloorPlaneRuntime instance, populated at _ready() by scanning FloorLayer.
 ## Exposes solid/drop classification to whatever queries it (player fall check).
-var floor_plane: FloorPlaneRuntime
+var floor_plane: RefCounted
 
 
 func _ready() -> void:
 	var floor_layer: TileMapLayer = $FloorLayer as TileMapLayer
-	floor_plane = FloorPlaneRuntime.new()
+	floor_plane = _FloorPlaneRuntimeScript.new()
 	floor_plane.scan(floor_layer, FLOOR_ROW)

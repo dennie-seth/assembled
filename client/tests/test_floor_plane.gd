@@ -47,15 +47,16 @@ func _init() -> void:
 
 
 ## Create a minimal TileMapLayer with tiles placed at the given columns in FLOOR_ROW.
-## The TileSet has a single atlas source (id=0) with a 16×16 tile at atlas coord (0,0).
+## The TileSet has a single atlas source (id=0). We do NOT call create_tile() because
+## TileSetAtlasSource.create_tile() requires a non-null texture and will error without
+## one; TileMapLayer.set_cell() stores cell data independently of that validation,
+## and get_cell_source_id() returns the stored source_id correctly (what we test).
 ## The caller is responsible for calling layer.free() when done.
 func _make_floor_layer(solid_cols: Array[int]) -> TileMapLayer:
 	var ts := TileSet.new()
 	ts.tile_size = Vector2i(16, 16)
 
 	var src := TileSetAtlasSource.new()
-	src.texture_region_size = Vector2i(16, 16)
-	src.create_tile(Vector2i(0, 0))
 	ts.add_source(src, 0)
 
 	var layer := TileMapLayer.new()
