@@ -5,7 +5,11 @@ import {
   RunOrchestrator,
   appendNote,
   MAX_AUTO_RETRY_ATTEMPTS,
-  DEFAULT_PHASE_TIMEOUT_MS
+  DEFAULT_PHASE_TIMEOUT_MS,
+  DEFAULT_INACTIVITY_TIMEOUT_MS,
+  PR_OPEN_GRAPHQL_MAX_ATTEMPTS,
+  PR_OPEN_REST_MAX_ATTEMPTS,
+  PR_OPEN_BACKOFF_BASE_MS
 } from "../../src/runner/runOrchestrator.js";
 import { crossCheckVerdict } from "../../src/runner/verdictCrossCheck.js";
 
@@ -32,6 +36,13 @@ function assistantEvent(text) {
 
 function verdictBlock(verdict, notes) {
   return `\`\`\`verdict\n${JSON.stringify({ verdict, notes })}\n\`\`\``;
+}
+
+/** A rejected-createPr-style error pre-classified the way githubOps.classifyGhError would tag it. */
+function ghErr(message, classification) {
+  const err = new Error(message);
+  err.ghClassification = classification;
+  return err;
 }
 
 function makeStore(initialTasks) {
@@ -808,6 +819,191 @@ describe("RunOrchestrator.runCard — phase-level timeout (hung child protection
   });
 });
 
+describe("RunOrchestrator.runCard — inactivity watchdog (stdin-hang hardening, T-0117)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("exports a generous default inactivity window, well tighter than the phase timeout", () => {
+    expect(DEFAULT_INACTIVITY_TIMEOUT_MS).toBeGreaterThanOrEqual(5 * 60 * 1000);
+    expect(DEFAULT_INACTIVITY_TIMEOUT_MS).toBeLessThanOrEqual(10 * 60 * 1000);
+    expect(DEFAULT_INACTIVITY_TIMEOUT_MS).toBeLessThan(DEFAULT_PHASE_TIMEOUT_MS);
+  });
+
+  it("kills the implementer's process group when its stdout goes silent for inactivityTimeoutMs, and retries instead of hard-blocking", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.start).toHaveBeenCalledTimes(1);
+    const implChild = runner.spawnedChildren[0];
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+    // Not a hard block: the auto-retry loop already re-invoked the implementer on attempt 2.
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toMatch(/implementer run went silent/i);
+    expect(finalTask.body).toMatch(/stdin-hang/i);
+    expect(finalTask.body).toMatch(/run 1 of 5/i);
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+  });
+
+  it("kills the reviewer's process group on silence too, and retries from the implementer on the next attempt", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: reviewChild }));
+    expect(runner.start).toHaveBeenCalledTimes(3);
+
+    const secondImplChild = runner.spawnedChildren[2];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const secondReviewChild = runner.spawnedChildren[3];
+    secondReviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    secondReviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toMatch(/reviewer run went silent/i);
+  });
+
+  it("does not false-positive on a run that keeps producing output across multiple re-arm windows", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // Three windows' worth of elapsed time, each reset by fresh output just before the deadline.
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(800);
+      implChild.stdout.emit("data", ndjson(assistantEvent(`still working ${i}`)));
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.kill).not.toHaveBeenCalled();
+    expect(runner.start).toHaveBeenCalledTimes(1);
+
+    implChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(runner.kill).not.toHaveBeenCalled();
+  });
+
+  it("exhausts MAX_AUTO_RETRY_ATTEMPTS on repeated inactivity timeouts and blocks the card for a human, same as a real reviewer FAIL", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(MAX_AUTO_RETRY_ATTEMPTS);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/auto-retry limit reached/i);
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+  });
+
+  it("respects the INACTIVITY_TIMEOUT_MS env override", () => {
+    const original = process.env.INACTIVITY_TIMEOUT_MS;
+    try {
+      process.env.INACTIVITY_TIMEOUT_MS = "12345";
+      const store = makeStore([baseTask()]);
+      const git = makeGit();
+      const runner = makeRunner();
+      const orchestrator = makeOrchestrator({ store, git, runner });
+      expect(orchestrator.inactivityTimeoutMs).toBe(12345);
+    } finally {
+      if (original === undefined) delete process.env.INACTIVITY_TIMEOUT_MS;
+      else process.env.INACTIVITY_TIMEOUT_MS = original;
+    }
+  });
+});
+
 describe("RunOrchestrator.runCard — guardrails", () => {
   it("refuses to run a card that is not in ready or review status", async () => {
     const store = makeStore([baseTask({ status: "in-progress" })]);
@@ -1283,6 +1479,171 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
     expect(github.createPr).not.toHaveBeenCalled();
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
+  });
+});
+
+describe("RunOrchestrator.runCard — finalize: PR-open resilience (retry + REST fallback on transient GitHub failures)", () => {
+  // Motivated by a live incident: reviewer PASSed T-0117, `gh pr create` (GraphQL) failed with
+  // "HTTP 503 ... api.github.com/graphql", the failure was swallowed, and the card sat in
+  // `review` with `pr: null` until a human noticed. REST stayed up throughout.
+  async function driveToPass(runner) {
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+  }
+
+  it("retries gh pr create through transient 503s and succeeds within the retry budget, recording the PR", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const createPr = vi
+      .fn()
+      .mockRejectedValueOnce(ghErr("HTTP 503: Service Unavailable (api.github.com/graphql)", "transient"))
+      .mockRejectedValueOnce(ghErr("HTTP 503: Service Unavailable (api.github.com/graphql)", "transient"))
+      .mockResolvedValueOnce("https://github.com/example/repo/pull/501");
+    const sleepFn = vi.fn(async () => {});
+    const github = makeGithub({ checkAvailability: vi.fn(async () => ({ available: true, reason: null })), createPr });
+    const orchestrator = makeOrchestrator({ store, git, runner, github, sleepFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(createPr).toHaveBeenCalledTimes(3);
+    expect(sleepFn).toHaveBeenCalledTimes(2);
+    // Exponential backoff from the named base constant, doubling each retry.
+    expect(sleepFn.mock.calls[0][0]).toBe(PR_OPEN_BACKOFF_BASE_MS);
+    expect(sleepFn.mock.calls[1][0]).toBe(PR_OPEN_BACKOFF_BASE_MS * 2);
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/501");
+  });
+
+  it("falls back to the REST API once gh pr create exhausts its retry budget on persistent 503s, recording the REST PR", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const createPr = vi.fn(async () => {
+      throw ghErr("HTTP 503: Service Unavailable (api.github.com/graphql)", "transient");
+    });
+    const createPrRest = vi.fn(async () => "https://github.com/example/repo/pull/601");
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr,
+      createPrRest
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github, sleepFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(createPr).toHaveBeenCalledTimes(PR_OPEN_GRAPHQL_MAX_ATTEMPTS);
+    expect(createPrRest).toHaveBeenCalledTimes(1);
+    const restCall = createPrRest.mock.calls[0][0];
+    expect(restCall.base).toBe("develop");
+    expect(restCall.head).toBe("feature/T-0001");
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/601");
+  });
+
+  it("treats 'pull request already exists' from gh pr create as success and captures the existing PR instead of erroring or duplicating", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const createPr = vi.fn(async () => {
+      throw ghErr("GraphQL: A pull request already exists for me:feature/T-0001. (createPullRequest)", "already-exists");
+    });
+    const findExistingPr = vi
+      .fn()
+      .mockResolvedValueOnce(null) // pre-create idempotency check: nothing yet
+      .mockResolvedValueOnce("https://github.com/example/repo/pull/701"); // post-failure lookup finds it
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr,
+      findExistingPr
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github, sleepFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(createPr).toHaveBeenCalledTimes(1);
+    expect(findExistingPr).toHaveBeenCalledTimes(2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/701");
+  });
+
+  it("does not retry or fall back to REST on a terminal (non-transient) failure -- but still leaves an explanatory comment, not a silent failure", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const createPr = vi.fn(async () => {
+      throw ghErr("HTTP 401: Bad credentials", "terminal");
+    });
+    const createPrRest = vi.fn(async () => "https://github.com/example/repo/pull/999");
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr,
+      createPrRest
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github, sleepFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(createPr).toHaveBeenCalledTimes(1);
+    expect(createPrRest).not.toHaveBeenCalled();
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.pr).toBeFalsy();
+    expect(finalTask.comments?.some((c) => /PR-open failed/i.test(c.text))).toBe(true);
+  });
+
+  it("when GraphQL retries AND the REST fallback both fail, leaves the card retryable (review, no pr) with a clear comment instead of a silent dead end", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const createPr = vi.fn(async () => {
+      throw ghErr("HTTP 503: Service Unavailable (api.github.com/graphql)", "transient");
+    });
+    const createPrRest = vi.fn(async () => {
+      throw ghErr("HTTP 503: Service Unavailable", "transient");
+    });
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr,
+      createPrRest
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github, sleepFn: vi.fn(async () => {}) });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    await runPromise;
+
+    expect(createPr).toHaveBeenCalledTimes(PR_OPEN_GRAPHQL_MAX_ATTEMPTS);
+    expect(createPrRest).toHaveBeenCalledTimes(PR_OPEN_REST_MAX_ATTEMPTS);
+
+    const finalTask = await store.get("T-0001");
+    // Still retryable: "review" is one of runCard()'s accepted starting statuses, so a later
+    // re-run (human click or automation) will retry PR-open -- never silently stuck.
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.pr).toBeFalsy();
+    expect(finalTask.comments).toBeTruthy();
+    const lastComment = finalTask.comments[finalTask.comments.length - 1];
+    expect(lastComment.text).toMatch(/PR-open failed/i);
+    expect(lastComment.text).toMatch(/retries/i);
+    expect(lastComment.text).toContain(finalTask.branch);
+    expect(lastComment.text).toContain(finalTask.commit);
   });
 });
 

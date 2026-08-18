@@ -639,3 +639,47 @@ output, so no visual error occurs at the chain tear.
 - `client/signal_tower/signal_tower_chain.gd`
 - `client/shaders/chroma.gdshader`
 - `client/tests/test_signal_tower.gd`
+
+---
+
+## DL-17 — Climax rooms independent of chain-key tier (closes DL-16)
+
+**Date:** 2026-08-17
+**Raised by:** DL-16 (2026-08-16) — "Action required: Human review of whether
+T-0185's Climax criterion reflects current design ... or whether DL-13's
+Climax removal supersedes it."
+**Resolved by:** T-0191 (actioned directly by Dispatch on behalf of
+@DennieSeth)
+
+### Decision
+
+1. **DL-13's rare-tier chain-key change stands.** It remains the correct fix
+   for the population-scaling failure identified in `HANDOFF.md` §13; no
+   part of that mechanism is in question here.
+
+2. **DL-13's "Climax lost" consequence is superseded.** Climax rooms are
+   independent of the chain-key tier, not a casualty of the tier change.
+   Every vertical-slice archetype carries exactly one Climax room: Signal
+   Tower's Records Room, Hospital's Nurses' Station, and Long Descent's
+   Storage Vault.
+
+3. **Authoritative sources already agree.** `11-moment-to-moment.md` §7
+   (Climax Rooms), `14-vertical-slice.md`, `19-vertical-slice-hospital.md`,
+   and `20-vertical-slice-long-descent.md` all describe a Climax room per
+   archetype with no chain-key-tier dependency in the mechanism itself.
+   DL-13's "Climax lost" line was a scoping error at the time — a
+   consequence asserted in the decision entry, not a reflection of what
+   those docs actually specify.
+
+4. **No implementation change required.** What T-0185 shipped — Records
+   Room as Signal Tower's Climax room — is correct as-is.
+
+### Closes DL-16
+
+This resolves DL-16's open "Action required: Human review of whether
+T-0185's Climax criterion reflects current design" item. DL-16 is left
+unmodified above; this entry is the closure record it called for.
+
+**Touched docs:**
+- None. This is a decision-log-only entry — `11`, `14`, `19`, and `20` are
+  cited as already agreeing and require no edits; DL-13 is unmodified.

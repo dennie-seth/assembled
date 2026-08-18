@@ -116,6 +116,67 @@ std::vector<NoteRecord> PgNoteRepo::fetchRanked(int16_t archetype_id, int16_t an
     return result;
 }
 
+std::string PgNoteRepo::createBroadcast(const CreateBroadcastParams &params) {
+    // archetype_id and anchor_tag are omitted from the INSERT so they default to
+    // NULL (migration 015 dropped the NOT NULL constraint).  is_broadcast = true
+    // marks this row as a petition visible through GET /v1/petitions.
+    drogon::orm::Result r(nullptr);
+    {
+        auto binder = *client_ << "INSERT INTO notes "
+                                  "(author_token, template_id, item_ref, is_broadcast) "
+                                  "VALUES ($1, $2, $3, true) RETURNING id";
+        binder << params.author_token;
+        binder << params.template_id;
+
+        if (params.item_ref.has_value())
+            binder << params.item_ref.value();
+        else
+            binder << nullptr;
+
+        binder << drogon::orm::Mode::Blocking;
+        binder >> [&r](const drogon::orm::Result &result) { r = result; };
+        binder.exec();
+    }
+    return r[0]["id"].as<std::string>();
+}
+
+std::vector<NoteRecord> PgNoteRepo::fetchBroadcast(int limit) {
+    const int32_t clamped = (limit < 1) ? 1 : (limit > kMaxNotesLimit ? kMaxNotesLimit : limit);
+
+    const std::string sql =
+        "SELECT id, author_token, template_id, slot_a, slot_b, item_ref, rating "
+        "FROM notes "
+        "WHERE is_broadcast = true "
+        "ORDER BY rating DESC "
+        "LIMIT " +
+        std::to_string(clamped);
+    const auto rows = client_->execSqlSync(sql);
+
+    std::vector<NoteRecord> result;
+    result.reserve(static_cast<std::size_t>(rows.size()));
+    for (const auto &row : rows) {
+        NoteRecord n;
+        n.id = row["id"].as<std::string>();
+        n.author_token = row["author_token"].as<std::string>();
+        n.template_id = row["template_id"].as<int16_t>();
+        n.is_broadcast = true;
+        // archetype_id and anchor_tag are NULL for broadcast notes — leave at 0.
+
+        if (!row["slot_a"].isNull())
+            n.slot_a = row["slot_a"].as<int16_t>();
+
+        if (!row["slot_b"].isNull())
+            n.slot_b = row["slot_b"].as<int16_t>();
+
+        if (!row["item_ref"].isNull())
+            n.item_ref = row["item_ref"].as<std::string>();
+
+        n.rating = row["rating"].as<int32_t>();
+        result.push_back(std::move(n));
+    }
+    return result;
+}
+
 void PgNoteRepo::rate(const std::string &note_id, const std::string &voter, int16_t val) {
     // Upsert: insert the vote or overwrite it if val changed.
     // The WHERE clause in DO UPDATE makes same-val a no-op at the row level.

@@ -502,3 +502,32 @@ describe("ClaudeCliRunner.kill process-group behavior (no orphans)", () => {
     await vi.waitFor(() => expect(isAlive(child.pid)).toBe(false), { timeout: 8000 });
   });
 });
+
+describe("stdin-hang hardening (T-0117): the outer spawn's stdio config is what the board controls", () => {
+  it("a real child spawned with the board's stdio config (stdin ignored) gets immediate EOF -- a bare `cat` with no input does not hang", async () => {
+    // Mirrors ClaudeCliRunner.start()'s actual stdio: ["ignore", "pipe", "pipe"] exactly. This is
+    // a real, unmocked child process -- proof that stdin: "ignore" (-> /dev/null) is sufficient to
+    // stop a bare `cat`/`grep`/`read` with no input from hanging, at the layer the board actually
+    // spawns: the outer `claude -p` process itself. It does NOT prove anything about commands the
+    // `claude` CLI spawns internally for its own Bash tool -- see runOrchestrator.js's
+    // DEFAULT_INACTIVITY_TIMEOUT_MS docstring for why that's a separate, non-board-controlled
+    // problem the inactivity watchdog exists to catch instead.
+    const child = nodeSpawn("bash", ["-c", "cat; echo DONE"], {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    const output = await new Promise((resolve, reject) => {
+      let out = "";
+      const timer = setTimeout(() => reject(new Error("hung: bare `cat` did not exit within 5s of an ignored stdin")), 5000);
+      child.stdout.on("data", (chunk) => {
+        out += chunk.toString();
+      });
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolve(out);
+      });
+    });
+
+    expect(output).toContain("DONE");
+  });
+});
