@@ -6,6 +6,7 @@ import {
   appendNote,
   MAX_AUTO_RETRY_ATTEMPTS,
   DEFAULT_PHASE_TIMEOUT_MS,
+  DEFAULT_INACTIVITY_TIMEOUT_MS,
   PR_OPEN_GRAPHQL_MAX_ATTEMPTS,
   PR_OPEN_REST_MAX_ATTEMPTS,
   PR_OPEN_BACKOFF_BASE_MS
@@ -815,6 +816,191 @@ describe("RunOrchestrator.runCard — phase-level timeout (hung child protection
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
     expect(runner.kill).not.toHaveBeenCalled();
+  });
+});
+
+describe("RunOrchestrator.runCard — inactivity watchdog (stdin-hang hardening, T-0117)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("exports a generous default inactivity window, well tighter than the phase timeout", () => {
+    expect(DEFAULT_INACTIVITY_TIMEOUT_MS).toBeGreaterThanOrEqual(5 * 60 * 1000);
+    expect(DEFAULT_INACTIVITY_TIMEOUT_MS).toBeLessThanOrEqual(10 * 60 * 1000);
+    expect(DEFAULT_INACTIVITY_TIMEOUT_MS).toBeLessThan(DEFAULT_PHASE_TIMEOUT_MS);
+  });
+
+  it("kills the implementer's process group when its stdout goes silent for inactivityTimeoutMs, and retries instead of hard-blocking", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.start).toHaveBeenCalledTimes(1);
+    const implChild = runner.spawnedChildren[0];
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+    // Not a hard block: the auto-retry loop already re-invoked the implementer on attempt 2.
+    expect(runner.start).toHaveBeenCalledTimes(2);
+    expect((await store.get("T-0001")).status).toBe("in-progress");
+
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toMatch(/implementer run went silent/i);
+    expect(finalTask.body).toMatch(/stdin-hang/i);
+    expect(finalTask.body).toMatch(/run 1 of 5/i);
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+  });
+
+  it("kills the reviewer's process group on silence too, and retries from the implementer on the next attempt", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+    implChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: reviewChild }));
+    expect(runner.start).toHaveBeenCalledTimes(3);
+
+    const secondImplChild = runner.spawnedChildren[2];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const secondReviewChild = runner.spawnedChildren[3];
+    secondReviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    secondReviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(finalTask.body).toMatch(/reviewer run went silent/i);
+  });
+
+  it("does not false-positive on a run that keeps producing output across multiple re-arm windows", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // Three windows' worth of elapsed time, each reset by fresh output just before the deadline.
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(800);
+      implChild.stdout.emit("data", ndjson(assistantEvent(`still working ${i}`)));
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.kill).not.toHaveBeenCalled();
+    expect(runner.start).toHaveBeenCalledTimes(1);
+
+    implChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("review");
+    expect(runner.kill).not.toHaveBeenCalled();
+  });
+
+  it("exhausts MAX_AUTO_RETRY_ATTEMPTS on repeated inactivity timeouts and blocks the card for a human, same as a real reviewer FAIL", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(MAX_AUTO_RETRY_ATTEMPTS);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/auto-retry limit reached/i);
+    expect(orchestrator.hasActiveRuns()).toBe(false);
+  });
+
+  it("respects the INACTIVITY_TIMEOUT_MS env override", () => {
+    const original = process.env.INACTIVITY_TIMEOUT_MS;
+    try {
+      process.env.INACTIVITY_TIMEOUT_MS = "12345";
+      const store = makeStore([baseTask()]);
+      const git = makeGit();
+      const runner = makeRunner();
+      const orchestrator = makeOrchestrator({ store, git, runner });
+      expect(orchestrator.inactivityTimeoutMs).toBe(12345);
+    } finally {
+      if (original === undefined) delete process.env.INACTIVITY_TIMEOUT_MS;
+      else process.env.INACTIVITY_TIMEOUT_MS = original;
+    }
   });
 });
 
