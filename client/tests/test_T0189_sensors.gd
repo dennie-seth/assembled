@@ -417,11 +417,12 @@ func _test_sight_cone_signals() -> Array[String]:
 	sensor.entity_plane_x = 0.0
 	sensor.entity_facing_dir = 1.0
 
-	# Use Array captures — reference types work safely in closures.
+	# Arrays are reference types — safe to mutate from inside lambdas (value types like
+	# int are captured by value in GDScript closures and would give a stale copy).
 	var detected_vals: Array[float] = []
-	var cleared_count: int = 0
+	var cleared_events: Array[bool] = []
 	sensor.target_detected.connect(func(x: float) -> void: detected_vals.append(x))
-	sensor.target_cleared.connect(func() -> void: cleared_count += 1)
+	sensor.target_cleared.connect(func() -> void: cleared_events.append(true))
 
 	var player_x: float = 3.0 * 16.0  # 48 px, in range
 
@@ -438,7 +439,7 @@ func _test_sight_cone_signals() -> Array[String]:
 
 	# Player moves out of range — target_cleared must fire.
 	sensor.check(7.0 * 16.0)  # beyond 6-tile range
-	if cleared_count == 0:
+	if cleared_events.is_empty():
 		failures.append("signals: target_cleared must be emitted when player leaves detection range")
 
 	sensor.free()
