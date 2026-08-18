@@ -63,7 +63,7 @@ def sheet() -> Image.Image:
 
 
 @pytest.fixture(scope="module")
-def palette() -> "asset_gate_palette.Palette":
+def palette() -> asset_gate_palette.Palette:
     assert PALETTE_PATH.exists(), f"home palette not found: {PALETTE_PATH}"
     return asset_gate_palette.load_palette(PALETTE_PATH)
 
@@ -83,13 +83,13 @@ def frame_images(sheet: Image.Image) -> dict[tuple[int, int], Image.Image]:
 # ---------------------------------------------------------------------------
 
 
-def test_palette_membership(sheet: Image.Image, palette: "asset_gate_palette.Palette") -> None:
+def test_palette_membership(sheet: Image.Image, palette: asset_gate_palette.Palette) -> None:
     """All used pixel colours must be exact members of the home palette (P-4)."""
     result = asset_gate_palette.check_palette_membership(sheet, palette)
     assert result.passed, result.reason
 
 
-def test_index_semantics(sheet: Image.Image, palette: "asset_gate_palette.Palette") -> None:
+def test_index_semantics(sheet: Image.Image, palette: asset_gate_palette.Palette) -> None:
     """P-4: index N must resolve to the same RGB as home_palette slot N in every asset."""
     result = asset_gate_palette.check_index_semantics(sheet, palette)
     assert result.passed, result.reason
