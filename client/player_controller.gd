@@ -163,10 +163,11 @@ func update_state(delta: float) -> void:
 	# The room runtime (T-0187) listens on this signal and performs the actual
 	# room swap + floor_y update.  This controller never modifies position.y
 	# directly for vertical transitions — that is the room runtime's job.
-	for connector: Dictionary in room_connectors:
-		var area: Rect2 = connector["area"] as Rect2
+	for connector in room_connectors:
+		var area: Rect2 = connector.get("area", Rect2())
 		if area.has_point(position):
-			room_transition.emit(connector["target_room_id"])
+			var target_id: String = connector.get("target_room_id", "")
+			room_transition.emit(target_id)
 			break  # one transition per frame
 
 

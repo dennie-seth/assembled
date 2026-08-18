@@ -111,7 +111,7 @@ func _test_floor_plane_velocity_y_always_zero() -> Array[String]:
 func _test_drop_gap_instant_death() -> Array[String]:
 	var failures: Array[String] = []
 	var pc: CharacterBody2D = _make_pc(0.0, 0.0)
-	pc.drop_gaps = [WIDE_GAP]
+	pc.drop_gaps.append(WIDE_GAP)
 	pc.apply_input(1.0, false)
 	pc.update_state(1.0)
 
@@ -130,7 +130,7 @@ func _test_drop_gap_instant_death() -> Array[String]:
 func _test_drop_gap_velocity_and_noise_zeroed() -> Array[String]:
 	var failures: Array[String] = []
 	var pc: CharacterBody2D = _make_pc(0.0, 0.0)
-	pc.drop_gaps = [WIDE_GAP]
+	pc.drop_gaps.append(WIDE_GAP)
 	pc.apply_input(1.0, true)  # running — would normally set is_loud
 	pc.update_state(1.0)
 
@@ -154,7 +154,7 @@ func _test_drop_gap_velocity_and_noise_zeroed() -> Array[String]:
 func _test_adjacent_to_gap_no_death() -> Array[String]:
 	var failures: Array[String] = []
 	var pc: CharacterBody2D = _make_pc(152.0, 0.0)
-	pc.drop_gaps = [GAP_RECT]
+	pc.drop_gaps.append(GAP_RECT)
 	pc.apply_input(0.0, false)  # stationary
 	pc.update_state(0.016)
 
@@ -177,7 +177,7 @@ func _test_adjacent_to_gap_no_death() -> Array[String]:
 func _test_rapid_reversal_on_gap_still_dies() -> Array[String]:
 	var failures: Array[String] = []
 	var pc: CharacterBody2D = _make_pc(168.0, 0.0)
-	pc.drop_gaps = [GAP_RECT]
+	pc.drop_gaps.append(GAP_RECT)
 	pc.apply_input(-1.0, false)  # reversed: moving left, away from gap
 	pc.update_state(0.016)
 
@@ -196,21 +196,25 @@ func _test_rapid_reversal_on_gap_still_dies() -> Array[String]:
 ## Stepping into a connector area must emit the room_transition signal.
 ## Vertical room-to-room transition is connector-gated — never a general
 ## vertical movement capability (§11 §5).
+##
+## Signal capture uses an Array[String] (reference type) to avoid any
+## ambiguity around bool closure-capture semantics in headless GDScript.
 func _test_ladder_transition_signal_fired() -> Array[String]:
 	var failures: Array[String] = []
 	var pc: CharacterBody2D = _make_pc(50.0, 0.0)
 
-	var signal_fired: bool = false
-	pc.room_transition.connect(func(_id: String) -> void: signal_fired = true)
+	# Use an Array as mutable capture — arrays are reference types.
+	var captured: Array[String] = []
+	pc.room_transition.connect(func(id: String) -> void: captured.append(id))
 
 	# Connector area that contains the player's position (50, 0).
-	pc.room_connectors = [{
+	pc.room_connectors.append({
 		"area": Rect2(40.0, -10.0, 20.0, 20.0),
 		"target_room_id": "room_upper"
-	}]
+	})
 	pc.update_state(0.016)
 
-	if not signal_fired:
+	if captured.is_empty():
 		failures.append(
 			"ladder_signal: room_transition must be emitted when player centre is in connector area"
 		)
@@ -226,15 +230,16 @@ func _test_ladder_target_room_id_preserved() -> Array[String]:
 	var failures: Array[String] = []
 	var pc: CharacterBody2D = _make_pc(50.0, 0.0)
 
-	var received_id: String = ""
-	pc.room_transition.connect(func(id: String) -> void: received_id = id)
+	var captured: Array[String] = []
+	pc.room_transition.connect(func(id: String) -> void: captured.append(id))
 
-	pc.room_connectors = [{
+	pc.room_connectors.append({
 		"area": Rect2(40.0, -10.0, 20.0, 20.0),
 		"target_room_id": "basement_corridor"
-	}]
+	})
 	pc.update_state(0.016)
 
+	var received_id: String = captured[0] if not captured.is_empty() else ""
 	if received_id != "basement_corridor":
 		failures.append(
 			"ladder_room_id: expected 'basement_corridor', got '%s'" % received_id
