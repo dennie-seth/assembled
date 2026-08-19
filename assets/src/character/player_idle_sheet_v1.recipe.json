@@ -1,0 +1,18 @@
+{
+  "_comment": "Recipe for player idle sheet SDXL generation (T-0198 spike). Use with sd_xl_base_1.0.safetensors + soviet_brutalism_style_v1 LoRA. Target: 1152x1152 (x8 from 144x144 native, 3x3 grid of 48x48 cells). See MANUAL_GENERATION.md for Windows-side workflow.",
+  "name": "player_idle_sheet_v1",
+  "prompt": "pixel art sprite sheet, Soviet brutalist soldier standing idle, flat side-on orthographic view, 3x3 grid layout nine equal panels, single standing figure per panel, subtle breathing pose variation, upright standing pose, institutional concrete interior background, muted grey-green palette, value-separated silhouette, clean readable outline, no perspective, no vanishing point, no diagonal composition, no text, no UI",
+  "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple characters per panel, action pose, background clutter, bright colours, photorealistic",
+  "seed": 31415,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1152,
+  "height": 1152,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "sampler": "euler",
+  "scheduler": "normal",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.70,
+  "model_hash": null,
+  "_fallback": "If 8 GB VRAM strains, use width=1008, height=1008 (x7 from 144, i.e. 336x336 per cell)"
+}

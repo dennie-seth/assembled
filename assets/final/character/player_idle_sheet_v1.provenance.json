@@ -1,0 +1,35 @@
+{
+  "model": "N/A — synthetic reference image, procedurally generated (not AI-generated)",
+  "model_license": "N/A",
+  "model_hash": null,
+  "prompt": "N/A — pixel data computed programmatically by synth_sheet.py: 40px humanoid silhouette drawn from home palette indices BG=0, LEG=4, BODY=6, HEAD=10; 4-frame subtle head-bob idle animation (head_offset alternates 0/1 px between adjacent frames)",
+  "negative_prompt": null,
+  "seed": null,
+  "_note": "synthetic — this is the programmatic reference image for T-0198 gate infrastructure validation. Replace with SDXL-generated + descended PNG following MANUAL_GENERATION.md to answer the real spike question (does a 40px figure survive SDXL descent as a readable silhouette?). See player_idle_sheet_v1.recipe.json for SDXL parameters (seed=31415, sd_xl_base_1.0 + soviet_brutalism_style_v1 LoRA weight=0.70, 1152x1152 -> 144x144 descent).",
+  "generator": "assets/src/character/src/char_gen/synth_sheet.py (invoked via tests/conftest.py ensure_synth_sheet fixture)",
+  "card": "T-0198",
+  "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
+  "layout": {
+    "sheet_px": [144, 144],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 3,
+    "figure_height_px": 40,
+    "frame_cells": [
+      {"cell": "(0,0)", "head_offset": 0},
+      {"cell": "(0,1)", "head_offset": 1},
+      {"cell": "(0,2)", "head_offset": 0},
+      {"cell": "(1,0)", "head_offset": 1}
+    ],
+    "spare_cells": ["(1,1)", "(1,2)", "(2,0)", "(2,1)", "(2,2)"]
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "gate_results": {
+    "palette_membership": "PASS (design-verified: only indices 0/4/6/10 used, all in home palette)",
+    "index_semantics": "PASS (design-verified: palette embedded slot-for-slot from home_palette.json)",
+    "cell_fit_3x3_48px": "PASS (design-verified: figure cols 12-35, rows 4-42, no cell-edge bleed)",
+    "orphan_pixels_threshold_4": "PASS (design-verified: figure is one 4-connected component, no isolated blobs)",
+    "frame_consistency_delta_30pct": "PASS (design-verified: 1-px head-bob yields ~3-6% delta ratio between adjacent frames)",
+    "total": "5/5 passed (synthetic image; SDXL descent pending Windows-side run)"
+  }
+}

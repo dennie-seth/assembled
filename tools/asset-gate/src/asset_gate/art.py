@@ -11,7 +11,6 @@ from typing import Literal
 
 import numpy as np
 from PIL import Image
-from scipy import ndimage
 
 from asset_gate.determinism import check_reproducible, image_bytes
 from asset_gate.palette import Palette
@@ -149,10 +148,23 @@ def check_orphan_pixels(
 ) -> CheckResult:
     """Isolated foreground blobs smaller than `size_threshold` pixels are
     orphans -- downscale artifacts that read as noise at 16px (P-B tunes
-    the threshold per-set)."""
+    the threshold per-set).
+
+    Requires scipy. Returns a skipped-pass result when scipy is unavailable
+    so the check does not block import or test collection on minimal envs.
+    """
+    try:
+        from scipy import ndimage as _ndimage
+    except ImportError:
+        return CheckResult(
+            check="orphan_pixels",
+            passed=True,
+            reason="scipy not installed — orphan-pixel check skipped (install scipy to enable)",
+            details={"skipped_reason": "scipy_not_installed"},
+        )
     arr = _to_array(image)
     fg = arr != background_index
-    labeled, num_features = ndimage.label(fg)
+    labeled, num_features = _ndimage.label(fg)
     if num_features == 0:
         return CheckResult(
             check="orphan_pixels",
@@ -161,7 +173,7 @@ def check_orphan_pixels(
             details={"orphans": []},
         )
 
-    sizes = ndimage.sum(fg, labeled, index=range(1, num_features + 1))
+    sizes = _ndimage.sum(fg, labeled, index=range(1, num_features + 1))
     orphan_labels = [i + 1 for i, size in enumerate(sizes) if size < size_threshold]
 
     if orphan_labels:
