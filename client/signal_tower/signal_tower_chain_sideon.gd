@@ -1,4 +1,5 @@
 class_name SignalTowerChainSideon
+extends Node
 ## Seven-room Signal Tower chain rebuilt on the side-on runtime (§20-a3 / T-0194).
 ##
 ## Room graph (14 §10) on the side-on movement model (T-0187–T-0190):
