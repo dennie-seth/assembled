@@ -130,17 +130,20 @@ def test_atlas_determinism_passes_for_deterministic_packer():
 
 
 def test_atlas_determinism_fails_for_nondeterministic_packer():
-    import random
-
     from PIL import Image
 
     imgs = [make_indexed_image(np.full((2, 2), 1, dtype=np.uint8), TEST_PALETTE_HEX)]
 
+    _call_count = [0]
+
     def pack(images):
-        # Non-deterministic: embeds a random byte each call.
+        # Non-deterministic: increments a counter each call so the pixel value
+        # is guaranteed to differ between runs (avoids the 25% collision rate
+        # that `random.randint(...) % 4` produces, making the test flaky).
+        _call_count[0] += 1
         out = Image.new("P", (2, 2))
         out.putpalette(images[0].getpalette())
-        out.info["nonce"] = random.randint(0, 1_000_000)
+        out.info["nonce"] = _call_count[0]
         return out
 
     def produce_bytes():
