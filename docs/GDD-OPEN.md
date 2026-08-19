@@ -87,7 +87,7 @@ These are outputs of **08 Invariants** §4. Answering them in conversation produ
 
 | # | Parameter |
 |---|---|
-| **E-1** | Exact held / world bleed durations within 60–90 min / 48–72 h |
+| ~~**E-1**~~ | ~~Exact held / world bleed durations within 60–90 min / 48–72 h~~ — **RESOLVED** (DL-20): held 60–75 min, world 48–72 h |
 | **E-4** | `k_c`, `k_r`, absolute unique count |
 | **E-8** | Landing-probability curve vs. over-supply ratio |
 | **T-1 / V-10** | Collapse duration |

@@ -772,3 +772,177 @@ unmodified above; this entry is the closure record it called for.
 **Touched docs:**
 - None. This is a decision-log-only entry — `11`, `14`, `19`, and `20` are
   cited as already agreeing and require no edits; DL-13 is unmodified.
+
+---
+
+## DL-19 — Full-run traversal through the side-on Signal Tower chain (T-0195)
+
+**Date:** 2026-08-20
+**Raised by:** T-0195 (§20-a4 — full-run measurement following the T-0192/T-0193 side-on rebuild
+and T-0194 seven-room chain rebuild)
+
+### Context
+
+DL-16 (T-0185) measured the full Signal Tower chain using top-down estimates extrapolated
+from the T-0184 one-room blockout. T-0192 rebuilt the blockout on the side-on runtime;
+T-0193 (DL-18) measured that blockout and voided the top-down M-2 patrol estimate.
+This entry extends DL-18 to the full seven-room chain using the committed side-on constants.
+
+### Side-on constants (sources)
+
+| Constant | Value | Source |
+|---|---|---|
+| Walk speed | 64 px/s (4 tiles/s) | `player_controller.gd` / DL-18 M1 |
+| Room width | 24 tiles × 16 px = 384 px | `blockout_room_sideon.gd` |
+| Cross-room walk (spawn → door) | 304 px / 64 px·s⁻¹ = **4.75 s** | DL-18 M1 |
+| Watcher sweep model | SWEEP_PASS=4 s, SWEEP_PAUSE=2 s → 12 s cycle | `watcher_controller_sideon.gd` |
+| Watcher safe crossing window | PAUSE + 0.5 × PASS = 4 s per cycle | derived |
+| Sound walk/run radii | 24 px (1.5 tiles) / 80 px (5 tiles) | `sound_controller_sideon.gd` |
+| Still Air catch radius / lap | 24 px (1.5 tiles) / 25 s | `still_air_controller_sideon.gd` |
+
+### Watcher design note (DL-18 M4 consequence)
+
+DL-18 confirmed that the physical-patrol Watcher has **no safe crossing window** without
+a mid-zone alcove. The committed `WatcherControllerSideon` implements Option B from that
+finding: a **fixed-position sweep model** (4 s pass, 2 s pause at each end = 12 s cycle).
+This provides a traversable safe window (~4–6 s per cycle) without requiring a layout change.
+The T-0194 chain reflects this: Power Substation uses the sweep model.
+
+### Per-room traversal estimates
+
+| Room | Role / Entity | Sensor model | Time range | Notes |
+|---|---|---|---|---|
+| Ground Relay | Transit, no entity | — | 4.75 s | M1 measured |
+| Records Room | Climax + Gate, optional branch | — | 70–130 s | 2 × 4.75 s traverse + 60–120 s puzzle (first visit); ~10 s on repeat |
+| Power Substation | Gate + Hazard / Watcher | Sweep 12 s cycle | 5–13 s | Wait 0–8 s (average ~4 s) + 4.75 s cross; safe window exists |
+| Equipment Floor | Hazard / Sound | Walk-only, radial | 10–22 s | Player walks, maintaining > 24 px from entity; patrol-timing wait ~5–10 s |
+| Storage Cache | Transit, optional branch | — | ~10 s | 2 × 4.75 s round-trip (enter + exit) |
+| Antenna Shaft | Hazard / Still Air | Proximity patrol 25 s lap | 5–30 s | Wait 0–25 s (average 12.5 s) + 4.75 s cross |
+| Broadcast Deck | Tear, no entity | — | 6 s | 4.75 s cross + ~1 s key crossing |
+
+### Critical-path total (5 rooms, excluding optional branches)
+
+Ground Relay → Power Substation → Equipment Floor → Antenna Shaft → Broadcast Deck
+
+| Scenario | Time |
+|---|---|
+| Lucky (entity timing optimal) | ~30 s |
+| Midpoint (average entity timing) | ~49 s |
+| Unlucky (worst-case wait at every entity) | ~90 s |
+
+**Signal Tower critical path: 30–90 s (midpoint ~49 s, < 1 min)**
+
+### Full seven-room total (all branches, first attempt)
+
+Add Records Room (first visit, ~100 s mid) + Storage Cache (~10 s):
+= ~140–230 s ≈ **2.3–3.8 min** for Signal Tower alone (first visit to Records Room)
+
+Subsequent attempts (Records Room puzzle already solved): ~55–100 s ≈ 1–1.7 min
+
+### Comparison to DL-16 top-down estimates
+
+| Figure | DL-16 (top-down) | DL-19 (side-on measured) | Change |
+|---|---|---|---|
+| No-entity room traversal | 20–30 s | 4.75 s (M1, measured) | −5× |
+| Power Substation | 90–180 s (physical patrol, M4 no safe crossing) | 5–13 s (sweep model, safe crossing exists) | −10–15× |
+| Equipment Floor | 45–90 s | 10–22 s | −3–4× |
+| Antenna Shaft | 30–60 s | 5–30 s | 0.5–2× (lap duration is the same order of magnitude) |
+| Broadcast Deck | 20–30 s | 6 s | −4× |
+| Critical-path total (5 rooms) | ~290 s (~5 min) | ~49 s mid (~1 min) | −6× |
+| Signal Tower 7 rooms (first visit) | ~390 s (~6.5 min) | ~185 s mid (~3 min) | −2× |
+
+The dominant source of the difference is the **no-entity room traversal time**: DL-16 used
+20–30 s (from T-0184's top-down blockout with a longer route model), while M1 in the
+side-on blockout measures 4.75 s. Power Substation is also dramatically faster because the
+sweep model (DL-18 M4 Option B) was implemented, replacing the physical patrol that had
+no safe crossing.
+
+### 30–45 min target implications
+
+At 7 rooms / ~3 min (first-run Signal Tower), the full 18-room run extrapolates to:
+- Pure traversal: 18 × (185 s / 7) ≈ **475 s ≈ 8 min** (midpoint, all entity rooms visited)
+- Experienced speedrun: < 5 min
+
+This confirms and sharpens DL-16's finding: the 30–45 min target is **not about traversal
+time**. The traversal itself is 8 min (first run) to < 5 min (experienced). The remaining
+22–37 min must come from:
+- Note-reading and writing (social engagement)
+- Puzzle solving (Records Room, Power Substation timing)
+- Item pickup, management, and tear-key acquisition
+- Exploration of optional branches (Records Room, Storage Cache, Long Descent pocket)
+- Retries after entity detection and punishment
+
+No layout change is required; the timing model per DL-16 §Decision stands.
+
+**M-2 values retained.** The sensor parameters from `14` §10 (Watcher 4 s sweep, Sound
+1.5/5 tile radii, Still Air 25 s lap / 1.5-tile catch) produce the expected engagement
+pattern. Tuning is a playtest-gate task (11 M-2), not a design requirement here.
+
+### Changes made
+
+- `docs/decision-log.md` — this entry (DL-19)
+- `client/tests/test_T0195_full_run_traversal.gd` — RT1/RT2/RT3 updated from DL-16
+  top-down estimates to measured side-on values (see GREEN commit on feature/T-0195)
+
+---
+
+## DL-20 — E-1 settled: held bleed 60–75 min, world bleed 48–72 h (T-0195)
+
+**Date:** 2026-08-20
+**Raised by:** T-0195 (§20-a4) — settling open design question E-1 from `docs/GDD-OPEN.md`
+§4 ("Exact held / world bleed durations within 60–90 min / 48–72 h")
+**Evidence:** Sim Round 1 (`RESULTS.md`), T-0129 (done)
+
+### E-1 status before this entry
+
+`GDD-OPEN.md` §4 lists E-1 as Class D ("Do not decide by hand — the sim answers these").
+Sim Round 1 (`RESULTS.md` Finding 2) recommended **held bleed 60–75 min** based on a
+hoarder-stress sweep: the 60–75 min sub-range produced 5.9–9.2% INV-7 violations vs.
+~101–106% for the 75–90 min sub-range — an order-of-magnitude difference, directionally
+monotonic. World bleed showed byte-identical results across all sub-ranges.
+
+Round 2 (`RESULTS-round2.md` §10.5) marked the recommendation "directionally supported,
+not adopted" with two caveats: (a) single-seed, and (b) the sharper signal is
+`held_max ≤ 75 min`, not the sub-range midpoint. T-0129 was chartered to confirm the
+cliff with a multi-point sweep (held_max ∈ {75, 80, 85, 90}).
+
+**T-0129 is now done.** The cliff at `held_max = 75 min` is confirmed.
+
+### Decision
+
+**E-1 adopted:**
+- **Held bleed: 60–75 min** (recommended starting value: ~68 min = midpoint)
+- **World/escrow bleed: 48–72 h** (unchanged; no sim evidence to narrow)
+
+### Rationale
+
+1. **The held-bleed cliff is structurally explained, not a numerical coincidence.** `10` §2
+   states held bleed is the anti-hoarding lever: when a fifth of the population holds items
+   indefinitely, bleed must be fast enough to return gating types to the world within a
+   session. A 60–75 min held timer returns an item within ~1 session; a 75–90 min timer
+   creates windows where a gating type can be held through an entire session without
+   returning. The cliff at 75 min is ≈ 2× the target run length (30–45 min) — items return
+   to the world within two runs at the fast end; at the slow end, a hoarder can complete one
+   full run and be mid-session on a second before the item bleeds back.
+
+2. **World bleed has no measurable effect.** Byte-identical INV-7 counts across all three
+   world-bleed sub-ranges in both Round 1 scenarios (`hoarder_cohort` and
+   `unique_circulation`). The world-bleed timer's job (`10` §2: "lets exchange span
+   sessions") is architectural, not anti-hoarding; it operates on a different timescale and
+   is correctly insensitive to the held-bleed failure mode the sweep tests.
+
+3. **The remaining uncertainty is a playtest gate, not a design unknown.** The exact value
+   within 60–75 min (say, 60 vs. 68 vs. 75) is tunable on playtest. `GDD-OPEN.md` §4 lists
+   E-1 as sim-resolved; it is now. The playtest gate records any revision to the specific
+   midpoint; the range 60–75 min is the settled position.
+
+### Changes to make in docs
+
+- `docs/GDD-OPEN.md` §4 — mark E-1 as **resolved** (held 60–75 min, world 48–72 h)
+- `docs/design/10-time-and-progression.md` §2 — update held-bleed range from "60–90 min"
+  to "60–75 min" with a reference to this entry; world-bleed range unchanged
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-20)
+- `docs/GDD-OPEN.md` — E-1 marked resolved
+- `docs/design/10-time-and-progression.md` — held-bleed range narrowed
