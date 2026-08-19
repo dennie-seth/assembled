@@ -10,20 +10,19 @@ extends SceneTree
 ## Constants sourced from: watcher_controller_sideon.gd, sound_controller_sideon.gd,
 ##                         still_air_controller_sideon.gd, test_T0193_blockout_measures.gd
 ##
-## INITIALLY FAILING (RED) — assertions use DL-16 top-down estimates as starting
-## hypotheses. The three failing assertions are listed below; each is voided by the
-## measurement and replaced with the correct value in the GREEN commit.
+## RED → GREEN progression (per conduct.md TDD):
 ##
-##   RT1: Cross-room walk time asserted in [15, 35] s (DL-16 no-entity: "20–30 s").
-##        Fails because M1 (DL-18) = 4.75 s — side-on walk is 5× faster than the
-##        top-down estimate.
+##   RT1 (was failing): Cross-room walk asserted in [15, 35] s (DL-16 no-entity "20–30 s")
+##        → FAILED because M1 (DL-18) = 4.75 s (side-on is 5× faster than top-down).
+##        Updated to [3.5, 7.0] s (DL-19 measured).
 ##
-##   RT2: Still Air max avoidance asserted ≥ 30 s (DL-16 Antenna Shaft: "30–60 s").
-##        Fails because StillAirControllerSideon.LAP_SEC = 25 s → maximum wait is
-##        one full lap (25 s) + cross-room (4.75 s) = 29.75 s < 30 s.
+##   RT2 (was failing): Still Air max avoidance asserted ≥ 30 s (DL-16 floor)
+##        → FAILED because LAP_SEC + cross = 25 + 4.75 = 29.75 s < 30 s.
+##        Updated to max ≤ 32.0 s (DL-19 measured).
 ##
-##   RT3: Critical-path total asserted ≥ 200 s (DL-16 estimated ~290 s for 5 rooms).
-##        Fails because side-on constants give a critical-path midpoint of ~49 s.
+##   RT3 (was failing): Critical-path total asserted ≥ 200 s (DL-16 ~290 s)
+##        → FAILED because side-on midpoint is ~49 s.
+##        Updated to [30, 120] s (DL-19 measured range).
 ##
 ## Run headless (from client/):
 ##   cd client && timeout 600 godot --headless \
@@ -72,58 +71,74 @@ func _init() -> void:
 		quit(1)
 
 
-## ── RT1: Cross-room walk time — INITIALLY FAILING ────────────────────────────
-## DL-16 top-down estimate: no-entity room traversal 20–30 s.
-## Assertion uses the DL-16 range [15, 35] s — FAILS because M1 = 4.75 s.
-## Will be updated to [3.5, 7.0] s after measurement.
+## ── RT1: Cross-room walk time (DL-19 measured value) ────────────────────────
+## DL-16 top-down estimate was "20–30 s" — VOIDED by M1 (DL-18) = 4.75 s.
+## RED assertion was [15, 35] s; fails because 4.75 < 15.
+## DL-19 records the measured value; assertion updated to [3.5, 7.0] s.
 
 func _test_rt1_cross_room_walk() -> Array[String]:
 	var failures: Array[String] = []
 	var walk_time_s: float = CROSS_ROOM_DIST_PX / WALK_SPEED_PX_S  ## 4.75 s
-	## ── DL-16 top-down estimate (FAILING — voided by M1 = 4.75 s) ──────────────
-	if walk_time_s < 15.0 or walk_time_s > 35.0:
+	## ── MEASURED VALUE (DL-19, from DL-18 M1): 4.75 s → assert [3.5, 7.0] s ───
+	if walk_time_s < 3.5 or walk_time_s > 7.0:
 		failures.append(
-			"rt1_cross_room_walk: DL-16 estimated 15–35 s, measured %.2f s — "
-			+ "update to measured [3.5, 7.0] s range after DL-19" % walk_time_s
+			"rt1_cross_room_walk: expected 3.5–7.0 s (DL-19 measured 4.75 s), got %.2f s" % walk_time_s
 		)
 	return failures
 
 
-## ── RT2: Still Air max avoidance time — INITIALLY FAILING ────────────────────
+## ── RT2: Still Air max avoidance time (DL-19 measured value) ────────────────
 ## DL-16 top-down estimate: Antenna Shaft 30–60 s.
-## Assertion checks max avoidance ≥ 30 s — FAILS because LAP_SEC + cross = 29.75 s.
-## Will be updated to [4.75, 32.0] s after measurement.
+## RED assertion checked max ≥ 30 s; fails because LAP_SEC + cross = 29.75 s < 30 s.
+## DL-19 records the measured range; assertion updated to max ≤ 32.0 s.
 
 func _test_rt2_still_air_avoidance() -> Array[String]:
 	var failures: Array[String] = []
 	var cross_time_s: float = CROSS_ROOM_DIST_PX / WALK_SPEED_PX_S
-	var max_total_s:  float = STILL_AIR_LAP_SEC + cross_time_s  ## 25 + 4.75 = 29.75 s
-	## ── DL-16 top-down estimate (FAILING — max = 29.75 s < 30 s floor) ─────────
-	if max_total_s < 30.0:
+	var min_total_s:  float = cross_time_s                       ## lucky: entity at far end = 4.75 s
+	var max_total_s:  float = STILL_AIR_LAP_SEC + cross_time_s  ## unlucky: full lap + cross = 29.75 s
+	## ── MEASURED VALUE (DL-19): range [4.75, 29.75] s → assert ≤ 32.0 s ceiling ──
+	if min_total_s < 3.5:
 		failures.append(
-			"rt2_still_air: DL-16 estimated floor ≥ 30 s; LAP_SEC + cross = %.2f s — "
-			+ "update to [4.75, 32.0] s range after DL-19" % max_total_s
+			"rt2_still_air: min total %.2f s below floor 3.5 s (cross-room walk)" % min_total_s
+		)
+	if max_total_s > 32.0:
+		failures.append(
+			"rt2_still_air: max total %.2f s exceeds 32.0 s ceiling (LAP_SEC + cross)" % max_total_s
 		)
 	return failures
 
 
-## ── RT3: Critical-path total — INITIALLY FAILING ─────────────────────────────
+## ── RT3: Critical-path total (DL-19 measured range) ─────────────────────────
 ## DL-16 top-down estimate: ~290 s for the 5-room critical path.
-## Assertion checks midpoint ≥ 200 s — FAILS because side-on midpoint is ~49 s.
-## Will be updated to [30, 120] s after measurement.
+## RED assertion checked midpoint ≥ 200 s; fails because side-on midpoint ~49 s.
+## DL-19 records the measured range [30, 90] s; assertion updated to [30, 120] s.
+##
+## Midpoint derivation (DL-19):
+##   Ground Relay   (no entity, M1)         :  4.75 s
+##   Power Sub.     (sweep: avg wait ~4 s)  :  8.75 s
+##   Equipment Floor (sound, walk-only)     : 15.0  s (mid estimate)
+##   Antenna Shaft  (still air: avg wait 12.5 s) : 17.25 s
+##   Broadcast Deck (no entity + key)       :  5.75 s
+##   ─────────────────────────────────────────────────
+##   Total midpoint                         : ~51.5 s
 
 func _test_rt3_critical_path_total() -> Array[String]:
 	var failures: Array[String] = []
 
 	var ground_relay_s:   float = CROSS_ROOM_DIST_PX / WALK_SPEED_PX_S               ## 4.75 s
-	var broadcast_deck_s: float = CROSS_ROOM_DIST_PX / WALK_SPEED_PX_S + 1.0        ## 5.75 s
+	var broadcast_deck_s: float = CROSS_ROOM_DIST_PX / WALK_SPEED_PX_S + 1.0        ## 5.75 s (+key)
 
+	## Power Substation — sweep model, 12 s cycle, ~4-6 s safe window.
 	var sweep_cycle_s:       float = 2.0 * (WATCHER_SWEEP_PASS_SEC + WATCHER_SWEEP_PAUSE_SEC)
 	var safe_window_s:       float = WATCHER_SWEEP_PAUSE_SEC + WATCHER_SWEEP_PASS_SEC * 0.5
 	var watcher_avg_wait_s:  float = 0.5 * (sweep_cycle_s - safe_window_s)
 	var power_sub_avg_s:     float = watcher_avg_wait_s + CROSS_ROOM_DIST_PX / WALK_SPEED_PX_S
 
+	## Equipment Floor — sound, walk-only, mid estimate from DL-19.
 	var equip_floor_mid_s: float = 15.0
+
+	## Antenna Shaft — still air, average wait = LAP_SEC / 2.
 	var antenna_shaft_avg_s: float = STILL_AIR_LAP_SEC * 0.5 + CROSS_ROOM_DIST_PX / WALK_SPEED_PX_S
 
 	var critical_path_mid_s: float = (
@@ -131,11 +146,14 @@ func _test_rt3_critical_path_total() -> Array[String]:
 		antenna_shaft_avg_s + broadcast_deck_s
 	)
 
-	## ── DL-16 top-down estimate (FAILING — midpoint ~49 s, not ≥ 200 s) ────────
-	if critical_path_mid_s < 200.0:
+	## ── MEASURED VALUE (DL-19): midpoint ~49–52 s → assert [30, 120] s ─────────
+	if critical_path_mid_s < 30.0:
 		failures.append(
-			"rt3_critical_path: DL-16 estimated ~290 s; measured midpoint %.1f s — "
-			+ "update to [30, 120] s range after DL-19" % critical_path_mid_s
+			"rt3_critical_path: midpoint %.1f s below 30 s floor (check constants)" % critical_path_mid_s
+		)
+	if critical_path_mid_s > 120.0:
+		failures.append(
+			"rt3_critical_path: midpoint %.1f s exceeds 120 s ceiling (check entity estimates)" % critical_path_mid_s
 		)
 	return failures
 

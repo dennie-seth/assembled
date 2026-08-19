@@ -14,7 +14,7 @@ The design has **four nested timers**. They interact, they must be tuned against
 collapse        weeks         identity     -> meta fail state
   unlock decay  min -> long   (variant,tag)-> re-exploration pressure
     escrow      48-72 h       anchored item-> social latency buffer
-      held      60-90 min     inventory    -> anti-hoarding
+      held      60-75 min     inventory    -> anti-hoarding
 ```
 
 ---
@@ -23,7 +23,7 @@ collapse        weeks         identity     -> meta fail state
 
 | Clock | Scope | Duration | Job |
 |---|---|---|---|
-| **Held bleed** | item in inventory | **60–90 min** (≈2× run) | Kills hoarding, forces circulation |
+| **Held bleed** | item in inventory | **60–75 min** (≈2× run; sim-settled, DL-20) | Kills hoarding, forces circulation |
 | **World / escrow** | item at an anchor | **48–72 h** | Lets exchange span sessions |
 | **Unlock decay** | `(variant_id, tag)` | **minutes → long** (§3) | Keeps variants worth re-exploring |
 | **Collapse** | identity | **~2–4 weeks nominal, ~1.5× for first universe** (V-10) | Ends the universe; the losing ending |
@@ -34,11 +34,17 @@ At 90 minutes, escrow would be dead on arrival — nobody can find an offering, 
 
 Fiction absorbs it without strain: *a thing anchored to a place is more anchored than a thing carried by someone whose universe is ending.*
 
-### Held bleed at 60–90 min
+### Held bleed at 60–75 min (sim-settled, DL-20)
 
 Short enough that a long hold inside a single session bites, so bleed contributes real in-run tension. Nothing survives absence: whatever you carry at logoff is gone before you return.
 
-> **Correction to `07` §5 (v1–v2).** Earlier drafts claimed bleed makes holding a rare item "tense rather than safe" while implying multi-day durations. At multi-day scale that was false. At 60–90 min it is true. Death still carries the moment-to-moment tension; bleed carries the *session* tension.
+The 60–75 min range was settled by simulation (Round 1 `RESULTS.md` Finding 2, confirmed
+by T-0129's multi-point sweep). The cliff at `held_max = 75 min` tracks run length: items
+return to the world within ~2 runs at the fast end; beyond 75 min a hoarder can hold through
+an entire session without the item bleeding back. Starting value: ~68 min (midpoint); playtest
+is the tuning gate for the exact value within the range. See DL-20.
+
+> **Correction to `07` §5 (v1–v2).** Earlier drafts claimed bleed makes holding a rare item "tense rather than safe" while implying multi-day durations. At multi-day scale that was false. At 60–75 min it is true. Death still carries the moment-to-moment tension; bleed carries the *session* tension.
 
 ---
 
