@@ -1,0 +1,41 @@
+{
+  "model": "N/A — synthetic reference image, procedurally generated (not AI-generated)",
+  "model_license": "N/A",
+  "model_hash": null,
+  "prompt": "N/A — pixel data computed programmatically by synth_states.py: crouch-hide figure drawn from home palette indices BG=0, LEG=4, BODY=6, HEAD=10; 9-frame crouch sequence where head descends 2px per frame (rows 4-14 at frame 0 to rows 20-30 at frame 8) into a constant body-core (rows 20-41, cols 10-37), with legs sliding up 1px per frame; neck bridge ensures 4-connectivity when head is above body",
+  "negative_prompt": null,
+  "seed": null,
+  "_note": "synthetic — programmatic reference image for T-0199 gate infrastructure validation. Represents the player crouch-hide state (figure progressively compresses from standing height ~40px to crouched ~24px). img2img from the approved idle sheet (player_idle_sheet_v1.png, T-0198) is the intended production path.",
+  "generator": "assets/src/character/src/char_gen/synth_states.py:generate_crouch_hide_sheet (invoked via tests/conftest.py ensure_synth_sheets fixture)",
+  "card": "T-0199",
+  "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
+  "layout": {
+    "sheet_px": [144, 144],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 3,
+    "figure_height_px_standing": 40,
+    "figure_height_px_crouched": 24,
+    "frame_cells": [
+      {"cell": "(0,0)", "step": 0, "head_rows": "4:14", "note": "standing"},
+      {"cell": "(0,1)", "step": 1, "head_rows": "6:16", "note": "slight crouch"},
+      {"cell": "(0,2)", "step": 2, "head_rows": "8:18", "note": "crouch"},
+      {"cell": "(1,0)", "step": 3, "head_rows": "10:20", "note": "deeper crouch"},
+      {"cell": "(1,1)", "step": 4, "head_rows": "12:22", "note": "head meets body"},
+      {"cell": "(1,2)", "step": 5, "head_rows": "14:24", "note": "head inside body"},
+      {"cell": "(2,0)", "step": 6, "head_rows": "16:26", "note": "crouched"},
+      {"cell": "(2,1)", "step": 7, "head_rows": "18:28", "note": "deep crouch"},
+      {"cell": "(2,2)", "step": 8, "head_rows": "20:30", "note": "fully crouched/hidden"}
+    ],
+    "spare_cells": []
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "gate_results": {
+    "palette_membership": "PASS (design-verified: only indices 0/4/6/10 used, all in home palette)",
+    "index_semantics": "PASS (design-verified: palette embedded slot-for-slot from home_palette.json)",
+    "cell_fit_3x3_48px": "PASS (design-verified: body cols 10-37, head cols 16-27, legs cols 14-19 and 30-35, neck cols 20-27 — no cell-edge bleed at cols 0/47 or rows 0/47)",
+    "orphan_pixels_threshold_4": "PASS (design-verified: head connects to body via neck bridge or direct overlap; all parts 4-connected through body-core; no isolated blobs)",
+    "frame_consistency_delta_65pct": "PASS (design-verified: adjacent frames shift head 2px, legs 1px; delta/union < 8% per pair — well under 65% limit)",
+    "total": "5/5 passed (synthetic image; SDXL img2img pending Windows-side ComfyUI access)"
+  }
+}

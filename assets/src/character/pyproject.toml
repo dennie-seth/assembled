@@ -16,6 +16,9 @@ dev = [
 
 [project.scripts]
 generate-synth-idle-sheet = "char_gen.synth_sheet:main"
+generate-synth-move-sheet = "char_gen.synth_states:main_move"
+generate-synth-crouch-hide-sheet = "char_gen.synth_states:main_crouch_hide"
+generate-synth-die-sheet = "char_gen.synth_states:main_die"
 
 [build-system]
 requires = ["setuptools>=68"]

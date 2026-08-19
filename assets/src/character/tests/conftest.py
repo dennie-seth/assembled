@@ -1,16 +1,16 @@
-"""Session-scoped conftest: auto-generates the synthetic idle sheet before gate tests run.
+"""Session-scoped conftest: auto-generates synthetic sheets before gate tests run.
 
-The synthetic sheet is a programmatic reference image — not an AI-generated asset.
-It exists to validate that the T-0102 gate infrastructure works correctly at the
-target format (144×144, mode P, 3×3 grid of 48×48 cells, 40px humanoid figure).
+The synthetic sheets are programmatic reference images — not AI-generated assets.
+They exist to validate that the T-0102 gate infrastructure works correctly at the
+target format (mode P, 48×48 cells, 40px humanoid figure).
 
-Running `pytest` produces `assets/final/character/player_idle_sheet_v1.png` if it
-doesn't already exist, so the gate tests are self-contained for the spike.
-The SDXL-generated sheet (see MANUAL_GENERATION.md) replaces this file once
-the Windows-side generation run is complete.
+  idle:        144×144, 3×3 grid, 4 frames  (T-0198)
+  move:        144×192, 3×4 grid, 10 frames (T-0199)
+  crouch-hide: 144×144, 3×3 grid, 9 frames  (T-0199)
+  die:         144×144, 3×3 grid, 9 frames  (T-0199)
 
 Also adds tools/asset-gate/src to sys.path at module level so that
-`pytest.importorskip("asset_gate.art")` in the test module resolves correctly
+`pytest.importorskip("asset_gate.art")` in the test modules resolves correctly
 without requiring a separate pip install step.
 """
 
@@ -33,11 +33,13 @@ from PIL import Image  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
-OUT_PATH = REPO_ROOT / "assets" / "final" / "character" / "player_idle_sheet_v1.png"
+CHAR_OUT = REPO_ROOT / "assets" / "final" / "character"
+IDLE_PATH = CHAR_OUT / "player_idle_sheet_v1.png"
+MOVE_PATH = CHAR_OUT / "player_move_sheet_v1.png"
+CROUCH_PATH = CHAR_OUT / "player_crouch_hide_sheet_v1.png"
+DIE_PATH = CHAR_OUT / "player_die_sheet_v1.png"
 
 CELL_SIZE = 48
-COLS = 3
-ROWS = 3
 BG_IDX = 0
 LEG_IDX = 4
 BODY_IDX = 6
@@ -54,7 +56,21 @@ def _load_palette(path: Path) -> list[tuple[int, int, int]]:
     return result
 
 
-def _draw_figure(cell_arr: np.ndarray, head_offset: int = 0) -> None:
+def _to_pil(arr: np.ndarray, palette: list[tuple[int, int, int]]) -> Image.Image:
+    img = Image.fromarray(arr, mode="P")
+    flat = [0] * (256 * 3)
+    for i, (r, g, b) in enumerate(palette):
+        flat[3 * i], flat[3 * i + 1], flat[3 * i + 2] = r, g, b
+    img.putpalette(flat)
+    return img
+
+
+# ---------------------------------------------------------------------------
+# Idle sheet (T-0198) — unchanged from original conftest
+# ---------------------------------------------------------------------------
+
+
+def _draw_idle_figure(cell_arr: np.ndarray, head_offset: int = 0) -> None:
     cell_arr[:] = BG_IDX
     hr0, hr1 = 4 + head_offset, 12 + head_offset
     cell_arr[hr0:hr1, 18:30] = HEAD_IDX
@@ -67,30 +83,143 @@ def _draw_figure(cell_arr: np.ndarray, head_offset: int = 0) -> None:
     cell_arr[29:43, 26:31] = LEG_IDX
 
 
-def _generate_sheet() -> None:
+def _generate_idle_sheet() -> None:
     palette = _load_palette(PALETTE_PATH)
-    sheet = np.zeros((ROWS * CELL_SIZE, COLS * CELL_SIZE), dtype=np.uint8)
+    sheet = np.zeros((3 * CELL_SIZE, 3 * CELL_SIZE), dtype=np.uint8)
     for sr, sc, ho in [(0, 0, 0), (0, 1, 1), (0, 2, 0), (1, 0, 1)]:
         y0, x0 = sr * CELL_SIZE, sc * CELL_SIZE
-        _draw_figure(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], head_offset=ho)
-    img = Image.fromarray(sheet, mode="P")
-    flat = [0] * (256 * 3)
-    for i, (r, g, b) in enumerate(palette):
-        flat[3 * i], flat[3 * i + 1], flat[3 * i + 2] = r, g, b
-    img.putpalette(flat)
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    img.save(OUT_PATH)
+        _draw_idle_figure(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], head_offset=ho)
+    CHAR_OUT.mkdir(parents=True, exist_ok=True)
+    _to_pil(sheet, palette).save(IDLE_PATH)
 
 
-# Generate the synthetic sheet at conftest import time so the PNG exists
-# even when test collection is cut short (e.g. pytest.importorskip skips
-# the test module before any fixture has a chance to run).
-if not OUT_PATH.exists():
-    _generate_sheet()
+# ---------------------------------------------------------------------------
+# Move sheet (T-0199) — 3×4 grid, 10 walk-cycle frames
+# ---------------------------------------------------------------------------
+
+_WALK_OFFSETS: list[tuple[int, int]] = [
+    (0, 0), (-2, 2), (-4, 4), (-2, 2), (0, 0),
+    (2, -2), (4, -4), (2, -2), (0, 0), (-2, 2),
+]
+
+
+def _draw_walk_frame(cell_arr: np.ndarray, l_off: int, r_off: int) -> None:
+    cell_arr[:] = BG_IDX
+    cell_arr[13:42, 8:42] = BODY_IDX
+    cell_arr[4:14, 16:28] = HEAD_IDX
+    cell_arr[13:23, 2:10] = BODY_IDX
+    cell_arr[13:23, 40:46] = BODY_IDX
+    ll_c0 = 14 + l_off
+    cell_arr[29:35, ll_c0 : ll_c0 + 6] = LEG_IDX
+    rl_c0 = 30 + r_off
+    cell_arr[29:35, rl_c0 : rl_c0 + 6] = LEG_IDX
+
+
+def _generate_move_sheet() -> None:
+    palette = _load_palette(PALETTE_PATH)
+    sheet = np.zeros((4 * CELL_SIZE, 3 * CELL_SIZE), dtype=np.uint8)
+    frame_cells = [
+        (0, 0), (0, 1), (0, 2),
+        (1, 0), (1, 1), (1, 2),
+        (2, 0), (2, 1), (2, 2),
+        (3, 0),
+    ]
+    for idx, (sr, sc) in enumerate(frame_cells):
+        y0, x0 = sr * CELL_SIZE, sc * CELL_SIZE
+        l_off, r_off = _WALK_OFFSETS[idx]
+        _draw_walk_frame(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], l_off, r_off)
+    CHAR_OUT.mkdir(parents=True, exist_ok=True)
+    _to_pil(sheet, palette).save(MOVE_PATH)
+
+
+# ---------------------------------------------------------------------------
+# Crouch-hide sheet (T-0199) — 3×3 grid, 9 frames
+# ---------------------------------------------------------------------------
+
+
+def _draw_crouch_frame(cell_arr: np.ndarray, step: int) -> None:
+    cell_arr[:] = BG_IDX
+    cell_arr[20:42, 10:38] = BODY_IDX
+    head_top = 4 + 2 * step
+    head_bot = head_top + 10
+    cell_arr[head_top:head_bot, 16:28] = HEAD_IDX
+    if head_bot <= 20:
+        neck_top = head_bot - 1
+        if neck_top < 21:
+            cell_arr[neck_top:21, 20:28] = BODY_IDX
+    leg_top = 40 - step
+    leg_bot = min(leg_top + 5, 46)
+    if leg_top < leg_bot:
+        cell_arr[leg_top:leg_bot, 14:20] = LEG_IDX
+        cell_arr[leg_top:leg_bot, 30:36] = LEG_IDX
+
+
+def _generate_crouch_hide_sheet() -> None:
+    palette = _load_palette(PALETTE_PATH)
+    sheet = np.zeros((3 * CELL_SIZE, 3 * CELL_SIZE), dtype=np.uint8)
+    step = 0
+    for sr in range(3):
+        for sc in range(3):
+            y0, x0 = sr * CELL_SIZE, sc * CELL_SIZE
+            _draw_crouch_frame(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], step)
+            step += 1
+    CHAR_OUT.mkdir(parents=True, exist_ok=True)
+    _to_pil(sheet, palette).save(CROUCH_PATH)
+
+
+# ---------------------------------------------------------------------------
+# Die sheet (T-0199) — 3×3 grid, 9 frames
+# ---------------------------------------------------------------------------
+
+
+def _draw_die_frame(cell_arr: np.ndarray, step: int) -> None:
+    cell_arr[:] = BG_IDX
+    cell_arr[13:42, 8:40] = BODY_IDX
+    head_r0 = 4 + 2 * step
+    head_c0 = 16 + 2 * step
+    cell_arr[head_r0 : head_r0 + 10, head_c0 : head_c0 + 12] = HEAD_IDX
+    leg_r0 = 41 - step
+    leg_r1 = min(leg_r0 + 5, 46)
+    if leg_r0 < leg_r1:
+        cell_arr[leg_r0:leg_r1, 14:20] = LEG_IDX
+        cell_arr[leg_r0:leg_r1, 30:36] = LEG_IDX
+
+
+def _generate_die_sheet() -> None:
+    palette = _load_palette(PALETTE_PATH)
+    sheet = np.zeros((3 * CELL_SIZE, 3 * CELL_SIZE), dtype=np.uint8)
+    step = 0
+    for sr in range(3):
+        for sc in range(3):
+            y0, x0 = sr * CELL_SIZE, sc * CELL_SIZE
+            _draw_die_frame(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], step)
+            step += 1
+    CHAR_OUT.mkdir(parents=True, exist_ok=True)
+    _to_pil(sheet, palette).save(DIE_PATH)
+
+
+# ---------------------------------------------------------------------------
+# Auto-generate missing sheets at import time
+# ---------------------------------------------------------------------------
+
+if not IDLE_PATH.exists():
+    _generate_idle_sheet()
+if not MOVE_PATH.exists():
+    _generate_move_sheet()
+if not CROUCH_PATH.exists():
+    _generate_crouch_hide_sheet()
+if not DIE_PATH.exists():
+    _generate_die_sheet()
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ensure_synth_sheet() -> None:
-    """Re-generate the synthetic idle sheet if somehow absent at run time."""
-    if not OUT_PATH.exists():  # pragma: no cover
-        _generate_sheet()
+def ensure_synth_sheets() -> None:
+    """Re-generate synthetic sheets if somehow absent at run time."""
+    if not IDLE_PATH.exists():  # pragma: no cover
+        _generate_idle_sheet()
+    if not MOVE_PATH.exists():  # pragma: no cover
+        _generate_move_sheet()
+    if not CROUCH_PATH.exists():  # pragma: no cover
+        _generate_crouch_hide_sheet()
+    if not DIE_PATH.exists():  # pragma: no cover
+        _generate_die_sheet()
