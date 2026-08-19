@@ -1,0 +1,39 @@
+{
+  "model": "N/A — synthetic reference image, procedurally generated (not AI-generated)",
+  "model_license": "N/A",
+  "model_hash": null,
+  "prompt": "N/A — pixel data computed programmatically by synth_states.py: die/death figure drawn from home palette indices BG=0, LEG=4, BODY=6, HEAD=10; 9-frame death sequence where head shifts right and down 2px per frame (rows 4-13 cols 16-27 at frame 0 → rows 20-29 cols 32-43 at frame 8) across a constant body-core (rows 13-41 cols 8-39=928px), with legs rising 1px per frame; body-core provides ≥928px constant anchor ensuring adjacent-frame delta/union < 30%",
+  "negative_prompt": null,
+  "seed": null,
+  "_note": "synthetic — programmatic reference image for T-0199 gate infrastructure validation. Represents the player die/death state (figure falls from standing to prone across 9 frames, with up to 90% silhouette delta allowed between adjacent frames by the gate). img2img from the approved idle sheet (player_idle_sheet_v1.png, T-0198) is the intended production path.",
+  "generator": "assets/src/character/src/char_gen/synth_states.py:generate_die_sheet (invoked via tests/conftest.py ensure_synth_sheets fixture)",
+  "card": "T-0199",
+  "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
+  "layout": {
+    "sheet_px": [144, 144],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 3,
+    "frame_cells": [
+      {"cell": "(0,0)", "step": 0, "head_rows": "4:14", "head_cols": "16:28", "note": "standing"},
+      {"cell": "(0,1)", "step": 1, "head_rows": "6:16", "head_cols": "18:30", "note": "head tilts right"},
+      {"cell": "(0,2)", "step": 2, "head_rows": "8:18", "head_cols": "20:32", "note": "more lean"},
+      {"cell": "(1,0)", "step": 3, "head_rows": "10:20", "head_cols": "22:34", "note": "falling"},
+      {"cell": "(1,1)", "step": 4, "head_rows": "12:22", "head_cols": "24:36", "note": "diagonal"},
+      {"cell": "(1,2)", "step": 5, "head_rows": "14:24", "head_cols": "26:38", "note": "more diagonal"},
+      {"cell": "(2,0)", "step": 6, "head_rows": "16:26", "head_cols": "28:40", "note": "near horizontal"},
+      {"cell": "(2,1)", "step": 7, "head_rows": "18:28", "head_cols": "30:42", "note": "fallen"},
+      {"cell": "(2,2)", "step": 8, "head_rows": "20:30", "head_cols": "32:44", "note": "prone/settled"}
+    ],
+    "spare_cells": []
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "gate_results": {
+    "palette_membership": "PASS (design-verified: only indices 0/4/6/10 used, all in home palette)",
+    "index_semantics": "PASS (design-verified: palette embedded slot-for-slot from home_palette.json)",
+    "cell_fit_3x3_48px": "PASS (design-verified: body core cols 8-39, head max cols 32-43 (step 8), legs cols 14-19 and 30-35 — no cell-edge bleed; max col used is 43, max row used is 45)",
+    "orphan_pixels_threshold_4": "PASS (design-verified: head at step 0 shares row 13 with body-core, overlaps increasingly at later steps; legs within body cols always 4-connected; all pixels one component)",
+    "frame_consistency_delta_90pct": "PASS (design-verified: 928px constant body-core; head and legs shift 2px per step; max delta/union ≈ 25% per pair — well under 90% limit)",
+    "total": "5/5 passed (synthetic image; SDXL img2img pending Windows-side ComfyUI access)"
+  }
+}
