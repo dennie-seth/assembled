@@ -12,16 +12,9 @@ from typing import Literal
 import numpy as np
 from PIL import Image
 
-try:
-    from scipy import ndimage as _ndimage
-
-    _HAS_SCIPY = True
-except ImportError:
-    _HAS_SCIPY = False
-
-from asset_gate.determinism import check_reproducible, image_bytes  # noqa: E402
-from asset_gate.palette import Palette  # noqa: E402
-from asset_gate.result import CheckResult  # noqa: E402
+from asset_gate.determinism import check_reproducible, image_bytes
+from asset_gate.palette import Palette
+from asset_gate.result import CheckResult
 
 
 def _to_array(image: Image.Image) -> np.ndarray:
@@ -160,7 +153,9 @@ def check_orphan_pixels(
     Requires scipy. Returns a skipped-pass result when scipy is unavailable
     so the check does not block import or test collection on minimal envs.
     """
-    if not _HAS_SCIPY:
+    try:
+        from scipy import ndimage as _ndimage
+    except ImportError:
         return CheckResult(
             check="orphan_pixels",
             passed=True,
