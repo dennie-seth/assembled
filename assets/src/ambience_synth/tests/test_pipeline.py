@@ -97,4 +97,9 @@ def test_render_to_ogg_same_seed_is_reproducible(tmp_path):
     recipe = _fast_recipe(seed=42)
     render_to_ogg(recipe, out1)
     render_to_ogg(recipe, out2)
-    assert out1.read_bytes() == out2.read_bytes()
+    # Compare decoded samples — Ogg Vorbis embeds a random serial per stream so
+    # raw byte equality is never guaranteed even for identical audio content.
+    samples1, sr1 = sf.read(str(out1), dtype="float64")
+    samples2, sr2 = sf.read(str(out2), dtype="float64")
+    assert sr1 == sr2
+    np.testing.assert_array_equal(samples1, samples2)
