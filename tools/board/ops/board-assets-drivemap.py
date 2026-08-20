@@ -71,6 +71,12 @@ def folder_name_for(task_dir_name, index_tasks_by_id):
     entry = index_tasks_by_id.get(task_dir_name)
     title = entry["cardTitle"] if entry and entry.get("cardTitle") else task_dir_name
     title = re.sub(r"\s+", " ", title).strip()
+    # "/" and "\" are path separators to rclone's remote-path syntax
+    # (`gdrive:{name}`) even though Drive itself allows them in a folder
+    # name -- left unescaped, a title like "Watcher / Sound / Still Air"
+    # silently fragments into nested subfolders instead of a single
+    # correctly named one. Swap in a lookalike that survives intact.
+    title = title.replace("/", "⁄").replace("\\", "⁄")
     if len(title) > 60:
         title = title[:57] + "..."
     return f"{task_dir_name} — {title}" if title != task_dir_name else task_dir_name
