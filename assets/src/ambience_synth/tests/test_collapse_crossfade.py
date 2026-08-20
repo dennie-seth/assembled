@@ -135,14 +135,13 @@ class TestCrossfadePair:
 
     def test_monotonic_stage_progression(self):
         """As proximity increases, the crossfade never goes backwards."""
-        prev_lower, _, prev_alpha = collapse_crossfade_pair(0.0)
+        prev_lower, _, _ = collapse_crossfade_pair(0.0)
         for i in range(1, 101):
             p = i / 100.0
-            lower, _, alpha = collapse_crossfade_pair(p)
+            lower, _, _ = collapse_crossfade_pair(p)
             # lower stage never decreases
             assert lower >= prev_lower, f"lower regressed at p={p}"
             prev_lower = lower
-            prev_alpha = alpha
 
 
 class TestCollapseStages:
