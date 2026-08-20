@@ -91,7 +91,6 @@ def _fill_rect(px: bytearray, x0: int, y0: int, x1: int, y1: int, rgb: tuple) ->
     y0, y1 = max(0, y0), min(H - 1, y1)
     r, g, b = rgb
     for y in range(y0, y1 + 1):
-        row_start = (y * W + x0) * 3
         for x in range(x0, x1 + 1):
             i = (y * W + x) * 3
             px[i], px[i + 1], px[i + 2] = r, g, b

@@ -34,10 +34,9 @@ import sys
 from pathlib import Path
 
 try:
-    import numpy as np
     from PIL import Image, ImageDraw, ImageFont
 except ImportError as e:
-    print(f"ERROR: {e}. Install: pip install pillow numpy", file=sys.stderr)
+    print(f"ERROR: {e}. Install: pip install pillow", file=sys.stderr)
     sys.exit(1)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]

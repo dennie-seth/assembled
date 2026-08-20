@@ -1,0 +1,16 @@
+{
+  "model": "synth \u2014 programmatic stdlib-only generation (T-0209 fallback; SDXL blocked by WSL\u2192Windows Firewall)",
+  "model_license": "N/A \u2014 no AI model used; Python stdlib only (struct, zlib, binascii)",
+  "model_hash": null,
+  "prompt": "flat side-on character concept sheet, 4 reference panels: idle standing, walk mid-stride, crouch-hide, scale reference + palette family. Player figure: 40px tall in 48\u00d748 cell, institutional green clothing, concrete-grey head/skin, deep shadow values. Soviet brutalist interior aesthetic. Hard value separation, flat lighting. No perspective, no vanishing point, no scene composition.",
+  "negative_prompt": "perspective, vanishing point, atmospheric haze, depth of field, bright saturated colors, photorealistic, 3d render, scene composition",
+  "seed": 0,
+  "steps": null,
+  "cfg": null,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": null,
+  "prompt_id": "synth-T-0209",
+  "concept_hash": "11c445c796741b026ef9bd5270669582f182aa6bb15b880e0da881541d3a2fe0",
+  "_note": "Synthetic reference \u2014 replace with SDXL generation via player_character_concept_sheet_v1.recipe.json once WSL\u2192ComfyUI is accessible. Same swap path as T-0198/T-0199 sprite sheets."
+}
