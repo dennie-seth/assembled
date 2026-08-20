@@ -173,6 +173,23 @@ export async function pullDevelop({ repoRoot, branch = "develop" }) {
 }
 
 /**
+ * Fetches `branch` from origin and reports whether origin has commits repoRoot's HEAD doesn't
+ * have yet -- the cheap check the periodic auto-pull poller (autoPullPoller.js) runs every tick
+ * before deciding whether `pullDevelop` is worth invoking at all. Deliberately a `rev-list
+ * --count HEAD..origin/<branch>` (commits reachable from origin not reachable from HEAD), not a
+ * plain SHA inequality check: repoRoot can be locally ahead of origin on its own (e.g. a
+ * card-on-create commit that hasn't been auto-pushed yet, see `commitPaths`), and that alone is
+ * not "behind" -- there's nothing new to pull. A truly diverged history (local ahead AND origin
+ * ahead) still correctly reports true here, since `pullDevelop`'s merge is what's needed to
+ * reconcile it.
+ */
+export async function isBehindOrigin({ repoRoot, branch = "develop" }) {
+  await git(["fetch", "origin", branch], repoRoot);
+  const { stdout } = await git(["rev-list", "--count", `HEAD..origin/${branch}`], repoRoot);
+  return Number(stdout.trim()) > 0;
+}
+
+/**
  * Fetches `branch` from origin and merges `origin/<branch>` into repoRoot's checkout with
  * `--no-ff` -- always a real merge commit, even on the (common, for a repo whose local
  * `develop` never diverges from origin) case where a plain fast-forward would apply. Used

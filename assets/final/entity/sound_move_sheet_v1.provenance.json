@@ -1,0 +1,34 @@
+{
+  "model": "N/A — synthetic reference image, procedurally generated (not AI-generated)",
+  "model_license": "N/A",
+  "model_hash": null,
+  "prompt": "N/A — pixel data computed programmatically by synth_entities.py: wide flat wave-band silhouette (rows 18:30, cols 8:40, 12x32px) with crest accent drawn from home palette indices BG=0, BODY=6, CREST=10; 8-frame horizontal-drift move animation (h_offsets=[0,-2,-4,-6,-4,-2,0,2]px).",
+  "negative_prompt": null,
+  "seed": null,
+  "_note": "synthetic — programmatic reference image for T-0200 gate infrastructure validation. Replace with SDXL-generated + descended PNG once ComfyUI access is available.",
+  "generator": "assets/src/character/src/char_gen/synth_entities.py:generate_sound_move_sheet (invoked via tests/conftest.py _ensure_entity_sheets)",
+  "card": "T-0200",
+  "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
+  "layout": {
+    "sheet_px": [192, 96],
+    "cell_px": 48,
+    "cols": 4,
+    "rows": 2,
+    "entity": "Sound",
+    "state": "move",
+    "frame_count": 8,
+    "animation": "horizontal drift, h_offsets=[0,-2,-4,-6,-4,-2,0,2]px",
+    "body_rect": "rows 18:30, cols 8:40 base (12x32px)",
+    "accent_rect": "rows 18:22, cols 14:34 base (4x20px, HEAD_IDX=10, inside body top)",
+    "spare_cells": []
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "gate_results": {
+    "palette_membership": "PASS (design-verified: only indices 0/6/10 used, all in home palette)",
+    "index_semantics": "PASS (design-verified: palette embedded slot-for-slot from home_palette.json)",
+    "cell_fit_4x2_48px": "PASS (design-verified: body cols 2:46 at max h_offset=-6, no cell-edge bleed)",
+    "orphan_pixels_threshold_4": "PASS (design-verified: single connected body rectangle, accent inside body)",
+    "frame_consistency_delta_60pct": "PASS (design-verified: 2px horizontal shift per step yields ~17% delta ratio, well under 60%)",
+    "total": "5/5 passed (synthetic image)"
+  }
+}

@@ -16,6 +16,7 @@ import { ClaudeCliRunner } from "../runner/claudeCliRunner.js";
 import { createRestartCoordinator } from "../runner/serviceRestart.js";
 import { createOrphanReaper } from "../runner/orphanReaper.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
+import { createAutoPullPoller } from "../runner/autoPullPoller.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -94,6 +95,15 @@ export async function startBoardServer({
     taskStoreKind,
     hub
   });
+  // Companion to the Done-triggered pull in httpApi.js's handlePatchTask: closes the gap where
+  // an idle board with no card reaching Done never catches up to origin/develop (see
+  // docs/board-invariants.md). Reuses the same restartCoordinator/orchestrator.hasActiveRuns()
+  // idle-guard as the Done path -- see autoPullPoller.js's docstring for the tick semantics.
+  const autoPullPoller = createAutoPullPoller({
+    repoRoot: REPO_ROOT,
+    orchestrator,
+    restartCoordinator
+  });
 
   if (watcher) {
     watcher.on("task-changed", (event) => hub.broadcast(event));
@@ -138,6 +148,7 @@ export async function startBoardServer({
   await orphanReaper.reapOnStartup();
   orphanReaper.start();
   selfImprovementLoop.start();
+  autoPullPoller.start();
 
   if (watcher) {
     await watcher.start();
@@ -158,7 +169,9 @@ export async function startBoardServer({
     restartCoordinator,
     orphanReaper,
     selfImprovementLoop,
+    autoPullPoller,
     async close() {
+      autoPullPoller.stop();
       selfImprovementLoop.stop();
       orphanReaper.stop();
       hub.close();

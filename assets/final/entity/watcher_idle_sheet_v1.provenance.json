@@ -1,0 +1,34 @@
+{
+  "model": "N/A — synthetic reference image, procedurally generated (not AI-generated)",
+  "model_license": "N/A",
+  "model_hash": null,
+  "prompt": "N/A — pixel data computed programmatically by synth_entities.py: wide surveillance-orb silhouette (rows 14:34, cols 10:38, 20x28px) with lens accent (rows 28:34, cols 16:32) drawn from home palette indices BG=0, BODY=6, ACCENT=4; 6-frame vertical-float idle animation (v_offsets=[0,-1,-2,-1,0,1]px).",
+  "negative_prompt": null,
+  "seed": null,
+  "_note": "synthetic — programmatic reference image for T-0200 gate infrastructure validation. Replace with SDXL-generated + descended PNG following MANUAL_GENERATION.md once ComfyUI access is available.",
+  "generator": "assets/src/character/src/char_gen/synth_entities.py:generate_watcher_idle_sheet (invoked via tests/conftest.py _ensure_entity_sheets)",
+  "card": "T-0200",
+  "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
+  "layout": {
+    "sheet_px": [144, 96],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 2,
+    "entity": "Watcher",
+    "state": "idle",
+    "frame_count": 6,
+    "animation": "vertical float, v_offsets=[0,-1,-2,-1,0,1]px",
+    "body_rect": "rows 14:34, cols 10:38 (20x28px)",
+    "accent_rect": "rows 28:34, cols 16:32 (6x16px, LEG_IDX=4, inside body)",
+    "spare_cells": []
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "gate_results": {
+    "palette_membership": "PASS (design-verified: only indices 0/4/6 used, all in home palette)",
+    "index_semantics": "PASS (design-verified: palette embedded slot-for-slot from home_palette.json)",
+    "cell_fit_3x2_48px": "PASS (design-verified: body cols 10:38, rows 12:35 at max offset, no cell-edge bleed)",
+    "orphan_pixels_threshold_4": "PASS (design-verified: single connected body rectangle, accent inside body, no isolated blobs)",
+    "frame_consistency_delta_30pct": "PASS (design-verified: 1-2px vertical float yields ~5-10% delta ratio, well under 30%)",
+    "total": "5/5 passed (synthetic image)"
+  }
+}

@@ -21,6 +21,7 @@ from comfy_client.recipe import Recipe
 DEFAULT_TEMPLATE_NAME = "sdxl_txt2img_v1"
 IMG2IMG_TEMPLATE_NAME = "sdxl_img2img_v1"
 LORA_IMG2IMG_TEMPLATE_NAME = "sdxl_img2img_lora_v1"
+LORA_TXT2IMG_TEMPLATE_NAME = "sdxl_txt2img_lora_v1"
 
 
 def load_template(name: str = DEFAULT_TEMPLATE_NAME) -> dict[str, Any]:
@@ -108,6 +109,41 @@ def render_img2img_lora_workflow(
     graph["3"]["inputs"]["sampler_name"] = recipe.sampler
     graph["3"]["inputs"]["scheduler"] = recipe.scheduler
     graph["3"]["inputs"]["denoise"] = recipe.denoise
+    graph["9"]["inputs"]["filename_prefix"] = recipe.name
+
+    return graph
+
+
+def render_txt2img_lora_workflow(
+    recipe: Recipe,
+    lora_name: str,
+    lora_weight: float = 0.75,
+    template: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Render `recipe` + LoRA name/weight into a txt2img+LoRA `/prompt`-ready
+    node graph (T-0209, `docs/design/13-asset-pipeline.md` §6.9).
+
+    Like `render_workflow` but inserts a LoraLoader (node 12) between the
+    checkpoint and the downstream KSampler/CLIPTextEncode nodes using the
+    sdxl_txt2img_lora_v1 template. Pure txt2img (EmptyLatentImage) -- no
+    init image, unlike `render_img2img_lora_workflow`.
+    """
+    tmpl = load_template(LORA_TXT2IMG_TEMPLATE_NAME) if template is None else template
+    graph = copy.deepcopy(tmpl["graph"])
+
+    graph["4"]["inputs"]["ckpt_name"] = recipe.checkpoint
+    graph["12"]["inputs"]["lora_name"] = lora_name
+    graph["12"]["inputs"]["strength_model"] = lora_weight
+    graph["12"]["inputs"]["strength_clip"] = lora_weight
+    graph["5"]["inputs"]["width"] = recipe.width
+    graph["5"]["inputs"]["height"] = recipe.height
+    graph["6"]["inputs"]["text"] = recipe.prompt
+    graph["7"]["inputs"]["text"] = recipe.negative_prompt
+    graph["3"]["inputs"]["seed"] = recipe.seed
+    graph["3"]["inputs"]["steps"] = recipe.steps
+    graph["3"]["inputs"]["cfg"] = recipe.cfg
+    graph["3"]["inputs"]["sampler_name"] = recipe.sampler
+    graph["3"]["inputs"]["scheduler"] = recipe.scheduler
     graph["9"]["inputs"]["filename_prefix"] = recipe.name
 
     return graph

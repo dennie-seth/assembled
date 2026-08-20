@@ -296,6 +296,42 @@ describe("orphaned run recovery", () => {
   });
 });
 
+describe("auto-pull poller wiring", () => {
+  it("constructs an auto-pull poller wired to the orchestrator and restart coordinator, exposed on the returned board object", () => {
+    expect(board.autoPullPoller).toBeDefined();
+    expect(typeof board.autoPullPoller.tick).toBe("function");
+    expect(typeof board.autoPullPoller.start).toBe("function");
+    expect(typeof board.autoPullPoller.stop).toBe("function");
+  });
+
+  it("stops the auto-pull poller's timer when the board server closes", async () => {
+    const stopSpy = vi.spyOn(board.autoPullPoller, "stop");
+
+    await board.close();
+    // afterEach also calls board.close() -- idempotent, matches every other .close() in this file.
+
+    expect(stopSpy).toHaveBeenCalled();
+  });
+
+  it("is disabled end-to-end when BOARD_AUTOPULL is set to a disable value", async () => {
+    const prior = process.env.BOARD_AUTOPULL;
+    process.env.BOARD_AUTOPULL = "0";
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-autopull-disabled-"));
+    try {
+      const server = await startBoardServer({ tasksDir: dir, port: 0 });
+      try {
+        expect(server.autoPullPoller.enabled).toBe(false);
+      } finally {
+        await server.close();
+      }
+    } finally {
+      if (prior === undefined) delete process.env.BOARD_AUTOPULL;
+      else process.env.BOARD_AUTOPULL = prior;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("pty terminal integration", () => {
   it("serves a working shell over /ws/pty on the same server", async () => {
     const { port } = board.server.address();
