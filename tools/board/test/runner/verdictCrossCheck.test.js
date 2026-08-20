@@ -212,6 +212,63 @@ describe("crossCheckVerdict", () => {
     expect(result).toEqual(PASS);
   });
 
+  it("python-verify: pytest run bare in a later command, after an earlier cd into pkgDir, still counts as PASS", () => {
+    // Reproduces the live T-0203 failure: the Bash tool's shell persists cwd across calls (like
+    // any interactive shell), so a reviewer that `cd`s into pkgDir once, pokes around, then runs
+    // a bare `pytest` (no pkgDir text in that line) has genuinely satisfied the route -- the old
+    // single-group-with-both-regexes shape scored this "not_run".
+    const events = [
+      ...bashCall("1", "cd assets/src/ambience_synth && python3 --version"),
+      ...bashCall("2", "python3 -m venv .venv && echo venv OK"),
+      ...bashCall("3", ".venv/bin/pip install -e \".[dev]\""),
+      ...bashCall("4", ".venv/bin/pytest"),
+      ...bashCall("5", ".venv/bin/ruff check --fix . && .venv/bin/ruff check .")
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/src/ambience_synth/src/ambience_synth/collapse_crossfade.py"],
+      task: { id: "T-0203" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
+  it("python-verify: re-issuing the router's literal cd command from inside pkgDir (nonexistent nested dir) doesn't erase an earlier real pass", () => {
+    // The reviewer's own attempt to "run exactly" the registered command after already being
+    // inside pkgDir fails with ENOENT (cd pkgDir/pkgDir) -- that failed invocation must not
+    // retroactively downgrade the pytest run that already genuinely passed (any-wins, same
+    // principle as the board-suite vitest/npm-test case above).
+    const events = [
+      ...bashCall("1", "cd assets/src/ambience_synth && python3 --version"),
+      ...bashCall("2", ".venv/bin/pytest"),
+      ...bashCall("3", "cd assets/src/ambience_synth && python3 -m venv .venv && .venv/bin/pytest", {
+        ok: false,
+        text: "No such file or directory"
+      })
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/src/ambience_synth/src/ambience_synth/collapse_crossfade.py"],
+      task: { id: "T-0203" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
+  it("python-verify: pytest never run anywhere still downgrades, even with pkgDir referenced", () => {
+    const events = [...bashCall("1", "cd assets/src/ambience_synth && python3 --version")];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/src/ambience_synth/src/ambience_synth/collapse_crossfade.py"],
+      task: { id: "T-0203" }
+    });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.crossCheckFailures).toEqual([
+      expect.objectContaining({ id: "python-verify:assets/src/ambience_synth", status: "not_run" })
+    ]);
+  });
+
   it("cross-checks server-db-verify on the actual ctest invocation", () => {
     const events = [
       ...bashCall(
