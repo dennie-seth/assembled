@@ -144,6 +144,20 @@ describe("crossCheckVerdict", () => {
     expect(result).toEqual(PASS);
   });
 
+  it("board-suite: npx vitest run counts as equivalent to npm test when reviewer lacks npm grant", () => {
+    const events = [
+      ...bashCall("1", "npx vitest run --reporter=verbose"),
+      ...bashCall("2", "npx eslint .")
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["tools/board/src/thing.js"],
+      task: { id: "T-0001" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
   it("requires board-suite's test AND lint commands independently -- one present, one missing still downgrades", () => {
     const events = [...bashCall("1", "cd tools/board && npm test")];
     const result = crossCheckVerdict({
