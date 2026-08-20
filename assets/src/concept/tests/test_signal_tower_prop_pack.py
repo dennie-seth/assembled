@@ -27,7 +27,6 @@ PNG inspection uses stdlib (struct, zlib) only — no Pillow/numpy dependency.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import struct
 import zlib

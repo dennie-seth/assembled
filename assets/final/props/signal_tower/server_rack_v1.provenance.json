@@ -1,0 +1,17 @@
+{
+  "model": "synth -- programmatic stdlib-only generation (T-0201 fallback; SDXL img2img + BiRefNet pipeline blocked by WSL->Windows Firewall)",
+  "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
+  "model_hash": null,
+  "prompt": "flat side-on server rack cabinet sprite, hiding-spot prop (all-sensor block, single-occupant), Signal Tower interior. 20x46 game px RGBA cutout. Tall enclosed cabinet form. Dark concrete outer shell (ramp04), heavier frame border (ramp08), near-black interior with 3 horizontal rack divider bars (ramp04 over ramp00). Single-occupant, fully seals all sensors. Exposed entry only.",
+  "negative_prompt": "perspective, vanishing point, isometric, background, scene, depth of field, ambient occlusion, photorealistic, 3d render, multiple props, composed illustration, text, watermark",
+  "seed": 0,
+  "steps": null,
+  "cfg": null,
+  "width": null,
+  "height": null,
+  "workflow_hash": null,
+  "prompt_id": "synth-T-0201-server_rack",
+  "prop_class": "hide",
+  "sprite_hash": "49fd61cd43f7e7e38761793a9c99b7af576541e981f01e9ebd3f6e21c2a80d4b",
+  "_note": "Synthetic placeholder \u2014 replace with SDXL img2img (conditioned on signal_tower_props_concept_sheet_v1.png via IP-Adapter) + BiRefNet background removal once WSL->ComfyUI is accessible (T-0106 pipeline). Concept hash source: signal_tower_props_concept_sheet_v1.provenance.json."
+}

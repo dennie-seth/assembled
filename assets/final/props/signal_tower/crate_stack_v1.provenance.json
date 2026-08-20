@@ -1,0 +1,17 @@
+{
+  "model": "synth -- programmatic stdlib-only generation (T-0201 fallback; SDXL img2img + BiRefNet pipeline blocked by WSL->Windows Firewall)",
+  "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
+  "model_hash": null,
+  "prompt": "flat side-on two-crate equipment stack sprite, cover prop (sight-cone block only), Signal Tower interior. 24x28 game px RGBA cutout. Bottom crate rows 11-27, top crate slightly narrower rows 0-10. Visible seam line. Mid-value concrete grey (ramp10 body, ramp06 side, ramp12 top). Fully exposed from above \u2014 cover only, not a hiding spot.",
+  "negative_prompt": "perspective, vanishing point, isometric, background, scene, depth of field, ambient occlusion, photorealistic, 3d render, multiple props, composed illustration, text, watermark",
+  "seed": 0,
+  "steps": null,
+  "cfg": null,
+  "width": null,
+  "height": null,
+  "workflow_hash": null,
+  "prompt_id": "synth-T-0201-crate_stack",
+  "prop_class": "cover",
+  "sprite_hash": "5b6f36f413edabe02f2ab8a3bfbc43404eded66b8dc107dd759b7c635f3bd120",
+  "_note": "Synthetic placeholder \u2014 replace with SDXL img2img (conditioned on signal_tower_props_concept_sheet_v1.png via IP-Adapter) + BiRefNet background removal once WSL->ComfyUI is accessible (T-0106 pipeline). Concept hash source: signal_tower_props_concept_sheet_v1.provenance.json."
+}
