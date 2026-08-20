@@ -89,6 +89,36 @@ runtime commit now also pushes `develop` to origin.
 - **Disabling it:** set `AUTO_PUSH_ON_COMMIT=0` (also accepts `false`/`off`/`no`, any case) in
   the service's environment.
 
+## Periodic auto-pull (`src/runner/autoPullPoller.js`)
+
+Marking a card `done` already triggers a pull of `origin/develop` into `repoRoot`
+(`httpApi.js`'s `handlePatchTask`, see `docs/board-invariants.md` §6 PULL-1) -- but that only
+fires from a card event. An idle board with no card reaching Done never re-checks
+`origin/develop`, so a merged PR can sit un-deployed indefinitely with nothing to trigger a
+catch-up (this happened live: PR #210 sat un-pulled for hours). `autoPullPoller.js` closes that
+gap with an in-process timer, started/stopped alongside the rest of `boardServer.js`'s
+lifecycle -- **not** a separate systemd timer like the asset-sync/db-backup/integrity-check
+units, since it needs live access to the same `RunOrchestrator`/`restartCoordinator` instances
+the HTTP server already holds.
+
+Every tick: if a card run is active (`orchestrator.hasActiveRuns()`), the tick is skipped
+entirely -- no fetch, no pull, no restart -- deferring to the next tick or to the run's own
+eventual idle notification. Otherwise it fetches `origin/develop` and, only if `repoRoot`'s HEAD
+is actually behind, runs the exact same `pullDevelop` + `restartCoordinator.notifyPulled` pair
+the Done path uses -- no separate pull/restart logic to keep in sync with PULL-1..3.
+
+- **`BOARD_AUTOPULL`** -- default ON; set to `0`/`false`/`off`/`no` (any case) to disable,
+  mirroring `AUTO_RESTART_ON_PULL`/`AUTO_RECOVER_ORPHANED_RUNS`.
+- **`BOARD_AUTOPULL_INTERVAL_MS`** -- default 5 minutes (`300000`). An explicit `0` also
+  disables the poller; invalid/negative input falls back to the default rather than silently
+  turning it off.
+- This is complementary to, not a replacement for, `npm run deploy` above -- the deploy script
+  still stops the service before merging so `node --watch` can never observe a live-merge race
+  (outage #1). The poller pulls into the *running* service's checkout the same way the Done
+  path already does, and only ever restarts through the same idle-guarded
+  `restartCoordinator` -- it does not add a new restart path or a new way to touch the tree
+  while the service is mid-merge.
+
 ## Database backups (`scripts/backupDb.js`, `npm run backup:db`)
 
 Phase 1 of `docs/design/cards-to-database.md` moves card state into a SQLite file
