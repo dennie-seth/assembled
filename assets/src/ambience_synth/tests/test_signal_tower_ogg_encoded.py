@@ -177,7 +177,8 @@ def test_encoded_ogg_loop_start_is_valid_integer():
     tags = OggVorbis(str(OGG_PATH))
     loop_start_values = [v for k, v in tags.items() if k.lower() == "loop_start"]
     assert loop_start_values, "LOOP_START not found"
-    raw = loop_start_values[0][0] if isinstance(loop_start_values[0], list) else loop_start_values[0]
+    first = loop_start_values[0]
+    raw = first[0] if isinstance(first, list) else first
     sample_offset = int(raw)
     assert sample_offset >= 0, f"LOOP_START must be >= 0, got {sample_offset}"
 

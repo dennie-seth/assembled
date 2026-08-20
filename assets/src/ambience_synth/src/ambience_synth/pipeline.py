@@ -53,7 +53,10 @@ def render_to_ogg(recipe: AmbienceRecipe, out_path: str | pathlib.Path) -> None:
 
     # 5. Encode to Ogg with loop metadata
     loop_end = len(normalized) - 1
-    write_ogg(out_path, normalized, recipe.sample_rate, loop_start_sample=0, loop_end_sample=loop_end)
+    write_ogg(
+        out_path, normalized, recipe.sample_rate,
+        loop_start_sample=0, loop_end_sample=loop_end,
+    )
 
 
 def main() -> None:

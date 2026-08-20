@@ -25,7 +25,9 @@ def pink_noise(rng: np.random.Generator, n: int) -> np.ndarray:
     for k in range(bands):
         band_n = max(1, n >> k)
         band = rng.standard_normal(band_n)
-        out += np.repeat(band, 1 << k)[:n]
+        repeated = np.repeat(band, 1 << k)
+        # np.resize pads by cycling the array, handling non-power-of-2 n
+        out += np.resize(repeated, n)
     return out / np.sqrt(bands)
 
 
