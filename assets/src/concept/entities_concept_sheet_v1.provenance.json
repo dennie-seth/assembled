@@ -1,0 +1,21 @@
+{
+  "name": "entities_concept_sheet_v1",
+  "model": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.70,
+  "model_license": "CreativeML OpenRAIL++-M",
+  "prompt": "flat side-on entity concept reference sheet, orthographic game asset, no perspective, no vanishing point, three foreign entity characters in nine reference panels arranged in a 3x3 grid. The Watcher: wide compact surveillance orb silhouette, horizontal scanner shape, no limbs, lens detail on lower face, concrete grey with institutional green accent, looming and mechanical. The Sound: wide flat wave-band silhouette, horizontal ripple shape, no limbs, lighter crest on top edge, desaturated institutional green tones, ambient and expansive. The Still Air: tall narrow atmospheric column silhouette, vertical pillar shape, no limbs, pale glowing cap at top, pale concrete grey tones, inevitable and silent. Three animation states shown per entity row: idle centred neutral pose, move drifted horizontal offset pose, trapped constrained contained pose. Soviet brutalist interior aesthetic, muted desaturated home palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, no background elements. Foreign entity roster, non-humanoid shapes, pixel art scale reference, game asset reference sheet style, entity silhouette study",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, arms, legs, head on humanoid body, player character",
+  "seed": 21000,
+  "steps": 30,
+  "cfg": 7.0,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "width": 1024,
+  "height": 1024,
+  "prompt_id": "72a3994b-4401-4677-8b5a-2a37d8ae5977",
+  "workflow_hash": "e13d0c0b9ecc21ae8e28c3c4d62c9c55c3d859706237cffaebfba7513df8f2c2",
+  "concept_hash": "77b03788aef9533d5b5c36d9df2583d234ef23e455efc509bf5bab50ec1244ce",
+  "generated_at": "2026-08-20T17:04:54Z",
+  "generator": "ComfyUI via T-0210"
+}
