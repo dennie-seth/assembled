@@ -26,6 +26,14 @@ describe("resolveVerifyRoutes", () => {
     expect(routes.map((r) => r.id)).toEqual(["board-suite"]);
   });
 
+  it("board-suite command is self-contained (includes cd tools/board) so the harness can run it from the repo root without a manual directory change", () => {
+    const routes = resolveVerifyRoutes(["tools/board/src/lib/fsTaskStore.js"]);
+    const route = routes.find((r) => r.id === "board-suite");
+    expect(route.command).toContain("cd tools/board");
+    expect(route.command).toContain("npm test");
+    expect(route.command).toContain("npx eslint .");
+  });
+
   it("routes a diff touching both tasks/** and tools/board/** to all three checks", () => {
     const routes = resolveVerifyRoutes(["tasks/T-0200.md", "tools/board/src/lib/fsTaskStore.js"]);
     expect(routes.map((r) => r.id).sort()).toEqual(["backlog-validate", "board-suite", "planner-diff-guard"]);
@@ -72,12 +80,25 @@ describe("resolveVerifyRoutes", () => {
       "tools/sim",
       "assets/src/audio",
       "assets/src/lora",
-      "assets/src/tiles"
+      "assets/src/tiles",
+      "assets/src/ambience_synth"
     ];
     for (const root of roots) {
       const routes = resolveVerifyRoutes([`${root}/tests/test_smoke.py`]);
       expect(routes.map((r) => r.id)).toEqual([`python-verify:${root}`]);
     }
+  });
+
+  it("routes an assets/src/ambience_synth/** diff to python-verify -- T-0202's package, added after three consecutive runs blocked on a missing reviewer grant", () => {
+    const routes = resolveVerifyRoutes(["assets/src/ambience_synth/src/ambience_synth/pipeline.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:assets/src/ambience_synth"]);
+    const route = routes[0];
+    expect(route.command).toContain("cd assets/src/ambience_synth");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check --fix .");
+    expect(route.command).toContain(".venv/bin/ruff check .");
   });
 
   it("routes an assets/src/lora/** diff to python-verify -- T-0072's package, added after it blocked on a missing reviewer grant", () => {
