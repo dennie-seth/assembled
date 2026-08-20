@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import urllib.request
 from io import BytesIO
 from pathlib import Path

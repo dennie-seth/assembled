@@ -16,10 +16,9 @@ WORKTREE = Path(__file__).resolve().parents[3]
 ASSET_GATE_SRC = WORKTREE / "tools/asset-gate/src"
 sys.path.insert(0, str(ASSET_GATE_SRC))
 
-from PIL import Image  # noqa: E402
-
 import asset_gate.art as art  # noqa: E402
 import asset_gate.palette as pal  # noqa: E402
+from PIL import Image  # noqa: E402
 
 SHEET_PATH = WORKTREE / "assets/final/character/player_idle_sheet_v2.png"
 PROVENANCE_PATH = WORKTREE / "assets/final/character/player_idle_sheet_v2.provenance.json"
@@ -90,7 +89,11 @@ results = art.check_cell_fit(
     background_index=BACKGROUND_INDEX,
 )
 cell_failures = [r for r in results if not r.passed]
-check("cell_fit", not cell_failures, "; ".join(f"cell {r.details['cell']}: {r.reason}" for r in cell_failures))
+check(
+    "cell_fit",
+    not cell_failures,
+    "; ".join(f"cell {r.details['cell']}: {r.reason}" for r in cell_failures),
+)
 
 # -- per-frame checks --
 frame_images: dict[tuple[int, int], Image.Image] = {}

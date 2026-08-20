@@ -2,7 +2,6 @@
 """Run T-0212 gate tests using lora-train-venv (numpy+PIL available) + asset-gate from src."""
 
 import sys
-import subprocess
 from pathlib import Path
 
 WORKTREE = Path(__file__).resolve().parents[3]
