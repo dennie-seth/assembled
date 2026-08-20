@@ -237,7 +237,7 @@ if not DIE_PATH.exists():
 
 def _ensure_entity_sheets() -> None:
     """Generate all 9 entity sheets that are absent."""
-    from char_gen.synth_entities import (  # noqa: PLC0415
+    from char_gen.synth_entities import (  # noqa: I001, PLC0415
         _load_palette as _ent_load_palette,
         generate_sound_idle_sheet,
         generate_sound_move_sheet,
