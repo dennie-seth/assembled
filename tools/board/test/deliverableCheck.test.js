@@ -49,6 +49,44 @@ describe("checkDeliverable", () => {
     expect(report.errors).toEqual([]);
   });
 
+  describe("requireArtifact -- forces applicability regardless of deliverable_type (the T-0198/T-0209/T-0202 gap)", () => {
+    it("is not applicable for a code-deliverable card when requireArtifact is not set (unchanged default)", async () => {
+      const report = await checkDeliverable(task({ deliverable_type: "code" }));
+      expect(report.applicable).toBe(false);
+    });
+
+    it("becomes applicable for a code-deliverable card when requireArtifact is true", async () => {
+      const report = await checkDeliverable(task({ deliverable_type: "code", attachments: [] }), {
+        requireArtifact: true
+      });
+      expect(report.applicable).toBe(true);
+      expect(report.ok).toBe(false);
+      expect(report.errors[0]).toMatch(/no attachments recorded/i);
+    });
+
+    it("passes a code-deliverable card under requireArtifact when it does have an attachment recorded", async () => {
+      const report = await checkDeliverable(
+        task({ deliverable_type: "code", attachments: [{ filename: "sheet.png" }] }),
+        { requireArtifact: true }
+      );
+      expect(report.applicable).toBe(true);
+      expect(report.ok).toBe(true);
+    });
+
+    it("requireArtifact is still a no-op when the task is already deliverable_type: 'artifact' (same result either way)", async () => {
+      const withFlag = await checkDeliverable(task({ deliverable_type: "artifact", attachments: [] }), {
+        requireArtifact: true
+      });
+      const withoutFlag = await checkDeliverable(task({ deliverable_type: "artifact", attachments: [] }));
+      expect(withFlag).toEqual(withoutFlag);
+    });
+
+    it("requireArtifact has no effect when the task itself is missing", async () => {
+      const report = await checkDeliverable(undefined, { requireArtifact: true });
+      expect(report).toEqual({ ok: true, applicable: false, errors: [] });
+    });
+  });
+
   describe("with attachmentsDir -- cross-checks the frontmatter claim against real files", () => {
     let dir;
 
