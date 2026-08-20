@@ -76,7 +76,13 @@ function requirementGroupsForRoute(route) {
     return [[/\bgodot\b/, /--headless\b/, new RegExp(escapeRegExp(fileName))]];
   }
   if (route.id === "deliverable-check") {
-    const taskId = route.command.trim().split(/\s+/).pop();
+    // Extract the task id from the token right after `checkDeliverable.js` specifically --
+    // not the command's last token -- because a diff-triggered route (see
+    // verifyRouter.js's resolveDeliverableRoute) appends a trailing `--require-artifact`
+    // flag, which `.pop()` would wrongly capture as "the task id" and make this check
+    // task-id-agnostic (any checkDeliverable.js invocation would satisfy it).
+    const match = /checkDeliverable\.js\s+(\S+)/.exec(route.command);
+    const taskId = match?.[1] ?? "";
     return [[/checkDeliverable\.js/, new RegExp(escapeRegExp(taskId))]];
   }
   // Unknown future route id: fall back to matching on the command's first token (the binary/
@@ -113,9 +119,10 @@ function evaluateRoute(route, invocations) {
  * on client-godot-verify) -- fail closed, per the #183 lesson that a confused/non-compliant
  * reviewer can claim PASS without ever having run the check. A self-reported FAIL is always left
  * as FAIL: the cross-check only ever downgrades, never upgrades. When there are no required
- * routes for this diff (nothing under a code-enforced prefix, and the task isn't
- * `deliverable_type: "artifact"`), the reviewer's verdict passes through unchanged -- there is
- * nothing here for the harness to verify independently.
+ * routes for this diff (nothing under a code-enforced prefix, the task isn't
+ * `deliverable_type: "artifact"`, and the diff doesn't touch a known artifact-producing path
+ * either -- see `resolveDeliverableRoute`'s diff-triggered backstop), the reviewer's verdict
+ * passes through unchanged -- there is nothing here for the harness to verify independently.
  */
 export function crossCheckVerdict({ verdict, events, changedPaths = [], task, baseBranch = "develop" }) {
   if (!verdict || verdict.verdict !== "PASS") {
@@ -123,7 +130,7 @@ export function crossCheckVerdict({ verdict, events, changedPaths = [], task, ba
   }
 
   const routes = [...resolveVerifyRoutes(changedPaths, { baseBranch })];
-  const deliverableRoute = resolveDeliverableRoute(task);
+  const deliverableRoute = resolveDeliverableRoute(task, changedPaths);
   if (deliverableRoute) {
     routes.push(deliverableRoute);
   }
