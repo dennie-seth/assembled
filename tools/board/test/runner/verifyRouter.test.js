@@ -26,6 +26,14 @@ describe("resolveVerifyRoutes", () => {
     expect(routes.map((r) => r.id)).toEqual(["board-suite"]);
   });
 
+  it("board-suite command is self-contained (includes cd tools/board) so the harness can run it from the repo root without a manual directory change", () => {
+    const routes = resolveVerifyRoutes(["tools/board/src/lib/fsTaskStore.js"]);
+    const route = routes.find((r) => r.id === "board-suite");
+    expect(route.command).toContain("cd tools/board");
+    expect(route.command).toContain("npm test");
+    expect(route.command).toContain("npx eslint .");
+  });
+
   it("routes a diff touching both tasks/** and tools/board/** to all three checks", () => {
     const routes = resolveVerifyRoutes(["tasks/T-0200.md", "tools/board/src/lib/fsTaskStore.js"]);
     expect(routes.map((r) => r.id).sort()).toEqual(["backlog-validate", "board-suite", "planner-diff-guard"]);

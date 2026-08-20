@@ -159,7 +159,7 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
     routes.push({
       id: "board-suite",
       label: "Board test/lint suite",
-      command: "npm test && npx eslint . (run from tools/board)"
+      command: "cd tools/board && npm test && npx eslint ."
     });
   }
   if (touchesServerRoots(changedPaths)) {
