@@ -2,12 +2,18 @@
 
 The synthetic sheets are programmatic reference images — not AI-generated assets.
 They exist to validate that the T-0102 gate infrastructure works correctly at the
-target format (mode P, 48×48 cells, 40px humanoid figure).
+target format (mode P, 48×48 cells, humanoid figures).
 
-  idle:        144×144, 3×3 grid, 4 frames  (T-0198)
-  move:        144×192, 3×4 grid, 10 frames (T-0199)
-  crouch-hide: 144×144, 3×3 grid, 9 frames  (T-0199)
-  die:         144×144, 3×3 grid, 9 frames  (T-0199)
+Player sheets (T-0198/T-0199):
+  idle:        144×144, 3×3 grid, 4 frames
+  move:        144×192, 3×4 grid, 10 frames
+  crouch-hide: 144×144, 3×3 grid, 9 frames
+  die:         144×144, 3×3 grid, 9 frames
+
+Entity sheets (T-0200) — Watcher, Sound, Still Air (no die state):
+  idle:    144×96,  3×2 grid, 6 frames each
+  move:    192×96,  4×2 grid, 8 frames each
+  trapped:  96×96,  2×2 grid, 4 frames each
 
 Also adds tools/asset-gate/src to sys.path at module level so that
 `pytest.importorskip("asset_gate.art")` in the test modules resolves correctly
@@ -38,6 +44,19 @@ IDLE_PATH = CHAR_OUT / "player_idle_sheet_v1.png"
 MOVE_PATH = CHAR_OUT / "player_move_sheet_v1.png"
 CROUCH_PATH = CHAR_OUT / "player_crouch_hide_sheet_v1.png"
 DIE_PATH = CHAR_OUT / "player_die_sheet_v1.png"
+
+ENTITY_OUT = REPO_ROOT / "assets" / "final" / "entity"
+_ENTITY_SHEETS = [
+    "watcher_idle_sheet_v1.png",
+    "watcher_move_sheet_v1.png",
+    "watcher_trapped_sheet_v1.png",
+    "sound_idle_sheet_v1.png",
+    "sound_move_sheet_v1.png",
+    "sound_trapped_sheet_v1.png",
+    "still_air_idle_sheet_v1.png",
+    "still_air_move_sheet_v1.png",
+    "still_air_trapped_sheet_v1.png",
+]
 
 CELL_SIZE = 48
 BG_IDX = 0
@@ -212,6 +231,65 @@ if not DIE_PATH.exists():
     _generate_die_sheet()
 
 
+# ---------------------------------------------------------------------------
+# Entity sheets (T-0200) — Watcher, Sound, Still Air
+# ---------------------------------------------------------------------------
+
+def _ensure_entity_sheets() -> None:
+    """Generate all 9 entity sheets that are absent."""
+    from char_gen.synth_entities import (  # noqa: PLC0415
+        _load_palette as _ent_load_palette,
+        generate_watcher_idle_sheet,
+        generate_watcher_move_sheet,
+        generate_watcher_trapped_sheet,
+        generate_sound_idle_sheet,
+        generate_sound_move_sheet,
+        generate_sound_trapped_sheet,
+        generate_still_air_idle_sheet,
+        generate_still_air_move_sheet,
+        generate_still_air_trapped_sheet,
+    )
+
+    palette = _ent_load_palette(PALETTE_PATH)
+    ENTITY_OUT.mkdir(parents=True, exist_ok=True)
+
+    generators = {
+        "watcher_idle_sheet_v1.png": lambda: generate_watcher_idle_sheet(
+            palette, ENTITY_OUT / "watcher_idle_sheet_v1.png"
+        ),
+        "watcher_move_sheet_v1.png": lambda: generate_watcher_move_sheet(
+            palette, ENTITY_OUT / "watcher_move_sheet_v1.png"
+        ),
+        "watcher_trapped_sheet_v1.png": lambda: generate_watcher_trapped_sheet(
+            palette, ENTITY_OUT / "watcher_trapped_sheet_v1.png"
+        ),
+        "sound_idle_sheet_v1.png": lambda: generate_sound_idle_sheet(
+            palette, ENTITY_OUT / "sound_idle_sheet_v1.png"
+        ),
+        "sound_move_sheet_v1.png": lambda: generate_sound_move_sheet(
+            palette, ENTITY_OUT / "sound_move_sheet_v1.png"
+        ),
+        "sound_trapped_sheet_v1.png": lambda: generate_sound_trapped_sheet(
+            palette, ENTITY_OUT / "sound_trapped_sheet_v1.png"
+        ),
+        "still_air_idle_sheet_v1.png": lambda: generate_still_air_idle_sheet(
+            palette, ENTITY_OUT / "still_air_idle_sheet_v1.png"
+        ),
+        "still_air_move_sheet_v1.png": lambda: generate_still_air_move_sheet(
+            palette, ENTITY_OUT / "still_air_move_sheet_v1.png"
+        ),
+        "still_air_trapped_sheet_v1.png": lambda: generate_still_air_trapped_sheet(
+            palette, ENTITY_OUT / "still_air_trapped_sheet_v1.png"
+        ),
+    }
+    for fname, gen in generators.items():
+        if not (ENTITY_OUT / fname).exists():
+            gen()
+
+
+_ensure_entity_sheets()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def ensure_synth_sheets() -> None:
     """Re-generate synthetic sheets if somehow absent at run time."""
@@ -223,3 +301,4 @@ def ensure_synth_sheets() -> None:
         _generate_crouch_hide_sheet()
     if not DIE_PATH.exists():  # pragma: no cover
         _generate_die_sheet()
+    _ensure_entity_sheets()
