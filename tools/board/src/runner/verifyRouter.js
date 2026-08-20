@@ -75,7 +75,8 @@ const PYTHON_PACKAGE_ROOTS = [
   "tools/sim/",
   "assets/src/audio/",
   "assets/src/lora/",
-  "assets/src/tiles/"
+  "assets/src/tiles/",
+  "assets/src/ambience_synth/"
 ];
 
 function detectChangedGodotTests(changedPaths) {
@@ -158,7 +159,7 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
     routes.push({
       id: "board-suite",
       label: "Board test/lint suite",
-      command: "npm test && npx eslint . (run from tools/board)"
+      command: "cd tools/board && npm test && npx eslint ."
     });
   }
   if (touchesServerRoots(changedPaths)) {
