@@ -1,0 +1,72 @@
+{
+  "prompt": {
+    "4": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "sd_xl_base_1.0.safetensors"
+      }
+    },
+    "12": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["4", 0],
+        "clip": ["4", 1],
+        "lora_name": "soviet_brutalism_style_v1.safetensors",
+        "strength_model": 0.70,
+        "strength_clip": 0.70
+      }
+    },
+    "5": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "flat side-on entity concept reference sheet, orthographic game asset, no perspective, no vanishing point, three foreign entity characters in nine reference panels arranged in a 3x3 grid. The Watcher: wide compact surveillance orb silhouette, horizontal scanner shape, no limbs, lens detail on lower face, concrete grey with institutional green accent, looming and mechanical. The Sound: wide flat wave-band silhouette, horizontal ripple shape, no limbs, lighter crest on top edge, desaturated institutional green tones, ambient and expansive. The Still Air: tall narrow atmospheric column silhouette, vertical pillar shape, no limbs, pale glowing cap at top, pale concrete grey tones, inevitable and silent. Three animation states shown per entity row: idle centred neutral pose, move drifted horizontal offset pose, trapped constrained contained pose. Soviet brutalist interior aesthetic, muted desaturated home palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, no background elements. Foreign entity roster, non-humanoid shapes, pixel art scale reference, game asset reference sheet style, entity silhouette study",
+        "clip": ["12", 1]
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, arms, legs, head on humanoid body, player character",
+        "clip": ["12", 1]
+      }
+    },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 21000,
+        "steps": 30,
+        "cfg": 7.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0,
+        "model": ["12", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["5", 0]
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["3", 0],
+        "vae": ["4", 2]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "entities_concept_sheet_v1",
+        "images": ["8", 0]
+      }
+    }
+  },
+  "client_id": "T-0210-entities-concept-sheet"
+}
