@@ -67,8 +67,23 @@ function requirementGroupsForRoute(route) {
     return [[/\bctest\b/, /--output-on-failure\b/]];
   }
   if (route.id.startsWith("python-verify:")) {
+    // Two independent groups, not one group requiring both regexes on the same command line.
+    // The Bash tool's shell persists cwd across calls within a session (like any interactive
+    // shell), so a reviewer who `cd`s into pkgDir once and then pokes around (ls, cat
+    // pyproject.toml, python3 --version) before running a bare `pytest` is following completely
+    // normal, expected shell usage -- that `pytest` invocation's command text never repeats
+    // pkgDir. The old single-group-with-both-regexes shape scored that as "not_run" even though
+    // pytest genuinely ran against the right package, and was actively hostile to a reviewer who
+    // tried to recover by re-cd'ing: from inside pkgDir, re-issuing the router's own relative
+    // `cd ${pkgDir} && ...` command hunts for a nonexistent nested pkgDir/pkgDir and fails with
+    // "No such file or directory" (observed live blocking T-0203 3 runs in a row post-#214).
+    // Splitting into two groups -- pytest ran successfully *somewhere*, and pkgDir was
+    // referenced in *some* command -- keeps the original disambiguation signal (proves the
+    // reviewer was actually in/near this package, not just running an unrelated pytest) without
+    // requiring both facts to land on one command line. Mirrors board-suite's existing
+    // independent-groups shape above.
     const pkgDir = route.id.slice("python-verify:".length);
-    return [[/\bpytest\b/, new RegExp(escapeRegExp(pkgDir))]];
+    return [[/\bpytest\b/], [new RegExp(escapeRegExp(pkgDir))]];
   }
   if (route.id.startsWith("client-godot-verify:")) {
     const testPath = route.id.slice("client-godot-verify:".length);
