@@ -158,6 +158,21 @@ describe("crossCheckVerdict", () => {
     expect(result).toEqual(PASS);
   });
 
+  it("board-suite: npx vitest passed then npm test permission-denied still counts as PASS (any-wins)", () => {
+    const events = [
+      ...bashCall("1", "npx vitest run --reporter=verbose"),
+      ...bashCall("2", "cd tools/board && npm test", { ok: false }),
+      ...bashCall("3", "npx eslint .")
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["tools/board/src/thing.js"],
+      task: { id: "T-0001" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
   it("requires board-suite's test AND lint commands independently -- one present, one missing still downgrades", () => {
     const events = [...bashCall("1", "cd tools/board && npm test")];
     const result = crossCheckVerdict({
