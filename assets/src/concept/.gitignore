@@ -5,3 +5,5 @@ _wf_canon.json
 # Python venv and cache
 .venv/
 __pycache__/
+# Temporary planning/scratch files
+conftest_props_addition.py
