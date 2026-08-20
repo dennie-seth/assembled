@@ -92,9 +92,11 @@ function evaluateRoute(route, invocations) {
     if (matches.length === 0) {
       return "not_run";
     }
-    // Last matching invocation wins -- a reviewer that re-ran a flaky command and got a clean
-    // second result should not be penalized for a stale first failure.
-    if (!matches[matches.length - 1].ok) {
+    // Any matching invocation wins -- if any pass, the group is satisfied. This covers both the
+    // retry case (first run flaky, second clean) and the equivalent-command case (npx vitest
+    // passed, later npm test permission-denied): a subsequent blocked attempt doesn't erase a
+    // prior passing run of an equivalent command.
+    if (!matches.some((inv) => inv.ok)) {
       anyGroupFailed = true;
     }
   }
