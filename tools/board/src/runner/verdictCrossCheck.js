@@ -61,7 +61,7 @@ function requirementGroupsForRoute(route) {
     return [[/tools\/board\/scripts\/checkPlannerDiffGuard\.js/]];
   }
   if (route.id === "board-suite") {
-    return [[/\bnpm\s+(run\s+)?test\b/], [/\beslint\b/]];
+    return [[/\bnpm\s+(run\s+)?test\b|\bnpx\s+vitest\b/], [/\beslint\b/]];
   }
   if (route.id === "server-db-verify") {
     return [[/\bctest\b/, /--output-on-failure\b/]];
