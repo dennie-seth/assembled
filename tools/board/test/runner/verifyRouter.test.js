@@ -72,12 +72,25 @@ describe("resolveVerifyRoutes", () => {
       "tools/sim",
       "assets/src/audio",
       "assets/src/lora",
-      "assets/src/tiles"
+      "assets/src/tiles",
+      "assets/src/ambience_synth"
     ];
     for (const root of roots) {
       const routes = resolveVerifyRoutes([`${root}/tests/test_smoke.py`]);
       expect(routes.map((r) => r.id)).toEqual([`python-verify:${root}`]);
     }
+  });
+
+  it("routes an assets/src/ambience_synth/** diff to python-verify -- T-0202's package, added after three consecutive runs blocked on a missing reviewer grant", () => {
+    const routes = resolveVerifyRoutes(["assets/src/ambience_synth/src/ambience_synth/pipeline.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:assets/src/ambience_synth"]);
+    const route = routes[0];
+    expect(route.command).toContain("cd assets/src/ambience_synth");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check --fix .");
+    expect(route.command).toContain(".venv/bin/ruff check .");
   });
 
   it("routes an assets/src/lora/** diff to python-verify -- T-0072's package, added after it blocked on a missing reviewer grant", () => {
