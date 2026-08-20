@@ -42,7 +42,14 @@ running any workflow. Key points, in priority order:
 ## Workflow
 
 Generate via the `AssetAgent` HTTP interface, normalize loudness, curate
-into `assets/final/audio/`, run the `asset-provenance` skill, then commit
+into `assets/final/audio/`, run the `asset-provenance` skill, **then upload
+every curated audio file to the card via the attachments API —
+non-optional, before you commit:**
+`curl -X POST "http://127.0.0.1:${BOARD_PORT:-4173}/api/tasks/<id>/attachments" -F "file=@assets/final/audio/<filename>"`
+(see `.claude/rules/assets.md`'s attachment bullet for the full rationale —
+a file that is only committed, never attached, is invisible to the
+attachments-only asset-export stager and Drive sync; this was skipped on
+T-0202's ambience bed and needed a manual attach afterward). Then commit
 everything (curated finals + provenance entry) and stop once
 `git status --porcelain` is empty. Do NOT invoke the `open-review-pr` skill
 yourself and do NOT push or open a PR — an Agent Runner orchestrator drives
