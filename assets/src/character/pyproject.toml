@@ -19,6 +19,15 @@ generate-synth-idle-sheet = "char_gen.synth_sheet:main"
 generate-synth-move-sheet = "char_gen.synth_states:main_move"
 generate-synth-crouch-hide-sheet = "char_gen.synth_states:main_crouch_hide"
 generate-synth-die-sheet = "char_gen.synth_states:main_die"
+generate-synth-watcher-idle-sheet = "char_gen.synth_entities:main_watcher_idle"
+generate-synth-watcher-move-sheet = "char_gen.synth_entities:main_watcher_move"
+generate-synth-watcher-trapped-sheet = "char_gen.synth_entities:main_watcher_trapped"
+generate-synth-sound-idle-sheet = "char_gen.synth_entities:main_sound_idle"
+generate-synth-sound-move-sheet = "char_gen.synth_entities:main_sound_move"
+generate-synth-sound-trapped-sheet = "char_gen.synth_entities:main_sound_trapped"
+generate-synth-still-air-idle-sheet = "char_gen.synth_entities:main_still_air_idle"
+generate-synth-still-air-move-sheet = "char_gen.synth_entities:main_still_air_move"
+generate-synth-still-air-trapped-sheet = "char_gen.synth_entities:main_still_air_trapped"
 
 [build-system]
 requires = ["setuptools>=68"]
