@@ -15,8 +15,18 @@ const DEFAULT_RECENT_MS = 2 * 60 * 1000;
  * check running under a differently-named wrapper, ...). `pgrep` exits 1 when nothing
  * matches at all -- not an error, just "no candidates" -- so that's treated as `false`
  * rather than thrown.
+ *
+ * `pgrep -af claude` is system-wide: it also matches `claude` processes that have nothing
+ * to do with this board (a manual repro shell, another project's agent session, ...) but
+ * happen to be invoked with `-p`/`--print` too, which trips this guard as a false positive
+ * and blocks deploy for no reason (see the T-0210 deploy incident this was hardened after).
+ * When `boardDirs` is given, a matching pid is only counted if its cwd (`/proc/<pid>/cwd`)
+ * is the board's repo root or a worktree under it -- where `ClaudeCliRunner` always launches
+ * card-run processes from. A pid whose cwd can't be read (already exited, owned by another
+ * user -- board runs are always this user) is dropped rather than counted, since it can't be
+ * confirmed as a board run either way. Omitting `boardDirs` keeps the old unscoped behavior.
  */
-export async function hasLiveClaudeProcess({ execFn = execFileAsync } = {}) {
+export async function hasLiveClaudeProcess({ execFn = execFileAsync, boardDirs, readlinkFn = fs.readlink } = {}) {
   let stdout = "";
   try {
     ({ stdout } = await execFn("pgrep", ["-af", "claude"]));
@@ -24,11 +34,29 @@ export async function hasLiveClaudeProcess({ execFn = execFileAsync } = {}) {
     if (err && err.code === 1) return false;
     throw new Error(`pgrep -af claude failed: ${(err && (err.stderr || err.message)) || err}`);
   }
-  return stdout
+
+  const candidates = stdout
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .some((line) => /\bclaude\b.*\s-p\b/.test(line) || /\bclaude\b.*\s--print\b/.test(line));
+    .filter((line) => /\bclaude\b.*\s-p\b/.test(line) || /\bclaude\b.*\s--print\b/.test(line));
+
+  if (candidates.length === 0) return false;
+  if (!boardDirs || boardDirs.length === 0) return true;
+
+  for (const line of candidates) {
+    const [pid] = line.split(/\s+/);
+    let cwd;
+    try {
+      cwd = await readlinkFn(`/proc/${pid}/cwd`);
+    } catch {
+      continue;
+    }
+    if (boardDirs.some((dir) => cwd === dir || cwd.startsWith(`${dir}/`))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -75,9 +103,9 @@ export async function hasRecentlyGrowingRunLog({
  * live card, then a crash on a conflict-markered file, 20+ minutes down); a false "not
  * safe" just costs a retried deploy a little later.
  */
-export async function detectLiveRun({ runsDir, execFn, readdirFn, statFn, now, recentMs } = {}) {
+export async function detectLiveRun({ runsDir, execFn, readdirFn, statFn, now, recentMs, boardDirs, readlinkFn } = {}) {
   const [processLive, logGrowing] = await Promise.all([
-    hasLiveClaudeProcess({ execFn }),
+    hasLiveClaudeProcess({ execFn, boardDirs, readlinkFn }),
     hasRecentlyGrowingRunLog({ runsDir, recentMs, now, readdirFn, statFn })
   ]);
   return {
