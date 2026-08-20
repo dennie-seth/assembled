@@ -488,3 +488,230 @@ def ensure_entities_concept_sheet():
     if not OUT_ENTITIES_PNG.exists() or not OUT_ENTITIES_PROV.exists():
         concept_hash = _generate_entities_concept_png(OUT_ENTITIES_PNG)
         _generate_entities_provenance(concept_hash, OUT_ENTITIES_PROV)
+
+
+# ── T-0211 — Signal Tower props concept sheet (cover + hiding-spot) ────────────
+
+OUT_PROPS_PNG = CONCEPT_DIR / "signal_tower_props_concept_sheet_v1.png"
+OUT_PROPS_PROV = CONCEPT_DIR / "signal_tower_props_concept_sheet_v1.provenance.json"
+
+# Prop colours (home palette, full-colour concept art)
+# Cover props: mid-to-light value — opaque, open, exposed from above
+COVER_BODY  = PAL["ramp10"]  # concrete light  — main face
+COVER_SIDE  = PAL["ramp06"]  # concrete mid    — shadow side
+COVER_TOP   = PAL["ramp12"]  # concrete pale   — top lit face
+COVER_ACCT  = PAL["ramp07"]  # inst. green mid — accent stripe
+
+# Hiding-spot props: dark-bodied enclosed containers, exposed entry only
+HIDE_BODY   = PAL["ramp04"]  # concrete dark      — outer shell
+HIDE_INSIDE = PAL["ramp00"]  # near-black         — interior void
+HIDE_FRAME  = PAL["ramp08"]  # concrete mid-light — door/entry frame
+HIDE_HANDLE = PAL["ramp13"]  # concrete lightest  — door handle accent
+
+_P_PW = (W - 2 * _E_MARGIN - _E_GUTTER) // 2   # 492 — same as entity panels
+_P_PH = (H - 2 * _E_MARGIN - _E_GUTTER) // 2   # 492
+
+
+def _p_panel_origin(row: int, col: int) -> tuple[int, int]:
+    return (_E_MARGIN + col * (_P_PW + _E_GUTTER),
+            _E_MARGIN + row * (_P_PH + _E_GUTTER))
+
+
+def _p_panel_frame(px: bytearray, x0: int, y0: int) -> None:
+    _fill_rect(px, x0, y0, x0 + _P_PW - 1, y0 + _P_PH - 1, BG)
+    _draw_border(px, x0, y0, x0 + _P_PW - 1, y0 + _P_PH - 1, BORDER, 2)
+
+
+def _draw_relay_cabinet(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Wide squat relay junction cabinet (cover prop). Game: 36w x 20h."""
+    hw = 18 * s
+    h  = 20 * s
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y, COVER_BODY)
+    _fill_rect(px, cx - hw, floor_y - h, cx - hw + 4*s, floor_y, COVER_SIDE)
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y - h + 3*s, COVER_TOP)
+    _fill_rect(px, cx - hw + 4*s, floor_y - 12*s, cx + hw, floor_y - 10*s, COVER_ACCT)
+
+
+def _draw_crate_stack(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Two-crate stack (cover prop). Game: 24w x 28h."""
+    hw = 12 * s
+    # Bottom crate
+    _fill_rect(px, cx - hw, floor_y - 16*s, cx + hw, floor_y, COVER_BODY)
+    _fill_rect(px, cx - hw, floor_y - 16*s, cx - hw + 3*s, floor_y, COVER_SIDE)
+    _fill_rect(px, cx - hw, floor_y - 16*s, cx + hw, floor_y - 14*s, COVER_TOP)
+    # Seam
+    _fill_rect(px, cx - hw, floor_y - 17*s, cx + hw, floor_y - 16*s, COVER_SIDE)
+    # Top crate (slightly narrower)
+    _fill_rect(px, cx - hw + 2*s, floor_y - 28*s, cx + hw - 2*s, floor_y - 17*s, COVER_BODY)
+    _fill_rect(px, cx - hw + 2*s, floor_y - 28*s, cx - hw + 5*s, floor_y - 17*s, COVER_SIDE)
+    _fill_rect(px, cx - hw + 2*s, floor_y - 28*s, cx + hw - 2*s, floor_y - 26*s, COVER_TOP)
+
+
+def _draw_low_duct(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Horizontal HVAC duct segment (cover prop). Game: 48w x 12h."""
+    hw = 24 * s
+    h  = 12 * s
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y, COVER_SIDE)
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y - h + 4*s, COVER_TOP)
+    _fill_rect(px, cx - hw, floor_y - h, cx - hw + 3*s, floor_y, COVER_ACCT)
+    _fill_rect(px, cx + hw - 3*s, floor_y - h, cx + hw, floor_y, COVER_ACCT)
+
+
+def _draw_locker(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Tall narrow standing locker (hiding-spot prop). Game: 14w x 42h."""
+    hw = 7 * s
+    h  = 42 * s
+    # Outer body
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y, HIDE_BODY)
+    # Door frame border
+    _draw_border(px, cx - hw, floor_y - h, cx + hw, floor_y, HIDE_FRAME, 2)
+    # Interior darkness (enclosed space visible through entry)
+    gap = 2 * s
+    _fill_rect(px, cx - hw + gap, floor_y - h + gap,
+               cx + hw - gap, floor_y - gap, HIDE_INSIDE)
+    # Door handle
+    hh = floor_y - h // 2
+    _fill_rect(px, cx + hw - 3*s, hh - s, cx + hw - s, hh + s, HIDE_HANDLE)
+
+
+def _draw_server_rack(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Enclosed server rack cabinet (hiding-spot prop). Game: 20w x 46h."""
+    hw = 10 * s
+    h  = 46 * s
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y, HIDE_BODY)
+    _draw_border(px, cx - hw, floor_y - h, cx + hw, floor_y, HIDE_FRAME, 3)
+    # Interior void
+    gap = 3 * s
+    _fill_rect(px, cx - hw + gap, floor_y - h + gap,
+               cx + hw - gap, floor_y - gap, HIDE_INSIDE)
+    # Horizontal rack bars
+    inner_h = h - 2 * gap
+    for k in range(1, 4):
+        bar_y = floor_y - h + gap + k * inner_h // 4
+        t = max(1, s // 2)
+        _fill_rect(px, cx - hw + gap, bar_y - t, cx + hw - gap, bar_y + t, HIDE_BODY)
+
+
+def _generate_props_concept_png(out_path: Path) -> str:
+    """Build 1024x1024 RGB signal tower props concept sheet; return sha256 hex digest."""
+    px = _make_canvas(W, H, CANVAS)
+
+    for r in range(2):
+        for c in range(2):
+            x0, y0 = _p_panel_origin(r, c)
+            _p_panel_frame(px, x0, y0)
+
+    _SEC  = _P_PW // 3   # 164px per cover-prop section
+    _HSEC = _P_PW // 2   # 246px per hiding-spot section
+
+    # Panel (0,0) — COVER PROPS: relay cabinet | crate stack | low duct
+    x0, y0 = _p_panel_origin(0, 0)
+    for i in (1, 2):
+        sx = x0 + _SEC * i
+        _fill_rect(px, sx, y0 + 2, sx, y0 + _P_PH - 3, BORDER)
+    floor_y = y0 + _P_PH - 40
+    S_C = 3
+    _draw_relay_cabinet(px, x0 + _SEC // 2,              floor_y, S_C)
+    _draw_crate_stack(  px, x0 + _SEC + _SEC // 2,       floor_y, S_C)
+    _draw_low_duct(     px, x0 + 2 * _SEC + _SEC // 2,   floor_y, S_C)
+
+    # Panel (0,1) — HIDING SPOTS: locker | server rack
+    x0, y0 = _p_panel_origin(0, 1)
+    sx = x0 + _HSEC
+    _fill_rect(px, sx, y0 + 2, sx, y0 + _P_PH - 3, BORDER)
+    floor_y_h = y0 + _P_PH - 40
+    S_H = 4
+    _draw_locker(      px, x0 + _HSEC // 2,           floor_y_h, S_H)
+    _draw_server_rack( px, x0 + _HSEC + _HSEC // 2,   floor_y_h, S_H)
+
+    # Panel (1,0) — SCALE REFERENCE: cover prop | player | hiding spot at x2
+    x0, y0 = _p_panel_origin(1, 0)
+    for i in (1, 2):
+        sx = x0 + _SEC * i
+        _fill_rect(px, sx, y0 + 2, sx, y0 + _P_PH - 3, BORDER)
+    floor_y_r = y0 + _P_PH - 60
+    S_R = 2
+    _draw_relay_cabinet(px, x0 + _SEC // 2, floor_y_r, S_R)
+    # Player silhouette at x2 (head + torso)
+    pcx = x0 + _SEC + _SEC // 2
+    _fill_rect(px, pcx - 7*S_R, floor_y_r - 14*S_R, pcx + 7*S_R, floor_y_r, BODY_DRK)
+    _fill_rect(px, pcx - 6*S_R, floor_y_r - 20*S_R, pcx + 6*S_R, floor_y_r - 14*S_R, HEAD_DRK)
+    _draw_locker(px, x0 + 2 * _SEC + _SEC // 2, floor_y_r, S_R)
+
+    # Panel (1,1) — PALETTE SWATCHES
+    x0, y0 = _p_panel_origin(1, 1)
+    slots = list(PAL.values())
+    sw_w, sw_h, sw_gap = 32, 24, 4
+    sw_total = len(slots) * (sw_w + sw_gap) - sw_gap
+    sw_x = x0 + (_P_PW - sw_total) // 2
+    sw_y = y0 + _P_PH - sw_h - 20
+    for rgb in slots:
+        _fill_rect(px, sw_x, sw_y, sw_x + sw_w - 1, sw_y + sw_h - 1, rgb)
+        sw_x += sw_w + sw_gap
+
+    png_bytes = _encode_png(px, W, H)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(png_bytes)
+    return hashlib.sha256(png_bytes).hexdigest()
+
+
+def _generate_props_provenance(concept_hash: str, out_path: Path) -> None:
+    prov = {
+        "model": (
+            "synth -- programmatic stdlib-only generation (T-0211 fallback; "
+            "SDXL blocked by WSL->Windows Firewall)"
+        ),
+        "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
+        "model_hash": None,
+        "prompt": (
+            "flat side-on prop concept reference sheet, Signal Tower interior props. "
+            "Panel 0 (COVER PROPS - sight-cone block only): relay junction cabinet "
+            "(wide squat, 36w x 20h game px), crate stack (24w x 28h), "
+            "low HVAC duct (48w x 12h). "
+            "Cover props are mid-to-light value, open top, exposed -- "
+            "block sight-cone but not sound/proximity sensors. "
+            "Panel 1 (HIDING SPOT PROPS - all-sensor block, single-occupant, exposed entry only): "
+            "standing locker (14w x 42h, dark body, door frame, handle detail), "
+            "server rack cabinet (20w x 46h, dark body, interior horizontal bars). "
+            "Hiding spot props are dark-bodied enclosed containers -- "
+            "interior near-black, entry frame lighter, single-occupant. "
+            "Panel 2 (SCALE REFERENCE): relay cabinet + player silhouette + locker at x2 scale. "
+            "Panel 3 (PALETTE): home palette swatches. "
+            "Soviet brutalist Signal Tower interior. Hard value separation. "
+            "No perspective, no vanishing point, no scene composition."
+        ),
+        "negative_prompt": (
+            "perspective, vanishing point, atmospheric haze, depth of field, "
+            "bright saturated colors, photorealistic, 3d render, scene composition"
+        ),
+        "seed": 0,
+        "steps": None,
+        "cfg": None,
+        "width": W,
+        "height": H,
+        "workflow_hash": None,
+        "prompt_id": "synth-T-0211",
+        "concept_hash": concept_hash,
+        "_note": (
+            "Synthetic reference -- replace with SDXL generation via "
+            "signal_tower_props_concept_sheet_v1.recipe.json once WSL->ComfyUI is accessible. "
+            "Cover props: mid-value, exposed, sight-block only (ss11 s2). "
+            "Hiding-spot props: dark-bodied, enclosed, all-sensor block (ss11 s2)."
+        ),
+    }
+    out_path.write_text(json.dumps(prov, indent=2))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_signal_tower_props_concept_sheet():
+    """Generate the signal tower props concept sheet PNG + provenance if not yet present.
+
+    Covers cover props and hiding-spot props (T-0211). Autouse so the
+    artifact is always present before any test in this session inspects it.
+
+    If the SDXL-generated PNG already exists (fetched from ComfyUI), this
+    fixture is a no-op -- it never overwrites an already-present file.
+    """
+    if not OUT_PROPS_PNG.exists() or not OUT_PROPS_PROV.exists():
+        concept_hash = _generate_props_concept_png(OUT_PROPS_PNG)
+        _generate_props_provenance(concept_hash, OUT_PROPS_PROV)
