@@ -35,6 +35,7 @@ from comfy_client.recipe import Recipe
 from comfy_client.workflow import (
     render_img2img_lora_workflow,
     render_img2img_workflow,
+    render_txt2img_lora_workflow,
     render_workflow,
     workflow_hash,
 )
@@ -113,6 +114,21 @@ class LoraConditionedConceptProvenanceRecord(ConditionedConceptProvenanceRecord)
     lora_weight: float
     lora_license: str
     base_concept_hash: str
+
+
+@dataclass(frozen=True)
+class LoraTxt2ImgConceptProvenanceRecord(ConceptProvenanceRecord):
+    """Extends `ConceptProvenanceRecord` for plain txt2img + LoRA runs (T-0209,
+    `13-asset-pipeline.md` §6.9).
+
+    No init image, no conditioning source -- pure txt2img generation with a
+    LoRA applied. `concept_hash` (inherited) is the sha256 of the generated
+    concept sheet's own bytes (same as `ConceptProvenanceRecord`).
+    """
+
+    lora_name: str
+    lora_weight: float
+    lora_license: str
 
 
 @dataclass(frozen=True)
@@ -283,6 +299,75 @@ def generate_concept_conditioned_lora(
         lora_weight=lora_weight,
         lora_license=lora_license,
         base_concept_hash=base_concept_hash,
+    )
+    provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
+    provenance_path.write_text(json.dumps(asdict(provenance), indent=2))
+
+    return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
+
+
+def generate_concept_lora(
+    recipe: Recipe,
+    lora_name: str,
+    lora_weight: float,
+    lora_license: str,
+    out_dir: str | Path = DEFAULT_CONCEPT_DIR,
+    client: GenerationClient | None = None,
+    timeout: float = 300.0,
+    poll_interval: float = 1.0,
+) -> ConceptResult:
+    """txt2img + LoRA concept-sheet generation (T-0209, `13-asset-pipeline.md` §6.9).
+
+    Like `generate_concept` but inserts a LoRA between the checkpoint and the
+    sampler/CLIP nodes -- pure txt2img (EmptyLatentImage) with LoRA conditioning,
+    no init image. Enforces the license gate via `assert_checkpoint_allowed`
+    before any network call. `concept_hash` in the provenance is the sha256 of
+    the generated sheet's own bytes (same as `generate_concept`).
+
+    `model_hash=None` on the recipe is accepted: concept art is a pipeline
+    *source*, not a shipped asset, so the T-0151 model-hash requirement does
+    not apply here (it applies to descended sprites via `pipeline.generate()`).
+    """
+    # License gate -- raises CheckpointNotAllowedError before any network call;
+    # return value carries the entry's license string for the provenance record.
+    entry = assert_checkpoint_allowed(recipe.checkpoint)
+
+    graph = render_txt2img_lora_workflow(recipe, lora_name=lora_name, lora_weight=lora_weight)
+    graph_hash = workflow_hash(graph)
+
+    gen_client = client or ComfyUIClient(base_url=resolve_base_url())
+
+    job_id = gen_client.submit(graph)
+    job_result = gen_client.wait_for_completion(
+        job_id, timeout=timeout, poll_interval=poll_interval
+    )
+    raw_bytes = gen_client.fetch_output(job_result)
+    concept_hash_value = hashlib.sha256(raw_bytes).hexdigest()
+
+    out_dir_path = Path(out_dir)
+    out_dir_path.mkdir(parents=True, exist_ok=True)
+    image_path = out_dir_path / f"{recipe.name}.png"
+    image_path.write_bytes(raw_bytes)
+
+    # Build provenance directly (not via build_provenance_record) so that
+    # model_hash=None is acceptable for concept-art sources (see docstring).
+    provenance = LoraTxt2ImgConceptProvenanceRecord(
+        model=f"{recipe.checkpoint} + LoRA {lora_name} (weight {lora_weight})",
+        model_license=f"{entry.license} (base) / {lora_license} (LoRA)",
+        model_hash=recipe.model_hash,
+        prompt=recipe.prompt,
+        negative_prompt=recipe.negative_prompt,
+        seed=recipe.seed,
+        steps=recipe.steps,
+        cfg=recipe.cfg,
+        width=recipe.width,
+        height=recipe.height,
+        workflow_hash=graph_hash,
+        prompt_id=job_id,
+        concept_hash=concept_hash_value,
+        lora_name=lora_name,
+        lora_weight=lora_weight,
+        lora_license=lora_license,
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
     provenance_path.write_text(json.dumps(asdict(provenance), indent=2))

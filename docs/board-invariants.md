@@ -124,19 +124,30 @@ db mode — flows through before touching rendered state.
 | RUN-2 | A card already running cannot be run again concurrently. | Two orchestrator runs on the same card/worktree would race each other's git state. | ✅ Covered — `httpApi.test.js` "returns 409 when running a card that already has an active run". |
 | RUN-3 | The Run affordance must reflect actual readiness: a card whose own dependencies are unmet (DOT-1 shows 🔴) cannot be started via Run, matching LC-4's guard on manual `PATCH →in-progress`. | Same rule as LC-5 above — listed here too since "Run gating" was called out as its own area. The client doesn't hide the Run button based on the dependency dot (`boardView.js`'s Run button is gated only on `task.status === "ready"`), so the server-side check is the only enforcement point. | ❌ **Was NOT covered, and the code violated it.** Fixed in this PR (see LC-5). |
 
-## 6. Deploy propagation (pull-on-done)
+## 6. Deploy propagation (pull-on-done, pull-on-timer)
 
 This area is different in kind from §1–5: it's not about what renders on a
 card, but about whether merged code on `origin/develop` ever reaches the
-live board process at all. It's the headline finding of this PR — a real,
-already-shipped regression, not just a coverage gap discovered by
-enumeration.
+live board process at all. PULL-1 below was the headline finding of the PR
+that introduced this section — a real, already-shipped regression, not just
+a coverage gap discovered by enumeration.
+
+PULL-1's Done-triggered pull has one structural gap of its own: it only
+fires from a card's `PATCH .../status → done` handler, so a board sitting
+idle — no card reaching Done — never re-checks `origin/develop` no matter
+how long a merged PR has been sitting there (confirmed live: PR #210 sat
+un-pulled for hours with no card completing after it merged). PULL-4 closes
+that gap with a periodic timer that reuses the same `pullDevelop` +
+`restartCoordinator` machinery on an interval instead of a card event. The
+"no timer or other trigger" observation in PULL-1's own description below is
+what PULL-4 changes going forward — see PULL-4 for the new mechanism.
 
 | ID | Invariant | Why it matters | Status |
 |----|-----------|-----------------|--------|
 | PULL-1 | Marking a card `done` triggers a pull of `origin/develop` into `repoRoot`, **independent of task-store mode** (fs or db). | This is the live board's *only* auto-deploy mechanism — there is no timer or other trigger (confirmed: `systemctl --user list-timers` on the live host shows only asset-sync/backup/integrity-check timers, nothing pull-related). `handlePatchTask` (`httpApi.js`) gated the pull with `taskStoreKind !== "db"`, reasoning that "card writes never touch git in db mode" — true, but irrelevant to this invariant: `repoRoot` is still a real, live checkout of `develop` in db mode (Phase 2 keeps `tasks/` git-tracked alongside the DB), and *other* merged PRs still need to reach it. When the live board was cut over to `BOARD_TASK_STORE=db` on 2026-08-07, this gate silently killed the only auto-deploy path — merged code stopped reaching the live tree with no error, no log line, nothing. First noticed 2026-08-08 when the user reported merged code wasn't showing up live. | ❌ **Was NOT covered, and shipped broken for a day.** Fixed in this PR: the `taskStoreKind !== "db"` condition is dropped from the gate. New regression tests in `httpApi.dbMode.test.js` (`PULL-1: ...`), confirmed failing against the pre-fix code before the fix landed. |
 | PULL-2 | The pull never blocks or delays the PATCH response — it's fire-and-forget, and a failed pull (network down, no `develop` ref, merge conflict) still returns 200 with the card's updated status. | A flaky/offline git remote must not make marking a card done appear to fail. | ✅ Covered — `httpApi.done.test.js` "still returns 200 even when pullDevelop rejects". |
 | PULL-3 | The pull itself is never gated on whether a card run is active, but a **service restart** triggered by the pull (`restartCoordinator.notifyPulled`) *is* deferred while `orchestrator.hasActiveRuns()` is true. | These are deliberately different gates on different risks. `pullDevelop` runs `git pull` against `repoRoot` only; a card's live run happens in its own `git worktree` (`gitOps.addWorktree`, on a `feature/T-XXXX` branch) — a separate working tree and HEAD that a pull into `repoRoot`'s `develop` checkout cannot touch or interrupt. What *would* interrupt a live run is restarting the board's Node process out from under the in-process `RunOrchestrator` — that's the actual risk, and it's the thing already deferred. Gating the pull itself on "no live run" (rather than just the restart) would be over-broad and would reintroduce a version of this same bug: a long-running card would indefinitely block *all* deploys, not just its own restart. | ✅ Covered — `httpApi.done.test.js` "restart-on-pull coordination" (fs mode, 4 tests) and the new `httpApi.dbMode.test.js` "PULL-1: defers the restart-on-pull coordinator... in db mode too" (confirms the same deferral holds in db mode, not just fs mode). |
+| PULL-4 | Independent of any card event, `autoPullPoller.js` runs a periodic timer (`BOARD_AUTOPULL_INTERVAL_MS`, default 5 minutes; `BOARD_AUTOPULL` / an interval of `0` disables it) that fetches `origin/develop` and, only if it's actually ahead of `repoRoot`'s HEAD, runs the same `pullDevelop` + `restartCoordinator.notifyPulled` pair the Done path uses. Unlike PULL-3, a tick with an active card run is skipped **entirely** — no fetch, no pull, not just a deferred restart — and the next tick (or the run's own eventual idle notification) picks it back up. | This is the fix for the structural gap called out in this section's intro: PULL-1 only fires from a Done transition, so an idle board can sit arbitrarily far behind a merged `origin/develop` with nothing to trigger a catch-up. The timer is deliberately more conservative than PULL-3 about skipping ticks outright (rather than always pulling and only deferring the restart) because, unlike a card reaching Done, no external event is forcing this particular tick to happen right now — waiting for the next one is free. | ✅ Covered — `gitOps.test.js` (`isBehindOrigin`: up-to-date, origin-ahead, local-only-ahead, diverged) and `autoPullPoller.test.js` (pulls+restarts when behind+idle, skips the entire tick when a run is live, no-ops when already up to date, respects `enabled`/`intervalMs: 0`, start/stop interval wiring, tick-failure isolation) plus `boardServer.test.js` "auto-pull poller wiring" (construction, `close()` stops it, env-disabled end-to-end). |
 
 ## 7. Detail panel live-update safety
 
@@ -163,7 +174,7 @@ down (`root.replaceChildren()`) and rebuilds every field from `task`.
 | Create/update | CR-2, CR-3 | CR-1 | — | — |
 | WS event application | WS-1..4 | — | WS-5, WS-6, WS-7, WS-8 | — |
 | Run gating | RUN-1, RUN-2 | — | RUN-3 (= LC-5) | — |
-| Deploy propagation | PULL-2, PULL-3 | — | **PULL-1 (headline)** | — |
+| Deploy propagation | PULL-2, PULL-3, PULL-4 | — | **PULL-1 (headline)** | — |
 | Detail panel live-update safety | — | — | DP-1, DP-2 | — |
 
 **Deferred, not silently dropped:** LC-7 (no guard against a manual card edit

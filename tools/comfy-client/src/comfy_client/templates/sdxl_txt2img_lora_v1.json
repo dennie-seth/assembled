@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "name": "sdxl_txt2img_lora_v1",
+    "version": 1,
+    "description": "SDXL txt2img + LoRA graph (T-0209, docs/design/13-asset-pipeline.md §6.9) -- CheckpointLoaderSimple -> LoraLoader -> CLIPTextEncode x2 + EmptyLatentImage -> KSampler -> VAEDecode -> SaveImage. Node 12 (LoraLoader) sits between the checkpoint and the model/clip consumers: it takes model+clip from node 4 and passes modified model+clip to node 3 (KSampler) and nodes 6+7 (CLIPTextEncode). VAE is taken directly from the checkpoint (node 4, output 2) and bypasses the LoRA. No init image -- pure txt2img generation with LoRA conditioning. Node IDs are stable; add a new template file for graph-shape changes."
+  },
+  "graph": {
+    "4": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "sd_xl_base_1.0.safetensors"
+      }
+    },
+    "12": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["4", 0],
+        "clip": ["4", 1],
+        "lora_name": "soviet_brutalism_style_v1.safetensors",
+        "strength_model": 0.75,
+        "strength_clip": 0.75
+      }
+    },
+    "5": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": ["12", 1]
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": ["12", 1]
+      }
+    },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 20,
+        "cfg": 7.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0,
+        "model": ["12", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["5", 0]
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["3", 0],
+        "vae": ["4", 2]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "assembled",
+        "images": ["8", 0]
+      }
+    }
+  }
+}

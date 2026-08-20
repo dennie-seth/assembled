@@ -13,6 +13,7 @@ import {
   push,
   getHeadCommit,
   pullDevelop,
+  isBehindOrigin,
   mergeNoFF,
   fetch,
   mergeDevelop,
@@ -466,6 +467,54 @@ describe("pullDevelop", () => {
     await fs.writeFile(path.join(repoRoot, "after.txt"), "post-conflict work\n", "utf8");
     await git(["add", "after.txt"], repoRoot);
     await expect(git(["commit", "-m", "local: work after aborted pull"], repoRoot)).resolves.toBeDefined();
+  });
+});
+
+describe("isBehindOrigin", () => {
+  it("returns false when repoRoot's develop already matches origin/develop", async () => {
+    await expect(isBehindOrigin({ repoRoot, branch: "develop" })).resolves.toBe(false);
+  });
+
+  it("returns true once origin/develop has commits repoRoot doesn't have yet", async () => {
+    const cloneDir = path.join(tmpDir, "other-clone-behind-check");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream-behind.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream-behind.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: commit repoRoot hasn't seen"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(isBehindOrigin({ repoRoot, branch: "develop" })).resolves.toBe(true);
+  });
+
+  it("returns false when repoRoot is only ahead of origin (local unpushed commit, nothing new upstream)", async () => {
+    await fs.writeFile(path.join(repoRoot, "local-only.txt"), "local\n", "utf8");
+    await git(["add", "local-only.txt"], repoRoot);
+    await git(["commit", "-m", "local: unpushed commit"], repoRoot);
+
+    await expect(isBehindOrigin({ repoRoot, branch: "develop" })).resolves.toBe(false);
+  });
+
+  it("returns true when histories diverged (repoRoot has an unpushed commit AND origin moved on)", async () => {
+    await fs.writeFile(path.join(repoRoot, "local-diverge.txt"), "local\n", "utf8");
+    await git(["add", "local-diverge.txt"], repoRoot);
+    await git(["commit", "-m", "local: unpushed commit"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-diverged");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream-diverge.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream-diverge.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: diverged commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(isBehindOrigin({ repoRoot, branch: "develop" })).resolves.toBe(true);
   });
 });
 

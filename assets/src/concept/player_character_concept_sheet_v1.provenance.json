@@ -1,0 +1,18 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
+  "model_hash": null,
+  "prompt": "flat side-on character concept reference sheet, orthographic game asset, no perspective, no vanishing point, four reference panels: idle standing pose, walk mid-stride pose, crouch-hide pose, scale reference panel. Player character: 40px tall humanoid figure in a 48x48 cell, institutional green coat/clothing, concrete-grey head and skin tones, deep shadow values. Soviet brutalist interior aesthetic, muted desaturated palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, no background elements. Game asset reference sheet style, pixel art scale reference, figure silhouette study",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality",
+  "seed": 20900,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "5a6ddec45f51506dd37313edafb388dfbf37b88ea575a3b4d5b20446b8a4d3ac",
+  "prompt_id": "edceda75-f95c-4c53-88ea-766aff632cbb",
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "lora_license": "CreativeML OpenRAIL++-M"
+}

@@ -17,6 +17,7 @@ from comfy_client.concept import (
     generate_concept,
     generate_concept_conditioned,
     generate_concept_conditioned_lora,
+    generate_concept_lora,
 )
 from comfy_client.recipe import Recipe
 
@@ -296,6 +297,88 @@ def test_generate_concept_conditioned_lora_refuses_disallowed_checkpoint(tmp_pat
             lora_weight=0.75,
             lora_license="CreativeML Open RAIL++-M",
             base_concept_path=init_image_path,
+            out_dir=tmp_path,
+            client=client,
+        )
+    assert client.calls == []
+
+
+# ---- LoRA txt2img concept generation (T-0209) --------------------------------
+
+
+def test_generate_concept_lora_writes_png_and_provenance_sidecar(tmp_path, sample_recipe):
+    client = FakeClient()
+    result = generate_concept_lora(
+        sample_recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.70,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=client,
+    )
+    assert result.path.exists()
+    assert result.path.read_bytes() == b"PNGDATA"
+    sidecar = tmp_path / f"{sample_recipe.name}.provenance.json"
+    assert sidecar.exists()
+
+
+def test_generate_concept_lora_provenance_has_lora_and_concept_hash_keys(
+    tmp_path, sample_recipe
+):
+    import hashlib
+
+    client = FakeClient(image_bytes=b"PNGDATA")
+    result = generate_concept_lora(
+        sample_recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.70,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=client,
+    )
+    prov = result.provenance
+    assert prov.lora_name == "soviet_brutalism_style_v1.safetensors"
+    assert prov.lora_weight == 0.70
+    assert prov.lora_license == "Apache-2.0"
+    expected_hash = hashlib.sha256(b"PNGDATA").hexdigest()
+    assert prov.concept_hash == expected_hash
+
+    sidecar = tmp_path / f"{sample_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["lora_name"] == "soviet_brutalism_style_v1.safetensors"
+    assert on_disk["lora_weight"] == 0.70
+    assert on_disk["concept_hash"] == expected_hash
+
+
+def test_generate_concept_lora_uses_lora_txt2img_workflow(tmp_path, sample_recipe):
+    client = FakeClient()
+    generate_concept_lora(
+        sample_recipe,
+        lora_name="my_lora.safetensors",
+        lora_weight=0.5,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=client,
+    )
+    submitted_graph = client.calls[0][1]  # ("submit", workflow)
+    assert "12" in submitted_graph
+    assert submitted_graph["12"]["class_type"] == "LoraLoader"
+    assert submitted_graph["12"]["inputs"]["lora_name"] == "my_lora.safetensors"
+    assert submitted_graph["12"]["inputs"]["strength_model"] == 0.5
+    # txt2img: must have EmptyLatentImage ("5"), must NOT have LoadImage ("10")
+    assert "5" in submitted_graph
+    assert "10" not in submitted_graph
+
+
+def test_generate_concept_lora_refuses_disallowed_checkpoint(tmp_path):
+    recipe = Recipe(prompt="x", seed=1, checkpoint="not_on_allowlist.safetensors")
+    client = FakeClient()
+    with pytest.raises(CheckpointNotAllowedError):
+        generate_concept_lora(
+            recipe,
+            lora_name="test_lora",
+            lora_weight=0.5,
+            lora_license="Apache-2.0",
             out_dir=tmp_path,
             client=client,
         )

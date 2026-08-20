@@ -1,0 +1,7 @@
+# Throwaway hash/canonicalization helpers created during T-0209 SDXL generation
+_compute_hashes.py
+_compute_hashes.js
+_wf_canon.json
+# Python venv and cache
+.venv/
+__pycache__/

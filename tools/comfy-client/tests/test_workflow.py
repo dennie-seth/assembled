@@ -215,3 +215,82 @@ def test_lora_workflow_hash_differs_from_non_lora_img2img():
     non_lora = render_img2img_workflow(r, init_image_name="a.png")
     lora = render_img2img_lora_workflow(r, "a.png", lora_name="test_lora", lora_weight=0.5)
     assert workflow_hash(non_lora) != workflow_hash(lora)
+
+
+# ---- LoRA txt2img workflow (T-0209) -----------------------------------------
+
+
+def test_load_txt2img_lora_template_has_expected_node_shape():
+    from comfy_client.workflow import load_template
+
+    tmpl = load_template("sdxl_txt2img_lora_v1")
+    graph = tmpl["graph"]
+    assert graph["4"]["class_type"] == "CheckpointLoaderSimple"
+    assert graph["12"]["class_type"] == "LoraLoader"
+    assert graph["5"]["class_type"] == "EmptyLatentImage"
+    assert graph["6"]["class_type"] == "CLIPTextEncode"
+    assert graph["7"]["class_type"] == "CLIPTextEncode"
+    assert graph["3"]["class_type"] == "KSampler"
+    assert graph["8"]["class_type"] == "VAEDecode"
+    assert graph["9"]["class_type"] == "SaveImage"
+    # LoRA connections: model and clip come from LoraLoader, not checkpoint directly
+    assert graph["3"]["inputs"]["model"] == ["12", 0]
+    assert graph["6"]["inputs"]["clip"] == ["12", 1]
+    assert graph["7"]["inputs"]["clip"] == ["12", 1]
+    # No init-image nodes (txt2img, not img2img)
+    assert "10" not in graph
+    assert "11" not in graph
+
+
+def test_render_txt2img_lora_workflow_substitutes_recipe_and_lora_fields():
+    from comfy_client.workflow import render_txt2img_lora_workflow
+
+    r = Recipe(
+        prompt="player character concept sheet",
+        negative_prompt="blurry, low quality",
+        seed=20900,
+        steps=30,
+        cfg=7.0,
+        checkpoint="sd_xl_base_1.0.safetensors",
+        sampler="euler",
+        scheduler="normal",
+        name="player_character_concept_sheet_v1",
+    )
+    graph = render_txt2img_lora_workflow(
+        r, lora_name="soviet_brutalism_style_v1.safetensors", lora_weight=0.70
+    )
+    assert graph["4"]["inputs"]["ckpt_name"] == "sd_xl_base_1.0.safetensors"
+    assert graph["12"]["inputs"]["lora_name"] == "soviet_brutalism_style_v1.safetensors"
+    assert graph["12"]["inputs"]["strength_model"] == 0.70
+    assert graph["12"]["inputs"]["strength_clip"] == 0.70
+    assert graph["6"]["inputs"]["text"] == r.prompt
+    assert graph["7"]["inputs"]["text"] == r.negative_prompt
+    assert graph["5"]["inputs"]["width"] == r.width
+    assert graph["5"]["inputs"]["height"] == r.height
+    assert graph["3"]["inputs"]["seed"] == 20900
+    assert graph["3"]["inputs"]["steps"] == 30
+    assert graph["3"]["inputs"]["cfg"] == 7.0
+    assert graph["3"]["inputs"]["model"] == ["12", 0]
+    assert graph["9"]["inputs"]["filename_prefix"] == "player_character_concept_sheet_v1"
+
+
+def test_render_txt2img_lora_workflow_does_not_mutate_template():
+    from comfy_client.workflow import render_txt2img_lora_workflow
+
+    r1 = Recipe(prompt="first", seed=1)
+    r2 = Recipe(prompt="second", seed=2)
+    g1 = render_txt2img_lora_workflow(r1, lora_name="lora_a", lora_weight=0.5)
+    g2 = render_txt2img_lora_workflow(r2, lora_name="lora_b", lora_weight=0.8)
+    assert g1["6"]["inputs"]["text"] == "first"
+    assert g2["6"]["inputs"]["text"] == "second"
+    assert g1["12"]["inputs"]["lora_name"] == "lora_a"
+    assert g2["12"]["inputs"]["lora_name"] == "lora_b"
+
+
+def test_txt2img_lora_workflow_hash_differs_from_plain_txt2img():
+    from comfy_client.workflow import render_txt2img_lora_workflow
+
+    r = Recipe(prompt="x", seed=1)
+    plain = render_workflow(r)
+    lora = render_txt2img_lora_workflow(r, lora_name="test_lora", lora_weight=0.5)
+    assert workflow_hash(plain) != workflow_hash(lora)
