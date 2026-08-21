@@ -282,7 +282,7 @@ def poll_until_done(prompt_id: str, timeout_s: int = 600, interval_s: int = 10) 
             if has_error:
                 raise RuntimeError(f"ComfyUI execution error for prompt_id={prompt_id}")
         else:
-            print(f"  Waiting... (not in history yet)")
+            print("  Waiting... (not in history yet)")
 
         time.sleep(interval_s)
 
