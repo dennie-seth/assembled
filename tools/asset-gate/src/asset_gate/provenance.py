@@ -10,9 +10,13 @@ Implements `13-asset-pipeline.md` §2 (validation gate, T-0102).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from asset_gate.result import CheckResult
 
 _MISSING = object()
+_BASELINE_FILENAME = "provenance_baseline.txt"
 
 
 def check_provenance_model_hash(provenance: dict) -> CheckResult:
@@ -56,3 +60,79 @@ def check_provenance_model_hash(provenance: dict) -> CheckResult:
         reason=f"model_hash is present ({str(model_hash)[:16]}...)",
         details={"model_hash": model_hash},
     )
+
+
+def _default_baseline_path() -> Path:
+    return Path(__file__).parent / _BASELINE_FILENAME
+
+
+def load_baseline(path: Path | str | None = None) -> frozenset[str]:
+    """Load the set of documented, pre-existing null-hash paths (HANDOFF §21).
+
+    These are already-audited gaps -- synth-fallback placeholders and the
+    T-0209 concept sheet, catalogued in PR #221's audit table -- that need
+    real regeneration, not a backfill, and are tracked in a follow-up card
+    rather than fixed here. `sweep_provenance_model_hash` exempts exactly
+    these paths so introducing the sweep (and every later PR touching it)
+    doesn't re-fail on already-known debt; anything not listed here still
+    fails the gate.
+    """
+    baseline_path = Path(path) if path is not None else _default_baseline_path()
+    if not baseline_path.exists():
+        return frozenset()
+    return frozenset(
+        line.strip()
+        for line in baseline_path.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    )
+
+
+def sweep_provenance_model_hash(
+    root: Path | str, baseline: frozenset[str] = frozenset()
+) -> list[CheckResult]:
+    """Run `check_provenance_model_hash` against every ``*.provenance.json``
+    under *root*, recursively.
+
+    (HANDOFF §21) T-0151 enforced ``model_hash`` inside one writer
+    (`comfy_client.pipeline.generate()`); several other asset-writing paths
+    (concept-art LoRA generation, standalone synth-fallback scripts) never
+    went through it and shipped null hashes undetected because nothing
+    scanned the committed tree. This sweep is writer-agnostic -- it reads
+    the sidecars that actually landed in the repo, so a gap in any future
+    writer is still caught here regardless of which code path produced it.
+
+    *baseline* is a set of paths (relative to *root*, forward-slashed)
+    that are allowed to keep failing `check_provenance_model_hash` --
+    documented pre-existing gaps (see `load_baseline`). Anything not in
+    *baseline* must pass.
+    """
+    results = []
+    for path in sorted(Path(root).rglob("*.provenance.json")):
+        provenance = json.loads(path.read_text())
+        single = check_provenance_model_hash(provenance)
+        rel = path.relative_to(root) if path.is_relative_to(root) else path
+        rel_str = str(rel).replace("\\", "/")
+
+        if not single.passed and rel_str in baseline:
+            results.append(
+                CheckResult(
+                    check="provenance_model_hash",
+                    passed=True,
+                    reason=(
+                        f"{rel}: {single.reason} "
+                        "[baseline-exempt: documented pre-existing gap, HANDOFF §21]"
+                    ),
+                    details={**single.details, "path": rel_str, "baseline_exempt": True},
+                )
+            )
+            continue
+
+        results.append(
+            CheckResult(
+                check="provenance_model_hash",
+                passed=single.passed,
+                reason=f"{rel}: {single.reason}",
+                details={**single.details, "path": rel_str},
+            )
+        )
+    return results
