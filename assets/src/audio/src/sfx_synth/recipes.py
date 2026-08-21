@@ -228,11 +228,18 @@ FOOTSTEP_RUN = Recipe(
             gain_db=3.0,
         ),
         # Sharp scuff: fast sole-drag, higher energy and broader than walk.
+        # q=1.5 (was 2.0): the 4 kHz bandpass dominates the mix's sample peak
+        # (layer peak -7 dBFS vs thud -30 dBFS). At Q=2.0 the crest factor
+        # (peak-to-LUFS gap, 17.0 dB) caused the -2 dBFS peak ceiling to bite
+        # during loudness normalization, capping the final LUFS at -19.06
+        # instead of -16.00 (delta 3.06 dB, outside the ±3.0 dB gate window).
+        # Q=1.5 reduces the resonant overshoot enough to bring the post-
+        # normalization LUFS to -18.98 (delta 2.98 dB, inside the gate window).
         Layer(
             onset_s=0.0,
             noise_color="white",
             center_hz=4000.0,
-            q=2.0,
+            q=1.5,
             attack_s=0.0008,
             decay_s=0.03,
             gain_db=-5.0,
