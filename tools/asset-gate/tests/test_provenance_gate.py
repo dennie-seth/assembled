@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import json
 
-from asset_gate.provenance import check_provenance_model_hash, sweep_provenance_model_hash
+from asset_gate.provenance import (
+    check_provenance_model_hash,
+    load_baseline,
+    sweep_provenance_model_hash,
+)
 
 
 def test_passes_when_model_hash_is_present():
@@ -101,3 +105,51 @@ def test_sweep_ignores_non_provenance_json_files(tmp_path):
 
 def test_sweep_of_empty_tree_returns_no_results(tmp_path):
     assert sweep_provenance_model_hash(tmp_path) == []
+
+
+# ---- Baseline exemption for documented pre-existing gaps (HANDOFF §21, PR #221) ----
+
+
+def test_sweep_baseline_exempts_documented_pre_existing_gaps(tmp_path):
+    _write_prov(tmp_path / "known_bad.provenance.json", model_hash=None)
+    _write_prov(tmp_path / "unknown_bad.provenance.json", model_hash=None)
+
+    results = sweep_provenance_model_hash(
+        tmp_path, baseline=frozenset({"known_bad.provenance.json"})
+    )
+
+    by_path = {r.details["path"]: r for r in results}
+    assert by_path["known_bad.provenance.json"].passed
+    assert by_path["known_bad.provenance.json"].details["baseline_exempt"] is True
+    assert not by_path["unknown_bad.provenance.json"].passed
+    assert "baseline_exempt" not in by_path["unknown_bad.provenance.json"].details
+
+
+def test_sweep_baseline_does_not_exempt_a_passing_file(tmp_path):
+    _write_prov(tmp_path / "fine.provenance.json", model_hash="a" * 64)
+
+    results = sweep_provenance_model_hash(tmp_path, baseline=frozenset({"fine.provenance.json"}))
+
+    assert results[0].passed
+    assert "baseline_exempt" not in results[0].details
+
+
+def test_load_baseline_returns_empty_set_when_file_missing(tmp_path):
+    assert load_baseline(tmp_path / "does_not_exist.txt") == frozenset()
+
+
+def test_load_baseline_parses_lines_and_skips_comments_and_blanks(tmp_path):
+    baseline_file = tmp_path / "baseline.txt"
+    baseline_file.write_text("# a comment\nfoo/bar.provenance.json\n\nbaz.provenance.json\n")
+
+    assert load_baseline(baseline_file) == frozenset(
+        {"foo/bar.provenance.json", "baz.provenance.json"}
+    )
+
+
+def test_load_baseline_default_path_lists_the_pr_221_audit_table():
+    baseline = load_baseline()
+
+    assert len(baseline) == 21
+    assert "src/concept/player_character_concept_sheet_v1.provenance.json" in baseline
+    assert "src/concept/entities_concept_sheet_v1.provenance.json" in baseline

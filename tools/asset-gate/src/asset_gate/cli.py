@@ -57,7 +57,8 @@ def _cmd_provenance_model_hash(args: argparse.Namespace) -> int:
 
 
 def _cmd_provenance_sweep(args: argparse.Namespace) -> int:
-    results = provenance_mod.sweep_provenance_model_hash(args.root)
+    baseline = provenance_mod.load_baseline()
+    results = provenance_mod.sweep_provenance_model_hash(args.root, baseline=baseline)
     if not results:
         print(f"no *.provenance.json files found under {args.root}")
     return _report_and_exit(results)

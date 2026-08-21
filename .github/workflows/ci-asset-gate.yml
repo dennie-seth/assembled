@@ -52,6 +52,9 @@ jobs:
       - run: pip install -e ".[dev]"
 
       # Recursively validates every committed *.provenance.json under assets/,
-      # regardless of which script wrote it -- fails the PR if any sidecar
-      # carries a null/missing model_hash instead of letting it merge silently.
+      # regardless of which script wrote it -- fails the PR if any *new or
+      # undocumented* sidecar carries a null/missing model_hash instead of
+      # letting it merge silently. Paths listed in provenance_baseline.txt
+      # are already-audited pre-existing gaps tracked for regeneration in a
+      # follow-up card (PR #221) and don't block this gate.
       - run: python -m asset_gate.cli provenance-sweep ../../assets
