@@ -356,4 +356,23 @@ describe("buildReviewerPrompt -- deliverable artifact check (deliverable_type: '
     expect(prompt).toContain("Deliverable artifact check");
     expect(prompt).toContain("Python verify (tools/asset-gate)");
   });
+
+  it("adds the deliverable check route for a code-deliverable card when the diff adds a file under assets/final/** (T-0198-style gap, diff-triggered even though deliverable_type says code)", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["assets/final/character/player_idle_sheet_v1.png"]
+    });
+    expect(prompt).toContain("Deliverable artifact check");
+    expect(prompt).toContain("checkDeliverable.js T-0099 --require-artifact");
+  });
+
+  it("explains the diff-triggered case in the enforcement text without claiming deliverable_type is 'artifact' when it isn't", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["assets/final/character/player_idle_sheet_v1.png"]
+    });
+    expect(prompt).toMatch(/artifact-producing path/);
+  });
 });

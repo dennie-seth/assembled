@@ -79,10 +79,16 @@ running any workflow. Key points, in priority order:
 
 Generate via the `AssetAgent` HTTP interface, post-process per the Phase 6
 pipeline (cutout / palette quantize / upscale as configured), curate into
-`assets/final/`, run the `asset-provenance` skill, then commit everything
-(curated finals + provenance entry) and stop once `git status --porcelain`
-is empty. Do NOT invoke the `open-review-pr` skill yourself and do NOT push
-or open a PR — an Agent Runner orchestrator drives this session and owns
+`assets/final/`, run the `asset-provenance` skill, **then upload every
+curated final (and any concept sheet / key art file the card produced) to
+the card via the attachments API — non-optional, before you commit:**
+`curl -X POST "http://127.0.0.1:${BOARD_PORT:-4173}/api/tasks/<id>/attachments" -F "file=@<path>"`
+(see `.claude/rules/assets.md`'s attachment bullet for the full rationale —
+a file that is only committed, never attached, is invisible to the
+attachments-only asset-export stager and Drive sync). Then commit
+everything (curated finals + provenance entry) and stop once
+`git status --porcelain` is empty. Do NOT invoke the `open-review-pr` skill
+yourself and do NOT push or open a PR — an Agent Runner orchestrator drives this session and owns
 the handoff to the reviewer's VALIDATION pass, pushing only once that
 verdict is PASS. Never move a card to `review` or `done` yourself, and
 never merge a PR.
