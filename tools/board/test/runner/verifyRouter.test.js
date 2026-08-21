@@ -287,3 +287,79 @@ describe("resolveDeliverableRoute -- task-driven, not diff-path-driven (T-0136 g
     expect(route.command).toBe("node tools/board/scripts/checkDeliverable.js T-0136");
   });
 });
+
+describe("resolveDeliverableRoute -- diff-detected artifact backstop (T-0198/T-0209/T-0202 gap: real art/audio committed under deliverable_type: 'code')", () => {
+  it("routes a code-deliverable card when the diff adds a PNG under assets/final/**", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0198", deliverable_type: "code" },
+      ["assets/final/character/player_idle_sheet_v1.png"]
+    );
+    expect(route).not.toBeNull();
+    expect(route.id).toBe("deliverable-check");
+  });
+
+  it("routes a code-deliverable card when the diff adds a concept sheet PNG under assets/src/concept/**", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0209", deliverable_type: "code" },
+      ["assets/src/concept/player_concept_sheet_v1.png"]
+    );
+    expect(route).not.toBeNull();
+  });
+
+  it("routes a code-deliverable card when the diff adds key art under assets/src/keyart/**", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0155", deliverable_type: "code" },
+      ["assets/src/keyart/signal_tower_keyart_v1.png"]
+    );
+    expect(route).not.toBeNull();
+  });
+
+  it("routes a code-deliverable card when the diff adds an ogg under assets/final/audio/**", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0202", deliverable_type: "code" },
+      ["assets/final/audio/signal_tower_ambience.ogg"]
+    );
+    expect(route).not.toBeNull();
+  });
+
+  it("adds a --require-artifact flag to the command when routed only by the diff signal, not by deliverable_type", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0198", deliverable_type: "code" },
+      ["assets/final/character/player_idle_sheet_v1.png"]
+    );
+    expect(route.command).toBe("node tools/board/scripts/checkDeliverable.js T-0198 --require-artifact");
+  });
+
+  it("does NOT add --require-artifact when deliverable_type is already 'artifact' -- unchanged command shape", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0136", deliverable_type: "artifact" },
+      ["assets/final/whatever.png"]
+    );
+    expect(route.command).toBe("node tools/board/scripts/checkDeliverable.js T-0136");
+  });
+
+  it("does not route a code-deliverable card for a non-artifact extension under assets/final/** (e.g. a workflow JSON or provenance doc)", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0201", deliverable_type: "code" },
+      ["assets/final/props/signal_tower/_comfyui_workflow.json", "ASSET_PROVENANCE.md"]
+    );
+    expect(route).toBeNull();
+  });
+
+  it("does not route a code-deliverable card for a Python/script change under assets/src/** outside concept/keyart (pure pipeline code)", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0073", deliverable_type: "code" },
+      ["assets/src/lora/src/lora/train.py", "tools/asset-gate/src/asset_gate/checks/loudness.py"]
+    );
+    expect(route).toBeNull();
+  });
+
+  it("does not route a code-deliverable card whose diff is entirely outside assets/**", () => {
+    const route = resolveDeliverableRoute({ id: "T-0001", deliverable_type: "code" }, ["tools/board/src/lib/thing.js"]);
+    expect(route).toBeNull();
+  });
+
+  it("still returns null for a code-deliverable card with no changedPaths given (default [])", () => {
+    expect(resolveDeliverableRoute({ id: "T-0001", deliverable_type: "code" })).toBeNull();
+  });
+});

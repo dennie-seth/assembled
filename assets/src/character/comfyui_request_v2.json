@@ -1,0 +1,84 @@
+{
+  "client_id": "T-0212-idle-v2",
+  "prompt": {
+    "4": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": { "ckpt_name": "sd_xl_base_1.0.safetensors" }
+    },
+    "12": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["4", 0],
+        "clip": ["4", 1],
+        "lora_name": "soviet_brutalism_style_v1.safetensors",
+        "strength_model": 0.70,
+        "strength_clip": 0.70
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "pixel art sprite sheet, Soviet brutalist soldier standing idle, flat side-on orthographic view, 3x3 grid layout nine equal panels, single standing figure per panel, subtle breathing pose variation, upright standing pose, institutional concrete interior background, muted grey-green palette, value-separated silhouette, clean readable outline, no perspective, no vanishing point, no diagonal composition, no text, no UI",
+        "clip": ["12", 1]
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple characters per panel, action pose, background clutter, bright colours, photorealistic",
+        "clip": ["12", 1]
+      }
+    },
+    "10": {
+      "class_type": "LoadImage",
+      "inputs": { "image": "player_character_concept_sheet_v1.png" }
+    },
+    "14": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": ["10", 0],
+        "upscale_method": "lanczos",
+        "width": 1152,
+        "height": 1152,
+        "crop": "disabled"
+      }
+    },
+    "11": {
+      "class_type": "VAEEncode",
+      "inputs": { "pixels": ["14", 0], "vae": ["4", 2] }
+    },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": ["12", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["11", 0],
+        "seed": 31416,
+        "steps": 30,
+        "cfg": 7.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 0.7
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": { "samples": ["3", 0], "vae": ["4", 2] }
+    },
+    "13": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": ["8", 0],
+        "upscale_method": "area",
+        "width": 144,
+        "height": 144,
+        "crop": "disabled"
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": { "filename_prefix": "player_idle_sheet_v2", "images": ["13", 0] }
+    }
+  }
+}
