@@ -9,6 +9,8 @@ is hermetic and does not break when the real catalogue grows.
 
 from __future__ import annotations
 
+import pathlib
+
 from locale_gate.catalogue import parse_loc_ids, parse_seed_wordlist, parse_template_slots
 from locale_gate.checker import (
     check_l1_coverage,
@@ -16,7 +18,7 @@ from locale_gate.checker import (
     check_l3_no_positional,
     check_l4_no_seed_words,
 )
-from locale_gate.po_parser import parse_po
+from locale_gate.po_parser import PoFile, parse_po
 
 # ── Synthetic shared/note_templates.hpp fragment ───────────────────────────────
 # 2 words, 2 templates:
@@ -499,8 +501,6 @@ def test_parse_template_slots_word_slot_plus_item_ref():
 # in an incompatible way), but that is exactly the point — they prove the
 # shipped vocabulary actually passes locale-gate.
 
-import pathlib
-
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]  # tools/locale-gate/tests -> repo root
 _HPP_PATH = _REPO_ROOT / "shared" / "note_templates.hpp"
 _EN_PO_PATH = _REPO_ROOT / "client" / "locale" / "en.po"
@@ -508,7 +508,7 @@ _RU_PO_PATH = _REPO_ROOT / "client" / "locale" / "ru.po"
 _SEED_CPP_PATH = _REPO_ROOT / "server" / "src" / "SeedPhrase.cpp"
 
 
-def _load_real_locales() -> dict[str, "PoFile"]:
+def _load_real_locales() -> dict[str, PoFile]:
     """Load en.po and ru.po from the repository."""
     return {
         "en": parse_po(_EN_PO_PATH.read_text(encoding="utf-8")),
