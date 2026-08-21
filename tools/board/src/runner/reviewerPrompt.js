@@ -24,7 +24,7 @@ This fenced block is the only channel your verdict is recorded through. If it is
 
 function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
   const routes = [...resolveVerifyRoutes(changedPaths, { baseBranch })];
-  const deliverableRoute = resolveDeliverableRoute(task);
+  const deliverableRoute = resolveDeliverableRoute(task, changedPaths);
   if (deliverableRoute) {
     routes.push(deliverableRoute);
   }
@@ -48,7 +48,7 @@ function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
     enforcement += ` Run each client-godot-verify command exactly as given, with the \`timeout\` wrapper intact -- never drop it and run \`godot --headless\` bare. A test script that never calls \`get_tree().quit()\` hangs the process indefinitely otherwise (T-0185); if \`timeout\` kills the run, that is itself a FAIL ("test hung / exceeded the timeout") and must be reported as such, not treated as an unverified pass.`;
   }
   if (hasDeliverableRoute) {
-    enforcement += ` This card's \`deliverable_type\` is "artifact": its stated output is a produced file (an asset, a doc, an attached image, a generated artifact) -- not the code that could produce one. A green test suite for an uploader/fetcher/generator script is not evidence the file exists; run the Deliverable artifact check and treat a nonzero exit as a FAIL, naming exactly which artifact is missing, in your notes. This is the T-0136 gap: an uploader CLI shipped with fully mocked tests, ruff+pytest green, and not a single image was ever actually fetched or attached -- nothing at review time checked for the attachment itself, only that the surrounding code compiled and had (mocked) coverage.`;
+    enforcement += ` This card requires a produced deliverable actually attached to the ticket -- either because its \`deliverable_type\` is "artifact", or because this diff adds/updates a file under a known artifact-producing path (\`assets/final/**\`, \`assets/src/concept/**\`, \`assets/src/keyart/**\`), which makes an attachment mandatory regardless of what \`deliverable_type\` says. A green test suite for an uploader/fetcher/generator script is not evidence the file exists; run the Deliverable artifact check and treat a nonzero exit as a FAIL, naming exactly which artifact is missing, in your notes. This is the T-0136 gap, generalized: an uploader CLI shipped with fully mocked tests, ruff+pytest green, and not a single image was ever actually fetched or attached -- and later, several art/audio cards (character/concept art sheets, an ambience bed) were committed straight to the repo tagged \`deliverable_type: "code"\` and never attached either, so the original deliverable_type-only gate never even fired for them.`;
   }
   return `## Required verification for this diff\n\nRun exactly the following, in addition to (not instead of) the \`verify\` skill's own table for any other paths this diff touches:\n\n${lines.join("\n")}\n\n${enforcement}`;
 }
