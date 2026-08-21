@@ -1,0 +1,17 @@
+{
+  "model": "synth -- programmatic stdlib-only generation (T-0201 fallback; SDXL img2img + BiRefNet pipeline blocked by WSL->Windows Firewall)",
+  "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
+  "model_hash": null,
+  "prompt": "flat side-on relay junction cabinet sprite, cover prop (sight-cone block only), Signal Tower interior. 36x20 game px RGBA cutout. Wide squat form: mid-value concrete grey body (ramp10), darker left shadow side (ramp06), lit top face (ramp12), institutional-green accent stripe at mid-height (ramp07). Exposed top and sides \u2014 player crouches behind for sight-cone cover only, sound sensors still detect. Soviet brutalist, hard value separation.",
+  "negative_prompt": "perspective, vanishing point, isometric, background, scene, depth of field, ambient occlusion, photorealistic, 3d render, multiple props, composed illustration, text, watermark",
+  "seed": 0,
+  "steps": null,
+  "cfg": null,
+  "width": null,
+  "height": null,
+  "workflow_hash": null,
+  "prompt_id": "synth-T-0201-relay_cabinet",
+  "prop_class": "cover",
+  "sprite_hash": "b4789165a1548b1363dcd3a5ff99f14ada2cca0b4f4cb5c16418f0e76be8410e",
+  "_note": "Synthetic placeholder \u2014 replace with SDXL img2img (conditioned on signal_tower_props_concept_sheet_v1.png via IP-Adapter) + BiRefNet background removal once WSL->ComfyUI is accessible (T-0106 pipeline). Concept hash source: signal_tower_props_concept_sheet_v1.provenance.json."
+}
