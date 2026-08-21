@@ -446,3 +446,44 @@ def test_l4_incomplete_locale_still_checked():
     locales = {"de": parse_po(bad_po)}
     results = check_l4_no_seed_words(words, locales)
     assert len(results) == 1
+
+
+# ── catalogue: item_ref slot detection ───────────────────────────────────────
+# Templates that reference ITEM_REF in their inline comment get "item_ref"
+# added to their slot set, so L-2 can verify locale parity.
+
+SAMPLE_HPP_ITEM_REF = """
+namespace assembled {
+
+enum class WordCategory : int16_t {
+    DIRECTION = 1,
+    HAZARD    = 2,
+    ACTION    = 3,
+    OBJECT    = 4,
+    QUALIFIER = 5,
+};
+
+struct WordDef { int16_t id; WordCategory category; };
+inline constexpr std::array<WordDef, 2> kWords = {{
+    {1, WordCategory::DIRECTION},
+    {2, WordCategory::OBJECT},
+}};
+
+struct TemplateDef { int16_t id; int16_t slots; int16_t slot_a_category; int16_t slot_b_category; };
+inline constexpr std::array<TemplateDef, 2> kTemplates = {{
+    {1, 0, 0, 0},   // "need {ITEM_REF}"                 — item_ref column only
+    {2, 1, 4, 0},   // "{OBJECT} opens with {ITEM_REF}"  — slot_a=OBJECT + item_ref
+}};
+
+} // namespace assembled
+"""
+
+
+def test_parse_template_slots_item_ref_only():
+    slots = parse_template_slots(SAMPLE_HPP_ITEM_REF)
+    assert slots["template:1"] == {"item_ref"}
+
+
+def test_parse_template_slots_word_slot_plus_item_ref():
+    slots = parse_template_slots(SAMPLE_HPP_ITEM_REF)
+    assert slots["template:2"] == {"object", "item_ref"}

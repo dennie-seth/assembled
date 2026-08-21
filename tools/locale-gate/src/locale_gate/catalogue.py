@@ -56,12 +56,14 @@ def parse_template_slots(hpp_text: str) -> dict[str, set[str]]:
         Templates with no slots map to an empty set.
     """
     result: dict[str, set[str]] = {}
-    for tid, _slots_count, slot_a_cat, slot_b_cat in _extract_template_defs(hpp_text):
+    for tid, _slots_count, slot_a_cat, slot_b_cat, comment in _extract_template_defs(hpp_text):
         names: set[str] = set()
         if slot_a_cat in _CATEGORY_SLOT_NAME:
             names.add(_CATEGORY_SLOT_NAME[slot_a_cat])
         if slot_b_cat in _CATEGORY_SLOT_NAME:
             names.add(_CATEGORY_SLOT_NAME[slot_b_cat])
+        if "ITEM_REF" in comment:
+            names.add("item_ref")
         result[f"template:{tid}"] = names
     return result
 
@@ -106,14 +108,22 @@ def _extract_template_ids(hpp_text: str) -> list[int]:
 
 def _extract_template_defs(
     hpp_text: str,
-) -> list[tuple[int, int, int, int]]:
-    """Return list of (id, slots, slot_a_category, slot_b_category) tuples."""
+) -> list[tuple[int, int, int, int, str]]:
+    """Return list of (id, slots, slot_a_category, slot_b_category, comment) tuples.
+
+    The *comment* is the trailing ``// …`` text on the same line as the entry,
+    or an empty string if there is none.  Used by ``parse_template_slots`` to
+    detect templates that reference ``ITEM_REF``.
+    """
     array_match = re.search(r'kTemplates\s*=\s*\{\{(.*?)\}\}', hpp_text, re.DOTALL)
     if not array_match:
         return []
     body = array_match.group(1)
-    # Each entry: {id, slots, slot_a_category, slot_b_category}
     results = []
-    for m in re.finditer(r'\{(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\}', body):
-        results.append((int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))))
+    for m in re.finditer(r'\{(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\}[^/\n]*(//[^\n]*)?', body):
+        comment = m.group(5) or ""
+        results.append((
+            int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)),
+            comment,
+        ))
     return results
