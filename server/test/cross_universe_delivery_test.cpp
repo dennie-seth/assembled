@@ -64,8 +64,8 @@ void seedIdentity(const drogon::orm::DbClientPtr &db, const std::string &token) 
 }
 
 void seedItemType(const drogon::orm::DbClientPtr &db, int16_t id) {
-    db->execSqlSync(
-        "INSERT INTO item_type (id, rarity) VALUES ($1, 0) ON CONFLICT (id) DO NOTHING", id);
+    db->execSqlSync("INSERT INTO item_type (id, rarity) VALUES ($1, 0) ON CONFLICT (id) DO NOTHING",
+                    id);
 }
 
 /// Seed an item held by alice with bleed_at already in the past — the sweep
@@ -135,8 +135,7 @@ TEST_CASE("cross-universe delivery: A leaves, sweep delivers, B takes (T-0206)")
     leave_params.anchor_arch = 1;        // HOSPITAL archetype (seeded by migration 003)
     leave_params.anchor_tag = 1;         // entrance
 
-    const auto leave_receipt =
-        receipt_repo.idempotentLeave(kTidLeave, item_repo, leave_params);
+    const auto leave_receipt = receipt_repo.idempotentLeave(kTidLeave, item_repo, leave_params);
 
     // Leave must win (CAS matched version 0, holder = alice).
     REQUIRE(leave_receipt.outcome == assembled_server::ReceiptOutcome::Won);
@@ -150,7 +149,7 @@ TEST_CASE("cross-universe delivery: A leaves, sweep delivers, B takes (T-0206)")
         auto r = client->execSqlSync(
             "SELECT holder, hosted_by FROM item_instance WHERE id = $1::uuid", item_id);
         REQUIRE(!r.empty());
-        CHECK(r[0]["holder"].isNull());      // A no longer holds it
+        CHECK(r[0]["holder"].isNull());     // A no longer holds it
         CHECK(!r[0]["hosted_by"].isNull()); // anchored in some universe
     }
 
@@ -184,8 +183,8 @@ TEST_CASE("cross-universe delivery: A leaves, sweep delivers, B takes (T-0206)")
         REQUIRE(!r.empty());
         CHECK(r[0]["holder"].isNull());
         version_after_sweep = r[0]["version"].as<int32_t>();
-        CHECK(version_after_sweep == 2);                        // leave→1, sweep→2
-        CHECK(r[0]["custody_depth"].as<int32_t>() == 2);       // INV-5: 1 → 2
+        CHECK(version_after_sweep == 2);                 // leave→1, sweep→2
+        CHECK(r[0]["custody_depth"].as<int32_t>() == 2); // INV-5: 1 → 2
     }
 
     // ── Step 3: B takes the item from its new anchor ──────────────────────────
@@ -236,8 +235,8 @@ TEST_CASE("cross-universe delivery: A leaves, sweep delivers, B takes (T-0206)")
     //
     // Full chain: 0 (seed) → 1 (leave) → 2 (sweep bleed) → 3 (take).
     {
-        auto r = client->execSqlSync(
-            "SELECT custody_depth FROM item_instance WHERE id = $1::uuid", item_id);
+        auto r = client->execSqlSync("SELECT custody_depth FROM item_instance WHERE id = $1::uuid",
+                                     item_id);
         REQUIRE(!r.empty());
         CHECK(r[0]["custody_depth"].as<int32_t>() == 3);
     }
