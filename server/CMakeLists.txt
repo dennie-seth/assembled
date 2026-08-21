@@ -282,3 +282,14 @@ add_executable(petition_tests
 )
 target_link_libraries(petition_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(petition_tests)
+
+# T-0206: Cross-universe delivery proof (Stream D social proof).
+# Exercises the full A-leaves → sweep-bleed-delivers → B-takes pipeline:
+# receipts on both sides, custody_depth incremented, item leaves A, arrives in B.
+# Separate binary: no drogon::app() singleton contention risk.
+# cross_universe_delivery_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(cross_universe_delivery_tests
+  test/cross_universe_delivery_test.cpp
+)
+target_link_libraries(cross_universe_delivery_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(cross_universe_delivery_tests)
