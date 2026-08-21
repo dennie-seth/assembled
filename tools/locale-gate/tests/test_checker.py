@@ -487,3 +487,68 @@ def test_parse_template_slots_item_ref_only():
 def test_parse_template_slots_word_slot_plus_item_ref():
     slots = parse_template_slots(SAMPLE_HPP_ITEM_REF)
     assert slots["template:2"] == {"object", "item_ref"}
+
+
+# ══ Integration tests — real .po files on disk ═══════════════════════════════
+# AC #6: "pytest exercising the full checker pipeline against the actual .po
+# files on disk (not mocked), confirming end-to-end correctness."
+#
+# These tests load the real client/locale/en.po, client/locale/ru.po, and
+# shared/note_templates.hpp from the repository and run L-1 through L-4
+# against them.  They are NOT hermetic (they break if the real files change
+# in an incompatible way), but that is exactly the point — they prove the
+# shipped vocabulary actually passes locale-gate.
+
+import pathlib
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]  # tools/locale-gate/tests -> repo root
+_HPP_PATH = _REPO_ROOT / "shared" / "note_templates.hpp"
+_EN_PO_PATH = _REPO_ROOT / "client" / "locale" / "en.po"
+_RU_PO_PATH = _REPO_ROOT / "client" / "locale" / "ru.po"
+_SEED_CPP_PATH = _REPO_ROOT / "server" / "src" / "SeedPhrase.cpp"
+
+
+def _load_real_locales() -> dict[str, "PoFile"]:
+    """Load en.po and ru.po from the repository."""
+    return {
+        "en": parse_po(_EN_PO_PATH.read_text(encoding="utf-8")),
+        "ru": parse_po(_RU_PO_PATH.read_text(encoding="utf-8")),
+    }
+
+
+def _load_real_hpp() -> str:
+    return _HPP_PATH.read_text(encoding="utf-8")
+
+
+def test_integration_l1_real_locales_pass():
+    """L-1: both en.po and ru.po cover every LocId in note_templates.hpp."""
+    hpp = _load_real_hpp()
+    ids = parse_loc_ids(hpp)
+    locales = _load_real_locales()
+    results = check_l1_coverage(ids, locales)
+    assert results == [], f"L-1 failures: {[r.reason for r in results]}"
+
+
+def test_integration_l2_real_locales_pass():
+    """L-2: slot sets in en.po and ru.po match the reference from the hpp."""
+    hpp = _load_real_hpp()
+    slots = parse_template_slots(hpp)
+    locales = _load_real_locales()
+    results = check_l2_slot_consistency(slots, locales)
+    assert results == [], f"L-2 failures: {[r.reason for r in results]}"
+
+
+def test_integration_l3_real_locales_pass():
+    """L-3: no positional placeholders in en.po or ru.po."""
+    locales = _load_real_locales()
+    results = check_l3_no_positional(locales)
+    assert results == [], f"L-3 failures: {[r.reason for r in results]}"
+
+
+def test_integration_l4_real_locales_pass():
+    """L-4: no seed-phrase words appear as msgids in en.po or ru.po."""
+    seed_cpp = _SEED_CPP_PATH.read_text(encoding="utf-8")
+    words = parse_seed_wordlist(seed_cpp)
+    locales = _load_real_locales()
+    results = check_l4_no_seed_words(words, locales)
+    assert results == [], f"L-4 failures: {[r.reason for r in results]}"
