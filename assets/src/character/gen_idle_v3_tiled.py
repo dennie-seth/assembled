@@ -45,6 +45,10 @@ PROVENANCE_OUT = REPO_ROOT / "assets/final/character/player_idle_sheet_v2.proven
 COMFYUI_HOST = "http://172.18.192.1:8188"
 EXPECTED_CONCEPT_HASH = "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b"
 
+# ComfyUI model paths (Windows-side via /mnt/f)
+COMFYUI_CHECKPOINTS = Path("/mnt/f/ComfyUI/models/checkpoints")
+COMFYUI_LORAS = Path("/mnt/f/ComfyUI/models/loras")
+
 # ---------------------------------------------------------------------------
 # Generation parameters
 # ---------------------------------------------------------------------------
@@ -86,6 +90,22 @@ NEGATIVE_PROMPT = (
 
 UPLOAD_FILENAME = "player_idle_v3_template.png"
 OUTPUT_PREFIX = "player_idle_v3"
+
+
+# ---------------------------------------------------------------------------
+# Model hashing (T-0151)
+# ---------------------------------------------------------------------------
+
+def hash_file(path: Path) -> str:
+    """Return SHA-256 hex digest of *path*, reading in 8 MiB chunks."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(8 * 1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -412,13 +432,21 @@ def save_indexed_png(index_arr: np.ndarray, palette: list[tuple[int, int, int]])
 # ---------------------------------------------------------------------------
 
 def write_provenance(concept_hash: str, prompt_id: str) -> None:
+    ckpt_path = COMFYUI_CHECKPOINTS / "sd_xl_base_1.0.safetensors"
+    lora_path = COMFYUI_LORAS / "soviet_brutalism_style_v1.safetensors"
+    print(f"  Hashing checkpoint: {ckpt_path}")
+    model_hash = hash_file(ckpt_path) if ckpt_path.exists() else None
+    print(f"  Hashing LoRA: {lora_path}")
+    lora_hash = hash_file(lora_path) if lora_path.exists() else None
+
     prov = {
         "model": (
             f"sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors "
             f"(weight {LORA_WEIGHT})"
         ),
         "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
-        "model_hash": None,
+        "model_hash": model_hash,
+        "lora_hash": lora_hash,
         "prompt": PROMPT,
         "negative_prompt": NEGATIVE_PROMPT,
         "seed": SEED,

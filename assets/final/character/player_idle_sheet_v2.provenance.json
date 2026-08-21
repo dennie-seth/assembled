@@ -1,7 +1,8 @@
 {
   "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
   "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
-  "model_hash": null,
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
   "prompt": "pixel art idle animation sprite sheet, Soviet brutalist soldier in standard military uniform, flat side-on orthographic side view, nine frame cells arranged in a 3x3 grid, same single character in every cell, subtle idle motion between frames, slight weight shift and natural breathing pose variation, both feet on ground, arms relaxed at sides, upright standing posture, consistent character identity across all cells, institutional grey concrete background, muted olive-green and grey military palette, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no different costumes per panel, no multiple characters, no action poses, no UI, no text",
   "negative_prompt": "costume turnaround sheet, character design sheet, different outfits per cell, multiple costume variants, jacket closeup, clothing detail sheet, perspective, three-quarter view, vanishing point, diagonal composition, depth of field, atmospheric haze, blurry, low quality, photorealistic, watermark, text, UI, running, jumping, action pose, background clutter, bright colours, neon, multiple different characters",
   "seed": 31416,
