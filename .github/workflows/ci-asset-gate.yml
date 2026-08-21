@@ -5,11 +5,13 @@ on:
     branches: [develop, main]
     paths:
       - "tools/asset-gate/**"
+      - "assets/**/*.provenance.json"
       - ".github/workflows/ci-asset-gate.yml"
   push:
     branches: [develop, main]
     paths:
       - "tools/asset-gate/**"
+      - "assets/**/*.provenance.json"
       - ".github/workflows/ci-asset-gate.yml"
 
 concurrency:
@@ -36,3 +38,23 @@ jobs:
       - run: ruff check .
 
       - run: pytest -q
+
+  provenance-sweep:
+    name: model_hash provenance sweep (HANDOFF §21 / T-0151)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # Recursively validates every committed *.provenance.json under assets/,
+      # regardless of which script wrote it -- fails the PR if any *new or
+      # undocumented* sidecar carries a null/missing model_hash instead of
+      # letting it merge silently. Paths listed in provenance_baseline.txt
+      # are already-audited pre-existing gaps tracked for regeneration in a
+      # follow-up card (PR #221) and don't block this gate.
+      - run: python -m asset_gate.cli provenance-sweep ../../assets

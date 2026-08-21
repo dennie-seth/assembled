@@ -1,0 +1,27 @@
+# Documented pre-existing model_hash gaps (HANDOFF §21, PR #221 audit table).
+# Paths are relative to the assets/ root. Every entry here is a synth-fallback
+# placeholder (no model used) or the T-0209 concept sheet -- already audited,
+# needs real regeneration rather than a backfill. See PR #221's audit table
+# for the full per-file reasoning and the follow-up card that owns cleanup.
+# Do NOT add new entries here to silence a fresh violation -- fix the writer.
+final/character/player_crouch_hide_sheet_v1.provenance.json
+final/character/player_die_sheet_v1.provenance.json
+final/character/player_idle_sheet_v1.provenance.json
+final/character/player_move_sheet_v1.provenance.json
+final/entity/sound_idle_sheet_v1.provenance.json
+final/entity/sound_move_sheet_v1.provenance.json
+final/entity/sound_trapped_sheet_v1.provenance.json
+final/entity/still_air_idle_sheet_v1.provenance.json
+final/entity/still_air_move_sheet_v1.provenance.json
+final/entity/still_air_trapped_sheet_v1.provenance.json
+final/entity/watcher_idle_sheet_v1.provenance.json
+final/entity/watcher_move_sheet_v1.provenance.json
+final/entity/watcher_trapped_sheet_v1.provenance.json
+final/props/signal_tower/crate_stack_v1.provenance.json
+final/props/signal_tower/locker_v1.provenance.json
+final/props/signal_tower/low_duct_v1.provenance.json
+final/props/signal_tower/relay_cabinet_v1.provenance.json
+final/props/signal_tower/server_rack_v1.provenance.json
+final/tiles/signal_tower_concrete_wall_floor_transitions_16px.provenance.json
+src/concept/entities_concept_sheet_v1.provenance.json
+src/concept/player_character_concept_sheet_v1.provenance.json
