@@ -56,6 +56,13 @@ def _cmd_provenance_model_hash(args: argparse.Namespace) -> int:
     return _report_and_exit([provenance_mod.check_provenance_model_hash(prov)])
 
 
+def _cmd_provenance_sweep(args: argparse.Namespace) -> int:
+    results = provenance_mod.sweep_provenance_model_hash(args.root)
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
 def _cmd_audio_gate(args: argparse.Namespace) -> int:
     samples, sample_rate = sf.read(args.audio, always_2d=False)
     targets = audio.load_loudness_targets(args.loudness_targets)
@@ -80,6 +87,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("provenance", type=argparse.FileType("r"), help=".provenance.json path")
     p.set_defaults(func=_cmd_provenance_model_hash)
+
+    p = sub.add_parser(
+        "provenance-sweep",
+        help=(
+            "recursively validate model_hash in every *.provenance.json under "
+            "a directory (T-0151/HANDOFF §21 -- catches gaps in any writer)"
+        ),
+    )
+    p.add_argument("root", help="directory to search recursively (e.g. assets/)")
+    p.set_defaults(func=_cmd_provenance_sweep)
 
     p = sub.add_parser("art-palette", help="palette membership + index semantics (P-4)")
     p.add_argument("image")

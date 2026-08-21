@@ -10,6 +10,9 @@ Implements `13-asset-pipeline.md` §2 (validation gate, T-0102).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from asset_gate.result import CheckResult
 
 _MISSING = object()
@@ -56,3 +59,31 @@ def check_provenance_model_hash(provenance: dict) -> CheckResult:
         reason=f"model_hash is present ({str(model_hash)[:16]}...)",
         details={"model_hash": model_hash},
     )
+
+
+def sweep_provenance_model_hash(root: Path | str) -> list[CheckResult]:
+    """Run `check_provenance_model_hash` against every ``*.provenance.json``
+    under *root*, recursively.
+
+    (HANDOFF §21) T-0151 enforced ``model_hash`` inside one writer
+    (`comfy_client.pipeline.generate()`); several other asset-writing paths
+    (concept-art LoRA generation, standalone synth-fallback scripts) never
+    went through it and shipped null hashes undetected because nothing
+    scanned the committed tree. This sweep is writer-agnostic -- it reads
+    the sidecars that actually landed in the repo, so a gap in any future
+    writer is still caught here regardless of which code path produced it.
+    """
+    results = []
+    for path in sorted(Path(root).rglob("*.provenance.json")):
+        provenance = json.loads(path.read_text())
+        single = check_provenance_model_hash(provenance)
+        rel = path.relative_to(root) if path.is_relative_to(root) else path
+        results.append(
+            CheckResult(
+                check="provenance_model_hash",
+                passed=single.passed,
+                reason=f"{rel}: {single.reason}",
+                details={**single.details, "path": str(rel)},
+            )
+        )
+    return results

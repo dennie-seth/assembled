@@ -29,7 +29,9 @@ from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import assert_checkpoint_allowed
 
 from comfy_client.base_url import resolve_base_url
+from comfy_client.checkpoint_hash import hash_checkpoint_file
 from comfy_client.comfyui_client import ComfyUIClient
+from comfy_client.errors import MissingModelHashError
 from comfy_client.provenance import build_provenance_record
 from comfy_client.recipe import Recipe
 from comfy_client.workflow import (
@@ -315,6 +317,7 @@ def generate_concept_lora(
     client: GenerationClient | None = None,
     timeout: float = 300.0,
     poll_interval: float = 1.0,
+    checkpoint_dir: Path | str | None = None,
 ) -> ConceptResult:
     """txt2img + LoRA concept-sheet generation (T-0209, `13-asset-pipeline.md` §6.9).
 
@@ -324,13 +327,31 @@ def generate_concept_lora(
     before any network call. `concept_hash` in the provenance is the sha256 of
     the generated sheet's own bytes (same as `generate_concept`).
 
-    `model_hash=None` on the recipe is accepted: concept art is a pipeline
-    *source*, not a shipped asset, so the T-0151 model-hash requirement does
-    not apply here (it applies to descended sprites via `pipeline.generate()`).
+    Raises `MissingModelHashError` if neither `checkpoint_dir` is supplied nor
+    `recipe.model_hash` is already set (HANDOFF §21 / T-0151): a committed
+    concept sheet is exactly as unprovable with a null `model_hash` as a
+    shipped sprite is, LoRA output or not, so this mirrors
+    `pipeline.generate()`'s enforcement rather than special-casing concept
+    art as exempt.
     """
     # License gate -- raises CheckpointNotAllowedError before any network call;
     # return value carries the entry's license string for the provenance record.
     entry = assert_checkpoint_allowed(recipe.checkpoint)
+
+    # Resolve model_hash before any generation work (HANDOFF §21 / T-0151).
+    if checkpoint_dir is not None:
+        ckpt_path = Path(checkpoint_dir) / recipe.checkpoint
+        computed_hash = hash_checkpoint_file(ckpt_path)
+        from dataclasses import asdict as _asdict
+
+        recipe = Recipe(**{**_asdict(recipe), "model_hash": computed_hash})
+    elif recipe.model_hash is None:
+        raise MissingModelHashError(
+            f"recipe.model_hash is None and checkpoint_dir was not supplied "
+            f"(checkpoint: {recipe.checkpoint!r}). "
+            "Pass checkpoint_dir= so the file can be hashed, or set "
+            "recipe.model_hash to the known SHA-256 of the checkpoint."
+        )
 
     graph = render_txt2img_lora_workflow(recipe, lora_name=lora_name, lora_weight=lora_weight)
     graph_hash = workflow_hash(graph)
@@ -349,8 +370,9 @@ def generate_concept_lora(
     image_path = out_dir_path / f"{recipe.name}.png"
     image_path.write_bytes(raw_bytes)
 
-    # Build provenance directly (not via build_provenance_record) so that
-    # model_hash=None is acceptable for concept-art sources (see docstring).
+    # Built directly rather than via build_provenance_record because the LoRA
+    # is folded into `model`/`model_license` here; recipe.model_hash is
+    # guaranteed non-None by this point (resolved or raised above).
     provenance = LoraTxt2ImgConceptProvenanceRecord(
         model=f"{recipe.checkpoint} + LoRA {lora_name} (weight {lora_weight})",
         model_license=f"{entry.license} (base) / {lora_license} (LoRA)",

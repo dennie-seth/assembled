@@ -15,6 +15,10 @@ Prerequisites:
   3. comfy-client and gen-client-base installed in a venv:
        cd tools/comfy-client && pip install -e ".[dev]"
        cd tools/gen-client-base && pip install -e ".[dev]"
+  4. The checkpoint (sd_xl_base_1.0.safetensors) reachable at CHECKPOINT_DIR
+     (default /mnt/f/ComfyUI/models/checkpoints, same as
+     scripts/backfill_model_hash.py) so model_hash can be computed
+     (HANDOFF §21 / T-0151) -- override with the CHECKPOINT_DIR env var.
 
 Usage (from repo root, inside the comfy-client venv):
   python assets/src/concept/_run_sdxl_generation.py
@@ -27,12 +31,14 @@ Outputs (committed, not gitignored):
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 WORKTREE = Path(__file__).resolve().parents[3]
 CONCEPT_DIR = WORKTREE / "assets" / "src" / "concept"
 RECIPE_PATH = CONCEPT_DIR / "player_character_concept_sheet_v1.recipe.json"
+DEFAULT_CHECKPOINT_DIR = "/mnt/f/ComfyUI/models/checkpoints"
 
 
 def main() -> int:
@@ -70,10 +76,13 @@ def main() -> int:
     lora_weight = raw["lora_weight"]
     lora_license = "CreativeML OpenRAIL++-M"
 
+    checkpoint_dir = os.environ.get("CHECKPOINT_DIR", DEFAULT_CHECKPOINT_DIR)
+
     base_url = resolve_base_url()
     print(f"ComfyUI URL: {base_url}")
     print(f"Generating: {recipe.name} (seed={recipe.seed})")
     print(f"  LoRA: {lora_name} @ {lora_weight}")
+    print(f"  Checkpoint dir: {checkpoint_dir}")
 
     result = generate_concept_lora(
         recipe,
@@ -82,6 +91,7 @@ def main() -> int:
         lora_license=lora_license,
         out_dir=CONCEPT_DIR,
         timeout=600.0,
+        checkpoint_dir=checkpoint_dir,
     )
 
     print(f"Generated: {result.path}")

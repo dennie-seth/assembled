@@ -19,6 +19,7 @@ from comfy_client.concept import (
     generate_concept_conditioned_lora,
     generate_concept_lora,
 )
+from comfy_client.errors import MissingModelHashError
 from comfy_client.recipe import Recipe
 
 
@@ -383,3 +384,69 @@ def test_generate_concept_lora_refuses_disallowed_checkpoint(tmp_path):
             client=client,
         )
     assert client.calls == []
+
+
+# ---- T-0151/HANDOFF §21: generate_concept_lora must not silently write a
+# null model_hash. This is the exact defect T-0209 shipped: a real,
+# successful generation whose recipe never had model_hash set (the caller
+# built a bare Recipe from a JSON file with no model_hash field), and this
+# function used to accept that and write model_hash: null to the sidecar. ----
+
+
+def test_generate_concept_lora_raises_without_model_hash_or_checkpoint_dir(tmp_path):
+    """Recipe with model_hash=None and no checkpoint_dir -- must refuse, not write null."""
+    recipe = Recipe(prompt="x", seed=1)  # model_hash defaults to None
+    client = FakeClient()
+    with pytest.raises(MissingModelHashError):
+        generate_concept_lora(
+            recipe,
+            lora_name="soviet_brutalism_style_v1.safetensors",
+            lora_weight=0.70,
+            lora_license="Apache-2.0",
+            out_dir=tmp_path,
+            client=client,
+        )
+    # The error must fire before any network call -- same guarantee as pipeline.generate().
+    assert client.calls == []
+    assert not (tmp_path / "assembled.provenance.json").exists()
+
+
+def test_generate_concept_lora_with_checkpoint_dir_populates_model_hash(tmp_path):
+    import hashlib
+
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir()
+    ckpt_file = ckpt_dir / "sd_xl_base_1.0.safetensors"
+    ckpt_file.write_bytes(b"FAKE_CHECKPOINT_BYTES")
+    expected_hash = hashlib.sha256(b"FAKE_CHECKPOINT_BYTES").hexdigest()
+
+    recipe = Recipe(prompt="x", seed=1)
+    client = FakeClient()
+    result = generate_concept_lora(
+        recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.70,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path / "out",
+        client=client,
+        checkpoint_dir=ckpt_dir,
+    )
+
+    assert result.provenance.model_hash == expected_hash
+    sidecar = (tmp_path / "out") / f"{recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["model_hash"] == expected_hash
+
+
+def test_generate_concept_lora_with_pre_set_model_hash_uses_it(tmp_path):
+    recipe = Recipe(prompt="x", seed=1, model_hash="c" * 64)
+    client = FakeClient()
+    result = generate_concept_lora(
+        recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.70,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=client,
+    )
+    assert result.provenance.model_hash == "c" * 64
