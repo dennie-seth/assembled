@@ -248,6 +248,40 @@ describe("resolveAllowedTools", () => {
       )
     ).toBe(true);
   });
+
+  it("grants the assets agent both the tilde and absolute-path forms of the shared lora-train-venv interpreter", () => {
+    const resolved = resolveAllowedTools("assets", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0212 root cause: the pre-existing grant `Bash(~/dev/lora-train-venv/bin/python:*)` only
+    // covers commands that literally start with the string `~/dev/lora-train-venv/bin/python` --
+    // isToolAllowed does raw string-prefix matching with no `~` expansion, no path
+    // normalization, no realpath/symlink resolution (see the `isToolAllowed` block below). A
+    // live implementer run invoked the identical interpreter via its absolute path,
+    // `/home/dennieseth/dev/lora-train-venv/bin/python3 ...` (both a different path form *and*
+    // `python3` instead of `python`), and every attempt was denied with "This command requires
+    // approval" for the full remainder of the run -- confirmed directly in
+    // tasks/.runs/T-0212-2026-08-21T09-57-03-458Z.jsonl, where the implementer had already
+    // produced a real ComfyUI generation via the curl grant but could never run the
+    // palette-descent post-processing script, and the run was ultimately killed by the 40-minute
+    // phase timeout. Same failure class the audio agent hit on T-0202 (see git log
+    // .claude/agents/audio.md) -- a grant string that's technically correct for one invocation
+    // shape but silently fails to cover the equally-valid alternate shape.
+    expect(resolved).toContain("Bash(~/dev/lora-train-venv/bin/python:*)");
+    expect(resolved).toContain("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:*)");
+    expect(resolved).toContain("Bash(/home/dennieseth/dev/lora-train-venv/bin/python3:*)");
+    expect(resolved).toContain("Bash(~/dev/lora-train-venv/bin/python3:*)");
+    expect(resolved).toContain("Bash(/home/dennieseth/dev/lora-train-venv/bin/accelerate:*)");
+
+    expect(
+      isToolAllowed(
+        "Bash(/home/dennieseth/dev/lora-train-venv/bin/python3:assets/src/character/descent_final.py)",
+        resolved
+      )
+    ).toBe(true);
+    expect(
+      isToolAllowed("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:--version)", resolved)
+    ).toBe(true);
+  });
 });
 
 describe("isToolAllowed", () => {
@@ -293,6 +327,19 @@ describe("isToolAllowed", () => {
       )
     ).toBe(true);
     expect(isToolAllowed("Bash(SOMETHING_ELSE=x)", bareStarAllowed)).toBe(false);
+  });
+
+  it("does not treat a `~/`-prefixed grant as covering the equivalent absolute-path invocation", () => {
+    // T-0212: no `~` expansion or path normalization happens anywhere in this matcher (or in the
+    // real Claude Code CLI it models -- see the assets-agent test above). A grant authored with a
+    // tilde only ever matches commands that are themselves spelled with that literal tilde; the
+    // same binary invoked via its absolute path is a different string and must be granted
+    // separately.
+    const tildeOnly = ["Bash(~/dev/lora-train-venv/bin/python:*)"];
+    expect(isToolAllowed("Bash(~/dev/lora-train-venv/bin/python:script.py)", tildeOnly)).toBe(true);
+    expect(
+      isToolAllowed("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:script.py)", tildeOnly)
+    ).toBe(false);
   });
 });
 
