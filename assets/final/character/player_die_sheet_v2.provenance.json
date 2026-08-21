@@ -1,0 +1,38 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "prompt": "pixel art death animation sprite sheet, Soviet brutalist soldier in standard military uniform, flat side-on orthographic side view, nine frame cells arranged in a 3x3 grid, same single character collapsing from standing to horizontal, smooth fall from vertical upright posture to lying flat on ground, consistent character identity across all cells, institutional grey concrete background, muted olive-green and grey military palette, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no different costumes per panel, no multiple characters",
+  "negative_prompt": "costume turnaround sheet, character design sheet, different outfits per cell, multiple costume variants, perspective, three-quarter view, vanishing point, diagonal composition, depth of field, atmospheric haze, blurry, low quality, photorealistic, watermark, text, UI, running, jumping, crouching, standing upright, background clutter, bright colours, neon, multiple different characters",
+  "seed": 31419,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1152,
+  "height": 1152,
+  "concept_hash": "fc8262a4701e535e6f1c1b6dac9200a604b79df5004bfb5783922eae4d23dddc",
+  "concept_source": "assets/final/character/player_idle_sheet_v2.png",
+  "concept_card": "T-0212",
+  "method": "img2img concept-conditioned via ComfyUI HTTP API (SDXL KSampler, euler/normal, denoise=0.85); cell (0,0) cropped from T-0212 player_idle_sheet_v2.png (48x48), scaled to 384x384, tiled 3x3 to 1152x1152 as img2img template so character identity is preserved while diffusion introduces death-sequence pose variation per frame. ComfyUI workflow: assets/src/character/gen_states_v2_comfyui.js (or gen_states_v2_tiled.py). NOTE: current file is a synthetic programmatic placeholder — replace with SDXL img2img-descended image by running gen_states_v2_comfyui.js die",
+  "img2img_denoise": 0.85,
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "lora_license": "CreativeML OpenRAIL++-M",
+  "generator": "assets/src/character/gen_states_v2_comfyui.js",
+  "card": "T-0213",
+  "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters \u2014 the hard class) + \u00a76 (archetype-first coherence guard)",
+  "layout": {
+    "sheet_px": [144, 144],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 3,
+    "figure_height_px": 40,
+    "frame_cells": [
+      {"cell": "(0,0)"}, {"cell": "(0,1)"}, {"cell": "(0,2)"},
+      {"cell": "(1,0)"}, {"cell": "(1,1)"}, {"cell": "(1,2)"},
+      {"cell": "(2,0)"}, {"cell": "(2,1)"}, {"cell": "(2,2)"}
+    ],
+    "spare_cells": []
+  },
+  "palette_source": "assets/final/palette/home_palette.json"
+}
