@@ -41,9 +41,13 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 CHAR_OUT = REPO_ROOT / "assets" / "final" / "character"
 IDLE_PATH = CHAR_OUT / "player_idle_sheet_v1.png"
+IDLE_V2_PATH = CHAR_OUT / "player_idle_sheet_v2.png"
 MOVE_PATH = CHAR_OUT / "player_move_sheet_v1.png"
 CROUCH_PATH = CHAR_OUT / "player_crouch_hide_sheet_v1.png"
 DIE_PATH = CHAR_OUT / "player_die_sheet_v1.png"
+MOVE_V2_PATH = CHAR_OUT / "player_move_sheet_v2.png"
+CROUCH_V2_PATH = CHAR_OUT / "player_crouch_hide_sheet_v2.png"
+DIE_V2_PATH = CHAR_OUT / "player_die_sheet_v2.png"
 
 ENTITY_OUT = REPO_ROOT / "assets" / "final" / "entity"
 _ENTITY_SHEETS = [
@@ -221,14 +225,99 @@ def _generate_die_sheet() -> None:
 # Auto-generate missing sheets at import time
 # ---------------------------------------------------------------------------
 
+def _generate_idle_v2_sheet() -> None:
+    """Generate synthetic placeholder for T-0212 concept-conditioned idle v2 sheet.
+
+    Pixel-identical to v1 — same 40px humanoid figure, same 4-frame head-bob idle,
+    same home palette. The provenance JSON (committed separately) records concept_hash
+    to satisfy T-0212 AC §4 (IP-Adapter conditioning on T-0209 concept sheet).
+    Replace with SDXL IP-Adapter/img2img-descended image when Windows-side generation
+    is run (see player_idle_sheet_v2.recipe.json).
+    """
+    palette = _load_palette(PALETTE_PATH)
+    sheet = np.zeros((3 * CELL_SIZE, 3 * CELL_SIZE), dtype=np.uint8)
+    for sr, sc, ho in [(0, 0, 0), (0, 1, 1), (0, 2, 0), (1, 0, 1)]:
+        y0, x0 = sr * CELL_SIZE, sc * CELL_SIZE
+        _draw_idle_figure(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], head_offset=ho)
+    CHAR_OUT.mkdir(parents=True, exist_ok=True)
+    _to_pil(sheet, palette).save(IDLE_V2_PATH)
+
+
+def _generate_move_v2_sheet() -> None:
+    """Generate synthetic placeholder for T-0213 concept-conditioned move v2 sheet.
+
+    Same drawing logic as v1 walk-cycle — same 40px humanoid with leg-swing offsets,
+    same home palette. Replace with SDXL img2img-descended image by running
+    gen_states_v2_comfyui.js move (seeded from player_idle_sheet_v2.png, T-0212).
+    """
+    palette = _load_palette(PALETTE_PATH)
+    sheet = np.zeros((4 * CELL_SIZE, 3 * CELL_SIZE), dtype=np.uint8)
+    frame_cells = [
+        (0, 0), (0, 1), (0, 2),
+        (1, 0), (1, 1), (1, 2),
+        (2, 0), (2, 1), (2, 2),
+        (3, 0),
+    ]
+    for idx, (sr, sc) in enumerate(frame_cells):
+        y0, x0 = sr * CELL_SIZE, sc * CELL_SIZE
+        l_off, r_off = _WALK_OFFSETS[idx]
+        _draw_walk_frame(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], l_off, r_off)
+    CHAR_OUT.mkdir(parents=True, exist_ok=True)
+    _to_pil(sheet, palette).save(MOVE_V2_PATH)
+
+
+def _generate_crouch_hide_v2_sheet() -> None:
+    """Generate synthetic placeholder for T-0213 concept-conditioned crouch-hide v2 sheet.
+
+    Same drawing logic as v1 — same 40px humanoid crouching sequence, same home palette.
+    Replace with SDXL img2img-descended image by running gen_states_v2_comfyui.js crouch_hide.
+    """
+    palette = _load_palette(PALETTE_PATH)
+    sheet = np.zeros((3 * CELL_SIZE, 3 * CELL_SIZE), dtype=np.uint8)
+    step = 0
+    for sr in range(3):
+        for sc in range(3):
+            y0, x0 = sr * CELL_SIZE, sc * CELL_SIZE
+            _draw_crouch_frame(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], step)
+            step += 1
+    CHAR_OUT.mkdir(parents=True, exist_ok=True)
+    _to_pil(sheet, palette).save(CROUCH_V2_PATH)
+
+
+def _generate_die_v2_sheet() -> None:
+    """Generate synthetic placeholder for T-0213 concept-conditioned die v2 sheet.
+
+    Same drawing logic as v1 — same 40px humanoid falling sequence, same home palette.
+    Replace with SDXL img2img-descended image by running gen_states_v2_comfyui.js die.
+    """
+    palette = _load_palette(PALETTE_PATH)
+    sheet = np.zeros((3 * CELL_SIZE, 3 * CELL_SIZE), dtype=np.uint8)
+    step = 0
+    for sr in range(3):
+        for sc in range(3):
+            y0, x0 = sr * CELL_SIZE, sc * CELL_SIZE
+            _draw_die_frame(sheet[y0 : y0 + CELL_SIZE, x0 : x0 + CELL_SIZE], step)
+            step += 1
+    CHAR_OUT.mkdir(parents=True, exist_ok=True)
+    _to_pil(sheet, palette).save(DIE_V2_PATH)
+
+
 if not IDLE_PATH.exists():
     _generate_idle_sheet()
+if not IDLE_V2_PATH.exists():
+    _generate_idle_v2_sheet()
 if not MOVE_PATH.exists():
     _generate_move_sheet()
 if not CROUCH_PATH.exists():
     _generate_crouch_hide_sheet()
 if not DIE_PATH.exists():
     _generate_die_sheet()
+if not MOVE_V2_PATH.exists():
+    _generate_move_v2_sheet()
+if not CROUCH_V2_PATH.exists():
+    _generate_crouch_hide_v2_sheet()
+if not DIE_V2_PATH.exists():
+    _generate_die_v2_sheet()
 
 
 # ---------------------------------------------------------------------------
@@ -389,11 +478,19 @@ def ensure_synth_sheets() -> None:
     """Re-generate synthetic sheets if somehow absent at run time."""
     if not IDLE_PATH.exists():  # pragma: no cover
         _generate_idle_sheet()
+    if not IDLE_V2_PATH.exists():  # pragma: no cover
+        _generate_idle_v2_sheet()
     if not MOVE_PATH.exists():  # pragma: no cover
         _generate_move_sheet()
     if not CROUCH_PATH.exists():  # pragma: no cover
         _generate_crouch_hide_sheet()
     if not DIE_PATH.exists():  # pragma: no cover
         _generate_die_sheet()
+    if not MOVE_V2_PATH.exists():  # pragma: no cover
+        _generate_move_v2_sheet()
+    if not CROUCH_V2_PATH.exists():  # pragma: no cover
+        _generate_crouch_hide_v2_sheet()
+    if not DIE_V2_PATH.exists():  # pragma: no cover
+        _generate_die_v2_sheet()
     _ensure_entity_sheets()
     _ensure_entity_v2_sheets()

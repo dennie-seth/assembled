@@ -88,6 +88,31 @@ function detectChangedGodotTests(changedPaths) {
   return matches.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+/**
+ * Directories where the `assets`/`audio` agents commit a real, shareable deliverable, per their
+ * own `.claude/agents/{assets,audio}.md` conventions: `assets/final/**` (curated finals,
+ * including `assets/final/audio/**`) and `assets/src/concept/**` / `assets/src/keyart/**`
+ * (concept sheets and key art -- human-reviewed pipeline deliverables in their own right, see
+ * `docs/design/13-asset-pipeline.md` §6.8-6.11, not "final" but still real produced files).
+ * A new or changed file with one of these extensions under one of these prefixes is a real
+ * produced artifact regardless of what the card's own `deliverable_type` frontmatter claims --
+ * the mechanical backstop for the observed failure mode where several art/audio cards
+ * (character sheets T-0198-T-0200, concept art T-0209-T-0211, an ambience bed T-0202) were
+ * committed straight to the repo tagged `deliverable_type: "code"` and never attached, so the
+ * plain `deliverable_type`-gated route below never even fired for them.
+ */
+const ARTIFACT_PRODUCING_PREFIXES = ["assets/final/", "assets/src/concept/", "assets/src/keyart/"];
+const ARTIFACT_FILE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".ogg", ".wav", ".mp3", ".flac"]);
+
+function touchesArtifactProducingPath(changedPaths) {
+  return changedPaths.some((changedPath) => {
+    if (!ARTIFACT_PRODUCING_PREFIXES.some((prefix) => changedPath.startsWith(prefix))) return false;
+    const dot = changedPath.lastIndexOf(".");
+    const ext = dot === -1 ? "" : changedPath.slice(dot).toLowerCase();
+    return ARTIFACT_FILE_EXTENSIONS.has(ext);
+  });
+}
+
 function detectPythonPackageRoots(changedPaths) {
   const touched = new Set();
   for (const path of changedPaths) {
@@ -212,14 +237,31 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
  * failure mode -- an uploader CLI shipped with fully mocked tests, nothing
  * ever actually fetched or attached, and nothing in VALIDATION at the time
  * checked for the attachment itself.
+ *
+ * Also fires when `deliverable_type` is anything else (the default,
+ * "code") but `changedPaths` shows the diff adding/updating a file under
+ * `touchesArtifactProducingPath`'s known artifact directories -- a
+ * mechanical backstop for the observed pattern of the card's own
+ * `deliverable_type` field being set wrong (see this module's
+ * `ARTIFACT_PRODUCING_PREFIXES` docstring). In that diff-triggered case the
+ * generated command carries `--require-artifact`, telling
+ * `checkDeliverable.js` to treat the card as artifact-deliverable even
+ * though its own frontmatter says "code"; when `deliverable_type` is
+ * already "artifact" the flag is omitted since it would be a no-op.
  */
-export function resolveDeliverableRoute(task) {
-  if (!task || task.deliverable_type !== "artifact") {
+export function resolveDeliverableRoute(task, changedPaths = []) {
+  if (!task) {
     return null;
   }
+  const declaredArtifact = task.deliverable_type === "artifact";
+  const diffProducesArtifact = touchesArtifactProducingPath(changedPaths);
+  if (!declaredArtifact && !diffProducesArtifact) {
+    return null;
+  }
+  const forceFlag = declaredArtifact ? "" : " --require-artifact";
   return {
     id: "deliverable-check",
     label: `Deliverable artifact check (${task.id})`,
-    command: `node tools/board/scripts/checkDeliverable.js ${task.id}`
+    command: `node tools/board/scripts/checkDeliverable.js ${task.id}${forceFlag}`
   };
 }
