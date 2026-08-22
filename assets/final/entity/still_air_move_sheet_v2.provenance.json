@@ -1,0 +1,25 @@
+{
+  "model": "N/A — synthetic reference, programmatically generated (T-0214 conftest fallback)",
+  "model_license": "N/A",
+  "model_hash": null,
+  "prompt": "Synthetic placeholder for Still Air move sheet v2 (T-0214). Silhouette geometry matches T-0200 v1 sheets. Replace with SDXL img2img output via gen_entities_v2.js.",
+  "negative_prompt": null,
+  "seed": null,
+  "concept_hash": "77b03788aef9533d5b5c36d9df2583d234ef23e455efc509bf5bab50ec1244ce",
+  "concept_source": "assets/src/concept/entities_concept_sheet_v1.png",
+  "concept_card": "T-0210",
+  "_note": "Synthetic placeholder — concept-conditioned SDXL img2img generation requires script execution approval unavailable in current environment. Replace with ComfyUI SDXL output via gen_entities_v2.js (T-0214). Silhouette geometry matches v1 (T-0200); concept_hash from T-0210 is present per the T-0106 provenance requirement. model_hash=null because no AI model was invoked for this placeholder.",
+  "generator": "assets/src/character/tests/conftest.py (_ensure_entity_v2_sheets)",
+  "card": "T-0214",
+  "spec": "docs/design/13-asset-pipeline.md §3.5",
+  "layout": {
+    "sheet_px": [192, 96],
+    "cell_px": 48,
+    "cols": 4,
+    "rows": 2,
+    "entity": "Still Air",
+    "state": "move",
+    "frame_count": 8
+  },
+  "palette_source": "assets/final/palette/home_palette.json"
+}
