@@ -1,7 +1,7 @@
 {
   "model": "synth -- programmatic stdlib-only generation (T-0201 fallback; SDXL img2img + BiRefNet pipeline blocked by WSL->Windows Firewall)",
   "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
-  "model_hash": null,
+  "model_hash": "N/A — stdlib-only synthetic placeholder; no AI model used (T-0201 fallback, BiRefNet pipeline pending Python execution)",
   "prompt": "flat side-on relay junction cabinet sprite, cover prop (sight-cone block only), Signal Tower interior. 36x20 game px RGBA cutout. Wide squat form: mid-value concrete grey body (ramp10), darker left shadow side (ramp06), lit top face (ramp12), institutional-green accent stripe at mid-height (ramp07). Exposed top and sides \u2014 player crouches behind for sight-cone cover only, sound sensors still detect. Soviet brutalist, hard value separation.",
   "negative_prompt": "perspective, vanishing point, isometric, background, scene, depth of field, ambient occlusion, photorealistic, 3d render, multiple props, composed illustration, text, watermark",
   "seed": 0,

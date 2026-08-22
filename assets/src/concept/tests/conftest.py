@@ -249,7 +249,7 @@ def _generate_provenance(concept_hash: str, out_path: Path) -> None:
             "SDXL blocked by WSL→Windows Firewall)"
         ),
         "model_license": "N/A — no AI model used; Python stdlib only (struct, zlib, binascii)",
-        "model_hash": None,
+        "model_hash": "N/A — stdlib-only synthetic placeholder; no AI model used (T-0209 fallback)",
         "prompt": (
             "flat side-on character concept sheet, 4 reference panels: idle standing, "
             "walk mid-stride, crouch-hide, scale reference + palette family. "
@@ -438,7 +438,7 @@ def _generate_entities_provenance(concept_hash: str, out_path: Path) -> None:
             "SDXL blocked by WSL->Windows Firewall)"
         ),
         "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
-        "model_hash": None,
+        "model_hash": "N/A — stdlib-only synthetic placeholder; no AI model used (T-0210 fallback)",
         "prompt": (
             "flat side-on entity concept reference sheet, three entities: Watcher, Sound, Still Air. "
             "2x2 panel layout (four 492x492px panels). "
@@ -662,7 +662,7 @@ def _generate_props_provenance(concept_hash: str, out_path: Path) -> None:
             "SDXL blocked by WSL->Windows Firewall)"
         ),
         "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
-        "model_hash": None,
+        "model_hash": "N/A — stdlib-only synthetic placeholder; no AI model used (T-0211 fallback)",
         "prompt": (
             "flat side-on prop concept reference sheet, Signal Tower interior props. "
             "Panel 0 (COVER PROPS - sight-cone block only): relay junction cabinet "
@@ -987,7 +987,7 @@ def _gen_prop_prov(sprite_hash: str, name: str, out_path: Path) -> None:
             "SDXL img2img + BiRefNet pipeline blocked by WSL->Windows Firewall)"
         ),
         "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
-        "model_hash": None,
+        "model_hash": "N/A — stdlib-only synthetic placeholder; no AI model used (T-0201 fallback)",
         "prompt": _PROP_PROMPTS[name],
         "negative_prompt": (
             "perspective, vanishing point, isometric, background, scene, "

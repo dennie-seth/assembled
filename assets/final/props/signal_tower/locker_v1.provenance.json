@@ -1,7 +1,7 @@
 {
   "model": "synth -- programmatic stdlib-only generation (T-0201 fallback; SDXL img2img + BiRefNet pipeline blocked by WSL->Windows Firewall)",
   "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
-  "model_hash": null,
+  "model_hash": "N/A — stdlib-only synthetic placeholder; no AI model used (T-0201 fallback, BiRefNet pipeline pending Python execution)",
   "prompt": "flat side-on standing locker sprite, hiding-spot prop (all-sensor block, single-occupant), Signal Tower interior. 14x42 game px RGBA cutout. Tall narrow form. Dark concrete outer shell (ramp04), door-frame border lighter (ramp08), near-black interior visible through entry gap (ramp00), door-handle accent right side centre (ramp13). Single-occupant, fully seals all sensors once player enters. Exposed entry only.",
   "negative_prompt": "perspective, vanishing point, isometric, background, scene, depth of field, ambient occlusion, photorealistic, 3d render, multiple props, composed illustration, text, watermark",
   "seed": 0,

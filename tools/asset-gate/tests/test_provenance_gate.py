@@ -147,9 +147,19 @@ def test_load_baseline_parses_lines_and_skips_comments_and_blanks(tmp_path):
     )
 
 
-def test_load_baseline_default_path_lists_the_pr_221_audit_table():
+def test_load_baseline_default_path_lists_remaining_in_flight_gaps():
+    """After T-0215 removed 8 backfilled entries, the baseline holds 13 paths
+    for the T-0198/T-0199/T-0200 sheets still owned by T-0212/T-0213/T-0214.
+    (HANDOFF §21 / T-0215)
+    """
     baseline = load_baseline()
 
-    assert len(baseline) == 21
-    assert "src/concept/player_character_concept_sheet_v1.provenance.json" in baseline
-    assert "src/concept/entities_concept_sheet_v1.provenance.json" in baseline
+    assert len(baseline) == 13
+    # T-0215-owned paths must be gone (backfilled)
+    assert "src/concept/player_character_concept_sheet_v1.provenance.json" not in baseline
+    assert "src/concept/entities_concept_sheet_v1.provenance.json" not in baseline
+    assert "final/tiles/signal_tower_concrete_wall_floor_transitions_16px.provenance.json" not in baseline
+    assert "final/props/signal_tower/crate_stack_v1.provenance.json" not in baseline
+    # T-0212/T-0213/T-0214 paths must still be present
+    assert "final/character/player_idle_sheet_v1.provenance.json" in baseline
+    assert "final/entity/watcher_idle_sheet_v1.provenance.json" in baseline

@@ -1,7 +1,7 @@
 {
   "model": "synth -- programmatic stdlib-only generation (T-0201 fallback; SDXL img2img + BiRefNet pipeline blocked by WSL->Windows Firewall)",
   "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
-  "model_hash": null,
+  "model_hash": "N/A — stdlib-only synthetic placeholder; no AI model used (T-0201 fallback, BiRefNet pipeline pending Python execution)",
   "prompt": "flat side-on horizontal HVAC duct segment sprite, cover prop (sight-cone block only), Signal Tower interior. 48x12 game px RGBA cutout. Wide flat horizontal form. Duct body: darker concrete grey side (ramp06). Top lit face (ramp12). Institutional-green end-cap flanges left and right (ramp07). Low clearance, player slides behind for partial cover.",
   "negative_prompt": "perspective, vanishing point, isometric, background, scene, depth of field, ambient occlusion, photorealistic, 3d render, multiple props, composed illustration, text, watermark",
   "seed": 0,
