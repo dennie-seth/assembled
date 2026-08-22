@@ -202,9 +202,8 @@ def test_descend_does_not_write_provenance_sidecar(tmp_path):
     """
     pytest.importorskip("comfy_client.descend", reason="comfy-client not installed")
     import numpy as np  # noqa: PLC0415
-    from PIL import Image  # noqa: PLC0415
-
     from comfy_client.descend import descend  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
 
     palette = [(0, 0, 0), (128, 128, 128), (255, 255, 255)]
     arr = np.full((16, 16, 3), 128, dtype=np.uint8)
