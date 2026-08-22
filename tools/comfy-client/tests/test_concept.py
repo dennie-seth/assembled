@@ -450,3 +450,36 @@ def test_generate_concept_lora_with_pre_set_model_hash_uses_it(tmp_path):
         client=client,
     )
     assert result.provenance.model_hash == "c" * 64
+
+
+# ---- T-0215: confirm remaining concept writers also refuse null model_hash ----
+# generate_concept() and generate_concept_conditioned() both route through
+# build_provenance_record() which raises MissingModelHashError — this confirms
+# their coverage in addition to generate_concept_lora() (PR #221) and
+# pipeline.generate() (T-0151).  HANDOFF §21 inventory check.
+
+
+def test_generate_concept_raises_missing_model_hash_when_recipe_has_none(tmp_path):
+    """generate_concept() must raise MissingModelHashError (not write null) when
+    recipe.model_hash is None.  Routes through build_provenance_record().
+    (HANDOFF §21 / T-0215 acceptance §1)
+    """
+    recipe = Recipe(prompt="x", seed=1)  # model_hash defaults to None
+    client = FakeClient()
+    with pytest.raises(MissingModelHashError):
+        generate_concept(recipe, out_dir=tmp_path, client=client)
+
+
+def test_generate_concept_conditioned_raises_missing_model_hash_when_recipe_has_none(
+    tmp_path, init_image_path
+):
+    """generate_concept_conditioned() must raise MissingModelHashError (not write
+    null) when recipe.model_hash is None.  Routes through build_provenance_record().
+    (HANDOFF §21 / T-0215 acceptance §1)
+    """
+    recipe = Recipe(prompt="x", seed=1)  # model_hash defaults to None
+    client = FakeConditionedClient()
+    with pytest.raises(MissingModelHashError):
+        generate_concept_conditioned(
+            recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
+        )
