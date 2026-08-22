@@ -67,9 +67,10 @@ PROP_NAMES = [
 PROPS_DIR = ASSETS / "final" / "props" / "signal_tower"
 
 
-# ── 1. Enforcement confirmation (import-skipped when comfy-client absent) ────
-
-comfy_client = pytest.importorskip("comfy_client.concept", reason="comfy-client not installed")
+# ── 1. Enforcement confirmation (import-skipped per-test when comfy-client absent) ──
+# Full coverage lives in tools/comfy-client/tests/test_concept.py (where comfy-client
+# IS installed).  These tests are secondary confirmation in the asset-gate suite;
+# they skip gracefully when comfy-client is not installed rather than erroring.
 
 
 def test_generate_concept_raises_missing_model_hash_when_recipe_has_none(tmp_path):
@@ -78,9 +79,10 @@ def test_generate_concept_raises_missing_model_hash_when_recipe_has_none(tmp_pat
     This confirms the path is covered in addition to generate_concept_lora()
     (PR #221) and pipeline.generate() (T-0151).  (HANDOFF §21 / T-0215)
     """
-    from comfy_client.concept import generate_concept
-    from comfy_client.errors import MissingModelHashError
-    from comfy_client.recipe import Recipe
+    pytest.importorskip("comfy_client.concept", reason="comfy-client not installed")
+    from comfy_client.concept import generate_concept  # noqa: PLC0415
+    from comfy_client.errors import MissingModelHashError  # noqa: PLC0415
+    from comfy_client.recipe import Recipe  # noqa: PLC0415
 
     recipe = Recipe(prompt="x", seed=1)  # model_hash defaults to None
 
@@ -117,9 +119,10 @@ def test_generate_concept_conditioned_raises_missing_model_hash_when_recipe_has_
     which raises MissingModelHashError when recipe.model_hash is None.
     (HANDOFF §21 / T-0215)
     """
-    from comfy_client.concept import generate_concept_conditioned
-    from comfy_client.errors import MissingModelHashError
-    from comfy_client.recipe import Recipe
+    pytest.importorskip("comfy_client.concept", reason="comfy-client not installed")
+    from comfy_client.concept import generate_concept_conditioned  # noqa: PLC0415
+    from comfy_client.errors import MissingModelHashError  # noqa: PLC0415
+    from comfy_client.recipe import Recipe  # noqa: PLC0415
 
     init_img = tmp_path / "template.png"
     init_img.write_bytes(b"TEMPLATEBYTES")
