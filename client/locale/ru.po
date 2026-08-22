@@ -1,0 +1,259 @@
+# Russian locale — assembled note vocabulary (T-0205)
+# All 56 words + 20 templates from shared/note_templates.hpp.
+# Telegraphic register per 17-localization.md §5.2:
+#   nouns nominative singular (uninflected), adverbs, imperatives
+#   (imperfective) only. No case-inflected forms, no gender/number-agreeing
+#   adjectives, no articles (Russian has none).
+# Named slots per 17-localization.md §4: no positional placeholders.
+# Slot sets match English exactly (L-2); order may differ.
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ru\n"
+
+# ── НАПРАВЛЕНИЕ / DIRECTION (words 1–8) ─────────────────────────────────────
+
+msgid "word:1"
+msgstr "впереди"
+
+msgid "word:2"
+msgstr "позади"
+
+msgid "word:3"
+msgstr "внизу"
+
+msgid "word:4"
+msgstr "наверху"
+
+msgid "word:5"
+msgstr "слева"
+
+msgid "word:6"
+msgstr "справа"
+
+msgid "word:7"
+msgstr "внутри"
+
+msgid "word:8"
+msgstr "дальше"
+
+# ── ОПАСНОСТЬ / HAZARD (words 9–20) ─────────────────────────────────────────
+# No articles in Russian; bare nominative nouns.
+
+msgid "word:9"
+msgstr "обрыв"
+
+msgid "word:10"
+msgstr "наблюдатель"
+
+msgid "word:11"
+msgstr "звук"
+
+msgid "word:12"
+msgstr "холод"
+
+msgid "word:13"
+msgstr "безветрие"
+
+msgid "word:14"
+msgstr "тьма"
+
+msgid "word:15"
+msgstr "жар"
+
+msgid "word:16"
+msgstr "ловушка"
+
+msgid "word:17"
+msgstr "разрыв"
+
+msgid "word:18"
+msgstr "край"
+
+msgid "word:19"
+msgstr "зверь"
+
+msgid "word:20"
+msgstr "течение"
+
+# ── ДЕЙСТВИЕ / ACTION (words 21–32) ─────────────────────────────────────────
+# Imperatives, imperfective aspect (unmarked form for telegraphic register).
+
+msgid "word:21"
+msgstr "жди"
+
+msgid "word:22"
+msgstr "беги"
+
+msgid "word:23"
+msgstr "прячься"
+
+msgid "word:24"
+msgstr "пересекай"
+
+msgid "word:25"
+msgstr "назад"
+
+msgid "word:26"
+msgstr "слушай"
+
+msgid "word:27"
+msgstr "не надо"
+
+msgid "word:28"
+msgstr "продолжай"
+
+msgid "word:29"
+msgstr "стой"
+
+msgid "word:30"
+msgstr "ищи"
+
+msgid "word:31"
+msgstr "забирайся"
+
+msgid "word:32"
+msgstr "спускайся"
+
+# ── ОБЪЕКТ / OBJECT (words 33–48) ───────────────────────────────────────────
+# Nominative singular, no articles, no demonstratives.
+
+msgid "word:33"
+msgstr "дверь"
+
+msgid "word:34"
+msgstr "лампа"
+
+msgid "word:35"
+msgstr "кости"
+
+msgid "word:36"
+msgstr "механизм"
+
+msgid "word:37"
+msgstr "шов"
+
+msgid "word:38"
+msgstr "переключатель"
+
+msgid "word:39"
+msgstr "рычаг"
+
+msgid "word:40"
+msgstr "проход"
+
+msgid "word:41"
+msgstr "ключ"
+
+msgid "word:42"
+msgstr "замок"
+
+msgid "word:43"
+msgstr "окно"
+
+msgid "word:44"
+msgstr "пол"
+
+msgid "word:45"
+msgstr "стена"
+
+msgid "word:46"
+msgstr "потолок"
+
+msgid "word:47"
+msgstr "труба"
+
+msgid "word:48"
+msgstr "люк"
+
+# ── ОПРЕДЕЛИТЕЛЬ / QUALIFIER (words 49–56) ──────────────────────────────────
+# Adverbs and fixed adverbial phrases — no inflection.
+
+msgid "word:49"
+msgstr "медленно"
+
+msgid "word:50"
+msgstr "дважды"
+
+msgid "word:51"
+msgstr "никогда"
+
+msgid "word:52"
+msgstr "лишь раз"
+
+msgid "word:53"
+msgstr "в одиночку"
+
+msgid "word:54"
+msgstr "осторожно"
+
+msgid "word:55"
+msgstr "тихо"
+
+msgid "word:56"
+msgstr "быстро"
+
+# ── ШАБЛОНЫ / TEMPLATES (1–20) ──────────────────────────────────────────────
+# Telegraphic fragments, nominative. Same named-slot sets as English (L-2).
+# Slot order may differ from English where Russian word order requires it.
+
+msgid "template:1"
+msgstr "{action} {qualifier}"
+
+msgid "template:2"
+msgstr "{hazard} {direction}"
+
+msgid "template:3"
+msgstr "{object} {direction}"
+
+msgid "template:4"
+msgstr "{action} {direction}"
+
+msgid "template:5"
+msgstr "{hazard}"
+
+msgid "template:6"
+msgstr "{action}"
+
+msgid "template:7"
+msgstr "{direction}"
+
+msgid "template:8"
+msgstr "{object} тут"
+
+msgid "template:9"
+msgstr "пробуй {action} {qualifier}"
+
+msgid "template:10"
+msgstr "осторожно — {hazard} {direction}"
+
+msgid "template:11"
+msgstr "{qualifier}, {action}"
+
+msgid "template:12"
+msgstr "помощь — {direction}"
+
+msgid "template:13"
+msgstr "надо {item_ref}"
+
+msgid "template:14"
+msgstr "что-то не так"
+
+msgid "template:15"
+msgstr "{object} — {item_ref}"
+
+msgid "template:16"
+msgstr "иди {direction}"
+
+msgid "template:17"
+msgstr "{action} — {object}"
+
+msgid "template:18"
+msgstr "{object} {qualifier}"
+
+msgid "template:19"
+msgstr "осторожно — {hazard}"
+
+msgid "template:20"
+msgstr "безопасный путь"
