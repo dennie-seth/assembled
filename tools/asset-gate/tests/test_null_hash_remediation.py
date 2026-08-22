@@ -24,7 +24,8 @@ Two concerns under test:
     * T-0209  assets/src/concept/player_character_concept_sheet_v1.provenance.json
     * T-0210  assets/src/concept/entities_concept_sheet_v1.provenance.json
     * T-0153  assets/final/tiles/signal_tower_concrete_wall_floor_transitions_16px.provenance.json
-    * T-0201  assets/final/props/signal_tower/{crate_stack,locker,low_duct,relay_cabinet,server_rack}_v1.provenance.json
+    * T-0201  assets/final/props/signal_tower/
+      {crate_stack,locker,low_duct,relay_cabinet,server_rack}_v1.provenance.json
 
     These tests are RED until the provenance files are updated (step 3
     of the TDD cycle).  They turn GREEN when the sidecar carries any
@@ -55,7 +56,10 @@ ASSETS = REPO_ROOT / "assets"
 
 PLAYER_PROV = ASSETS / "src" / "concept" / "player_character_concept_sheet_v1.provenance.json"
 ENTITIES_PROV = ASSETS / "src" / "concept" / "entities_concept_sheet_v1.provenance.json"
-TILE_PROV = ASSETS / "final" / "tiles" / "signal_tower_concrete_wall_floor_transitions_16px.provenance.json"
+TILE_PROV = (
+    ASSETS / "final" / "tiles"
+    / "signal_tower_concrete_wall_floor_transitions_16px.provenance.json"
+)
 
 PROP_NAMES = [
     "crate_stack_v1",
@@ -71,6 +75,16 @@ PROPS_DIR = ASSETS / "final" / "props" / "signal_tower"
 # Full coverage lives in tools/comfy-client/tests/test_concept.py (where comfy-client
 # IS installed).  These tests are secondary confirmation in the asset-gate suite;
 # they skip gracefully when comfy-client is not installed rather than erroring.
+#
+# 1a. build_provenance_record() — the single enforcement point for ALL AI writers
+# (pipeline.generate, generate_concept*, and any future tile/SDXL writer that goes
+# through comfy_client).  Confirmed here so the test file documents the full
+# inventory in one place (T-0215 acceptance #1).
+#
+# 1b. Tile/descent writers — comfy_client.descend.descend() and
+# transition_sheet.generate_sheet() do NOT write *.provenance.json at all, so
+# they cannot introduce null model_hash.  Confirmed by checking that calling them
+# leaves no provenance sidecar on disk.
 
 
 def test_generate_concept_raises_missing_model_hash_when_recipe_has_none(tmp_path):
@@ -152,6 +166,76 @@ def test_generate_concept_conditioned_raises_missing_model_hash_when_recipe_has_
         "generate_concept_conditioned() wrote a provenance sidecar with null "
         "model_hash; should have raised MissingModelHashError instead."
     )
+
+
+# 1a — shared enforcement point -----------------------------------------------
+
+
+def test_build_provenance_record_raises_missing_model_hash_when_none():
+    """build_provenance_record() is the single enforcement point used by every
+    AI-based writer in comfy_client: pipeline.generate(), generate_concept(),
+    generate_concept_lora(), generate_concept_conditioned(), and any future
+    tile/SDXL writer that is built on top of comfy_client.
+
+    Confirming it raises MissingModelHashError when recipe.model_hash is None
+    proves the entire writer inventory is covered without duplicating the check
+    in every caller.  (HANDOFF §21 / T-0215 acceptance #1 — tile/descent path)
+    """
+    pytest.importorskip("comfy_client.provenance", reason="comfy-client not installed")
+    from comfy_client.errors import MissingModelHashError  # noqa: PLC0415
+    from comfy_client.provenance import build_provenance_record  # noqa: PLC0415
+    from comfy_client.recipe import Recipe  # noqa: PLC0415
+
+    recipe = Recipe(prompt="x", seed=1)  # model_hash defaults to None
+    with pytest.raises(MissingModelHashError):
+        build_provenance_record(recipe, workflow_hash="abc", prompt_id="test-id")
+
+
+# 1b — tile and descent writers don't write provenance ------------------------
+
+
+def test_descend_does_not_write_provenance_sidecar(tmp_path):
+    """comfy_client.descend.descend() is a post-processing step (downscale ->
+    quantize -> indexed PNG).  It writes only the indexed PNG, no
+    *.provenance.json.  Null model_hash cannot originate from the descent path.
+    (HANDOFF §21 / T-0215 acceptance #1 — tile/descent path)
+    """
+    pytest.importorskip("comfy_client.descend", reason="comfy-client not installed")
+    import numpy as np  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
+
+    from comfy_client.descend import descend  # noqa: PLC0415
+
+    palette = [(0, 0, 0), (128, 128, 128), (255, 255, 255)]
+    arr = np.full((16, 16, 3), 128, dtype=np.uint8)
+    raw = tmp_path / "raw.png"
+    Image.fromarray(arr, mode="RGB").save(raw)
+
+    descend(raw, palette=palette, target_size=8, out_path=tmp_path / "out.png")
+
+    prov_files = list(tmp_path.glob("*.provenance.json"))
+    assert not prov_files, (
+        "descend() wrote a provenance sidecar — it must only write the indexed PNG. "
+        "Null model_hash risk from the descent path is now present and must be fixed."
+    )
+
+
+def test_tile_transition_sheet_generate_sheet_does_not_write_provenance():
+    """transition_sheet.generate_sheet() is a deterministic procedural writer:
+    it returns a PIL.Image without writing any file (main() writes the PNG,
+    nothing writes a *.provenance.json from within the module).  The tile
+    sidecar for T-0153 was written manually with model_hash='N/A — procedural'.
+    No AI model -> no null-hash risk from this path.
+    (HANDOFF §21 / T-0215 acceptance #1 — tile/descent path)
+    """
+    pytest.importorskip("tile_gen.transition_sheet", reason="tile_gen not installed")
+    from tile_gen.transition_sheet import generate_sheet  # noqa: PLC0415
+
+    sheet = generate_sheet()
+    # generate_sheet() returns a PIL Image and writes nothing to disk
+    assert sheet is not None, "generate_sheet() returned None"
+    assert sheet.mode == "P", f"Expected indexed mode 'P', got {sheet.mode!r}"
+    assert sheet.size == (64, 32), f"Expected 64x32 sheet, got {sheet.size}"
 
 
 # ── 2. Artifact gate: committed sidecars must have non-null model_hash ───────
@@ -236,7 +320,7 @@ def test_sweep_with_empty_baseline_finds_no_null_hash_in_T0215_owned_files(tmp_p
     in baseline) — it isolates T-0215's eight files in a tmp tree so the
     test has no dependency on the in-flight cards.
     """
-    from asset_gate.provenance import check_provenance_model_hash, sweep_provenance_model_hash
+    from asset_gate.provenance import sweep_provenance_model_hash
 
     # Copy only the T-0215-owned files into the tmp tree
     t0215_files = [

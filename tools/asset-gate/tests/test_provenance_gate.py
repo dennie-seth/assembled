@@ -158,7 +158,8 @@ def test_load_baseline_default_path_lists_remaining_in_flight_gaps():
     # T-0215-owned paths must be gone (backfilled)
     assert "src/concept/player_character_concept_sheet_v1.provenance.json" not in baseline
     assert "src/concept/entities_concept_sheet_v1.provenance.json" not in baseline
-    assert "final/tiles/signal_tower_concrete_wall_floor_transitions_16px.provenance.json" not in baseline
+    _tile_key = "final/tiles/signal_tower_concrete_wall_floor_transitions_16px.provenance.json"
+    assert _tile_key not in baseline
     assert "final/props/signal_tower/crate_stack_v1.provenance.json" not in baseline
     # T-0212/T-0213/T-0214 paths must still be present
     assert "final/character/player_idle_sheet_v1.provenance.json" in baseline
