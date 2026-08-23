@@ -12,6 +12,8 @@ dependencies = []
 dev = [
     "pytest==8.3.5",
     "ruff==0.14.4",
+    "Pillow==11.2.1",
+    "numpy==2.2.5",
 ]
 
 [tool.pytest.ini_options]

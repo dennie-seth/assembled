@@ -1,0 +1,101 @@
+{
+  "meta": {
+    "name": "sdxl_cutout_lora_v1",
+    "version": 2,
+    "description": "SDXL txt2img + LoRA + RGBA-cutout graph (T-0220/T-0221, docs/design/13-asset-pipeline.md §6.15). CheckpointLoaderSimple -> LoraLoader -> CLIPTextEncode x2 + EmptyLatentImage(gen dims) -> KSampler -> VAEDecode -> SolidMask(gen dims) + JoinImageWithAlpha -> ImageScale(game dims, area) -> SaveImage. Produces RGBA PNG at game-pixel dimensions. NOTE: ComfyUI JoinImageWithAlpha INVERTS the mask (value=0.0 → opaque, value=1.0 → transparent); render_cutout_workflow() applies 1.0-solid_mask_value before writing node 13 so solid_mask_value=1.0 (the user-facing 'fully opaque') correctly produces alpha=255. Node 13 SolidMask uses generation dimensions (gen_width/gen_height from render_cutout_workflow); node 15 ImageScale resizes the RGBA output to recipe.width/height (game pixel dimensions). Node IDs are stable; add a new template file for graph-shape changes, never edit node IDs in place."
+  },
+  "graph": {
+    "4": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "sd_xl_base_1.0.safetensors"
+      }
+    },
+    "12": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["4", 0],
+        "clip": ["4", 1],
+        "lora_name": "soviet_brutalism_style_v1.safetensors",
+        "strength_model": 0.70,
+        "strength_clip": 0.70
+      }
+    },
+    "5": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": ["12", 1]
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": ["12", 1]
+      }
+    },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 20,
+        "cfg": 7.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0,
+        "model": ["12", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["5", 0]
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["3", 0],
+        "vae": ["4", 2]
+      }
+    },
+    "13": {
+      "class_type": "SolidMask",
+      "inputs": {
+        "value": 1.0,
+        "width": 1024,
+        "height": 1024
+      }
+    },
+    "14": {
+      "class_type": "JoinImageWithAlpha",
+      "inputs": {
+        "image": ["8", 0],
+        "alpha": ["13", 0]
+      }
+    },
+    "15": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": ["14", 0],
+        "upscale_method": "area",
+        "width": 64,
+        "height": 64,
+        "crop": "disabled"
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "assembled",
+        "images": ["15", 0]
+      }
+    }
+  }
+}
