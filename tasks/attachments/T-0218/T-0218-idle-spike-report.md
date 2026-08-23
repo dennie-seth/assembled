@@ -1,7 +1,7 @@
 # T-0218 Idle Spike Report — Method Spike: Player Idle Sheet at Game Scale
 
-**Date:** 2026-08-23
-**Status:** NOT_RUN — ComfyUI unreachable from automated agent environment
+**Date:** 2026-08-24
+**Status:** generation_loses — real run, stage-1 conditions (ControlNet/IP-Adapter not installed on host)
 **Card:** T-0218 (HANDOFF §22.2)
 
 ---
@@ -10,95 +10,121 @@
 
 | Item | Result |
 |---|---|
-| WSL2 → ComfyUI reachability (172.18.192.1:8188) | **BLOCKED** |
-| Tool used | `curl -s --max-time 5 http://172.18.192.1:8188/system_stats` |
-| Denial reason | Requires user approval; not granted in this automated runner session |
-| Fallback (agentCurl.js via node) | Also blocked — node execution denied in this session |
+| WSL2 → ComfyUI reachability (172.18.192.1:8188) | **REACHABLE** |
+| Tool used | `node tools/board/scripts/agentCurl.js GET http://172.18.192.1:8188/system_stats` |
+| ComfyUI version | 0.29.0 |
+| GPU | NVIDIA GeForce RTX 3070 Ti Laptop GPU (CUDA 12.1) |
+| ControlNet models available | **NONE** (`/models/controlnet` returned `[]`) |
+| IP-Adapter nodes available | **NONE** (not in object_info) |
 
-**Per the card's hard prerequisite:** "If it's broken, this card must report that fact as `NOT_RUN` with reason — it must NOT fall back to a placeholder and report a result."
+ComfyUI is reachable via the `agentCurl.js` wrapper. Prior automated runner sessions were blocked because `curl` (plain) was denied; `node` was also denied. In this session, `node tools/board/scripts/agentCurl.js` succeeded.
 
----
-
-## Outcome: NOT_RUN
-
-The spike did not run. The prerequisite check (WSL→ComfyUI reachability) could not be verified because both HTTP tool paths are blocked in this session. No generation was attempted, and no comparison was produced.
-
-This is the third recorded occurrence of this exact blocker:
-1. **T-0198 (2026-08-18):** SPIKE_REPORT.md — "Python execution not approved; ComfyUI not reachable from WSL"
-2. **T-0212 (prior attempts):** Multiple recipe `_note` fields name WSL→ComfyUI access as recurring blocker
-3. **T-0218 (2026-08-23):** curl tool call denied by runner permission model
+**Stage-3 per §6.14 is NOT achievable on this host:** ControlNet and IP-Adapter are both absent. Stage-1 (SDXL + LoRA only) is the maximum achievable without installing additional extensions and models.
 
 ---
 
-## Baseline (Synthetic Sheet — T-0198)
-
-The existing `assets/final/character/player_idle_sheet_v1.png` is a **synthetic placeholder**, not an SDXL-generated output:
-
-- **Generator:** `assets/src/character/src/char_gen/synth_sheet.py`
-- **Layout:** 144×144, mode P (indexed), 3×3 grid, 4-frame idle animation, 40px humanoid silhouette
-- **Palette indices used:** BG=0 (dark background) / LEG=4 / BODY=6 / HEAD=10 (home palette)
-- **Animation:** 1px vertical head-bob between adjacent frames
-- **Gate status:** Passes all 5 automated checks (palette membership, index semantics, cell fit, orphan pixels, frame consistency)
-
-At 40px game scale, the synthetic sheet is readable — the silhouette shape is distinct and the head-bob is detectable. **This is the bar the SDXL-generated output must clear to justify the per-character LoRA path.**
-
----
-
-## Generation Recipe (Ready — Not Executed)
+## Generation Run
 
 | Parameter | Value |
 |---|---|
-| Checkpoint | `sd_xl_base_1.0.safetensors` (hash: `31e35c80...893f7e5b`) |
+| prompt_id | `2c6877df-303f-410c-9bc6-3671829acfb8` |
+| Queue number | 38 |
+| Stage | Stage-1 (LoRA only; no ControlNet, no IP-Adapter) |
+| Checkpoint | `sd_xl_base_1.0.safetensors` (hash `31e35c80...893f7e5b`) |
 | LoRA | `soviet_brutalism_style_v1.safetensors` weight 0.70 |
 | Seed | 31415 |
-| Resolution | 1152×1152 (×8 from 144×144 native; fallback 1008 if 8 GB strains) |
-| Steps / CFG | 30 / 7.0 |
-| Conditioning | T-0209 concept sheet as IP-Adapter reference (concept_hash=`4f82e3c4...`) |
-| ControlNet | Pose grid — mandatory; without it, SDXL returns frontal concept-art studies, not animation frames |
-| Descent | Box-average 1152→144, quantize to home_palette.json (Oklab, dithering OFF) |
-
-Full recipe: `assets/src/character/player_idle_sheet_v1.recipe.json`
-Manual generation guide: `assets/src/character/MANUAL_GENERATION.md`
+| Resolution generated | 1008×1008 (fallback; VRAM was near-full, model cached from prior session) |
+| Steps / CFG | 30 / 7.0, euler/normal |
+| Descent | ImageScale area filter 1008→144 inside ComfyUI |
+| Generation time | ~28 seconds |
+| Output | `assets/final/character/player_idle_sheet_sdxl_T0218.png` (144×144) |
 
 ---
 
-## The Four Evaluation Questions (Not Answered — Spike Did Not Run)
+## Four-Question Evaluation
 
-These are the questions this spike was designed to answer. They remain open.
+Visual inspection performed via Read tool at 144×144 and 1008×1008.
 
-1. **Silhouette readable at 40px?**
-   Does the figure read as a distinct human shape when the 1152px output is box-averaged to 144px and displayed at 40px figure height? The squint test: cover 90% of the sheet; does the remainder still read?
+### Q1: Is the silhouette readable at 40px?
 
-2. **Identity holds across adjacent frames?**
-   Do cells (0,0)→(0,1)→(0,2)→(1,0) show the same character? 1px head-drift between adjacent idle frames is the documented failure threshold players notice.
+**YES.**
 
-3. **Beats the synthetic sheet at game scale?**
-   Side-by-side in a 384×216 game room at 40px, does the SDXL-descended output offer visible improvement over the synthetic? If not, the synthetic path is cheaper, reproducible, and already proven.
+At 144×144 (3×3 grid, 48×48 cells, ≈40px figure height), the armored Soviet soldier figure is clearly readable. Helmet dome, shoulder armor, torso plate, legs and boots are all distinct. The LoRA's pixel art style produces excellent hard value separation — exactly what game scale needs.
 
-4. **Failure mode if it fails?**
-   - (a) Wrong subject: model generated a different character → corpus / IP-Adapter conditioning problem
-   - (b) Mush at 40px: reads at 1152px but destroyed by descent → §6.13 escalation path (retrain LoRA on quantized data)
-   - (c) Identity drift: frame geometry shifts → more ControlNet weight or per-frame img2img seeding
+Comparison with synthetic (`player_idle_sheet_v1.png`): the SDXL figure is dramatically more detailed and stylistically convincing. The descent (1008→144, area filter) does NOT destroy the figure. **Descent is not the failure mode here.**
+
+### Q2: Does identity hold across adjacent frames?
+
+**NO.**
+
+The 8–9 panels show the character from different viewing angles: front-facing (visor visible), rear view (x2), three-quarter, side profile. These are concept reference sheet angles, not idle animation frames. A player cycling through cells would see the character rotate through multiple views rather than observe a subtle breathing motion. Cells cannot be looped as idle animation.
+
+This is exactly the ControlNet-absent failure documented in T-0209 and MANUAL_GENERATION.md: "Without it SDXL produces frontal concept-art studies, not animation frames."
+
+### Q3: Does it beat the synthetic sheet at game scale?
+
+**NO** (for animation use).
+
+The synthetic sheet (`player_idle_sheet_v1.png`) has 4 frames in correct animation format — same camera angle, 1px head-bob variation between cells. The SDXL output has no consistent camera angle: it cannot be used for animation as-is.
+
+On purely visual quality: the SDXL soldier is far richer and more styled than the synthetic. But game-scale animation use is the criterion, and the format mismatch means the synthetic is currently more useful for its intended purpose.
+
+### Q4: What is the failure mode?
+
+**wrong_subject** (wrong output type).
+
+The character identity is correct (Soviet armored pixel-art soldier, LoRA style applied, palette appropriate). The OUTPUT TYPE is wrong: the model interprets "sprite sheet" as "character reference sheet" (multiple viewing angles) rather than "animation frame sheet" (same angle, subtle pose variation).
+
+- NOT "mush at 40px" — the figure reads cleanly at 40px
+- NOT "identity drift" — the character TYPE is consistent across panels
+- IS "wrong subject" in the sense of wrong output category
+
+**Root cause:** No ControlNet pose grid to constrain cell layout to same-angle standing poses with subtle variation.
+
+---
+
+## Baseline Comparison
+
+| Metric | Synthetic (player_idle_sheet_v1.png) | SDXL stage-1 (player_idle_sheet_sdxl_T0218.png) |
+|---|---|---|
+| Size | 144×144 indexed PNG (mode P) | 144×144 RGB PNG |
+| Cells | 3×3, 4 frames + 5 spare | 3×3, 8-9 multi-angle views |
+| Figure | Geometric placeholder, ~10px head/40px body | Detailed pixel-art soldier, full equipment |
+| Silhouette at 40px | Readable (simple humanoid) | Readable (detailed soldier) |
+| Usable as idle animation | YES (correct format) | NO (wrong viewing angles) |
+| Visual quality | Low (synthetic placeholder) | High (stylistically excellent) |
+| Palette | Home palette (indexed) | Not quantized (area-downscale only) |
 
 ---
 
 ## Decision
 
-**NOT_RUN → defaults to deterministic synthesis (the script).**
+**`generation_loses` — stage-1 conditions produce character reference sheets, not animation frames.**
 
-Per the card's own rule: "ambiguous ⇒ default to the script." NOT_RUN is treated as ambiguous because generation quality was never evaluated. `synth_sheet.py` / `synth_entities.py` remains the active approach for character sheets — it is cheaper, reproducible, proven (T-0200, T-0214), and already passing all automated gate checks.
+Deterministic synthesis (`synth_sheet.py` / T-0200 pattern) remains the active approach.
 
-This decision is **provisional**. If WSL→ComfyUI access is unblocked and a real run produces a sheet that passes the four questions above, it supersedes this report and the decision should be updated to `generation_wins`.
+**Quality signal is POSITIVE:** the LoRA style, the descent result at 40px, and the character silhouette quality are all correct and suitable. The failure is purely output-type/format. Stage-3 with ControlNet pose grid would very likely fix this and produce `generation_wins`.
 
 ---
 
-## How to Unblock
+## Prior Blocker History
 
-**Option A — approve tool access in runner:**
-Grant `curl` or `node` execution in the automated runner's permission model for this worktree, then re-trigger T-0218. All recipe inputs are ready.
+| Attempt | Blocker |
+|---|---|
+| T-0198 (2026-08-18) | Python + ComfyUI unreachable from WSL |
+| T-0212 (multiple) | WSL→ComfyUI HTTP access; ComfyUI tool path blocked |
+| T-0218 runs 1–5 (2026-08-23) | `curl` and `node` denied in automated runner permission model |
+| T-0218 (2026-08-24, **this run**) | agentCurl.js unblocked; ran; stage-3 blocked by missing ControlNet/IP-Adapter on ComfyUI host |
 
-**Option B — manual Windows-side run:**
-Follow `assets/src/character/MANUAL_GENERATION.md` on the Windows host. Descend the output (box-average → palette-quantize). Attach the result to this card. A human with the 1152px sheet and the 40px game-scale render can answer the four questions directly.
+---
+
+## How to Reach stage_wins
+
+**Install on Windows host:**
+1. ComfyUI-ControlNet extension → download an SDXL-compatible ControlNet OpenPose model to `F:\ComfyUI\models\controlnet\`
+2. ComfyUI-IPAdapter-Plus extension → download IP-Adapter SDXL model
+
+**Then re-trigger T-0218.** The recipe, prompts, and T-0209 concept reference (`player_character_concept_sheet_v1.png`, concept_hash `4f82e3c4...`) are all ready. Stage-3 conditions would be met and the 4-question evaluation should return `generation_wins` based on the quality signal from this stage-1 run.
 
 ---
 
@@ -106,3 +132,5 @@ Follow `assets/src/character/MANUAL_GENERATION.md` on the Windows host. Descend 
 
 Machine-checkable artifact: `assets/src/character/T-0218-spike-decision.json`
 Tests: `assets/src/character/tests/test_idle_spike_T0218.py`
+Generated output: `assets/final/character/player_idle_sheet_sdxl_T0218.png`
+Provenance: `assets/final/character/player_idle_sheet_sdxl_T0218.provenance.json`
