@@ -53,4 +53,39 @@ files add to this, they never relax it.
   mock away the actual side effect (a network fetch, a file write, an
   upload) prove the code *could* work, not that it *did*. See T-0136: an
   uploader CLI shipped with fully mocked tests and clean lint, and not a
-  single image was ever actually fetched or attached.
+  single image was ever actually fetched or attached. This check no longer
+  depends only on `deliverable_type` being set correctly: `verifyRouter.js`'s
+  `resolveDeliverableRoute` also fires when the diff itself adds/updates a
+  file under `assets/final/**`, `assets/src/concept/**`, or
+  `assets/src/keyart/**` — a mechanical backstop for exactly the
+  misclassification this repo has already seen (below).
+- **Attach every produced deliverable to its card — not just to the repo.**
+  A file committed to the repo is invisible to the board's own attachment
+  pipeline (the card's Attachments list, the asset-export stager, Drive
+  sync) until it is *also* uploaded through the attachments API, in
+  addition to (never instead of) committing it under its normal path:
+  ```
+  node tools/board/scripts/agentCurl.js POST \
+    "http://127.0.0.1:4173/api/tasks/<id>/attachments" \
+    -F "file=@<path-to-the-produced-file>"
+  ```
+  (`agentCurl.js` is the scoped HTTP client the `assets`/`audio` agents are
+  granted in place of raw `curl`: it forwards every flag to `curl` untouched
+  but refuses any mutating call against the board's own task API. See
+  `tools/board/src/lib/agentCurlPolicy.js`. An agent that finds itself
+  reaching for the board API to change a card's state has already gone wrong
+  -- that is the orchestrator's job, and routing around a denied tool call is
+  a conduct violation in its own right, not a workaround.)
+  Do this for every produced deliverable a card's story asks a human to see
+  or approve — an image, an audio file, a document — the moment it's
+  curated/finalized, before you commit and stop. This is non-optional for
+  the `assets` and `audio` agents specifically (see their own
+  `.claude/agents/{assets,audio}.md` Workflow steps), and for any other
+  agent whose card produces a comparable shareable file. **This is not
+  hypothetical**: T-0198–T-0200 (character sheets), T-0209–T-0211 (concept
+  art), and T-0202 (an ambience bed) all shipped without this step —
+  committed straight to the repo, never attached, invisible to the
+  asset-export stager and Drive sync until a human noticed and attached
+  them by hand. The reviewer's `checkDeliverable.js` gate (see above) now
+  catches a repeat of this mechanically, but that is a backstop for a
+  missed step, never a substitute for doing the upload yourself.

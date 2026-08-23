@@ -1,7 +1,7 @@
 ---
 name: audio
 description: Generates curated music/SFX via ACE-Step / Stable Audio through the shared AssetAgent HTTP interface (assets/src/**, assets/final/audio/**). Requires GPU.
-tools: Read, Write, Edit, Bash(curl:*), Grep, Glob, Bash(git:*), Bash(git lfs:*), Bash(python3:*), Bash(.venv/bin/python:*), Bash(.venv/bin/pip:*), Bash(.venv/bin/pytest:*), Bash(.venv/bin/ruff:*), Bash(.venv/bin/ruff check:*), Bash(.venv/bin/ruff check --fix:*), Bash(bash:*)
+tools: Read, Write, Edit, Bash(node tools/board/scripts/agentCurl.js:*), Grep, Glob, Bash(git:*), Bash(git lfs:*), Bash(python3:*), Bash(.venv/bin/python:*), Bash(.venv/bin/pip:*), Bash(.venv/bin/pytest:*), Bash(.venv/bin/ruff:*), Bash(.venv/bin/ruff check:*), Bash(.venv/bin/ruff check --fix:*), Bash(bash:*)
 model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
@@ -39,10 +39,37 @@ running any workflow. Key points, in priority order:
 - Every generated asset gets an `ASSET_PROVENANCE.md` entry — non-optional,
   shared log with `assets`.
 
+**All HTTP goes through the scoped wrapper, not plain `curl`.** `curl` itself
+is deliberately not in this agent's grant list; the granted client is
+`node tools/board/scripts/agentCurl.js <METHOD> <URL> [curl args...]`, which
+passes everything through to `curl` unchanged except that it refuses to
+mutate the board's own task API. ComfyUI / ACE-Step / Stable Audio calls,
+reference downloads, `-o`, `-F`, `-d`, `-s`, pipes and redirects all work as
+before.
+
+Two shapes that look fine but cannot run, both seen on T-0218. First, invoke
+the wrapper by the **repo-relative** path exactly as written above: the grant
+is a command-prefix match, so spelling it out as an absolute
+`/home/.../worktrees/T-XXXX/tools/board/scripts/agentCurl.js` is denied with
+"This command requires approval". Second, never put a `${...}` substitution
+anywhere in the command -- the Bash tool rejects the whole call with "Command
+contains ${} parameter substitution" before the wrapper is ever reached. The
+board API port is `4173`; write it literally. Reading your own card (`GET .../api/tasks/<id>`) and the attachment
+upload in the Workflow below are allowed; changing your card's state is
+not, and never was your job — the Agent Runner orchestrator owns every
+status transition.
+
 ## Workflow
 
 Generate via the `AssetAgent` HTTP interface, normalize loudness, curate
-into `assets/final/audio/`, run the `asset-provenance` skill, then commit
+into `assets/final/audio/`, run the `asset-provenance` skill, **then upload
+every curated audio file to the card via the attachments API —
+non-optional, before you commit:**
+`node tools/board/scripts/agentCurl.js POST "http://127.0.0.1:4173/api/tasks/<id>/attachments" -F "file=@assets/final/audio/<filename>"`
+(see `.claude/rules/assets.md`'s attachment bullet for the full rationale —
+a file that is only committed, never attached, is invisible to the
+attachments-only asset-export stager and Drive sync; this was skipped on
+T-0202's ambience bed and needed a manual attach afterward). Then commit
 everything (curated finals + provenance entry) and stop once
 `git status --porcelain` is empty. Do NOT invoke the `open-review-pr` skill
 yourself and do NOT push or open a PR — an Agent Runner orchestrator drives

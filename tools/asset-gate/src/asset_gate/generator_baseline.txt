@@ -1,0 +1,40 @@
+# Documented pre-existing generator-resolvability gaps (HANDOFF §22-c, T-0219).
+# Paths are relative to the assets/ root. Every entry here was committed before
+# the generator field requirement existed; they are tracked for remediation in
+# follow-up cards rather than fixed here.
+#
+# IMPORTANT: Do NOT add the 5 signal_tower props to this list. They were the
+# motivating failure case for this gate, and T-0221 has since regenerated them
+# through a committed pipeline path -- all 5 now resolve to
+# tools/comfy-client/src/comfy_client/cutout.py and pass on merit, so they need
+# no exemption and must never acquire one:
+#   final/props/signal_tower/crate_stack_v1.provenance.json
+#   final/props/signal_tower/locker_v1.provenance.json
+#   final/props/signal_tower/low_duct_v1.provenance.json
+#   final/props/signal_tower/relay_cabinet_v1.provenance.json
+#   final/props/signal_tower/server_rack_v1.provenance.json
+#
+# Do NOT add new entries here to silence a fresh violation -- fix the writer.
+final/character/player_crouch_hide_sheet_v1.provenance.json
+final/character/player_die_sheet_v1.provenance.json
+final/character/player_idle_sheet_v1.provenance.json
+final/character/player_move_sheet_v1.provenance.json
+final/entity/sound_idle_sheet_v1.provenance.json
+final/entity/sound_move_sheet_v1.provenance.json
+final/entity/sound_trapped_sheet_v1.provenance.json
+final/entity/still_air_idle_sheet_v1.provenance.json
+final/entity/still_air_move_sheet_v1.provenance.json
+final/entity/still_air_trapped_sheet_v1.provenance.json
+final/entity/watcher_idle_sheet_v1.provenance.json
+final/entity/watcher_move_sheet_v1.provenance.json
+final/entity/watcher_trapped_sheet_v1.provenance.json
+final/tiles/signal_tower_concrete_wall_16px.provenance.json
+src/concept/entities_concept_sheet_v1.provenance.json
+src/concept/player_character_concept_sheet_v1.provenance.json
+src/concept/signal_tower_concept_sheet_v1.provenance.json
+src/concept/signal_tower_concept_sheet_v3.provenance.json
+src/concept/signal_tower_material_sheet.provenance.json
+src/concept/signal_tower_material_sheet_lora.provenance.json
+src/concept/signal_tower_props_concept_sheet_v1.provenance.json
+src/keyart/signal_tower_exterior.provenance.json
+src/keyart/signal_tower_interior.provenance.json

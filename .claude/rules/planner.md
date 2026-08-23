@@ -46,7 +46,18 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   `tools/board/src/lib/deliverableCheck.js` and
   `tools/board/scripts/checkDeliverable.js` are the reviewer's machine-checked
   gate for `artifact` cards — they FAIL a card with no attachments recorded,
-  or a recorded attachment with no backing file on disk.
+  or a recorded attachment with no backing file on disk. **Set this correctly
+  even though a diff-based backstop now also exists:** several `assets`/
+  `audio` cards whose real output was a shareable file (T-0198-T-0200,
+  T-0209-T-0211, T-0202) were tagged `deliverable_type: "code"` instead,
+  which is exactly the misclassification `verifyRouter.js`'s
+  `resolveDeliverableRoute` now also catches mechanically (any diff adding a
+  file under `assets/final/**`, `assets/src/concept/**`, or
+  `assets/src/keyart/**` requires an attachment regardless of what this
+  field says). That backstop is a safety net for a missed classification,
+  not a reason to skip setting the field right — an accurate
+  `deliverable_type: artifact` is still what drives the reviewer's own
+  Acceptance-criteria wording above.
 - **Acceptance criteria must fully cover the story, not just whatever got
   drafted first.** After writing `## Acceptance`, walk back through the
   card's story and confirm every distinct requirement it states or clearly

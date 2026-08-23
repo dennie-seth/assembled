@@ -1,7 +1,7 @@
 {
   "model": "N/A — procedurally generated",
   "model_license": "N/A",
-  "model_hash": null,
+  "model_hash": "N/A — deterministic procedural generation (transition_sheet.py); no AI model used",
   "prompt": "N/A — tile pixels are computed from locked home palette slot indices (WALL=8 #58554c, FLOOR=13 #7e7c74, JOINT=4 #3d3b31) via tile layout logic in transition_sheet.py",
   "negative_prompt": null,
   "seed": null,

@@ -1,9 +1,16 @@
 # Documented pre-existing model_hash gaps (HANDOFF §21, PR #221 audit table).
 # Paths are relative to the assets/ root. Every entry here is a synth-fallback
-# placeholder (no model used) or the T-0209 concept sheet -- already audited,
-# needs real regeneration rather than a backfill. See PR #221's audit table
-# for the full per-file reasoning and the follow-up card that owns cleanup.
-# Do NOT add new entries here to silence a fresh violation -- fix the writer.
+# placeholder whose card (T-0212/T-0213/T-0214) is in-flight; they will be
+# removed from this file when those cards land and their sidecars are confirmed
+# non-null. Do NOT add new entries here to silence a fresh violation -- fix the
+# writer instead.
+#
+# History: PR #221 seeded this file with 21 entries. T-0221 removed the 5
+# signal_tower props (regenerated through the committed cutout recipe, 21->16).
+# T-0215 removed 3 more (T-0209/T-0210 concept sheets, T-0153 tile sheet) after
+# backfilling their sidecars, 16->13. The remaining 13 are owned by T-0212
+# (T-0198 idle), T-0213 (T-0199 three sheets) and T-0214 (T-0200 nine entity
+# sheets).
 final/character/player_crouch_hide_sheet_v1.provenance.json
 final/character/player_die_sheet_v1.provenance.json
 final/character/player_idle_sheet_v1.provenance.json
@@ -17,11 +24,3 @@ final/entity/still_air_trapped_sheet_v1.provenance.json
 final/entity/watcher_idle_sheet_v1.provenance.json
 final/entity/watcher_move_sheet_v1.provenance.json
 final/entity/watcher_trapped_sheet_v1.provenance.json
-final/props/signal_tower/crate_stack_v1.provenance.json
-final/props/signal_tower/locker_v1.provenance.json
-final/props/signal_tower/low_duct_v1.provenance.json
-final/props/signal_tower/relay_cabinet_v1.provenance.json
-final/props/signal_tower/server_rack_v1.provenance.json
-final/tiles/signal_tower_concrete_wall_floor_transitions_16px.provenance.json
-src/concept/entities_concept_sheet_v1.provenance.json
-src/concept/player_character_concept_sheet_v1.provenance.json

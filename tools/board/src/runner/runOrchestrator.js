@@ -21,6 +21,7 @@ import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
 import { findExistingRemediationCard, draftRemediationCard } from "../lib/escalationRemediation.js";
 import { createCard as createCardDefault } from "./cardCreation.js";
+import { checkAcceptancePreflight } from "./acceptancePreflight.js";
 
 /**
  * Hard cap on total implementer/reviewer runs a card can consume across its bounded
@@ -365,6 +366,26 @@ export class RunOrchestrator {
       if (!plannerOk) return;
     }
     const effectiveAgent = task.agent ?? "generic";
+
+    // Pre-flight: verify the card has a parseable ## Acceptance checklist before running an
+    // implementer. For agent:null cards this runs after the planner has expanded the spec; for
+    // pre-assigned cards it runs immediately. Root cause from T-0186: 6 of 16 sampled rework
+    // cycles were caused solely by a missing Acceptance section — implementation correct but
+    // reviewer FAILed on the absent checklist. Catching this here saves one implementer LLM
+    // call + one reviewer LLM call per underspecified card (see acceptancePreflight.js).
+    //
+    // Skip for blocked re-runs: the card was already validated once; blocking it again on a
+    // missing Acceptance section would prevent legitimate recovery runs (the Blocked note
+    // appended to the body doesn't add an Acceptance section, so a previously-valid card
+    // that was blocked mid-run would be permanently un-runnable).
+    if (task.status !== "blocked") {
+      const preFlightTask = await this.store.get(taskId);
+      const preflight = checkAcceptancePreflight(preFlightTask);
+      if (!preflight.ok) {
+        await this._blocked(taskId, preflight.message);
+        return;
+      }
+    }
 
     let currentReused = reused;
     const attemptRecords = [];
