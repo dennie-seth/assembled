@@ -2,7 +2,23 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { AgentRunner } from "./agentRunner.js";
 import { DEFAULT_KILL_ESCALATION_MS } from "./runState.js";
 
-export const DEFAULT_ENV_ALLOWLIST = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TZ"];
+// BOARD_TASK_STORE/BOARD_DB_PATH MUST be included: without them, a child `claude` CLI process
+// (and the reviewer/implementer scripts it runs via its own Bash tool -- checkDeliverable.js,
+// checkPlannerDiffGuard.js, validateBacklog.js) always falls back to `fs` mode, resolving
+// attachments/tasks from `tasks/*.md` instead of the live SQLite store the parent board process
+// is actually running in `BOARD_TASK_STORE=db` mode. That gap made #225's DB-mode attachment
+// gate false-FAIL every real db-mode artifact card (T-0213/T-0214) with "no attachments
+// recorded" even though the files were attached in the DB -- see docs/design/cards-to-database.md.
+export const DEFAULT_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+  "TZ",
+  "BOARD_TASK_STORE",
+  "BOARD_DB_PATH"
+];
 
 /**
  * Validates a `--model` value before it reaches argv. Accepts Claude Code's

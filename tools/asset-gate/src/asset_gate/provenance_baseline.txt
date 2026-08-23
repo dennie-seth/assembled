@@ -5,10 +5,12 @@
 # non-null. Do NOT add new entries here to silence a fresh violation -- fix the
 # writer instead.
 #
-# T-0215 removed 8 entries from this baseline (T-0209/T-0210 concept sheets,
-# T-0153 tile sheet, T-0201 five props) after backfilling their sidecars.
-# Remaining 13 entries are owned by T-0212 (T-0198 idle), T-0213 (T-0199 three
-# sheets), and T-0214 (T-0200 nine entity sheets).
+# History: PR #221 seeded this file with 21 entries. T-0221 removed the 5
+# signal_tower props (regenerated through the committed cutout recipe, 21->16).
+# T-0215 removed 3 more (T-0209/T-0210 concept sheets, T-0153 tile sheet) after
+# backfilling their sidecars, 16->13. The remaining 13 are owned by T-0212
+# (T-0198 idle), T-0213 (T-0199 three sheets) and T-0214 (T-0200 nine entity
+# sheets).
 final/character/player_crouch_hide_sheet_v1.provenance.json
 final/character/player_die_sheet_v1.provenance.json
 final/character/player_idle_sheet_v1.provenance.json

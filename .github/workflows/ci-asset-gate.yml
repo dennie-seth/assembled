@@ -58,3 +58,45 @@ jobs:
       # are already-audited pre-existing gaps tracked for regeneration in a
       # follow-up card (PR #221) and don't block this gate.
       - run: python -m asset_gate.cli provenance-sweep ../../assets
+
+  generator-sweep:
+    name: generator resolvability sweep (T-0219/HANDOFF §22-c)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # Recursively validates that the generator field in every committed
+      # *.provenance.json under assets/ resolves to an existing file in the
+      # repo tree. A fabricated or ad-hoc-script generator string (e.g.
+      # "ComfyUI 0.29.0 via T-0215 (SolidMask + JoinImageWithAlpha)") fails
+      # because those nodes/scripts are not committed anywhere, making the
+      # asset unregeneraable (P-3 violation). Paths listed in
+      # generator_baseline.txt are pre-existing gaps tracked for remediation;
+      # the 5 signal_tower props are intentionally NOT in that baseline and
+      # will fail until Card C regenerates them through a committed path.
+      - run: python -m asset_gate.cli generator-sweep ../../assets --repo-root ../../
+
+  visibility-sweep:
+    name: rendered-visibility sweep (PR #231 / T-0215 alpha-zero bug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # PR #231 shipped 5 prop PNGs with alpha=0 on every pixel -- the
+      # provenance sweep above only checks model_hash, so it can't catch a
+      # PNG that never renders. This sweeps every committed *.png under
+      # assets/final and fails the PR if any is fully transparent or reads
+      # as blank/uniform.
+      - run: python -m asset_gate.cli visibility-sweep ../../assets/final

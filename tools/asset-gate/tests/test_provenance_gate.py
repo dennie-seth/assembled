@@ -148,9 +148,10 @@ def test_load_baseline_parses_lines_and_skips_comments_and_blanks(tmp_path):
 
 
 def test_load_baseline_default_path_lists_remaining_in_flight_gaps():
-    """After T-0215 removed 8 backfilled entries, the baseline holds 13 paths
-    for the T-0198/T-0199/T-0200 sheets still owned by T-0212/T-0213/T-0214.
-    (HANDOFF §21 / T-0215)
+    """T-0221 removed the 5 signal_tower props (21->16); T-0215 then removed
+    the 3 backfilled sidecars it owns (T-0209/T-0210 concept sheets, T-0153
+    tile sheet, 16->13). The remaining 13 are the T-0198/T-0199/T-0200 sheets
+    still owned by T-0212/T-0213/T-0214. (HANDOFF §21 / T-0215)
     """
     baseline = load_baseline()
 
