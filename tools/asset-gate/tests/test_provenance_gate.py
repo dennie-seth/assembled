@@ -147,12 +147,21 @@ def test_load_baseline_parses_lines_and_skips_comments_and_blanks(tmp_path):
     )
 
 
-def test_load_baseline_default_path_lists_the_pr_221_audit_table():
+def test_load_baseline_default_path_lists_remaining_in_flight_gaps():
+    """T-0221 removed the 5 signal_tower props (21->16); T-0215 then removed
+    the 3 backfilled sidecars it owns (T-0209/T-0210 concept sheets, T-0153
+    tile sheet, 16->13). The remaining 13 are the T-0198/T-0199/T-0200 sheets
+    still owned by T-0212/T-0213/T-0214. (HANDOFF §21 / T-0215)
+    """
     baseline = load_baseline()
 
-    # T-0221 removed the 5 signal_tower props from the baseline (model_hash
-    # gaps fixed by regeneration through T-0220's committed cutout recipe).
-    # Baseline now has 16 entries (was 21 before T-0221).
-    assert len(baseline) == 16
-    assert "src/concept/player_character_concept_sheet_v1.provenance.json" in baseline
-    assert "src/concept/entities_concept_sheet_v1.provenance.json" in baseline
+    assert len(baseline) == 13
+    # T-0215-owned paths must be gone (backfilled)
+    assert "src/concept/player_character_concept_sheet_v1.provenance.json" not in baseline
+    assert "src/concept/entities_concept_sheet_v1.provenance.json" not in baseline
+    _tile_key = "final/tiles/signal_tower_concrete_wall_floor_transitions_16px.provenance.json"
+    assert _tile_key not in baseline
+    assert "final/props/signal_tower/crate_stack_v1.provenance.json" not in baseline
+    # T-0212/T-0213/T-0214 paths must still be present
+    assert "final/character/player_idle_sheet_v1.provenance.json" in baseline
+    assert "final/entity/watcher_idle_sheet_v1.provenance.json" in baseline
