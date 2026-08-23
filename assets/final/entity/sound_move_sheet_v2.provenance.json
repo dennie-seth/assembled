@@ -19,7 +19,7 @@
   "lora_name": "soviet_brutalism_style_v1.safetensors",
   "lora_weight": 0.70,
   "lora_license": "CreativeML OpenRAIL++-M",
-  "generator": "assets/src/character/gen_entities_v2.js (curl-only pipeline, T-0214)",
+  "generator": "assets/src/character/gen_entities_v2.js",
   "card": "T-0214",
   "spec": "docs/design/13-asset-pipeline.md §3.5 §6.11",
   "layout": {
