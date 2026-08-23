@@ -1,10 +1,10 @@
 """RGBA-cutout sprite generation path (T-0220, docs/design/13-asset-pipeline.md §6.15).
 
 Implements the committed, reproducible prop/entity sprite-cutout workflow:
-recipe -> generate (LoRA + SolidMask + JoinImageWithAlpha cutout chain) ->
-RGBA PNG + provenance sidecar.
+recipe -> generate (LoRA + SolidMask + JoinImageWithAlpha + ImageScale chain) ->
+RGBA PNG at game-pixel dimensions + provenance sidecar.
 
-This is the 'missing recipe' that T-0215's signal_tower prop generation
+This is the committed recipe that T-0215's signal_tower prop generation
 claimed to use but never committed. The ComfyUI node graph is
 `templates/sdxl_cutout_lora_v1.json`; `generate_cutout()` here is the single
 committed entrypoint that builds and submits it.
@@ -12,17 +12,26 @@ committed entrypoint that builds and submits it.
 Node graph summary (sdxl_cutout_lora_v1.json):
   4  CheckpointLoaderSimple
   12 LoraLoader          <- 4 model+clip
-  5  EmptyLatentImage    (recipe.width x recipe.height)
+  5  EmptyLatentImage    (gen_width x gen_height -- SDXL generation dimensions)
   6  CLIPTextEncode      (positive) <- 12 clip
   7  CLIPTextEncode      (negative) <- 12 clip
   3  KSampler            <- 12 model, 6, 7, 5
   8  VAEDecode           <- 3, 4 vae
-  13 SolidMask           (recipe.width x recipe.height, value=solid_mask_value)
+  13 SolidMask           (gen_width x gen_height, ComfyUI-value=1.0-solid_mask_value)
   14 JoinImageWithAlpha  <- 8 image, 13 alpha
-  9  SaveImage           <- 14
+  15 ImageScale          <- 14, area method, recipe.width x recipe.height (game dims)
+  9  SaveImage           <- 15
 
-`provenance.generator` is set to `"comfy_client.cutout:generate_cutout"` so
-the T-0219 resolvability gate can verify this recipe exists in the repo.
+IMPORTANT: ComfyUI's JoinImageWithAlpha INVERTS the mask convention:
+  SolidMask value=0.0 → alpha=255 (fully opaque) in the output
+  SolidMask value=1.0 → alpha=0 (fully transparent) in the output
+render_cutout_workflow() compensates by writing `1.0 - solid_mask_value` to
+node 13, so solid_mask_value=1.0 (user-facing "fully opaque") correctly
+produces alpha=255 in the saved PNG.
+
+`provenance.generator` is set to `"tools/comfy-client/src/comfy_client/cutout.py"`
+(repo-relative file path) so the T-0219 resolvability gate can verify this
+recipe exists in the repo as a committed file.
 """
 
 from __future__ import annotations
@@ -48,9 +57,14 @@ from comfy_client.workflow import workflow_hash
 CUTOUT_TEMPLATE_NAME = "sdxl_cutout_lora_v1"
 DEFAULT_CUTOUT_DIR = Path("assets/out/cutout")
 
-#: Importable path written to every provenance sidecar.  The T-0219
-#: resolvability gate verifies this points at a committed module+function.
-GENERATOR_ID = "comfy_client.cutout:generate_cutout"
+#: Repo-relative file path written to every provenance sidecar.  The T-0219
+#: resolvability gate resolves (repo_root / generator) and checks is_file().
+GENERATOR_ID = "tools/comfy-client/src/comfy_client/cutout.py"
+
+#: Minimum SDXL-safe generation dimension (must be multiple of 8).
+#: Tiny game sprites need to be generated at this minimum size and then
+#: scaled down via the ImageScale node to their target game-pixel dimensions.
+_SDXL_MIN_DIM = 512
 
 
 @dataclass(frozen=True)
@@ -110,19 +124,32 @@ def render_cutout_workflow(
     lora_weight: float = 0.70,
     solid_mask_value: float = 1.0,
     template: dict[str, Any] | None = None,
+    gen_width: int | None = None,
+    gen_height: int | None = None,
 ) -> dict[str, Any]:
     """Render `recipe` + LoRA params into a cutout `/prompt`-ready node graph.
 
     Uses `sdxl_cutout_lora_v1.json` which adds SolidMask (node 13) +
-    JoinImageWithAlpha (node 14) after VAEDecode to produce RGBA output.
-    SolidMask dimensions are set from `recipe.width`/`height` so the mask
-    always matches the generated image; `solid_mask_value` controls alpha
-    uniformity (1.0 = fully opaque).
+    JoinImageWithAlpha (node 14) + ImageScale (node 15, area method) after
+    VAEDecode to produce RGBA output at game-pixel dimensions.
+
+    `gen_width`/`gen_height` set the SDXL generation dimensions (EmptyLatentImage
+    and SolidMask); they default to `recipe.width`/`recipe.height` if not
+    provided. For tiny game sprites, pass SDXL-safe generation dimensions
+    (e.g., 512×512) and let ImageScale (node 15) resize to `recipe.width`/`height`.
+
+    `solid_mask_value` is the user-facing alpha value (1.0 = fully opaque).
+    ComfyUI's JoinImageWithAlpha INVERTS the mask (0.0=opaque, 1.0=transparent),
+    so this function writes `1.0 - solid_mask_value` to node 13.
 
     Returns a fresh dict each call -- the shared template is never mutated.
     """
     tmpl = _load_cutout_template() if template is None else template
     graph = copy.deepcopy(tmpl["graph"])
+
+    # SDXL generation dimensions (may differ from game-pixel output dimensions)
+    actual_gen_w = gen_width if gen_width is not None else recipe.width
+    actual_gen_h = gen_height if gen_height is not None else recipe.height
 
     # Checkpoint + LoRA
     graph["4"]["inputs"]["ckpt_name"] = recipe.checkpoint
@@ -130,12 +157,15 @@ def render_cutout_workflow(
     graph["12"]["inputs"]["strength_model"] = lora_weight
     graph["12"]["inputs"]["strength_clip"] = lora_weight
 
-    # Dimensions -- EmptyLatentImage and SolidMask must match
-    graph["5"]["inputs"]["width"] = recipe.width
-    graph["5"]["inputs"]["height"] = recipe.height
-    graph["13"]["inputs"]["width"] = recipe.width
-    graph["13"]["inputs"]["height"] = recipe.height
-    graph["13"]["inputs"]["value"] = solid_mask_value
+    # EmptyLatentImage and SolidMask use generation dimensions
+    graph["5"]["inputs"]["width"] = actual_gen_w
+    graph["5"]["inputs"]["height"] = actual_gen_h
+    graph["13"]["inputs"]["width"] = actual_gen_w
+    graph["13"]["inputs"]["height"] = actual_gen_h
+
+    # ComfyUI JoinImageWithAlpha inverts the mask: value=0.0→opaque, 1.0→transparent.
+    # Invert here so solid_mask_value=1.0 (user-facing "fully opaque") → alpha=255.
+    graph["13"]["inputs"]["value"] = 1.0 - solid_mask_value
 
     # Prompts
     graph["6"]["inputs"]["text"] = recipe.prompt
@@ -147,6 +177,10 @@ def render_cutout_workflow(
     graph["3"]["inputs"]["cfg"] = recipe.cfg
     graph["3"]["inputs"]["sampler_name"] = recipe.sampler
     graph["3"]["inputs"]["scheduler"] = recipe.scheduler
+
+    # ImageScale (node 15) resizes RGBA output to game-pixel dimensions
+    graph["15"]["inputs"]["width"] = recipe.width
+    graph["15"]["inputs"]["height"] = recipe.height
 
     # Output filename prefix
     graph["9"]["inputs"]["filename_prefix"] = recipe.name
@@ -167,14 +201,24 @@ def generate_cutout(
     solid_mask_value: float = 1.0,
     comfyui_version: str | None = None,
     torch_version: str | None = None,
+    gen_width: int | None = None,
+    gen_height: int | None = None,
 ) -> CutoutResult:
-    """recipe + LoRA -> RGBA-cutout PNG + provenance sidecar.
+    """recipe + LoRA -> RGBA-cutout PNG at game-pixel dimensions + provenance sidecar.
 
-    The submitted ComfyUI workflow (`sdxl_cutout_lora_v1.json`) includes a
-    SolidMask (node 13) + JoinImageWithAlpha (node 14) after VAEDecode so
-    that ComfyUI writes RGBA output. `solid_mask_value` controls the alpha
-    channel value (1.0 = fully opaque, matches the original signal_tower
-    prop generation path).
+    The submitted ComfyUI workflow (`sdxl_cutout_lora_v1.json`) generates at
+    SDXL-compatible dimensions (`gen_width`×`gen_height`) and then ImageScale
+    (node 15, area method) resizes to `recipe.width`×`recipe.height` (game pixels).
+    JoinImageWithAlpha (node 14) merges the VAEDecode output with a SolidMask
+    so the final PNG is RGBA.
+
+    `gen_width`/`gen_height`: SDXL generation dimensions. Default to
+    `max(_SDXL_MIN_DIM, recipe.width)` × `max(_SDXL_MIN_DIM, recipe.height)`,
+    rounded to the nearest multiple of 8. Pass explicitly to override.
+
+    `solid_mask_value=1.0` means fully opaque. ComfyUI's JoinImageWithAlpha
+    inverts the mask, so this function compensates internally; the provenance
+    records the user-facing value (1.0 = fully opaque).
 
     Raises `CheckpointNotAllowedError` before any network call if
     `recipe.checkpoint` is not on the license allowlist.
@@ -200,11 +244,23 @@ def generate_cutout(
             "recipe.model_hash to the known SHA-256 of the checkpoint."
         )
 
+    # Compute SDXL-safe generation dimensions if not supplied.
+    # SDXL requires at least _SDXL_MIN_DIM in each dimension; dimensions
+    # must be multiples of 8 (latent space is 8× downsampled).
+    if gen_width is None:
+        raw = max(_SDXL_MIN_DIM, recipe.width)
+        gen_width = (raw + 7) // 8 * 8
+    if gen_height is None:
+        raw = max(_SDXL_MIN_DIM, recipe.height)
+        gen_height = (raw + 7) // 8 * 8
+
     graph = render_cutout_workflow(
         recipe,
         lora_name=lora_name,
         lora_weight=lora_weight,
         solid_mask_value=solid_mask_value,
+        gen_width=gen_width,
+        gen_height=gen_height,
     )
     graph_hash = workflow_hash(graph)
 

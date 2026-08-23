@@ -9,7 +9,6 @@ required.
 from __future__ import annotations
 
 import hashlib
-import importlib
 import io
 import json
 
@@ -140,7 +139,14 @@ def test_generate_cutout_submits_workflow_with_lora_node(tmp_path, cutout_recipe
 
 
 def test_generate_cutout_workflow_has_solid_mask_node(tmp_path, cutout_recipe):
-    """Submitted workflow must include SolidMask (node '13') for the alpha channel."""
+    """Submitted workflow must include SolidMask (node '13') for the alpha channel.
+
+    ComfyUI's JoinImageWithAlpha INVERTS the mask (value=0.0→opaque, 1.0→transparent).
+    render_cutout_workflow compensates: solid_mask_value=1.0 (user-facing 'fully opaque')
+    writes 1.0-1.0=0.0 to node 13's value field, producing alpha=255 in ComfyUI output.
+    SolidMask dimensions match the SDXL generation dimensions (gen_width/gen_height),
+    which for a recipe.width=512 are max(512,512)=512 each.
+    """
     client = FakeClient()
     generate_cutout(
         cutout_recipe,
@@ -153,7 +159,9 @@ def test_generate_cutout_workflow_has_solid_mask_node(tmp_path, cutout_recipe):
     graph = client.calls[0][1]
     assert "13" in graph
     assert graph["13"]["class_type"] == "SolidMask"
-    assert graph["13"]["inputs"]["value"] == 1.0  # default: fully opaque
+    # solid_mask_value=1.0 (fully opaque) → ComfyUI receives 1.0-1.0=0.0 (opaque after inversion)
+    assert graph["13"]["inputs"]["value"] == 0.0
+    # SolidMask uses gen dimensions (same as recipe.width/height here since both >=512)
     assert graph["13"]["inputs"]["width"] == cutout_recipe.width
     assert graph["13"]["inputs"]["height"] == cutout_recipe.height
 
@@ -191,8 +199,8 @@ def test_generate_cutout_workflow_feeds_mask_into_join_alpha(tmp_path, cutout_re
     assert join_inputs["alpha"] == ["13", 0]  # SolidMask output
 
 
-def test_generate_cutout_workflow_save_image_reads_from_join(tmp_path, cutout_recipe):
-    """SaveImage (node 9) must read from JoinImageWithAlpha (14), not VAEDecode (8)."""
+def test_generate_cutout_workflow_has_image_scale_node(tmp_path, cutout_recipe):
+    """Submitted workflow must include ImageScale (node '15') to resize RGBA to game dims."""
     client = FakeClient()
     generate_cutout(
         cutout_recipe,
@@ -203,7 +211,27 @@ def test_generate_cutout_workflow_save_image_reads_from_join(tmp_path, cutout_re
         client=client,
     )
     graph = client.calls[0][1]
-    assert graph["9"]["inputs"]["images"] == ["14", 0]
+    assert "15" in graph
+    assert graph["15"]["class_type"] == "ImageScale"
+    assert graph["15"]["inputs"]["image"] == ["14", 0]   # input from JoinImageWithAlpha
+    assert graph["15"]["inputs"]["upscale_method"] == "area"
+    assert graph["15"]["inputs"]["width"] == cutout_recipe.width
+    assert graph["15"]["inputs"]["height"] == cutout_recipe.height
+
+
+def test_generate_cutout_workflow_save_image_reads_from_image_scale(tmp_path, cutout_recipe):
+    """SaveImage (node 9) must read from ImageScale (15), not JoinImageWithAlpha (14)."""
+    client = FakeClient()
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=client,
+    )
+    graph = client.calls[0][1]
+    assert graph["9"]["inputs"]["images"] == ["15", 0]
 
 
 def test_render_cutout_workflow_deterministic(cutout_recipe):
@@ -226,10 +254,11 @@ def test_render_cutout_workflow_different_seed_gives_different_graph(cutout_reci
 
 
 def test_render_cutout_workflow_solid_mask_value_is_configurable(cutout_recipe):
+    # solid_mask_value=0.8 → ComfyUI node 13 receives 1.0-0.8=0.2 (inversion for opaqueness)
     g = render_cutout_workflow(
         cutout_recipe, lora_name=LORA_NAME, lora_weight=LORA_WEIGHT, solid_mask_value=0.8
     )
-    assert g["13"]["inputs"]["value"] == 0.8
+    assert g["13"]["inputs"]["value"] == pytest.approx(0.2)
 
 
 # ---------------------------------------------------------------------------
@@ -331,9 +360,13 @@ def test_generate_cutout_provenance_matches_result_object(tmp_path, cutout_recip
 
 
 def test_generate_cutout_provenance_generator_field_resolves(tmp_path, cutout_recipe):
-    """The 'generator' field in the sidecar must point at a real, importable
-    Python module path (the T-0219 resolvability gate checks this: 'pkg.mod:fn').
+    """The 'generator' field in the sidecar must be a repo-relative file path
+    that resolves to an existing committed file (T-0219 P-7 resolvability gate:
+    check_provenance_generator_resolvable resolves (repo_root / generator) and
+    calls is_file()).  GENERATOR_ID is 'tools/comfy-client/src/comfy_client/cutout.py'.
     """
+    from pathlib import Path
+
     client = FakeClient()
     generate_cutout(
         cutout_recipe,
@@ -348,10 +381,16 @@ def test_generate_cutout_provenance_generator_field_resolves(tmp_path, cutout_re
     on_disk = json.loads(sidecar.read_text())
     generator = on_disk["generator"]
 
-    assert ":" in generator, f"generator must be 'module:attr', got {generator!r}"
-    module_path, attr = generator.split(":", 1)
-    mod = importlib.import_module(module_path)
-    assert hasattr(mod, attr), f"{module_path} has no attribute {attr!r}"
+    assert generator == GENERATOR_ID, (
+        f"generator is {generator!r}, expected repo-relative path {GENERATOR_ID!r}"
+    )
+    # Resolve from this file's repo root (worktree root = 4 dirs up from tests/)
+    repo_root = Path(__file__).resolve().parents[4]
+    resolved = repo_root / generator
+    assert resolved.is_file(), (
+        f"generator '{generator}' does not resolve to a committed file under "
+        f"repo root {repo_root} (T-0219 P-7 gate). Expected: {resolved}"
+    )
 
 
 def test_generate_cutout_with_env_versions(tmp_path, cutout_recipe):

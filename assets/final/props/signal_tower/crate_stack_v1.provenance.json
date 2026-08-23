@@ -14,13 +14,13 @@
   "width": 512,
   "height": 576,
   "solid_mask_value": 1.0,
-  "workflow_hash": "de3d63440b9b030a396be7296b9f5b39ccfe7090b8d134d06c41793d5822ab42",
+  "workflow_hash": "14ac24aefbf3cb5c293968fa81635087e3f2a07e5ca09cc9ca270c4b11bb8847",
   "workflow_template": "tools/comfy-client/src/comfy_client/templates/sdxl_cutout_lora_v1.json",
-  "prompt_id": "16f3164e-9b5d-47c4-a8e5-a37d5c174b5f",
+  "prompt_id": "6e555a84-2380-45cc-91ad-c19bb00a78b6",
   "prop_class": "cover",
-  "sprite_hash": "4ad9af4d8671874252dc7a702c0ffd81042aaaeed10f553778015b4ef2241736",
+  "sprite_hash": "c6992374d69d9e6200f7cdd4771939e3239a553c47bb95d814d359cdd8e1141f",
   "comfyui_version": "0.29.0",
   "torch_version": "2.5.1+cu121",
   "generator": "tools/comfy-client/src/comfy_client/cutout.py",
-  "_generation_note": "T-0221: regenerated via committed sdxl_cutout_lora_v1.json template (T-0220) submitted directly to ComfyUI /prompt API. Node graph: CheckpointLoaderSimple(4)->LoraLoader(12)->EmptyLatentImage(5)+CLIPTextEncode(6/7)->KSampler(3)->VAEDecode(8)->SolidMask(13)+JoinImageWithAlpha(14)->ImageScale(15, area, 24x28)->SaveImage(9). workflow_hash is sha256sum of the submitted workflow JSON file. Reproducibility bar: same workflow+seed+model on the same rig reproduces equivalent output (CUDA sampling is not bit-exact cross-hardware per T-0221 spec)."
+  "_generation_note": "T-0221 run-2: alpha-fix regeneration. SolidMask(value=0.0) in workflow (ComfyUI JoinImageWithAlpha inverts mask; 0.0->alpha=255). solid_mask_value records user-facing convention (1.0=fully opaque). Gen 512x576->game 24x28 via ImageScale(area). Node graph: CheckpointLoaderSimple(4)->LoraLoader(12)->EmptyLatentImage(5)+CLIPTextEncode(6/7)->KSampler(3)->VAEDecode(8)->SolidMask(13)+JoinImageWithAlpha(14)->ImageScale(15, area, 24x28)->SaveImage(9). workflow_hash is sha256sum of the submitted workflow JSON file."
 }
