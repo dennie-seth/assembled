@@ -28,7 +28,6 @@ from comfy_client.cutout import (
 from comfy_client.errors import MissingModelHashError
 from comfy_client.recipe import Recipe
 
-
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
