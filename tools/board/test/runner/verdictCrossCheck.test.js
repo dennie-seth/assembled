@@ -286,6 +286,52 @@ describe("crossCheckVerdict", () => {
     expect(result).toEqual(PASS);
   });
 
+  it("downgrades a self-reported PASS to FAIL when a code-deliverable card's diff adds an unattached art file (T-0198-style gap) and the reviewer never ran the deliverable check", () => {
+    const events = [
+      { type: "assistant", message: { content: [{ type: "text", text: "Tests pass, looks good." }] } }
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/final/character/player_idle_sheet_v1.png"],
+      task: { id: "T-0198", deliverable_type: "code" }
+    });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.downgraded).toBe(true);
+    expect(result.crossCheckFailures).toEqual([
+      expect.objectContaining({ id: "deliverable-check", status: "not_run" })
+    ]);
+  });
+
+  it("keeps a self-reported PASS as PASS when the diff-triggered deliverable check (--require-artifact) actually ran and exited zero", () => {
+    const events = [
+      ...bashCall("1", "node tools/board/scripts/checkDeliverable.js T-0198 --require-artifact", { ok: true })
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/final/character/player_idle_sheet_v1.png"],
+      task: { id: "T-0198", deliverable_type: "code" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
+  it("keys the deliverable-check cross-check on the actual task id, not the trailing --require-artifact flag (a run for a DIFFERENT task id must not satisfy this one)", () => {
+    const events = [
+      ...bashCall("1", "node tools/board/scripts/checkDeliverable.js T-9999 --require-artifact", { ok: true })
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/final/character/player_idle_sheet_v1.png"],
+      task: { id: "T-0198", deliverable_type: "code" }
+    });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.crossCheckFailures).toEqual([
+      expect.objectContaining({ id: "deliverable-check", status: "not_run" })
+    ]);
+  });
+
   it("ignores non-Bash tool_use/tool_result pairs -- a Read/Grep of the test file is not evidence it ran", () => {
     const events = [
       {
