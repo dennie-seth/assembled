@@ -23,6 +23,8 @@ client/vendor/*.tar.gz
 client/vendor/curl/
 # One-off verify debug helpers, not part of the project.
 client/vendor_clean.py
+_attach_deliverables.mjs
+_attach_deliverables.py
 commit_msg.txt
 run_clang_format.sh
 run_clang_format.py

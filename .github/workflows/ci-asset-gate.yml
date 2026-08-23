@@ -6,12 +6,14 @@ on:
     paths:
       - "tools/asset-gate/**"
       - "assets/**/*.provenance.json"
+      - "assets/**/*.png"
       - ".github/workflows/ci-asset-gate.yml"
   push:
     branches: [develop, main]
     paths:
       - "tools/asset-gate/**"
       - "assets/**/*.provenance.json"
+      - "assets/**/*.png"
       - ".github/workflows/ci-asset-gate.yml"
 
 concurrency:
@@ -58,3 +60,22 @@ jobs:
       # are already-audited pre-existing gaps tracked for regeneration in a
       # follow-up card (PR #221) and don't block this gate.
       - run: python -m asset_gate.cli provenance-sweep ../../assets
+
+  visibility-sweep:
+    name: rendered-visibility sweep (PR #231 / T-0215 alpha-zero bug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # PR #231 shipped 5 prop PNGs with alpha=0 on every pixel -- the
+      # provenance sweep above only checks model_hash, so it can't catch a
+      # PNG that never renders. This sweeps every committed *.png under
+      # assets/final and fails the PR if any is fully transparent or reads
+      # as blank/uniform.
+      - run: python -m asset_gate.cli visibility-sweep ../../assets/final

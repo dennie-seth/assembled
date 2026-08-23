@@ -1,0 +1,252 @@
+# English locale — assembled note vocabulary (T-0205)
+# All 56 words + 20 templates from shared/note_templates.hpp.
+# Telegraphic register per 17-localization.md §5.2:
+#   nouns nominative singular, adverbs, imperatives only.
+# Named slots per 17-localization.md §4: no positional placeholders.
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en\n"
+
+# ── DIRECTION (words 1–8) ────────────────────────────────────────────────────
+
+msgid "word:1"
+msgstr "ahead"
+
+msgid "word:2"
+msgstr "behind"
+
+msgid "word:3"
+msgstr "below"
+
+msgid "word:4"
+msgstr "above"
+
+msgid "word:5"
+msgstr "left"
+
+msgid "word:6"
+msgstr "right"
+
+msgid "word:7"
+msgstr "within"
+
+msgid "word:8"
+msgstr "beyond"
+
+# ── HAZARD (words 9–20) ─────────────────────────────────────────────────────
+
+msgid "word:9"
+msgstr "the drop"
+
+msgid "word:10"
+msgstr "the watcher"
+
+msgid "word:11"
+msgstr "the sound"
+
+msgid "word:12"
+msgstr "the cold"
+
+msgid "word:13"
+msgstr "the still air"
+
+msgid "word:14"
+msgstr "the dark"
+
+msgid "word:15"
+msgstr "the heat"
+
+msgid "word:16"
+msgstr "the trap"
+
+msgid "word:17"
+msgstr "the gap"
+
+msgid "word:18"
+msgstr "the edge"
+
+msgid "word:19"
+msgstr "the beast"
+
+msgid "word:20"
+msgstr "the current"
+
+# ── ACTION (words 21–32) ────────────────────────────────────────────────────
+
+msgid "word:21"
+msgstr "wait"
+
+msgid "word:22"
+msgstr "run"
+
+msgid "word:23"
+msgstr "hide"
+
+msgid "word:24"
+msgstr "cross"
+
+msgid "word:25"
+msgstr "turn back"
+
+msgid "word:26"
+msgstr "listen"
+
+msgid "word:27"
+msgstr "do not"
+
+msgid "word:28"
+msgstr "proceed"
+
+msgid "word:29"
+msgstr "stop"
+
+msgid "word:30"
+msgstr "search"
+
+msgid "word:31"
+msgstr "climb"
+
+msgid "word:32"
+msgstr "descend"
+
+# ── OBJECT (words 33–48) ────────────────────────────────────────────────────
+
+msgid "word:33"
+msgstr "the door"
+
+msgid "word:34"
+msgstr "the lamp"
+
+msgid "word:35"
+msgstr "the bones"
+
+msgid "word:36"
+msgstr "the machine"
+
+msgid "word:37"
+msgstr "the seam"
+
+msgid "word:38"
+msgstr "the switch"
+
+msgid "word:39"
+msgstr "the lever"
+
+msgid "word:40"
+msgstr "the passage"
+
+msgid "word:41"
+msgstr "the key"
+
+msgid "word:42"
+msgstr "the lock"
+
+msgid "word:43"
+msgstr "the window"
+
+msgid "word:44"
+msgstr "the floor"
+
+msgid "word:45"
+msgstr "the wall"
+
+msgid "word:46"
+msgstr "the ceiling"
+
+msgid "word:47"
+msgstr "the pipe"
+
+msgid "word:48"
+msgstr "the hatch"
+
+# ── QUALIFIER (words 49–56) ─────────────────────────────────────────────────
+
+msgid "word:49"
+msgstr "slowly"
+
+msgid "word:50"
+msgstr "twice"
+
+msgid "word:51"
+msgstr "never"
+
+msgid "word:52"
+msgstr "only once"
+
+msgid "word:53"
+msgstr "if alone"
+
+msgid "word:54"
+msgstr "carefully"
+
+msgid "word:55"
+msgstr "quietly"
+
+msgid "word:56"
+msgstr "quickly"
+
+# ── TEMPLATES (1–20) ────────────────────────────────────────────────────────
+# Telegraphic fragments, not full sentences (17 §5.2, 02 §2).
+# Named slots only — L-3 rejects positional placeholders.
+
+msgid "template:1"
+msgstr "{action} {qualifier}"
+
+msgid "template:2"
+msgstr "{hazard} {direction}"
+
+msgid "template:3"
+msgstr "{object} {direction}"
+
+msgid "template:4"
+msgstr "{action} {direction}"
+
+msgid "template:5"
+msgstr "{hazard}"
+
+msgid "template:6"
+msgstr "{action}"
+
+msgid "template:7"
+msgstr "{direction}"
+
+msgid "template:8"
+msgstr "{object} here"
+
+msgid "template:9"
+msgstr "try {action} {qualifier}"
+
+msgid "template:10"
+msgstr "beware {hazard} {direction}"
+
+msgid "template:11"
+msgstr "{qualifier}, {action}"
+
+msgid "template:12"
+msgstr "need help {direction}"
+
+msgid "template:13"
+msgstr "need {item_ref}"
+
+msgid "template:14"
+msgstr "something is wrong"
+
+msgid "template:15"
+msgstr "{object} opens with {item_ref}"
+
+msgid "template:16"
+msgstr "go {direction}"
+
+msgid "template:17"
+msgstr "{action} {object}"
+
+msgid "template:18"
+msgstr "{object} {qualifier}"
+
+msgid "template:19"
+msgstr "watch for {hazard}"
+
+msgid "template:20"
+msgstr "safe passage"
