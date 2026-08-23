@@ -14,10 +14,9 @@ import io
 import json
 
 import pytest
-from PIL import Image
-
 from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
+from PIL import Image
 
 from comfy_client.cutout import (
     GENERATOR_ID,
