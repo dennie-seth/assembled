@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { spawn as nodeSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { AgentRunner } from "../../src/runner/agentRunner.js";
-import { ClaudeCliRunner } from "../../src/runner/claudeCliRunner.js";
+import { ClaudeCliRunner, DEFAULT_ENV_ALLOWLIST } from "../../src/runner/claudeCliRunner.js";
 import { DEFAULT_KILL_ESCALATION_MS } from "../../src/runner/runState.js";
 
 const TASK = { id: "T-0099", agent: "infra" };
@@ -274,6 +274,28 @@ describe("ClaudeCliRunner env isolation", () => {
     });
     expect(invocation.env.CLAUDE_CONFIG_DIR).toBe("/wt/.claude-config");
     expect(invocation.env.PATH).toBe("/usr/bin");
+  });
+
+  it("passes BOARD_TASK_STORE and BOARD_DB_PATH through to the child, so a db-mode reviewer/implementer run (and any checkDeliverable.js/checkPlannerDiffGuard.js/validateBacklog.js it invokes via Bash) resolves the live SQLite store instead of silently falling back to fs mode", () => {
+    const hostEnv = {
+      PATH: "/usr/bin",
+      BOARD_TASK_STORE: "db",
+      BOARD_DB_PATH: "/home/dennieseth/.local/share/assembled-board/board.db"
+    };
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv });
+    const invocation = runner.buildInvocation({
+      task: TASK,
+      prompt: "x",
+      allowedTools: ["Read"],
+      worktreeDir: "/wt"
+    });
+    expect(invocation.env.BOARD_TASK_STORE).toBe("db");
+    expect(invocation.env.BOARD_DB_PATH).toBe("/home/dennieseth/.local/share/assembled-board/board.db");
+  });
+
+  it("includes BOARD_TASK_STORE and BOARD_DB_PATH in the default allowlist", () => {
+    expect(DEFAULT_ENV_ALLOWLIST).toContain("BOARD_TASK_STORE");
+    expect(DEFAULT_ENV_ALLOWLIST).toContain("BOARD_DB_PATH");
   });
 
   it("does not leak the whole process.env by default when hostEnv is not overridden", () => {
