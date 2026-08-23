@@ -150,6 +150,9 @@ def test_load_baseline_parses_lines_and_skips_comments_and_blanks(tmp_path):
 def test_load_baseline_default_path_lists_the_pr_221_audit_table():
     baseline = load_baseline()
 
-    assert len(baseline) == 21
+    # T-0221 removed the 5 signal_tower props from the baseline (model_hash
+    # gaps fixed by regeneration through T-0220's committed cutout recipe).
+    # Baseline now has 16 entries (was 21 before T-0221).
+    assert len(baseline) == 16
     assert "src/concept/player_character_concept_sheet_v1.provenance.json" in baseline
     assert "src/concept/entities_concept_sheet_v1.provenance.json" in baseline

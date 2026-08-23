@@ -1,8 +1,8 @@
 {
   "meta": {
     "name": "sdxl_cutout_lora_v1",
-    "version": 1,
-    "description": "SDXL txt2img + LoRA + RGBA-cutout graph (T-0220, docs/design/13-asset-pipeline.md §6.15). CheckpointLoaderSimple -> LoraLoader -> CLIPTextEncode x2 + EmptyLatentImage -> KSampler -> VAEDecode -> SolidMask + JoinImageWithAlpha -> SaveImage. Produces RGBA PNG: the SolidMask (node 13) creates a uniform alpha channel (value=1.0 fully opaque by default) at the recipe's output dimensions; JoinImageWithAlpha (node 14) merges the sampled image with this alpha before SaveImage. This is the committed recipe for prop/entity sprite-cutout generation -- SolidMask.width/height are set from recipe.width/height by render_cutout_workflow() so the mask always matches the generated image. Node IDs are stable; add a new template file for graph-shape changes, never edit node IDs in place."
+    "version": 2,
+    "description": "SDXL txt2img + LoRA + RGBA-cutout graph (T-0220/T-0221, docs/design/13-asset-pipeline.md §6.15). CheckpointLoaderSimple -> LoraLoader -> CLIPTextEncode x2 + EmptyLatentImage(gen dims) -> KSampler -> VAEDecode -> SolidMask(gen dims) + JoinImageWithAlpha -> ImageScale(game dims, area) -> SaveImage. Produces RGBA PNG at game-pixel dimensions. NOTE: ComfyUI JoinImageWithAlpha INVERTS the mask (value=0.0 → opaque, value=1.0 → transparent); render_cutout_workflow() applies 1.0-solid_mask_value before writing node 13 so solid_mask_value=1.0 (the user-facing 'fully opaque') correctly produces alpha=255. Node 13 SolidMask uses generation dimensions (gen_width/gen_height from render_cutout_workflow); node 15 ImageScale resizes the RGBA output to recipe.width/height (game pixel dimensions). Node IDs are stable; add a new template file for graph-shape changes, never edit node IDs in place."
   },
   "graph": {
     "4": {
@@ -80,11 +80,21 @@
         "alpha": ["13", 0]
       }
     },
+    "15": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": ["14", 0],
+        "upscale_method": "area",
+        "width": 64,
+        "height": 64,
+        "crop": "disabled"
+      }
+    },
     "9": {
       "class_type": "SaveImage",
       "inputs": {
         "filename_prefix": "assembled",
-        "images": ["14", 0]
+        "images": ["15", 0]
       }
     }
   }
