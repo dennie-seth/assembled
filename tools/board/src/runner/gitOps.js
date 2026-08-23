@@ -65,21 +65,147 @@ async function reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBran
   return true;
 }
 
+async function revParse({ repoRoot, ref }) {
+  try {
+    const { stdout } = await git(["rev-parse", "--verify", "--quiet", ref], repoRoot);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The branch repoRoot itself has checked out, or null when it is on a detached HEAD. */
+async function currentBranch({ repoRoot }) {
+  try {
+    const { stdout } = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], repoRoot);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether some worktree *other than repoRoot* has `branch` checked out. Moving a ref out from
+ * under a checked-out worktree desyncs its index against HEAD, so that case is reported rather
+ * than forced.
+ */
+async function branchCheckedOutElsewhere({ repoRoot, branch }) {
+  const { stdout } = await git(["worktree", "list", "--porcelain"], repoRoot);
+  return stdout.split(/\n\s*\n/).some((entry) => {
+    const dir = /^worktree (.*)$/m.exec(entry)?.[1];
+    const head = /^branch (.*)$/m.exec(entry)?.[1];
+    return head === `refs/heads/${branch}` && dir && path.resolve(dir) !== path.resolve(repoRoot);
+  });
+}
+
+/**
+ * Fast-forwards repoRoot's local `<branch>` ref to origin's, so that whatever is cut from it
+ * next is the code that is actually deployed.
+ *
+ * Why this is needed at all: `addWorktree` cuts every card branch from the *local* `develop`
+ * ref, and nothing in the board reliably advances that ref. `pullDevelop` and `mergeNoFF` both
+ * act on repoRoot's *checked-out* branch, and `isBehindOrigin` compares `HEAD..origin/develop`
+ * -- so a repoRoot parked on any other branch (a deploy or a hotfix left on `fix/...`, say)
+ * keeps reporting "up to date" while `refs/heads/develop` silently stays wherever it was.
+ *
+ * That is not hypothetical. On 2026-08-23 the live board started T-0218 five minutes after PR
+ * #240 merged: repoRoot's checkout was at #240's code -- so the runner read #240's agent
+ * definitions and emitted its grants -- while `develop` was still at PR #221 from two days
+ * earlier. #240 had replaced the `assets`/`audio` blanket `Bash(curl:*)` with
+ * `Bash(node tools/board/scripts/agentCurl.js:*)`, and the worktree cut from the frozen ref did
+ * not contain that file: "Cannot find module .../worktrees/T-0218/tools/board/scripts/
+ * agentCurl.js". The card had no HTTP client at all and burned all five auto-retries reporting
+ * ComfyUI unreachable.
+ *
+ * Deliberately non-throwing. A fetch failure (offline, no origin, a fixture repo with no
+ * remote) degrades to "cut from whatever the local ref is" -- exactly the previous behaviour --
+ * rather than stopping every run on the board. Divergence is likewise reported, never resolved:
+ * merging is `pullDevelop`'s job, and doing it silently here could rewrite work.
+ *
+ * @returns {Promise<{status: "current"|"fast-forwarded"|"created"|"diverged"|"checked-out-elsewhere"|"unavailable",
+ *                    before: string|null, after: string|null, reason: string|null}>}
+ */
+export async function syncBaseBranch({ repoRoot, branch = "develop" }) {
+  const before = await revParse({ repoRoot, ref: `refs/heads/${branch}` });
+  const unchanged = (status, reason) => ({ status, before, after: before, reason });
+
+  try {
+    await git(["fetch", "origin", branch], repoRoot);
+  } catch (err) {
+    return unchanged("unavailable", `fetch failed: ${err.message}`);
+  }
+
+  const originSha = await revParse({ repoRoot, ref: `refs/remotes/origin/${branch}` });
+  if (!originSha) {
+    return unchanged("unavailable", `origin/${branch} could not be resolved after fetch`);
+  }
+  if (before === originSha) {
+    return { status: "current", before, after: originSha, reason: null };
+  }
+
+  if (before !== null) {
+    const { stdout } = await git(
+      ["rev-list", "--count", `${originSha}..refs/heads/${branch}`],
+      repoRoot
+    );
+    if (Number(stdout.trim()) > 0) {
+      return unchanged(
+        "diverged",
+        `local ${branch} has commits origin/${branch} does not; leaving it for pullDevelop to reconcile`
+      );
+    }
+  }
+
+  if ((await currentBranch({ repoRoot })) === branch) {
+    try {
+      await git(["merge", "--ff-only", `origin/${branch}`], repoRoot);
+    } catch (err) {
+      return unchanged("unavailable", `fast-forward of checked-out ${branch} failed: ${err.message}`);
+    }
+  } else if (await branchCheckedOutElsewhere({ repoRoot, branch })) {
+    return unchanged(
+      "checked-out-elsewhere",
+      `${branch} is checked out in another worktree; not moving its ref`
+    );
+  } else {
+    await git(["update-ref", `refs/heads/${branch}`, originSha], repoRoot);
+  }
+
+  return {
+    status: before === null ? "created" : "fast-forwarded",
+    before,
+    after: originSha,
+    reason: null
+  };
+}
+
 /**
  * Creates a worktree for a card. If `branch` already exists with unique commits ahead of
  * baseBranch (a card being continued after review, or a resumed crashed run), reattaches a
  * worktree to that existing branch instead of cutting a fresh one -- returns `{ reused: true }`
  * so the caller can prompt the implementer to fix outstanding issues rather than start over.
  * Otherwise cuts a new branch from baseBranch as before -- returns `{ reused: false }`.
+ *
+ * baseBranch is fast-forwarded to origin first (see `syncBaseBranch`); the resulting
+ * `{ baseSync }` says whether that succeeded, so a run cut from a lagging base is at least
+ * visible rather than silent.
  */
 export async function addWorktree({ repoRoot, worktreeDir, branch, baseBranch = "develop" }) {
+  const baseSync = await syncBaseBranch({ repoRoot, branch: baseBranch });
+  if (baseSync.status !== "current" && baseSync.status !== "fast-forwarded" && baseSync.status !== "created") {
+    // Not fatal -- the worktree is still cut, just from a base that may lag origin. Loud,
+    // because a card silently running against stale code is what T-0218 spent five attempts on.
+    console.warn(
+      `Board: ${baseBranch} was not synced to origin before cutting ${branch} (${baseSync.status}): ${baseSync.reason}`
+    );
+  }
   const reused = await reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch });
   if (reused) {
     await git(["worktree", "add", worktreeDir, branch], repoRoot);
   } else {
     await git(["worktree", "add", "-b", branch, worktreeDir, baseBranch], repoRoot);
   }
-  return { reused };
+  return { reused, baseSync };
 }
 
 /** Force-removes a worktree, even if it has uncommitted changes. Never deletes the branch. */

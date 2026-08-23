@@ -112,3 +112,66 @@ describe("agentCurl.js end to end", () => {
     expect(run(["GET"]).status).toBe(64);
   });
 });
+
+/**
+ * The wrapper invocations the agent instructions prescribe have to be commands
+ * the runner can actually execute. Two ways they silently could not be, both
+ * seen live on T-0218 (2026-08-23):
+ *
+ *  - `${BOARD_PORT:-4173}` in the documented attachment upload. The Claude Code
+ *    Bash tool refuses any command containing `${}` outright -- the run log shows
+ *    `Command contains ${} parameter substitution` -- so an agent that copies the
+ *    documented line verbatim can never upload its deliverable.
+ *  - An absolute path to the wrapper. The grant is a *prefix* match on the
+ *    relative `node tools/board/scripts/agentCurl.js`, so
+ *    `node /home/.../worktrees/T-0218/tools/board/scripts/agentCurl.js ...` is
+ *    denied ("This command requires approval"). The docs must therefore only ever
+ *    show the repo-relative form.
+ */
+describe("documented agentCurl invocations are runnable as written", () => {
+  const DOC_FILES = [
+    path.join(REPO_ROOT, ".claude", "agents", "assets.md"),
+    path.join(REPO_ROOT, ".claude", "agents", "audio.md"),
+    path.join(REPO_ROOT, ".claude", "rules", "assets.md"),
+    path.join(REPO_ROOT, ".claude", "rules", "conduct.md")
+  ];
+
+  /**
+   * Every line of `file` that is an actual wrapper invocation, with markdown backticks
+   * stripped: it starts the command, rather than merely mentioning the script in prose or
+   * carrying the `Bash(node ...:*)` grant string itself.
+   */
+  const wrapperLines = (file) =>
+    fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .map((line) => line.replace(/`/g, "").trim())
+      .filter((line) => line.startsWith("node ") && line.includes("agentCurl.js"));
+
+  it.each(DOC_FILES)("%s documents at least one wrapper invocation", (file) => {
+    expect(wrapperLines(file).length).toBeGreaterThan(0);
+  });
+
+  it.each(DOC_FILES)("%s never shows ${} substitution the Bash tool refuses", (file) => {
+    for (const line of wrapperLines(file)) {
+      expect(line).not.toMatch(/\$\{/);
+    }
+    // The URL continuation lines of a multi-line example carry the port, not the
+    // `agentCurl.js` token, so check the whole attachment-upload snippet too.
+    const raw = fs.readFileSync(file, "utf8");
+    const uploads = raw.match(/^.*api\/tasks\/<id>\/attachments.*$/gm) ?? [];
+    for (const line of uploads) {
+      expect(line).not.toMatch(/\$\{/);
+    }
+  });
+
+  it.each(DOC_FILES)("%s invokes the wrapper by the repo-relative path the grant matches", (file) => {
+    const resolved = resolveAllowedTools("assets", { agentsDir: REAL_AGENTS_DIR });
+    for (const line of wrapperLines(file)) {
+      const invocation = line.slice(line.indexOf("node "));
+      expect(invocation.startsWith("node tools/board/scripts/agentCurl.js")).toBe(true);
+      const [, ...args] = invocation.split(/\s+/);
+      expect(isToolAllowed(`Bash(node ${args[0]}:${args.slice(1).join(" ")})`, resolved)).toBe(true);
+    }
+  });
+});
