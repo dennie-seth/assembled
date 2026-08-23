@@ -18,7 +18,6 @@ from asset_gate.generator import (
     sweep_provenance_generator_resolvable,
 )
 
-
 # ---- check_provenance_generator_resolvable unit tests ----
 
 
@@ -73,8 +72,11 @@ def test_fails_when_generator_names_nonexistent_path(tmp_path):
 
 def test_fails_when_generator_is_free_text_naming_absent_nodes(tmp_path):
     """Regression: the motivating T-0215 case -- SolidMask + JoinImageWithAlpha don't exist."""
+    fabricated = (
+        "ComfyUI 0.29.0 via T-0215 (SDXL T2I + ImageScale + SolidMask + JoinImageWithAlpha)"
+    )
     prov = {
-        "generator": "ComfyUI 0.29.0 via T-0215 (SDXL T2I + ImageScale + SolidMask + JoinImageWithAlpha)",
+        "generator": fabricated,
         "model": "sd_xl_base_1.0.safetensors",
     }
     result = check_provenance_generator_resolvable(prov, repo_root=tmp_path)
@@ -156,7 +158,6 @@ def test_sweep_fails_for_sidecar_with_missing_generator(tmp_path):
 
 
 def test_sweep_ignores_non_provenance_json_files(tmp_path):
-    repo_root = tmp_path
     (tmp_path / "recipe.json").write_text(json.dumps({"prompt": "x"}))
     script = tmp_path / "gen.py"
     script.write_text("# gen")
@@ -245,9 +246,12 @@ def test_load_generator_baseline_default_path_excludes_signal_tower_props():
 
 def test_signal_tower_prop_with_fabricated_generator_fails(tmp_path):
     """Motivating case (HANDOFF §22-c): generator names nodes not in the repo."""
+    fabricated = (
+        "ComfyUI 0.29.0 via T-0215 (SDXL T2I + ImageScale + SolidMask + JoinImageWithAlpha)"
+    )
     prov = {
         "model": "sd_xl_base_1.0.safetensors",
-        "generator": "ComfyUI 0.29.0 via T-0215 (SDXL T2I + ImageScale + SolidMask + JoinImageWithAlpha)",
+        "generator": fabricated,
         "seed": 12345,
     }
     result = check_provenance_generator_resolvable(prov, repo_root=tmp_path)
