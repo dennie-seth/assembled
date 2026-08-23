@@ -25,10 +25,22 @@ async function fileExists(filePath) {
  * feature) -- a frontmatter entry with no backing file is the same failure
  * mode by a different route. A `deliverable_type` other than "artifact"
  * (the default, "code") is not applicable -- this check has nothing to say
- * about code-deliverable cards.
+ * about code-deliverable cards -- unless `requireArtifact` is passed.
+ *
+ * `requireArtifact` overrides that default-"code" exemption: pass `true`
+ * when the caller has independent evidence (not the card's own
+ * self-reported `deliverable_type`) that this card must have a produced
+ * deliverable attached. `verifyRouter.js`'s `resolveDeliverableRoute` sets
+ * this when the diff itself adds/updates a file under a known
+ * artifact-producing path (`assets/final/**`, `assets/src/concept/**`,
+ * `assets/src/keyart/**`) -- the mechanical backstop for the pattern where
+ * several art/audio cards (character sheets, concept art, an ambience bed)
+ * were committed straight to the repo tagged `deliverable_type: "code"`
+ * and never attached, so the plain `deliverable_type`-gated check above
+ * never even ran for them.
  */
-export async function checkDeliverable(task, { attachmentsDir } = {}) {
-  if (!task || task.deliverable_type !== "artifact") {
+export async function checkDeliverable(task, { attachmentsDir, requireArtifact = false } = {}) {
+  if (!task || (task.deliverable_type !== "artifact" && !requireArtifact)) {
     return { ok: true, applicable: false, errors: [] };
   }
 
