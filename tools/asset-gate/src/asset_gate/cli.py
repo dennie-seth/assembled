@@ -14,6 +14,7 @@ import soundfile as sf
 from PIL import Image
 
 from asset_gate import art, audio
+from asset_gate import generator as generator_mod
 from asset_gate import palette as palette_mod
 from asset_gate import provenance as provenance_mod
 from asset_gate.result import CheckResult, all_passed, format_report
@@ -64,6 +65,16 @@ def _cmd_provenance_sweep(args: argparse.Namespace) -> int:
     return _report_and_exit(results)
 
 
+def _cmd_generator_sweep(args: argparse.Namespace) -> int:
+    baseline = generator_mod.load_generator_baseline()
+    results = generator_mod.sweep_provenance_generator_resolvable(
+        args.root, repo_root=args.repo_root, baseline=baseline
+    )
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
 def _cmd_audio_gate(args: argparse.Namespace) -> int:
     samples, sample_rate = sf.read(args.audio, always_2d=False)
     targets = audio.load_loudness_targets(args.loudness_targets)
@@ -98,6 +109,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("root", help="directory to search recursively (e.g. assets/)")
     p.set_defaults(func=_cmd_provenance_sweep)
+
+    p = sub.add_parser(
+        "generator-sweep",
+        help=(
+            "recursively validate that the generator field in every *.provenance.json "
+            "resolves to a committed repo file (T-0219/HANDOFF §22-c)"
+        ),
+    )
+    p.add_argument("root", help="directory to search recursively (e.g. assets/)")
+    p.add_argument(
+        "--repo-root",
+        default=".",
+        help="repository root used to resolve generator paths (default: current directory)",
+    )
+    p.set_defaults(func=_cmd_generator_sweep)
 
     p = sub.add_parser("art-palette", help="palette membership + index semantics (P-4)")
     p.add_argument("image")
