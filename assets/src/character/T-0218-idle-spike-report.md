@@ -83,7 +83,23 @@ The character identity is correct (Soviet armored pixel-art soldier, LoRA style 
 
 ---
 
-## Baseline Comparison
+## Visual Comparison at Game Scale
+
+**Comparison image:** `assets/final/character/T0218-game-scale-comparison.png` (1184×576, 4× pixel-art scale)
+**Attached to card as:** `T0218-game-scale-comparison.png`
+
+This image places both sheets side-by-side at 4× nearest-exact scale (each 48×48 cell rendered at 192×192px, each figure ~160px height — the 40px game-scale figure magnified 4× for review). An 8px grey separator divides the panels.
+
+- **Left panel (synthetic `player_idle_sheet_v1.png`):** Near-black background, 4 simple humanoid outlines in dark grey using home palette geometric blocks. Top row shows 3 idle frames + 1 bottom-left — all same camera angle, subtle head-bob variation. Correct animation format.
+- **Right panel (SDXL `player_idle_sheet_sdxl_T0218.png`):** Grey-green background, 8 richly-detailed pixel-art armored soldiers from multiple viewing angles (front, rear ×2, three-quarter, side profile, partial views). Each cell is a distinct camera view — character reference sheet layout, not animation frames.
+
+At 4× scale the SDXL figure is clearly the superior artistic result: detailed helmet dome, shoulder armor, belt, and boots all read cleanly with hard value separation matching the LoRA's pixel-art style. The wrong-subject failure mode is visually unambiguous from the comparison: cells show different camera angles, which makes looping as idle animation impossible regardless of artistic quality.
+
+*Comparison produced via ComfyUI compositing workflow (no diffusion — EmptyImage + ImageCompositeMasked × 2 + ImageScale 4× nearest-exact, prompt_id `f9e1f44c-01ff-4b5a-a9be-4d6d56c91bf7`). Workflow: `assets/src/character/comfyui_comparison_T0218.json`.*
+
+---
+
+## Baseline Comparison Table
 
 | Metric | Synthetic (player_idle_sheet_v1.png) | SDXL stage-1 (player_idle_sheet_sdxl_T0218.png) |
 |---|---|---|
@@ -134,3 +150,5 @@ Machine-checkable artifact: `assets/src/character/T-0218-spike-decision.json`
 Tests: `assets/src/character/tests/test_idle_spike_T0218.py`
 Generated output: `assets/final/character/player_idle_sheet_sdxl_T0218.png`
 Provenance: `assets/final/character/player_idle_sheet_sdxl_T0218.provenance.json`
+Comparison image: `assets/final/character/T0218-game-scale-comparison.png` (4× side-by-side, attached to card)
+Comparison workflow: `assets/src/character/comfyui_comparison_T0218.json`
