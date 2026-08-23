@@ -373,11 +373,18 @@ export class RunOrchestrator {
     // cycles were caused solely by a missing Acceptance section — implementation correct but
     // reviewer FAILed on the absent checklist. Catching this here saves one implementer LLM
     // call + one reviewer LLM call per underspecified card (see acceptancePreflight.js).
-    const preFlightTask = await this.store.get(taskId);
-    const preflight = checkAcceptancePreflight(preFlightTask);
-    if (!preflight.ok) {
-      await this._blocked(taskId, preflight.message);
-      return;
+    //
+    // Skip for blocked re-runs: the card was already validated once; blocking it again on a
+    // missing Acceptance section would prevent legitimate recovery runs (the Blocked note
+    // appended to the body doesn't add an Acceptance section, so a previously-valid card
+    // that was blocked mid-run would be permanently un-runnable).
+    if (task.status !== "blocked") {
+      const preFlightTask = await this.store.get(taskId);
+      const preflight = checkAcceptancePreflight(preFlightTask);
+      if (!preflight.ok) {
+        await this._blocked(taskId, preflight.message);
+        return;
+      }
     }
 
     let currentReused = reused;
