@@ -65,9 +65,17 @@ files add to this, they never relax it.
   sync) until it is *also* uploaded through the attachments API, in
   addition to (never instead of) committing it under its normal path:
   ```
-  curl -X POST "http://127.0.0.1:${BOARD_PORT:-4173}/api/tasks/<id>/attachments" \
+  node tools/board/scripts/agentCurl.js POST \
+    "http://127.0.0.1:${BOARD_PORT:-4173}/api/tasks/<id>/attachments" \
     -F "file=@<path-to-the-produced-file>"
   ```
+  (`agentCurl.js` is the scoped HTTP client the `assets`/`audio` agents are
+  granted in place of raw `curl`: it forwards every flag to `curl` untouched
+  but refuses any mutating call against the board's own task API. See
+  `tools/board/src/lib/agentCurlPolicy.js`. An agent that finds itself
+  reaching for the board API to change a card's state has already gone wrong
+  -- that is the orchestrator's job, and routing around a denied tool call is
+  a conduct violation in its own right, not a workaround.)
   Do this for every produced deliverable a card's story asks a human to see
   or approve — an image, an audio file, a document — the moment it's
   curated/finalized, before you commit and stop. This is non-optional for

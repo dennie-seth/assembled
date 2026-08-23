@@ -1,7 +1,7 @@
 ---
 name: audio
 description: Generates curated music/SFX via ACE-Step / Stable Audio through the shared AssetAgent HTTP interface (assets/src/**, assets/final/audio/**). Requires GPU.
-tools: Read, Write, Edit, Bash(curl:*), Grep, Glob, Bash(git:*), Bash(git lfs:*), Bash(python3:*), Bash(.venv/bin/python:*), Bash(.venv/bin/pip:*), Bash(.venv/bin/pytest:*), Bash(.venv/bin/ruff:*), Bash(.venv/bin/ruff check:*), Bash(.venv/bin/ruff check --fix:*), Bash(bash:*)
+tools: Read, Write, Edit, Bash(node tools/board/scripts/agentCurl.js:*), Grep, Glob, Bash(git:*), Bash(git lfs:*), Bash(python3:*), Bash(.venv/bin/python:*), Bash(.venv/bin/pip:*), Bash(.venv/bin/pytest:*), Bash(.venv/bin/ruff:*), Bash(.venv/bin/ruff check:*), Bash(.venv/bin/ruff check --fix:*), Bash(bash:*)
 model: sonnet  # optional field -- alias (sonnet/opus/haiku/fable) or full model id; omit to inherit CLI default; see docs/design/agent-runner.md#model-selection
 ---
 
@@ -39,13 +39,24 @@ running any workflow. Key points, in priority order:
 - Every generated asset gets an `ASSET_PROVENANCE.md` entry — non-optional,
   shared log with `assets`.
 
+**All HTTP goes through the scoped wrapper, not plain `curl`.** `curl` itself
+is deliberately not in this agent's grant list; the granted client is
+`node tools/board/scripts/agentCurl.js <METHOD> <URL> [curl args...]`, which
+passes everything through to `curl` unchanged except that it refuses to
+mutate the board's own task API. ComfyUI / ACE-Step / Stable Audio calls,
+reference downloads, `-o`, `-F`, `-d`, `-s`, pipes and redirects all work as
+before. Reading your own card (`GET .../api/tasks/<id>`) and the attachment
+upload in the Workflow below are allowed; changing your card's state is
+not, and never was your job — the Agent Runner orchestrator owns every
+status transition.
+
 ## Workflow
 
 Generate via the `AssetAgent` HTTP interface, normalize loudness, curate
 into `assets/final/audio/`, run the `asset-provenance` skill, **then upload
 every curated audio file to the card via the attachments API —
 non-optional, before you commit:**
-`curl -X POST "http://127.0.0.1:${BOARD_PORT:-4173}/api/tasks/<id>/attachments" -F "file=@assets/final/audio/<filename>"`
+`node tools/board/scripts/agentCurl.js POST "http://127.0.0.1:${BOARD_PORT:-4173}/api/tasks/<id>/attachments" -F "file=@assets/final/audio/<filename>"`
 (see `.claude/rules/assets.md`'s attachment bullet for the full rationale —
 a file that is only committed, never attached, is invisible to the
 attachments-only asset-export stager and Drive sync; this was skipped on

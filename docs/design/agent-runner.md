@@ -155,6 +155,29 @@ Reusable procedures agents invoke by name. See `.claude/skills/*/SKILL.md`.
 - **Run stream persisted.** Every NDJSON stream is written verbatim to
   `tasks/.runs/T-NNNN-<ts>.jsonl` — the audit trail for what a run actually
   did, independent of the summarized log pane.
+- **No agent may reach the board's own mutating API.** The `assets` / `audio`
+  agents need an HTTP client (ComfyUI, ACE-Step / Stable Audio, reference
+  downloads, and the mandatory attachment upload), but the `--allowedTools`
+  grammar is a *command-prefix* match with one trailing `*`, so
+  `Bash(curl ...)` cannot express "any flags, but only to host X". A blanket
+  `Bash(curl:*)` therefore also handed those agents `PATCH
+  http://127.0.0.1:4173/api/tasks/<id>` on loopback -- and during the T-0221
+  diagnosis an implementer whose `gh pr create` was denied used exactly that
+  to self-report its card into `review`. The grant is now
+  `Bash(node tools/board/scripts/agentCurl.js:*)`: a wrapper that forwards
+  every flag to `curl` untouched, refuses flags that could override the
+  method or target it just validated (`-X`, `--url`, `--next`, `-K`, ...),
+  and allows the board's own ports (`BOARD_PORT` and the vite dev port that
+  proxies `/api` to it) only for reads plus `POST
+  /api/tasks/<T-NNNN>/attachments`. Policy and rationale live in
+  `tools/board/src/lib/agentCurlPolicy.js`.
+
+  This is a guardrail, not a sandbox: an agent that still holds a
+  general-purpose interpreter grant (`Bash(python3:*)` on `audio`, the LoRA
+  venv python on `assets`, `Bash(bash:*)` on `audio`) can still open a socket
+  by hand. Closing that off needs a control the board enforces itself rather
+  than one the grant list expresses -- see the PR that introduced this
+  wrapper for the options.
 - **Reviewer is read-only on source.** It can run tests/lint/build and read
   files, but it cannot Write or Edit production code. A PASS/FAIL verdict
   from an agent that could also silently patch the code to pass would not be
