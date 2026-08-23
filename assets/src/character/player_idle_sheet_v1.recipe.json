@@ -13,6 +13,6 @@
   "scheduler": "normal",
   "lora": "soviet_brutalism_style_v1.safetensors",
   "lora_weight": 0.70,
-  "model_hash": null,
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
   "_fallback": "If 8 GB VRAM strains, use width=1008, height=1008 (x7 from 144, i.e. 336x336 per cell)"
 }

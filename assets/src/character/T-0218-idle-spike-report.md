@@ -48,7 +48,7 @@ At 40px game scale, the synthetic sheet is readable — the silhouette shape is 
 
 | Parameter | Value |
 |---|---|
-| Checkpoint | `sd_xl_base_1.0.safetensors` |
+| Checkpoint | `sd_xl_base_1.0.safetensors` (hash: `31e35c80...893f7e5b`) |
 | LoRA | `soviet_brutalism_style_v1.safetensors` weight 0.70 |
 | Seed | 31415 |
 | Resolution | 1152×1152 (×8 from 144×144 native; fallback 1008 if 8 GB strains) |

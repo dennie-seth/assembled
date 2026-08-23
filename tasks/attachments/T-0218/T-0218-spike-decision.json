@@ -25,6 +25,7 @@
   "generation_recipe_ready": {
     "recipe_file": "assets/src/character/player_idle_sheet_v1.recipe.json",
     "checkpoint": "sd_xl_base_1.0.safetensors",
+    "checkpoint_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
     "lora": "soviet_brutalism_style_v1.safetensors",
     "lora_weight": 0.70,
     "seed": 31415,
