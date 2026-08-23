@@ -14,6 +14,7 @@ import {
   getHeadCommit,
   pullDevelop,
   isBehindOrigin,
+  syncBaseBranch,
   mergeNoFF,
   fetch,
   mergeDevelop,
@@ -982,5 +983,131 @@ describe("autoCommitCardsOnCreateFromEnv", () => {
   it.each(["0", "false", "off", "no", "FALSE", "Off"])("is false when set to %s", (value) => {
     process.env.AUTO_COMMIT_CARDS_ON_CREATE = value;
     expect(autoCommitCardsOnCreateFromEnv()).toBe(false);
+  });
+});
+
+describe("syncBaseBranch — the worktree base must be the code that is deployed", () => {
+  /**
+   * Advances origin/develop by one commit adding `filename`, while leaving repoRoot's local
+   * `develop` ref exactly where it is -- the shape the live board was in on 2026-08-23.
+   */
+  async function advanceOriginDevelop(filename, cloneName = "publisher") {
+    const publisher = path.join(tmpDir, cloneName);
+    await git(["clone", "--branch", "develop", originDir, publisher]);
+    await git(["config", "user.email", "test@example.com"], publisher);
+    await git(["config", "user.name", "Test"], publisher);
+    await fs.writeFile(path.join(publisher, filename), "shipped\n", "utf8");
+    await git(["add", filename], publisher);
+    await git(["commit", "-m", `add ${filename}`], publisher);
+    await git(["push", "origin", "develop"], publisher);
+    const { stdout } = await git(["rev-parse", "HEAD"], publisher);
+    return stdout.trim();
+  }
+
+  it("fast-forwards a stale local develop while repoRoot sits on another branch", async () => {
+    // repoRoot parked on a feature branch is exactly what froze `develop`: `pullDevelop` and
+    // `isBehindOrigin` both operate on HEAD, so they report "up to date" and never touch the ref.
+    await git(["checkout", "-b", "fix/parked"], repoRoot);
+    const shipped = await advanceOriginDevelop("agentCurl.js");
+
+    const before = await git(["rev-parse", "refs/heads/develop"], repoRoot);
+    expect(before.stdout.trim()).not.toBe(shipped);
+
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+
+    expect(result.status).toBe("fast-forwarded");
+    expect(result.after).toBe(shipped);
+    const after = await git(["rev-parse", "refs/heads/develop"], repoRoot);
+    expect(after.stdout.trim()).toBe(shipped);
+    // The parked branch must not have been dragged along with it.
+    const head = await git(["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
+    expect(head.stdout.trim()).toBe("fix/parked");
+  });
+
+  it("fast-forwards develop when develop is the branch repoRoot has checked out", async () => {
+    const shipped = await advanceOriginDevelop("agentCurl.js", "publisher-checked-out");
+
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+
+    expect(result.status).toBe("fast-forwarded");
+    const head = await git(["rev-parse", "HEAD"], repoRoot);
+    expect(head.stdout.trim()).toBe(shipped);
+  });
+
+  it("reports 'current' and changes nothing when the ref already matches origin", async () => {
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+    expect(result.status).toBe("current");
+    expect(result.before).toBe(result.after);
+  });
+
+  it("reports 'diverged' and leaves the ref alone rather than merging behind the caller's back", async () => {
+    await advanceOriginDevelop("shipped.txt", "publisher-diverged");
+    // Local develop now has its own commit too -- resolving that is pullDevelop's job, not ours.
+    await fs.writeFile(path.join(repoRoot, "local-only.txt"), "local\n", "utf8");
+    await git(["add", "local-only.txt"], repoRoot);
+    await git(["commit", "-m", "local only"], repoRoot);
+    const localTip = (await git(["rev-parse", "refs/heads/develop"], repoRoot)).stdout.trim();
+
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+
+    expect(result.status).toBe("diverged");
+    expect((await git(["rev-parse", "refs/heads/develop"], repoRoot)).stdout.trim()).toBe(localTip);
+  });
+
+  it("degrades to 'unavailable' instead of throwing when origin cannot be reached", async () => {
+    await git(["remote", "set-url", "origin", path.join(tmpDir, "no-such-remote.git")], repoRoot);
+
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.reason).toMatch(/fetch failed/);
+  });
+});
+
+describe("addWorktree — cuts from the deployed tip, not a frozen local ref", () => {
+  async function advanceOriginDevelop(filename, cloneName) {
+    const publisher = path.join(tmpDir, cloneName);
+    await git(["clone", "--branch", "develop", originDir, publisher]);
+    await git(["config", "user.email", "test@example.com"], publisher);
+    await git(["config", "user.name", "Test"], publisher);
+    await fs.writeFile(path.join(publisher, filename), "shipped\n", "utf8");
+    await git(["add", filename], publisher);
+    await git(["commit", "-m", `add ${filename}`], publisher);
+    await git(["push", "origin", "develop"], publisher);
+  }
+
+  it("gives the card a worktree containing code merged to develop moments earlier", async () => {
+    // T-0218's failure, reduced: repoRoot on a feature branch, `develop` two days stale, and a
+    // card cut from it missing tools/board/scripts/agentCurl.js -- the very file its grant named.
+    await git(["checkout", "-b", "fix/parked"], repoRoot);
+    await advanceOriginDevelop("agentCurl.js", "publisher-wt");
+
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0218");
+    const result = await addWorktree({
+      repoRoot,
+      worktreeDir,
+      branch: "feature/T-0218",
+      baseBranch: "develop"
+    });
+
+    expect(result.reused).toBe(false);
+    expect(result.baseSync.status).toBe("fast-forwarded");
+    await expect(fs.stat(path.join(worktreeDir, "agentCurl.js"))).resolves.toBeTruthy();
+  });
+
+  it("still cuts a worktree when the base cannot be synced", async () => {
+    await git(["remote", "set-url", "origin", path.join(tmpDir, "no-such-remote.git")], repoRoot);
+
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0219");
+    const result = await addWorktree({
+      repoRoot,
+      worktreeDir,
+      branch: "feature/T-0219",
+      baseBranch: "develop"
+    });
+
+    expect(result.baseSync.status).toBe("unavailable");
+    const stat = await fs.stat(worktreeDir);
+    expect(stat.isDirectory()).toBe(true);
   });
 });
