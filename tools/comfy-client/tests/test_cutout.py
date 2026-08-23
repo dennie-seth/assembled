@@ -384,8 +384,8 @@ def test_generate_cutout_provenance_generator_field_resolves(tmp_path, cutout_re
     assert generator == GENERATOR_ID, (
         f"generator is {generator!r}, expected repo-relative path {GENERATOR_ID!r}"
     )
-    # Resolve from this file's repo root (worktree root = 4 dirs up from tests/)
-    repo_root = Path(__file__).resolve().parents[4]
+    # Resolve from this file's repo root (repo root = 3 dirs up from tests/)
+    repo_root = Path(__file__).resolve().parents[3]
     resolved = repo_root / generator
     assert resolved.is_file(), (
         f"generator '{generator}' does not resolve to a committed file under "
