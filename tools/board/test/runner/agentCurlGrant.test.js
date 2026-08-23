@@ -136,13 +136,17 @@ describe("documented agentCurl invocations are runnable as written", () => {
     path.join(REPO_ROOT, ".claude", "rules", "conduct.md")
   ];
 
-  /** Every line of `file` that invokes the wrapper, with markdown backticks stripped. */
+  /**
+   * Every line of `file` that is an actual wrapper invocation, with markdown backticks
+   * stripped: it starts the command, rather than merely mentioning the script in prose or
+   * carrying the `Bash(node ...:*)` grant string itself.
+   */
   const wrapperLines = (file) =>
     fs
       .readFileSync(file, "utf8")
       .split("\n")
       .map((line) => line.replace(/`/g, "").trim())
-      .filter((line) => line.includes("agentCurl.js") && !line.includes("agentCurl.js:*"));
+      .filter((line) => line.startsWith("node ") && line.includes("agentCurl.js"));
 
   it.each(DOC_FILES)("%s documents at least one wrapper invocation", (file) => {
     expect(wrapperLines(file).length).toBeGreaterThan(0);

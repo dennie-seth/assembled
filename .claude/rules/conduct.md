@@ -66,7 +66,7 @@ files add to this, they never relax it.
   addition to (never instead of) committing it under its normal path:
   ```
   node tools/board/scripts/agentCurl.js POST \
-    "http://127.0.0.1:${BOARD_PORT:-4173}/api/tasks/<id>/attachments" \
+    "http://127.0.0.1:4173/api/tasks/<id>/attachments" \
     -F "file=@<path-to-the-produced-file>"
   ```
   (`agentCurl.js` is the scoped HTTP client the `assets`/`audio` agents are

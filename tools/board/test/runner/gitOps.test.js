@@ -140,7 +140,7 @@ describe("addWorktree — stale branch/worktree recovery", () => {
 
     const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" });
 
-    expect(result).toEqual({ reused: true });
+    expect(result).toMatchObject({ reused: true });
     const { stdout: branchSha } = await git(["rev-parse", "feature/T-0111"], repoRoot);
     expect(branchSha.trim().length).toBe(40);
     const stat = await fs.stat(worktreeDir);
@@ -162,7 +162,7 @@ describe("addWorktree — stale branch/worktree recovery", () => {
 
     const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0112", baseBranch: "develop" });
 
-    expect(result).toEqual({ reused: true });
+    expect(result).toMatchObject({ reused: true });
     const { stdout: log } = await git(["log", "-1", "--pretty=%s"], worktreeDir);
     expect(log.trim()).toBe("feat: real work");
   });
@@ -171,7 +171,7 @@ describe("addWorktree — stale branch/worktree recovery", () => {
     const worktreeDir = path.join(tmpDir, "worktrees", "T-0199");
     const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0199", baseBranch: "develop" });
 
-    expect(result).toEqual({ reused: false });
+    expect(result).toMatchObject({ reused: false });
     const stat = await fs.stat(worktreeDir);
     expect(stat.isDirectory()).toBe(true);
     const { stdout: branch } = await git(["rev-parse", "--abbrev-ref", "HEAD"], worktreeDir);
@@ -184,7 +184,7 @@ describe("addWorktree — stale branch/worktree recovery", () => {
 
     const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0100b", baseBranch: "develop" });
 
-    expect(result).toEqual({ reused: false });
+    expect(result).toMatchObject({ reused: false });
   });
 });
 

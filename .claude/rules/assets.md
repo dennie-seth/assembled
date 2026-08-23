@@ -25,7 +25,7 @@ paths: ["assets/**"]
   and stop:
   ```
   node tools/board/scripts/agentCurl.js POST \
-    "http://127.0.0.1:${BOARD_PORT:-4173}/api/tasks/<id>/attachments" \
+    "http://127.0.0.1:4173/api/tasks/<id>/attachments" \
     -F "file=@assets/final/<...>/<filename>"
   ```
   (substitute the real `<id>` and the path of the file you just curated —
