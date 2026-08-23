@@ -237,8 +237,12 @@ def test_load_generator_baseline_default_path_excludes_signal_tower_props():
     assert "final/props/signal_tower/low_duct_v1.provenance.json" not in baseline
     assert "final/props/signal_tower/relay_cabinet_v1.provenance.json" not in baseline
     assert "final/props/signal_tower/server_rack_v1.provenance.json" not in baseline
-    # 24 pre-existing gaps (all committed provenance files minus the 5 signal_tower props)
-    assert len(baseline) == 24
+    # 23 pre-existing gaps. Excluded from this list, for two different reasons:
+    # the 5 signal_tower props (motivating failure case, regenerated on merit by
+    # T-0221), and final/tiles/..._wall_floor_transitions_16px.provenance.json,
+    # whose exemption was dead -- it resolves to a committed generator
+    # (assets/src/tiles/src/tile_gen/transition_sheet.py) and passes without it.
+    assert len(baseline) == 23
 
 
 # ---- Regression: the 5 T-0215 signal_tower props must fail ----
