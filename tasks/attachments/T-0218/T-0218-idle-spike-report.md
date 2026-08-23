@@ -83,19 +83,39 @@ The character identity is correct (Soviet armored pixel-art soldier, LoRA style 
 
 ---
 
-## Visual Comparison at Game Scale
+## Visual Comparison at Game Scale — In a Game Room
 
-**Comparison image:** `assets/final/character/T0218-game-scale-comparison.png` (1184×576, 4× pixel-art scale)
+**Room-scene comparison image:** `assets/final/character/T0218-room-scene-comparison.png` (1440×480)
+**Attached to card as:** `T0218-room-scene-comparison.png`
+
+This image places both sprites inside a signal_tower game-room environment at 3× pixel-art scale (each 48×48 game cell rendered at 144×144px, the 40px figure rendered at ~120px height — clearly readable at review scale).
+
+**Room layout:**
+- **Top strip (wall):** `signal_tower_concrete_wall_16px.png` tile stretched across the full width — concrete grey mottled texture, clearly identifies the signal tower interior environment.
+- **Middle (character zone):** Dark floor (#1a1a1a). Left 4 columns: the synthetic idle animation frames 0→1→2→3 in sequence (read left-to-right = one animation cycle). Right column (separated by background shift): SDXL stage-1 front-facing soldier cell.
+- **Bottom strip (floor):** `signal_tower_concrete_wall_floor_transitions_16px.png` tile stretched across — concrete floor/wall junction, grounds the characters to the floor plane.
+
+**What the image shows:**
+- **Left 4 columns (synthetic idle, frames 0–3):** Simple geometric placeholder figure (home palette geometric blocks, very dark). Reading left-to-right the 4 idle frames show subtle pose variation — this is the head-bob animation cycle. Each frame has the same camera angle and character position, confirming correct animation format. At game scale the silhouette is readable but the figure is a geometric block-man, not a characterful soldier.
+- **Right column (SDXL stage-1):** Richly-detailed armored pixel-art soldier in the same room context. Far superior artistic quality — helmet dome, shoulder armor, belt, boots are all legible at this scale. However this is a single reference cell (front-facing), not a loopable animation frame — the wrong-subject failure mode is evident from the fact that we can only show one cell as a representative view, while the synthetic yields 4 distinct animation frames.
+
+At 1440×480 (2× final upscale of the 720×240 composite), the concrete wall texture and floor tile are clearly recognizable as signal_tower interior. The 4-frame animation strip makes the motion progression readable by eye without requiring actual GIF playback.
+
+*Room-scene produced via ComfyUI compositing (no diffusion) — prompt_id `9d3f8812-0f88-4a32-b528-38880d8604b4`. Workflow: `assets/src/character/comfyui_room_scene_T0218.json`.*
+
+---
+
+## Side-by-Side Sheet Comparison (Full Sheets, 4× Scale)
+
+**Prior comparison image:** `assets/final/character/T0218-game-scale-comparison.png` (1184×576, 4× pixel-art scale)
 **Attached to card as:** `T0218-game-scale-comparison.png`
 
-This image places both sheets side-by-side at 4× nearest-exact scale (each 48×48 cell rendered at 192×192px, each figure ~160px height — the 40px game-scale figure magnified 4× for review). An 8px grey separator divides the panels.
+This places both full 3×3 sheets side-by-side at 4× nearest-exact scale to show all cells at once.
 
-- **Left panel (synthetic `player_idle_sheet_v1.png`):** Near-black background, 4 simple humanoid outlines in dark grey using home palette geometric blocks. Top row shows 3 idle frames + 1 bottom-left — all same camera angle, subtle head-bob variation. Correct animation format.
-- **Right panel (SDXL `player_idle_sheet_sdxl_T0218.png`):** Grey-green background, 8 richly-detailed pixel-art armored soldiers from multiple viewing angles (front, rear ×2, three-quarter, side profile, partial views). Each cell is a distinct camera view — character reference sheet layout, not animation frames.
+- **Left panel (synthetic):** Near-black background, 4 simple humanoid outlines (4 frames used, 5 cells spare/dark). Same camera angle across all cells — correct animation format.
+- **Right panel (SDXL):** Grey-green background, 8 richly-detailed pixel-art armored soldiers from multiple viewing angles (front, rear ×2, three-quarter, side profile, partial views). Each cell is a distinct camera view — wrong output type for animation.
 
-At 4× scale the SDXL figure is clearly the superior artistic result: detailed helmet dome, shoulder armor, belt, and boots all read cleanly with hard value separation matching the LoRA's pixel-art style. The wrong-subject failure mode is visually unambiguous from the comparison: cells show different camera angles, which makes looping as idle animation impossible regardless of artistic quality.
-
-*Comparison produced via ComfyUI compositing workflow (no diffusion — EmptyImage + ImageCompositeMasked × 2 + ImageScale 4× nearest-exact, prompt_id `f9e1f44c-01ff-4b5a-a9be-4d6d56c91bf7`). Workflow: `assets/src/character/comfyui_comparison_T0218.json`.*
+*Produced via ComfyUI compositing, prompt_id `f9e1f44c-01ff-4b5a-a9be-4d6d56c91bf7`. Workflow: `assets/src/character/comfyui_comparison_T0218.json`.*
 
 ---
 
@@ -150,5 +170,7 @@ Machine-checkable artifact: `assets/src/character/T-0218-spike-decision.json`
 Tests: `assets/src/character/tests/test_idle_spike_T0218.py`
 Generated output: `assets/final/character/player_idle_sheet_sdxl_T0218.png`
 Provenance: `assets/final/character/player_idle_sheet_sdxl_T0218.provenance.json`
-Comparison image: `assets/final/character/T0218-game-scale-comparison.png` (4× side-by-side, attached to card)
-Comparison workflow: `assets/src/character/comfyui_comparison_T0218.json`
+Room-scene comparison: `assets/final/character/T0218-room-scene-comparison.png` (in-room animation strip, attached to card)
+Full-sheets comparison: `assets/final/character/T0218-game-scale-comparison.png` (4× side-by-side, attached to card)
+Room-scene workflow: `assets/src/character/comfyui_room_scene_T0218.json`
+Full-sheets workflow: `assets/src/character/comfyui_comparison_T0218.json`
