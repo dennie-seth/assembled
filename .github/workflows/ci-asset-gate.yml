@@ -78,8 +78,9 @@ jobs:
       # because those nodes/scripts are not committed anywhere, making the
       # asset unregeneraable (P-3 violation). Paths listed in
       # generator_baseline.txt are pre-existing gaps tracked for remediation;
-      # the 5 signal_tower props are intentionally NOT in that baseline and
-      # will fail until Card C regenerates them through a committed path.
+      # the 5 signal_tower props are intentionally NOT in that baseline -- they
+      # were the motivating failure case, and since T-0221 regenerated them
+      # through the committed cutout path they pass this gate on merit.
       - run: python -m asset_gate.cli generator-sweep ../../assets --repo-root ../../
 
   visibility-sweep:
