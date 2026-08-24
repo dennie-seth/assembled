@@ -56,3 +56,45 @@ describe("card-rerun CSS styling", () => {
     expect(getComputedStyle(rerunBtn).borderRadius).toBe(getComputedStyle(runBtn).borderRadius);
   });
 });
+
+// The Run/Re-run controls are disabled on a card whose own dependencies are unmet
+// (boardView.js). The `disabled` IDL property alone doesn't paint anything, so this
+// asserts the greyed, non-interactive affordance actually lands -- same treatment
+// .detail-delete:disabled already gets.
+describe("disabled Run/Re-run control styling", () => {
+  it("paints a disabled card-run greyed out with a not-allowed cursor", () => {
+    const btn = document.createElement("button");
+    btn.className = "card-run";
+    btn.disabled = true;
+    document.body.appendChild(btn);
+
+    const style = getComputedStyle(btn);
+    expect(style.cursor).toBe("not-allowed");
+    expect(Number(style.opacity)).toBeLessThan(1);
+  });
+
+  it("paints a disabled card-rerun the same way as a disabled card-run", () => {
+    const runBtn = document.createElement("button");
+    runBtn.className = "card-run";
+    runBtn.disabled = true;
+    const rerunBtn = document.createElement("button");
+    rerunBtn.className = "card-rerun";
+    rerunBtn.disabled = true;
+    document.body.append(runBtn, rerunBtn);
+
+    expect(getComputedStyle(rerunBtn).cursor).toBe(getComputedStyle(runBtn).cursor);
+    expect(getComputedStyle(rerunBtn).opacity).toBe(getComputedStyle(runBtn).opacity);
+  });
+
+  it("leaves an enabled card-run interactive and not dimmed", () => {
+    const enabled = document.createElement("button");
+    enabled.className = "card-run";
+    const disabled = document.createElement("button");
+    disabled.className = "card-run";
+    disabled.disabled = true;
+    document.body.append(enabled, disabled);
+
+    expect(getComputedStyle(enabled).cursor).toBe("pointer");
+    expect(getComputedStyle(enabled).opacity).not.toBe(getComputedStyle(disabled).opacity);
+  });
+});
