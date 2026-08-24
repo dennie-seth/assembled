@@ -1,0 +1,122 @@
+{"prompt": {
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "sd_xl_base_1.0.safetensors" }
+  },
+  "2": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": ["1", 0],
+      "clip": ["1", 1],
+      "lora_name": "soviet_brutalism_style_v1.safetensors",
+      "strength_model": 0.70,
+      "strength_clip": 0.70
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "pixel art idle animation sprite sheet, Soviet brutalist armored soldier standing idle, flat front-on orthographic view, nine animation frames arranged in a 3x3 grid, same single character in every cell, subtle idle motion between frames, slight weight shift and natural breathing pose variation, both feet on ground, arms relaxed at sides, upright standing posture, consistent character identity and camera angle across all cells, institutional grey concrete background, muted olive-green and grey military palette, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point",
+      "clip": ["2", 1]
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple characters per panel, action pose, background clutter, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, skeleton, wireframe",
+      "clip": ["2", 1]
+    }
+  },
+  "5": {
+    "class_type": "ControlNetLoader",
+    "inputs": { "control_net_name": "controlnet-openpose-sdxl-1.0_xinsir.safetensors" }
+  },
+  "6": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "pose_grid_stage3_T0218.png" }
+  },
+  "7": {
+    "class_type": "ControlNetApplyAdvanced",
+    "inputs": {
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "control_net": ["5", 0],
+      "image": ["6", 0],
+      "strength": 0.45,
+      "start_percent": 0.0,
+      "end_percent": 0.7
+    }
+  },
+  "8": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "player_character_concept_sheet_v1.png" }
+  },
+  "9": {
+    "class_type": "IPAdapterUnifiedLoader",
+    "inputs": {
+      "model": ["2", 0],
+      "preset": "PLUS (high strength)"
+    }
+  },
+  "10": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "model": ["9", 0],
+      "ipadapter": ["9", 1],
+      "image": ["8", 0],
+      "weight": 0.65,
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0.0,
+      "end_at": 1.0,
+      "embeds_scaling": "V only"
+    }
+  },
+  "11": {
+    "class_type": "EmptyLatentImage",
+    "inputs": { "width": 1008, "height": 1008, "batch_size": 1 }
+  },
+  "12": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["10", 0],
+      "positive": ["7", 0],
+      "negative": ["7", 1],
+      "latent_image": ["11", 0],
+      "seed": 31415,
+      "steps": 30,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0
+    }
+  },
+  "13": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["12", 0], "vae": ["1", 2] }
+  },
+  "14": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": ["13", 0],
+      "upscale_method": "area",
+      "width": 144,
+      "height": 144,
+      "crop": "disabled"
+    }
+  },
+  "15": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "player_idle_sheet_stage3_T0218",
+      "images": ["14", 0]
+    }
+  },
+  "16": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "player_idle_sheet_stage3_full_T0218",
+      "images": ["13", 0]
+    }
+  }
+}}
