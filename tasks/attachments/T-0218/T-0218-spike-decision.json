@@ -1,0 +1,78 @@
+{
+  "card": "T-0218",
+  "title": "Method spike: one player idle sheet, generated properly & compared at game scale",
+  "date": "2026-08-24",
+  "outcome": "generation_loses",
+  "reason": "Stage-1 conditions only (SDXL + LoRA, no ControlNet, no IP-Adapter). ComfyUI is reachable via agentCurl.js wrapper. Generation ran successfully (prompt_id: 2c6877df-303f-410c-9bc6-3671829acfb8, seed=31415, 1008x1008 fallback resolution, ~28s on RTX 3070 Ti). ControlNet models absent from ComfyUI host (/models/controlnet returned []); IP-Adapter nodes not installed. Stage-3 conditions per §6.14 require both — stage-1 was the best achievable. Descended 1008x1008 to 144x144 via ImageScale area filter inside ComfyUI. Visual evaluation performed via Read tool at 144x144 and 1008x1008. Result: SDXL generated a character reference sheet (8 views: front/back/side/3-quarter) not idle animation frames. generation_loses for animation use. Visual quality at 40px is excellent — descent is not the failure mode.",
+  "prerequisite_check": {
+    "comfyui_url": "http://172.18.192.1:8188",
+    "result": "REACHABLE",
+    "detail": "ComfyUI 0.29.0 confirmed reachable via agentCurl.js wrapper (node tools/board/scripts/agentCurl.js GET http://172.18.192.1:8188/system_stats). RTX 3070 Ti Laptop GPU, CUDA 12.1, PyTorch 2.5.1. Models: sd_xl_base_1.0.safetensors + soviet_brutalism_style_v1.safetensors LoRA confirmed present. ControlNet: empty (/models/controlnet []). IP-Adapter: not in object_info (no IPAdapter node class found). Tools attempted and succeeded: node tools/board/scripts/agentCurl.js.",
+    "tools_attempted": ["node tools/board/scripts/agentCurl.js (succeeded)"]
+  },
+  "generation_run": {
+    "prompt_id": "2c6877df-303f-410c-9bc6-3671829acfb8",
+    "queue_number": 38,
+    "checkpoint": "sd_xl_base_1.0.safetensors",
+    "checkpoint_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+    "lora": "soviet_brutalism_style_v1.safetensors",
+    "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+    "lora_weight": 0.70,
+    "seed": 31415,
+    "steps": 30,
+    "cfg": 7.0,
+    "sampler": "euler",
+    "scheduler": "normal",
+    "width_gen": 1008,
+    "height_gen": 1008,
+    "width_final": 144,
+    "height_final": 144,
+    "resolution_note": "Used 1008x1008 fallback (recipe states 1152x1152 primary, 1008x1008 if VRAM strains). Torch VRAM was ~90MB free at submission; model was cached from prior session, generation completed in ~28 seconds.",
+    "stage": "stage-1",
+    "stage_note": "ControlNet models not installed (empty /models/controlnet). IP-Adapter not available (no IPAdapter class in object_info). Stage-3 per §6.14 requires both — stage-1 is the maximum achievable on this host without installation.",
+    "output_1008": "T0218_idle_sheet_1008_00001_.png (ComfyUI output dir, gitignored)",
+    "output_144": "assets/final/character/player_idle_sheet_sdxl_T0218.png"
+  },
+  "questions": {
+    "silhouette_readable_at_40px": true,
+    "silhouette_detail": "Each cell is 48x48px (figure ~40px tall). At 144x144 the armored Soviet soldier figure is clearly readable: helmet dome, shoulder armor, torso plate, legs and boots are all distinct. The LoRA's pixel art style with hard value separation produces excellent squint-legibility. Dramatically more readable and styled than the synthetic placeholder (which is basic geometric blocks). The descent (1008->144 area filter) does NOT destroy the figure — it reads cleanly.",
+    "identity_holds_across_frames": false,
+    "identity_detail": "The 8-9 panels show the character from different viewing angles: front-facing (visor visible), rear view, three-quarter, side profile — both full-body and partial. These are concept reference sheet angles, not idle animation frames. A player would see the character rotate through multiple views rather than observe subtle breathing variation. Identity fails for animation use: cells cannot be looped as idle frames. This is exactly the ControlNet-absent failure mode documented in T-0209 and the MANUAL_GENERATION.md — without pose-grid enforcement, SDXL defaults to character sheet layout.",
+    "beats_synthetic_at_game_scale": false,
+    "beats_synthetic_detail": "For idle animation use: NO. The synthetic sheet (player_idle_sheet_v1.png) has 4 frames in correct animation format (same camera angle, 1px head-bob variation). The SDXL output cannot be used for animation as-is — it has no consistent camera angle across cells. Purely on visual quality: YES, the SDXL soldier is far richer, stylistically consistent, and more recognizable as a game character. But game scale use is the criterion, and the format mismatch means the synthetic is currently more useful for its intended purpose.",
+    "failure_mode": "wrong_subject",
+    "failure_mode_detail": "The character identity is correct (Soviet armored soldier, LoRA style applied). The OUTPUT TYPE is wrong — the model interprets the prompt as a character reference sheet request (multiple viewing angles) rather than an animation frame sheet (same angle, subtle pose variation). Root cause: no ControlNet pose grid to constrain cell layout. This is NOT 'mush at 40px' (the descent quality is fine) and NOT 'identity drift' (the character TYPE is consistent). Installing ControlNet pose grid models and rerunning as stage-3 would likely fix this."
+  },
+  "existing_baseline": {
+    "synthetic_sheet": "assets/final/character/player_idle_sheet_v1.png",
+    "synthetic_provenance": "assets/final/character/player_idle_sheet_v1.provenance.json",
+    "description": "Programmatic 144x144 indexed PNG, 4-frame subtle head-bob idle animation, 40px humanoid silhouette drawn from home palette indices BG=0 / LEG=4 / BODY=6 / HEAD=10. Generated by synth_sheet.py (T-0198). Simple geometric blocks, very dark background.",
+    "visual_comparison": "Side-by-side comparison image (T0218-game-scale-comparison.png, 1184x576 at 4x pixel-art scale): LEFT panel — synthetic is near-black with 4 simple humanoid outlines (4 cells used, 5 spare/dark). RIGHT panel — SDXL is grey-green background with 8 richly-detailed pixel art soldiers in multiple viewing angles. The 4x scale (each 48px cell rendered at 192px) preserves pixel-art fidelity and shows each cell as a human would see it squinting at a 40px figure. Observation: at game scale the SDXL figure is far richer and more characterful, but shows 8 different viewing angles not 4 idle frames — confirming the wrong_subject failure mode visually.",
+    "comparison_image": "assets/final/character/T0218-game-scale-comparison.png",
+    "comparison_image_how": "ComfyUI workflow (comfyui_comparison_T0218.json): EmptyImage 296x144 grey canvas + ImageCompositeMasked synthetic at x=0 + ImageCompositeMasked SDXL at x=152 (8px separator) + ImageScale 4x nearest-exact to 1184x576. prompt_id: f9e1f44c-01ff-4b5a-a9be-4d6d56c91bf7.",
+    "room_scene_comparison": {
+      "image": "assets/final/character/T0218-room-scene-comparison.png",
+      "prompt_id": "9d3f8812-0f88-4a32-b528-38880d8604b4",
+      "workflow": "assets/src/character/comfyui_room_scene_T0218.json",
+      "dimensions": "1440x480 (2x final scale of 720x240 room canvas)",
+      "layout": "signal_tower_concrete_wall_16px.png tile stretched to 720x48 wall strip at top (y=0–48); dark room floor (#1a1a1a) in middle (y=48–192); signal_tower_concrete_wall_floor_transitions_16px.png stretched to 720x48 floor strip at bottom (y=192–240). Left 4 columns: synthetic idle frames 0–3 at 3x scale (144x144 each, x=0/144/288/432). Right column: SDXL front-facing cell at 3x scale (144x144, x=576). Final 2x upscale to 1440x480 nearest-exact.",
+      "description": "Both sheets placed in a signal_tower game-room environment (concrete wall tile + floor transition tile from assets/final/tiles/) at game scale. LEFT 4 columns: the 4 synthetic idle animation frames in sequence (frame 0→1→2→3, read left-to-right = animation cycle), each frame showing the 40px humanoid figure against the concrete wall and floor. RIGHT column: the SDXL stage-1 generated soldier at the same scale for comparison. The synthetic frames show consistent camera angle and subtle pose variation (head-bob) confirming correct animation format; the SDXL soldier is a single cell of the front-facing character reference view."
+    }
+  },
+  "decision": "generation_loses — stage-1 conditions produce character reference sheets, not animation frames. Default to deterministic synthesis (synth_sheet.py / T-0200 pattern) per the documented fallback rule. NOT_RUN is now superseded: this was a real run with real evaluation.",
+  "unblock_path_for_stage3": "Install ComfyUI-ControlNet extension and download a ControlNet OpenPose model (e.g. control_v11p_sd15_openpose, adapted for SDXL) to F:\\ComfyUI\\models\\controlnet\\. Install ComfyUI-IPAdapter-Plus extension and download IP-Adapter model for SDXL. Then re-trigger T-0218 — the recipe, prompt, and concept reference (T-0209 player_character_concept_sheet_v1.png) are ready.",
+  "quality_signal": "POSITIVE — the LoRA style, the descent quality, and the character silhouette at 40px are all correct. The failure is purely output-type/format. Stage-3 with ControlNet would very likely produce usable animation frames at game scale.",
+  "sdxl_generated_output": "assets/final/character/player_idle_sheet_sdxl_T0218.png",
+  "four_question_framework_for_stage3_rerun": {
+    "q1_silhouette_readable_at_40px": "Does the figure read as a distinct human shape when the 1008px output is box-averaged to 144px (the sheet), then a single 48px cell is cropped and displayed at 40px figure height? Squint test: cover 90% of the sheet and check the remaining area still reads. [PASSED in stage-1 run — answer is YES at 40px]",
+    "q2_identity_holds_across_frames": "Do adjacent idle frames (cells 0,0 → 0,1 → 0,2 → 1,0) show the same character, or does the head/torso geometry drift enough that a player would notice? 1px head-drift is the documented failure threshold. [FAILED in stage-1 run — cells show different angles, not animation frames]",
+    "q3_beats_synthetic_at_game_scale": "Placed side-by-side in a 384x216 game room with the 40px synthetic sheet, does the SDXL-descended version offer a visible quality improvement in silhouette clarity or animation smoothness? If not, the synthetic is cheaper and reproducible with no loss. [FAILED in stage-1 run — wrong format; re-evaluate in stage-3]",
+    "q4_failure_mode": "If the sheet fails q1 or q2, classify: (a) wrong subject — the model generated something other than the intended character (corpus / IP-Adapter conditioning problem); (b) mush at 40px — the character reads at 1008px but detail is destroyed by descent (descent problem, P-D §6.13); (c) identity drift — frame-to-frame inconsistency (generation problem, requires per-frame img2img seeding or more ControlNet weight)."
+  },
+  "blocker_history": [
+    "T-0198 (2026-08-18): SPIKE_REPORT.md — 'Python execution not approved; ComfyUI not reachable from WSL'",
+    "T-0212 (multiple prior attempts): recipe _note fields name WSL→ComfyUI HTTP access as recurring blocker",
+    "T-0218 runs 1-5 (2026-08-23): curl tool call denied by automated runner permission model",
+    "T-0218 (2026-08-24, this run): agentCurl.js wrapper unblocked; generation ran; stage-3 blocked by missing ControlNet/IP-Adapter models on ComfyUI host"
+  ]
+}
