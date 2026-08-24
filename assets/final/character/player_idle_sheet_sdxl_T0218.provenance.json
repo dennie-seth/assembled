@@ -26,6 +26,7 @@
   "concept_hash": null,
   "ip_adapter": null,
   "controlnet": null,
+  "generator": "assets/src/character/comfyui_submit_T0218.json",
   "spike_outcome": "generation_loses",
   "spike_reason": "Stage-1 produced character reference sheet (multiple viewing angles) not idle animation frames (same angle, subtle variation). ControlNet not installed; failure mode: wrong_subject. Visual quality at 40px is excellent — descent is not the problem."
 }

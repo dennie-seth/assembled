@@ -21,5 +21,6 @@
   "prompt_positive": "openpose body pose estimation visualization, stick figure skeleton, 9 humanoid figures arranged in 3x3 grid, each figure standing upright facing forward, colored joint keypoints, colored limb connection lines, front view orthographic, pure black background, blue and green skeleton lines, medical anatomical illustration, no clothing, no texture, no background, scientific keypoint diagram",
   "prompt_negative": "realistic, photographic, clothing, skin, face detail, colored background, landscape, text, watermark, action pose, dark lines, pencil sketch",
   "role": "ControlNet conditioning image for player_idle_sheet_stage3_sdxl_T0218.png generation",
+  "generator": "assets/src/character/comfyui_stage3_skeleton_T0218.json",
   "workflow_json": "assets/src/character/comfyui_stage3_skeleton_T0218.json"
 }

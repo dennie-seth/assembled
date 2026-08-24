@@ -36,5 +36,6 @@
   "prompt_negative": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple characters per panel, action pose, background clutter, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, skeleton, wireframe",
   "spike_outcome": "ambiguous",
   "spike_reason": "Stage-3 run completed with full ControlNet + IP-Adapter + LoRA. ControlNet successfully enforced front-facing orientation (major improvement over stage-1 multi-angle reference sheet). IP-Adapter conditioned character identity (consistent military figure type). However, cross-row equipment/costume variation remains: rows 1 and 3 are internally consistent front-facing views; row 2 shows equipment drift and some angle variation. At game scale (48x48), rows 1 and 3 could form 3-frame idle loops. Not a clean idle animation sheet. Failure mode: identity_drift (costume inconsistency across rows) vs stage-1's wrong_subject (multi-angle reference sheet). Decision: ambiguous -> default to deterministic synthesis per decision tree.",
+  "generator": "assets/src/character/comfyui_stage3_main_submit_T0218.json",
   "workflow_json": "assets/src/character/comfyui_stage3_main_submit_T0218.json"
 }
