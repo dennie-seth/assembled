@@ -39,6 +39,7 @@ REQUIRED_ASSET_SETS = {
     "records_room_shelving",
     "ladder_traversal",
     "power_substation_catwalk_grating",
+    "doors",
     "broadcast_deck_tear_centerpiece",
 }
 

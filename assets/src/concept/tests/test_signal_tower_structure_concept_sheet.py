@@ -176,3 +176,48 @@ def test_structure_concept_covers_catwalk(structure_provenance):
     terms = ["catwalk", "grating"]
     matched = [t for t in terms if t.lower() in prompt.lower()]
     assert matched, f"Provenance prompt must reference the catwalk/grating. Looked for any of {terms!r}."
+
+
+def test_structure_concept_covers_door(structure_provenance):
+    """Provenance prompt must reference a door (`14` line 142 'Branches are single doors';
+    `11` §2 gives the ladder 'same status as a normal door', which obliges a door row too)."""
+    prompt = structure_provenance.get("prompt", "")
+    terms = ["door"]
+    matched = [t for t in terms if t.lower() in prompt.lower()]
+    assert matched, f"Provenance prompt must reference a door. Looked for any of {terms!r}."
+
+
+def test_structure_provenance_obeys_archetype_first_coherence_guard(structure_provenance):
+    """§6 archetype-first coherence guard (13-asset-pipeline.md:313-319): a Signal Tower
+    concept sheet after the first (the material sheet) must be img2img/IP-Adapter
+    conditioned on an already-approved sheet, not a bare prompt. Mechanical check, not a
+    text-matching one -- a bare txt2img generation has no `conditioning_source`/`denoise`
+    at all, so this fails loudly instead of passing on prompt wording alone."""
+    assert "conditioning_source" in structure_provenance, (
+        "Missing conditioning_source -- this sheet must be img2img-conditioned on the "
+        "archetype's first approved sheet, per the coherence guard."
+    )
+    assert "denoise" in structure_provenance, "Missing denoise -- a bare prompt has no denoise strength."
+    denoise = structure_provenance["denoise"]
+    assert 0.0 < denoise < 1.0, (
+        f"denoise={denoise!r} -- must be strictly less than 1.0 (1.0 discards the "
+        "conditioning image's latent entirely, which is a bare prompt in disguise)."
+    )
+
+
+def test_structure_conditioning_source_resolves_and_matches_base_concept_hash(structure_provenance):
+    """The conditioning_source must be a real, committed file, and it must actually be the
+    sheet whose hash is cited as base_concept_hash -- otherwise the 'coherence' claim is
+    just a filename with nothing behind it."""
+    conditioning_source = structure_provenance.get("conditioning_source", "")
+    assert conditioning_source, "conditioning_source must be set (coherence guard)."
+    resolved = WORKTREE / conditioning_source
+    assert resolved.exists(), f"conditioning_source {conditioning_source!r} does not resolve to a committed file"
+
+    base_concept_hash = structure_provenance.get("base_concept_hash", "")
+    assert base_concept_hash, "base_concept_hash must be set to the sha256 of the conditioning sheet."
+    actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    assert base_concept_hash == actual, (
+        f"base_concept_hash {base_concept_hash!r} does not match sha256 of "
+        f"conditioning_source {conditioning_source!r} ({actual!r})"
+    )
