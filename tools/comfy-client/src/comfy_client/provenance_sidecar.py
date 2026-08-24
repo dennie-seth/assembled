@@ -52,7 +52,22 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from asset_gate.generator import check_provenance_generator_resolvable
+try:
+    from asset_gate.generator import check_provenance_generator_resolvable
+except ImportError as _exc:  # pragma: no cover - environment wiring, not logic
+    # Deliberately imported rather than restated: sharing asset-gate's predicate is
+    # what stops the writer and the CI gate drifting apart. asset_gate.generator
+    # itself pulls in only json + pathlib, so this costs nothing at runtime -- but
+    # the package still has to be importable, and a bare ModuleNotFoundError here
+    # would be a confusing way to find that out mid-generation.
+    raise ImportError(
+        "comfy_client.provenance_sidecar needs the sibling asset-gate package: it reuses "
+        "asset_gate.generator.check_provenance_generator_resolvable so the provenance writer "
+        "and the CI resolvability gate cannot diverge.\n"
+        "Install it with:  pip install -e tools/asset-gate\n"
+        "(pytest runs already resolve it via the pythonpath entry in "
+        "tools/comfy-client/pyproject.toml.)"
+    ) from _exc
 
 #: A bare repo-relative POSIX path: alphanumerics, dot, underscore, dash, slash.
 #: Deliberately strict -- anything a real recipe path needs, and nothing prose
