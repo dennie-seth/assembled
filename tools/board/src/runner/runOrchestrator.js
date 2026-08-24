@@ -417,8 +417,13 @@ export class RunOrchestrator {
         return;
       }
 
-      const signature = computeFailureSignature({ phase: verdict.phase, verdict: verdict.verdict, notes: verdict.notes });
-      const noProgress = previousSignature !== null && signature === previousSignature;
+      // Inactivity timeouts are excluded from signature comparison (see _inactivityVerdict's
+      // `synthetic` docstring): their reason text is generic by construction, so two in a row
+      // isn't evidence of a repeating, unfixable blocker the way a genuine reviewer FAIL is.
+      const signature = verdict.synthetic
+        ? null
+        : computeFailureSignature({ phase: verdict.phase, verdict: verdict.verdict, notes: verdict.notes });
+      const noProgress = signature !== null && previousSignature !== null && signature === previousSignature;
       attemptRecords.push({ attempt, notes: verdict.notes, events, signature });
 
       const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
@@ -432,7 +437,7 @@ export class RunOrchestrator {
       // Every attempt after the first resumes the same worktree/branch, regardless of
       // whether addWorktree itself had to reuse it (a first attempt can start fresh).
       currentReused = true;
-      previousSignature = signature;
+      if (signature !== null) previousSignature = signature;
     }
   }
 
@@ -804,9 +809,18 @@ export class RunOrchestrator {
     return `${phase} run exceeded ${minutes} minute${minutes === 1 ? "" : "s"} and was terminated -- likely a hung subprocess`;
   }
 
-  /** Synthetic FAIL verdict for an inactivity-timed-out implementer/reviewer phase -- feeds the normal auto-retry loop instead of hard-blocking, since a stdin-hang is a one-off tool-call incident, not evidence the whole attempt is unrecoverable. */
+  /**
+   * Synthetic FAIL verdict for an inactivity-timed-out implementer/reviewer phase -- feeds the
+   * normal auto-retry loop instead of hard-blocking, since a stdin-hang is a one-off tool-call
+   * incident, not evidence the whole attempt is unrecoverable. `synthetic: true` opts this out of
+   * §23-a's no-progress signature comparison (see _runCardInWorktree): its reason text is the
+   * same generic string every time by construction (same phase + same configured timeout), so
+   * treating repeats as "no progress" would defeat the whole point of retrying it -- a stdin-hang
+   * is exactly the kind of flaky, non-reproducible failure that's likely to clear on a plain
+   * retry, unlike a deterministic reviewer FAIL repeating the same finding.
+   */
   _inactivityVerdict(phase) {
-    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity"), phase };
+    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity"), phase, synthetic: true };
   }
 
   async cancelRun(taskId) {
