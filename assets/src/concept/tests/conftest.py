@@ -1112,6 +1112,15 @@ def _draw_catwalk(px: bytearray, x0: int, y0: int, w: int, h: int) -> None:
     _fill_rect(px, x0, y0 - h + deck_h, x0 + w, y0 - h + deck_h + 3, STRUCT_ACCT)
 
 
+def _draw_door(px: bytearray, x0: int, y0: int, w: int, h: int) -> None:
+    """Single flat branch door: plain frame + seam + handle detail."""
+    _fill_rect(px, x0, y0, x0 + w, y0 + h, STRUCT_FRAME)
+    _draw_border(px, x0, y0, x0 + w, y0 + h, BORDER, 3)
+    _fill_rect(px, x0 + w // 2 - 1, y0, x0 + w // 2 + 1, y0 + h, STRUCT_DARK)
+    handle_y = y0 + h // 2
+    _fill_rect(px, x0 + w // 2 + 6, handle_y - 4, x0 + w // 2 + 10, handle_y + 4, STRUCT_ACCT)
+
+
 def _generate_structure_concept_png(out_path: Path) -> str:
     """Build 1024x1024 RGB signal tower structure concept sheet; return sha256 hex digest."""
     px = _make_canvas(W, H, CANVAS)
@@ -1133,8 +1142,9 @@ def _generate_structure_concept_png(out_path: Path) -> str:
     x0, y0 = _p_panel_origin(1, 0)
     _draw_catwalk(px, x0 + 60, y0 + _P_PH - 120, _P_PW - 120, 180)
 
-    # Panel (1,1) — PALETTE SWATCHES
+    # Panel (1,1) — DOOR + palette swatches
     x0, y0 = _p_panel_origin(1, 1)
+    _draw_door(px, x0 + _P_PW // 2 - 60, y0 + 40, 120, _P_PH - 140)
     slots = list(PAL.values())
     sw_w, sw_h, sw_gap = 32, 24, 4
     sw_total = len(slots) * (sw_w + sw_gap) - sw_gap
@@ -1163,7 +1173,8 @@ def _generate_structure_provenance(concept_hash: str, out_path: Path) -> None:
             "narrow uprights, free-standing traversal object. "
             "Panel 2 (CATWALK / GRATING): short elevated metal grating platform with a guard "
             "railing, industrial perforated-grate floor texture, side-on elevation. "
-            "Panel 3 (PALETTE): home palette swatches. "
+            "Panel 3 (DOOR): single flat steel branch door in a plain frame, closed, side-on "
+            "elevation, simple handle and seam detail, plus home palette swatches. "
             "Soviet brutalist Signal Tower interior. Hard value separation. "
             "No perspective, no vanishing point, no scene composition."
         ),
@@ -1179,13 +1190,21 @@ def _generate_structure_provenance(concept_hash: str, out_path: Path) -> None:
         "workflow_hash": None,
         "prompt_id": "synth-T-0226",
         "concept_hash": concept_hash,
+        "denoise": 0.88,
+        "conditioning_source": "assets/src/concept/signal_tower_material_sheet.png",
+        "base_concept_hash": "9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460",
         "generator": "assets/src/concept/tests/conftest.py (_generate_structure_concept_png, stdlib-only synthetic fallback)",
         "_note": (
             "Synthetic reference -- replace with SDXL generation via "
             "signal_tower_structure_concept_sheet_v1.recipe.json if the committed real "
             "sheet is ever lost. Records shelving: open frame + document-box rows. "
             "Ladder: two uprights + evenly spaced rungs. Catwalk: perforated grate deck "
-            "+ guard rail (13-asset-pipeline.md §6.9)."
+            "+ guard rail. Door: framed panel + seam + handle "
+            "(13-asset-pipeline.md §6.9). denoise/conditioning_source/base_concept_hash "
+            "mirror the real sheet's img2img conditioning on signal_tower_material_sheet.png "
+            "(archetype-first coherence guard, §6 lines 313-319) so this fallback can't "
+            "silently regress that guard if the real sheet is ever lost and regenerated "
+            "synthetically."
         ),
     }
     out_path.write_text(json.dumps(prov, indent=2))

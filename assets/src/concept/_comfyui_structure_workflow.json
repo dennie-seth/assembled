@@ -16,41 +16,46 @@
         "strength_clip": 0.70
       }
     },
-    "5": {
-      "class_type": "EmptyLatentImage",
+    "10": {
+      "class_type": "LoadImage",
       "inputs": {
-        "width": 1024,
-        "height": 1024,
-        "batch_size": 1
+        "image": "signal_tower_material_sheet.png"
+      }
+    },
+    "11": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": ["10", 0],
+        "vae": ["4", 2]
       }
     },
     "6": {
       "class_type": "CLIPTextEncode",
       "inputs": {
-        "text": "flat side-on structural/traversal concept reference sheet, orthographic game asset, no perspective, no vanishing point, Signal Tower interior structural elements shown as flat elevation silhouettes arranged in labeled panels. PANEL ONE - RECORDS ROOM SHELVING: tall dense records-office shelving row, stacked document boxes and binders on open shelf frames, narrow aisle gap, mid-value concrete-grey shelf frame with darker document-box silhouettes. PANEL TWO - LADDER: vertical steel rung ladder mounted flush to a wall section, evenly spaced horizontal rungs, narrow uprights, free-standing traversal object. PANEL THREE - CATWALK / GRATING: short elevated metal grating platform section with a simple guard railing along one edge, industrial perforated-grate floor texture, side-on elevation. Soviet brutalist Signal Tower interior, muted concrete grey and institutional green and near-black palette, hard value separation, flat unlit shading, no atmospheric haze, no depth of field, structural silhouette study, game asset reference sheet style, no background scene composition",
+        "text": "flat side-on structural/traversal concept reference sheet, orthographic game asset, no perspective, no vanishing point, no room, no scene, Signal Tower interior structural elements shown as flat elevation silhouettes arranged in four labeled panels on a plain background, matching the flat side-on framing of the reference material sheet. PANEL ONE - RECORDS ROOM SHELVING: tall dense records-office shelving row, stacked document boxes and binders on open shelf frames, narrow aisle gap, mid-value concrete-grey shelf frame with darker document-box silhouettes. PANEL TWO - LADDER: vertical steel rung ladder mounted flush to a wall section, evenly spaced horizontal rungs, narrow uprights, free-standing traversal object. PANEL THREE - CATWALK / GRATING: short elevated metal grating platform section with a simple guard railing along one edge, industrial perforated-grate floor texture, side-on elevation. PANEL FOUR - DOOR: single flat steel branch door in a plain frame, closed, side-on elevation, simple handle and seam detail, free-standing door object matching the vertical connector's same status as a normal door. Soviet brutalist Signal Tower interior, muted concrete grey and institutional green and near-black palette, hard value separation, flat unlit shading, no atmospheric haze, no depth of field, structural silhouette study, game asset reference sheet style, no background scene composition, no walls receding into the distance, no floor plane, no ceiling",
         "clip": ["12", 1]
       }
     },
     "7": {
       "class_type": "CLIPTextEncode",
       "inputs": {
-        "text": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait",
+        "text": "perspective, vanishing point, three-quarter view, isometric, receding walls, room interior scene, floor plane, ceiling, wall corner, single-point perspective, large double doors, open doorway, architectural rendering, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait",
         "clip": ["12", 1]
       }
     },
     "3": {
       "class_type": "KSampler",
       "inputs": {
-        "seed": 21200,
+        "seed": 21201,
         "steps": 30,
         "cfg": 7.0,
         "sampler_name": "euler",
         "scheduler": "normal",
-        "denoise": 1.0,
+        "denoise": 0.88,
         "model": ["12", 0],
         "positive": ["6", 0],
         "negative": ["7", 0],
-        "latent_image": ["5", 0]
+        "latent_image": ["11", 0]
       }
     },
     "8": {
@@ -68,5 +73,5 @@
       }
     }
   },
-  "client_id": "T-0226-signal-tower-structure-concept-sheet"
+  "client_id": "T-0226-signal-tower-structure-concept-sheet-v2"
 }
