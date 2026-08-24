@@ -43,10 +43,8 @@ jobs:
       - run: ruff check .
 
       # Covers every concept artifact gate: player + entity + signal_tower
-      # concept sheets and the T-0201/T-0221 prop pack. Exactly one test is
-      # xfail(strict=False) -- the cover-vs-hiding 16px luminance gate, whose
-      # fix needs GPU regeneration and is owned by the prop re-tune follow-up
-      # to T-0221 (see the marker in tests/test_signal_tower_prop_pack.py).
-      # -rxX surfaces that xfail/xpass in the log so it stays visible rather
-      # than silently accumulating.
-      - run: pytest -q -rxX
+      # concept sheets and the T-0201/T-0221 prop pack.  The xfail on the
+      # cover-vs-hiding 16px luminance gate was removed by T-0223 (decoder
+      # was mis-measuring, locker re-tuned to be correctly dark).  All tests
+      # are now fully enforced.
+      - run: pytest -q

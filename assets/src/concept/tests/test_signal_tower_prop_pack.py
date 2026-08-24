@@ -6,7 +6,8 @@ Validates that the Signal Tower prop pack sprites exist in
   - Cover props included: relay_cabinet, crate_stack, low_duct
   - Hiding-spot props included: locker, server_rack
   - Cover vs hiding-spot props visually distinguishable at 16px
-    (mean luminance of cover opaque pixels > hiding-spot opaque pixels)
+    (BT.601 luminance of cover opaque pixels > hiding-spot opaque pixels,
+    both per-class-mean and per-prop strict ordering)
 
 All sprites are RGBA (colour_type=6) to represent the BiRefNet cutout output
 — background pixels are transparent (alpha=0), prop pixels are fully opaque.
@@ -22,16 +23,20 @@ Design references:
   - docs/design/11-moment-to-moment.md §2 (cover vs hiding-spot semantics)
   - docs/design/13-asset-pipeline.md §6 (pipeline, sprite format)
 
-PNG inspection uses stdlib (struct, zlib) only — no Pillow/numpy dependency.
+PNG inspection uses Pillow (already in the concept package's `dev` extra) for
+correct decoding of all PNG filter types (0–4). The earlier stdlib-only decoder
+assumed filter type 0 on every scanline, which silently mis-decoded the
+mixed-filter output of the real cutout pipeline (T-0223 root cause).
 """
 
 from __future__ import annotations
 
+import io
 import json
 import struct
-import zlib
 from pathlib import Path
 
+from PIL import Image
 import pytest
 
 WORKTREE = Path(__file__).resolve().parents[4]
@@ -58,8 +63,17 @@ PROP_DIMS = {
     "server_rack_v1.png": (20, 46),
 }
 
+# Minimum BT.601 luminance gap (at 16px game scale) between the lightest
+# hiding prop and the darkest cover prop.  Derived from
+# docs/design/13-asset-pipeline.md §3.5/§6.9: cover targets mid-value
+# (ramp10, BT.601 ≈ 97); hiding targets dark (ramp04, BT.601 ≈ 58),
+# giving a natural ~39-luma gap on the home palette.  A floor of 15 allows
+# for SDXL value variance while keeping the distinction player-readable at
+# 16px game scale.
+_MIN_COVER_HIDE_GAP = 15.0
 
-# ── PNG parsing helpers (stdlib only) ─────────────────────────────────────────
+
+# ── PNG parsing helpers ────────────────────────────────────────────────────────
 
 def _parse_ihdr(data: bytes) -> dict:
     """Parse PNG signature + IHDR. Returns width, height, bit_depth, colour_type."""
@@ -79,40 +93,39 @@ def _parse_ihdr(data: bytes) -> dict:
 
 
 def _extract_opaque_pixels(data: bytes) -> list[tuple[int, int, int]]:
-    """Decompress RGBA PNG and return list of (R,G,B) for all opaque pixels (A>0).
+    """Decode RGBA PNG and return list of (R,G,B) for all opaque pixels (A>0).
 
-    Assumes colour_type=6 (RGBA, 8-bit), filter type 0 (None) on every
-    scanline — both guaranteed by the synth generator used here.
+    Uses Pillow for correct decoding across all PNG filter types (0–4).
+    Real cutout-pipeline output uses mixed filter types (1/2/4 per scanline);
+    the former stdlib decoder assumed filter type 0 everywhere, producing
+    garbage luminance measurements on those files (T-0223 root cause fix).
     """
-    meta = _parse_ihdr(data)
-    assert meta["colour_type"] == 6, "Expected RGBA (colour_type=6)"
-    w, h = meta["width"], meta["height"]
+    img = Image.open(io.BytesIO(data)).convert("RGBA")
+    return [(r, g, b) for r, g, b, a in img.getdata() if a > 0]
 
-    # Collect all IDAT chunks
-    idat = bytearray()
-    pos = 8
-    while pos + 12 <= len(data):
-        chunk_len = struct.unpack(">I", data[pos:pos + 4])[0]
-        chunk_type = data[pos + 4:pos + 8]
-        if chunk_type == b"IDAT":
-            idat.extend(data[pos + 8:pos + 8 + chunk_len])
-        elif chunk_type == b"IEND":
-            break
-        pos += 12 + chunk_len
 
-    raw = zlib.decompress(bytes(idat))
-    stride = w * 4  # RGBA: 4 bytes per pixel
+def _downscale_to_game_16px(data: bytes) -> list[tuple[int, int, int]]:
+    """Downscale sprite to 16px on its longest side and return opaque pixels.
 
-    opaque = []
-    for y in range(h):
-        # +1 for filter byte (always 0 for our synth PNG)
-        row_start = y * (stride + 1) + 1
-        for x in range(w):
-            i = row_start + x * 4
-            r, g, b, a = raw[i], raw[i + 1], raw[i + 2], raw[i + 3]
-            if a > 0:
-                opaque.append((r, g, b))
-    return opaque
+    Game-scale rule: longest side → 16px, other side proportionally (round).
+    Examples for the five props:
+      low_duct_v1.png   48×12  → 16×4   (longest = 48)
+      relay_cabinet     36×20  → 16×7   (longest = 36, round(20·16/36)=9 → 9)
+      crate_stack       24×28  → 14×16  (longest = 28)
+      locker            14×42  → 5×16   (longest = 42)
+      server_rack       20×46  → 7×16   (longest = 46)
+
+    Lanczos resampling.  Alpha-weighted: only pixels with a > 0 contribute.
+    These sprites are 100% opaque so the filter is effectively a no-op, but
+    it guards against soft-edge regressions introduced by re-tuning.
+    """
+    img = Image.open(io.BytesIO(data)).convert("RGBA")
+    w, h = img.size
+    max_dim = max(w, h)
+    new_w = max(1, round(w * 16 / max_dim))
+    new_h = max(1, round(h * 16 / max_dim))
+    img_small = img.resize((new_w, new_h), Image.LANCZOS)
+    return [(r, g, b) for r, g, b, a in img_small.getdata() if a > 0]
 
 
 def _mean_luma(pixels: list[tuple[int, int, int]]) -> float:
@@ -185,6 +198,29 @@ def test_all_props_have_opaque_pixels(prop_bytes):
         )
 
 
+def test_opaque_pixel_decode_full_coverage(prop_bytes):
+    """Regression (T-0223): fully-opaque sprites must decode to exactly width × height pixels.
+
+    Guards against the T-0201 stdlib decoder bug: PNG filter types 1/2/4
+    (used by real cutout-pipeline output) caused mis-decode, reporting only
+    4–80 opaque pixels in sprites that are 100% opaque
+    (e.g. relay_cabinet_v1.png = 720 px all at alpha=255, but the old reader
+    saw 5).  With Pillow, a fully-opaque sprite must always yield W × H pixels.
+    """
+    for name, data in prop_bytes.items():
+        meta = _parse_ihdr(data)
+        expected_count = meta["width"] * meta["height"]
+        pixels = _extract_opaque_pixels(data)
+        assert len(pixels) == expected_count, (
+            f"{name}: expected {expected_count} opaque pixels "
+            f"({meta['width']}×{meta['height']}), got {len(pixels)}. "
+            "All cutout-pipeline sprite pixels must be fully opaque (alpha=255). "
+            "If count is far below expected, the decoder has a filter-type bug. "
+            "If count is below expected due to soft edges, re-tune the generation "
+            "to ensure solid_mask_value=1.0 propagates correctly."
+        )
+
+
 # ── Provenance gate ───────────────────────────────────────────────────────────
 
 def test_all_provenance_sidecars_exist(ensure_signal_tower_prop_pack):  # noqa: ARG001
@@ -221,44 +257,62 @@ def test_provenance_prop_class_field(ensure_signal_tower_prop_pack):  # noqa: AR
 
 # ── Visual distinguishability gate ────────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "KNOWN FAILURE, tracked -- do not silence any other assertion in this file. "
-        "T-0221 regenerated the signal_tower prop pack through the committed cutout "
-        "recipe, and the regenerated cover props came out DARKER (mean luma ~141.6) "
-        "than the hiding-spot props (~152.3), inverting the gate below. Restoring the "
-        "cover > hide luminance gap needs a GPU re-generation with re-tuned value "
-        "targets, which is out of scope for the CI wiring that first surfaced this. "
-        "TODO: delete this marker -- and leave the assertion below untouched and "
-        "enforcing -- as part of the signal_tower prop re-tune follow-up to T-0221; "
-        "that card owns the fix. Non-strict on purpose: once the re-tuned props land "
-        "this reports XPASS rather than failing the pipeline, so the follow-up is "
-        "never blocked on landing the un-xfail in the same commit."
-    ),
-)
 def test_cover_vs_hiding_distinguishable_at_16px(prop_bytes):
-    """T-0201 acceptance: cover props must be visually lighter than hiding-spot props.
+    """T-0201/T-0223: cover props must read lighter than hiding props at 16px game scale.
 
-    Computes BT.601 mean luminance of opaque pixels for each class.
-    Cover props are mid-value concrete grey (ramp10, ~luma 97) while hiding-spot
-    props are dark-bodied (ramp04 outer shell, ramp00 interior, ~luma <50).
-    At 16px game scale this luminance gap is the primary visual discriminant.
+    Checks both class-mean AND per-prop strict ordering: every cover prop must
+    have higher BT.601 luminance than every hiding prop, with a minimum gap of
+    _MIN_COVER_HIDE_GAP luma units between the lightest cover and the darkest
+    hiding prop.  Measurements taken after downscaling each sprite to 16px on
+    its longest side (game-scale rule; see _downscale_to_game_16px docstring).
+
+    Design rationale (docs/design/13-asset-pipeline.md §3.5 / §6.9):
+      - Cover props: exposed, mid-value concrete grey — player crouches behind
+        for sight-cone cover only; sound sensors still fire.  Target: ramp10
+        dominant (BT.601 ≈ 97).
+      - Hiding props: enclosed, dark-bodied — player fully sealed from all
+        sensors.  Target: ramp04/ramp00 dominant (BT.601 ≈ 17–58).
+    At 16px game scale the luminance gap is the primary visual discriminant.
+
+    xfail marker removed by T-0223: the bug was the mis-decoding stdlib reader,
+    not the art.  Per-prop strict ordering is now enforced; re-tuning the locker
+    (the only prop whose true luma violated per-prop ordering) ships with this card.
     """
-    cover_lumas = [
-        _mean_luma(_extract_opaque_pixels(prop_bytes[n])) for n in COVER_PROPS
-    ]
-    hide_lumas = [
-        _mean_luma(_extract_opaque_pixels(prop_bytes[n])) for n in HIDE_PROPS
-    ]
-    cover_mean = sum(cover_lumas) / len(cover_lumas)
-    hide_mean = sum(hide_lumas) / len(hide_lumas)
+    cover_lumas = {
+        n: _mean_luma(_downscale_to_game_16px(prop_bytes[n])) for n in COVER_PROPS
+    }
+    hide_lumas = {
+        n: _mean_luma(_downscale_to_game_16px(prop_bytes[n])) for n in HIDE_PROPS
+    }
 
+    cover_mean = sum(cover_lumas.values()) / len(cover_lumas)
+    hide_mean = sum(hide_lumas.values()) / len(hide_lumas)
+
+    # Class-mean ordering
     assert cover_mean > hide_mean, (
-        f"Cover props mean luminance ({cover_mean:.1f}) must exceed "
-        f"hiding-spot props mean luminance ({hide_mean:.1f}). "
-        "Cover props should be mid-value (ramp10), hiding props should be dark (ramp04/ramp00). "
-        "This is the primary visual distinguisher at 16px game scale."
+        f"Cover class mean luma ({cover_mean:.1f}) must exceed hiding class mean "
+        f"luma ({hide_mean:.1f}) at 16px game scale.\n"
+        f"  Cover: { {n: f'{v:.1f}' for n, v in cover_lumas.items()} }\n"
+        f"  Hide:  { {n: f'{v:.1f}' for n, v in hide_lumas.items()} }"
+    )
+
+    # Per-prop strict ordering: every cover prop lighter than every hiding prop.
+    # Find the pair with the smallest gap (lightest cover vs darkest hide).
+    min_cover_name = min(cover_lumas, key=cover_lumas.__getitem__)
+    max_hide_name = max(hide_lumas, key=hide_lumas.__getitem__)
+    min_cover = cover_lumas[min_cover_name]
+    max_hide = hide_lumas[max_hide_name]
+    gap = min_cover - max_hide
+
+    assert gap >= _MIN_COVER_HIDE_GAP, (
+        f"Per-prop separation at 16px insufficient: "
+        f"lightest cover prop '{min_cover_name}' ({min_cover:.1f} luma) must be "
+        f"≥ {_MIN_COVER_HIDE_GAP} luma above darkest hiding prop "
+        f"'{max_hide_name}' ({max_hide:.1f} luma); actual gap = {gap:.1f}.\n"
+        "Every cover prop must read visually lighter than every hiding prop "
+        "at game scale — re-tune props so the bands do not overlap.\n"
+        f"  Cover lumas: { {n: f'{v:.1f}' for n, v in cover_lumas.items()} }\n"
+        f"  Hide lumas:  { {n: f'{v:.1f}' for n, v in hide_lumas.items()} }"
     )
 
 
