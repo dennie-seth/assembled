@@ -10,16 +10,19 @@ from __future__ import annotations
 import json
 
 import pytest
+from asset_gate.generator import check_provenance_generator_resolvable
 from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
 from comfy_client.concept import (
+    GENERATOR_ID,
     generate_concept,
     generate_concept_conditioned,
     generate_concept_conditioned_lora,
     generate_concept_lora,
 )
 from comfy_client.errors import MissingModelHashError
+from comfy_client.provenance_sidecar import package_repo_root
 from comfy_client.recipe import Recipe
 
 
@@ -483,3 +486,86 @@ def test_generate_concept_conditioned_raises_missing_model_hash_when_recipe_has_
         generate_concept_conditioned(
             recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
         )
+
+
+# ---- Adoption: every concept sheet gets a resolvable generator BY CONSTRUCTION ----
+#
+# The T-0226 root cause was that this path emitted sidecars with no `generator`
+# key at all, leaving whoever ran it to hand-add one -- which came out as prose
+# ("...json (ComfyUI 0.29.0 img2img+LoRA workflow, submitted via ...)") that the
+# P-7 gate could not resolve, and in one older sheet as nothing at all (T-0236).
+# These pin down that the field is now set structurally by the module and passes
+# the real gate, so no agent has to write it by hand again.
+
+
+def _sidecar(tmp_path, name):
+    return json.loads((tmp_path / f"{name}.provenance.json").read_text())
+
+
+def test_generate_concept_writes_a_resolvable_generator(tmp_path, sample_recipe):
+    generate_concept(sample_recipe, out_dir=tmp_path, client=FakeClient())
+
+    written = _sidecar(tmp_path, sample_recipe.name)
+    assert written["generator"] == GENERATOR_ID
+    result = check_provenance_generator_resolvable(written, repo_root=package_repo_root())
+    assert result.passed, result.reason
+
+
+def test_generate_concept_lora_writes_a_resolvable_generator(tmp_path, sample_recipe):
+    generate_concept_lora(
+        sample_recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.7,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=FakeClient(),
+    )
+
+    written = _sidecar(tmp_path, sample_recipe.name)
+    assert written["generator"] == GENERATOR_ID
+    assert check_provenance_generator_resolvable(written, repo_root=package_repo_root()).passed
+
+
+def test_generate_concept_conditioned_writes_a_resolvable_generator(tmp_path, sample_recipe):
+    init = tmp_path / "init.png"
+    init.write_bytes(b"INITPNG")
+
+    generate_concept_conditioned(
+        sample_recipe, init_image_path=init, out_dir=tmp_path, client=FakeConditionedClient()
+    )
+
+    written = _sidecar(tmp_path, sample_recipe.name)
+    assert written["generator"] == GENERATOR_ID
+    assert check_provenance_generator_resolvable(written, repo_root=package_repo_root()).passed
+
+
+def test_generate_concept_conditioned_lora_writes_a_resolvable_generator(tmp_path, sample_recipe):
+    init = tmp_path / "init.png"
+    init.write_bytes(b"INITPNG")
+    base_ref = tmp_path / "base_ref.png"
+    base_ref.write_bytes(b"BASEPNG")
+
+    generate_concept_conditioned_lora(
+        sample_recipe,
+        init_image_path=init,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.7,
+        lora_license="Apache-2.0",
+        base_concept_path=base_ref,
+        out_dir=tmp_path,
+        client=FakeConditionedClient(),
+    )
+
+    written = _sidecar(tmp_path, sample_recipe.name)
+    assert written["generator"] == GENERATOR_ID
+    assert check_provenance_generator_resolvable(written, repo_root=package_repo_root()).passed
+
+
+def test_the_generator_written_is_a_bare_path_with_no_prose(tmp_path, sample_recipe):
+    """Regression on the exact T-0226 shape: no spaces, no parenthetical."""
+    generate_concept(sample_recipe, out_dir=tmp_path, client=FakeClient())
+
+    generator = _sidecar(tmp_path, sample_recipe.name)["generator"]
+    assert " " not in generator
+    assert "(" not in generator and ")" not in generator
+    assert not generator.startswith("/")

@@ -21,7 +21,6 @@ key conditioning on.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -33,6 +32,7 @@ from comfy_client.checkpoint_hash import hash_checkpoint_file
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.errors import MissingModelHashError
 from comfy_client.provenance import build_provenance_record
+from comfy_client.provenance_sidecar import package_repo_root, write_provenance_sidecar
 from comfy_client.recipe import Recipe
 from comfy_client.workflow import (
     render_img2img_lora_workflow,
@@ -43,6 +43,14 @@ from comfy_client.workflow import (
 )
 
 DEFAULT_CONCEPT_DIR = Path("assets/src/concept")
+
+#: Repo-relative path to this module, written to every sidecar as `generator`.
+#: This module IS the committed recipe for a concept sheet generated through it,
+#: so the P-7 resolvability gate (T-0219, HANDOFF §22-c) can verify the sheet is
+#: regenerable.  Set structurally here rather than left to the caller: sheets
+#: generated before this had no `generator` key at all, and the field got
+#: hand-added afterwards as prose, which is exactly what broke T-0226.
+GENERATOR_ID = "tools/comfy-client/src/comfy_client/concept.py"
 
 
 @dataclass(frozen=True)
@@ -60,13 +68,21 @@ class ConceptProvenanceRecord:
     workflow_hash: str
     prompt_id: str
     concept_hash: str
+    #: Repo-relative path to the committed recipe (T-0219 resolvability).
+    generator: str
 
 
 def build_concept_provenance_record(
-    recipe: Recipe, workflow_hash: str, prompt_id: str, concept_hash: str
+    recipe: Recipe,
+    workflow_hash: str,
+    prompt_id: str,
+    concept_hash: str,
+    generator: str = GENERATOR_ID,
 ) -> ConceptProvenanceRecord:
     base = build_provenance_record(recipe, workflow_hash=workflow_hash, prompt_id=prompt_id)
-    return ConceptProvenanceRecord(**asdict(base), concept_hash=concept_hash)
+    return ConceptProvenanceRecord(
+        **asdict(base), concept_hash=concept_hash, generator=generator
+    )
 
 
 def concept_provenance_to_dict(record: ConceptProvenanceRecord) -> dict:
@@ -93,9 +109,14 @@ def build_conditioned_concept_provenance_record(
     prompt_id: str,
     concept_hash: str,
     conditioning_source: str,
+    generator: str = GENERATOR_ID,
 ) -> ConditionedConceptProvenanceRecord:
     base = build_concept_provenance_record(
-        recipe, workflow_hash=workflow_hash, prompt_id=prompt_id, concept_hash=concept_hash
+        recipe,
+        workflow_hash=workflow_hash,
+        prompt_id=prompt_id,
+        concept_hash=concept_hash,
+        generator=generator,
     )
     return ConditionedConceptProvenanceRecord(
         **asdict(base), denoise=recipe.denoise, conditioning_source=conditioning_source
@@ -174,7 +195,12 @@ def generate_concept(
         recipe, workflow_hash=graph_hash, prompt_id=job_id, concept_hash=concept_hash
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
-    provenance_path.write_text(json.dumps(concept_provenance_to_dict(provenance), indent=2))
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
 
     return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
 
@@ -230,7 +256,12 @@ def generate_concept_conditioned(
         conditioning_source=str(init_path),
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
-    provenance_path.write_text(json.dumps(concept_provenance_to_dict(provenance), indent=2))
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
 
     return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
 
@@ -303,7 +334,12 @@ def generate_concept_conditioned_lora(
         base_concept_hash=base_concept_hash,
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
-    provenance_path.write_text(json.dumps(asdict(provenance), indent=2))
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
 
     return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
 
@@ -387,11 +423,17 @@ def generate_concept_lora(
         workflow_hash=graph_hash,
         prompt_id=job_id,
         concept_hash=concept_hash_value,
+        generator=GENERATOR_ID,
         lora_name=lora_name,
         lora_weight=lora_weight,
         lora_license=lora_license,
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
-    provenance_path.write_text(json.dumps(asdict(provenance), indent=2))
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
 
     return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
