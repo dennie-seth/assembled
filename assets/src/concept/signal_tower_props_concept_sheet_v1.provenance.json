@@ -11,5 +11,6 @@
   "height": 1024,
   "workflow_hash": "a77e688ae7706477feea7c1e5229ee9293d74dd29875a7cf7710367843ccec9f",
   "prompt_id": "674cc982-0910-49fb-92fd-634551ae690a",
-  "concept_hash": "da676d790f923bcb266225c96445b1be26bec56b0b651befd0c254415fbe87a4"
+  "concept_hash": "da676d790f923bcb266225c96445b1be26bec56b0b651befd0c254415fbe87a4",
+  "generator": "assets/src/concept/signal_tower_props_concept_sheet_v1.recipe.json"
 }

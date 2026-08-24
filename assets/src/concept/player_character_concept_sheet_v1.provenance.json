@@ -14,5 +14,6 @@
   "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
   "lora_name": "soviet_brutalism_style_v1.safetensors",
   "lora_weight": 0.7,
-  "lora_license": "CreativeML OpenRAIL++-M"
+  "lora_license": "CreativeML OpenRAIL++-M",
+  "generator": "assets/src/concept/player_character_concept_sheet_v1.recipe.json"
 }
