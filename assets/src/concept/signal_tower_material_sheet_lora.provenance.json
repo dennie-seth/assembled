@@ -11,12 +11,14 @@
   "height": 1024,
   "workflow_hash": "dfdaf577623cdd3b84496a0c63c7099e22403165fd3ebcc6401c6a94103c3f33",
   "prompt_id": "437d1d57-0543-4e81-9384-5da7a5f5ce43",
-  "concept_hash": "61de4b16d30b8b61edc33109a4007ade5453565a183a67d195184371a8c13540",
+  "concept_hash": "0366e6c1176b5f0cbd61e234e5fe44ba097472db855d260ca485ed041bf4880d",
   "denoise": 0.9,
   "conditioning_source": "assets/src/concept/signal_tower_material_template.png",
   "lora_name": "soviet_brutalism_style_v1.safetensors",
   "lora_weight": 0.75,
   "lora_license": "CreativeML Open RAIL++-M",
   "base_concept_hash": "9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460",
-  "output_sha256": "0366e6c1176b5f0cbd61e234e5fe44ba097472db855d260ca485ed041bf4880d"
+  "output_sha256": "0366e6c1176b5f0cbd61e234e5fe44ba097472db855d260ca485ed041bf4880d",
+  "generator": "assets/src/concept/signal_tower_material_sheet_lora.recipe.json",
+  "_t0226_fix": "concept_hash previously held the sha256 of the conditioning_source template (61de4b16...), not the output sheet -- corrected to match the already-present output_sha256 field (the actual sha256 of signal_tower_material_sheet_lora.png, per DL-15's 'LoRA run' value)."
 }

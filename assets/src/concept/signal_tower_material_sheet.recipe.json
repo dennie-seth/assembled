@@ -1,0 +1,16 @@
+{
+  "name": "signal_tower_material_sheet",
+  "description": "T-0106 — Signal Tower interior material sheet (concrete wall, floor, wall-to-floor trim), img2img-conditioned on signal_tower_material_template.png. Source for T-0105 palette extraction (home_palette.json) and DL-15's LoRA direction-confirmation handshake. Backfilled by T-0226 -- this recipe did not exist before (the sheet's provenance previously had no committed generator to point to, and its concept_hash field was misassigned to the template's hash; see the sibling .provenance.json's _t0226_fix note).",
+  "prompt": "brutalist concrete wall texture, worn concrete floor surface, wall-to-floor trim, muted concrete grey and oxide and institutional green, flat side-on reference sheet, no perspective, value-separated material panels, interior, weathered surface detail, rough stained concrete",
+  "negative_prompt": "equipment, control panel, machinery, switches, buttons, sky, perspective, three-quarter view, isometric, vanishing point, text, watermark, glow, blurry, low quality, character, creature, smooth, flat colour, solid colour",
+  "seed": 3101,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "sampler": "euler",
+  "scheduler": "normal",
+  "denoise": 0.9,
+  "conditioning_source": "assets/src/concept/signal_tower_material_template.png"
+}
