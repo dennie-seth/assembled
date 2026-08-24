@@ -1405,7 +1405,10 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
       const implChild = await nthChild(runner, n * 2 - 1);
       implChild.emit("exit", 0, null);
       const reviewChild = await nthChild(runner, n * 2);
-      reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "missing test"))));
+      // Distinct notes per attempt -- this test exercises the auto-retry cap itself, not
+      // the §23-a no-progress abort (see runOrchestrator.noProgressAbort.test.js for that),
+      // so every attempt must hash to a different failure signature to reach the cap.
+      reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", `missing test (round ${n})`))));
       reviewChild.emit("exit", 0, null);
     }
     await runPromise;
@@ -2746,7 +2749,9 @@ describe("RunOrchestrator — commits every in-run status write to repoRoot", ()
       const implChild = await nthChild(runner, attempt * 2 - 1);
       implChild.emit("exit", 0, null);
       const reviewChild = await nthChild(runner, attempt * 2);
-      reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("FAIL", "nope")}`)));
+      // Distinct notes per attempt -- this test exercises the commit-on-every-status-write
+      // behavior through to cap exhaustion, not the §23-a no-progress abort.
+      reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("FAIL", `nope (round ${attempt})`)}`)));
       reviewChild.emit("exit", 0, null);
     }
     await runPromise;

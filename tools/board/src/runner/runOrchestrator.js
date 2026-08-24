@@ -18,6 +18,7 @@ import {
   applyPlannerFileViewDiff
 } from "./plannerFileView.js";
 import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
+import { computeFailureSignature } from "./failureSignature.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
 import { findExistingRemediationCard, draftRemediationCard } from "../lib/escalationRemediation.js";
 import { createCard as createCardDefault } from "./cardCreation.js";
@@ -389,6 +390,11 @@ export class RunOrchestrator {
 
     let currentReused = reused;
     const attemptRecords = [];
+    // Tracks the previous attempt's failure signature (§23-a) so two consecutive attempts that
+    // fail for the identical, unfixable reason abort the loop immediately instead of burning the
+    // remaining MAX_AUTO_RETRY_ATTEMPTS slots on repeats -- see _handleFailValidation/
+    // _escalateIfGenuineBlocker below for how the abort is surfaced.
+    let previousSignature = null;
     for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
       // Re-fetch: a prior attempt in this same loop may have appended a FAIL note to the
       // body (read by the implementer's "continuing existing work" prompt on the retry).
@@ -411,18 +417,27 @@ export class RunOrchestrator {
         return;
       }
 
-      attemptRecords.push({ attempt, notes: verdict.notes, events });
+      // Inactivity timeouts are excluded from signature comparison (see _inactivityVerdict's
+      // `synthetic` docstring): their reason text is generic by construction, so two in a row
+      // isn't evidence of a repeating, unfixable blocker the way a genuine reviewer FAIL is.
+      const signature = verdict.synthetic
+        ? null
+        : computeFailureSignature({ phase: verdict.phase, verdict: verdict.verdict, notes: verdict.notes });
+      const noProgress = signature !== null && previousSignature !== null && signature === previousSignature;
+      attemptRecords.push({ attempt, notes: verdict.notes, events, signature });
 
       const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
-      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !isFinalAttempt);
-      if (isFinalAttempt) {
-        await this._escalateIfGenuineBlocker(taskId, attemptRecords, runLog);
+      const stopping = isFinalAttempt || noProgress;
+      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !stopping, { noProgress, signature });
+      if (stopping) {
+        await this._escalateIfGenuineBlocker(taskId, attemptRecords, runLog, { noProgress, repeatedSignature: noProgress ? signature : null });
         return;
       }
 
       // Every attempt after the first resumes the same worktree/branch, regardless of
       // whether addWorktree itself had to reuse it (a first attempt can start fresh).
       currentReused = true;
+      if (signature !== null) previousSignature = signature;
     }
   }
 
@@ -536,7 +551,7 @@ export class RunOrchestrator {
       await this._logCrossCheck(taskId, runLog, verdict.notes);
     }
 
-    return { stop: false, verdict, events: [...implementerResult.events, ...reviewerResult.events] };
+    return { stop: false, verdict: { ...verdict, phase: verdict.phase ?? "reviewer" }, events: [...implementerResult.events, ...reviewerResult.events] };
   }
 
   /**
@@ -794,9 +809,18 @@ export class RunOrchestrator {
     return `${phase} run exceeded ${minutes} minute${minutes === 1 ? "" : "s"} and was terminated -- likely a hung subprocess`;
   }
 
-  /** Synthetic FAIL verdict for an inactivity-timed-out implementer/reviewer phase -- feeds the normal auto-retry loop instead of hard-blocking, since a stdin-hang is a one-off tool-call incident, not evidence the whole attempt is unrecoverable. */
+  /**
+   * Synthetic FAIL verdict for an inactivity-timed-out implementer/reviewer phase -- feeds the
+   * normal auto-retry loop instead of hard-blocking, since a stdin-hang is a one-off tool-call
+   * incident, not evidence the whole attempt is unrecoverable. `synthetic: true` opts this out of
+   * §23-a's no-progress signature comparison (see _runCardInWorktree): its reason text is the
+   * same generic string every time by construction (same phase + same configured timeout), so
+   * treating repeats as "no progress" would defeat the whole point of retrying it -- a stdin-hang
+   * is exactly the kind of flaky, non-reproducible failure that's likely to clear on a plain
+   * retry, unlike a deterministic reviewer FAIL repeating the same finding.
+   */
   _inactivityVerdict(phase) {
-    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity") };
+    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity"), phase, synthetic: true };
   }
 
   async cancelRun(taskId) {
@@ -836,30 +860,49 @@ export class RunOrchestrator {
     await this._updateAndBroadcast(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
   }
 
-  /** `(run N of MAX)` suffix on every FAIL note -- the attempt-count visibility the auto-retry loop needs on the card. */
-  _failNoteText(verdict, attempt, capped) {
+  /**
+   * `(run N of MAX)` suffix on every FAIL note -- the attempt-count visibility the auto-retry loop
+   * needs on the card. `noProgress` (§23-a) takes priority over the plain cap-reached suffix: it
+   * names the repeated failure signature and states outright that the loop stopped itself early,
+   * not because attempts ran out -- distinct wording from the exhausted-cap case on purpose, so a
+   * human reading the card never has to guess which one happened.
+   */
+  _failNoteText(verdict, attempt, capped, { noProgress = false, signature } = {}) {
     const progress = `(run ${attempt} of ${MAX_AUTO_RETRY_ATTEMPTS})`;
-    const capSuffix = capped ? " Auto-retry limit reached -- blocked for human review." : "";
-    return `${verdict.notes}\n\n${progress}${capSuffix}`;
+    let suffix = "";
+    if (noProgress) {
+      suffix =
+        ` Auto-retry loop aborted: no progress -- this attempt's failure signature (${signature}) matches ` +
+        "the previous attempt's. Blocked for human review; retries were not exhausted.";
+    } else if (capped) {
+      suffix = " Auto-retry limit reached -- blocked for human review.";
+    }
+    return `${verdict.notes}\n\n${progress}${suffix}`;
   }
 
   /**
-   * Records a FAIL verdict. `retrying` (true for every attempt but the last) keeps the card
-   * at `status: "in-progress"` -- the same status a live run shows -- since the auto-retry
-   * loop is about to re-invoke the implementer itself; the final attempt instead moves the
-   * card to `blocked` for a human, with a note explaining the cap was reached.
+   * Records a FAIL verdict. `retrying` (true for every attempt but the last, and false for a
+   * no-progress abort regardless of attempt count) keeps the card at `status: "in-progress"` --
+   * the same status a live run shows -- since the auto-retry loop is about to re-invoke the
+   * implementer itself; a stopping attempt instead moves the card to `blocked` for a human, with
+   * a note explaining why the loop stopped (cap reached, or no progress -- see `_failNoteText`).
    */
-  async _handleFailValidation(taskId, verdict, attempt, retrying) {
+  async _handleFailValidation(taskId, verdict, attempt, retrying, { noProgress = false, signature } = {}) {
     const current = await this.store.get(taskId);
     await this._updateAndBroadcast(taskId, {
       status: retrying ? "in-progress" : "blocked",
-      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying))
+      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying, { noProgress, signature }))
     });
   }
 
   /**
    * Escalation step, fired once at the exhaustion boundary of the auto-retry loop (the 5th
    * consecutive FAIL that just set the card to `blocked` -- see docs/design/escalation-workflow.md).
+   * Also fires early, before the cap is reached, when the retry loop detects no progress (§23-a):
+   * two consecutive attempts hashed to the identical failure signature (`noProgress`/
+   * `repeatedSignature`, threaded through from `_runCardInWorktree`) -- buildBlockerReport folds
+   * that into the report's `abortReason` so the comment/remediation card name the repeated
+   * signature and say explicitly the loop stopped for no progress, not exhaustion.
    *
    * First checks whether the run(s) failed because of an Anthropic token/usage/weekly/rate limit
    * -- a transient environmental stop, not a genuine blocker -- by scanning every attempt's raw
@@ -881,7 +924,7 @@ export class RunOrchestrator {
    * create failure) is caught and logged, never rethrown -- the card is already correctly
    * `blocked` by the time this runs, and escalation is additive, not load-bearing for that.
    */
-  async _escalateIfGenuineBlocker(taskId, attemptRecords, runLog) {
+  async _escalateIfGenuineBlocker(taskId, attemptRecords, runLog, { noProgress = false, repeatedSignature = null } = {}) {
     try {
       const allEvents = attemptRecords.flatMap((r) => r.events ?? []);
       if (eventsContainUsageLimitSignature(allEvents)) {
@@ -894,7 +937,7 @@ export class RunOrchestrator {
       }
 
       const task = await this.store.get(taskId);
-      const report = buildBlockerReport({ task, attemptRecords, attemptCount: attemptRecords.length });
+      const report = buildBlockerReport({ task, attemptRecords, attemptCount: attemptRecords.length, noProgress, repeatedSignature });
       await this._appendComment(taskId, "assembled-board", formatBlockerReportComment(report));
 
       const tasks = await this.store.list();
