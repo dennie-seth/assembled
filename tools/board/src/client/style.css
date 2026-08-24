@@ -236,6 +236,14 @@ body:has(#terminal-panel.collapsed) #side-panel {
   color: color-mix(in srgb, red 55%, currentColor);
 }
 
+/* A Run/Re-run control on a card whose own dependencies are unmet (boardView.js). Mirrors
+   .detail-delete:disabled -- dimmed, and the cursor stops offering the interaction. */
+.card-run:disabled,
+.card-rerun:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .detail-field {
   display: flex;
   flex-direction: column;

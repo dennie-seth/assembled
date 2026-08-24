@@ -1,4 +1,12 @@
-import { STATUSES, groupTasksByStatus, computeBlockerCounts, computeDependencyStatus, sortTasks, SORT_KEYS } from "./board.js";
+import {
+  STATUSES,
+  groupTasksByStatus,
+  computeBlockerCounts,
+  computeDependencyStatus,
+  computeUnmetDependencies,
+  sortTasks,
+  SORT_KEYS
+} from "./board.js";
 
 export const BATCH_SIZE = 20;
 
@@ -24,13 +32,28 @@ const SORT_LABELS = {
   newest: "Newest"
 };
 
-function actionButton(className, label, onClick) {
+function actionButton(className, label, onClick, { disabled = false, title } = {}) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
   button.textContent = label;
+  // title only, never aria-label: overriding the accessible name with the blocker list
+  // would cost the control its action name ("Run") in a screen reader. aria-disabled
+  // below is what conveys the state; the title is supplementary.
+  if (title) {
+    button.title = title;
+  }
+  if (disabled) {
+    button.disabled = true;
+    button.setAttribute("aria-disabled", "true");
+  }
   button.addEventListener("click", (event) => {
     event.stopPropagation();
+    // Re-checked here rather than relying on the disabled attribute alone: a disabled
+    // <button> suppresses real user clicks, but the handler is still wired and a
+    // programmatic dispatch reaches it. The requirement is that the run POST is inert,
+    // not merely greyed out, so the guard lives in the handler too.
+    if (button.disabled) return;
     onClick();
   });
   return button;
@@ -80,7 +103,7 @@ function attemptsBadgeFor(task) {
   return badge;
 }
 
-function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, dependencyStatus) {
+function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, dependencyStatus, unmetDependencies) {
   const card = document.createElement("div");
   card.className = "card";
   card.draggable = true;
@@ -118,11 +141,20 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, depen
 
   card.append(titleRow, meta);
 
+  // Display half of the RUN-3 / LC-5 dependency guard (docs/board-invariants.md). The
+  // server already 409s a run whose own dependencies aren't done/retired
+  // (assertCanMoveToInProgress on the /run route, which stays as defence in depth); a
+  // control that looks live and then fails on the round trip is just a worse way to say
+  // no. Both controls post to the same /run route, so both are gated the same way --
+  // Cancel is not, it doesn't start a run.
+  const unmet = unmetDependencies?.get(task.id) ?? [];
+  const runOptions = unmet.length > 0 ? { disabled: true, title: `Blocked by ${unmet.join(", ")}` } : undefined;
+
   if (task.status === "ready" && onRun) {
-    card.appendChild(actionButton("card-run", "Run", () => onRun(task.id)));
+    card.appendChild(actionButton("card-run", "Run", () => onRun(task.id), runOptions));
   }
   if ((task.status === "review" || task.status === "blocked") && onRun) {
-    card.appendChild(actionButton("card-rerun", "Re-run", () => onRun(task.id)));
+    card.appendChild(actionButton("card-rerun", "Re-run", () => onRun(task.id), runOptions));
   }
   if ((task.status === "in-progress" || task.status === "validation") && onCancel) {
     card.appendChild(actionButton("card-cancel", "Cancel", () => onCancel(task.id)));
@@ -151,7 +183,7 @@ function sortSelectFor(status, sortKey, onSortChange) {
   return select;
 }
 
-function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus) {
+function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus, unmetDependencies) {
   const column = document.createElement("div");
   column.className = "column";
   column.dataset.status = status;
@@ -189,7 +221,7 @@ function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus)
   const visibleCount = callbacks.columnBatch?.get(status) ?? BATCH_SIZE;
   const sorted = sortTasks(tasks, sortKey);
   for (const task of sorted.slice(0, visibleCount)) {
-    list.appendChild(renderCard(task, callbacks, blockerCounts, dependencyStatus));
+    list.appendChild(renderCard(task, callbacks, blockerCounts, dependencyStatus, unmetDependencies));
   }
   if (sorted.length > visibleCount && callbacks.onShowMore) {
     const sentinel = document.createElement("div");
@@ -209,6 +241,7 @@ export function renderBoard(root, tasks, callbacks) {
   const grouped = groupTasksByStatus(tasks);
   const blockerCounts = computeBlockerCounts(tasks);
   const dependencyStatus = computeDependencyStatus(tasks);
+  const unmetDependencies = computeUnmetDependencies(tasks);
   root.replaceChildren();
 
   if (callbacks.error) {
@@ -222,7 +255,9 @@ export function renderBoard(root, tasks, callbacks) {
   board.className = "board";
 
   for (const status of STATUSES) {
-    board.appendChild(renderColumn(status, grouped.get(status) ?? [], callbacks, blockerCounts, dependencyStatus));
+    board.appendChild(
+      renderColumn(status, grouped.get(status) ?? [], callbacks, blockerCounts, dependencyStatus, unmetDependencies)
+    );
   }
 
   root.appendChild(board);
