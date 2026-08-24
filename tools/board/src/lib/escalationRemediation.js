@@ -34,18 +34,22 @@ export function draftRemediationCard({ task, report, attemptCount, now = () => n
   const dateStr = now().toISOString().slice(0, 10);
   const marker = `<!-- escalation-remediation-for: ${task.id} -->`;
   const label = CATEGORY_LABELS[report.lacks.category] ?? report.lacks.category;
+  const contextLine = report.noProgress
+    ? `Auto-escalated after \`${task.id}\` (${task.title}) had its auto-retry loop aborted for no progress after ${attemptCount} attempt(s) (proposed ${dateStr}).`
+    : `Auto-escalated after \`${task.id}\` (${task.title}) exhausted ${attemptCount} auto-retry attempts (proposed ${dateStr}).`;
 
   const body = [
     marker,
     "",
     "## Context",
     "",
-    `Auto-escalated after \`${task.id}\` (${task.title}) exhausted ${attemptCount} auto-retry attempts (proposed ${dateStr}).`,
+    contextLine,
     "",
     "## Blocker report",
     "",
     `**Attempted:** ${report.attempted}`,
     "",
+    ...(report.abortReason ? [`**Abort reason:** ${report.abortReason}`, ""] : []),
     "**Failure signature across attempts:**",
     "",
     report.failureSignature,

@@ -193,7 +193,8 @@ describe("RunOrchestrator -- no-progress abort on identical failure signature", 
     const comment = finalTask.comments.find((c) => c.text.includes("Blocker report"));
     expect(comment).toBeTruthy();
     expect(comment.text).toMatch(/no progress/i);
-    expect(comment.text).not.toMatch(/exhausted/i);
+    expect(comment.text).not.toMatch(/auto-retry limit reached/i);
+    expect(comment.text).toMatch(/not because attempts were exhausted/i);
     // Names the repeated signature (a hex digest) explicitly.
     expect(comment.text).toMatch(/[0-9a-f]{16,}/);
 
@@ -238,7 +239,7 @@ describe("RunOrchestrator -- no-progress abort on identical failure signature", 
     const runPromise = orchestrator.runCard("T-0001");
     await driveFailCycle(runner, 1, "first distinct failure: missing config key");
     await driveFailCycle(runner, 2, "second distinct failure: different assertion entirely");
-    await driveFailCycle(runner, 3, "second distinct failure: different assertion entirely (again, same root cause)");
+    await driveFailCycle(runner, 3, "second distinct failure: different assertion entirely");
     await runPromise;
 
     // 3 attempts ran (attempt 2 differed from 1, consuming a normal slot; attempt 3 repeated
