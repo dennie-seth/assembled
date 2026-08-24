@@ -51,6 +51,7 @@ from comfy_client.base_url import resolve_base_url
 from comfy_client.checkpoint_hash import hash_checkpoint_file
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.errors import MissingModelHashError
+from comfy_client.provenance_sidecar import package_repo_root, write_provenance_sidecar
 from comfy_client.recipe import Recipe
 from comfy_client.workflow import workflow_hash
 
@@ -303,6 +304,11 @@ def generate_cutout(
     )
 
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
-    provenance_path.write_text(json.dumps(asdict(provenance), indent=2))
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
 
     return CutoutResult(path=image_path, prompt_id=job_id, provenance=provenance)
