@@ -23,6 +23,7 @@ import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.
 import { findExistingRemediationCard, draftRemediationCard } from "../lib/escalationRemediation.js";
 import { createCard as createCardDefault } from "./cardCreation.js";
 import { checkAcceptancePreflight } from "./acceptancePreflight.js";
+import { checkCapabilityPreflight } from "./capabilityPreflight.js";
 
 /**
  * Hard cap on total implementer/reviewer runs a card can consume across its bounded
@@ -384,6 +385,23 @@ export class RunOrchestrator {
       const preflight = checkAcceptancePreflight(preFlightTask);
       if (!preflight.ok) {
         await this._blocked(taskId, preflight.message);
+        return;
+      }
+
+      // Pre-flight (HANDOFF §23-b): checks the AC's actionable claims against the assigned
+      // agent's tool grants and against external capabilities/resources it names (a ComfyUI
+      // checkpoint/LoRA/custom node, a service endpoint) -- before the implementer child process
+      // is spawned. Precedents this exists to catch before burning implementer/GPU time: T-0212
+      // (assets.md tilde-vs-absolute python grant gap), T-0222 (AC required "open a PR", never
+      // satisfiable by any implementer agent), T-0193 (ten FAILs on a missing reviewer grant).
+      // Same fail-fast/blocked path as the acceptance-checklist preflight above -- a capability
+      // gap is exactly as much a genuine blocker as a missing Acceptance section is.
+      const capabilityPreflight = checkCapabilityPreflight(preFlightTask, effectiveAgent, {
+        agentsDir: this.agentsDir,
+        resolveAllowedToolsFn: this.resolveAllowedToolsFn
+      });
+      if (!capabilityPreflight.ok) {
+        await this._blocked(taskId, capabilityPreflight.message);
         return;
       }
     }
