@@ -20,7 +20,9 @@
   "lora_name": "soviet_brutalism_style_v1.safetensors",
   "lora_weight": 0.70,
   "lora_license": "CreativeML Open RAIL++-M",
-  "generator": "assets/src/concept/_comfyui_structure_workflow.json (ComfyUI 0.29.0 img2img+LoRA workflow, submitted via tools/board/scripts/agentCurl.js per T-0226)",
+  "generator": "assets/src/concept/_comfyui_structure_workflow.json",
+  "comfyui_version": "0.29.0",
+  "_generator_note": "`generator` is the api-format ComfyUI workflow that was POSTed to /prompt at 172.18.192.1:8188 via tools/board/scripts/agentCurl.js for this card (T-0226); its sha256 is the workflow_hash recorded above, and its node graph matches the payload ComfyUI recorded under prompt_id 2797fa19-2607-4dfb-b3b1-dbec203cc9ea exactly. Free-text detail lives here rather than appended to `generator`, which the P-7 resolvability gate (tools/asset-gate/src/asset_gate/generator.py) resolves verbatim as a repo path.",
   "generated_at": "2026-08-24",
   "card": "T-0226",
   "_t0226_coherence_fix": "First submission of this sheet (prompt_id 5b78b7c4-8ad5-434b-8a4c-fddab9de61fa) was a bare txt2img+LoRA generation with no conditioning_source -- it violated the archetype-first coherence guard (13-asset-pipeline.md:313-319, 'the first approved concept sheet conditions the ones that follow ... not a bare prompt') and rendered a receding-perspective interior room scene instead of flat elevation panels. Regenerated as img2img (denoise=0.88) conditioned on signal_tower_material_sheet.png -- the Signal Tower archetype's first sheet -- with a fourth DOOR panel added to also cover the doors asset set the audit table was missing a row for."

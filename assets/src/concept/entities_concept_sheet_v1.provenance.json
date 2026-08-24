@@ -18,5 +18,7 @@
   "workflow_hash": "e13d0c0b9ecc21ae8e28c3c4d62c9c55c3d859706237cffaebfba7513df8f2c2",
   "concept_hash": "77b03788aef9533d5b5c36d9df2583d234ef23e455efc509bf5bab50ec1244ce",
   "generated_at": "2026-08-20T17:04:54Z",
-  "generator": "assets/src/concept/entities_concept_sheet_v1.recipe.json (ComfyUI via T-0210)"
+  "generator": "assets/src/concept/entities_concept_sheet_v1.recipe.json",
+  "card": "T-0210",
+  "_generator_note": "Generated through ComfyUI for T-0210. The api-format workflow submitted for prompt_id 72a3994b-4401-4677-8b5a-2a37d8ae5977 is committed at assets/src/concept/_comfyui_entities_workflow.json, whose sha256 matches the workflow_hash recorded above. Free-text detail lives here rather than appended to `generator`, which the P-7 resolvability gate resolves verbatim as a repo path."
 }

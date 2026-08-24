@@ -29,7 +29,6 @@ final/entity/watcher_idle_sheet_v1.provenance.json
 final/entity/watcher_move_sheet_v1.provenance.json
 final/entity/watcher_trapped_sheet_v1.provenance.json
 final/tiles/signal_tower_concrete_wall_16px.provenance.json
-src/concept/entities_concept_sheet_v1.provenance.json
 src/concept/player_character_concept_sheet_v1.provenance.json
 src/concept/signal_tower_concept_sheet_v1.provenance.json
 src/concept/signal_tower_concept_sheet_v3.provenance.json
