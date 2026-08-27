@@ -230,3 +230,27 @@ def test_deploy_to_comfyui_reports_copy_failure_without_raising(tmp_path, monkey
     dest = deploy_to_comfyui(source, target_dir, validate=_always_valid)
 
     assert dest is None
+
+
+class TestSaveEveryNEpochsArg:
+    """The checkpoint cadence has to reach sd-scripts, not just sit in the config."""
+
+    def test_passes_the_configured_cadence_through_to_sd_scripts(self):
+        config = _make_config(save_every_n_epochs=1)
+        args = build_train_args(
+            config,
+            checkpoint_path=pathlib.Path("/ckpt.safetensors"),
+            dataset_config_path=pathlib.Path("/dataset.toml"),
+            output_dir=pathlib.Path("/out"),
+        )
+        assert "--save_every_n_epochs=1" in args
+
+    def test_a_larger_cadence_is_passed_verbatim(self):
+        config = _make_config(save_every_n_epochs=3)
+        args = build_train_args(
+            config,
+            checkpoint_path=pathlib.Path("/ckpt.safetensors"),
+            dataset_config_path=pathlib.Path("/dataset.toml"),
+            output_dir=pathlib.Path("/out"),
+        )
+        assert "--save_every_n_epochs=3" in args

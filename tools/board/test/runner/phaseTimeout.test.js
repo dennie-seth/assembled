@@ -21,8 +21,8 @@ import {
  * server/client/infra phases that have no business running for two hours.
  */
 describe("resolvePhaseTimeoutMs", () => {
-  it("gives the assets agent 120 minutes", () => {
-    expect(resolvePhaseTimeoutMs("assets")).toBe(120 * 60 * 1000);
+  it("gives the assets agent 240 minutes", () => {
+    expect(resolvePhaseTimeoutMs("assets")).toBe(240 * 60 * 1000);
   });
 
   it("leaves every other agent on the 40-minute default", () => {
@@ -54,7 +54,7 @@ describe("resolvePhaseTimeoutMs", () => {
 
   it("ignores a non-positive or unparseable override and keeps the per-agent budget", () => {
     for (const bad of [0, -1, NaN, null, undefined, "abc"]) {
-      expect(resolvePhaseTimeoutMs("assets", { override: bad })).toBe(120 * 60 * 1000);
+      expect(resolvePhaseTimeoutMs("assets", { override: bad })).toBe(240 * 60 * 1000);
     }
   });
 
@@ -66,7 +66,7 @@ describe("resolvePhaseTimeoutMs", () => {
   });
 
   it("exposes the budgets as a frozen map keyed by agent name", () => {
-    expect(PHASE_TIMEOUT_MS_BY_AGENT.assets).toBe(120 * 60 * 1000);
+    expect(PHASE_TIMEOUT_MS_BY_AGENT.assets).toBe(240 * 60 * 1000);
     expect(Object.isFrozen(PHASE_TIMEOUT_MS_BY_AGENT)).toBe(true);
   });
 
@@ -74,5 +74,22 @@ describe("resolvePhaseTimeoutMs", () => {
     for (const ms of Object.values(PHASE_TIMEOUT_MS_BY_AGENT)) {
       expect(ms).toBeGreaterThanOrEqual(DEFAULT_PHASE_TIMEOUT_MS);
     }
+  });
+});
+
+// Arm B's own measured numbers, so a future trim has to argue with them:
+// ~7 min SDXL checkpoint load (6.94 GB at ~32 MB/s over the WSL 9p mount)
+// + ~3 min network build / latent cache / optimizer
+// + ~117 min training (72 steps at ~98 s/step)
+// = ~127 min for training alone, and the generation half adds attempts on top.
+// T-0229 was killed at step 65/72 under the old 120-minute bound.
+describe("the assets budget covers the measured Arm B worst case", () => {
+  const MEASURED_ARM_B_WORST_CASE_MS = 175 * 60 * 1000;
+
+  it("leaves real slack above the worst case, not a few minutes", () => {
+    const budget = resolvePhaseTimeoutMs("assets");
+    expect(budget).toBeGreaterThan(MEASURED_ARM_B_WORST_CASE_MS);
+    // At least 30 minutes of headroom -- the checkpoint read rate varies run to run.
+    expect(budget - MEASURED_ARM_B_WORST_CASE_MS).toBeGreaterThanOrEqual(30 * 60 * 1000);
   });
 });
