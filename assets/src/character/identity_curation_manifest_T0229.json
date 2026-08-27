@@ -1,0 +1,169 @@
+{
+  "curation_version": "1.0",
+  "card": "T-0229",
+  "bake_off_arm": "B (\u00a723-e)",
+  "source_sheet": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "concept_card": "T-0209",
+  "trigger_token": "sbrutalistplayer",
+  "selection_rationale": "T-0209's sheet diverged from its own 'four reference panels' prompt into ~20 costume/figure studies spanning at least three visually distinct designs. Only the institutional-green-coat panels (consistent with the sheet's own prompt and the established player silhouette) were curated; tan/khaki and grey-armour panels elsewhere on the same sheet are a different design and were excluded, not merely deduplicated.",
+  "generator": "assets/src/character/curate_identity_panels_T0229.py",
+  "refs": [
+    {
+      "id": "ref_001",
+      "crop_box": [
+        0,
+        245,
+        205,
+        500
+      ],
+      "view": "front view, hood down, arms at sides",
+      "augmentation": "none",
+      "source_panel": null,
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, front view, hood down, arms at sides, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_007",
+      "crop_box": [
+        0,
+        245,
+        205,
+        500
+      ],
+      "view": "front view, hood down, arms at sides",
+      "augmentation": "horizontal_flip",
+      "source_panel": "ref_001",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, front view, hood down, arms at sides, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_002",
+      "crop_box": [
+        205,
+        245,
+        410,
+        500
+      ],
+      "view": "front view, arms at sides",
+      "augmentation": "none",
+      "source_panel": null,
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, front view, arms at sides, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_008",
+      "crop_box": [
+        205,
+        245,
+        410,
+        500
+      ],
+      "view": "front view, arms at sides",
+      "augmentation": "horizontal_flip",
+      "source_panel": "ref_002",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, front view, arms at sides, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_003",
+      "crop_box": [
+        410,
+        245,
+        614,
+        500
+      ],
+      "view": "front view, hooded, right arm raised",
+      "augmentation": "none",
+      "source_panel": null,
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, front view, hooded, right arm raised, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_009",
+      "crop_box": [
+        410,
+        245,
+        614,
+        500
+      ],
+      "view": "front view, hooded, right arm raised",
+      "augmentation": "horizontal_flip",
+      "source_panel": "ref_003",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, front view, hooded, right arm raised, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_004",
+      "crop_box": [
+        0,
+        500,
+        205,
+        755
+      ],
+      "view": "three-quarter back view, pack visible",
+      "augmentation": "none",
+      "source_panel": null,
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, three-quarter back view, pack visible, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_010",
+      "crop_box": [
+        0,
+        500,
+        205,
+        755
+      ],
+      "view": "three-quarter back view, pack visible",
+      "augmentation": "horizontal_flip",
+      "source_panel": "ref_004",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, three-quarter back view, pack visible, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_005",
+      "crop_box": [
+        410,
+        500,
+        614,
+        755
+      ],
+      "view": "three-quarter back view, pack visible",
+      "augmentation": "none",
+      "source_panel": null,
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, three-quarter back view, pack visible, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_011",
+      "crop_box": [
+        410,
+        500,
+        614,
+        755
+      ],
+      "view": "three-quarter back view, pack visible",
+      "augmentation": "horizontal_flip",
+      "source_panel": "ref_005",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, three-quarter back view, pack visible, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_006",
+      "crop_box": [
+        614,
+        500,
+        819,
+        755
+      ],
+      "view": "straight back view",
+      "augmentation": "none",
+      "source_panel": null,
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, straight back view, flat colour concept illustration, grey background"
+    },
+    {
+      "id": "ref_012",
+      "crop_box": [
+        614,
+        500,
+        819,
+        755
+      ],
+      "view": "straight back view",
+      "augmentation": "horizontal_flip",
+      "source_panel": "ref_006",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green coat, pale hooded head, white gloves, straight back view, flat colour concept illustration, grey background"
+    }
+  ]
+}
