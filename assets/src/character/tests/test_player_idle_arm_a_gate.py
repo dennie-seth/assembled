@@ -146,7 +146,9 @@ def test_ip_adapter_and_controlnet_recorded() -> None:
     data = json.loads(PROVENANCE_PATH.read_text())
     assert data.get("lora_hash"), "lora_hash missing — T-0072 style LoRA must be recorded"
     assert data.get("ip_adapter"), "ip_adapter field missing — Arm A must record its IP-Adapter"
-    assert data.get("controlnet"), "controlnet field missing — Arm A must record its OpenPose ControlNet"
+    assert data.get("controlnet"), (
+        "controlnet field missing — Arm A must record its OpenPose ControlNet"
+    )
 
 
 def test_generator_field_is_bare_repo_path() -> None:

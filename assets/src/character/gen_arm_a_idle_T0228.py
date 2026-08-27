@@ -77,7 +77,9 @@ CONTROLNET_NAME = "controlnet-openpose-sdxl-1.0_xinsir.safetensors"
 IPADAPTER_NAME = "ip-adapter-plus_sdxl_vit-h.safetensors"
 IPADAPTER_PRESET = "PLUS (high strength)"
 
-CONCEPT_SHEET_PATH = REPO_ROOT / "assets" / "src" / "concept" / "player_character_concept_sheet_v1.png"
+CONCEPT_SHEET_PATH = (
+    REPO_ROOT / "assets" / "src" / "concept" / "player_character_concept_sheet_v1.png"
+)
 EXPECTED_CONCEPT_HASH = "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b"
 
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
@@ -148,9 +150,9 @@ def upload_image(path: Path) -> str:
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="image"; filename="{path.name}"\r\n'
         "Content-Type: image/png\r\n\r\n"
-    ).encode("utf-8")
+    ).encode()
     body += path.read_bytes()
-    body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+    body += f"\r\n--{boundary}--\r\n".encode()
     req = urllib.request.Request(
         f"{COMFYUI_BASE}/upload/image",
         data=body,
@@ -161,7 +163,8 @@ def upload_image(path: Path) -> str:
 
 
 def submit_prompt(graph: dict) -> str:
-    result = _http_post_json("/prompt", {"prompt": graph, "client_id": f"T-0228-arm-a-{uuid.uuid4().hex[:8]}"})
+    client_id = f"T-0228-arm-a-{uuid.uuid4().hex[:8]}"
+    result = _http_post_json("/prompt", {"prompt": graph, "client_id": client_id})
     if "error" in result:
         raise RuntimeError(f"ComfyUI rejected the graph: {json.dumps(result['error'])}")
     return result["prompt_id"]
@@ -188,7 +191,10 @@ def wait_for_completion(prompt_id: str, timeout_s: int = 300, poll_s: int = 3) -
 
 def fetch_save_image(info: dict, node_id: str) -> bytes:
     img = info["outputs"][node_id]["images"][0]
-    qs = f"filename={urllib.parse.quote(img['filename'])}&subfolder={urllib.parse.quote(img.get('subfolder', ''))}&type={img.get('type', 'output')}"
+    filename = urllib.parse.quote(img["filename"])
+    subfolder = urllib.parse.quote(img.get("subfolder", ""))
+    image_type = img.get("type", "output")
+    qs = f"filename={filename}&subfolder={subfolder}&type={image_type}"
     return _http_get(f"/view?{qs}")
 
 
@@ -426,7 +432,9 @@ def quantize_to_palette(rgb_image: Image.Image, palette: asset_gate_palette.Pale
     return indexed
 
 
-def cleanup_orphans(indexed: Image.Image, background_index: int, size_threshold: int) -> Image.Image:
+def cleanup_orphans(
+    indexed: Image.Image, background_index: int, size_threshold: int
+) -> Image.Image:
     """Replace foreground blobs smaller than size_threshold with the background
     index -- downscale noise cleanup (§3.1)."""
     try:
@@ -451,6 +459,52 @@ def cleanup_orphans(indexed: Image.Image, background_index: int, size_threshold:
 
 def sha256_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# ── Attempt log + promotion (DL-21: every attempt logged, first pass promoted) ─
+
+ATTEMPT_LOG_PATH = REPO_ROOT / "assets" / "src" / "character" / "ARM_A_ATTEMPT_LOG_T0228.md"
+FINAL_CHARACTER_DIR = REPO_ROOT / "assets" / "final" / "character"
+FINAL_SHEET_PATH = FINAL_CHARACTER_DIR / "player_idle_sheet_arm_a_T0228.png"
+FINAL_PROVENANCE_PATH = FINAL_CHARACTER_DIR / "player_idle_sheet_arm_a_T0228.provenance.json"
+
+ATTEMPT_LOG_HEADER = (
+    "# Arm A attempt log (T-0228, HANDOFF §23-d, DL-21)\n\n"
+    "Every attempt is recorded here whether it passes the mechanical gate or not, so "
+    "attempts-to-first-pass is a real, auditable number. `mechanical_gate` is the "
+    "frame-silhouette delta check (DL-21 criterion 2's mechanical half); the human "
+    "silhouette-read (criterion 1) and human drift verdict (criterion 2's other half) "
+    "are judged later, in §23-g, against the promoted sheet.\n\n"
+    "| Attempt | Seed | ControlNet strength/end | IP-Adapter weight | LoRA weight | "
+    "GPU seconds | Mechanical gate | Promoted |\n"
+    "|---|---|---|---|---|---|---|---|\n"
+)
+
+
+def append_attempt_log(provenance: dict) -> None:
+    if not ATTEMPT_LOG_PATH.exists():
+        ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
+    row = (
+        f"| {provenance['attempt']} | {provenance['seed']} "
+        f"| {provenance['controlnet_strength']}/{provenance['controlnet_end_percent']} "
+        f"| {provenance['ip_adapter_weight']} | {provenance['lora_weight']} "
+        f"| {provenance['gpu_seconds']} "
+        f"| {'PASS' if provenance['mechanical_gate_passed'] else 'FAIL'} "
+        f"| {'yes' if provenance.get('promoted') else 'no'} |\n"
+    )
+    with ATTEMPT_LOG_PATH.open("a") as f:
+        f.write(row)
+
+
+def promote_attempt(out_dir: Path, provenance: dict) -> None:
+    """Copy this attempt's indexed sheet + provenance into assets/final/character/.
+
+    Only called for the first attempt whose mechanical gate passes -- a discarded
+    attempt's bytes never land in assets/final/, even transiently (module docstring).
+    """
+    FINAL_CHARACTER_DIR.mkdir(parents=True, exist_ok=True)
+    FINAL_SHEET_PATH.write_bytes((out_dir / "sheet_144_indexed.png").read_bytes())
+    FINAL_PROVENANCE_PATH.write_text(json.dumps(provenance, indent=2) + "\n")
 
 
 # ── Attempt driver ────────────────────────────────────────────────────────────
@@ -527,8 +581,12 @@ def run_attempt(
         )
     mechanical_gate_passed = all(d["passed"] for d in frame_deltas)
 
+    model_summary = (
+        f"{CHECKPOINT} + LoRA {LORA_NAME} (weight {lora_weight}) "
+        f"+ IP-Adapter {IPADAPTER_NAME} + ControlNet {CONTROLNET_NAME}"
+    )
     provenance = {
-        "model": f"{CHECKPOINT} + LoRA {LORA_NAME} (weight {lora_weight}) + IP-Adapter {IPADAPTER_NAME} + ControlNet {CONTROLNET_NAME}",
+        "model": model_summary,
         "model_license": CHECKPOINT_LICENSE,
         "model_hash": CHECKPOINT_HASH,
         "lora_name": LORA_NAME,
@@ -556,7 +614,8 @@ def run_attempt(
         "method": (
             "Single combined ComfyUI graph: SDXL txt2img skeleton (336x336, no LoRA) tiled "
             "bit-for-bit identical into a 1008x1008 pose grid via ImageStitch (right x2, down x2) "
-            "-> ControlNetApplyAdvanced (xinsir OpenPose) + IPAdapterAdvanced (PLUS, T-0209 concept) "
+            "-> ControlNetApplyAdvanced (xinsir OpenPose) "
+            "+ IPAdapterAdvanced (PLUS, T-0209 concept) "
             "+ LoraLoader (soviet_brutalism_style_v1) -> KSampler 1008x1008 -> area downscale to "
             "144x144 -> Oklab-nearest palette quantization (dithering off, §3.1) -> orphan cleanup."
         ),
@@ -585,7 +644,9 @@ def run_attempt(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--attempt", type=int, required=True, help="attempt number, 1..8 (DL-21 cap)")
+    parser.add_argument(
+        "--attempt", type=int, required=True, help="attempt number, 1..8 (DL-21 cap)"
+    )
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--controlnet-strength", type=float, default=0.55)
     parser.add_argument("--controlnet-end", type=float, default=0.75)
@@ -604,6 +665,16 @@ def main() -> None:
         ipadapter_weight=args.ipadapter_weight,
         lora_weight=args.lora_weight,
     )
+
+    already_promoted = FINAL_SHEET_PATH.exists()
+    promote_now = provenance["mechanical_gate_passed"] and not already_promoted
+    provenance["promoted"] = promote_now
+    out_dir = REPO_ROOT / "assets" / "out" / "arm_a" / f"attempt_{args.attempt}"
+    (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    if promote_now:
+        promote_attempt(out_dir, provenance)
+
+    append_attempt_log(provenance)
     print(json.dumps(provenance, indent=2))
 
 
