@@ -222,8 +222,14 @@ RateResult PgNoteRepo::rate(const std::string &note_id, const std::string &voter
     // Held-bleed slowdown (docs/design/02-notes-system.md §7,
     // docs/design/07-items-economy.md §5, T-0207): a genuine +1 vote slows
     // the author's held bleed. Ceiling-clamped to kHeldBleedCeilingMinutes
-    // from now so a single note cannot bank bleed time indefinitely; LEAST
-    // also means a vote never *shortens* bleed_at.
+    // from now so a single note cannot bank bleed time indefinitely. The
+    // outer GREATEST(bleed_at, ...) is what actually makes this monotonic:
+    // a bare LEAST(bleed_at + bonus, now() + ceiling) would *shorten*
+    // bleed_at whenever it already sits beyond the ceiling (e.g. a freshly
+    // spawned world item's 72h timer, ItemSpawner.cpp), which inverts the
+    // acceptance criterion instead of satisfying it. With the GREATEST
+    // guard a vote can only ever push bleed_at later, up to the ceiling —
+    // never earlier than where it already was.
     // MUST NOT touch identity.collapse_expires_at
     //   (docs/design/10-time-and-progression.md §5) — that clock is
     //   intentionally immune to rating to prevent solo players from extending
@@ -234,11 +240,11 @@ RateResult PgNoteRepo::rate(const std::string &note_id, const std::string &voter
         // constants, not user input — interpolating them into INTERVAL literals
         // avoids Drogon binary-protocol parameter issues (see fetchRanked's LIMIT).
         const std::string sql = "UPDATE item_instance "
-                                "SET bleed_at = LEAST(bleed_at + INTERVAL '" +
+                                "SET bleed_at = GREATEST(bleed_at, LEAST(bleed_at + INTERVAL '" +
                                 std::to_string(kHeldBleedRatingBonusMinutes) +
                                 " minutes', now() + INTERVAL '" +
                                 std::to_string(kHeldBleedCeilingMinutes) +
-                                " minutes') "
+                                " minutes')) "
                                 "WHERE holder = $1";
         client_->execSqlSync(sql, author);
     }
