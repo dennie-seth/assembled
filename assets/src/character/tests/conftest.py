@@ -17,7 +17,12 @@ Entity sheets (T-0200) — Watcher, Sound, Still Air (no die state):
 
 Also adds tools/asset-gate/src to sys.path at module level so that
 `pytest.importorskip("asset_gate.art")` in the test modules resolves correctly
-without requiring a separate pip install step.
+without requiring a separate pip install step. Same for this package's own
+src/ (char_gen — needed by _ensure_entity_sheets below) and
+assets/src/lora/src (lora_train.config — needed by the Arm B, T-0229,
+identity-curation/training gate tests) so a plain `pytest` run against a
+venv that only has this package's [dev] deps installed, not every editable
+package pip would otherwise chain-install, still collects cleanly.
 """
 
 from __future__ import annotations
@@ -26,12 +31,22 @@ import json
 import sys
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+
 # Make asset_gate importable from the monorepo's tools/asset-gate package
 # without requiring `pip install -e tools/asset-gate` — conftest is loaded
 # before test modules, so this is in place before pytest.importorskip runs.
-_ASSET_GATE_SRC = Path(__file__).resolve().parents[4] / "tools" / "asset-gate" / "src"
+_ASSET_GATE_SRC = _REPO_ROOT / "tools" / "asset-gate" / "src"
 if _ASSET_GATE_SRC.exists() and str(_ASSET_GATE_SRC) not in sys.path:
     sys.path.insert(0, str(_ASSET_GATE_SRC))
+
+_CHAR_GEN_SRC = Path(__file__).resolve().parents[1] / "src"
+if _CHAR_GEN_SRC.exists() and str(_CHAR_GEN_SRC) not in sys.path:
+    sys.path.insert(0, str(_CHAR_GEN_SRC))
+
+_LORA_TRAIN_SRC = _REPO_ROOT / "assets" / "src" / "lora" / "src"
+if _LORA_TRAIN_SRC.exists() and str(_LORA_TRAIN_SRC) not in sys.path:
+    sys.path.insert(0, str(_LORA_TRAIN_SRC))
 
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
