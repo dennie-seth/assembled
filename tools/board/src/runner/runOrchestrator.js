@@ -495,9 +495,16 @@ export class RunOrchestrator {
       // Inactivity timeouts are excluded from signature comparison (see _inactivityVerdict's
       // `synthetic` docstring): their reason text is generic by construction, so two in a row
       // isn't evidence of a repeating, unfixable blocker the way a genuine reviewer FAIL is.
-      const signature = verdict.synthetic
-        ? null
-        : computeFailureSignature({ phase: verdict.phase, verdict: verdict.verdict, notes: verdict.notes });
+      //
+      // The signature is computed from the worktree's git state, not the reviewer's notes --
+      // see failureSignature.js for why (T-0229 burned all five slots on eight FAILs the
+      // reviewer itself called byte-identical, because its notes carry an attempt counter).
+      const treeState = verdict.synthetic ? null : await this._readTreeState(worktreeDir);
+      const signature = computeFailureSignature({
+        phase: verdict.phase,
+        verdict: verdict.verdict,
+        state: treeState
+      });
       const noProgress = signature !== null && previousSignature !== null && signature === previousSignature;
       attemptRecords.push({ attempt, notes: verdict.notes, events, signature });
 
@@ -513,6 +520,22 @@ export class RunOrchestrator {
       // whether addWorktree itself had to reuse it (a first attempt can start fresh).
       currentReused = true;
       if (signature !== null) previousSignature = signature;
+    }
+  }
+
+  /**
+   * Worktree git state for the no-progress signature, or null if it cannot be read.
+   *
+   * Never throws: a git failure here must not take down an otherwise-fine run. Returning null
+   * makes the signature null, which is never compared -- so the loop falls back to running the
+   * full retry cap rather than risking a false abort on a card that might be progressing.
+   */
+  async _readTreeState(worktreeDir) {
+    if (typeof this.git.readTreeState !== "function") return null;
+    try {
+      return await this.git.readTreeState({ worktreeDir });
+    } catch {
+      return null;
     }
   }
 
