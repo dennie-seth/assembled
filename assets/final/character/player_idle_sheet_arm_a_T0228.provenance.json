@@ -1,0 +1,199 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7) + IP-Adapter ip-adapter-plus_sdxl_vit-h.safetensors + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "lora_weight": 0.7,
+  "lora_license": "CreativeML OpenRAIL++-M",
+  "ip_adapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
+  "ip_adapter_preset": "PLUS (high strength)",
+  "ip_adapter_weight": 0.5,
+  "controlnet": "controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+  "controlnet_strength": 1.0,
+  "controlnet_end_percent": 1.0,
+  "prompt": "pixel art idle animation contact sheet, 3 by 3 grid of nine separate equal square photographs, thin white gutter lines separating each square, exactly three rows and three columns and nothing outside the grid, Soviet brutalist armored soldier standing idle, flat front-on orthographic view, one single unchanging soldier repeated in every panel, same uniform and same equipment loadout in every panel, exactly one single figure centered in each cell matching the pose skeleton exactly, never two figures in one cell, no duplicate figure per cell, identical character identity and camera angle across all cells, same identical texture, shading and colours in every cell, no per-cell variation in equipment or uniform colour, subtle idle motion between frames, slight weight shift and natural breathing pose variation, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background in every cell, muted olive-green and grey military uniform palette, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point",
+  "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters per panel, more than nine panels, extra panels, small thumbnails, two figures per cell, duplicate figure, twins, doubled character, couple, side by side figures, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, costume change between panels, inconsistent identity, different shading between panels, different texture between panels, different colour between panels, skeleton, wireframe",
+  "pose_source": "procedural (draw_pose_skeleton_cell) -- no SDXL sampling, no seed",
+  "seed": 31419,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1008,
+  "height": 1008,
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "concept_card": "T-0209",
+  "method": "Procedurally drawn OpenPose-format skeleton (single 336x336 cell, PIL, 18-keypoint COCO layout, standard OpenPose limb colours) tiled bit-for-bit identical into a 1008x1008 pose grid, uploaded once -> ControlNetApplyAdvanced (xinsir OpenPose) + IPAdapterAdvanced (PLUS, T-0209 concept) + LoraLoader (soviet_brutalism_style_v1) -> KSampler 1008x1008 -> area downscale to 144x144 -> Oklab-nearest palette quantization (dithering off, \u00a73.1) -> orphan cleanup.",
+  "generator": "assets/src/character/gen_arm_a_idle_T0228.py",
+  "card": "T-0228",
+  "bake_off_arm": "A (\u00a723-d)",
+  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5",
+  "comfyui_prompt_id": "39c51e26-075f-466b-ae94-e7bdc053acbc",
+  "attempt": 8,
+  "gpu_seconds": 294.4,
+  "mechanical_gate_passed": false,
+  "frame_deltas": [
+    {
+      "pair": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "ratio": 0.16266822703335285,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "ratio": 0.17989417989417988,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "ratio": 0.3211252653927813,
+      "passed": false
+    },
+    {
+      "pair": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "ratio": 0.1204954954954955,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "ratio": 0.738274464389114,
+      "passed": false
+    },
+    {
+      "pair": [
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          0
+        ]
+      ],
+      "ratio": 0.7192874692874693,
+      "passed": false
+    },
+    {
+      "pair": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "ratio": 0.12354570637119114,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "ratio": 0.7795454545454545,
+      "passed": false
+    }
+  ],
+  "layout": {
+    "sheet_px": [
+      144,
+      144
+    ],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 3,
+    "frame_cells": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        2,
+        1
+      ],
+      [
+        2,
+        2
+      ]
+    ]
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "promoted": true,
+  "bake_off_result": "criterion-3 failure -- DL-21 8-attempt cap exhausted without a mechanical criterion-2 pass; delivered as the best-effort candidate for \u00a723-g's criterion-1 inspection, not as a passing sheet"
+}
