@@ -519,7 +519,11 @@ def run_attempt(
             cells[a], cells[b], background_index=0, max_delta_ratio=0.30
         )
         frame_deltas.append(
-            {"pair": [list(a), list(b)], "ratio": result.details["ratio"], "passed": result.passed}
+            {
+                "pair": [list(a), list(b)],
+                "ratio": float(result.details["ratio"]),
+                "passed": bool(result.passed),
+            }
         )
     mechanical_gate_passed = all(d["passed"] for d in frame_deltas)
 
