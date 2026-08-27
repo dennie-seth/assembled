@@ -49,13 +49,67 @@ export const MAX_AUTO_RETRY_ATTEMPTS = 5;
  */
 export const DEFAULT_PHASE_TIMEOUT_MS = 40 * 60 * 1000;
 
+/**
+ * Per-agent phase budgets, for agents whose legitimate work does not fit the default.
+ * One entry per agent; adding or tuning one is a one-line change.
+ *
+ * `assets` (120 min) -- GPU generation. T-0228 (Arm A of the §23 bake-off) was killed
+ * twice at exactly 40 minutes while making steady progress: 1136 and 661 logged events,
+ * max inter-event gap 120s / 287s (nowhere near the 8-minute inactivity threshold), and
+ * 26/26 ComfyUI executions succeeded with no errors and no OOM. Its stack (SDXL + style
+ * LoRA + IP-Adapter + OpenPose ControlNet) measured ~240s per generation, and the card's
+ * own acceptance criteria mandate up to 8 attempts -- ~32 minutes of GPU alone, before
+ * setup, tests, image inspection, descend/index and provenance. The card was
+ * unsatisfiable inside the default bound.
+ *
+ * Raising the bound is much safer than it once was: §23-a's no-progress abort escalates
+ * a repeating failure without burning the budget, and DEFAULT_INACTIVITY_TIMEOUT_MS still
+ * catches a genuine hang in 8 minutes regardless of what this says. The phase timeout is
+ * no longer the load-bearing hang defence -- it is a cost ceiling.
+ *
+ * Note this keys on the agent the PHASE runs as, not the card's agent: an assets card's
+ * reviewer phase runs as `reviewer` and keeps the default, since it verifies output
+ * rather than generating it.
+ */
+export const PHASE_TIMEOUT_MS_BY_AGENT = Object.freeze({
+  assets: 120 * 60 * 1000
+});
+
 const PHASE_TIMEOUT_ENV_VAR = "PHASE_TIMEOUT_MS";
 
-/** PHASE_TIMEOUT_MS env var: overrides DEFAULT_PHASE_TIMEOUT_MS when set to a positive number. */
-function phaseTimeoutMsFromEnv() {
+/**
+ * Phase budget for *agent*, in precedence order:
+ *   1. `override` -- the process-wide PHASE_TIMEOUT_MS escape hatch (or an injected
+ *      value in tests). Applies to every agent, deliberately: it exists to override.
+ *   2. `byAgent` -- the per-agent budget above.
+ *   3. `fallback` -- DEFAULT_PHASE_TIMEOUT_MS.
+ *
+ * A non-positive or unparseable override is ignored rather than trusted, so a typo in the
+ * env var cannot silently disable the watchdog.
+ */
+export function resolvePhaseTimeoutMs(
+  agent,
+  { override = null, byAgent = PHASE_TIMEOUT_MS_BY_AGENT, fallback = DEFAULT_PHASE_TIMEOUT_MS } = {}
+) {
+  const parsedOverride = Number(override);
+  if (override !== null && override !== undefined && Number.isFinite(parsedOverride) && parsedOverride > 0) {
+    return parsedOverride;
+  }
+  // Own-property check only: an agent literally named "constructor" or "toString" must
+  // not pick up a function off Object.prototype and be compared as a number.
+  const perAgent =
+    typeof agent === "string" && byAgent && Object.prototype.hasOwnProperty.call(byAgent, agent)
+      ? Number(byAgent[agent])
+      : NaN;
+  if (Number.isFinite(perAgent) && perAgent > 0) return perAgent;
+  return fallback;
+}
+
+/** PHASE_TIMEOUT_MS env var: a global override across every agent, or null when unset/invalid. */
+function phaseTimeoutOverrideFromEnv() {
   const raw = process.env[PHASE_TIMEOUT_ENV_VAR];
   const parsed = Number(raw);
-  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PHASE_TIMEOUT_MS;
+  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 /**
@@ -159,7 +213,8 @@ export class RunOrchestrator {
     github = githubOps,
     autoOpenPr = autoOpenPrFromEnv(),
     autoCaptureUncommitted = autoCaptureUncommittedFromEnv(),
-    phaseTimeoutMs = phaseTimeoutMsFromEnv(),
+    phaseTimeoutMs = phaseTimeoutOverrideFromEnv(),
+    phaseTimeoutsByAgent = PHASE_TIMEOUT_MS_BY_AGENT,
     inactivityTimeoutMs = inactivityTimeoutMsFromEnv(),
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
@@ -194,7 +249,9 @@ export class RunOrchestrator {
     this.github = github;
     this.autoOpenPr = autoOpenPr;
     this.autoCaptureUncommitted = autoCaptureUncommitted;
-    this.phaseTimeoutMs = phaseTimeoutMs;
+    // Global escape hatch (PHASE_TIMEOUT_MS, or injected). null = defer to the per-agent map.
+    this.phaseTimeoutOverrideMs = phaseTimeoutMs ?? null;
+    this.phaseTimeoutsByAgent = phaseTimeoutsByAgent;
     this.inactivityTimeoutMs = inactivityTimeoutMs;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
@@ -476,6 +533,7 @@ export class RunOrchestrator {
       taskId,
       task,
       phase: "implementer",
+      agent: effectiveAgent,
       prompt,
       allowedTools,
       worktreeDir,
@@ -489,7 +547,7 @@ export class RunOrchestrator {
       if (implementerResult.timeoutKind === "inactivity") {
         return { stop: false, verdict: this._inactivityVerdict("implementer"), events: implementerResult.events };
       }
-      await this._blocked(taskId, this._timeoutReason("implementer"));
+      await this._blocked(taskId, this._timeoutReason("implementer", "phase", effectiveAgent));
       return { stop: true };
     }
     if (implementerResult.exitCode !== 0) {
@@ -527,6 +585,7 @@ export class RunOrchestrator {
       taskId,
       task,
       phase: "reviewer",
+      agent: "reviewer",
       prompt: reviewerPrompt,
       allowedTools: reviewerAllowedTools,
       worktreeDir,
@@ -544,7 +603,7 @@ export class RunOrchestrator {
           events: [...implementerResult.events, ...reviewerResult.events]
         };
       }
-      await this._blocked(taskId, this._timeoutReason("reviewer"));
+      await this._blocked(taskId, this._timeoutReason("reviewer", "phase", "reviewer"));
       return { stop: true };
     }
     if (reviewerResult.exitCode !== 0) {
@@ -721,7 +780,7 @@ export class RunOrchestrator {
     return `${phase} process exited with code ${result.exitCode ?? "null"}${signalSuffix}`;
   }
 
-  async _runPhase({ taskId, task, phase, prompt, allowedTools, worktreeDir, model, runLog }) {
+  async _runPhase({ taskId, task, phase, agent, prompt, allowedTools, worktreeDir, model, runLog }) {
     const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model });
     const entry = { phase, run, worktreeDir, cancelled: false };
     this.activeRuns.set(taskId, entry);
@@ -791,7 +850,7 @@ export class RunOrchestrator {
     const timeoutPromise = new Promise((resolve) => {
       timeoutTimer = setTimeout(
         () => resolve({ exitCode: null, signal: null, spawnError: null, timedOut: true, timeoutKind: "phase" }),
-        this.phaseTimeoutMs
+        this._phaseTimeoutMsFor(agent)
       );
       if (typeof timeoutTimer.unref === "function") timeoutTimer.unref();
     });
@@ -817,14 +876,29 @@ export class RunOrchestrator {
     return { ...result, events, cancelled: entry.cancelled };
   }
 
+  /** Phase budget for the agent this phase runs as -- see resolvePhaseTimeoutMs for precedence. */
+  _phaseTimeoutMsFor(agent) {
+    return resolvePhaseTimeoutMs(agent, {
+      override: this.phaseTimeoutOverrideMs,
+      byAgent: this.phaseTimeoutsByAgent
+    });
+  }
+
   /** Human-readable reason for a phase terminated by the phase timeout or the inactivity watchdog. */
-  _timeoutReason(phase, kind = "phase") {
+  _timeoutReason(phase, kind = "phase", agent = null) {
     if (kind === "inactivity") {
       const minutes = Math.round(this.inactivityTimeoutMs / 60_000);
       return `${phase} run went silent for ${minutes} minute${minutes === 1 ? "" : "s"} with no new output and was terminated -- likely a stdin-hang or other hung child process (e.g. a bare grep/read/cat with no input redirect)`;
     }
-    const minutes = Math.round(this.phaseTimeoutMs / 60_000);
-    return `${phase} run exceeded ${minutes} minute${minutes === 1 ? "" : "s"} and was terminated -- likely a hung subprocess`;
+    // Deliberately does NOT claim a hang. The phase watchdog fires on elapsed wall-clock
+    // alone and cannot tell a slow-but-progressing run from a stuck one -- T-0228 was
+    // killed twice as a "likely hung subprocess" while 26/26 of its GPU generations were
+    // succeeding, and that wording is what sent the diagnosis down the wrong path. The
+    // inactivity watchdog above and §23-a's no-progress abort are the hang defences; this
+    // one is a budget ceiling, so it reports the budget and leaves the cause open.
+    const minutes = Math.round(this._phaseTimeoutMsFor(agent) / 60_000);
+    const forAgent = agent ? ` for the ${agent} agent` : "";
+    return `${phase} run exceeded its ${minutes}-minute phase budget${forAgent} and was terminated. This is a budget ceiling, not a diagnosis -- the run may simply need longer than the budget allows. Check the run log for steady output before assuming it was stuck; if the work legitimately needs more time, raise this agent's entry in PHASE_TIMEOUT_MS_BY_AGENT.`;
   }
 
   /**
@@ -1145,6 +1219,7 @@ export class RunOrchestrator {
       taskId,
       task,
       phase: "merge-conflict",
+      agent: effectiveAgent,
       prompt,
       allowedTools,
       worktreeDir,
@@ -1156,7 +1231,7 @@ export class RunOrchestrator {
       return { ok: true, skip: true };
     }
     if (result.timedOut) {
-      return { ok: false, reason: `${effectiveAgent} agent's ${this._timeoutReason("merge-conflict resolution", result.timeoutKind)}` };
+      return { ok: false, reason: `${effectiveAgent} agent's ${this._timeoutReason("merge-conflict resolution", result.timeoutKind, effectiveAgent)}` };
     }
     if (result.exitCode !== 0) {
       return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
