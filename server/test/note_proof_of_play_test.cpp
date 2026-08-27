@@ -82,7 +82,7 @@ std::string createAliceNote(assembled_server::PgNoteRepo &repo) {
     p.archetype_id = kArchetype;
     p.anchor_tag = kAnchorTag;
     p.template_id = 6; // {ACTION}
-    p.slot_a = 21;      // wait
+    p.slot_a = 21;     // wait
     return repo.create(p);
 }
 
@@ -140,8 +140,7 @@ TEST_CASE("PgNoteRepo rate — proof-of-play blocks a voter who never played the
     CHECK(found);
 
     const auto voteRows = db->getClient()->execSqlSync(
-        "SELECT COUNT(*) FROM note_votes WHERE note_id = $1::uuid AND voter = $2", note_id,
-        kCarol);
+        "SELECT COUNT(*) FROM note_votes WHERE note_id = $1::uuid AND voter = $2", note_id, kCarol);
     CHECK(voteRows[0][0].as<int>() == 0);
 }
 

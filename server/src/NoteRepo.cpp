@@ -177,15 +177,40 @@ std::vector<NoteRecord> PgNoteRepo::fetchBroadcast(int limit) {
     return result;
 }
 
-void PgNoteRepo::rate(const std::string &note_id, const std::string &voter, int16_t val) {
+RateResult PgNoteRepo::rate(const std::string &note_id, const std::string &voter, int16_t val) {
+    // Look up the note's anchor + author. Needed both for the proof-of-play
+    // gate below and, on a genuine upvote, to know whose held items to slow.
+    const auto noteRows = client_->execSqlSync(
+        "SELECT archetype_id, is_broadcast, author_token FROM notes WHERE id = $1::uuid", note_id);
+
+    // Proof-of-play (02-notes-system.md §7, T-0207): a non-broadcast note is
+    // anchored to an archetype, and only a voter who has actually played
+    // that archetype (an archetype_seen row) may rate it. Broadcast notes
+    // have no archetype to prove against and are exempt. A missing note is
+    // left to the INSERT below, which fails its FK exactly as before.
+    if (!noteRows.empty() && !noteRows[0]["is_broadcast"].as<bool>() &&
+        !noteRows[0]["archetype_id"].isNull()) {
+        const auto archetype_id = noteRows[0]["archetype_id"].as<int16_t>();
+        const auto seenRows = client_->execSqlSync(
+            "SELECT 1 FROM archetype_seen WHERE token = $1 AND archetype_id = $2", voter,
+            archetype_id);
+        if (seenRows.empty()) {
+            return RateResult{RateError::ProofOfPlayMissing};
+        }
+    }
+
     // Upsert: insert the vote or overwrite it if val changed.
-    // The WHERE clause in DO UPDATE makes same-val a no-op at the row level.
-    client_->execSqlSync("INSERT INTO note_votes (note_id, voter, val) "
-                         "VALUES ($1::uuid, $2, $3::smallint) "
-                         "ON CONFLICT (note_id, voter) DO UPDATE "
-                         "SET val = EXCLUDED.val "
-                         "WHERE note_votes.val != EXCLUDED.val",
-                         note_id, voter, val);
+    // The WHERE clause in DO UPDATE makes same-val a no-op at the row level;
+    // RETURNING tells us whether this call actually changed the tally, so
+    // the held-bleed bonus below never double-dips on a resubmitted vote.
+    const auto voteRows = client_->execSqlSync("INSERT INTO note_votes (note_id, voter, val) "
+                                               "VALUES ($1::uuid, $2, $3::smallint) "
+                                               "ON CONFLICT (note_id, voter) DO UPDATE "
+                                               "SET val = EXCLUDED.val "
+                                               "WHERE note_votes.val != EXCLUDED.val "
+                                               "RETURNING val",
+                                               note_id, voter, val);
+    const bool changed = !voteRows.empty();
 
     // Recompute the denormalized score from the authoritative votes table.
     client_->execSqlSync(
@@ -194,15 +219,31 @@ void PgNoteRepo::rate(const std::string &note_id, const std::string &voter, int1
         "WHERE id = $1::uuid",
         note_id);
 
-    // Bleed-timer seam (T-0098 / docs/design/02-notes-system.md §7,
-    // docs/design/07-items-economy.md §5):
-    //   After this point, fetch notes.author_token for note_id and call into
-    //   the bleed-timer repo to update the author's held-bleed multiplier based
-    //   on the new score.
+    // Held-bleed slowdown (docs/design/02-notes-system.md §7,
+    // docs/design/07-items-economy.md §5, T-0207): a genuine +1 vote slows
+    // the author's held bleed. Ceiling-clamped to kHeldBleedCeilingMinutes
+    // from now so a single note cannot bank bleed time indefinitely; LEAST
+    // also means a vote never *shortens* bleed_at.
     // MUST NOT touch identity.collapse_expires_at
     //   (docs/design/10-time-and-progression.md §5) — that clock is
     //   intentionally immune to rating to prevent solo players from extending
     //   their own collapse window indefinitely.
+    if (changed && val == 1 && !noteRows.empty()) {
+        const auto author = noteRows[0]["author_token"].as<std::string>();
+        // kHeldBleedRatingBonusMinutes/kHeldBleedCeilingMinutes are compile-time
+        // constants, not user input — interpolating them into INTERVAL literals
+        // avoids Drogon binary-protocol parameter issues (see fetchRanked's LIMIT).
+        const std::string sql = "UPDATE item_instance "
+                                "SET bleed_at = LEAST(bleed_at + INTERVAL '" +
+                                std::to_string(kHeldBleedRatingBonusMinutes) +
+                                " minutes', now() + INTERVAL '" +
+                                std::to_string(kHeldBleedCeilingMinutes) +
+                                " minutes') "
+                                "WHERE holder = $1";
+        client_->execSqlSync(sql, author);
+    }
+
+    return RateResult{RateError::None};
 }
 
 } // namespace assembled_server
