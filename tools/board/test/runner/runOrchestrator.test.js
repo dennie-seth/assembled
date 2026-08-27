@@ -759,7 +759,10 @@ describe("RunOrchestrator.runCard — phase-level timeout (hung child protection
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.body).toMatch(/implementer/i);
     expect(finalTask.body).toMatch(/timed? ?out|exceeded/i);
-    expect(finalTask.body).toContain("hung subprocess");
+    // Deliberately NOT "hung subprocess" any more -- see the message describe block
+    // below. The phase watchdog cannot tell an overrun from a hang, and asserting a
+    // hang sent the T-0228 diagnosis down the wrong path for two runs.
+    expect(finalTask.body).not.toContain("hung subprocess");
 
     // A timeout is a hard stop, not a graded FAIL -- it must not feed the auto-retry loop.
     expect(runner.start).toHaveBeenCalledTimes(1);
@@ -2808,5 +2811,194 @@ describe("appendNote", () => {
     expect(result).toContain("## Context\nOriginal.");
     expect(result).toContain("## Validation: PASS");
     expect(result).toContain("all good");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Per-agent phase budgets, and telling an overrun apart from a hang (T-0228).
+//
+// T-0228 was killed twice at exactly 40 minutes while making steady progress --
+// 26/26 ComfyUI generations succeeded, max inter-event gap 287s, nowhere near the
+// 8-minute inactivity threshold. Arm A's stack measures ~240s per generation and
+// the card mandates up to 8 attempts, so it could not fit a 40-minute bound. The
+// kill message said "likely a hung subprocess", which is what made the diagnosis
+// take two runs instead of one.
+// ---------------------------------------------------------------------------
+
+describe("RunOrchestrator per-agent phase budgets", () => {
+  // Long enough that only the phase timer can fire in these tests -- the inactivity
+  // watchdog would otherwise trip first, since the fixture children emit no stdout.
+  const QUIET = 10 * 60 * 60 * 1000;
+
+  it("holds an assets phase to the assets budget rather than the shorter default", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutsByAgent: { assets: 5000 },
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // Well past the 40-minute default, still inside the assets budget: alive.
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+
+  it("still holds a non-assets phase to the default budget", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "server" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutsByAgent: { assets: 5000 },
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The assets budget must not leak onto another agent.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_PHASE_TIMEOUT_MS);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalled();
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+
+  it("holds the reviewer phase of an assets card to the reviewer budget, not the assets one", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutsByAgent: { assets: 60_000 },
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    runner.spawnedChildren[0].emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+
+    // The reviewer runs as the `reviewer` agent, so it gets the default budget --
+    // it verifies output, it does not generate it.
+    await vi.advanceTimersByTimeAsync(DEFAULT_PHASE_TIMEOUT_MS);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: reviewChild }));
+  });
+
+  it("lets an explicit phaseTimeoutMs override win even for an assets card", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 1000,
+      phaseTimeoutsByAgent: { assets: 60 * 60 * 1000 },
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalled();
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+});
+
+describe("RunOrchestrator timeout messages distinguish overrun from hang", () => {
+  it("the phase-timeout message names the budget and does not claim a hang", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutsByAgent: { assets: 120 * 60 * 1000 },
+      inactivityTimeoutMs: 10 * 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(120 * 60 * 1000);
+    await runPromise;
+
+    const body = (await store.get("T-0001")).body;
+    expect(body).toMatch(/implementer/i);
+    expect(body).toContain("120");
+    expect(body).toMatch(/assets/);
+    // The watchdog cannot distinguish a slow run from a stuck one, so it must not
+    // assert either. The inactivity watchdog and §23-a's no-progress abort are the
+    // actual hang defences.
+    expect(body).not.toMatch(/hung|hang/i);
+  });
+
+  it("the inactivity message still calls out silence and a likely hang", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      inactivityTimeoutMs: 1000,
+      phaseTimeoutsByAgent: { assets: 10 * 60 * 60 * 1000 },
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.runAllTimersAsync();
+    await runPromise;
+
+    const body = (await store.get("T-0001")).body;
+    expect(body).toMatch(/no new output|went silent/i);
+    expect(body).toMatch(/hang|hung/i);
   });
 });
