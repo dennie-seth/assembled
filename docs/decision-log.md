@@ -946,3 +946,134 @@ cliff with a multi-point sweep (held_max ∈ {75, 80, 85, 90}).
 - `docs/decision-log.md` — this entry (DL-20)
 - `docs/GDD-OPEN.md` — E-1 marked resolved
 - `docs/design/10-time-and-progression.md` — held-bleed range narrowed
+
+---
+
+## DL-21 — Character-pipeline bake-off: pre-registered decision rule (T-0227)
+
+**Date:** 2026-08-27
+**Raised by:** HANDOFF §23, handle §23-c
+**Status:** **Pre-registered.** This entry was committed to git before any arm generated
+a single image. It is not to be amended — see this document's header. Any change to the
+clauses below after §23-d, §23-e or §23-f has generated anything invalidates the bake-off
+rather than refining it.
+**Applies to:** §23-d (Arm A), §23-e (Arm B), §23-f (Arm C — the script). The arms
+themselves are defined by their own cards; this entry defines only what they are judged on.
+**Cost template:** `docs/decisions/T-0227-bakeoff-cost-record-template.md`
+
+### Why pre-registration
+
+Three ways of producing the player's idle sheet are about to be raced against each other.
+A decision rule written once the results are in is not a decision rule, it is a
+rationalisation: whoever writes it can — without any intent to cheat — pick the weighting
+under which the sheet they already like wins. So the rule is committed to git before any
+arm generates a single image, and the winner is decided by a rule nobody was able to tune
+to the outcome.
+
+`docs/design/13-asset-pipeline.md` §6 already establishes the surrounding position that
+concept art precedes generation (DL-5); this entry does the same thing one level down, for
+the choice of generator.
+
+### Subject and state — fixed
+
+**Player character, idle state only.** Not move, not crouch-hide, not die: idle is the
+state every arm must produce and the only state that counts.
+
+All three arms are conditioned on **T-0209's approved player concept sheet**,
+`assets/src/concept/player_character_concept_sheet_v1.png`
+(concept_hash `4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b`). It is the
+shared reference; no arm substitutes its own.
+
+### Output spec — identically binding on all three arms, no exceptions
+
+| | |
+|---|---|
+| Grid | **3x3** |
+| Cell | **48x48** |
+| Native sheet | **144x144** |
+| Descent | per `docs/design/13-asset-pipeline.md` §3.1 |
+| Palette | indexed to the **locked 16-slot palette** (`assets/final/palette/home_palette.json`, T-0105) |
+| Provenance | **P-7-compliant** |
+
+P-7-compliant means: `generator` resolves to committed code in this repo tree,
+`model_hash` is non-null, and `concept_hash` resolves to T-0209's sheet (the gate landed
+in T-0219; see T-0222 for what non-compliance looks like).
+
+An arm that ships a sheet off this spec has not produced a comparable result and is
+re-run against its attempt budget, not judged as-is. The spec matches
+`13-asset-pipeline.md` §3.5's character class exactly; it is not a new constraint invented
+for the bake-off.
+
+### Judging conditions
+
+Judged **at 40px, in motion, inside the T-0192 blockout room** — the figure at the size
+and in the context a player will actually see it (`13-asset-pipeline.md` §3.5: at 384x216
+a figure is 40px tall, so the pipeline optimises for silhouette clarity, not detail).
+
+Explicitly **not at 1152**, and explicitly **not as a contact sheet**. A 1152 generation
+and a zoomed static grid both flatter detail that the descent destroys, and both hide the
+two failure modes that matter — an unreadable silhouette and identity drift between
+adjacent frames.
+
+### Criteria, in strict precedence
+
+Strict precedence, not a weighting. A later criterion never rescues an arm that failed an
+earlier one.
+
+**Criterion 1 — Silhouette readable at 40px in motion**
+
+Human pass/fail on three questions:
+is it a person, which way is it facing, what is it doing?
+A fail **eliminates** the arm — it is out of the bake-off entirely,
+not merely penalised in a score. This is the criterion the whole exercise exists to
+protect, and it is deliberately not tradeable against cost.
+
+**Criterion 2 — Identity stable across adjacent frames**
+
+Two parts, both required: a **frame-silhouette delta gate** (mechanical, over adjacent
+frames of the sheet) plus a **human drift verdict**. §3.5 is explicit that a player will
+catch 1px head drift between adjacent walk frames — this is where co-generation earns its
+keep, and where the T-0218 stage-3 spike already failed once (identity drift across rows).
+
+**Criterion 3 — Cost**
+
+Four columns, recorded identically by every arm: **GPU minutes**,
+**attempts-to-first-pass**, **wall-clock**, **$**.
+
+### Decision rule
+
+1. Arms failing criterion 1 are out. **Criterion-1 failures are out** regardless of how
+   they scored on anything else.
+2. Among the passers, **lowest cost wins**.
+3. **Tie → the script (Arm C) wins.**
+
+The tie-break is pre-committed and is not a coin toss: a script is deterministic,
+re-runnable, and reviewable as code, so where cost is genuinely equal the project takes
+the arm whose future re-runs are free and whose behaviour is inspectable.
+
+### Attempt cap
+
+**Attempt cap: 8 per arm.**
+
+An arm that cannot produce a gate-passing sheet in 8 attempts has *answered* criterion 3
+by failing it — that outcome is recorded as a **criterion-3 failure**, not as "no result"
+and not as grounds for a ninth attempt. Attempts are counted per arm and recorded in the
+cost template's attempts-to-first-pass column.
+
+### Recording
+
+Every arm fills in `docs/decisions/T-0227-bakeoff-cost-record-template.md` — the same
+template, the same columns, the same units — so §23-g's cost table is comparable by
+construction rather than by later reconciliation.
+
+### Note on grounding
+
+`docs/HANDOFF.md` in this repo ends at §13; §23 (like §22, cited by T-0219/T-0222) exists
+only in the card bodies the Agent Runner issues, not in the committed handoff document.
+The card body of T-0227 is therefore the authoritative statement of §23-c, and the rule
+above reproduces it clause for clause. Flagged rather than silently reconciled; the arm
+definitions (§23-d/e/f) are out of scope for this entry.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-21)
+- `docs/decisions/T-0227-bakeoff-cost-record-template.md` — the shared cost-recording template
