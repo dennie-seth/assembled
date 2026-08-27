@@ -26,6 +26,42 @@ const RUN_CUE_RE = /^(?:run|running|test)\b[:\s]/i;
 
 const SEED_COMMAND_VERBS = ["curl", "gh", "rm", "sudo", "pytest", "pip"];
 
+// How far either side of a model filename to look for a cue about which DIRECTION the mention
+// points. Deliberately narrow: an AC item can be a long sentence that both produces one thing
+// and consumes another ("the sheet is generated ... and the run loads `x.safetensors`"), so a
+// cue at the far end of the item says nothing about this filename.
+const MODEL_CUE_WINDOW = 60;
+
+// Cues that the model named beside them is something the card PRODUCES. A card whose deliverable
+// is a trained LoRA necessarily names a file that does not exist yet, and demanding it already be
+// in INSTALLED_MODELS makes every model-producing card unrunnable -- T-0237 (train the
+// player-identity LoRA) was hard-blocked on exactly this, and T-0072 (the style LoRA) would have
+// been too. This mirrors RUN_CUE_RE above, which the command check already has for the same class
+// of false positive.
+const MODEL_OUTPUT_CUE_RE =
+  /\b(?:commit|commits|committed|produce|produces|produced|writes?|written|train|trains|trained|training|generate|generates|generated|output|outputs|save|saves|saved|create|creates|created|deliverable|deploy|deploys|deployed)\b/i;
+
+// Cues that the model named beside them is something the card CONSUMES. Checked second and given
+// priority: when both appear next to the same filename the mention is treated as a prerequisite
+// and still verified, so this narrows a false positive without opening a hole. "Generation uses
+// checkpoint `nonexistent.safetensors`" carries an output word and a prerequisite word in one
+// breath, and it must keep failing.
+const MODEL_PREREQ_CUE_RE =
+  /\b(?:uses?|used|using|with|against|requires?|required|needs?|needed|loads?|loaded|from|reads?|installed|present|available|exists?|applied)\b/i;
+
+/**
+ * Is this particular mention of *name* in *text* the card's own output rather than something it
+ * needs to already exist? Fail-closed: no cue, or cues in both directions, means "prerequisite",
+ * so an unknown model still blocks.
+ */
+function isModelOutputMention(text, name, index) {
+  const before = text.slice(Math.max(0, index - MODEL_CUE_WINDOW), index);
+  const after = text.slice(index + name.length, index + name.length + MODEL_CUE_WINDOW);
+  const near = `${before} ${after}`;
+  if (MODEL_PREREQ_CUE_RE.test(near)) return false;
+  return MODEL_OUTPUT_CUE_RE.test(near);
+}
+
 // No agent's `.claude/agents/*.md` ever grants these, by design (`.claude/rules/conduct.md`):
 // only the orchestrator pushes, opens a PR, or merges once a PASS verdict lands, and only a
 // human moves a card done/review -> done. T-0222's AC literally required "commit + open a PR",
@@ -158,12 +194,13 @@ export function checkCapabilityPreflight(
     MODEL_FILE_RE.lastIndex = 0;
     while ((match = MODEL_FILE_RE.exec(text))) {
       const name = match[0];
-      if (!inventory.models.includes(name)) {
-        addFailure(
-          `AC item "${text}" names checkpoint/LoRA "${name}", which is not in the installed ` +
-            `capability inventory (checked tools/board/src/runner/capabilityInventory.js's INSTALLED_MODELS).`
-        );
-      }
+      if (inventory.models.includes(name)) continue;
+      // A model this card is producing has no business being in the installed inventory yet.
+      if (isModelOutputMention(text, name, match.index)) continue;
+      addFailure(
+        `AC item "${text}" names checkpoint/LoRA "${name}", which is not in the installed ` +
+          `capability inventory (checked tools/board/src/runner/capabilityInventory.js's INSTALLED_MODELS).`
+      );
     }
 
     const hasRunCue = RUN_CUE_RE.test(text.trim());
