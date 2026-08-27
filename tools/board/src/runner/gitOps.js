@@ -265,6 +265,34 @@ export async function getHeadCommit({ worktreeDir }) {
 }
 
 /**
+ * A deterministic snapshot of what a worktree currently holds: `{ head, tree, dirty }`.
+ *
+ * - `head`  -- the HEAD commit sha
+ * - `tree`  -- HEAD's tree object sha, so two different commits with identical content (a
+ *              reworded or re-authored commit) still compare equal on content
+ * - `dirty` -- `git status --porcelain`, catching staged/unstaged/untracked work that has not
+ *              been committed yet
+ *
+ * This is the basis for the retry loop's no-progress signature (failureSignature.js): if all
+ * three are unchanged across two attempts, the attempt left nothing behind and retrying it again
+ * cannot help. Ignored files are deliberately excluded -- `--porcelain` without `--ignored` --
+ * because the reviewer judges committed/tracked deliverables, and pulling in ignored build
+ * output would make the signature churn on noise the gate does not care about.
+ */
+export async function readTreeState({ worktreeDir }) {
+  const [head, tree, status] = await Promise.all([
+    git(["rev-parse", "HEAD"], worktreeDir),
+    git(["rev-parse", "HEAD^{tree}"], worktreeDir),
+    git(["status", "--porcelain"], worktreeDir)
+  ]);
+  return {
+    head: head.stdout.trim(),
+    tree: tree.stdout.trim(),
+    dirty: status.stdout.trim()
+  };
+}
+
+/**
  * Pulls the latest commits for `branch` (default "develop") into repoRoot from origin. Reports
  * whether HEAD moved, so callers know whether there's new code to pick up.
  *

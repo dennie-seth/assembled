@@ -36,19 +36,36 @@ export function normalizeFailureText(text) {
 }
 
 /**
- * Computes a stable failure signature (a sha256 hex digest) from the stable parts of one
- * implementer/reviewer attempt's outcome: which phase failed, the verdict, and the normalized
- * error/validation text. Two attempts that failed for the same, unfixable reason hash equal;
- * anything that actually changed between attempts (different phase, different verdict, or
- * genuinely different error text) hashes differently. This is what lets the retry loop
- * (runOrchestrator.js) tell "still the same blocker" apart from "made some progress, still
- * broken a different way" -- see docs' §23-a / HANDOFF.
+ * Computes a stable failure signature (a sha256 hex digest) for one implementer/reviewer
+ * attempt, from **what the attempt actually left behind**: the worktree's git state, plus
+ * which phase failed and the verdict category.
+ *
+ * The reviewer's free-text notes are deliberately NOT part of the basis. They used to be, and
+ * that is exactly why the abort never fired on T-0229: the card burned all five retry slots on
+ * eight consecutive FAILs whose branch state the reviewer itself called "byte-identical to runs
+ * 2-7", because each note opens with an incrementing ordinal ("Third consecutive FAIL", ...
+ * "Eighth consecutive FAIL"). Every attempt hashed differently by construction, no matter how
+ * thoroughly the text was normalized -- a counter is not volatile noise a regex can strip, it is
+ * the reviewer legitimately describing a different attempt number. Prose is the wrong thing to
+ * hash; the tree is the right one.
+ *
+ * `state` is `{ head, tree, dirty }` from gitOps.readTreeState: the HEAD commit, its tree object,
+ * and the porcelain status. Two attempts that leave byte-identical tracked state produce the same
+ * signature by definition, which is the whole claim "no progress" is making. An attempt that
+ * committed anything, or even left a new uncommitted file, moves at least one of the three.
+ *
+ * Returns **null** when `state` is absent (git state unreadable). A null signature is never
+ * compared, so the loop degrades to running the full retry cap rather than risking a false abort
+ * on a card that might genuinely be progressing.
  */
-export function computeFailureSignature({ phase, verdict, notes }) {
+export function computeFailureSignature({ phase, verdict, state }) {
+  if (!state || typeof state !== "object") return null;
   const stable = JSON.stringify({
     phase: phase ?? "unknown",
     verdict: verdict ?? "FAIL",
-    notes: normalizeFailureText(notes)
+    head: state.head ?? "",
+    tree: state.tree ?? "",
+    dirty: normalizeFailureText(state.dirty)
   });
   return createHash("sha256").update(stable).digest("hex");
 }
