@@ -233,6 +233,37 @@ TEST_CASE("PgNoteRepo rate — held-bleed bonus is clamped at the ceiling") {
     CHECK(after > 89 * 60);
 }
 
+// ── Integration: bleed_at beyond the ceiling is never shortened ───────────────
+
+TEST_CASE("PgNoteRepo rate — held-bleed bonus never shortens bleed_at already past the ceiling") {
+    if (!std::getenv("DATABASE_URL"))
+        return;
+
+    auto db = assembled_server::Database::fromEnv();
+    REQUIRE(db.has_value());
+
+    assembled_server::MigrationRunner runner(ASSEMBLED_MIGRATIONS_DIR);
+    runner.applyPending(db->getClient());
+
+    seedFixture(db->getClient());
+
+    assembled_server::PgNoteRepo repo(db->getClient());
+    const std::string note_id = createAliceNote(repo);
+    // A freshly spawned world item's bleed_at (ItemSpawner.cpp) sits at 72h,
+    // far past the 90-minute held-bleed ceiling. A bare LEAST(bleed_at +
+    // bonus, now() + ceiling) would clamp this *down* to ~90 minutes — a
+    // qualifying vote must never shorten bleed_at, only ever extend it.
+    const std::string item_id = seedAliceItem(db->getClient(), "72 hours");
+
+    const double before = secondsUntilBleed(db->getClient(), item_id);
+
+    const auto result = repo.rate(note_id, kBob, 1);
+    REQUIRE(result.error == assembled_server::RateError::None);
+
+    const double after = secondsUntilBleed(db->getClient(), item_id);
+    CHECK(after == doctest::Approx(before).epsilon(0.02));
+}
+
 // ── Integration: a rejected vote never touches held bleed ─────────────────────
 
 TEST_CASE("PgNoteRepo rate — proof-of-play rejection does not extend held bleed") {
