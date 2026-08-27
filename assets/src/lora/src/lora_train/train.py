@@ -175,6 +175,9 @@ def build_train_args(
     # choice for this corpus, not an oversight. If VRAM pressure demands it,
     # the tradeoff is: drop caption shuffling (set shuffle=false in
     # training_config.toml) to re-enable this flag.
+    # Per-epoch checkpoints so a run cut short by the phase budget resumes instead of
+    # restarting from step 0 (see TrainingConfig.save_every_n_epochs).
+    args.append(f"--save_every_n_epochs={config.save_every_n_epochs}")
     if config.cache_latents:
         args.append("--cache_latents")
     if max_train_steps is not None:
