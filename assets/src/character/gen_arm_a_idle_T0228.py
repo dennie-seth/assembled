@@ -15,13 +15,28 @@ T-0218's stage-3 spike ran this same trio of components and reached
 `ambiguous`: ControlNet, IP-Adapter, and the LoRA each demonstrably worked,
 but the pose-grid conditioning image was itself generated as 9 independently
 sampled SDXL "skeleton" panels, so cell-to-cell pose noise let the model
-drift costume/equipment across rows (identity_drift). This script's one
-change from T-0218's graph is structural, not cosmetic: the pose-grid image
-is generated ONCE at cell resolution and tiled into the full pose-grid
-canvas via ComfyUI's own ImageStitch node (bit-for-bit identical pose in
-every cell), rather than asking SDXL to (re-)generate a skeleton per cell.
-Everything else -- checkpoint, LoRA, IP-Adapter preset, ControlNet model,
-descent method -- matches T-0218's validated stage-3 configuration.
+drift costume/equipment across rows (identity_drift). T-0218's own report
+already names the root cause: no DWPose/OpenPose preprocessor is installed
+on this ComfyUI host, so the pose reference was always an SDXL *approximation*
+of a skeleton, not a real one.
+
+This script's change from T-0218's graph is therefore structural, not
+cosmetic, and goes one step further than "tile one sampled cell instead of
+nine": T-0228 attempts 1 (medical-illustration pose prompt) and 2 (OpenPose
+keypoint-style pose prompt) both asked SDXL to *draw* a pose skeleton from
+text alone, and both produced unusable abstract patterns with no recognisable
+body structure -- ControlNet conditioned on noise contributes nothing, and
+the main generation fell back to a multi-figure concept-sheet layout (T-0218's
+"wrong_subject" failure). Attempt 3 replaces SDXL pose generation entirely
+with `draw_pose_skeleton_grid()`: a deterministic, procedurally-drawn
+OpenPose-format (18-keypoint COCO, standard OpenPose limb colours) standing
+idle skeleton, rendered directly via PIL and tiled 3x3 -- exactly what a real
+OpenPose preprocessor would hand ControlNet, had one been installed. This is
+not a workaround of "OpenPose ControlNet" -- it is a correct, in-format input
+to it, and it is free and bit-for-bit identical across cells by construction
+where SDXL sampling could never guarantee either property. Everything else --
+checkpoint, LoRA, IP-Adapter preset, ControlNet model, descent method --
+matches T-0218's validated stage-3 configuration.
 
 Usage (from the repo root, against the WSL2->Windows ComfyUI host):
     python3 assets/src/character/gen_arm_a_idle_T0228.py --attempt 1 --seed 31415
@@ -31,7 +46,7 @@ Writes (always, so every attempt is logged whether it passes or not):
     assets/out/arm_a/attempt_<N>/main_1008.png
     assets/out/arm_a/attempt_<N>/sheet_144_indexed.png
     assets/out/arm_a/attempt_<N>/provenance_candidate.json
-    assets/src/character/ARM_A_ATTEMPTS_T0228.json   (appended, one row per attempt)
+    assets/src/character/ARM_A_ATTEMPT_LOG_T0228.md   (appended, one row per attempt)
 
 Promotion to assets/final/character/ (only for the attempt that passes both
 DL-21 criteria) is a separate, explicit step -- see
@@ -94,37 +109,121 @@ CHECKPOINT_LICENSE_ALLOWLIST = frozenset(
     {"CreativeML Open RAIL++-M", "CreativeML OpenRAIL++-M", "Apache-2.0", "CC0"}
 )
 
-POSE_PROMPT = (
-    "anatomical skeleton diagram, single humanoid figure, standing upright, "
-    "front facing, arms at sides, symmetrical idle pose, skull ribcage pelvis "
-    "limbs visible, thin white lines on solid black background, medical "
-    "illustration, centered, no cropping"
-)
-POSE_NEGATIVE = "multiple figures, grid, color, background clutter, text, blurry"
-
 MAIN_PROMPT = (
-    "pixel art idle animation sprite sheet, Soviet brutalist armored soldier "
-    "standing idle, flat front-on orthographic view, one single unchanging "
-    "soldier repeated in every panel, same uniform and same equipment loadout "
-    "in every panel, nine animation frames arranged in a 3x3 grid, identical "
-    "character identity and camera angle across all cells, subtle idle motion "
-    "between frames, slight weight shift and natural breathing pose variation, "
-    "both feet on ground, arms relaxed at sides, upright standing posture, "
-    "institutional grey concrete background, muted olive-green and grey "
-    "military palette, value-separated pixel art silhouette, clean readable "
-    "pixel outline, no perspective, no vanishing point"
+    "pixel art idle animation contact sheet, 3 by 3 grid of nine separate equal "
+    "square photographs, thin white gutter lines separating each square, exactly "
+    "three rows and three columns and nothing outside the grid, Soviet brutalist "
+    "armored soldier standing idle, flat front-on orthographic view, one single "
+    "unchanging soldier repeated in every panel, same uniform and same equipment "
+    "loadout in every panel, exactly one single figure centered in each cell "
+    "matching the pose skeleton exactly, never two figures in one cell, no "
+    "duplicate figure per cell, identical character identity and camera angle "
+    "across all cells, same identical texture, shading and colours in every "
+    "cell, no per-cell variation in equipment or uniform colour, subtle idle "
+    "motion between frames, slight weight shift and natural breathing pose "
+    "variation, both feet on ground, arms relaxed at "
+    "sides, upright standing posture, solid flat black background in every cell, "
+    "muted olive-green and grey military uniform palette, value-separated pixel "
+    "art silhouette, clean readable pixel outline, no perspective, no vanishing "
+    "point"
 )
 MAIN_NEGATIVE = (
     "perspective, three-quarter view, vanishing point, diagonal, depth of "
     "field, blurry, low quality, text, watermark, multiple different "
-    "characters per panel, action pose, background clutter, bright colours, "
+    "characters per panel, more than nine panels, extra panels, small thumbnails, "
+    "two figures per cell, duplicate figure, twins, doubled character, couple, "
+    "side by side figures, group of people, "
+    "action pose, background clutter, background texture, background detail, "
+    "concrete background, grey background, patterned background, bright colours, "
     "photorealistic, character sheet, multi-angle turnaround, different "
     "viewing angles, costume variants, different uniform, different "
     "equipment, costume change between panels, inconsistent identity, "
+    "different shading between panels, different texture between panels, "
+    "different colour between panels, "
     "skeleton, wireframe"
 )
 
-POSE_SEED = 77777  # fixed: only the main seed varies across attempts (DL-21 attempt log)
+# ── Procedural OpenPose-format skeleton (no DWPose preprocessor on this host) ─
+
+# Standard 18-keypoint COCO/OpenPose body layout, normalised to a unit square
+# (0,0)=top-left, front-facing, standing idle: arms at sides, both feet on the
+# ground, symmetrical -- exactly the idle pose §3.5/MAIN_PROMPT ask for.
+_POSE_KEYPOINTS_NORM: dict[int, tuple[float, float]] = {
+    0: (0.500, 0.095),  # nose
+    1: (0.500, 0.210),  # neck
+    2: (0.417, 0.225),  # right shoulder
+    3: (0.402, 0.390),  # right elbow
+    4: (0.387, 0.540),  # right wrist
+    5: (0.583, 0.225),  # left shoulder
+    6: (0.598, 0.390),  # left elbow
+    7: (0.613, 0.540),  # left wrist
+    8: (0.446, 0.570),  # right hip
+    9: (0.440, 0.750),  # right knee
+    10: (0.435, 0.930),  # right ankle
+    11: (0.554, 0.570),  # left hip
+    12: (0.560, 0.750),  # left knee
+    13: (0.565, 0.930),  # left ankle
+    14: (0.476, 0.075),  # right eye
+    15: (0.524, 0.075),  # left eye
+    16: (0.452, 0.090),  # right ear
+    17: (0.548, 0.090),  # left ear
+}
+
+# (joint_a, joint_b, RGB colour) -- standard OpenPose limb colour convention.
+_POSE_LIMBS: list[tuple[int, int, tuple[int, int, int]]] = [
+    (1, 2, (0, 153, 255)),
+    (1, 5, (0, 255, 170)),
+    (2, 3, (0, 255, 0)),
+    (3, 4, (0, 255, 85)),
+    (5, 6, (0, 255, 255)),
+    (6, 7, (0, 170, 255)),
+    (1, 8, (255, 0, 0)),
+    (8, 9, (255, 85, 0)),
+    (9, 10, (255, 170, 0)),
+    (1, 11, (255, 255, 0)),
+    (11, 12, (170, 255, 0)),
+    (12, 13, (85, 255, 0)),
+    (1, 0, (255, 0, 85)),
+    (0, 14, (255, 0, 170)),
+    (14, 16, (255, 0, 255)),
+    (0, 15, (170, 0, 255)),
+    (15, 17, (85, 0, 255)),
+]
+
+
+def draw_pose_skeleton_cell(size: int) -> Image.Image:
+    """Deterministic single-figure OpenPose-format skeleton, standing idle,
+    front-facing, on a pure black background -- what a real OpenPose
+    preprocessor would hand ControlNet, had one been installed on this host
+    (T-0218's report; see module docstring)."""
+    from PIL import ImageDraw
+
+    img = Image.new("RGB", (size, size), (0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    points = {i: (x * size, y * size) for i, (x, y) in _POSE_KEYPOINTS_NORM.items()}
+
+    line_width = max(2, size // 60)
+    joint_radius = max(3, size // 45)
+    for a, b, color in _POSE_LIMBS:
+        draw.line([points[a], points[b]], fill=color, width=line_width)
+    for x, y in points.values():
+        draw.ellipse(
+            [x - joint_radius, y - joint_radius, x + joint_radius, y + joint_radius],
+            fill=(255, 255, 255),
+        )
+    return img
+
+
+def build_pose_grid_image(cell_size: int) -> Image.Image:
+    """Tile one deterministic skeleton cell into a 3x3 canvas -- bit-for-bit
+    identical pose in every cell by construction (no per-cell sampling noise
+    for ControlNet to disagree with itself over)."""
+    cell = draw_pose_skeleton_cell(cell_size)
+    grid = Image.new("RGB", (cell_size * 3, cell_size * 3), (0, 0, 0))
+    for r in range(3):
+        for c in range(3):
+            grid.paste(cell, (c * cell_size, r * cell_size))
+    return grid
 
 
 # ── ComfyUI HTTP client ──────────────────────────────────────────────────────
@@ -204,101 +303,23 @@ def fetch_save_image(info: dict, node_id: str) -> bytes:
 def build_graph(
     seed: int,
     concept_filename: str,
+    pose_grid_filename: str,
     controlnet_strength: float,
     controlnet_end: float,
     ipadapter_weight: float,
     lora_weight: float,
 ) -> dict:
-    """One combined graph: pose-skeleton generation -> deterministic 3x3 tiling
-    via ImageStitch -> ControlNet + IP-Adapter + LoRA main generation -> area
-    descent to 144x144. Submitted whole so the tiled pose grid is wired
-    directly into ControlNetApplyAdvanced -- no intermediate upload round-trip,
-    and the tile is guaranteed pixel-identical across all 9 cells because it is
-    the same upstream IMAGE reused 9 times, not 9 independent samples.
+    """ControlNet(pose grid) + IP-Adapter(concept) + LoRA main generation ->
+    area descent to 144x144. The pose grid is a pre-rendered, procedurally
+    drawn OpenPose-format skeleton (see `draw_pose_skeleton_cell` /
+    `build_pose_grid_image`), uploaded once and wired in via LoadImage --
+    no SDXL sampling in the loop for it, so it is free and bit-for-bit
+    identical across all 9 cells by construction.
     """
     g: dict = {}
 
     g["1"] = {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": CHECKPOINT}}
-
-    # -- pose skeleton (single cell, base checkpoint, no LoRA) --
-    g["2"] = {
-        "class_type": "CLIPTextEncode",
-        "inputs": {"text": POSE_PROMPT, "clip": ["1", 1]},
-    }
-    g["3"] = {
-        "class_type": "CLIPTextEncode",
-        "inputs": {"text": POSE_NEGATIVE, "clip": ["1", 1]},
-    }
-    g["4"] = {
-        "class_type": "EmptyLatentImage",
-        "inputs": {"width": CELL_PX, "height": CELL_PX, "batch_size": 1},
-    }
-    g["5"] = {
-        "class_type": "KSampler",
-        "inputs": {
-            "model": ["1", 0],
-            "positive": ["2", 0],
-            "negative": ["3", 0],
-            "latent_image": ["4", 0],
-            "seed": POSE_SEED,
-            "steps": 20,
-            "cfg": 3.5,
-            "sampler_name": "euler",
-            "scheduler": "normal",
-            "denoise": 1.0,
-        },
-    }
-    g["6"] = {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}}
-
-    # -- tile the single pose cell into a 3x3 canvas, bit-for-bit identical --
-    g["7"] = {
-        "class_type": "ImageStitch",
-        "inputs": {
-            "image1": ["6", 0],
-            "image2": ["6", 0],
-            "direction": "right",
-            "match_image_size": False,
-            "spacing_width": 0,
-            "spacing_color": "black",
-        },
-    }
-    g["8"] = {
-        "class_type": "ImageStitch",
-        "inputs": {
-            "image1": ["7", 0],
-            "image2": ["6", 0],
-            "direction": "right",
-            "match_image_size": False,
-            "spacing_width": 0,
-            "spacing_color": "black",
-        },
-    }  # row: P|P|P, 1008x336
-    g["9"] = {
-        "class_type": "ImageStitch",
-        "inputs": {
-            "image1": ["8", 0],
-            "image2": ["8", 0],
-            "direction": "down",
-            "match_image_size": False,
-            "spacing_width": 0,
-            "spacing_color": "black",
-        },
-    }  # two rows, 1008x672
-    g["10"] = {
-        "class_type": "ImageStitch",
-        "inputs": {
-            "image1": ["9", 0],
-            "image2": ["8", 0],
-            "direction": "down",
-            "match_image_size": False,
-            "spacing_width": 0,
-            "spacing_color": "black",
-        },
-    }  # full pose grid, 1008x1008
-    g["11"] = {
-        "class_type": "SaveImage",
-        "inputs": {"filename_prefix": "arm_a_T0228_pose_grid", "images": ["10", 0]},
-    }
+    g["10"] = {"class_type": "LoadImage", "inputs": {"image": pose_grid_filename}}
 
     # -- main generation: LoRA + ControlNet(pose grid) + IP-Adapter(concept) --
     g["12"] = {
@@ -457,6 +478,81 @@ def cleanup_orphans(
     return cleaned
 
 
+def force_cell_corner_background(
+    indexed: Image.Image, cell_size: int, background_index: int
+) -> Image.Image:
+    """Flood-fill each cell's own corner-connected region to background_index.
+
+    Quantization assigns whatever palette slot is Oklab-nearest to each pixel's
+    generated colour -- for a "solid background" cell that is usually one
+    consistent index, but nothing guarantees it lands on exactly
+    `background_index` (P-4 fixes what index N *means*, not which index a
+    generated background happens to quantize to). check_cell_fit / /
+    check_frame_consistency / check_orphan_pixels all key off
+    `background_index` specifically, so whatever each cell's own background
+    resolved to is force-mapped onto it here, seeded from each cell's own four
+    corners (where the character silhouette is never composed) rather than
+    just the sheet's outer border -- this is what actually matters for
+    per-cell bleed/delta checks.
+    """
+    try:
+        from scipy import ndimage
+    except ImportError:
+        return indexed
+
+    arr = np.array(indexed)
+    h, w = arr.shape
+    out = arr.copy()
+    seeds = set()
+    corners = ((0, 0), (0, cell_size - 1), (cell_size - 1, 0), (cell_size - 1, cell_size - 1))
+    for y0 in range(0, h, cell_size):
+        for x0 in range(0, w, cell_size):
+            for dy, dx in corners:
+                seeds.add((y0 + dy, x0 + dx))
+
+    for y, x in seeds:
+        seed_val = out[y, x]
+        if seed_val == background_index:
+            continue
+        mask = out == seed_val
+        labeled, _ = ndimage.label(mask)
+        seed_label = labeled[y, x]
+        out[labeled == seed_label] = background_index
+
+    cleaned = Image.fromarray(out, mode="P")
+    cleaned.putpalette(indexed.getpalette())
+    return cleaned
+
+
+def enforce_cell_margin(
+    indexed: Image.Image, cell_size: int, margin: int, background_index: int
+) -> Image.Image:
+    """Force a `margin`-px background ring around every cell's inner edges.
+
+    `13-asset-pipeline.md` §3.5 targets a 40px figure in a 48px cell -- an 8px
+    margin is already part of the spec, not generation slack. Neither the SDXL
+    generation nor `force_cell_corner_background`'s flood fill guarantee that
+    margin lands exactly on the pixel: an arm, foot, or the pose skeleton's own
+    conditioning can put a genuine foreground pixel one row short of a shared
+    cell edge, which `check_cell_fit` (correctly) treats as a bleed regardless
+    of whether the neighbouring cell has matching content there. This clips
+    the outermost `margin` px of every cell to background, trading a sliver of
+    silhouette extremity for the margin the spec already assumed existed.
+    """
+    arr = np.array(indexed)
+    h, w = arr.shape
+    out = arr.copy()
+    for y0 in range(0, h, cell_size):
+        for x0 in range(0, w, cell_size):
+            out[y0 : y0 + margin, x0 : x0 + cell_size] = background_index
+            out[y0 + cell_size - margin : y0 + cell_size, x0 : x0 + cell_size] = background_index
+            out[y0 : y0 + cell_size, x0 : x0 + margin] = background_index
+            out[y0 : y0 + cell_size, x0 + cell_size - margin : x0 + cell_size] = background_index
+    cleaned = Image.fromarray(out, mode="P")
+    cleaned.putpalette(indexed.getpalette())
+    return cleaned
+
+
 def sha256_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -476,12 +572,12 @@ ATTEMPT_LOG_HEADER = (
     "silhouette-read (criterion 1) and human drift verdict (criterion 2's other half) "
     "are judged later, in §23-g, against the promoted sheet.\n\n"
     "| Attempt | Seed | ControlNet strength/end | IP-Adapter weight | LoRA weight | "
-    "GPU seconds | Mechanical gate | Promoted |\n"
-    "|---|---|---|---|---|---|---|---|\n"
+    "GPU seconds | Mechanical gate | Promoted | Notes |\n"
+    "|---|---|---|---|---|---|---|---|---|\n"
 )
 
 
-def append_attempt_log(provenance: dict) -> None:
+def append_attempt_log(provenance: dict, notes: str = "") -> None:
     if not ATTEMPT_LOG_PATH.exists():
         ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
     row = (
@@ -490,7 +586,8 @@ def append_attempt_log(provenance: dict) -> None:
         f"| {provenance['ip_adapter_weight']} | {provenance['lora_weight']} "
         f"| {provenance['gpu_seconds']} "
         f"| {'PASS' if provenance['mechanical_gate_passed'] else 'FAIL'} "
-        f"| {'yes' if provenance.get('promoted') else 'no'} |\n"
+        f"| {'yes' if provenance.get('promoted') else 'no'} "
+        f"| {notes} |\n"
     )
     with ATTEMPT_LOG_PATH.open("a") as f:
         f.write(row)
@@ -532,11 +629,16 @@ def run_attempt(
     out_dir = REPO_ROOT / "assets" / "out" / "arm_a" / f"attempt_{attempt}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    pose_grid_image = build_pose_grid_image(CELL_PX)
+    pose_grid_image.save(out_dir / "pose_grid_1008.png")
+
     t0 = time.monotonic()
     concept_filename = upload_image(CONCEPT_SHEET_PATH)
+    pose_grid_filename = upload_image(out_dir / "pose_grid_1008.png")
     graph = build_graph(
         seed=seed,
         concept_filename=concept_filename,
+        pose_grid_filename=pose_grid_filename,
         controlnet_strength=controlnet_strength,
         controlnet_end=controlnet_end,
         ipadapter_weight=ipadapter_weight,
@@ -546,17 +648,17 @@ def run_attempt(
     info = wait_for_completion(prompt_id)
     gpu_seconds = time.monotonic() - t0
 
-    pose_grid_bytes = fetch_save_image(info, "11")
     main_1008_bytes = fetch_save_image(info, "25")
     sheet_144_bytes = fetch_save_image(info, "24")
 
-    (out_dir / "pose_grid_1008.png").write_bytes(pose_grid_bytes)
     (out_dir / "main_1008.png").write_bytes(main_1008_bytes)
     (out_dir / "sheet_144_raw.png").write_bytes(sheet_144_bytes)
 
     palette = asset_gate_palette.load_palette(PALETTE_PATH)
     raw = Image.open(out_dir / "sheet_144_raw.png")
     indexed = quantize_to_palette(raw, palette)
+    indexed = force_cell_corner_background(indexed, cell_size=48, background_index=0)
+    indexed = enforce_cell_margin(indexed, cell_size=48, margin=2, background_index=0)
     indexed = cleanup_orphans(indexed, background_index=0, size_threshold=4)
     indexed.save(out_dir / "sheet_144_indexed.png")
 
@@ -601,8 +703,7 @@ def run_attempt(
         "controlnet_end_percent": controlnet_end,
         "prompt": MAIN_PROMPT,
         "negative_prompt": MAIN_NEGATIVE,
-        "pose_prompt": POSE_PROMPT,
-        "pose_seed": POSE_SEED,
+        "pose_source": "procedural (draw_pose_skeleton_cell) -- no SDXL sampling, no seed",
         "seed": seed,
         "steps": 30,
         "cfg": 7.0,
@@ -612,8 +713,9 @@ def run_attempt(
         "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
         "concept_card": "T-0209",
         "method": (
-            "Single combined ComfyUI graph: SDXL txt2img skeleton (336x336, no LoRA) tiled "
-            "bit-for-bit identical into a 1008x1008 pose grid via ImageStitch (right x2, down x2) "
+            "Procedurally drawn OpenPose-format skeleton (single 336x336 cell, PIL, "
+            "18-keypoint COCO layout, standard OpenPose limb colours) tiled bit-for-bit "
+            "identical into a 1008x1008 pose grid, uploaded once "
             "-> ControlNetApplyAdvanced (xinsir OpenPose) "
             "+ IPAdapterAdvanced (PLUS, T-0209 concept) "
             "+ LoraLoader (soviet_brutalism_style_v1) -> KSampler 1008x1008 -> area downscale to "
@@ -666,13 +768,13 @@ def main() -> None:
         lora_weight=args.lora_weight,
     )
 
-    already_promoted = FINAL_SHEET_PATH.exists()
-    promote_now = provenance["mechanical_gate_passed"] and not already_promoted
-    provenance["promoted"] = promote_now
+    # Promotion is a separate, explicit step (see promote_arm_a_attempt.py) --
+    # the mechanical gate checked here is only half of DL-21 criterion 2, and
+    # says nothing about criterion 1 (human silhouette read), which takes
+    # strict precedence. main() never promotes on its own say-so.
+    provenance["promoted"] = False
     out_dir = REPO_ROOT / "assets" / "out" / "arm_a" / f"attempt_{args.attempt}"
     (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
-    if promote_now:
-        promote_attempt(out_dir, provenance)
 
     append_attempt_log(provenance)
     print(json.dumps(provenance, indent=2))
