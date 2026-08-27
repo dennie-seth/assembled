@@ -54,6 +54,10 @@ TEST_CASE("PgNoteRepo rate — idempotent on same value") {
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('test-tok-0047-idem') ON CONFLICT DO NOTHING");
     db->getClient()->execSqlSync("DELETE FROM notes WHERE author_token = 'test-tok-0047-idem'");
+    // Proof-of-play (T-0207): rate() now requires an archetype_seen row.
+    db->getClient()->execSqlSync(
+        "INSERT INTO archetype_seen (token, archetype_id) VALUES ('test-tok-0047-idem', 1) "
+        "ON CONFLICT DO NOTHING");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
@@ -114,6 +118,10 @@ TEST_CASE("PgNoteRepo rate — changing vote overwrites, does not add a second r
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('test-tok-0047-chg') ON CONFLICT DO NOTHING");
     db->getClient()->execSqlSync("DELETE FROM notes WHERE author_token = 'test-tok-0047-chg'");
+    // Proof-of-play (T-0207): rate() now requires an archetype_seen row.
+    db->getClient()->execSqlSync(
+        "INSERT INTO archetype_seen (token, archetype_id) VALUES ('test-tok-0047-chg', 1) "
+        "ON CONFLICT DO NOTHING");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
@@ -167,6 +175,10 @@ TEST_CASE("PgNoteRepo rate — score reflects current tally correctly") {
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('test-tok-0047-tb') ON CONFLICT DO NOTHING");
     db->getClient()->execSqlSync("DELETE FROM notes WHERE author_token = 'test-tok-0047-ta'");
+    // Proof-of-play (T-0207): rate() now requires an archetype_seen row.
+    db->getClient()->execSqlSync(
+        "INSERT INTO archetype_seen (token, archetype_id) VALUES "
+        "('test-tok-0047-ta', 2), ('test-tok-0047-tb', 2) ON CONFLICT DO NOTHING");
 
     assembled_server::PgNoteRepo repo(db->getClient());
 
@@ -218,6 +230,10 @@ TEST_CASE("POST /v1/notes/{id}/rate HTTP integration") {
     db->getClient()->execSqlSync(
         "INSERT INTO identity (token) VALUES ('test-tok-0047-http') ON CONFLICT DO NOTHING");
     db->getClient()->execSqlSync("DELETE FROM notes WHERE author_token = 'test-tok-0047-http'");
+    // Proof-of-play (T-0207): rate() now requires an archetype_seen row.
+    db->getClient()->execSqlSync(
+        "INSERT INTO archetype_seen (token, archetype_id) VALUES ('test-tok-0047-http', 2) "
+        "ON CONFLICT DO NOTHING");
 
     // Create a note to rate via HTTP. STATION/tracks (2, 3) — unique per suite.
     assembled_server::PgNoteRepo repo(db->getClient());

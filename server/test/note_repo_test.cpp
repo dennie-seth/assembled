@@ -71,7 +71,11 @@ TEST_CASE("PgNoteRepo CRUD round-trip") {
     }
     CHECK(found);
 
-    // Rate: +1 vote from the author token.
+    // Rate: +1 vote from the author token. Proof-of-play (T-0207) requires
+    // an archetype_seen row before a vote is accepted.
+    db->getClient()->execSqlSync("INSERT INTO archetype_seen (token, archetype_id) VALUES ($1, $2) "
+                                 "ON CONFLICT DO NOTHING",
+                                 std::string("test-token-note-crud"), static_cast<int16_t>(1));
     repo.rate(note_id, "test-token-note-crud", 1);
     const auto notes2 = repo.fetch(1, 1);
     for (const auto &n : notes2) {

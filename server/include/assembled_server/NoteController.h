@@ -69,6 +69,8 @@ class NoteController : public drogon::HttpController<NoteController> {
     ///                 - 200 on success or idempotent no-op.
     ///                 - 400 JSON {"error":2005} if val is not +1 or -1.
     ///                 - 401 JSON {"error":1001} if Authorization is absent/malformed.
+    ///                 - 403 JSON {"error":4001} if the caller hasn't proven play of
+    ///                   the note's archetype (T-0207 proof-of-play).
     ///                 - 503 if no DATABASE_URL is configured.
     /// @param id       Note UUID from the path segment.
     void rateNote(const drogon::HttpRequestPtr &req,

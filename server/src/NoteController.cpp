@@ -324,7 +324,12 @@ void NoteController::rateNote(const drogon::HttpRequestPtr &req,
         [id, token, val, cb](drogon::orm::DbClientPtr client) mutable {
             try {
                 PgNoteRepo repo(client);
-                repo.rate(id, token, val);
+                const RateResult result = repo.rate(id, token, val);
+
+                if (result.error == RateError::ProofOfPlayMissing) {
+                    cb(makeError(drogon::k403Forbidden, 4001)); // NO_PROOF_OF_PLAY
+                    return;
+                }
 
                 auto resp = drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(drogon::k200OK);

@@ -293,3 +293,13 @@ add_executable(cross_universe_delivery_tests
 )
 target_link_libraries(cross_universe_delivery_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(cross_universe_delivery_tests)
+
+# T-0207: Two clients, one note — proof-of-play gating on NoteRepo::rate,
+# plus the held-bleed slowdown a proven +1 vote grants the note's author.
+# Separate binary: hosts its own drogon::app() HTTP integration test.
+# note_proof_of_play_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(note_proof_of_play_tests
+  test/note_proof_of_play_test.cpp
+)
+target_link_libraries(note_proof_of_play_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(note_proof_of_play_tests)
