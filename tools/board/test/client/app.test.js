@@ -1097,3 +1097,211 @@ describe("createApp git status wiring", () => {
     expect(gitStatusRoot.children.length).toBe(0);
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// Transient view state survives model-driven re-renders.
+//
+// Reported live: with cards running, opening a column-sort dropdown and clicking
+// an option does nothing -- the dropdown closes before the click lands. Root
+// cause is that every websocket event calls render(), which replaces the whole
+// DOM, and while agents run those events arrive several times a second. The
+// general form is worse than the reported symptom: a `click` only fires on the
+// nearest common ancestor of mousedown and mouseup, so a rebuild between them
+// means NO click event fires at all, for any button on the page.
+// ---------------------------------------------------------------------------
+
+function socketHandlerOf(connectSocketImpl) {
+  return connectSocketImpl.mock.calls[0][0];
+}
+
+describe("createApp: renders do not clobber a live interaction", () => {
+  it("does not rebuild the board while a sort dropdown has focus", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const { app, boardRoot, connectSocketImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t])
+    });
+    document.body.appendChild(boardRoot);
+    await app.init();
+
+    const select = boardRoot.querySelector('.column-sort[data-status="ready"]');
+    select.focus();
+
+    socketHandlerOf(connectSocketImpl)({
+      type: "changed",
+      id: "T-0001",
+      task: task({ id: "T-0001", status: "ready", title: "renamed" })
+    });
+
+    // Same element, still attached, still focused: the open popup survives and the
+    // pending click has somewhere to land.
+    expect(boardRoot.querySelector('.column-sort[data-status="ready"]')).toBe(select);
+    expect(select.isConnected).toBe(true);
+    expect(document.activeElement).toBe(select);
+    document.body.removeChild(boardRoot);
+  });
+
+  it("applies the deferred update once the dropdown is left", async () => {
+    const t = task({ id: "T-0001", status: "ready", title: "before" });
+    const { app, boardRoot, connectSocketImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t])
+    });
+    document.body.appendChild(boardRoot);
+    await app.init();
+
+    const select = boardRoot.querySelector('.column-sort[data-status="ready"]');
+    select.focus();
+    socketHandlerOf(connectSocketImpl)({
+      type: "changed",
+      id: "T-0001",
+      task: task({ id: "T-0001", status: "ready", title: "after" })
+    });
+    expect(boardRoot.textContent).toContain("before");
+
+    select.blur();
+    select.dispatchEvent(new Event("focusout", { bubbles: true }));
+
+    expect(boardRoot.textContent).toContain("after");
+    document.body.removeChild(boardRoot);
+  });
+
+  it("does not drop a Run click when an event arrives mid-press", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const { app, boardRoot, connectSocketImpl, runTaskImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t])
+    });
+    document.body.appendChild(boardRoot);
+    await app.init();
+
+    const runBtn = boardRoot.querySelector('.card[data-id="T-0001"] .card-run');
+
+    runBtn.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    socketHandlerOf(connectSocketImpl)({
+      type: "changed",
+      id: "T-0001",
+      task: task({ id: "T-0001", status: "ready", title: "renamed mid-press" })
+    });
+
+    expect(runBtn.isConnected).toBe(true);
+
+    runBtn.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    runBtn.dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(runTaskImpl).toHaveBeenCalledWith("T-0001");
+    document.body.removeChild(boardRoot);
+  });
+
+  it("restores keyboard focus across a render that does proceed", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const { app, boardRoot, connectSocketImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t])
+    });
+    document.body.appendChild(boardRoot);
+    await app.init();
+
+    // A focused button does NOT gate the render (its click has already committed),
+    // so this genuinely exercises the capture/restore pass rather than deferral.
+    const runBtn = boardRoot.querySelector('.card[data-id="T-0001"] .card-run');
+    runBtn.focus();
+    expect(document.activeElement).toBe(runBtn);
+
+    socketHandlerOf(connectSocketImpl)({
+      type: "added",
+      id: "T-0002",
+      task: task({ id: "T-0002", status: "backlog" })
+    });
+
+    const rebuilt = boardRoot.querySelector('.card[data-id="T-0001"] .card-run');
+    expect(rebuilt).not.toBe(runBtn); // the render really did happen
+    expect(document.activeElement).toBe(rebuilt); // and focus came back to it
+    document.body.removeChild(boardRoot);
+  });
+
+  it("preserves the board horizontal scroll position across a render", async () => {
+    const { app, boardRoot, connectSocketImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([task({ id: "T-0001", status: "ready" })])
+    });
+    document.body.appendChild(boardRoot);
+    await app.init();
+
+    // `.board` is the horizontal scroller and is rebuilt inside renderBoard, so a
+    // user scrolled right to Blocked/Retired was snapped back to Backlog on every
+    // websocket event.
+    boardRoot.querySelector(".board").scrollLeft = 640;
+
+    socketHandlerOf(connectSocketImpl)({
+      type: "added",
+      id: "T-0002",
+      task: task({ id: "T-0002", status: "backlog" })
+    });
+
+    expect(boardRoot.querySelector(".board").scrollLeft).toBe(640);
+    document.body.removeChild(boardRoot);
+  });
+});
+
+describe("createApp: render pressure", () => {
+  it("ignores run-events for a card that is not selected", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const { app, boardRoot, connectSocketImpl } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([t])
+    });
+    document.body.appendChild(boardRoot);
+    await app.init();
+
+    const before = boardRoot.querySelector(".board");
+
+    for (let i = 0; i < 10; i += 1) {
+      socketHandlerOf(connectSocketImpl)({
+        type: "run-event",
+        id: "T-0999",
+        phase: "implementer",
+        event: { type: "text", text: "noise" }
+      });
+    }
+
+    // The console only ever shows the selected card, so these renders would have
+    // produced an identical screen -- while destroying every live interaction.
+    expect(boardRoot.querySelector(".board")).toBe(before);
+    document.body.removeChild(boardRoot);
+  });
+
+  it("does not re-render when the git status poll returns an unchanged head", async () => {
+    const info = { head: "abc1234", branch: "develop", dirty: false, ahead: 0, behind: 0 };
+    const gitStatusRoot = document.createElement("div");
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([task({ id: "T-0001", status: "ready" })]),
+      fetchGitStatusImpl: vi.fn().mockResolvedValue(info),
+      gitStatusRoot
+    });
+    document.body.appendChild(boardRoot);
+    await app.init();
+
+    const before = boardRoot.querySelector(".board");
+    await app.pollGitStatus();
+
+    expect(boardRoot.querySelector(".board")).toBe(before);
+    document.body.removeChild(boardRoot);
+  });
+
+  it("still re-renders when the git head actually moves", async () => {
+    const gitStatusRoot = document.createElement("div");
+    const fetchGitStatusImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ head: "abc1234", branch: "develop", dirty: false })
+      .mockResolvedValueOnce({ head: "def5678", branch: "develop", dirty: false });
+    const { app, boardRoot } = makeApp({
+      fetchTasksImpl: vi.fn().mockResolvedValue([task({ id: "T-0001", status: "ready" })]),
+      fetchGitStatusImpl,
+      gitStatusRoot
+    });
+    document.body.appendChild(boardRoot);
+    await app.init();
+
+    const before = boardRoot.querySelector(".board");
+    await app.pollGitStatus();
+
+    expect(boardRoot.querySelector(".board")).not.toBe(before);
+    document.body.removeChild(boardRoot);
+  });
+});

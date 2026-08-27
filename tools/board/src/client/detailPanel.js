@@ -72,6 +72,22 @@ function captureDirtyFields(root, previousTask) {
     dirty.body = bodyEl.value;
   }
 
+  // An un-submitted comment is user-authored data with no copy anywhere else --
+  // losing it is the worst outcome on this panel. The focus/caret restore below only
+  // covers it while it HAS focus; this covers a draft the user clicked away from.
+  const commentEl = root.querySelector(".detail-comment-input");
+  if (commentEl && commentEl.value.length > 0) {
+    dirty.comment = commentEl.value;
+  }
+
+  // Delete-confirm is pure DOM state. A rebuild silently reverts it, so a user who
+  // read the prompt and reached for "Yes, delete" ends up clicking a re-rendered
+  // "Delete" button instead -- their confirmed intent dropped with no signal.
+  const confirmEl = root.querySelector(".detail-delete-confirm");
+  if (confirmEl && confirmEl.hidden === false) {
+    dirty.deleteConfirmOpen = true;
+  }
+
   return dirty;
 }
 
@@ -489,6 +505,20 @@ export function renderDetailPanel(
   panel.append(preview, labeledField("Body (markdown)", bodyTextarea), saveBtn, deleteControlsFor(task, onDelete));
 
   root.appendChild(panel);
+
+  if (typeof dirty.comment === "string") {
+    const commentEl = root.querySelector(".detail-comment-input");
+    if (commentEl) commentEl.value = dirty.comment;
+  }
+  if (dirty.deleteConfirmOpen) {
+    const confirmEl = root.querySelector(".detail-delete-confirm");
+    const deleteEl = root.querySelector(".detail-delete");
+    if (confirmEl && deleteEl) {
+      confirmEl.hidden = false;
+      deleteEl.hidden = true;
+    }
+  }
+
   restoreFocusState(root, focusState);
   root.__lastTask = task;
 }

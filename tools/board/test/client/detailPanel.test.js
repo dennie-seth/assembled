@@ -406,7 +406,17 @@ describe("renderDetailPanel draft preservation across live re-renders", () => {
     document.body.removeChild(root);
   });
 
-  it("does not restore a stale draft once the field has lost focus", () => {
+  // REVERSED deliberately. This previously asserted that a blurred draft is dropped,
+  // which made the comment box the one editable field on the panel that does NOT
+  // survive losing focus -- title, body, priority, status, agent, phase and the deps
+  // chips are all preserved by the T-0151 dirty-diff. The original b928575 fix was
+  // focus-scoped only, so the bug it was opened for ("comment draft erased") was still
+  // live the moment the user clicked away to check something: type a comment, click the
+  // body field, next run-event lands, draft gone with no undo. An un-submitted comment
+  // is user-authored data with no copy anywhere else, so it is now dirty-tracked like
+  // every other field. Bleed into a *different* card is still prevented -- dirty capture
+  // only runs when the task id is unchanged (see the test below).
+  it("preserves a comment draft even after the field has lost focus", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
     renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment: vi.fn() }));
@@ -417,6 +427,24 @@ describe("renderDetailPanel draft preservation across live re-renders", () => {
     input.blur();
 
     renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment: vi.fn() }));
+
+    expect(root.querySelector(".detail-comment-input").value).toBe("typed then blurred");
+    document.body.removeChild(root);
+  });
+
+  it("still clears the draft after the comment is submitted", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const onAddComment = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment }));
+
+    const input = root.querySelector(".detail-comment-input");
+    input.value = "ship it";
+    root.querySelector(".detail-comment-add").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onAddComment).toHaveBeenCalledWith("T-0137", "ship it");
+
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment }));
 
     expect(root.querySelector(".detail-comment-input").value).toBe("");
     document.body.removeChild(root);

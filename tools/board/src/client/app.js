@@ -16,6 +16,7 @@ import {
 } from "./api.js";
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard, BATCH_SIZE } from "./boardView.js";
+import { applyViewState, captureViewState, createRenderGate } from "./viewState.js";
 import { renderDetailPanel } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
 import { renderCreateForm } from "./createForm.js";
@@ -56,7 +57,21 @@ export function createApp({
   let gitStatus = null;
   let knownGitHead = null;
 
+  // Every subtree render() rebuilds. Focus, caret, uncommitted text, scroll offsets
+  // and open <details> live only in the DOM, so they are captured before the rebuild
+  // and re-applied after -- see viewState.js for why this is centralised here rather
+  // than patched per panel.
+  const renderRoots = [boardRoot, detailRoot, consoleRoot, createFormRoot, gitStatusRoot].filter(
+    Boolean
+  );
+
   function render() {
+    const snapshots = renderRoots.map((root) => [root, captureViewState(root)]);
+    renderAll();
+    for (const [root, snapshot] of snapshots) applyViewState(root, snapshot);
+  }
+
+  function renderAll() {
     renderBoard(boardRoot, tasks, {
       onDrop: handleDrop,
       onCardClick: handleCardClick,
@@ -106,6 +121,12 @@ export function createApp({
       renderGitStatusBar(gitStatusRoot, gitStatus);
     }
   }
+
+  // Model-driven updates (websocket events, the git poll) go through the gate: while
+  // the user is mid-gesture -- pointer held down, a <select> popup open, a field
+  // focused -- the render is deferred and coalesced, then flushed when they are done.
+  // User-initiated updates call render() directly and are never deferred.
+  const renderGate = createRenderGate({ render, roots: renderRoots });
 
   async function applyPatch(taskId, patch) {
     const updated = await patchTaskImpl(taskId, patch);
@@ -278,7 +299,12 @@ export function createApp({
   function handleRunEvent(event) {
     const existing = runLogs.get(event.id) ?? [];
     runLogs.set(event.id, [...existing, { phase: event.phase, event: event.event }]);
-    render();
+    // The console only ever shows the SELECTED card (see renderAll), so an event for
+    // any other card would rebuild the whole app to produce an identical screen. With
+    // several cards running that was the dominant source of renders, and every one of
+    // them was a chance to swallow a click or close a dropdown.
+    if (event.id !== selectedId) return;
+    renderGate.request();
   }
 
   function handleSocketMessage(event) {
@@ -293,7 +319,7 @@ export function createApp({
       return;
     }
     tasks = applyTaskEvent(tasks, event);
-    render();
+    renderGate.request();
   }
 
   async function pollGitStatus() {
@@ -301,11 +327,28 @@ export function createApp({
     try {
       const info = await fetchGitStatusImpl();
       const updated = knownGitHead !== null && info.head !== knownGitHead;
-      gitStatus = { ...info, updated, onReload: () => window.location.reload() };
-      render();
+      const next = { ...info, updated, onReload: () => window.location.reload() };
+      // Without this the board tore itself down every 30s on a completely idle
+      // instance -- which is why the sort dropdown misbehaved even with nothing
+      // running. `onReload` is a fresh closure each poll, so compare the data only.
+      if (gitStatusUnchanged(gitStatus, next)) return;
+      gitStatus = next;
+      renderGate.request();
     } catch {
       // Non-fatal: git status is informational; don't surface fetch errors on the board.
     }
+  }
+
+  function gitStatusUnchanged(previous, next) {
+    if (!previous) return false;
+    return (
+      previous.head === next.head &&
+      previous.branch === next.branch &&
+      previous.updated === next.updated &&
+      previous.dirty === next.dirty &&
+      previous.ahead === next.ahead &&
+      previous.behind === next.behind
+    );
   }
 
   async function init() {
@@ -316,6 +359,7 @@ export function createApp({
     tasks = fetchedTasks;
     agentOptions = fetchedAgents;
     render();
+    renderGate.attach();
     connectSocketImpl(handleSocketMessage);
 
     if (fetchGitStatusImpl) {
