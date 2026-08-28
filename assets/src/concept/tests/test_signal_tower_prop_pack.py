@@ -28,11 +28,8 @@ correct decoding of all PNG filter types (0–4). The earlier stdlib-only decode
 assumed filter type 0 on every scanline, which silently mis-decoded the
 mixed-filter output of the real cutout pipeline (T-0223 root cause).
 
-T-0233 (HANDOFF §23-j) certifies this same 5-prop pack as the full pack for
-all seven Signal Tower rooms (docs/design/14-vertical-slice.md §10 -- only
-Power Substation, Equipment Floor, Ground Relay, and Antenna Shaft need
-cover/hiding dressing; Records Room, Storage Cache, and Broadcast Deck need
-none) and adds:
+T-0233 (HANDOFF §23-j) makes this same 5-prop pack P-3/P-7 compliant and
+adds:
 
   - P-7 compliance: `concept_hash`/`concept_source` resolving to the
     approved `signal_tower_props_concept_sheet_v1.png` (T-0211) on every
@@ -46,8 +43,12 @@ none) and adds:
   - An explicit per-pair (not just per-class-min/max) 16px luma-gap check,
     so no individual prop can hide inside a passing aggregate.
 
-See `assets/src/concept/SIGNAL_TOWER_PROP_PACK_FULL_T0233.md` for the full
-room-coverage mapping and measured-value writeup.
+It does **not** certify full seven-room coverage: docs/design/14
+-vertical-slice.md §10 names dedicated geometry (transformer housings,
+a crawlspace, a hiding alcove) this 5-prop pack has no equivalent for.
+See `assets/src/concept/SIGNAL_TOWER_PROP_PACK_FULL_T0233.md`'s "Known
+gap" section for the room-by-room mapping and the v2 concept sheet this
+is blocked on.
 """
 
 from __future__ import annotations

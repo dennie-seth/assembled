@@ -35,11 +35,13 @@ OUT_PNG = CONCEPT_DIR / "player_character_concept_sheet_v1.png"
 OUT_PROV = CONCEPT_DIR / "player_character_concept_sheet_v1.provenance.json"
 
 # Adds tools/asset-gate/src to sys.path at module level so that
-# `pytest.importorskip("asset_gate...")` in the test modules resolves
-# without requiring a separate `pip install -e tools/asset-gate` step --
-# conftest loads before test modules, so this is in place before any
-# importorskip runs. Same pattern as assets/src/character/tests/conftest.py
-# and assets/src/tiles/tests/conftest.py (T-0233).
+# `import asset_gate...` in the test modules resolves without requiring a
+# separate `pip install -e tools/asset-gate` step -- conftest loads before
+# test modules, so this is in place before any test module import runs.
+# This is a hard import, not `pytest.importorskip`: a skip here would
+# silently no-op T-0223's own regression gate instead of failing it (see
+# T-0233 review notes). Same sys.path pattern as
+# assets/src/character/tests/conftest.py and assets/src/tiles/tests/conftest.py.
 _ASSET_GATE_SRC = WORKTREE / "tools" / "asset-gate" / "src"
 if _ASSET_GATE_SRC.exists() and str(_ASSET_GATE_SRC) not in sys.path:
     sys.path.insert(0, str(_ASSET_GATE_SRC))
