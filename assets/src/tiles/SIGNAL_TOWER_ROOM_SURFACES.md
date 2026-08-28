@@ -29,17 +29,22 @@ bounded by.
 
 | File | Kind | Path strategy |
 |---|---|---|
-| `wall_16px.png` | Base field | Circular-pad (`13` §3.4) |
-| `floor_16px.png` | Base field | Circular-pad (`13` §3.4) |
-| `concrete_16px.png` | Base field | Circular-pad (`13` §3.4) |
-| `transitions_16px.png` | Transitions (corners, edges, wall->floor and concrete->floor) | Sliced sheet (`13` §3.4) |
+| `wall_16px.png` | Base field | Circular-pad (`13` §3.4) — real SDXL txt2img (`sd_xl_base_1.0.safetensors`, 1024x1024) → descend (T-0073) → deterministic outer-ring seam-forcing |
+| `floor_16px.png` | Base field | Circular-pad (`13` §3.4) — same chain as `wall_16px.png` |
+| `concrete_16px.png` | Base field | Circular-pad (`13` §3.4) — same chain as `wall_16px.png` |
+| `transitions_16px.png` | Transitions (corners, edges, wall->floor and concrete->floor) | Sliced sheet (`13` §3.4) — deterministic construction (T-0153 precedent); plain wall/floor/concrete cells are pixel-identical copies of the real base fields above |
 
 All four committed under `assets/final/tiles/signal_tower/`, each with a
 P-7-compliant `.provenance.json` sidecar. See
-`assets/src/tiles/src/tile_gen/fields.py`,
-`assets/src/tiles/src/tile_gen/base_fields.py`, and
-`assets/src/tiles/src/tile_gen/signal_tower_sheet.py` for the generators,
-and `assets/src/tiles/tests/test_signal_tower_base_fields_gate.py` /
+`assets/src/tiles/src/tile_gen/base_fields.py` (real circular-pad
+generation: SDXL → `comfy_client.descend` → deterministic outer-ring
+seam-forcing, module docstring explains why the ring is forced),
+`assets/src/tiles/src/tile_gen/fields.py` (the sliced-sheet transition/
+corner constructors), and
+`assets/src/tiles/src/tile_gen/signal_tower_sheet.py` (composes the
+sheet, embedding the real base fields byte-for-byte into their cells) for
+the generators, and
+`assets/src/tiles/tests/test_signal_tower_base_fields_gate.py` /
 `assets/src/tiles/tests/test_signal_tower_transitions_gate.py` for the
 T-0102 gate proof (seamlessness on all 3 base fields; adjacency on all 20
-declared pairs).
+declared pairs; sheet-cell identity on all 3 shared base fields).

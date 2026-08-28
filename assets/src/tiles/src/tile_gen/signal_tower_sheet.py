@@ -14,6 +14,14 @@ arranged in a 4-col x 4-row grid at 16px per tile:
   Row 3: concrete_corner_tl | concrete_corner_tr | concrete_corner_bl | concrete_corner_br
 
 Tiles use the locked home palette (assets/final/palette/home_palette.json).
+The plain-field cells ("wall", "floor", "concrete") are not built here --
+they are loaded byte-for-byte from `tile_gen.base_fields`'s real,
+SDXL-generated standalone tiles (the circular-pad path, `13` §3.4), so run
+`python -m tile_gen.base_fields` before this module. The corner/edge cells
+are still built deterministically from `tile_gen.fields` (the sliced-sheet
+path's own, separate T-0153 precedent) using the flat WALL/FLOOR/CONCRETE
+indices the base fields' outer ring is seam-forced to match.
+
 All edges satisfy T-0102's gate constraints -- see
 `tests/test_signal_tower_transitions_gate.py` for the declared adjacency
 set. Row 2 col 1 ("floor") is pixel-identical to row 0 col 1: both
@@ -33,15 +41,12 @@ from tile_gen.fields import (
     CONCRETE,
     TILE,
     WALL,
-    make_concrete,
     make_corner_bl,
     make_corner_br,
     make_corner_tl,
     make_corner_tr,
     make_field_floor_h,
     make_field_floor_v,
-    make_floor,
-    make_wall,
 )
 from tile_gen.transition_sheet import _load_palette
 
@@ -51,30 +56,45 @@ SHEET_W = TILE * COLS  # 64
 SHEET_H = TILE * ROWS  # 64
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
-OUT_PATH = (
-    REPO_ROOT / "assets" / "final" / "tiles" / "signal_tower" / "transitions_16px.png"
-)
+TILE_DIR = REPO_ROOT / "assets" / "final" / "tiles" / "signal_tower"
+OUT_PATH = TILE_DIR / "transitions_16px.png"
+
+
+def _load_standalone_tile(name: str) -> np.ndarray:
+    """Load a real, already-generated standalone base-field tile's index
+    array (`tile_gen.base_fields.generate_base_field_tile` must have run
+    first) -- the sheet's own base-field cells must be pixel-identical to
+    these, not independently reconstructed (test_signal_tower_transitions_
+    gate.py's test_sheet_base_cell_matches_standalone_base_field)."""
+    path = TILE_DIR / f"{name}_16px.png"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"standalone base-field tile not found: {path}\n"
+            "Run `python -m tile_gen.base_fields` first."
+        )
+    return np.array(Image.open(path), dtype=np.uint8)
+
 
 # Left-to-right, top-to-bottom order matches TILE_LAYOUT in the test.
 _TILE_MAKERS = [
     # wall <-> floor block
-    make_wall,
-    make_floor,
+    lambda: _load_standalone_tile("wall"),
+    lambda: _load_standalone_tile("floor"),
     lambda: make_field_floor_v(WALL),
     lambda: make_field_floor_h(WALL),
     lambda: make_corner_tl(WALL),
     lambda: make_corner_tr(WALL),
-    make_corner_bl,
-    make_corner_br,
+    lambda: make_corner_bl(WALL),
+    lambda: make_corner_br(WALL),
     # concrete <-> floor block
-    make_concrete,
-    make_floor,
+    lambda: _load_standalone_tile("concrete"),
+    lambda: _load_standalone_tile("floor"),
     lambda: make_field_floor_v(CONCRETE),
     lambda: make_field_floor_h(CONCRETE),
     lambda: make_corner_tl(CONCRETE),
     lambda: make_corner_tr(CONCRETE),
-    make_corner_bl,
-    make_corner_br,
+    lambda: make_corner_bl(CONCRETE),
+    lambda: make_corner_br(CONCRETE),
 ]
 
 

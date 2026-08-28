@@ -1,5 +1,10 @@
 """Shared deterministic tile-array constructors for T-0232's Signal Tower
-base-field and transition tiles.
+transition tiles (the sliced-sheet path, `docs/design/13-asset-pipeline.md`
+§3.4). Base fields (wall/floor/concrete) are *not* built here any more --
+see `tile_gen.base_fields`, which drives real SDXL generation through the
+circular-pad path. This module keeps only the deterministic-construction
+strategy T-0153 already established (reviewed, merged) for the *sliced
+transition sheet*, extended to a second material pair.
 
 Reuses T-0153's WALL/FLOOR/JOINT home-palette slot indices and adds
 CONCRETE -- a third, distinct base field ("raw, exposed concrete") needed
@@ -9,17 +14,16 @@ closet and a narrow mechanical shaft rather than the tower's painted
 interior. Room -> surface mapping recorded in
 assets/src/tiles/SIGNAL_TOWER_ROOM_SURFACES.md.
 
-Circular-pad note (`docs/design/13-asset-pipeline.md` §3.4): true
-circular-pad SDXL sampling gives no guarantee of *pixel-exact*
-self-seamlessness under T-0102's mechanical gate (left col == right col,
-pixel equality) -- diffusion output is stochastic and P-1 forbids
-hand-editing a seam closed after the fact. T-0153 already established the
-deterministic-construction alternative for the sliced-transition half of
-this pipeline stage (reviewed, merged); this module applies the identical
-strategy to the circular-pad half: build each field's texture, then keep
-every edge column/row at the flat field colour by construction. That
-achieves the same *result* circular-pad sampling targets -- infinite
-self-repeat -- without leaving pixel-exact seam-matching to chance.
+Why transitions stay flat-constructed while base fields don't: T-0102's
+seamlessness/adjacency gates are pixel-exact (left col == right col, top
+row == bottom row; a declared pair's shared edge matches pixel-for-pixel).
+A transition tile's *entire* footprint is edge -- every pixel sits on one
+declared boundary or another -- so there is no interior left for organic
+texture the way a base field has one. Building it from the same flat
+WALL/FLOOR/CONCRETE indices the (real, SDXL-generated) base fields' outer
+ring is seam-forced to keeps every declared pair trivially, deterministically
+exact. See `tile_gen.base_fields` for why the base fields' *border* is
+forced to these same flat indices.
 """
 
 from __future__ import annotations
@@ -33,49 +37,6 @@ WALL = 8  # ramp-08 #58554c -- dark brutalist concrete, painted interior wall
 FLOOR = 13  # ramp-13 #7e7c74 -- lighter weathered floor slab
 JOINT = 4  # ramp-04 #3d3b31 -- concrete expansion joint / crack / speckle detail
 CONCRETE = 6  # ramp-06 #49493b -- raw exposed concrete, darker/rougher than WALL
-
-
-def make_wall() -> np.ndarray:
-    """Self-seamless 16x16 concrete wall with horizontal expansion joints.
-
-    Joint lines only in interior columns (1-14) so edge columns stay
-    uniformly WALL -- guarantees left_col == right_col == all-WALL.
-    Top row and bottom row are all-WALL (seamlessness + adjacency).
-    """
-    arr = np.full((TILE, TILE), WALL, dtype=np.uint8)
-    for row in [3, 7, 11]:
-        arr[row, 1:15] = JOINT
-    return arr
-
-
-def make_floor() -> np.ndarray:
-    """Self-seamless 16x16 floor slab with a single interior vertical crack.
-
-    Crack is at col 8, rows 1-14 only -- edge rows 0 and 15 stay all-FLOOR,
-    edge cols 0 and 15 are untouched.  All four edge vectors are all-FLOOR.
-    """
-    arr = np.full((TILE, TILE), FLOOR, dtype=np.uint8)
-    arr[1:15, 8] = JOINT
-    return arr
-
-
-def make_concrete() -> np.ndarray:
-    """Self-seamless 16x16 raw concrete field with a sparse aggregate speckle.
-
-    Speckle positions are fixed and confined to interior rows/cols (1-14),
-    same edge-safety rule as `make_wall`/`make_floor`: every edge vector
-    stays uniformly CONCRETE.
-    """
-    arr = np.full((TILE, TILE), CONCRETE, dtype=np.uint8)
-    speckle = [
-        (2, 2), (2, 6), (2, 10),
-        (6, 4), (6, 9), (6, 13),
-        (10, 2), (10, 7), (10, 12),
-        (13, 5), (13, 10),
-    ]
-    for row, col in speckle:
-        arr[row, col] = JOINT
-    return arr
 
 
 def make_field_floor_v(field_value: int) -> np.ndarray:
@@ -100,21 +61,61 @@ def make_field_floor_h(field_value: int) -> np.ndarray:
     return arr
 
 
+def _make_quadrant_corner(
+    top_left: int, top_right: int, bottom_left: int, bottom_right: int
+) -> np.ndarray:
+    """16x16 tile split into four 8x8 quadrants, each a flat index.
+
+    HALF = TILE // 2 so a corner tile's top_row is exactly its top-quadrant
+    row and its left/right_col is exactly its left/right-quadrant column --
+    each corner is checked against a neighbour's single edge vector, which
+    only ever touches two of the four quadrants.
+    """
+    half = TILE // 2
+    arr = np.empty((TILE, TILE), dtype=np.uint8)
+    arr[:half, :half] = top_left
+    arr[:half, half:] = top_right
+    arr[half:, :half] = bottom_left
+    arr[half:, half:] = bottom_right
+    return arr
+
+
 def make_corner_tl(field_value: int) -> np.ndarray:
-    """Top-left convex corner: field above/left, floor below/right."""
-    return make_field_floor_v(field_value)
+    """Top-left convex corner: field fills top band + left column (an L),
+    floor cuts into the bottom-right quadrant only.
+
+    top_row = all-field (top-left + top-right quadrants both field) ->
+      matches the field tile's own bottom row (adjacency: field above).
+    right_col = top half field, bottom half floor -> matches
+      make_field_floor_v(field_value)'s left/right col (adjacency: beside
+      the plain vertical edge tile).
+    """
+    return _make_quadrant_corner(field_value, field_value, field_value, FLOOR)
 
 
 def make_corner_tr(field_value: int) -> np.ndarray:
-    """Top-right convex corner: field above/right, floor below/left."""
-    return make_field_floor_v(field_value)
+    """Top-right convex corner: field fills top band + right column (an L),
+    floor cuts into the bottom-left quadrant only.
+
+    top_row = all-field, same adjacency as `make_corner_tl`.
+    left_col = top half field, bottom half floor -> matches
+      make_field_floor_v(field_value)'s left/right col on its other side.
+    """
+    return _make_quadrant_corner(field_value, field_value, FLOOR, field_value)
 
 
-def make_corner_bl() -> np.ndarray:
-    """Bottom-left concave corner: all floor."""
-    return np.full((TILE, TILE), FLOOR, dtype=np.uint8)
+def make_corner_bl(field_value: int) -> np.ndarray:
+    """Bottom-left concave corner: floor fills the top band, field pokes up
+    into the bottom-left quadrant only.
+
+    top_row = all-floor -> matches the floor tile's own bottom row
+    (adjacency: floor above).
+    """
+    return _make_quadrant_corner(FLOOR, FLOOR, field_value, FLOOR)
 
 
-def make_corner_br() -> np.ndarray:
-    """Bottom-right concave corner: all floor."""
-    return np.full((TILE, TILE), FLOOR, dtype=np.uint8)
+def make_corner_br(field_value: int) -> np.ndarray:
+    """Bottom-right concave corner: floor fills the top band, field pokes up
+    into the bottom-right quadrant only. Same top_row adjacency as
+    `make_corner_bl`; distinct from every other corner by construction."""
+    return _make_quadrant_corner(FLOOR, FLOOR, FLOOR, field_value)
