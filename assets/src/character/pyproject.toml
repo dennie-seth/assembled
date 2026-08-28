@@ -28,6 +28,7 @@ generate-synth-sound-trapped-sheet = "char_gen.synth_entities:main_sound_trapped
 generate-synth-still-air-idle-sheet = "char_gen.synth_entities:main_still_air_idle"
 generate-synth-still-air-move-sheet = "char_gen.synth_entities:main_still_air_move"
 generate-synth-still-air-trapped-sheet = "char_gen.synth_entities:main_still_air_trapped"
+generate-synth-player-idle-arm-c-sheet = "char_gen.synth_entities:main_player_idle_arm_c"
 
 [build-system]
 requires = ["setuptools>=68"]
