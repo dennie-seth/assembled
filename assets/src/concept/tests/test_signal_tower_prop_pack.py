@@ -61,12 +61,12 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
+import asset_gate.visibility as asset_gate_visibility
+import signal_tower_prop_recipes as prop_recipes
+
 WORKTREE = Path(__file__).resolve().parents[4]
 PROPS_DIR = WORKTREE / "assets" / "final" / "props" / "signal_tower"
 CONCEPT_DIR = WORKTREE / "assets" / "src" / "concept"
-
-asset_gate_visibility = pytest.importorskip("asset_gate.visibility")
-prop_recipes = pytest.importorskip("signal_tower_prop_recipes")
 
 COVER_PROPS = [
     "relay_cabinet_v1.png",
