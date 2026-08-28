@@ -18,8 +18,12 @@ violating P-3/P-7 ("no one-off uncommitted script").
 `width`/`height` below are the GAME-pixel dimensions passed as
 `Recipe.width`/`height` (the `ImageScale` node's resize target, per
 `comfy_client.cutout.render_cutout_workflow`); `gen_width`/`gen_height`
-are the SDXL-safe generation dimensions, matching what each prop's own
-`.provenance.json` records in its `width`/`height` fields.
+are the SDXL-safe generation dimensions, matching the "generated at
+NxN" figure documented for each prop in `ASSET_PROVENANCE.md`. Note this
+is NOT what each prop's own `.provenance.json` records in its `width`/
+`height` fields -- `write_provenance_sidecar` writes the post-downscale
+GAME dimensions there (same value as `Recipe.width`/`height` above), not
+the generation dimensions.
 
 Regenerate the full pack (requires a reachable ComfyUI instance and
 `tools/comfy-client` installed):

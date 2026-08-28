@@ -270,10 +270,16 @@ forward).
 
 ## Non-regression
 
-**Pixel bytes changed for one prop** (`server_rack_v1`, see "Live
-regeneration, run 3" above); the other four are byte-identical to what
-T-0223 committed. `server_rack_v1`'s prompt and seed changed from
-T-0221/T-0223's values — a deliberate re-tune, not drift — and
+**Only two of the five props are byte-identical to what T-0223/develop
+committed**: `low_duct_v1` and `relay_cabinet_v1` never changed anywhere on
+this branch (confirmed via `git ls-tree` — same blob as `develop`).
+`crate_stack_v1` and `locker_v1` did change pixels, in the run-2 live
+regeneration (same recipe/prompt/seed as T-0221/T-0223, but SDXL sampling
+on this rig is not bit-reproducible run to run); they have been stable
+since (byte-identical run-2→run-3, confirmed above) and pass every gate,
+but they are not byte-identical to develop's prior pixels. `server_rack_v1`
+is the one prop with a **deliberate** re-tune (see "Live regeneration, run
+3" above) — its prompt and seed changed from T-0221/T-0223's values — and
 `assets/src/props/signal_tower_prop_recipes.py`'s entry, the committed
 recipe, was updated to match exactly what produced the committed bytes;
 `test_recipe_data_matches_committed_provenance` enforces that the two
