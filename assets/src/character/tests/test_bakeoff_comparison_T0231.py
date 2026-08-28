@@ -10,18 +10,21 @@ invent the human silhouette-read (criterion 1) or human drift verdict
 (criterion 2's other half), which DL-21 reserves to a human and this card
 leaves PENDING (see BAKEOFF_DECISION_T0231.md).
 
-RED state: assets/final/character/bakeoff_comparison_T0231.svg,
+RED state: assets/final/character/bakeoff_comparison_T0231.webp,
            bakeoff_frame_delta_report_T0231.json, and
            assets/src/character/BAKEOFF_COST_TABLE_T0231.md all absent ->
            existence asserts fail; char_gen.bakeoff_compare does not exist
            yet -> the importorskip below fails collection too.
-GREEN state: all three artefacts exist, the delta report's numbers match an
-             independent re-run of the same mechanical gate over each arm's
-             own committed sheet, the cost table's rows match each arm's own
-             filled §23-c template verbatim, the decision record exists and
-             states Arm A's elimination plus the still-open human verdicts,
-             and both the DL-22 decision-log entry and an ASSET_PROVENANCE.md
-             row for the comparison artefact are present.
+GREEN state: all three artefacts exist, the comparison artefact is a real
+             raster composite (each arm's own judging-preview pixels pasted
+             into the frame, not an external reference), the delta report's
+             numbers match an independent re-run of the same mechanical gate
+             over each arm's own committed sheet, the cost table's rows
+             match each arm's own filled §23-c template verbatim, the
+             decision record exists and states Arm A's elimination plus the
+             still-open human verdicts, and both the DL-22 decision-log
+             entry and an ASSET_PROVENANCE.md row for the comparison
+             artefact are present.
 
 Install:
     pip install -e ".[dev]" -e ../../../../tools/asset-gate
@@ -31,7 +34,6 @@ from __future__ import annotations
 
 import json
 import re
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -43,7 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 CHAR_DIR = REPO_ROOT / "assets" / "src" / "character"
 FINAL_DIR = REPO_ROOT / "assets" / "final" / "character"
 
-SVG_PATH = FINAL_DIR / "bakeoff_comparison_T0231.svg"
+COMPARISON_PATH = FINAL_DIR / "bakeoff_comparison_T0231.webp"
 DELTA_REPORT_PATH = FINAL_DIR / "bakeoff_frame_delta_report_T0231.json"
 COST_TABLE_PATH = CHAR_DIR / "BAKEOFF_COST_TABLE_T0231.md"
 DECISION_PATH = CHAR_DIR / "BAKEOFF_DECISION_T0231.md"
@@ -58,32 +60,64 @@ ARMS = bakeoff_compare.ARMS
 # ---------------------------------------------------------------------------
 
 
-def test_comparison_svg_exists() -> None:
-    assert SVG_PATH.exists(), (
-        f"comparison artefact not found: {SVG_PATH}\n"
+def test_comparison_artefact_exists() -> None:
+    assert COMPARISON_PATH.exists(), (
+        f"comparison artefact not found: {COMPARISON_PATH}\n"
         "Run assets/src/character/compare_bakeoff_arms_T0231.py to produce it."
     )
 
 
-def test_comparison_svg_is_well_formed_xml() -> None:
-    ET.parse(SVG_PATH)  # raises ParseError on malformed XML
+def test_comparison_artefact_is_animated_raster_with_one_frame_per_arm_pose() -> None:
+    """Board attachments reject SVG/HTML outright (tools/board/src/server/
+    httpApi.js's resolveMimeType) -- the artefact must be a real raster
+    image, and 'in motion' means it actually animates."""
+    from PIL import Image
 
-
-def test_comparison_svg_references_all_three_arm_previews() -> None:
-    text = SVG_PATH.read_text()
-    for arm in ARMS:
-        assert arm.preview_gif.name in text, (
-            f"comparison SVG does not reference {arm.preview_gif.name} "
-            f"({arm.label}) -- all three arms must appear side by side, in "
-            "motion (DL-21 judging conditions), in one artefact"
+    with Image.open(COMPARISON_PATH) as im:
+        assert im.format == "WEBP"
+        assert getattr(im, "n_frames", 1) == 9, (
+            f"expected 9 composited frames (3x3 idle grid), got {getattr(im, 'n_frames', 1)}"
         )
+
+
+def test_comparison_artefact_references_all_three_arm_previews() -> None:
+    for arm in ARMS:
         assert arm.preview_gif.exists(), f"referenced preview missing: {arm.preview_gif}"
 
 
-def test_comparison_svg_labels_all_three_arms() -> None:
-    text = SVG_PATH.read_text()
+def test_comparison_artefact_labels_all_three_arms() -> None:
+    labels = bakeoff_compare.comparison_labels()
     for arm in ARMS:
-        assert arm.label in text, f"comparison SVG missing a label for {arm.label}"
+        assert any(arm.label in label and arm.card in label for label in labels), (
+            f"comparison artefact missing a label for {arm.label}"
+        )
+
+
+def test_comparison_artefact_embeds_each_arms_own_preview_pixels() -> None:
+    """The composite must actually embed each arm's own preview frames --
+    not merely reference the GIF filenames as text. Crop each arm's panel
+    out of the composite's first frame and diff it against that arm's own
+    judging-preview first frame; a real paste is pixel-identical (both are
+    lossless), an unrendered/placeholder panel would not match."""
+    from PIL import Image
+
+    width, height, y_panel = bakeoff_compare.comparison_layout()
+    with Image.open(COMPARISON_PATH) as composite:
+        composite.seek(0)
+        composite_frame0 = composite.convert("RGB")
+    assert composite_frame0.size == (width, height)
+
+    for i, arm in enumerate(ARMS):
+        with Image.open(arm.preview_gif) as preview:
+            preview.seek(0)
+            preview_frame0 = preview.convert("RGB")
+        x = bakeoff_compare.panel_x(i)
+        panel_w = bakeoff_compare.COMPARISON_PANEL_W
+        panel_h = bakeoff_compare.COMPARISON_PANEL_H
+        cropped = composite_frame0.crop((x, y_panel, x + panel_w, y_panel + panel_h))
+        assert list(cropped.getdata()) == list(preview_frame0.getdata()), (
+            f"{arm.key}: composite panel pixels do not match its own judging-preview frame 0"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -228,4 +262,4 @@ def test_decision_log_has_dl22_entry() -> None:
 
 def test_asset_provenance_lists_comparison_artefact() -> None:
     text = PROVENANCE_INDEX_PATH.read_text()
-    assert "bakeoff_comparison_T0231.svg" in text
+    assert "bakeoff_comparison_T0231.webp" in text
