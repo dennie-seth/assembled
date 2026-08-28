@@ -22,5 +22,7 @@
   "comfyui_version": "0.29.0",
   "torch_version": "2.5.1+cu121",
   "generator": "tools/comfy-client/src/comfy_client/cutout.py",
+  "concept_hash": "da676d790f923bcb266225c96445b1be26bec56b0b651befd0c254415fbe87a4",
+  "concept_source": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
   "_generation_note": "T-0223 value re-tune: T-0221's regeneration produced a locker that measured BT.601 luma16≈144.7, lighter than 2 of the 3 cover props (crate_stack 112.9, relay_cabinet 110.7) once the PNG decoder bug (T-0223 root cause) was fixed, violating the cover>hiding readability rule (docs/design/13-asset-pipeline.md §3.5/§6.9). Re-tuned prompt drops the lighter door-frame/handle accents (ramp08/ramp13) in favour of a near-black body (ramp00-ramp02) with only a small mid-dark accent, new seed 7223002. Result measures luma_full=82.9, luma16=82.0 (16px, longest-side-16 downscale) -- well below the lightest cover prop (relay_cabinet, luma16=110.7), a 28.7-luma margin against the 15.0 floor. Alpha remains 255 across all 588 px (14x42), unchanged from T-0221's alpha-fix. Same SolidMask(value=0.0)/JoinImageWithAlpha convention, same gen 256x768->game 14x42 via ImageScale(area), same committed cutout.py path. workflow_hash is sha256 of the submitted node graph JSON (sort_keys, compact separators), matching comfy_client.workflow.workflow_hash()."
 }
