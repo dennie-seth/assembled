@@ -14,15 +14,15 @@
   "width": 512,
   "height": 576,
   "solid_mask_value": 1.0,
-  "workflow_hash": "14ac24aefbf3cb5c293968fa81635087e3f2a07e5ca09cc9ca270c4b11bb8847",
+  "workflow_hash": "01a71c5a27dfc4bab45d3aed5a1e1e212d120bc6acd75824aab3cf56289e9232",
   "workflow_template": "tools/comfy-client/src/comfy_client/templates/sdxl_cutout_lora_v1.json",
-  "prompt_id": "6e555a84-2380-45cc-91ad-c19bb00a78b6",
+  "prompt_id": "b4a220e2-22d9-4c49-84bb-cec7b82dd862",
   "prop_class": "cover",
-  "sprite_hash": "c6992374d69d9e6200f7cdd4771939e3239a553c47bb95d814d359cdd8e1141f",
+  "sprite_hash": "0114af4f803d914950cc308ae9ea3c32c7cffbb257ecda9c900e53d4e1d2e037",
   "comfyui_version": "0.29.0",
   "torch_version": "2.5.1+cu121",
   "generator": "tools/comfy-client/src/comfy_client/cutout.py",
   "concept_hash": "da676d790f923bcb266225c96445b1be26bec56b0b651befd0c254415fbe87a4",
   "concept_source": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
-  "_generation_note": "T-0221 run-2: alpha-fix regeneration. SolidMask(value=0.0) in workflow (ComfyUI JoinImageWithAlpha inverts mask; 0.0->alpha=255). solid_mask_value records user-facing convention (1.0=fully opaque). Gen 512x576->game 24x28 via ImageScale(area). Node graph: CheckpointLoaderSimple(4)->LoraLoader(12)->EmptyLatentImage(5)+CLIPTextEncode(6/7)->KSampler(3)->VAEDecode(8)->SolidMask(13)+JoinImageWithAlpha(14)->ImageScale(15, area, 24x28)->SaveImage(9). workflow_hash is sha256sum of the submitted workflow JSON file."
+  "_generation_note": "T-0233 HANDOFF §23-j live regeneration: this card's own reviewer verdict found the prior sidecar recorded a real generation but the diff itself committed no new pixels, and that generate_all() had never actually been run against a live ComfyUI instance. This run re-submits the exact node graph assets/src/props/signal_tower_prop_recipes.py's PROP_RECIPES['crate_stack_v1'] entry renders (same prompt/negative_prompt/seed/checkpoint/LoRA/sampler/dims as the T-0221 run this replaces) to the same live ComfyUI instance (172.18.192.1:8188) via node tools/board/scripts/agentCurl.js -- python execution was unavailable in this session, so the submission used curl directly against the same committed sdxl_cutout_lora_v1.json template/values comfy_client.cutout.render_cutout_workflow would have produced (hand-transcribed and diffed against the recipe module and template file). SolidMask(value=0.0) in the submitted graph (ComfyUI JoinImageWithAlpha inverts the mask; 0.0->alpha=255). solid_mask_value records the user-facing convention (1.0=fully opaque). Gen 512x576->game 24x28 via ImageScale(area). Output verified RGBA/24x28 via `file`; visually compared against the prior sprite (both read as the same two-crate mid-value stack with a visible seam -- see assets/src/concept/SIGNAL_TOWER_PROP_PACK_FULL_T0233.md). workflow_hash is sha256sum of the canonicalized (sort_keys, compact-separator) submitted graph JSON, same convention as the T-0221/T-0223 rows above. Automated pytest verification of the 16px luma-gap/visibility gates could not be run locally in this sandboxed session (python3/pytest execution denied); the reviewer's VALIDATION pass runs test_signal_tower_prop_pack.py against these exact committed bytes."
 }
