@@ -520,6 +520,53 @@ def test_generate_cutout_concept_hash_defaults_to_none(tmp_path, cutout_recipe):
 
 
 # ---------------------------------------------------------------------------
+# extra (T-0233, HANDOFF §23-j): caller-supplied domain fields
+#
+# CutoutProvenanceRecord is deliberately generic -- cutout.py serves any
+# RGBA-cutout sprite, not just Signal Tower props. A field like `prop_class`
+# (cover vs hide) is domain-specific to one caller's recipe layer, so it has
+# no place on the shared dataclass. `extra` lets a caller merge structured
+# fields into the written sidecar without generate_cutout() knowing what
+# they mean -- the same mechanism write_provenance_sidecar already exposes,
+# just threaded through.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_cutout_extra_fields_recorded_in_sidecar(tmp_path, cutout_recipe):
+    client = FakeClient()
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=client,
+        extra={"prop_class": "cover"},
+    )
+
+    sidecar = tmp_path / f"{cutout_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["prop_class"] == "cover"
+
+
+def test_generate_cutout_extra_defaults_to_no_extra_fields(tmp_path, cutout_recipe):
+    """Callers that don't pass extra= get a sidecar with no surprise keys."""
+    client = FakeClient()
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=client,
+    )
+
+    sidecar = tmp_path / f"{cutout_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert "prop_class" not in on_disk
+
+
+# ---------------------------------------------------------------------------
 # License / model_hash guards
 # ---------------------------------------------------------------------------
 
