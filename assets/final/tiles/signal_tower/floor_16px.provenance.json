@@ -1,0 +1,27 @@
+{
+  "model": "sd_xl_base_1.0.safetensors",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "prompt": "flat weathered concrete floor slab texture, straight-on orthographic surface photograph, lighter grey than the walls, faint stains and hairline cracks, even diffuse lighting, seamless tileable texture, no border, no perspective",
+  "negative_prompt": "perspective, three-quarter view, isometric, vanishing point, vignette, frame border, sky, character, creature, furniture, machinery, control panel, text, watermark, blurry, low quality, gradient, depth of field",
+  "seed": 232002,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "7fe45b1a5001c224cf77c216ee6caad9f383ed640c242ed5c4fd6aa1b354cd8c",
+  "prompt_id": "c2da9e98-1d51-4634-940a-b537530d1bf2",
+  "raw_path": "assets/out/tiles/signal_tower_floor_c2da9e98-1d51-4634-940a-b537530d1bf2.png",
+  "border_forced_to_field_index": 13,
+  "concept_hash": "9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460",
+  "concept_source": "assets/src/concept/signal_tower_material_sheet.png",
+  "palette_source": "assets/final/palette/home_palette.json",
+  "room_surfaces": "Shared floor field for all seven Signal Tower rooms -- see assets/src/tiles/SIGNAL_TOWER_ROOM_SURFACES.md",
+  "gate_results": {
+    "tile_seamlessness": "PASS"
+  },
+  "generator": "assets/src/tiles/src/tile_gen/base_fields.py",
+  "comfyui_version": "0.29.0",
+  "card": "T-0232",
+  "_generator_note": "Circular-pad path (13-asset-pipeline.md \u00a73.4): SDXL txt2img 1024x1024, box-downscaled + Oklab-quantized to 16x16 (comfy_client.descend, T-0073), then the outer 1px ring deterministically forced to the flat home-palette field index (see base_fields.py module docstring) so the tile clears T-0102's pixel-exact seamlessness gate. Interior (rows/cols 1-14) is the real, unedited descended/quantized SDXL output."
+}
