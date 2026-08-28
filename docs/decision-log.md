@@ -1092,7 +1092,7 @@ per this document's own header ("entries are permanent — do not remove or amen
 **Applies to:** the outcome of DL-21, evaluating §23-d (Arm A, T-0228), §23-e (Arm B,
 T-0229/T-0237), and §23-f (Arm C, T-0230).
 **Full record:** `assets/src/character/BAKEOFF_DECISION_T0231.md`
-**Comparison artefact:** `assets/final/character/bakeoff_comparison_T0231.svg`
+**Comparison artefact:** `assets/final/character/bakeoff_comparison_T0231.webp`
 **Frame-delta gate (re-run):** `assets/final/character/bakeoff_frame_delta_report_T0231.json`
 **Cost table (assembled):** `assets/src/character/BAKEOFF_COST_TABLE_T0231.md`
 
@@ -1124,5 +1124,5 @@ until the sign-off lands, so as not to pre-empt it.
 - `docs/decision-log.md` — this entry (DL-22)
 - `assets/src/character/BAKEOFF_DECISION_T0231.md` — the full decision record
 - `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` — the assembled §23-c cost table
-- `assets/final/character/bakeoff_comparison_T0231.svg` — the side-by-side comparison artefact
+- `assets/final/character/bakeoff_comparison_T0231.webp` — the side-by-side comparison artefact
 - `assets/final/character/bakeoff_frame_delta_report_T0231.json` — the re-run mechanical gate

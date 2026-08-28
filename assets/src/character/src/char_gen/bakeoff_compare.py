@@ -156,49 +156,90 @@ def build_cost_table() -> str:
     return COST_TABLE_HEADER + "\n" + "\n".join(rows)
 
 
-SVG_PANEL_W = 384  # DL-18 committed blockout-room pixel width
-SVG_PANEL_H = 216  # DL-18 committed blockout-room pixel height
-SVG_GAP = 16
-SVG_LABEL_H = 24
-SVG_TITLE_H = 32
-SVG_MARGIN = 12
+COMPARISON_PANEL_W = 384  # DL-18 committed blockout-room pixel width
+COMPARISON_PANEL_H = 216  # DL-18 committed blockout-room pixel height
+COMPARISON_GAP = 16
+COMPARISON_LABEL_H = 24
+COMPARISON_TITLE_H = 32
+COMPARISON_MARGIN = 12
+COMPARISON_BG = (0x1B, 0x1B, 0x1B)
+COMPARISON_FG = (0xE8, 0xE4, 0xD8)
+COMPARISON_FRAME_MS = 220  # matches render_judging_preview*.py's own FRAME_MS
 
 
-def build_comparison_svg() -> str:
-    """One side-by-side artefact referencing all three arms' already-rendered
-    judging previews (each already at 40px, in motion, inside the T-0192
-    blockout-room mockup -- render_judging_preview*.py, DL-18 dimensions).
-    Text/vector only: no new pixels are generated, nothing is fabricated."""
-    n = len(ARMS)
-    width = SVG_MARGIN * 2 + n * SVG_PANEL_W + (n - 1) * SVG_GAP
-    height = SVG_MARGIN * 2 + SVG_TITLE_H + SVG_LABEL_H + SVG_PANEL_H
-
-    parts = [
-        '<svg xmlns="http://www.w3.org/2000/svg" '
-        'xmlns:xlink="http://www.w3.org/1999/xlink" '
-        f'width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        f'<rect x="0" y="0" width="{width}" height="{height}" fill="#1b1b1b"/>',
-        f'<text x="{width / 2}" y="{SVG_MARGIN + 18}" fill="#e8e4d8" '
-        'font-family="monospace" font-size="16" text-anchor="middle">'
+def comparison_title() -> str:
+    return (
         "T-0231 bake-off comparison -- DL-21 judging conditions: 40px, in "
-        "motion, T-0192 blockout room</text>",
-    ]
-    y_label = SVG_MARGIN + SVG_TITLE_H
-    y_panel = y_label + SVG_LABEL_H
-    for i, arm in enumerate(ARMS):
-        x = SVG_MARGIN + i * (SVG_PANEL_W + SVG_GAP)
-        href = arm.preview_gif.name
-        parts.append(
-            f'<text x="{x + SVG_PANEL_W / 2}" y="{y_label + 18}" fill="#e8e4d8" '
-            f'font-family="monospace" font-size="14" text-anchor="middle">'
-            f"{arm.label} ({arm.card})</text>"
-        )
-        parts.append(
-            f'<image x="{x}" y="{y_panel}" width="{SVG_PANEL_W}" height="{SVG_PANEL_H}" '
-            f'href="{href}" xlink:href="{href}"/>'
-        )
-    parts.append("</svg>")
-    return "\n".join(parts)
+        "motion, T-0192 blockout room"
+    )
+
+
+def comparison_labels() -> list[str]:
+    return [f"{arm.label} ({arm.card})" for arm in ARMS]
+
+
+def _load_preview_frames(gif_path: Path) -> list:
+    from PIL import Image
+
+    frames = []
+    with Image.open(gif_path) as gif:
+        for i in range(gif.n_frames):
+            gif.seek(i)
+            frames.append(gif.convert("RGB").copy())
+    return frames
+
+
+def comparison_layout() -> tuple[int, int, int]:
+    """(width, height, y_panel) for the composite canvas -- shared by the
+    builder and by tests that need to locate a given arm's panel."""
+    n = len(ARMS)
+    width = COMPARISON_MARGIN * 2 + n * COMPARISON_PANEL_W + (n - 1) * COMPARISON_GAP
+    height = COMPARISON_MARGIN * 2 + COMPARISON_TITLE_H + COMPARISON_LABEL_H + COMPARISON_PANEL_H
+    y_panel = COMPARISON_MARGIN + COMPARISON_TITLE_H + COMPARISON_LABEL_H
+    return width, height, y_panel
+
+
+def panel_x(index: int) -> int:
+    return COMPARISON_MARGIN + index * (COMPARISON_PANEL_W + COMPARISON_GAP)
+
+
+def build_comparison_frames() -> list:
+    """Composite all three arms' already-rendered judging previews (each
+    already 40px-scale, in motion, inside the T-0192 blockout-room mockup)
+    into one side-by-side animated sequence by pasting each preview's real
+    frame pixels onto a shared canvas per output frame. Unlike the SVG
+    predecessor's external <image href> (only resolves when the SVG is
+    opened as a top-level document), this embeds the pixels directly, so
+    the artefact displays correctly wherever it's opened -- including the
+    board's own attachment preview, which also refuses SVG/HTML outright."""
+    from PIL import Image, ImageDraw
+
+    per_arm_frames = [_load_preview_frames(arm.preview_gif) for arm in ARMS]
+    frame_counts = {len(frames) for frames in per_arm_frames}
+    if len(frame_counts) != 1:
+        raise ValueError(f"arms have mismatched frame counts: {frame_counts}")
+    n_frames = frame_counts.pop()
+
+    width, height, y_panel = comparison_layout()
+    title = comparison_title()
+    labels = comparison_labels()
+
+    composite_frames = []
+    for frame_idx in range(n_frames):
+        canvas = Image.new("RGB", (width, height), COMPARISON_BG)
+        draw = ImageDraw.Draw(canvas)
+        title_w = draw.textlength(title)
+        draw.text((width / 2 - title_w / 2, COMPARISON_MARGIN), title, fill=COMPARISON_FG)
+        y_label = COMPARISON_MARGIN + COMPARISON_TITLE_H
+        for i in range(len(ARMS)):
+            x = panel_x(i)
+            label_w = draw.textlength(labels[i])
+            draw.text(
+                (x + COMPARISON_PANEL_W / 2 - label_w / 2, y_label), labels[i], fill=COMPARISON_FG
+            )
+            canvas.paste(per_arm_frames[i][frame_idx], (x, y_panel))
+        composite_frames.append(canvas)
+    return composite_frames
 
 
 def main() -> None:
@@ -207,9 +248,21 @@ def main() -> None:
         json.dumps(delta_report, indent=2) + "\n"
     )
     (CHAR_DIR / "BAKEOFF_COST_TABLE_T0231.md").write_text(build_cost_table() + "\n")
-    (FINAL_DIR / "bakeoff_comparison_T0231.svg").write_text(build_comparison_svg() + "\n")
-    print("wrote bakeoff_frame_delta_report_T0231.json, BAKEOFF_COST_TABLE_T0231.md, "
-          "bakeoff_comparison_T0231.svg")
+    frames = build_comparison_frames()
+    frames[0].save(
+        FINAL_DIR / "bakeoff_comparison_T0231.webp",
+        format="WEBP",
+        save_all=True,
+        append_images=frames[1:],
+        duration=COMPARISON_FRAME_MS,
+        loop=0,
+        lossless=True,
+        method=6,
+    )
+    print(
+        "wrote bakeoff_frame_delta_report_T0231.json, BAKEOFF_COST_TABLE_T0231.md, "
+        "bakeoff_comparison_T0231.webp"
+    )
 
 
 if __name__ == "__main__":

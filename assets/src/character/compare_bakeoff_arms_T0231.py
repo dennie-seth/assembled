@@ -8,7 +8,7 @@ Usage (from the repo root, no ComfyUI/GPU required):
     python3 assets/src/character/compare_bakeoff_arms_T0231.py
 
 Writes:
-    assets/final/character/bakeoff_comparison_T0231.svg
+    assets/final/character/bakeoff_comparison_T0231.webp
     assets/final/character/bakeoff_frame_delta_report_T0231.json
     assets/src/character/BAKEOFF_COST_TABLE_T0231.md
 

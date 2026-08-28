@@ -3,10 +3,11 @@
 **Author:** Claude (Sonnet 5)
 **Card:** T-0231 — the deciding run of the T-0227 character-pipeline bake-off
 (`docs/decision-log.md` DL-21, pre-registered 2026-08-27).
-**Comparison artefact:** `assets/final/character/bakeoff_comparison_T0231.svg`
+**Comparison artefact:** `assets/final/character/bakeoff_comparison_T0231.webp`
 (all three arms' judging previews side by side, each already rendered at 40px,
 in motion, inside the T-0192 blockout-room mockup — DL-21's judging
-conditions — per `render_judging_preview*.py`, DL-18 dimensions).
+conditions — per `render_judging_preview*.py`, DL-18 dimensions, composited
+into one lossless animated WebP by `char_gen.bakeoff_compare.build_comparison_frames`).
 **Frame-delta gate report:** `assets/final/character/bakeoff_frame_delta_report_T0231.json`
 (DL-21 criterion 2's mechanical gate, independently re-run against each arm's
 own committed sheet for this card, not merely copied from each arm's own
@@ -14,17 +15,21 @@ provenance sidecar — though it matches those numbers exactly, since the
 sheets and the gate function are both unchanged).
 **Cost table:** `BAKEOFF_COST_TABLE_T0231.md` (§23-c's shared template,
 concatenated unchanged across all three arms).
-**Attachment note:** the board's own attachment endpoint refuses SVG/HTML
-content outright as a deliberate XSS safety gate
-(`tools/board/src/server/httpApi.js`'s `resolveMimeType`) — this card does
-not attempt to work around that refusal. The canonical comparison artefact
-therefore lives in the repo at the path above (renders correctly in any
-SVG-capable viewer, e.g. a browser tab on the raw file or GitHub's own SVG
-rendering); what's attached directly to the card instead is all three
-individual per-arm judging-preview GIFs it composites
-(`arm_a_judging_preview_T0228.gif`, `arm_b_judging_preview_T0229.gif`,
-`arm_c_judging_preview_T0230.gif` — each already raster, already passes the
-same gate) plus this record, the cost table, and the delta-gate report.
+**Attachment note:** an earlier revision of this card built the comparison
+artefact as a hand-authored SVG and, finding the board's attachment endpoint
+refuses SVG/HTML content outright as a deliberate XSS safety gate
+(`tools/board/src/server/httpApi.js`'s `resolveMimeType`), attached only the
+three per-arm GIFs instead of the composite itself. That left the one
+artefact this card's acceptance actually calls for — "all three arms side by
+side... in one comparison artefact" — uploaded nowhere. This revision
+rebuilds the artefact as a real raster (lossless animated WebP, `image/webp`
+is on the board's own previewable-image allowlist) that embeds each arm's
+preview pixels directly rather than referencing them externally, so it both
+passes the attachment gate and renders correctly wherever it's opened. It is
+attached to this card alongside the three individual per-arm judging-preview
+GIFs it composites (`arm_a_judging_preview_T0228.gif`,
+`arm_b_judging_preview_T0229.gif`, `arm_c_judging_preview_T0230.gif`), this
+record, the cost table, and the delta-gate report.
 
 ---
 
@@ -93,7 +98,7 @@ gap is not marginal enough to be a tie by any reasonable reading.
 | Attributed to | Dennie Seth | Dennie Seth | Dennie Seth |
 | Date recorded | 2026-08-28 (requested; not yet given) | 2026-08-28 (requested; not yet given) | 2026-08-28 (requested; not yet given) |
 
-Review `bakeoff_comparison_T0231.svg` (attached to this card) — all three
+Review `bakeoff_comparison_T0231.webp` (attached to this card) — all three
 arms side by side, at 40px, in motion, inside the T-0192 blockout-room
 mockup — and confirm or override, per arm:
 
