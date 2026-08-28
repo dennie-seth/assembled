@@ -15,7 +15,10 @@ GREEN state: sheet present, mode 'P', 64x64, passes both gate checks for
              every declared pair.
 
 Install:
-    pip install -e ".[dev]" -e ../../../../tools/asset-gate
+    pip install -e ".[dev]"
+    (asset_gate itself is resolved via tests/conftest.py's sys.path shim
+    onto ../../../tools/asset-gate/src -- no separate editable install of
+    tools/asset-gate is required.)
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 {
   "model": "N/A — deterministic procedural generation",
   "model_license": "N/A",
-  "model_hash": "5795926ac024c3672de618a3ff37058a3d00f4fe577ec3b79450ed0b7c771f14",
+  "model_hash": "df57a64cdda6b35e7bcee05ce213c97fde3394817d040b4b72af834f39fb657d",
   "model_hash_note": "sha256 of assets/src/tiles/src/tile_gen/fields.py, the committed recipe that defines this tile's pixels (P-7: generator resolves to committed code; no diffusion checkpoint in this path, so model_hash pins the recipe instead, same convention as T-0230 Arm C — assets/final/character/player_idle_sheet_arm_c_T0230.provenance.json).",
   "prompt": "N/A — tile pixels are computed from locked home palette slot indices (FLOOR=13 #7e7c74, JOINT=4 #3d3b31) via tile_gen.fields.make_floor",
   "negative_prompt": null,

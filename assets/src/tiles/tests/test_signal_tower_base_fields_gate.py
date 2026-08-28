@@ -10,7 +10,10 @@ RED state:  assets/final/tiles/signal_tower/{wall,floor,concrete}_16px.png
 GREEN state: all three tiles present, mode 'P', 16x16, self-seamless.
 
 Install:
-    pip install -e ".[dev]" -e ../../../../tools/asset-gate
+    pip install -e ".[dev]"
+    (asset_gate itself is resolved via tests/conftest.py's sys.path shim
+    onto ../../../tools/asset-gate/src -- no separate editable install of
+    tools/asset-gate is required.)
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
 {
   "model": "N/A — deterministic procedural generation",
   "model_license": "N/A",
-  "model_hash": "5795926ac024c3672de618a3ff37058a3d00f4fe577ec3b79450ed0b7c771f14",
+  "model_hash": "df57a64cdda6b35e7bcee05ce213c97fde3394817d040b4b72af834f39fb657d",
   "model_hash_note": "sha256 of assets/src/tiles/src/tile_gen/fields.py, the shared recipe (make_field_floor_v/h, make_corner_*) both material blocks in this sheet are built from. generator_hash below pins the sheet-composition script itself.",
-  "generator_hash": "7b4b878f1a00dac42f9f3b51f048c5c08ed0f563a3a9e8b1f16b88b0906dcd6e",
+  "generator_hash": "3b92c3f6c1fc55b3fcab456f05406ce30640e221fc0088e906345b109c1d50b3",
   "prompt": "N/A — tile pixels are computed from locked home palette slot indices via tile_gen.fields (WALL=8, FLOOR=13, CONCRETE=6, JOINT=4) composed by tile_gen.signal_tower_sheet",
   "negative_prompt": null,
   "seed": null,
