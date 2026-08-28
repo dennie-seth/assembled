@@ -365,7 +365,7 @@ def test_cover_classes_in_provenance_match_expected(ensure_signal_tower_prop_pac
 # generate_cutout had no such parameter until T-0233).
 
 
-def test_provenance_concept_hash_matches_approved_sheet(ensure_signal_tower_prop_pack):  # noqa: ARG001
+def test_concept_hash_matches_approved_sheet(ensure_signal_tower_prop_pack):  # noqa: ARG001
     """Every prop's concept_hash must equal the approved props sheet's own hash."""
     sheet_prov = json.loads(
         (CONCEPT_DIR / "signal_tower_props_concept_sheet_v1.provenance.json").read_text()
