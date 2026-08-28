@@ -1077,3 +1077,52 @@ definitions (§23-d/e/f) are out of scope for this entry.
 **Touched docs (this card):**
 - `docs/decision-log.md` — this entry (DL-21)
 - `docs/decisions/T-0227-bakeoff-cost-record-template.md` — the shared cost-recording template
+
+---
+
+## DL-22 — Character-pipeline bake-off: comparison assembled, verdict PENDING (T-0231)
+
+**Date:** 2026-08-28
+**Raised by:** HANDOFF §23, handle §23-g (the decision run)
+**Status:** **PENDING.** Everything DL-21's decision rule can settle mechanically is
+settled; the rule's human calls (criterion 1, criterion 2's drift verdict) are not. This
+entry records the mechanical state and stays PENDING until that sign-off lands — do not
+edit it to declare a winner without that sign-off; append a dated closing addendum instead,
+per this document's own header ("entries are permanent — do not remove or amend").
+**Applies to:** the outcome of DL-21, evaluating §23-d (Arm A, T-0228), §23-e (Arm B,
+T-0229/T-0237), and §23-f (Arm C, T-0230).
+**Full record:** `assets/src/character/BAKEOFF_DECISION_T0231.md`
+**Comparison artefact:** `assets/final/character/bakeoff_comparison_T0231.svg`
+**Frame-delta gate (re-run):** `assets/final/character/bakeoff_frame_delta_report_T0231.json`
+**Cost table (assembled):** `assets/src/character/BAKEOFF_COST_TABLE_T0231.md`
+
+### Mechanically settled
+
+- **Arm A is closed as a criterion-3 failure** — DL-21's 8-attempt cap was exhausted
+  without a sheet passing the mechanical half of criterion 2 (4/8 adjacent-cell
+  silhouette-delta ratios over the 0.30 cap, reconfirmed by an independent re-run for this
+  card). This closes Arm A's candidacy regardless of any criterion-1 read.
+- **Arm B and Arm C both mechanically pass criterion 2** — reconfirmed by an independent
+  re-run of `asset_gate.art.check_frame_consistency` against each arm's committed sheet,
+  matching each arm's own self-reported ratios exactly (Arm B 0.097–0.295; Arm C
+  0.072–0.112, all ≤ 0.30).
+- **Cost is not close.** Arm C: 0.0 GPU-min, 00:14 wall-clock. Arm B: 165.5 GPU-min, 02:48
+  wall-clock. Both $0.00. If both arms are confirmed as passers, DL-21 step 2 ("among the
+  passers, lowest cost wins") resolves to **Arm C** without needing the tie-break.
+
+### PENDING — not decided here
+
+Criterion 1 (silhouette readable at 40px in motion) and criterion 2's human drift verdict
+for Arm B and Arm C are **human pass/fail calls per DL-21**, attributed to **Dennie Seth**,
+requested 2026-08-28, not yet given. This card does not invent them — see
+`BAKEOFF_DECISION_T0231.md` for the full contingency table (what each possible verdict
+resolves to) and what changes in `docs/design/13-asset-pipeline.md` under each outcome.
+`docs/design/13-asset-pipeline.md` is **not edited by this entry** — the edit is deferred
+until the sign-off lands, so as not to pre-empt it.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-22)
+- `assets/src/character/BAKEOFF_DECISION_T0231.md` — the full decision record
+- `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` — the assembled §23-c cost table
+- `assets/final/character/bakeoff_comparison_T0231.svg` — the side-by-side comparison artefact
+- `assets/final/character/bakeoff_frame_delta_report_T0231.json` — the re-run mechanical gate
