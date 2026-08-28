@@ -32,6 +32,7 @@ docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class).
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 import numpy as np
@@ -298,6 +299,127 @@ def generate_still_air_trapped_sheet(
         _draw_still_air(cell_arr, v_off=_STILL_AIR_TRAPPED_V_OFFSETS[idx])
 
     return _make_sheet(2, 2, palette, out_path, draw, frame_cells)
+
+
+# ---------------------------------------------------------------------------
+# Player — articulated idle figure (Arm C, T-0230, HANDOFF §23-f)
+#
+# Bake-off Arm C (docs/decision-log.md DL-21): no diffusion model anywhere in
+# the generation path. A real articulated figure -- head, neck, torso,
+# two-segment arms (upper arm + swinging forearm), two-segment legs (thigh +
+# weight-shifting shin) -- rendered directly at 144x144 (3x3 grid of 48x48
+# cells) with palette indices assigned by construction, never quantised
+# after the fact. Always front-facing (toward camera): the deterministic
+# construction makes "which way is it facing" unambiguous by design, so
+# DL-21 criterion 1's other two questions (is it a person, what is it doing)
+# are answered by the articulated silhouette and the idle breathing /
+# weight-shift cycle below.
+#
+# Every part is 4-connected to a large, position-fixed torso/hip mass so no
+# per-frame offset can create an orphan blob (13-asset-pipeline.md §2).
+# Figure spans rows 4..43 (40px tall, matching §3.5's "figure 40px tall")
+# and cols 7..40 at the widest per-frame extreme -- >=4px margin from every
+# cell edge at every offset combination the six patterns below can produce.
+# ---------------------------------------------------------------------------
+
+# Six hand-verified idle-cycle patterns, one value per output frame (9
+# frames). Every adjacent pair in every pattern differs by at most 1 (never
+# a 2-step jump), so no per-frame offset combination _player_pose_offsets
+# can select can blow DL-21 criterion 2's frame-delta cap -- this is
+# guaranteed by construction, not tuned after measuring a failing render.
+_PLAYER_POSE_PATTERNS: list[list[int]] = [
+    [0, 0, 1, 1, 0, 0, -1, -1, 0],
+    [0, 1, 1, 0, -1, -1, 0, 1, 0],
+    [0, -1, -1, 0, 1, 1, 0, -1, 0],
+    [0, 0, -1, -1, 0, 0, 1, 1, 0],
+    [0, 1, 0, -1, 0, 1, 0, -1, 0],
+    [0, -1, 0, 1, 0, -1, 0, 1, 0],
+]
+
+
+def _player_pose_offsets(seed: int, n_frames: int = 9) -> list[tuple[int, int, int]]:
+    """Seeded, deterministic per-frame (head, arm, leg) pose offsets.
+
+    A `random.Random(seed)` instance picks one of the six pre-verified
+    `_PLAYER_POSE_PATTERNS` for each of the head-bob, arm-swing, and leg
+    weight-shift cycles -- the same seed always yields the same three
+    patterns (Python's `random.Random` is a documented-deterministic PRNG),
+    and every pattern is safe by construction, so pose selection can never
+    itself introduce a gate failure regardless of which seed is passed.
+    """
+    rng = random.Random(seed)
+    head_pattern = rng.choice(_PLAYER_POSE_PATTERNS)
+    arm_pattern = rng.choice(_PLAYER_POSE_PATTERNS)
+    leg_pattern = rng.choice(_PLAYER_POSE_PATTERNS)
+    return list(
+        zip(head_pattern[:n_frames], arm_pattern[:n_frames], leg_pattern[:n_frames], strict=True)
+    )
+
+
+def _draw_player_arm_c(
+    cell_arr: np.ndarray, head_off: int = 0, arm_off: int = 0, leg_off: int = 0
+) -> None:
+    """Articulated player figure: head, neck, torso, two-segment arms (upper
+    arm + swinging forearm), two-segment legs (thigh + weight-shifting
+    shin). Always front-facing. Not a rectangle silhouette."""
+    cell_arr[:] = BG_IDX
+    ho = head_off
+
+    # HEAD -- stepped-width oval, bobs vertically with ho (idle breathing)
+    cell_arr[5 + ho, 21:27] = HEAD_IDX
+    cell_arr[6 + ho, 20:28] = HEAD_IDX
+    cell_arr[7 + ho : 13 + ho, 19:29] = HEAD_IDX
+    cell_arr[13 + ho, 20:28] = HEAD_IDX
+    cell_arr[14 + ho, 21:27] = HEAD_IDX
+
+    # NECK -- bridges head to torso, bobs with the head
+    cell_arr[15 + ho : 18 + ho, 22:26] = BODY_IDX
+
+    # TORSO -- trapezoid (shoulders wider than waist), fixed
+    cell_arr[16:19, 13:35] = BODY_IDX
+    cell_arr[19:28, 16:32] = BODY_IDX
+    cell_arr[28:32, 18:30] = BODY_IDX
+
+    # ARMS -- upper arm fixed at the shoulder, forearm swings at the elbow
+    cell_arr[17:25, 9:13] = BODY_IDX
+    cell_arr[25:32, 8 + arm_off : 12 + arm_off] = BODY_IDX
+    cell_arr[17:25, 35:39] = BODY_IDX
+    cell_arr[25:32, 36 - arm_off : 40 - arm_off] = BODY_IDX
+
+    # LEGS -- thigh fixed at the hip, shin shifts for contrapposto weight-shift.
+    # Thighs keep a 3px gap (cols 23-25) so the shins never fully merge even
+    # at the max +/-1px weight-shift offset -- two legs stay visible in every frame.
+    cell_arr[31:38, 18:23] = LEG_IDX
+    cell_arr[37:44, 18 + leg_off : 23 + leg_off] = LEG_IDX
+    cell_arr[31:38, 26:31] = LEG_IDX
+    cell_arr[37:44, 26 - leg_off : 31 - leg_off] = LEG_IDX
+
+
+def generate_player_idle_sheet_arm_c(
+    seed: int, palette: list[tuple[int, int, int]], out_path: Path
+) -> Path:
+    """144x144 (3x3) player idle sheet, Arm C -- deterministic construction,
+    no diffusion model, palette indices assigned by construction. The same
+    seed always produces a byte-identical sheet (see
+    tests/test_player_idle_arm_c_gate.py::test_deterministic_double_render)."""
+    frame_cells = [(r, c) for r in range(3) for c in range(3)]
+    offsets = _player_pose_offsets(seed, n_frames=len(frame_cells))
+
+    def draw(cell_arr: np.ndarray, idx: int) -> None:
+        head_off, arm_off, leg_off = offsets[idx]
+        _draw_player_arm_c(cell_arr, head_off=head_off, arm_off=arm_off, leg_off=leg_off)
+
+    return _make_sheet(3, 3, palette, out_path, draw, frame_cells)
+
+
+def main_player_idle_arm_c() -> None:
+    palette = _load_palette(PALETTE_PATH)
+    out = generate_player_idle_sheet_arm_c(
+        seed=23230,
+        palette=palette,
+        out_path=REPO_ROOT / "assets" / "final" / "character" / "player_idle_sheet_arm_c_T0230.png",
+    )
+    print(f"wrote {out}")
 
 
 # ---------------------------------------------------------------------------
