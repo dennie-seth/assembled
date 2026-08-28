@@ -53,7 +53,7 @@ export const DEFAULT_PHASE_TIMEOUT_MS = 40 * 60 * 1000;
  * Per-agent phase budgets, for agents whose legitimate work does not fit the default.
  * One entry per agent; adding or tuning one is a one-line change.
  *
- * `assets` (120 min) -- GPU generation. T-0228 (Arm A of the §23 bake-off) was killed
+ * `assets` (240 min) -- GPU generation and LoRA training. T-0228 (Arm A) was killed
  * twice at exactly 40 minutes while making steady progress: 1136 and 661 logged events,
  * max inter-event gap 120s / 287s (nowhere near the 8-minute inactivity threshold), and
  * 26/26 ComfyUI executions succeeded with no errors and no OOM. Its stack (SDXL + style
@@ -62,17 +62,26 @@ export const DEFAULT_PHASE_TIMEOUT_MS = 40 * 60 * 1000;
  * setup, tests, image inspection, descend/index and provenance. The card was
  * unsatisfiable inside the default bound.
  *
+ * 120 was not enough. T-0229 (Arm B) trains a per-character LoRA before it generates, and
+ * that was measured at ~7 min to load the 6.94 GB SDXL checkpoint (~32 MB/s over the WSL 9p
+ * /mnt/f mount), ~3 min to build the network and cache latents, and ~117 min of training
+ * (72 steps at ~98 s/step) -- ~127 min before generation starts, ~175 min for the whole arm.
+ * It was killed at step 65/72. 240 clears that with ~65 min of slack, which matters because
+ * the checkpoint read rate varies run to run; 180 would have left about five minutes.
+ *
  * Raising the bound is much safer than it once was: §23-a's no-progress abort escalates
- * a repeating failure without burning the budget, and DEFAULT_INACTIVITY_TIMEOUT_MS still
- * catches a genuine hang in 8 minutes regardless of what this says. The phase timeout is
- * no longer the load-bearing hang defence -- it is a cost ceiling.
+ * a repeating failure without burning the budget (and since T-0229 it compares the worktree's
+ * git state rather than the reviewer's prose, so it actually fires), and
+ * DEFAULT_INACTIVITY_TIMEOUT_MS still catches a genuine hang in 8 minutes regardless of what
+ * this says. The phase timeout is no longer the load-bearing hang defence -- it is a cost
+ * ceiling.
  *
  * Note this keys on the agent the PHASE runs as, not the card's agent: an assets card's
  * reviewer phase runs as `reviewer` and keeps the default, since it verifies output
  * rather than generating it.
  */
 export const PHASE_TIMEOUT_MS_BY_AGENT = Object.freeze({
-  assets: 120 * 60 * 1000
+  assets: 240 * 60 * 1000
 });
 
 const PHASE_TIMEOUT_ENV_VAR = "PHASE_TIMEOUT_MS";
@@ -495,9 +504,16 @@ export class RunOrchestrator {
       // Inactivity timeouts are excluded from signature comparison (see _inactivityVerdict's
       // `synthetic` docstring): their reason text is generic by construction, so two in a row
       // isn't evidence of a repeating, unfixable blocker the way a genuine reviewer FAIL is.
-      const signature = verdict.synthetic
-        ? null
-        : computeFailureSignature({ phase: verdict.phase, verdict: verdict.verdict, notes: verdict.notes });
+      //
+      // The signature is computed from the worktree's git state, not the reviewer's notes --
+      // see failureSignature.js for why (T-0229 burned all five slots on eight FAILs the
+      // reviewer itself called byte-identical, because its notes carry an attempt counter).
+      const treeState = verdict.synthetic ? null : await this._readTreeState(worktreeDir);
+      const signature = computeFailureSignature({
+        phase: verdict.phase,
+        verdict: verdict.verdict,
+        state: treeState
+      });
       const noProgress = signature !== null && previousSignature !== null && signature === previousSignature;
       attemptRecords.push({ attempt, notes: verdict.notes, events, signature });
 
@@ -513,6 +529,22 @@ export class RunOrchestrator {
       // whether addWorktree itself had to reuse it (a first attempt can start fresh).
       currentReused = true;
       if (signature !== null) previousSignature = signature;
+    }
+  }
+
+  /**
+   * Worktree git state for the no-progress signature, or null if it cannot be read.
+   *
+   * Never throws: a git failure here must not take down an otherwise-fine run. Returning null
+   * makes the signature null, which is never compared -- so the loop falls back to running the
+   * full retry cap rather than risking a false abort on a card that might be progressing.
+   */
+  async _readTreeState(worktreeDir) {
+    if (typeof this.git.readTreeState !== "function") return null;
+    try {
+      return await this.git.readTreeState({ worktreeDir });
+    } catch {
+      return null;
     }
   }
 
