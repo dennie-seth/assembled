@@ -23,6 +23,7 @@ import binascii
 import hashlib
 import json
 import struct
+import sys
 import zlib
 from pathlib import Path
 
@@ -32,6 +33,23 @@ WORKTREE = Path(__file__).resolve().parents[4]
 CONCEPT_DIR = WORKTREE / "assets" / "src" / "concept"
 OUT_PNG = CONCEPT_DIR / "player_character_concept_sheet_v1.png"
 OUT_PROV = CONCEPT_DIR / "player_character_concept_sheet_v1.provenance.json"
+
+# Adds tools/asset-gate/src to sys.path at module level so that
+# `pytest.importorskip("asset_gate...")` in the test modules resolves
+# without requiring a separate `pip install -e tools/asset-gate` step --
+# conftest loads before test modules, so this is in place before any
+# importorskip runs. Same pattern as assets/src/character/tests/conftest.py
+# and assets/src/tiles/tests/conftest.py (T-0233).
+_ASSET_GATE_SRC = WORKTREE / "tools" / "asset-gate" / "src"
+if _ASSET_GATE_SRC.exists() and str(_ASSET_GATE_SRC) not in sys.path:
+    sys.path.insert(0, str(_ASSET_GATE_SRC))
+
+# Adds assets/src/props to sys.path so the signal_tower prop-pack tests can
+# import the committed generation recipes (T-0233, P-3: the recipe is a
+# source under assets/src/, not the reusable tools/comfy-client engine).
+_PROPS_SRC = WORKTREE / "assets" / "src" / "props"
+if _PROPS_SRC.exists() and str(_PROPS_SRC) not in sys.path:
+    sys.path.insert(0, str(_PROPS_SRC))
 
 # ── Home palette (assets/final/palette/home_palette.json) ─────────────────
 PAL = {
@@ -1003,6 +1021,12 @@ def _gen_prop_prov(sprite_hash: str, name: str, out_path: Path) -> None:
         "prompt_id": f"synth-T-0201-{name}",
         "prop_class": _PROP_CLASSES[name],
         "sprite_hash": sprite_hash,
+        # T-0233 P-7 compliance fields -- see
+        # assets/src/props/signal_tower_prop_recipes.py CONCEPT_HASH/
+        # CONCEPT_SOURCE. Included here too so the synthetic fallback never
+        # regresses P-7 compliance if it were ever to fire.
+        "concept_hash": "da676d790f923bcb266225c96445b1be26bec56b0b651befd0c254415fbe87a4",
+        "concept_source": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
         "_note": (
             "Synthetic placeholder — replace with SDXL img2img (conditioned on "
             "signal_tower_props_concept_sheet_v1.png via IP-Adapter) + BiRefNet "

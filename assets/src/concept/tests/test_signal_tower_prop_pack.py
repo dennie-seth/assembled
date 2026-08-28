@@ -27,11 +27,33 @@ PNG inspection uses Pillow (already in the concept package's `dev` extra) for
 correct decoding of all PNG filter types (0–4). The earlier stdlib-only decoder
 assumed filter type 0 on every scanline, which silently mis-decoded the
 mixed-filter output of the real cutout pipeline (T-0223 root cause).
+
+T-0233 (HANDOFF §23-j) certifies this same 5-prop pack as the full pack for
+all seven Signal Tower rooms (docs/design/14-vertical-slice.md §10 -- only
+Power Substation, Equipment Floor, Ground Relay, and Antenna Shaft need
+cover/hiding dressing; Records Room, Storage Cache, and Broadcast Deck need
+none) and adds:
+
+  - P-7 compliance: `concept_hash`/`concept_source` resolving to the
+    approved `signal_tower_props_concept_sheet_v1.png` (T-0211) on every
+    prop's provenance sidecar.
+  - A committed recipe (`assets/src/props/signal_tower_prop_recipes.py`,
+    P-3) checked for consistency against the committed provenance -- closes
+    the "generated via an uncommitted one-off script" gap T-0221/T-0223
+    left open.
+  - The T-0215 rendered-visibility gate (`asset_gate.visibility`) run
+    against every prop, not just the alpha-coverage/dimension checks above.
+  - An explicit per-pair (not just per-class-min/max) 16px luma-gap check,
+    so no individual prop can hide inside a passing aggregate.
+
+See `assets/src/concept/SIGNAL_TOWER_PROP_PACK_FULL_T0233.md` for the full
+room-coverage mapping and measured-value writeup.
 """
 
 from __future__ import annotations
 
 import io
+import itertools
 import json
 import struct
 from pathlib import Path
@@ -41,6 +63,10 @@ import pytest
 
 WORKTREE = Path(__file__).resolve().parents[4]
 PROPS_DIR = WORKTREE / "assets" / "final" / "props" / "signal_tower"
+CONCEPT_DIR = WORKTREE / "assets" / "src" / "concept"
+
+asset_gate_visibility = pytest.importorskip("asset_gate.visibility")
+prop_recipes = pytest.importorskip("signal_tower_prop_recipes")
 
 COVER_PROPS = [
     "relay_cabinet_v1.png",
@@ -328,3 +354,126 @@ def test_cover_classes_in_provenance_match_expected(ensure_signal_tower_prop_pac
         assert prov["prop_class"] == "hide", (
             f"{name} should have prop_class='hide', got {prov['prop_class']!r}."
         )
+
+
+# ── T-0233: P-7 compliance (concept_hash) ─────────────────────────────────────
+#
+# P-7-compliant provenance requires generator resolvable + model_hash
+# non-null + concept_hash resolves to the approved concept sheet
+# (docs/decision-log.md). The generator/model_hash halves were already true
+# for every prop; concept_hash was never wired through (tools/comfy-client's
+# generate_cutout had no such parameter until T-0233).
+
+
+def test_provenance_concept_hash_matches_approved_sheet(ensure_signal_tower_prop_pack):  # noqa: ARG001
+    """Every prop's concept_hash must equal the approved props sheet's own hash."""
+    sheet_prov = json.loads(
+        (CONCEPT_DIR / "signal_tower_props_concept_sheet_v1.provenance.json").read_text()
+    )
+    expected = sheet_prov["concept_hash"]
+    assert expected == prop_recipes.CONCEPT_HASH, (
+        "signal_tower_props_concept_sheet_v1.provenance.json's concept_hash "
+        f"({expected}) no longer matches the recipe module's CONCEPT_HASH "
+        f"({prop_recipes.CONCEPT_HASH}) -- update "
+        "assets/src/props/signal_tower_prop_recipes.py if the sheet was "
+        "regenerated."
+    )
+    for name in ALL_PROPS:
+        prov_path = PROPS_DIR / name.replace(".png", ".provenance.json")
+        prov = json.loads(prov_path.read_text())
+        assert prov.get("concept_hash") == expected, (
+            f"{name}.provenance.json concept_hash is {prov.get('concept_hash')!r}, "
+            f"expected {expected!r} (the approved signal_tower_props_concept_sheet_v1 "
+            "hash) -- this prop is not P-7-compliant."
+        )
+
+
+def test_provenance_concept_source_resolves(ensure_signal_tower_prop_pack):  # noqa: ARG001
+    """Every prop's concept_source must resolve to a real, committed file."""
+    for name in ALL_PROPS:
+        prov_path = PROPS_DIR / name.replace(".png", ".provenance.json")
+        prov = json.loads(prov_path.read_text())
+        source = prov.get("concept_source")
+        assert source, f"{name}.provenance.json is missing concept_source."
+        resolved = WORKTREE / source
+        assert resolved.is_file(), (
+            f"{name}: concept_source {source!r} does not resolve to a file under "
+            f"{WORKTREE}"
+        )
+
+
+# ── T-0233: P-3 compliance (committed recipe) ─────────────────────────────────
+
+
+def test_recipe_covers_every_committed_prop():
+    """assets/src/props/signal_tower_prop_recipes.py must define every prop
+    currently committed under assets/final/props/signal_tower/ -- a prop
+    with no committed recipe is exactly the P-3 gap this card closes."""
+    recipe_names = {entry["name"] for entry in prop_recipes.PROP_RECIPES}
+    expected_names = {name.replace(".png", "") for name in ALL_PROPS}
+    assert recipe_names == expected_names, (
+        f"recipe module defines {recipe_names}, expected {expected_names}"
+    )
+
+
+def test_recipe_data_matches_committed_provenance(ensure_signal_tower_prop_pack):  # noqa: ARG001
+    """The committed recipe's prompt/seed/dimensions/class must match what
+    actually produced each committed PNG -- otherwise the recipe documents
+    a *different* asset than the one in the repo, which is worse than no
+    recipe at all."""
+    for entry in prop_recipes.PROP_RECIPES:
+        name = f"{entry['name']}.png"
+        prov = json.loads((PROPS_DIR / name.replace(".png", ".provenance.json")).read_text())
+        assert prov["prompt"] == entry["prompt"], f"{name}: prompt mismatch"
+        assert prov["negative_prompt"] == entry["negative_prompt"], (
+            f"{name}: negative_prompt mismatch"
+        )
+        assert prov["seed"] == entry["seed"], f"{name}: seed mismatch"
+        assert prov["prop_class"] == entry["prop_class"], f"{name}: prop_class mismatch"
+        expected_w, expected_h = PROP_DIMS[name]
+        assert (entry["width"], entry["height"]) == (expected_w, expected_h), (
+            f"{name}: recipe game-px dims {(entry['width'], entry['height'])} != "
+            f"expected {(expected_w, expected_h)}"
+        )
+
+
+# ── T-0233: full asset-gate visibility check (T-0215 failure mode) ───────────
+
+
+def test_all_props_pass_rendered_visibility_gate(prop_bytes):
+    """Every prop must pass the real T-0215 visibility gate
+    (asset_gate.visibility.check_rendered_visibility): not fully transparent,
+    and not blank/uniform among its opaque pixels. This is the actual gate
+    function CI runs elsewhere in the pipeline (assets/src/tiles), not a
+    reimplementation of its logic."""
+    for name, data in prop_bytes.items():
+        image = Image.open(io.BytesIO(data))
+        result = asset_gate_visibility.check_rendered_visibility(image)
+        assert result.passed, f"{name} failed asset_gate visibility check: {result.reason}"
+
+
+# ── T-0233: per-pair value separation (no prop hides inside a class mean) ────
+
+
+def test_each_cover_hide_pair_meets_min_gap(prop_bytes):
+    """Every individual (cover, hide) pair must independently satisfy the
+    16px luma gap -- not just the lightest-cover-vs-darkest-hide pair the
+    aggregate test above checks. Reports every pair's actual gap so a
+    regression names the specific prop, not just a class mean."""
+    lumas = {
+        n: _mean_luma(_downscale_to_game_16px(prop_bytes[n])) for n in ALL_PROPS
+    }
+    failures = []
+    gaps = {}
+    for cover_name, hide_name in itertools.product(COVER_PROPS, HIDE_PROPS):
+        gap = lumas[cover_name] - lumas[hide_name]
+        gaps[(cover_name, hide_name)] = gap
+        if gap < _MIN_COVER_HIDE_GAP:
+            failures.append(
+                f"{cover_name} ({lumas[cover_name]:.1f}) vs {hide_name} "
+                f"({lumas[hide_name]:.1f}): gap {gap:.1f} < {_MIN_COVER_HIDE_GAP}"
+            )
+    assert not failures, (
+        "Per-pair 16px luma separation failed for:\n  " + "\n  ".join(failures) +
+        f"\nAll measured pairs: { {f'{c}/{h}': f'{g:.1f}' for (c, h), g in gaps.items()} }"
+    )
