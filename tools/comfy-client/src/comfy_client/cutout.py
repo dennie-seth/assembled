@@ -212,6 +212,7 @@ def generate_cutout(
     gen_height: int | None = None,
     concept_hash: str | None = None,
     concept_source: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> CutoutResult:
     """recipe + LoRA -> RGBA-cutout PNG at game-pixel dimensions + provenance sidecar.
 
@@ -242,6 +243,11 @@ def generate_cutout(
     recipe was directionally conditioned on (T-0233, P-7 compliance). Not
     enforced at generation time -- callers pass the sheet's own
     `concept_hash` from its `.provenance.json`.
+
+    `extra` merges caller-supplied structured fields (e.g. a recipe layer's
+    `prop_class`) into the written sidecar. `CutoutProvenanceRecord` stays
+    generic on purpose -- this is the escape hatch for domain-specific
+    metadata that has no business on the shared dataclass (T-0233).
     """
     entry = assert_checkpoint_allowed(recipe.checkpoint)
 
@@ -324,6 +330,7 @@ def generate_cutout(
         provenance,
         generator=provenance.generator,
         repo_root=package_repo_root(),
+        extra=extra,
     )
 
     return CutoutResult(path=image_path, prompt_id=job_id, provenance=provenance)
