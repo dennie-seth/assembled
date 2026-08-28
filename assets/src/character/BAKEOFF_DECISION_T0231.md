@@ -14,6 +14,17 @@ provenance sidecar — though it matches those numbers exactly, since the
 sheets and the gate function are both unchanged).
 **Cost table:** `BAKEOFF_COST_TABLE_T0231.md` (§23-c's shared template,
 concatenated unchanged across all three arms).
+**Attachment note:** the board's own attachment endpoint refuses SVG/HTML
+content outright as a deliberate XSS safety gate
+(`tools/board/src/server/httpApi.js`'s `resolveMimeType`) — this card does
+not attempt to work around that refusal. The canonical comparison artefact
+therefore lives in the repo at the path above (renders correctly in any
+SVG-capable viewer, e.g. a browser tab on the raw file or GitHub's own SVG
+rendering); what's attached directly to the card instead is all three
+individual per-arm judging-preview GIFs it composites
+(`arm_a_judging_preview_T0228.gif`, `arm_b_judging_preview_T0229.gif`,
+`arm_c_judging_preview_T0230.gif` — each already raster, already passes the
+same gate) plus this record, the cost table, and the delta-gate report.
 
 ---
 
