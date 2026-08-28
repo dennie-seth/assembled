@@ -50,6 +50,13 @@ LORA_LICENSE = "Apache-2.0"
 CONCEPT_SOURCE = "assets/src/concept/signal_tower_props_concept_sheet_v1.png"
 CONCEPT_HASH = "da676d790f923bcb266225c96445b1be26bec56b0b651befd0c254415fbe87a4"
 
+#: Pinned dev-rig versions (docs/env-inventory.md), read live from the
+#: generating ComfyUI instance's `/system_stats` at the time this pack was
+#: regenerated. Documentation only -- generate_cutout() does not enforce
+#: these, per its own docstring.
+COMFYUI_VERSION = "0.29.0"
+TORCH_VERSION = "2.5.1+cu121"
+
 _NEG_GENERIC = (
     "perspective, vanishing point, isometric, background, scene, "
     "depth of field, ambient occlusion, photorealistic, 3d render, "
@@ -153,14 +160,24 @@ PROP_RECIPES = [
         "prompt": (
             "flat side-on server rack cabinet sprite, hiding-spot prop "
             "(all-sensor block, single-occupant), Signal Tower interior. 20x46 "
-            "game px RGBA cutout. Tall enclosed cabinet form. Dark concrete "
-            "outer shell (ramp04), heavier frame border (ramp08), near-black "
-            "interior with 3 horizontal rack divider bars (ramp04 over "
-            "ramp00). Single-occupant, fully seals all sensors. Soviet "
-            "brutalist style, dark heavy form."
+            "game px RGBA cutout. Tall narrow enclosed cabinet form. Near-black "
+            "metal outer shell (ramp00-ramp01) covering nearly the entire "
+            "visible surface area. Thin dark seam line only (ramp02), no "
+            "light-value panels or highlights. Tiny status-light accent, small "
+            "and mid-dark (ramp06) at most, under 5 percent of surface area. "
+            "Interior near-black (ramp00). Single-occupant, fully seals all "
+            "sensors once player enters. Soviet brutalist style, hard value "
+            "separation, overall silhouette reads as a dark solid block, "
+            "low-key lighting."
         ),
-        "negative_prompt": _NEG_GENERIC,
-        "seed": 7221005,
+        "negative_prompt": (
+            "perspective, vanishing point, isometric, background, scene, depth "
+            "of field, ambient occlusion, photorealistic, 3d render, multiple "
+            "props, composed illustration, text, watermark, bright, "
+            "light-colored, pale, high-key lighting, large light panel, glossy "
+            "highlight, chrome, reflective, silver, white"
+        ),
+        "seed": 7233022,
         "width": 20,
         "height": 46,
         "gen_width": 448,
@@ -211,6 +228,9 @@ def generate_all(out_dir: str = "assets/final/props/signal_tower") -> list:
             gen_height=entry["gen_height"],
             concept_hash=CONCEPT_HASH,
             concept_source=CONCEPT_SOURCE,
+            comfyui_version=COMFYUI_VERSION,
+            torch_version=TORCH_VERSION,
+            extra={"prop_class": entry["prop_class"]},
         )
         results.append(result)
     return results
