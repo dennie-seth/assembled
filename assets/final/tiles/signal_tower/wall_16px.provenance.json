@@ -1,0 +1,20 @@
+{
+  "model": "N/A — deterministic procedural generation",
+  "model_license": "N/A",
+  "model_hash": "5795926ac024c3672de618a3ff37058a3d00f4fe577ec3b79450ed0b7c771f14",
+  "model_hash_note": "sha256 of assets/src/tiles/src/tile_gen/fields.py, the committed recipe that defines this tile's pixels (P-7: generator resolves to committed code; no diffusion checkpoint in this path, so model_hash pins the recipe instead, same convention as T-0230 Arm C — assets/final/character/player_idle_sheet_arm_c_T0230.provenance.json).",
+  "prompt": "N/A — tile pixels are computed from locked home palette slot indices (WALL=8 #58554c, JOINT=4 #3d3b31) via tile_gen.fields.make_wall",
+  "negative_prompt": null,
+  "seed": null,
+  "generator": "assets/src/tiles/src/tile_gen/base_fields.py",
+  "card": "T-0232",
+  "spec": "docs/design/13-asset-pipeline.md §3.4 — base fields, circular-pad path",
+  "circular_pad_note": "Real circular-pad SDXL sampling gives no pixel-exact self-seamlessness guarantee under T-0102's mechanical gate; this tile is built with every edge column/row held at the flat WALL colour by construction, which achieves circular-pad's own goal (infinite self-repeat) deterministically. See tile_gen/fields.py module docstring.",
+  "concept_hash": "9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460",
+  "concept_source": "assets/src/concept/signal_tower_material_sheet.png",
+  "palette_source": "assets/final/palette/home_palette.json",
+  "room_surfaces": "Ground Relay, Records Room, Power Substation, Equipment Floor, Broadcast Deck — see assets/src/tiles/SIGNAL_TOWER_ROOM_SURFACES.md",
+  "gate_results": {
+    "tile_seamlessness": "PASS"
+  }
+}

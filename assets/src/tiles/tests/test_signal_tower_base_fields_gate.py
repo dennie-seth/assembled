@@ -28,7 +28,8 @@ TILE_DIR = REPO_ROOT / "assets" / "final" / "tiles" / "signal_tower"
 TILE_SIZE = 16
 
 # The three base fields T-0232 dresses all seven Signal Tower rooms with --
-# see the room -> surface mapping recorded on tasks/T-0232.md.
+# see the room -> surface mapping recorded in
+# assets/src/tiles/SIGNAL_TOWER_ROOM_SURFACES.md.
 BASE_FIELD_TILES: list[str] = ["wall", "floor", "concrete"]
 
 

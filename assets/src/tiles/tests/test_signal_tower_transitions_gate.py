@@ -3,7 +3,7 @@ checks against T-0232's Signal Tower transition sheet -- the sliced-sheet
 path (`docs/design/13-asset-pipeline.md` §3.4), covering two material
 pairs (wall<->floor, concrete<->floor) so the declared adjacency set spans
 enough breadth to dress all seven Signal Tower rooms (room -> surface
-mapping recorded on tasks/T-0232.md).
+mapping recorded in assets/src/tiles/SIGNAL_TOWER_ROOM_SURFACES.md).
 
 T-0153 proved this gate against one wall<->floor sheet only (HANDOFF
 §12-c). This extends that proof to the "real, multi-surface tileset large
@@ -125,6 +125,6 @@ def test_sheet_base_cell_matches_standalone_base_field(tiles, tile_name):
     standalone_path = TILE_DIR / f"{tile_name}_16px.png"
     assert standalone_path.exists(), f"base field tile not found: {standalone_path}"
     standalone = Image.open(standalone_path)
-    assert list(tiles[tile_name].getdata()) == list(standalone.getdata()), (
+    assert tiles[tile_name].tobytes() == standalone.tobytes(), (
         f"sheet's {tile_name!r} cell diverges from the standalone base-field tile"
     )
