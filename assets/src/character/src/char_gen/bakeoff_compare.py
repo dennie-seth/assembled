@@ -141,8 +141,9 @@ def extract_cost_row(report_path: Path) -> str:
 
 
 COST_TABLE_HEADER = (
-    "| Arm | Criterion 1 (silhouette @ 40px in motion) | Criterion 2 (identity stable) "
-    "| Attempts-to-first-pass | GPU minutes | Wall-clock | $ | Sheet | Provenance sidecar | Notes |\n"
+    "| Arm | Criterion 1 (silhouette @ 40px in motion) "
+    "| Criterion 2 (identity stable) | Attempts-to-first-pass "
+    "| GPU minutes | Wall-clock | $ | Sheet | Provenance sidecar | Notes |\n"
     "|---|---|---|---|---|---|---|---|---|---|"
 )
 
