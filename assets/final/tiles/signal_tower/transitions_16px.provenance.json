@@ -1,7 +1,7 @@
 {
   "model": "N/A — deterministic procedural generation (corner/edge cells only; the plain wall/floor/concrete cells are pixel-identical copies of the real SDXL-generated standalone base fields, see wall_16px.provenance.json etc.)",
   "model_license": "N/A",
-  "model_hash": "d994c37435c72c9f84729990f5e518ad0f10ce039369dfea723eba727c537e05",
+  "model_hash": "6688b36a365b2af7c725ef66d3355b50699b64c313b5522612ac5c07cc3283ad",
   "model_hash_note": "sha256 of assets/src/tiles/src/tile_gen/fields.py, the shared recipe (make_field_floor_v/h, make_corner_*) both material blocks in this sheet are built from. generator_hash below pins the sheet-composition script itself.",
   "generator_hash": "164c6935614eed3a08067646630c02f57603d6b65441bed13b3607c1ac665500",
   "prompt": "N/A — tile pixels are computed from locked home palette slot indices via tile_gen.fields (WALL=8, FLOOR=13, CONCRETE=6, JOINT=4) composed by tile_gen.signal_tower_sheet",
