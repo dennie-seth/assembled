@@ -99,6 +99,9 @@ deliverable. Auto-deployed to `F:\ComfyUI\models\loras\player_identity_v1.safete
 by `lora_train.train`'s own post-train validate+copy step. The file is tracked via Git
 LFS (`.gitattributes`: `assets/final/lora/*.safetensors`), same as `soviet_brutalism_style_v1.safetensors`.
 This card's cost row (training only — curation happened earlier on `feature/T-0229` and
-is not re-measured here) feeds §23-c's shared Arm B cost row
+is not re-measured here, since `curate_identity_panels_T0229.py` was never instrumented
+for wall-clock/GPU time; see the explicit-exclusion note in
+`assets/src/character/ARM_B_BAKEOFF_REPORT_T0229.md`, filed in
+`ARM_A_BAKEOFF_REPORT_T0228.md`'s shape) feeds §23-c's shared Arm B cost row
 (`docs/decisions/T-0227-bakeoff-cost-record-template.md`), to be completed alongside
 generation by T-0229, which depends on this card and does not re-train.
