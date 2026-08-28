@@ -167,21 +167,30 @@ function makeOrchestrator({ store, git, runner, hub, github, idAllocator, taskSt
  * for simulating what the reviewer actually wrote about why it failed (the text the blocker-report
  * categorizer reads).
  */
-async function driveFailCycle(runner, n, { reviewerPreamble = "", notesOverride } = {}) {
+async function driveFailCycle(runner, n, { reviewerPreamble = "", notesOverride, extraEvents = [] } = {}) {
   const implChild = await nthChild(runner, n * 2 - 1);
   implChild.emit("exit", 0, null);
   const reviewChild = await nthChild(runner, n * 2);
   const notes = notesOverride ?? `issue round ${n}`;
+  for (const event of extraEvents) reviewChild.stdout.emit("data", ndjson(event));
   reviewChild.stdout.emit("data", ndjson(assistantEvent(`${reviewerPreamble}${verdictBlock("FAIL", notes)}`)));
   reviewChild.emit("exit", 0, null);
   return { implChild, reviewChild };
 }
 
-async function exhaustToBlocked(runner, { reviewerPreambleForAttempt, notesOverrideForAttempt } = {}) {
+async function exhaustToBlocked(
+  runner,
+  { reviewerPreambleForAttempt, notesOverrideForAttempt, extraEventsForAttempt } = {}
+) {
   for (let n = 1; n <= MAX_AUTO_RETRY_ATTEMPTS; n++) {
     const preamble = reviewerPreambleForAttempt && reviewerPreambleForAttempt(n);
     const notesOverride = notesOverrideForAttempt && notesOverrideForAttempt(n);
-    await driveFailCycle(runner, n, { reviewerPreamble: preamble ?? "", notesOverride });
+    const extraEvents = extraEventsForAttempt && extraEventsForAttempt(n);
+    await driveFailCycle(runner, n, {
+      reviewerPreamble: preamble ?? "",
+      notesOverride,
+      extraEvents: extraEvents ?? []
+    });
   }
 }
 
@@ -375,5 +384,70 @@ describe("RunOrchestrator.runCard -- pick-up loop skips agent: dispatch cards", 
     await expect(orchestrator.runCard("T-0001")).rejects.toThrow(/dispatch/i);
     expect(runner.start).not.toHaveBeenCalled();
     expect((await store.get("T-0001")).status).toBe("ready");
+  });
+});
+
+describe("RunOrchestrator escalation -- routine rate_limit_event telemetry", () => {
+  /** The shape the claude CLI emits on EVERY session, healthy or not. */
+  function rateLimitEvent(info) {
+    return { type: "rate_limit_event", rate_limit_info: info, session_id: "s-1" };
+  }
+
+  it("still escalates when every attempt carried routine allowed rate-limit telemetry", async () => {
+    // Regression guard for the live T-0233 failure. The CLI emits a rate_limit_event on every
+    // session, so serializing each event and substring-matching "rate_limit" suppressed
+    // escalation for EVERY exhausted card. Here the retries are exhausted by a real blocker
+    // while the telemetry stays healthy -- this must produce a report and a remediation card.
+    const store = makeStore([baseTask()]);
+    const runner = makeRunner();
+    const idAllocator = makeIdAllocator();
+    const orchestrator = makeOrchestrator({ store, git: makeGit(), runner, idAllocator });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner, {
+      extraEventsForAttempt: () => [
+        rateLimitEvent({ status: "allowed", rateLimitType: "five_hour", isUsingOverage: false }),
+        rateLimitEvent({
+          status: "allowed_warning",
+          rateLimitType: "five_hour",
+          utilization: 0.97,
+          surpassedThreshold: 0.9,
+          overageStatus: "rejected",
+          overageDisabledReason: "out_of_credits"
+        })
+      ]
+    });
+    await runPromise;
+
+    const original = await store.get("T-0001");
+    expect(original.status).toBe("blocked");
+    expect(original.comments.find((c) => c.text.includes("Blocker report"))).toBeTruthy();
+
+    const remediation = (await store.list()).find((t) => t.id !== "T-0001");
+    expect(remediation).toBeTruthy();
+    expect(remediation.status).toBe("ready");
+    expect(remediation.body).toContain("<!-- escalation-remediation-for: T-0001 -->");
+    expect(original.depends_on).toContain(remediation.id);
+  });
+
+  it("still suppresses when one attempt carried a genuine rejected rate-limit event", async () => {
+    const store = makeStore([baseTask()]);
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git: makeGit(), runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner, {
+      extraEventsForAttempt: (n) =>
+        n === 3
+          ? [rateLimitEvent({ status: "rejected", rateLimitType: "five_hour", resetsAt: 1787932800 })]
+          : [rateLimitEvent({ status: "allowed", rateLimitType: "five_hour" })]
+    });
+    await runPromise;
+
+    const original = await store.get("T-0001");
+    expect(original.status).toBe("blocked");
+    expect(original.comments).toEqual([]);
+    expect(original.depends_on).toEqual([]);
+    expect(await store.list()).toHaveLength(1);
   });
 });
