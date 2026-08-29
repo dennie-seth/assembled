@@ -19,7 +19,18 @@ const PRIORITY_RANK = new Map([
 /** Sorts after every real priority, so an unset/unknown priority is picked last, never first. */
 const UNRANKED_PRIORITY = Number.MAX_SAFE_INTEGER;
 
-export const DEFAULT_AUTO_LAUNCH_INTERVAL_MS = 5 * 60_000;
+/**
+ * One tick per Anthropic 5-hour usage window, deliberately matched to the window the usage gate
+ * reads (`rate_limit_info.rateLimitType: "five_hour"`). At most one card is started per tick, so
+ * the cadence *is* the throughput policy: roughly one auto-started card per usage window, rather
+ * than a tight poll that would drain a window as fast as cards finish.
+ *
+ * Consequence worth knowing before enabling it: the first tick is one full interval after the
+ * board process starts, and a restart (a deploy, an auto-restart-on-pull) resets that clock. A
+ * board restarted more often than every 5 hours will rarely, if ever, reach a tick. Lower
+ * `AUTO_LAUNCH_INTERVAL_MS` if that is the operating pattern.
+ */
+export const DEFAULT_AUTO_LAUNCH_INTERVAL_MS = 5 * 60 * 60 * 1000;
 export const DEFAULT_AUTO_LAUNCH_USAGE_MAX = 0.8;
 
 const LOG_PREFIX = "assembled-board: auto-launch";
@@ -35,7 +46,7 @@ export function autoLaunchEnabledFromEnv() {
   return ENABLE_VALUES.has((process.env.AUTO_LAUNCH_ENABLED ?? "").toLowerCase());
 }
 
-/** AUTO_LAUNCH_INTERVAL_MS env var: default 5 minutes. An explicit 0 disables; garbage falls back. */
+/** AUTO_LAUNCH_INTERVAL_MS env var: default 5 hours. An explicit 0 disables; garbage falls back. */
 export function autoLaunchIntervalMsFromEnv() {
   const raw = process.env.AUTO_LAUNCH_INTERVAL_MS;
   if (raw === undefined || raw === "") return DEFAULT_AUTO_LAUNCH_INTERVAL_MS;
