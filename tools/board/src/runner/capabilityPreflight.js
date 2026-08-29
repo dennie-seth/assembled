@@ -41,25 +41,40 @@ const MODEL_CUE_WINDOW = 60;
 const MODEL_OUTPUT_CUE_RE =
   /\b(?:commit|commits|committed|produce|produces|produced|writes?|written|train|trains|trained|training|generate|generates|generated|output|outputs|save|saves|saved|create|creates|created|deliverable|deploy|deploys|deployed)\b/i;
 
-// Cues that the model named beside them is something the card CONSUMES. Checked second and given
-// priority: when both appear next to the same filename the mention is treated as a prerequisite
-// and still verified, so this narrows a false positive without opening a hole. "Generation uses
-// checkpoint `nonexistent.safetensors`" carries an output word and a prerequisite word in one
-// breath, and it must keep failing.
-const MODEL_PREREQ_CUE_RE =
-  /\b(?:uses?|used|using|with|against|requires?|required|needs?|needed|loads?|loaded|from|reads?|installed|present|available|exists?|applied)\b/i;
+// Cues that the model named beside them is something the card CONSUMES, when they appear
+// BEFORE the filename: "generation uses `x`", "the workflow loads `x`", "generated against `x`".
+//
+// Position is what makes this reliable. An earlier version matched these anywhere in the window
+// and let a prerequisite hit win on ties, which is fail-closed but made the output exemption
+// defeatable by any prerequisite word that happened to land in the sentence. T-0248's
+// "`player_identity_v2.safetensors` is committed with resolvable P-7 provenance" was blocked by
+// that trailing "with" -- a card whose entire job is to train that LoRA, the same class of false
+// positive as T-0237, resurfacing through a different word. Trimming the word list is
+// whack-a-mole; English simply puts the consumption cue in front of the thing consumed.
+const MODEL_PREREQ_BEFORE_RE =
+  /\b(?:uses?|used|using|with|against|requires?|required|needs?|needed|loads?|loaded|from|reads?|applied|via)\b/i;
+
+// Consumption can also trail the name, but only in a narrow passive construction: "`x` is used",
+// "`x` must be installed". Matching the bare participles here would reopen the exact hole above
+// ("`x` is committed with resolvable provenance" must stay an output), so the verb has to be
+// bound to its auxiliary.
+const MODEL_PREREQ_AFTER_RE =
+  /\b(?:is|are|was|were|must\s+be|has\s+to\s+be|needs?\s+to\s+be|to\s+be)\s+(?:already\s+)?(?:used|required|loaded|installed|present|available|applied)\b/i;
 
 /**
  * Is this particular mention of *name* in *text* the card's own output rather than something it
- * needs to already exist? Fail-closed: no cue, or cues in both directions, means "prerequisite",
- * so an unknown model still blocks.
+ * needs to already exist?
+ *
+ * Direction is decided by where the cue sits relative to the filename, not merely by which words
+ * are present. Fail-closed is preserved: a consumption cue in either supported position wins, and
+ * no cue at all still means "prerequisite", so an unknown model keeps blocking.
  */
 function isModelOutputMention(text, name, index) {
   const before = text.slice(Math.max(0, index - MODEL_CUE_WINDOW), index);
   const after = text.slice(index + name.length, index + name.length + MODEL_CUE_WINDOW);
-  const near = `${before} ${after}`;
-  if (MODEL_PREREQ_CUE_RE.test(near)) return false;
-  return MODEL_OUTPUT_CUE_RE.test(near);
+  if (MODEL_PREREQ_BEFORE_RE.test(before)) return false;
+  if (MODEL_PREREQ_AFTER_RE.test(after)) return false;
+  return MODEL_OUTPUT_CUE_RE.test(`${before} ${after}`);
 }
 
 // No agent's `.claude/agents/*.md` ever grants these, by design (`.claude/rules/conduct.md`):

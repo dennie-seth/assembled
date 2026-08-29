@@ -3,6 +3,11 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { checkCapabilityPreflight } from "../../src/runner/capabilityPreflight.js";
+import {
+  INSTALLED_MODELS,
+  INSTALLED_COMFYUI_NODES,
+  REACHABLE_SERVICE_ENDPOINTS
+} from "../../src/runner/capabilityInventory.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const REAL_AGENTS_DIR = path.join(REPO_ROOT, ".claude", "agents");
@@ -39,11 +44,26 @@ function fixtureReader(files) {
   };
 }
 
+// Pin the model list these unit tests classify against. They exercise the *cue* logic, which has
+// to stay meaningful no matter what production later installs: once `player_identity_v1` joined
+// INSTALLED_MODELS, the T-0237 output-cue tests below would have started passing on an inventory
+// hit instead of on the cue, silently losing exactly the coverage they exist for. Nodes and
+// endpoints still come from the real inventory -- only the model list is pinned.
+const TEST_MODELS = Object.freeze([
+  "sd_xl_base_1.0.safetensors",
+  "soviet_brutalism_style_v1.safetensors"
+]);
+
 function fixtureOpts(overrides = {}) {
   return {
     agentsDir: "/agents",
     readFileFn: fixtureReader({ "/agents/infra.md": INFRA_MD, "/agents/assets.md": ASSETS_MD }),
     listAgentNamesFn: () => ["infra", "assets"],
+    inventory: {
+      models: TEST_MODELS,
+      nodes: INSTALLED_COMFYUI_NODES,
+      endpoints: REACHABLE_SERVICE_ENDPOINTS
+    },
     ...overrides
   };
 }
@@ -330,5 +350,134 @@ describe("checkCapabilityPreflight -- model named as an output, not a prerequisi
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("nonexistent_model_v3.safetensors");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Position decides direction (T-0248).
+//
+// The cue lists alone could not tell "uses `X`" from "`X` is committed": both cues were
+// matched anywhere in a +/-60 char window and a prerequisite hit won on ties. That is
+// fail-closed and safe, but it made the OUTPUT exemption defeatable by any prerequisite
+// word that happened to land in the sentence. T-0248's Done-when read
+//
+//     `player_identity_v2.safetensors` is committed with resolvable P-7 provenance
+//
+// -- "committed" (output) and "with" (prerequisite) inside one window -- so the card whose
+// entire job is to TRAIN that LoRA was hard-blocked for not already having it. Same class
+// as T-0237, resurfacing through a different word.
+//
+// English puts the cue on a predictable side: consumption reads "uses `X`" / "loads `X`"
+// (cue BEFORE the name), production reads "`X` is committed" / "written to `X`". So a
+// prerequisite cue only counts when it PRECEDES the filename. Passive consumption that
+// trails the name ("`X` is used", "`X` must be installed") is matched separately and still
+// blocks, so this narrows the false positive without opening the hole.
+// ---------------------------------------------------------------------------
+
+describe("checkCapabilityPreflight -- positional model cue classification", () => {
+  it("passes T-0248's ORIGINAL wording: a trailing 'with' no longer defeats 'committed'", () => {
+    const result = checkCapabilityPreflight(
+      task(
+        "## Acceptance\n" +
+          "- [ ] **Done when:** `player_identity_v2.safetensors` is committed with resolvable\n"
+      ),
+      "assets",
+      fixtureOpts()
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("passes T-0248's reworded wording too", () => {
+    const result = checkCapabilityPreflight(
+      task(
+        "## Acceptance\n" +
+          "- [ ] **Done when:** `player_identity_v2.safetensors` is committed, carrying resolvable\n"
+      ),
+      "assets",
+      fixtureOpts()
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    ["with", "- [ ] `out_lora_v1.safetensors` is committed with resolvable P-7 provenance"],
+    ["from", "- [ ] `out_lora_v1.safetensors` is produced, distinct from the v1 weights"],
+    ["against", "- [ ] `out_lora_v1.safetensors` is trained, then judged against the bake-off rule"],
+    ["requires", "- [ ] `out_lora_v1.safetensors` is committed; review requires two approvals"]
+  ])(
+    "a prerequisite word (%s) AFTER the filename does not block an output mention",
+    (_cue, item) => {
+      const result = checkCapabilityPreflight(task(`## Acceptance\n${item}\n`), "assets", fixtureOpts());
+      expect(result.ok).toBe(true);
+    }
+  );
+
+  it.each([
+    ["uses", "- [ ] Generation uses `missing_lora_v1.safetensors` and commits the result"],
+    ["loads", "- [ ] The workflow loads `missing_lora_v1.safetensors`, then writes the sheet"],
+    ["against", "- [ ] The sheet is generated against `missing_lora_v1.safetensors` and saved"],
+    ["with", "- [ ] Output is produced with `missing_lora_v1.safetensors` applied"],
+    ["from", "- [ ] Weights are read from `missing_lora_v1.safetensors` and then committed"]
+  ])(
+    "a prerequisite word (%s) BEFORE the filename still blocks, even beside an output word",
+    (_cue, item) => {
+      const result = checkCapabilityPreflight(task(`## Acceptance\n${item}\n`), "assets", fixtureOpts());
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("missing_lora_v1.safetensors");
+    }
+  );
+
+  it.each([
+    ["is used", "- [ ] `missing_lora_v1.safetensors` is used by the generation step"],
+    ["is required", "- [ ] `missing_lora_v1.safetensors` is required before the run starts"],
+    ["is loaded", "- [ ] `missing_lora_v1.safetensors` is loaded by the committed workflow"],
+    ["must be installed", "- [ ] `missing_lora_v1.safetensors` must be installed on the GPU host"],
+    ["must be present", "- [ ] `missing_lora_v1.safetensors` must be present before generating"]
+  ])(
+    "trailing passive consumption (%s) still blocks -- the fail-closed hole stays shut",
+    (_cue, item) => {
+      const result = checkCapabilityPreflight(task(`## Acceptance\n${item}\n`), "assets", fixtureOpts());
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("missing_lora_v1.safetensors");
+    }
+  );
+
+  it("still blocks a bare mention with no cue on either side", () => {
+    const result = checkCapabilityPreflight(
+      task("## Acceptance\n- [ ] `mystery_model_v9.safetensors` at 1024x1024\n"),
+      "assets",
+      fixtureOpts()
+    );
+
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("checkCapabilityPreflight -- player_identity_v1 is installed", () => {
+  // Deliberately runs against the REAL inventory, not TEST_MODELS: the point is that the
+  // production list now carries the LoRA T-0237 trained and left on disk.
+  function realInventoryOpts() {
+    return fixtureOpts({
+      inventory: {
+        models: INSTALLED_MODELS,
+        nodes: INSTALLED_COMFYUI_NODES,
+        endpoints: REACHABLE_SERVICE_ENDPOINTS
+      }
+    });
+  }
+
+  it("passes a card naming player_identity_v1 as a genuine prerequisite", () => {
+    const result = checkCapabilityPreflight(
+      task(
+        "## Acceptance\n" +
+          "- [ ] The idle sheet is generated using `player_identity_v1.safetensors`\n"
+      ),
+      "assets",
+      realInventoryOpts()
+    );
+
+    expect(result.ok).toBe(true);
   });
 });
