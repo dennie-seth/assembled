@@ -100,10 +100,11 @@ describe("autoLaunchIntervalMsFromEnv", () => {
     else process.env.AUTO_LAUNCH_INTERVAL_MS = original;
   });
 
-  it("defaults to 5 minutes when unset", () => {
+  it("defaults to 5 hours when unset -- one tick per Anthropic usage window", () => {
     delete process.env.AUTO_LAUNCH_INTERVAL_MS;
     expect(autoLaunchIntervalMsFromEnv()).toBe(DEFAULT_AUTO_LAUNCH_INTERVAL_MS);
-    expect(DEFAULT_AUTO_LAUNCH_INTERVAL_MS).toBe(300000);
+    expect(DEFAULT_AUTO_LAUNCH_INTERVAL_MS).toBe(18000000);
+    expect(DEFAULT_AUTO_LAUNCH_INTERVAL_MS).toBe(5 * 60 * 60 * 1000);
   });
 
   it("preserves an explicit 0 as the disable sentinel", () => {
