@@ -195,7 +195,9 @@ def test_per_frame_keypoint_files_resolve(provenance: dict) -> None:
     for frame in provenance["frame_generation"]:
         path = (REPO_ROOT / frame["pose_keypoints_file"]).resolve()
         path.relative_to(REPO_ROOT.resolve())
-        assert path.is_file(), f"{frame['pose_keypoints_file']} does not resolve to a committed file"
+        assert path.is_file(), (
+            f"{frame['pose_keypoints_file']} does not resolve to a committed file"
+        )
         keypoints = json.loads(path.read_text())
         assert len(keypoints) == 18, "each committed keypoint file must carry all 18 COCO joints"
 
