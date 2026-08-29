@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- In-process auto-launch poller: starts at most one `ready` card per tick when the board is
+  idle and Claude usage is below threshold, replacing an external scheduled task that could not
+  reach the board. Off by default (`AUTO_LAUNCH_ENABLED`); see `tools/board/DEPLOY.md`.
+
+### Changed
+
+- The run-start path behind `POST /api/tasks/:id/run` is extracted to `cardLaunch.js` so the
+  HTTP endpoint and the auto-launch poller share one guarded implementation. No behaviour
+  change to the endpoint.
+
 ## [0.3.0] - 2026-08-07
 
 Cards out of git, into a database: card state now lives in SQLite instead of git-tracked

@@ -17,6 +17,7 @@ import { createRestartCoordinator } from "../runner/serviceRestart.js";
 import { createOrphanReaper } from "../runner/orphanReaper.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 import { createAutoPullPoller } from "../runner/autoPullPoller.js";
+import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -104,6 +105,15 @@ export async function startBoardServer({
     orchestrator,
     restartCoordinator
   });
+  // Starts at most one ready card per tick when the board is idle and Claude usage is below
+  // threshold -- the in-process replacement for an external scheduler that could not reach the
+  // board. Default OFF (AUTO_LAUNCH_ENABLED), so deploying this does not switch it on; see
+  // autoLaunchPoller.js's docstring for the gate order and DEPLOY.md for the env vars.
+  const autoLaunchPoller = createAutoLaunchPoller({
+    store,
+    orchestrator,
+    runsDir: path.join(tasksDir, ".runs")
+  });
 
   if (watcher) {
     watcher.on("task-changed", (event) => hub.broadcast(event));
@@ -149,6 +159,7 @@ export async function startBoardServer({
   orphanReaper.start();
   selfImprovementLoop.start();
   autoPullPoller.start();
+  autoLaunchPoller.start();
 
   if (watcher) {
     await watcher.start();
@@ -170,7 +181,9 @@ export async function startBoardServer({
     orphanReaper,
     selfImprovementLoop,
     autoPullPoller,
+    autoLaunchPoller,
     async close() {
+      autoLaunchPoller.stop();
       autoPullPoller.stop();
       selfImprovementLoop.stop();
       orphanReaper.stop();

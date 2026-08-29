@@ -46,8 +46,21 @@ function proseFrom(event) {
  * and `overageDisabledReason: "out_of_credits"` describe whether overage *would* be available
  * and ride along on healthy events too, so they must not be read as a refusal.
  */
-function rateLimitInfoRejects(info) {
+export function rateLimitInfoRejects(info) {
   return Boolean(info) && typeof info === "object" && info.status === "rejected";
+}
+
+/**
+ * The `rate_limit_info` payload of a `rate_limit_event`, or `null` for any other event shape.
+ * Shared with `usageWindow.js`, which reads the same telemetry for a utilization reading rather
+ * than a refusal verdict -- one place that knows where this payload lives, two questions asked
+ * of it.
+ */
+export function rateLimitInfoFromEvent(event) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) return null;
+  if (event.type !== "rate_limit_event") return null;
+  const info = event.rate_limit_info;
+  return info && typeof info === "object" && !Array.isArray(info) ? info : null;
 }
 
 /** True if a single parsed NDJSON event indicates a genuine usage/rate-limit stop. */
