@@ -16,6 +16,7 @@ from lora_train.train import (
     build_dataset_toml,
     build_train_args,
     deploy_to_comfyui,
+    find_resume_state,
     resolve_checkpoint_path,
     resolve_comfyui_loras_dir,
     resolve_sd_scripts_dir,
@@ -254,3 +255,103 @@ class TestSaveEveryNEpochsArg:
             output_dir=pathlib.Path("/out"),
         )
         assert "--save_every_n_epochs=3" in args
+
+
+class TestFindResumeState:
+    """A run cut short by this environment's per-call wall-clock budget (the
+    tool that invokes train.py has its own timeout well under a full training
+    run's wall-clock, see T-0248 HANDOFF §24-a) must resume from the last
+    sd-scripts `--save_state` checkpoint on the next invocation instead of
+    restarting at step 0 -- this is what makes rule (b) ("a re-run resumes
+    from the last checkpoint") actually true rather than aspirational.
+
+    sd-scripts' `--save_state` writes one directory per checkpoint, named
+    either `{output_name}-{epoch:06d}-state` (epoch cadence) or
+    `{output_name}-step{step:08d}-state` (step cadence, `library/checkpoint_io.py`
+    EPOCH_STATE_NAME / STEP_STATE_NAME) -- both end in `-state` and both are
+    resumed the same way (`--resume <dir>`), so the most-recently-written one
+    (by mtime) is always the correct resume point regardless of which cadence
+    produced it.
+    """
+
+    def test_returns_none_when_no_state_dir_exists(self, tmp_path):
+        assert find_resume_state(tmp_path, "player_identity_v2") is None
+
+    def test_ignores_unrelated_files_and_dirs(self, tmp_path):
+        (tmp_path / "player_identity_v2.safetensors").write_bytes(b"not a state dir")
+        (tmp_path / "some_other_model-000001-state").mkdir()
+        assert find_resume_state(tmp_path, "player_identity_v2") is None
+
+    def test_finds_a_single_epoch_state_dir(self, tmp_path):
+        state_dir = tmp_path / "player_identity_v2-000001-state"
+        state_dir.mkdir()
+        assert find_resume_state(tmp_path, "player_identity_v2") == state_dir
+
+    def test_finds_a_single_step_state_dir(self, tmp_path):
+        state_dir = tmp_path / "player_identity_v2-step00000004-state"
+        state_dir.mkdir()
+        assert find_resume_state(tmp_path, "player_identity_v2") == state_dir
+
+    def test_picks_the_most_recently_written_state_dir(self, tmp_path):
+        import time
+
+        older = tmp_path / "player_identity_v2-000001-state"
+        older.mkdir()
+        time.sleep(0.01)
+        newer = tmp_path / "player_identity_v2-step00000016-state"
+        newer.mkdir()
+
+        assert find_resume_state(tmp_path, "player_identity_v2") == newer
+
+    def test_does_not_match_a_different_output_name(self, tmp_path):
+        (tmp_path / "player_identity_v1-000006-state").mkdir()
+        assert find_resume_state(tmp_path, "player_identity_v2") is None
+
+
+class TestResumeAndStepwiseStateWiring:
+    """The functions above only matter if their results actually reach the
+    sd-scripts CLI invocation."""
+
+    def test_resume_state_adds_resume_flag(self):
+        config = _make_config()
+        args = build_train_args(
+            config,
+            checkpoint_path=pathlib.Path("/ckpt.safetensors"),
+            dataset_config_path=pathlib.Path("/dataset.toml"),
+            output_dir=pathlib.Path("/out"),
+            resume_state=pathlib.Path("/out/player_identity_v2-step00000004-state"),
+        )
+        assert "--resume=/out/player_identity_v2-step00000004-state" in args
+
+    def test_no_resume_state_omits_resume_flag(self):
+        config = _make_config()
+        args = build_train_args(
+            config,
+            checkpoint_path=pathlib.Path("/ckpt.safetensors"),
+            dataset_config_path=pathlib.Path("/dataset.toml"),
+            output_dir=pathlib.Path("/out"),
+        )
+        assert not any(a.startswith("--resume") for a in args)
+
+    def test_save_every_n_steps_adds_stepwise_state_flags(self):
+        config = _make_config()
+        args = build_train_args(
+            config,
+            checkpoint_path=pathlib.Path("/ckpt.safetensors"),
+            dataset_config_path=pathlib.Path("/dataset.toml"),
+            output_dir=pathlib.Path("/out"),
+            save_every_n_steps=4,
+        )
+        assert "--save_every_n_steps=4" in args
+        assert "--save_state" in args
+
+    def test_no_save_every_n_steps_omits_stepwise_state_flags(self):
+        config = _make_config()
+        args = build_train_args(
+            config,
+            checkpoint_path=pathlib.Path("/ckpt.safetensors"),
+            dataset_config_path=pathlib.Path("/dataset.toml"),
+            output_dir=pathlib.Path("/out"),
+        )
+        assert not any(a.startswith("--save_every_n_steps") for a in args)
+        assert "--save_state" not in args
