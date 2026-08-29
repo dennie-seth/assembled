@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- In-process auto-launch poller: starts at most one `ready` card per tick when the board is
-  idle and Claude usage is below threshold, replacing an external scheduled task that could not
-  reach the board. Off by default (`AUTO_LAUNCH_ENABLED`); see `tools/board/DEPLOY.md`.
+- In-process auto-launch poller: starts at most one `ready` card per tick — default cadence one
+  tick every 5 hours, matching the Anthropic usage window — when the board is idle and Claude
+  usage is below threshold, replacing an external scheduled task that could not reach the board.
+  Off by default (`AUTO_LAUNCH_ENABLED`); see `tools/board/DEPLOY.md`.
 
 ### Changed
 
