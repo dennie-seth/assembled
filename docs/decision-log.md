@@ -1126,3 +1126,68 @@ until the sign-off lands, so as not to pre-empt it.
 - `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` — the assembled §23-c cost table
 - `assets/final/character/bakeoff_comparison_T0231.webp` — the side-by-side comparison artefact
 - `assets/final/character/bakeoff_frame_delta_report_T0231.json` — the re-run mechanical gate
+
+## DL-23 — Signal Tower props concept sheet v2: direction approved (T-0239)
+
+**Date:** 2026-08-29
+**Raised by:** HANDOFF §23, handle §23-j-0 (T-0239), gating §23-j-b/c/d/f
+**Status:** **APPROVED.** This is the human direction verdict T-0239's acceptance parked
+for, recorded here retroactively — the verdict was given, but only in the board card's
+comments, which live in the SQLite task store under `BOARD_TASK_STORE=db` and are therefore
+invisible to any reviewer auditing the repository. This entry closes that gap.
+**Applies to:** `assets/src/concept/signal_tower_props_concept_sheet_v2.png`
+(`concept_hash` `39ad4e890a31ceb813ccbec3600e888350be5e2832d0282b5dcf1e66e504a0e1`)
+
+### The verdict
+
+**Approved by @DennieSeth on 2026-08-29**, expressed as his authoring and merging of
+[PR #265](https://github.com/dennie-seth/assembled/pull/265) (`feature/T-0239` -> `develop`,
+merged 11:19:22Z) with no intermediate review — a deliberate human act on the sheet itself,
+not an automated advance.
+
+### What was approved — stated plainly, because it is not what v1 was
+
+v2 is **not** a straight SDXL generation. It is a two-stage artefact:
+
+1. A real ComfyUI img2img+LoRA background pass (`sd_xl_base_1.0.safetensors` +
+   `soviet_brutalism_style_v1.safetensors` @ 0.70, denoise 0.95, conditioned on the v1 props
+   sheet per T-0226's archetype-first coherence guard), prompted for an **empty wall/floor
+   texture only** so it could not re-hallucinate v1's own props.
+2. A committed deterministic compositing pass (`_composite_props_v2.py`) that draws the four
+   prop classes v1 does not depict — archive shelving row, transformer housings, breaker
+   panel as an explicit gate object, crawlspace opening and hiding alcove — as
+   **home-palette-exact labelled silhouette icons** with real legible text labels.
+
+Stage 2 was the fix for a real failure: the first attempt's single whole-sheet img2img pass
+at denoise 0.88 redrew v1's own locker/cabinet/rack vocabulary instead of the four new
+classes, and drifted off-palette. The reviewer caught it by opening the image.
+
+**So what this approval covers is the sheet's *content and classification*** — which prop
+classes exist and whether each is cover, gate object, or hiding — **not** painterly
+rendering direction. Downstream generation conditions on it for geometry and class, as
+[T-0243](T-0243) did for the archive shelving row.
+
+### Scope — deliberately narrow
+
+This entry approves the **v2 props sheet only**. It does **not** approve the other rows in
+`assets/src/concept/SIGNAL_TOWER_CONCEPT_AUDIT.md`, every one of which remains **pending**,
+including the v1 props sheet. That audit's own "No row above is approved" statement is
+T-0226's historical record and is left untouched; v2 was never one of its rows.
+
+Reuse of the five already-committed v1 props stays exempt from a fresh concept gate under
+the 2026-08-29 room-card amendment (reused committed props are accepted as-is), so this
+entry is sufficient to unblock §23-j-b/c/d/f without reopening v1's approval.
+
+### Why this was needed
+
+[T-0243](T-0243) generated `archive_shelving_v1` correctly through the committed cutout
+path, then **reverted it** and reported the slot blocked, because three in-repo records said
+the sheet was unapproved and `docs/decision-log.md` had no T-0239 entry. That was the gate
+working exactly as designed — the card refused to generate against an unapproved reference.
+The defect was in the record, not in the card.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-23)
+- `ASSET_PROVENANCE.md` — the v2 sheet's row, approval clause updated
+- `assets/src/concept/signal_tower_props_concept_sheet_v2.provenance.json` — `direction_approval` recorded
+- `assets/src/concept/SIGNAL_TOWER_CONCEPT_AUDIT.md` — a dated addendum, table left as T-0226 wrote it

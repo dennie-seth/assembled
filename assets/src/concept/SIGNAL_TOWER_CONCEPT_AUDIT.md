@@ -65,3 +65,25 @@ that gap is surfaced here, not resolved by this card. **This card parks for
 that verdict.** A human must review each row and record the approval verdict
 on this card before §23-d/e/f (Track 1) or §23-i/§23-j (Track 2) generate
 anything against it.
+
+---
+
+## Addendum — 2026-08-29: props sheet **v2** approved (DL-23)
+
+**The table above is T-0226's record and is unchanged.** Every row in it remains
+**pending**, including `cover_and_hiding_props` (the **v1** props sheet). Nothing here
+retroactively approves any of them.
+
+What changed is a sheet that is **not** in that table, because it did not exist when this
+audit was written: `signal_tower_props_concept_sheet_v2.png`, produced later by
+[T-0239](T-0239) to cover the four prop classes v1 does not depict (archive shelving row,
+transformer housings, breaker panel as a gate object, crawlspace opening, hiding alcove).
+
+| Asset set | Rooms | Sheet | `concept_hash` | Approved | Note |
+|---|---|---|---|---|---|
+| `new_prop_classes_v2` | records_room, power_substation, equipment_floor, antenna_shaft | `signal_tower_props_concept_sheet_v2.png` (T-0239) | `39ad4e89…e504a0e1` | **yes — @DennieSeth, 2026-08-29** | Direction approval recorded in `docs/decision-log.md` DL-23, evidenced by his authoring and merging of PR #265. Covers prop-class content and cover/gate/hiding classification; stage 2 is deterministic composited labelled-silhouette icon art over an SDXL background, not SDXL-rendered props. |
+
+This unblocks §23-j-b/c/d/f ([T-0243](T-0243)–[T-0246](T-0246)) to generate against **v2
+only**. Reuse of the five already-committed v1 props is exempt from a fresh concept gate
+under the 2026-08-29 room-card amendment, so v1's still-pending row does not block them.
+
