@@ -1224,3 +1224,211 @@ def ensure_signal_tower_structure_concept_sheet():
     if not OUT_STRUCTURE_PNG.exists() or not OUT_STRUCTURE_PROV.exists():
         concept_hash = _generate_structure_concept_png(OUT_STRUCTURE_PNG)
         _generate_structure_provenance(concept_hash, OUT_STRUCTURE_PROV)
+
+
+# ── T-0239 — Signal Tower props concept sheet v2 (§23-j-0) ─────────────────
+#
+# Extends the v1 props sheet (T-0211) with the four prop classes
+# `docs/design/14-vertical-slice.md` §10 needs that v1 does not depict:
+# archive shelving row (Records Room), transformer housings x2-3 + breaker
+# panel gate object (Power Substation), crawlspace opening (Equipment
+# Floor), hiding alcove (Antenna Shaft). v1's five props are untouched.
+#
+# This fixture is a stdlib-only synthetic fallback -- it only runs if the
+# committed sheet is ever missing. The actual committed sheet is real
+# ComfyUI SDXL img2img+LoRA output, conditioned on v1's own PNG per the
+# archetype-first coherence guard (see
+# signal_tower_props_concept_sheet_v2.recipe.json / .provenance.json).
+# ─────────────────────────────────────────────────────────────────────────
+
+OUT_PROPS_V2_PNG = CONCEPT_DIR / "signal_tower_props_concept_sheet_v2.png"
+OUT_PROPS_V2_PROV = CONCEPT_DIR / "signal_tower_props_concept_sheet_v2.provenance.json"
+
+# Gate-object colours (breaker panel) -- distinct from both cover and hiding
+# vocabularies: institutional-green body (locked cabinet), lit indicator lamps.
+GATE_BODY = PAL["ramp08"]   # concrete mid-light -- flush cabinet face
+GATE_FRAME = PAL["ramp04"]  # concrete dark -- panel border
+GATE_LAMP = PAL["ramp11"]   # inst. green light -- indicator lamps (lit)
+GATE_SWITCH = PAL["ramp02"]  # deep green -- breaker switch bodies (locked)
+
+
+def _draw_archive_shelving(px: bytearray, x0: int, y0: int, w: int, h: int) -> None:
+    """Dense archive shelving row (cover-class dressing). Same grammar as
+    the structure sheet's Records Room shelving, drawn in the cover palette."""
+    _fill_rect(px, x0, y0, x0 + w, y0 + h, COVER_BODY)
+    rows = 4
+    row_h = h // rows
+    for r in range(rows):
+        ry = y0 + r * row_h
+        _fill_rect(px, x0, ry, x0 + w, ry + max(2, row_h // 10), COVER_SIDE)
+        box_y0 = ry + max(2, row_h // 10) + 2
+        box_y1 = ry + row_h - 2
+        bx = x0 + 4
+        while bx < x0 + w - 8:
+            _fill_rect(px, bx, box_y0, bx + 10, box_y1, COVER_SIDE)
+            bx += 14
+    _fill_rect(px, x0, y0, x0 + w, y0 + 3, COVER_TOP)
+
+
+def _draw_transformer_housing(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Squat industrial transformer housing (cover prop)."""
+    hw = 11 * s
+    h = 18 * s
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y, COVER_BODY)
+    _fill_rect(px, cx - hw, floor_y - h, cx - hw + 3 * s, floor_y, COVER_SIDE)
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y - h + 3 * s, COVER_TOP)
+    # Cooling fins
+    fin_x = cx - hw + 5 * s
+    while fin_x < cx + hw - 2 * s:
+        _fill_rect(px, fin_x, floor_y - h + 5 * s, fin_x + s, floor_y - 3 * s, COVER_ACCT)
+        fin_x += 3 * s
+
+
+def _draw_breaker_panel(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Wall-mounted switch-locked breaker panel (gate object, NOT cover):
+    three labelled breaker switches, each with an indicator lamp."""
+    hw = 20 * s
+    h = 26 * s
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y, GATE_BODY)
+    _draw_border(px, cx - hw, floor_y - h, cx + hw, floor_y, GATE_FRAME, 2)
+    # Three breaker switches with lamps above each
+    third = (2 * hw) // 3
+    for i in range(3):
+        bx = cx - hw + i * third + third // 2
+        lamp_y = floor_y - h + 5 * s
+        _fill_rect(px, bx - s, lamp_y, bx + s, lamp_y + 2 * s, GATE_LAMP)
+        sw_y0 = floor_y - h + 10 * s
+        sw_y1 = floor_y - 4 * s
+        _fill_rect(px, bx - 2 * s, sw_y0, bx + 2 * s, sw_y1, GATE_SWITCH)
+
+
+def _draw_crawlspace(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Low dark crawlspace opening (hiding-spot prop)."""
+    hw = 13 * s
+    h = 10 * s
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y, HIDE_FRAME)
+    gap = 2 * s
+    _fill_rect(px, cx - hw + gap, floor_y - h + gap, cx + hw - gap, floor_y - gap, HIDE_INSIDE)
+
+
+def _draw_hiding_alcove(px: bytearray, cx: int, floor_y: int, s: int) -> None:
+    """Recessed wall niche, single-occupant (hiding-spot prop)."""
+    hw = 9 * s
+    h = 30 * s
+    _fill_rect(px, cx - hw, floor_y - h, cx + hw, floor_y, HIDE_BODY)
+    _draw_border(px, cx - hw, floor_y - h, cx + hw, floor_y, HIDE_FRAME, 2)
+    gap = 2 * s
+    _fill_rect(px, cx - hw + gap, floor_y - h + gap, cx + hw - gap, floor_y - gap, HIDE_INSIDE)
+    _fill_rect(px, cx + hw - 3 * s, floor_y - h // 2 - s, cx + hw - s, floor_y - h // 2 + s, HIDE_HANDLE)
+
+
+_PV2_PW = (W - 2 * _E_MARGIN) // 1  # single full-width column, 3 stacked panels
+_PV2_PH = (H - 2 * _E_MARGIN - 2 * _E_GUTTER) // 3
+
+
+def _pv2_panel_origin(row: int) -> tuple[int, int]:
+    return (_E_MARGIN, _E_MARGIN + row * (_PV2_PH + _E_GUTTER))
+
+
+def _pv2_panel_frame(px: bytearray, x0: int, y0: int) -> None:
+    _fill_rect(px, x0, y0, x0 + _PV2_PW - 1, y0 + _PV2_PH - 1, BG)
+    _draw_border(px, x0, y0, x0 + _PV2_PW - 1, y0 + _PV2_PH - 1, BORDER, 2)
+
+
+def _generate_props_v2_concept_png(out_path: Path) -> str:
+    """Build 1024x1024 RGB signal tower props v2 concept sheet; return sha256 hex digest."""
+    px = _make_canvas(W, H, CANVAS)
+
+    for r in range(3):
+        x0, y0 = _pv2_panel_origin(r)
+        _pv2_panel_frame(px, x0, y0)
+
+    # Panel 0 — COVER PROPS: archive shelving + transformer housings x3
+    x0, y0 = _pv2_panel_origin(0)
+    _draw_archive_shelving(px, x0 + 40, y0 + 30, _PV2_PW // 2 - 60, _PV2_PH - 60)
+    floor_y = y0 + _PV2_PH - 30
+    tx = x0 + _PV2_PW // 2 + 40
+    for _ in range(3):
+        _draw_transformer_housing(px, tx, floor_y, 3)
+        tx += 30 * 3 + 10
+
+    # Panel 1 — BREAKER PANEL (gate object, not cover)
+    x0, y0 = _pv2_panel_origin(1)
+    _draw_breaker_panel(px, x0 + _PV2_PW // 2, y0 + _PV2_PH - 40, 4)
+
+    # Panel 2 — HIDING SPOT PROPS: crawlspace + hiding alcove
+    x0, y0 = _pv2_panel_origin(2)
+    floor_y = y0 + _PV2_PH - 40
+    _draw_crawlspace(px, x0 + _PV2_PW // 3, floor_y, 4)
+    _draw_hiding_alcove(px, x0 + 2 * _PV2_PW // 3, floor_y, 4)
+
+    png_bytes = _encode_png(px, W, H)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(png_bytes)
+    return hashlib.sha256(png_bytes).hexdigest()
+
+
+def _generate_props_v2_provenance(concept_hash: str, out_path: Path) -> None:
+    v1_prov_path = OUT_PROPS_PROV
+    base_concept_hash = ""
+    if v1_prov_path.exists():
+        base_concept_hash = json.loads(v1_prov_path.read_text()).get("concept_hash", "")
+    prov = {
+        "model": "synth -- programmatic stdlib-only generation (T-0239 fallback)",
+        "model_license": "N/A -- no AI model used; Python stdlib only (struct, zlib, binascii)",
+        "model_hash": "N/A — stdlib-only synthetic placeholder; no AI model used (T-0239 fallback)",
+        "prompt": (
+            "flat side-on prop concept reference sheet, Signal Tower interior, extending "
+            "the v1 prop vocabulary with four new classes. "
+            "Panel 0 (COVER PROPS): dense archive shelving row (records-office dressing) "
+            "and two-to-three transformer housings, mid-value concrete grey, exposed. "
+            "Panel 1 (BREAKER PANEL, gate object, not cover): wall-mounted switch-locked "
+            "breaker panel, three labelled breaker switches each with an indicator lamp. "
+            "Panel 2 (HIDING SPOT PROPS): crawlspace opening and hiding alcove, dark-bodied, "
+            "enclosed, single-occupant, exposed entry only. "
+            "Soviet brutalist Signal Tower interior. Hard value separation. "
+            "No perspective, no vanishing point, no scene composition."
+        ),
+        "negative_prompt": (
+            "perspective, vanishing point, atmospheric haze, depth of field, "
+            "bright saturated colors, photorealistic, 3d render, scene composition"
+        ),
+        "seed": 0,
+        "steps": None,
+        "cfg": None,
+        "width": W,
+        "height": H,
+        "workflow_hash": None,
+        "prompt_id": "synth-T-0239",
+        "concept_hash": concept_hash,
+        "denoise": 0.88,
+        "conditioning_source": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
+        "base_concept_hash": base_concept_hash,
+        "lora_name": "soviet_brutalism_style_v1.safetensors",
+        "lora_weight": 0.70,
+        "generator": "assets/src/concept/tests/conftest.py (_generate_props_v2_concept_png, stdlib-only synthetic fallback)",
+        "_note": (
+            "Synthetic reference -- replace with SDXL generation via "
+            "signal_tower_props_concept_sheet_v2.recipe.json if the committed real sheet "
+            "is ever lost. denoise/conditioning_source/base_concept_hash mirror the real "
+            "sheet's img2img conditioning on signal_tower_props_concept_sheet_v1.png "
+            "(archetype-first coherence guard) so this fallback can't silently regress "
+            "that guard if the real sheet is ever lost and regenerated synthetically."
+        ),
+    }
+    out_path.write_text(json.dumps(prov, indent=2))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_signal_tower_props_concept_sheet_v2():
+    """Generate the signal tower props concept sheet v2 PNG + provenance if not
+    yet present (T-0239, §23-j-0). Autouse so the artifact is always present
+    before any test in this session inspects it.
+
+    If the SDXL-generated PNG already exists (fetched from ComfyUI), this
+    fixture is a no-op -- it never overwrites an already-present file, and
+    it never touches the v1 sheet.
+    """
+    if not OUT_PROPS_V2_PNG.exists() or not OUT_PROPS_V2_PROV.exists():
+        concept_hash = _generate_props_v2_concept_png(OUT_PROPS_V2_PNG)
+        _generate_props_v2_provenance(concept_hash, OUT_PROPS_V2_PROV)
