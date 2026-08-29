@@ -1,0 +1,64 @@
+# T-0248 — Player-identity SDXL LoRA v2 training configuration
+#
+# Round 2 of the character-pipeline bake-off (HANDOFF §24-a, DL-21 override).
+# Committed for reproducibility, loaded/validated by the same
+# assets/src/lora/src/lora_train/config.py and driven by the same
+# assets/src/lora/src/lora_train/train.py as player_identity_v1's own
+# config -- no changes to the shared WSL-native training stack were needed
+# beyond this card's own find_resume_state/--save_every_n_steps additions
+# (operational, not part of this reproducibility spec).
+#
+# Run (from the repo root, training venv per assets/src/lora/setup-training-env.sh):
+#   PYTHONPATH=assets/src/lora/src /home/dennieseth/dev/lora-train-venv/bin/python3 \
+#     -m lora_train.train --config assets/src/character/training_config_player_identity_v2.toml \
+#     --save-every-n-steps 4
+#
+# Dataset: assets/src/character/identity_refs_v2/ (29 images, SDXL+IP-Adapter
+# generated views of the single canonical costume -- see
+# CANONICAL_COSTUME_SELECTION_T0248.md and identity_curation_manifest_T0248.json).
+#
+# Network rank/alpha/learning-rate/optimizer are unchanged from v1
+# (training_config_player_identity_T0229.toml) so this run isolates exactly
+# one variable -- the training set's view diversity -- rather than
+# confounding it with a different training recipe.
+#
+# num_epochs=2 (29 refs x 2 = 58 steps) is smaller than v1's 6 epochs x 12 = 72
+# steps in absolute step count but trains on a materially larger and more
+# diverse image set per epoch; see ARM_B_BAKEOFF_REPORT_T0229.md-style cost
+# record for this run's actual measured GPU-minutes (§23-c, recorded not
+# deciding per the round-2 override).
+
+[model]
+base_checkpoint = "sd_xl_base_1.0.safetensors"
+checkpoint_license = "CreativeML Open RAIL++-M"
+
+[output]
+name = "player_identity_v2"
+dir = "assets/final/lora"
+format = "safetensors"
+
+[train]
+resolution = 1024
+batch_size = 1
+mixed_precision = "fp16"
+num_epochs = 2
+learning_rate = 1.0e-4
+optimizer = "AdamW8bit"
+save_every_n_epochs = 1
+
+[network]
+rank = 8
+alpha = 4
+type = "lora"
+target_modules = [
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+]
+
+[dataset]
+dir = "assets/src/character/identity_refs_v2"
+caption_ext = ".txt"
+shuffle = true
+cache_latents = true

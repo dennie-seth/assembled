@@ -144,11 +144,19 @@ def build_graph(
     controlnet_end: float,
     style_lora_weight: float,
     identity_lora_weight: float,
+    *,
+    identity_lora_name: str = IDENTITY_LORA_NAME,
 ) -> dict:
     """LoraLoader(style) -> LoraLoader(identity, chained) -> ControlNet(pose
     grid) main generation -> area descent to 144x144. No IP-Adapter -- the
     concept sheet conditions the trained identity LoRA's weights (see
-    curate_identity_panels_T0229.py), not this graph."""
+    curate_identity_panels_T0229.py), not this graph.
+
+    `identity_lora_name` defaults to the T-0229/v1 identity LoRA; T-0248's
+    round-2 re-run passes `player_identity_v2.safetensors` instead to measure
+    whether the single-costume LoRA changes the drift picture under the
+    otherwise-unchanged DL-21 recipe -- see gen_arm_b_idle_v2_T0248.py.
+    """
     g: dict = {}
 
     g["1"] = {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": CHECKPOINT}}
@@ -169,7 +177,7 @@ def build_graph(
         "inputs": {
             "model": ["11", 0],
             "clip": ["11", 1],
-            "lora_name": IDENTITY_LORA_NAME,
+            "lora_name": identity_lora_name,
             "strength_model": identity_lora_weight,
             "strength_clip": identity_lora_weight,
         },
@@ -248,9 +256,11 @@ ATTEMPT_LOG_HEADER = (
 )
 
 
-def append_attempt_log(provenance: dict, notes: str = "") -> None:
-    if not ATTEMPT_LOG_PATH.exists():
-        ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
+def append_attempt_log(
+    provenance: dict, notes: str = "", *, log_path: Path = ATTEMPT_LOG_PATH
+) -> None:
+    if not log_path.exists():
+        log_path.write_text(ATTEMPT_LOG_HEADER)
     row = (
         f"| {provenance['attempt']} | {provenance['seed']} "
         f"| {provenance['controlnet_strength']}/{provenance['controlnet_end_percent']} "
@@ -260,7 +270,7 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
         f"| {'yes' if provenance.get('promoted') else 'no'} "
         f"| {notes} |\n"
     )
-    with ATTEMPT_LOG_PATH.open("a") as f:
+    with log_path.open("a") as f:
         f.write(row)
 
 
@@ -271,7 +281,20 @@ def run_attempt(
     controlnet_end: float,
     style_lora_weight: float,
     identity_lora_weight: float,
+    *,
+    identity_lora_name: str = IDENTITY_LORA_NAME,
+    identity_lora_path: Path = IDENTITY_LORA_PATH,
+    identity_lora_provenance_path: Path = IDENTITY_LORA_PROVENANCE_PATH,
+    out_dir_name: str = "arm_b",
+    card: str = "T-0229",
+    bake_off_arm: str = "B (§23-e)",
 ) -> dict:
+    """`identity_lora_name`/`identity_lora_path`/`identity_lora_provenance_path`
+    default to the T-0229/v1 identity LoRA; `out_dir_name`/`card`/`bake_off_arm`
+    default to Arm A's own T-0229 identifiers. T-0248's round-2 re-run
+    (gen_arm_b_idle_v2_T0248.py) overrides all six to point at
+    `player_identity_v2` and a separate out dir/attempt log, so it never
+    touches T-0229's own promoted sheet or attempt history."""
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
 
@@ -282,20 +305,18 @@ def run_attempt(
             "-- the curated identity training set traces back to this exact sheet; refusing to "
             "record provenance against a sheet that is not T-0209's approved sheet"
         )
-    if not IDENTITY_LORA_PATH.exists():
+    if not identity_lora_path.exists():
         raise RuntimeError(
-            f"trained identity LoRA not found: {IDENTITY_LORA_PATH} -- run lora_train.train "
-            "against training_config_player_identity_T0229.toml first"
+            f"trained identity LoRA not found: {identity_lora_path} -- run lora_train.train first"
         )
-    if not IDENTITY_LORA_PROVENANCE_PATH.exists():
+    if not identity_lora_provenance_path.exists():
         raise RuntimeError(
-            f"identity LoRA provenance sidecar not found: {IDENTITY_LORA_PROVENANCE_PATH} -- "
-            "run finalize_identity_lora_provenance_T0229.py after training"
+            f"identity LoRA provenance sidecar not found: {identity_lora_provenance_path}"
         )
     style_lora_hash = sha256_of(LORA_PATH)
-    identity_lora_hash = sha256_of(IDENTITY_LORA_PATH)
+    identity_lora_hash = sha256_of(identity_lora_path)
 
-    out_dir = REPO_ROOT / "assets" / "out" / "arm_b" / f"attempt_{attempt}"
+    out_dir = REPO_ROOT / "assets" / "out" / out_dir_name / f"attempt_{attempt}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     pose_grid_image = build_pose_grid_image(CELL_PX)
@@ -310,6 +331,7 @@ def run_attempt(
         controlnet_end=controlnet_end,
         style_lora_weight=style_lora_weight,
         identity_lora_weight=identity_lora_weight,
+        identity_lora_name=identity_lora_name,
     )
     prompt_id = submit_prompt(graph)
     # Arm A's attempts ran up to 294s against its 300s default timeout (close
@@ -353,7 +375,7 @@ def run_attempt(
 
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
-        f"+ LoRA {IDENTITY_LORA_NAME} (player identity, weight {identity_lora_weight}) "
+        f"+ LoRA {identity_lora_name} (player identity, weight {identity_lora_weight}) "
         f"+ ControlNet {CONTROLNET_NAME}"
     )
     provenance = {
@@ -364,11 +386,11 @@ def run_attempt(
         "style_lora_hash": style_lora_hash,
         "style_lora_weight": style_lora_weight,
         "style_lora_license": LORA_LICENSE,
-        "identity_lora_name": IDENTITY_LORA_NAME,
+        "identity_lora_name": identity_lora_name,
         "identity_lora_hash": identity_lora_hash,
         "identity_lora_weight": identity_lora_weight,
         "identity_lora_license": "CreativeML OpenRAIL++-M",
-        "identity_lora_provenance": "assets/final/lora/player_identity_v1.provenance.json",
+        "identity_lora_provenance": str(identity_lora_provenance_path.relative_to(REPO_ROOT)),
         "controlnet": CONTROLNET_NAME,
         "controlnet_strength": controlnet_strength,
         "controlnet_end_percent": controlnet_end,
@@ -390,14 +412,14 @@ def run_attempt(
             "Procedurally drawn OpenPose-format skeleton (single 336x336 cell, PIL, "
             "18-keypoint COCO layout) tiled bit-for-bit identical into a 1008x1008 pose grid "
             "-> ControlNetApplyAdvanced (xinsir OpenPose) "
-            "+ LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v1, chained) "
+            f"+ LoraLoader(soviet_brutalism_style_v1) -> LoraLoader({identity_lora_name}, chained) "
             "-> KSampler 1008x1008 -> area downscale to 144x144 -> Oklab-nearest palette "
             "quantization (dithering off, §3.1) -> orphan cleanup. No IP-Adapter node -- "
             "identity comes from the trained LoRA (§6.14 stage 2)."
         ),
         "generator": "assets/src/character/gen_arm_b_idle_T0229.py",
-        "card": "T-0229",
-        "bake_off_arm": "B (§23-e)",
+        "card": card,
+        "bake_off_arm": bake_off_arm,
         "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §6.14 stage 2",
         "comfyui_prompt_id": prompt_id,
         "attempt": attempt,
