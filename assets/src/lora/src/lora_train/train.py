@@ -176,11 +176,14 @@ def build_train_args(
     single card's training phase is many separate invocations of this
     module, each resuming where the last left off.
 
-    `save_every_n_steps` (independent of `config.save_every_n_epochs`, which
-    stays the reproducibility-spec cadence for the emitted LoRA weights)
-    additionally saves full resumable trainer state every N steps -- without
-    it, a run interrupted mid-epoch has no state dir to resume from, since
-    epoch-boundary checkpoints alone can't help a run that never reaches one.
+    `config.save_every_n_epochs`'s cadence is always paired with `--save_state`
+    (T-0248), so every epoch boundary writes a full resumable state dir, not
+    just the LoRA weight snapshot. `save_every_n_steps` (independent of
+    `config.save_every_n_epochs`, which stays the reproducibility-spec cadence
+    for the emitted LoRA weights) additionally saves that same full resumable
+    trainer state every N steps -- without it, a run interrupted mid-epoch has
+    no state dir to resume from, since epoch-boundary checkpoints alone can't
+    help a run that never reaches one.
     """
     args = [
         f"--pretrained_model_name_or_path={checkpoint_path}",
@@ -207,8 +210,13 @@ def build_train_args(
     # the tradeoff is: drop caption shuffling (set shuffle=false in
     # training_config.toml) to re-enable this flag.
     # Per-epoch checkpoints so a run cut short by the phase budget resumes instead of
-    # restarting from step 0 (see TrainingConfig.save_every_n_epochs).
+    # restarting from step 0 (see TrainingConfig.save_every_n_epochs). --save_state is
+    # unconditional, not gated on save_every_n_steps below: without it, sd-scripts'
+    # plain epoch cadence writes only the LoRA weight snapshot at each boundary, never
+    # a full resumable state dir, so a run that never passes --save-every-n-steps (i.e.
+    # every real, non-smoke-test invocation) would not actually be resumable -- T-0248.
     args.append(f"--save_every_n_epochs={config.save_every_n_epochs}")
+    args.append("--save_state")
     if config.cache_latents:
         args.append("--cache_latents")
     if max_train_steps is not None:
@@ -217,7 +225,6 @@ def build_train_args(
         args.append(f"--max_train_epochs={config.num_epochs}")
     if save_every_n_steps is not None:
         args.append(f"--save_every_n_steps={save_every_n_steps}")
-        args.append("--save_state")
     if resume_state is not None:
         args.append(f"--resume={resume_state}")
     return args

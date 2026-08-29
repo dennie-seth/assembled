@@ -345,7 +345,18 @@ class TestResumeAndStepwiseStateWiring:
         assert "--save_every_n_steps=4" in args
         assert "--save_state" in args
 
-    def test_no_save_every_n_steps_omits_stepwise_state_flags(self):
+    def test_no_save_every_n_steps_omits_only_the_step_cadence_flag(self):
+        """T-0248: `--save_state` must NOT depend on the step-cadence override.
+
+        Without it, sd-scripts' plain `--save_every_n_epochs` cadence writes only
+        the LoRA weight snapshot at each epoch boundary, never a full resumable
+        `-state` dir -- so a run that relies solely on `config.save_every_n_epochs`
+        (i.e. every real training invocation that doesn't pass
+        `--save-every-n-steps`, which is a smoke-test-only CLI override) is not
+        actually resumable, contradicting rule (b) ("a re-run resumes from the
+        last checkpoint"). `--save_state` must ride along with the baseline epoch
+        cadence unconditionally; only `--save_every_n_steps` itself is optional.
+        """
         config = _make_config()
         args = build_train_args(
             config,
@@ -354,4 +365,19 @@ class TestResumeAndStepwiseStateWiring:
             output_dir=pathlib.Path("/out"),
         )
         assert not any(a.startswith("--save_every_n_steps") for a in args)
-        assert "--save_state" not in args
+        assert "--save_state" in args
+
+    def test_save_state_present_even_with_default_epoch_cadence_only(self):
+        """T-0248: epoch-cadence checkpoints (`config.save_every_n_epochs`) must be
+        resumable on their own, not only when a step-cadence override is also
+        passed -- see test_no_save_every_n_steps_omits_only_the_step_cadence_flag.
+        """
+        config = _make_config(save_every_n_epochs=1)
+        args = build_train_args(
+            config,
+            checkpoint_path=pathlib.Path("/ckpt.safetensors"),
+            dataset_config_path=pathlib.Path("/dataset.toml"),
+            output_dir=pathlib.Path("/out"),
+        )
+        assert "--save_every_n_epochs=1" in args
+        assert "--save_state" in args
