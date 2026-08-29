@@ -113,6 +113,22 @@ describe("buildPrBody -- summary, not a paste of the whole card", () => {
     expect(body).toContain("**Done when:** the manifest is attached");
   });
 
+  // The slot -> prop table is the substance of a prop PR: which slot resolved to which
+  // committed asset, and whether anything was newly generated. A reviewer checking the
+  // change needs it, so it is descriptive content, not implementer instruction.
+  it("keeps the Prop slots table", () => {
+    expect(body).toContain("## Prop slots for this room");
+    expect(body).toContain("| Stored crates | cover | `crate_stack_v1` |");
+  });
+
+  it("keeps the slot table without dragging in the instruction section that follows it", () => {
+    // `## Prop slots for this room` is immediately followed by `## Reuse before you generate`
+    // in the fixture -- section splitting must not let the kept section swallow the next one.
+    expect(body).toContain("## Prop slots for this room");
+    expect(body).not.toContain("## Reuse before you generate");
+    expect(body).not.toContain("Map this room's slots onto these first");
+  });
+
   it.each([
     ["## Blocked", "## Blocked (2026-08-29T11:21:09.500Z)"],
     ["## Amendment", "## Amendment — 2026-08-29"]

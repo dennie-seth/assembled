@@ -9,8 +9,13 @@ export function buildPrTitle({ task }) {
  * bodies grow new instruction sections all the time (`## Reuse before you generate`,
  * `## The gates every prop in this room must clear`, `## Pipeline prerequisite`), and a
  * denylist would silently start pasting each new one.
+ *
+ * `Prop slots` is here because it carries the slot -> prop table, which is the substance a
+ * reviewer of a prop PR is actually checking -- which slot resolved to which committed asset,
+ * and whether anything was newly generated. It is a statement of what the change contains,
+ * not an instruction to the implementer.
  */
-const DESCRIPTIVE_SECTION_RE = /^##\s+(context|story|acceptance)\b/i;
+const DESCRIPTIVE_SECTION_RE = /^##\s+(context|story|acceptance|prop slots)\b/i;
 
 /** Splits a card body into `## `-delimited sections, keeping `###` subheadings with their parent. */
 function splitSections(body) {
