@@ -117,6 +117,23 @@ def deploy_to_comfyui(
     return dest
 
 
+def find_resume_state(output_dir: pathlib.Path, output_name: str) -> pathlib.Path | None:
+    """Find the sd-scripts `--save_state` checkpoint dir to resume from.
+
+    sd-scripts writes one dir per checkpoint, named either
+    `{output_name}-{epoch:06d}-state` (epoch cadence) or
+    `{output_name}-step{step:08d}-state` (step cadence, when
+    `--save_every_n_steps`/`--save_state` are also passed) -- both are
+    resumed identically via `--resume <dir>`, so the most-recently-written
+    one (by mtime) is always the correct resume point regardless of which
+    cadence produced it. Returns None for a fresh run (no state dir yet).
+    """
+    candidates = [p for p in output_dir.glob(f"{output_name}-*-state") if p.is_dir()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def build_dataset_toml(config: TrainingConfig, refs_dir: pathlib.Path) -> str:
     """Render a kohya sd-scripts `--dataset_config` TOML for `refs_dir`.
 
@@ -144,12 +161,26 @@ def build_train_args(
     dataset_config_path: pathlib.Path,
     output_dir: pathlib.Path,
     max_train_steps: int | None = None,
+    resume_state: pathlib.Path | None = None,
+    save_every_n_steps: int | None = None,
 ) -> list[str]:
     """Build the `sdxl_train_network.py` CLI argument list from `config`.
 
     `max_train_steps` overrides `config.num_epochs` for a short smoke run;
     when omitted, trains the full `num_epochs` specified in
     training_config.toml.
+
+    `resume_state` (from `find_resume_state`) continues an interrupted run
+    instead of restarting at step 0 -- rule (b): this environment's per-call
+    wall-clock budget is well under a full training run's wall-clock, so a
+    single card's training phase is many separate invocations of this
+    module, each resuming where the last left off.
+
+    `save_every_n_steps` (independent of `config.save_every_n_epochs`, which
+    stays the reproducibility-spec cadence for the emitted LoRA weights)
+    additionally saves full resumable trainer state every N steps -- without
+    it, a run interrupted mid-epoch has no state dir to resume from, since
+    epoch-boundary checkpoints alone can't help a run that never reaches one.
     """
     args = [
         f"--pretrained_model_name_or_path={checkpoint_path}",
@@ -184,6 +215,11 @@ def build_train_args(
         args.append(f"--max_train_steps={max_train_steps}")
     else:
         args.append(f"--max_train_epochs={config.num_epochs}")
+    if save_every_n_steps is not None:
+        args.append(f"--save_every_n_steps={save_every_n_steps}")
+        args.append("--save_state")
+    if resume_state is not None:
+        args.append(f"--resume={resume_state}")
     return args
 
 
@@ -209,6 +245,22 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override num_epochs with a fixed step count (smoke tests)",
     )
+    parser.add_argument(
+        "--save-every-n-steps",
+        type=int,
+        default=None,
+        help=(
+            "Save full resumable trainer state every N steps, in addition to "
+            "config.save_every_n_epochs' LoRA weight snapshots -- needed when a "
+            "single invocation's wall-clock budget is shorter than one epoch, "
+            "so there is still a state dir to resume from (rule (b))"
+        ),
+    )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore any existing --save_state checkpoint and start fresh",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print the command, don't run it")
     args = parser.parse_args(argv)
 
@@ -233,12 +285,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"sd-scripts train script not found: {train_script}", file=sys.stderr)
         return 1
 
+    resume_state = None
+    if not args.no_resume:
+        resume_state = find_resume_state(output_dir, config.output_name)
+        if resume_state is not None:
+            print(f"[resume] continuing from {resume_state}")
+
     train_args = build_train_args(
         config,
         checkpoint_path=checkpoint_path,
         dataset_config_path=dataset_config_path,
         output_dir=output_dir,
         max_train_steps=args.max_train_steps,
+        resume_state=resume_state,
+        save_every_n_steps=args.save_every_n_steps,
     )
     # Resolve `accelerate` next to the running interpreter rather than via
     # PATH -- the assets agent invokes this module with the training venv's
