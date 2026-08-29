@@ -11,6 +11,12 @@ describe("capabilityInventory", () => {
     expect(INSTALLED_MODELS).toContain("soviet_brutalism_style_v1.safetensors");
   });
 
+  it("lists the player-identity LoRA T-0237 trained and left on disk", () => {
+    // assets/final/lora/player_identity_v1.safetensors exists (T-0237, PR #258) but was never
+    // added here, so any card naming it as a genuine prerequisite would have falsely blocked.
+    expect(INSTALLED_MODELS).toContain("player_identity_v1.safetensors");
+  });
+
   it("lists only ComfyUI node classes actually confirmed reachable here, not an exhaustive built-in catalog", () => {
     expect(INSTALLED_COMFYUI_NODES).toContain("CheckpointLoaderSimple");
     expect(INSTALLED_COMFYUI_NODES).toContain("ImageQuantize");
