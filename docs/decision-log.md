@@ -1126,3 +1126,83 @@ until the sign-off lands, so as not to pre-empt it.
 - `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` — the assembled §23-c cost table
 - `assets/final/character/bakeoff_comparison_T0231.webp` — the side-by-side comparison artefact
 - `assets/final/character/bakeoff_frame_delta_report_T0231.json` — the re-run mechanical gate
+
+---
+
+## DL-23 — DL-21 override: Arm C's mechanical win is overridden on authorship grounds, round 2 pursues Arms A/B, Arm C retained as benchmark (closes DL-22; T-0253)
+
+**Date:** 2026-08-30
+**Raised by:** HANDOFF §24, handle "DL-22" — see the numbering note below.
+**Resolved by:** T-0253 (actioned directly by Dispatch on behalf of @DennieSeth)
+**Status:** Closed. This entry closes DL-22's PENDING status.
+**Applies to:** the outcome of DL-21 as recorded by DL-22 (§23-d Arm A/T-0228, §23-e Arm
+B/T-0229/T-0237, §23-f Arm C/T-0230), and to HANDOFF §24 round 2 (§24-a..§24-e, T-0248,
+T-0249, and successor cards in that set).
+**Full record (round 1):** `assets/src/character/BAKEOFF_DECISION_T0231.md` (T-0231)
+
+### Numbering note
+
+HANDOFF §24 calls this handle "DL-22", but `DL-22` was already allocated by T-0231 for the
+comparison entry above. This entry takes the next free number, **DL-23**, and carries the
+HANDOFF §24 "DL-22" handle.
+
+### What DL-21's rule mechanically decided
+
+Both Arm B and Arm C passed criterion 2, and Arm C was lowest cost, so **Arm C won under
+DL-21's rule** — DL-21 step 2 ("among the passers, lowest cost wins") resolved to Arm C
+without needing the tie-break.
+
+Round-1 numbers, restated here so this entry stands on its own:
+
+- **Arm A** (T-0228) — **FAILED.** 4 of 8 adjacent-cell frame-silhouette deltas over the
+  0.30 cap, the 8-attempt cap exhausted without a pass. Also showed cross-row identity
+  drift and a green -> tan colour shift between rows. Closed as a **criterion-3 failure**
+  (the attempt cap answers criterion 3 by failing it, per DL-21).
+- **Arm B** (T-0229/T-0237) — **PASSED.** 0.097-0.295 frame-delta, 7 of 8 attempts,
+  165.5 GPU-min.
+- **Arm C** (T-0230) — **PASSED, best.** 0.072-0.112 frame-delta, 1 attempt, 0 GPU-min.
+
+### The override
+
+**That outcome is overridden on authorship grounds by @DennieSeth:** locally-generated art
+is part of this game's identity, and GPU time on hardware the project owns is not a real
+cost. **Cost is demoted from a deciding criterion to a recorded one** for round 2 — DL-21's
+step 2 no longer settles the question by itself.
+
+**Arms A/B are pursued in round 2** (HANDOFF §24, cards §24-a..§24-e), continuing the
+generative path rather than shipping the script.
+
+**Arm C is retained**, not discarded, as two things at once:
+
+1. The **benchmark** — every round-2 result is measured against Arm C's **0.072-0.112**
+   frame-delta result.
+2. The **shipping fallback** — if round 2 does not beat that benchmark, Arm C ships.
+
+Arm C's script and sheet stay committed and gate-passing; nothing in this entry, or in the
+round-2 card set, regresses them.
+
+### Unchanged for round 2
+
+**DL-21's criteria, the 0.30 frame-delta cap, and the judging conditions (40px, in motion,
+inside the T-0192 blockout room, not at 1152, not as a contact sheet) are unchanged for
+round 2.** Changing the measure would void the round-1 comparison round 2 is being measured
+against.
+
+### Closes DL-22
+
+This closes DL-22's PENDING status. DL-22 recorded everything DL-21's decision rule could
+settle mechanically and stayed PENDING for the human sign-off DL-21's criterion 1 and
+criterion 2 drift verdicts required, attributed to Dennie Seth. That sign-off has now been
+given, in the form of this override. DL-22 is left unmodified above; this entry is the
+closure record it called for — the same pattern as DL-17 closing DL-16.
+
+### Out of scope — flagged, not actioned
+
+DL-22 deferred the `docs/design/13-asset-pipeline.md` §3.5 edit until sign-off landed. **This
+entry does not make that edit.** What §3.5 should say depends on round 2's outcome
+(§24-a..§24-e), which has not run yet, so the edit **remains open, pending round 2**.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-23)
+- No other docs. `docs/design/13-asset-pipeline.md` §3.5 is explicitly not edited by this
+  entry — see "Out of scope" above.
