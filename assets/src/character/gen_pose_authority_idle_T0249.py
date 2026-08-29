@@ -47,7 +47,13 @@ Writes (always, so every attempt is logged whether it passes or not):
 Promotion to assets/final/character/ (only for the first attempt that passes
 the mechanical gate, or the best-effort candidate at the 8-attempt cap) is a
 separate, explicit step (--promote-attempt) -- a discarded attempt's bytes
-never land in assets/final/, even transiently.
+never land in assets/final/, even transiently. Promotion also re-homes that
+attempt's 9 per-frame keypoints/skeleton files (the ControlNet conditioning
+inputs) from assets/out/ into the committed
+assets/src/character/pose_rig_idle_frame_evidence_T0249/ directory, since
+assets/out/ is gitignored and the promoted provenance's frame_generation
+references must resolve on a fresh clone, not just on the machine that ran
+the attempt.
 """
 
 from __future__ import annotations
@@ -122,6 +128,14 @@ ARM_C_BENCHMARK = (0.072, 0.112)  # the real bar to beat, not the pass/fail floo
 
 RIG_GENERALIZATION_EVIDENCE_PATH = (
     REPO_ROOT / "assets" / "src" / "character" / "pose_rig_move_evidence_T0249.json"
+)
+# Where a promoted attempt's per-frame ControlNet conditioning inputs land --
+# assets/out/ is gitignored (see assets.md), so a passing attempt's own
+# skeleton/keypoints must be re-homed under assets/src/ at promotion time or
+# the provenance's frame_generation references dangle on a fresh clone
+# (P-3/P-7: an arm that wins on an uncommitted skeleton has not won).
+IDLE_FRAME_EVIDENCE_DIR = (
+    REPO_ROOT / "assets" / "src" / "character" / "pose_rig_idle_frame_evidence_T0249"
 )
 
 # Single-figure prompt -- each generation is its own image now, not a cell of
@@ -335,10 +349,33 @@ def promote_attempt(out_dir: Path, provenance: dict) -> None:
     assets/final/character/. Only called for an attempt whose mechanical
     gate passes (or the best-effort candidate at the 8-attempt cap) -- a
     discarded attempt's bytes never land in assets/final/, even transiently.
+
+    Also re-homes this attempt's 9 per-frame ControlNet conditioning inputs
+    (the emitted keypoints + rendered skeleton each frame was generated
+    against) from the gitignored assets/out/ into a committed evidence
+    directory under assets/src/, and rewrites the promoted provenance's
+    frame_generation entries to point there -- otherwise those references
+    resolve only on the machine that ran the attempt and dangle on a fresh
+    clone.
     """
     FINAL_CHARACTER_DIR.mkdir(parents=True, exist_ok=True)
     FINAL_SHEET_PATH.write_bytes((out_dir / "sheet_144_indexed.png").read_bytes())
+
+    IDLE_FRAME_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     promoted = dict(provenance)
+    promoted_frames = []
+    for frame in provenance["frame_generation"]:
+        i = frame["frame_index"]
+        keypoints_dst = IDLE_FRAME_EVIDENCE_DIR / f"frame_{i}_keypoints.json"
+        skeleton_dst = IDLE_FRAME_EVIDENCE_DIR / f"frame_{i}_pose_skeleton_384.png"
+        keypoints_dst.write_bytes((out_dir / f"frame_{i}_keypoints.json").read_bytes())
+        skeleton_dst.write_bytes((out_dir / f"frame_{i}_pose_skeleton_384.png").read_bytes())
+        promoted_frame = dict(frame)
+        promoted_frame["pose_keypoints_file"] = str(keypoints_dst.relative_to(REPO_ROOT))
+        promoted_frame["pose_skeleton_file"] = str(skeleton_dst.relative_to(REPO_ROOT))
+        promoted_frames.append(promoted_frame)
+    promoted["frame_generation"] = promoted_frames
+
     promoted["promoted"] = True
     FINAL_PROVENANCE_PATH.write_text(json.dumps(promoted, indent=2) + "\n")
 

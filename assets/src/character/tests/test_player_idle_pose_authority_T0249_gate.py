@@ -41,6 +41,7 @@ Install:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -191,14 +192,36 @@ def test_frames_generated_identically_except_pose(provenance: dict) -> None:
     assert len(skeletons) == 9, "every frame must reference its own distinct emitted skeleton"
 
 
+def _is_git_tracked(path: Path) -> bool:
+    """A file that only exists in the untracked working tree (e.g. under the
+    gitignored assets/out/) would pass a bare path.is_file() check on this
+    machine and still dangle on a fresh clone -- P-3/P-7 require the
+    referenced bytes to actually be committed, not merely present here."""
+    result = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "ls-files", "--error-unmatch", str(path)],
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def test_per_frame_keypoint_files_resolve(provenance: dict) -> None:
     for frame in provenance["frame_generation"]:
-        path = (REPO_ROOT / frame["pose_keypoints_file"]).resolve()
-        path.relative_to(REPO_ROOT.resolve())
-        assert path.is_file(), (
-            f"{frame['pose_keypoints_file']} does not resolve to a committed file"
-        )
-        keypoints = json.loads(path.read_text())
+        for field in ("pose_keypoints_file", "pose_skeleton_file"):
+            rel = frame[field]
+            path = (REPO_ROOT / rel).resolve()
+            path.relative_to(REPO_ROOT.resolve())
+            assert path.is_file(), f"{rel} does not resolve to a file"
+            assert not str(rel).startswith("assets/out/"), (
+                f"{rel} points into the gitignored assets/out/ -- it must be committed "
+                "under assets/src/ instead (P-3/P-7: an arm that wins on an uncommitted "
+                "script/skeleton has not won)"
+            )
+            assert _is_git_tracked(path), (
+                f"{rel} exists on disk but is not committed -- it would dangle on a "
+                "fresh clone of this branch"
+            )
+        keypoints = json.loads((REPO_ROOT / frame["pose_keypoints_file"]).read_text())
         assert len(keypoints) == 18, "each committed keypoint file must carry all 18 COCO joints"
 
 
