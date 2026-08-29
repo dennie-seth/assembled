@@ -119,6 +119,82 @@ the Done path uses -- no separate pull/restart logic to keep in sync with PULL-1
   `restartCoordinator` -- it does not add a new restart path or a new way to touch the tree
   while the service is mid-merge.
 
+## Auto-launch poller (`src/runner/autoLaunchPoller.js`)
+
+Starts **at most one** `ready` card per tick, from inside the board process, when the board is
+idle and Claude usage is below threshold. This replaces an external scheduled task that polled
+the board over HTTP and could not reach it from its sandbox: living in-process gives the poller
+the same `RunOrchestrator`, task store, and `tasks/.runs/*.jsonl` logs the HTTP server already
+holds -- which is what makes the idle and usage gates trustworthy rather than best-guess. Same
+lifecycle as the auto-pull poller above: an unref'd `setInterval` started from `boardServer.js`
+and stopped by its `close()`, **not** a systemd timer.
+
+Every tick applies four gates in order and stops at the first that fails, logging the reason
+under the `assembled-board: auto-launch` prefix (so `journalctl -u assembled-board | grep
+auto-launch` tells you what it decided and why):
+
+1. **Enabled** -- `AUTO_LAUNCH_ENABLED` is set and the interval is non-zero.
+2. **Usage below threshold** -- the newest `rate_limit_event` telemetry the runner recorded must
+   report a utilization strictly below `AUTO_LAUNCH_USAGE_MAX`. Undetermined usage skips.
+3. **Board idle** -- `orchestrator.hasActiveRuns()` (the runner's own liveness, *not* a `pgrep`)
+   reports nothing running, **and** no card sits at `in-progress`/`validation` (which also
+   catches a run stranded by a previous process that the orphan reaper hasn't reconciled yet).
+4. **Eligible card** -- status *exactly* `ready`, every `depends_on` at `done`/`retired`, not
+   owned by the non-executable `dispatch` sentinel. Highest priority wins (P0 > P1 > P2 > P3 >
+   unset), ties broken by lowest numeric id.
+
+The selected card is started through `cardLaunch.js`'s `launchCardRun` -- the *same* function
+`POST /api/tasks/:id/run` calls, extracted so there is one guarded path rather than two. Every
+Run-button guard therefore applies to an auto-launch too, including `assertCanMoveToInProgress`
+(`docs/board-invariants.md` RUN-3/LC-5) and the acceptance/capability preflights inside
+`runCard`. A card the guard refuses is logged as a skip; the poller does **not** fall through to
+the next candidate.
+
+Fail-safe throughout: any uncertainty -- unreadable telemetry, an unreadable store, a refused
+launch -- skips the tick. It never forces a launch, never starts more than one card per tick,
+and never interrupts a running card.
+
+- **`AUTO_LAUNCH_ENABLED`** -- **default OFF**, like `FLOW_STATS_SELFIMPROVE_ENABLED` and unlike
+  the `BOARD_AUTOPULL`/`AUTO_RESTART_ON_PULL` family. Those act on work a human or an
+  already-running card set in motion; this one starts a brand new card run with nobody having
+  asked for that specific one right then, so merging and deploying the code must not be what
+  switches it on. Accepts `1`/`true`/`on`/`yes`, case-insensitive.
+- **`AUTO_LAUNCH_INTERVAL_MS`** -- default 5 minutes (`300000`). An explicit `0` also disables
+  the poller; invalid/negative input falls back to the default rather than silently disabling.
+- **`AUTO_LAUNCH_USAGE_MAX`** -- default `0.80`. Utilization is compared with `>=`, so `0.80`
+  means "launch only while strictly below 80%". Out-of-range or garbage input falls back to the
+  default.
+
+### How usage is read (`src/runner/usageWindow.js`)
+
+The `claude` CLI emits a `rate_limit_event` on healthy sessions as well as refused ones. The
+poller walks `tasks/.runs/*.jsonl` newest-mtime-first, reads each log's **tail** (256 KB -- a
+live log runs to tens of megabytes) and takes the newest `rate_limit_info` payload it finds,
+reusing `usageLimitDetector.js`'s parsing rather than re-implementing it.
+
+**The CLI does not currently emit a numeric utilization.** A live payload is exactly
+`{status, resetsAt, rateLimitType, overageStatus, overageDisabledReason, isUsingOverage}`, so
+`status` is the only usage signal actually available and it is mapped onto the same 0..1 scale a
+real utilization would use: `allowed` -> `0`, `allowed_warning` -> `0.9`, `rejected` -> `1`. A
+status this code has never seen maps to *undetermined*, which skips. If a future CLI version
+starts emitting a real `utilization` number, that is preferred over the status proxy
+automatically.
+
+Two consequences worth knowing before enabling it:
+
+- With the current CLI, `AUTO_LAUNCH_USAGE_MAX` only bites at the `allowed_warning` boundary --
+  a plain `allowed` reads as `0` regardless of how much of the window has actually been spent.
+  Lower the threshold below `0.9` (the default `0.80` already is) to have warnings block
+  launches; raise it above `0.9` to launch through them.
+- `resetsAt` overrides everything: once that instant has passed, the window the event describes
+  is over, so even a `rejected` reading is treated as a fresh window. Without this the poller
+  would wedge permanently after any rate-limit stop -- the one state it most needs to recover
+  from on its own. The `overageStatus: "rejected"` / `overageDisabledReason: "out_of_credits"`
+  fields are **never** read as a refusal; they ride along on healthy events too (the
+  false-positive that disabled escalation board-wide on T-0233).
+
+Only `status: "rejected"` on the top-level `rate_limit_info` counts as a refusal.
+
 ## Database backups (`scripts/backupDb.js`, `npm run backup:db`)
 
 Phase 1 of `docs/design/cards-to-database.md` moves card state into a SQLite file

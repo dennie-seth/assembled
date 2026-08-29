@@ -10,7 +10,7 @@ import {
 } from "../lib/dependencyGuard.js";
 import { listAssignableAgents } from "../lib/agentCatalog.js";
 import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
-import { appendNote } from "../runner/runOrchestrator.js";
+import { launchCardRun, CardLaunchError } from "../runner/cardLaunch.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
@@ -18,7 +18,6 @@ const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
 const TASK_COMMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/comments$/;
 const TASK_ATTACHMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/attachments$/;
 const TASK_ATTACHMENT_FILE_PATH_RE = /^\/api\/tasks\/([^/]+)\/attachments\/([^/]+)$/;
-const RUNNABLE_STATUSES = new Set(["ready", "review", "blocked"]);
 const AGENTS_PATH = "/api/agents";
 const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const DONE_EXPORT_PATH = "/api/tasks/export/done";
@@ -399,59 +398,22 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
 }
 
 async function handleRunTask(orchestrator, id, res) {
-  if (!orchestrator) {
-    throw new HttpError(501, "Agent Runner is not configured on this server");
-  }
-  const task = await orchestrator.store.get(id);
-  if (!task) {
-    throw new HttpError(404, `Task ${id} not found`);
-  }
-  if (!RUNNABLE_STATUSES.has(task.status)) {
-    throw new HttpError(409, `Cannot run ${id}: status is "${task.status}", expected "ready", "review", or "blocked"`);
-  }
-  // Mirrors RunOrchestrator.runCard's own "dispatch" guard (belt and suspenders, see
-  // docs/design/escalation-workflow.md): a clean 409 here instead of letting the run's
-  // fire-and-forget .catch() below turn it into a "Run Failed" note.
-  if (task.agent === "dispatch") {
-    throw new HttpError(409, `Cannot run ${id}: assigned to "dispatch" -- awaiting human/Dispatch pickup, not eligible for automated runs`);
-  }
-  if (orchestrator.isRunning(id)) {
-    throw new HttpError(409, `Task ${id} already has an active run`);
-  }
-
-  // A run moves the card to in-progress the same way a manual PATCH does -- reuse the
-  // same dependency/cycle guard handlePatchTask applies there, so the Run/Re-run button
-  // can't start work whose own dependencies aren't resolved just because it bypasses
-  // the PATCH route (docs/board-invariants.md RUN-3 / LC-5).
+  // Thin adapter over the one shared launch path (`cardLaunch.js`): every guard -- runnable
+  // status, the non-executable `dispatch` sentinel, the already-running check, and
+  // `assertCanMoveToInProgress` -- lives there, so the in-process auto-launch poller starts a
+  // card through the exact same code this endpoint does rather than a parallel implementation.
+  let task;
   try {
-    await assertCanMoveToInProgress(orchestrator.store, id);
+    task = await launchCardRun({ orchestrator, id });
   } catch (err) {
-    if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError) {
-      throw new HttpError(409, err.message);
+    if (err instanceof CardLaunchError) {
+      throw new HttpError(err.statusCode, err.message);
     }
     throw err;
   }
 
-  // Fire-and-forget: a run (implementer + reviewer) can take minutes. The
-  // client follows progress over the board WS, not this response.
-  orchestrator.runCard(id).catch(async (err) => {
-    console.error(`Agent Runner: run failed for ${id}:`, err);
-    try {
-      const current = await orchestrator.store.get(id);
-      if (current) {
-        const updated = await orchestrator.store.update(id, {
-          status: "blocked",
-          body: appendNote(current.body ?? "", "Run Failed", err.message),
-        });
-        if (orchestrator.hub) {
-          orchestrator.hub.broadcast({ type: "changed", id, task: updated });
-        }
-      }
-    } catch (e2) {
-      console.error(`Agent Runner: failed to persist run failure for ${id}:`, e2);
-    }
-  });
-
+  // 202: the run (implementer + reviewer) takes minutes and is already in flight; the client
+  // follows progress over the board WS, not this response.
   sendJson(res, 202, task);
 }
 
