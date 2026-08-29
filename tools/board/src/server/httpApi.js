@@ -11,6 +11,7 @@ import {
 import { listAssignableAgents } from "../lib/agentCatalog.js";
 import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
 import { launchCardRun, CardLaunchError } from "../runner/cardLaunch.js";
+import { artifactCacheRootFor, clearPreservedArtifacts } from "../runner/artifactPreservation.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
@@ -319,6 +320,28 @@ async function handleGetTask(store, id, res) {
   sendJson(res, 200, task);
 }
 
+/** Statuses a card never comes back from, and so never needs its preserved artifacts again. */
+const ARTIFACT_TERMINAL_STATUSES = new Set(["done", "retired"]);
+
+/**
+ * Drops a card's preserved-artifact cache once it reaches a terminal status. Non-throwing: a card
+ * must never fail to move to Done because a cache directory could not be removed -- the worst
+ * case is disk that pruneArtifactCache's LRU bound reclaims later.
+ *
+ * Reads `worktreesDir` off the orchestrator rather than deriving it from repoRoot, so a board
+ * configured with a non-default worktrees location purges the cache it actually writes to.
+ */
+async function purgeArtifactCacheIfTerminal({ orchestrator, id, status }) {
+  if (!ARTIFACT_TERMINAL_STATUSES.has(status)) return;
+  const worktreesDir = orchestrator?.worktreesDir;
+  if (!worktreesDir) return;
+  try {
+    await clearPreservedArtifacts({ cacheRoot: artifactCacheRootFor({ worktreesDir }), cardId: id });
+  } catch (err) {
+    console.warn(`Board: failed to clear the preserved-artifact cache for ${id}:`, err.message);
+  }
+}
+
 /**
  * Handles ordinary card edits (drag between board columns, editing title/priority/agent/etc.
  * via the UI) -- the one route every routine field/status change goes through, including the
@@ -373,6 +396,13 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
   if (taskStoreKind === "db" && hub) {
     hub.broadcast({ type: "changed", id, task: updated });
   }
+
+  // A card that has landed is never going to be re-run, so the untracked artifacts held for it
+  // across worktree reclaims (LoRA checkpoints, generated output -- see artifactPreservation.js)
+  // have no further purpose and are the largest thing the board keeps on disk per card. This is
+  // the primary cleanup; pruneArtifactCache's LRU bound is only the backstop for cards that
+  // never reach a terminal status at all.
+  await purgeArtifactCacheIfTerminal({ orchestrator, id, status: updated.status });
 
   // Done-triggered pullDevelop exists to fetch code that OTHER merged PRs have pushed to
   // origin/develop, so it must fire in every task-store mode: `repoRoot` is still a real

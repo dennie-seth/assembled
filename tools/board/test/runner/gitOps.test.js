@@ -192,6 +192,135 @@ describe("addWorktree — stale branch/worktree recovery", () => {
   });
 });
 
+/**
+ * T-0248: the reclaim's `git worktree remove --force` deletes the whole directory, untracked and
+ * ignored files included, so per-epoch LoRA training checkpoints were destroyed on every re-run
+ * and `find_resume_state` restarted training from step 0 (~86 minutes of GPU, once). addWorktree
+ * now carries the card's allowlisted untracked artifacts across the reclaim -- see
+ * artifactPreservation.js.
+ */
+describe("addWorktree / removeWorktree — untracked artifacts survive the worktree reset", () => {
+  const CHECKPOINT = "assets/final/lora/player_identity_v2-step00000024-state/optimizer.bin";
+  const WEIGHTS = "assets/final/lora/player_identity_v2-step00000024.safetensors";
+
+  async function writeIn(root, rel, contents) {
+    await fs.mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+    await fs.writeFile(path.join(root, rel), contents, "utf8");
+  }
+
+  async function exists(target) {
+    try {
+      await fs.lstat(target);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("a re-run finds the previous run's untracked checkpoints in the fresh worktree, so training can resume", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0248");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0248", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "training-glue.py"), "print('v1')\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: training glue" });
+    // Untracked training state, exactly as sd-scripts --save_state leaves it.
+    await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+    await writeIn(worktreeDir, WEIGHTS, "lora weights");
+
+    const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0248", baseBranch: "develop" });
+
+    expect(result).toMatchObject({ reused: true });
+    expect(await fs.readFile(path.join(worktreeDir, CHECKPOINT), "utf8")).toBe("optimizer state");
+    expect(await fs.readFile(path.join(worktreeDir, WEIGHTS), "utf8")).toBe("lora weights");
+    // Restored, not merely stashed: nothing is left behind holding a second copy.
+    expect(await exists(path.join(tmpDir, "worktrees", ".artifact-cache", "T-0248"))).toBe(false);
+  });
+
+  it("does not carry across untracked files outside the artifact allowlist", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0249");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0249", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "work.txt"), "x\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: work" });
+    await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+    await writeIn(worktreeDir, "assets/src/character/__pycache__/synth.pyc", "junk");
+    await writeIn(worktreeDir, "scratch-notes.md", "junk");
+
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0249", baseBranch: "develop" });
+
+    expect(await exists(path.join(worktreeDir, CHECKPOINT))).toBe(true);
+    expect(await exists(path.join(worktreeDir, "assets/src/character/__pycache__/synth.pyc"))).toBe(false);
+    expect(await exists(path.join(worktreeDir, "scratch-notes.md"))).toBe(false);
+  });
+
+  it("never overwrites a tracked file in the fresh checkout with a preserved stale copy", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0250");
+    const config = "assets/final/lora/training_config.toml";
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0250", baseBranch: "develop" });
+    // Untracked when captured...
+    await writeIn(worktreeDir, config, "stale = true\n");
+    await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+
+    // ...but committed on the base branch by the time the card is re-run. The card branch has no
+    // unique commits, so the reclaim discards it and cuts a fresh one from develop -- and the
+    // fresh checkout's version of that path is the one that must win.
+    await git(["checkout", "develop"], repoRoot);
+    await fs.mkdir(path.join(repoRoot, path.dirname(config)), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, config), "fresh = true\n", "utf8");
+    await git(["add", config], repoRoot);
+    await git(["commit", "-m", "feat: commit the training config"], repoRoot);
+
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0250", baseBranch: "develop" });
+
+    expect(await fs.readFile(path.join(worktreeDir, config), "utf8")).toBe("fresh = true\n");
+    // The genuinely untracked artifact alongside it still comes back.
+    expect(await fs.readFile(path.join(worktreeDir, CHECKPOINT), "utf8")).toBe("optimizer state");
+  });
+
+  it("leaves a fresh card with no prior worktree completely unaffected", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0251");
+
+    const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0251", baseBranch: "develop" });
+
+    expect(result).toMatchObject({ reused: false });
+    expect((await fs.stat(worktreeDir)).isDirectory()).toBe(true);
+    expect(await exists(path.join(tmpDir, "worktrees", ".artifact-cache"))).toBe(false);
+  });
+
+  it("preserves artifacts through removeWorktree too, so a card re-run after review still resumes", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0252");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0252", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "work.txt"), "x\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: work" });
+    await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+
+    // The PASS path: branch pushed, PR opened, worktree torn down.
+    await removeWorktree({ repoRoot, worktreeDir });
+    expect(await exists(worktreeDir)).toBe(false);
+
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0252", baseBranch: "develop" });
+
+    expect(await fs.readFile(path.join(worktreeDir, CHECKPOINT), "utf8")).toBe("optimizer state");
+  });
+
+  it("honours BOARD_PRESERVE_ARTIFACTS=off by falling back to the old wipe-on-reclaim behaviour", async () => {
+    const previous = process.env.BOARD_PRESERVE_ARTIFACTS;
+    process.env.BOARD_PRESERVE_ARTIFACTS = "off";
+    try {
+      const worktreeDir = path.join(tmpDir, "worktrees", "T-0253");
+      await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0253", baseBranch: "develop" });
+      await fs.writeFile(path.join(worktreeDir, "work.txt"), "x\n", "utf8");
+      await commitAll({ worktreeDir, message: "feat: work" });
+      await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+
+      await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0253", baseBranch: "develop" });
+
+      expect(await exists(path.join(worktreeDir, CHECKPOINT))).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.BOARD_PRESERVE_ARTIFACTS;
+      else process.env.BOARD_PRESERVE_ARTIFACTS = previous;
+    }
+  });
+});
+
 describe("hasUncommittedChanges / commitAll", () => {
   it("reports false and skips committing when the worktree is clean", async () => {
     const worktreeDir = path.join(tmpDir, "worktrees", "T-0102");
