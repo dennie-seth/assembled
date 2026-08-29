@@ -129,8 +129,9 @@ def test_manifest_refs_share_one_costume_descriptor(manifest: dict) -> None:
     costume_id = manifest.get("costume_id")
     assert costume_id, "manifest missing top-level 'costume_id'"
     for ref in manifest["refs"]:
-        assert ref.get("costume_id") == costume_id, (
-            f"{ref['id']}: costume_id {ref.get('costume_id')!r} != manifest costume_id {costume_id!r}"
+        got = ref.get("costume_id")
+        assert got == costume_id, (
+            f"{ref['id']}: costume_id {got!r} != manifest costume_id {costume_id!r}"
         )
 
 
