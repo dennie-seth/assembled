@@ -195,6 +195,41 @@ Two consequences worth knowing before enabling it:
 
 Only `status: "rejected"` on the top-level `rate_limit_info` counts as a refusal.
 
+## Worktree artifact preservation (`src/runner/artifactPreservation.js`)
+
+Re-running a card reclaims its worktree with `git worktree remove --force`, which deletes the
+**entire** directory -- untracked and gitignored files included. Everything a run generated but
+never committed therefore died on every re-run. T-0248 hit this for real: its per-epoch
+sd-scripts `--save_state` checkpoints under `assets/final/lora/` were wiped, so the re-run's
+`find_resume_state` found nothing and retrained from step 0, costing ~86 minutes of GPU.
+
+`gitOps.js` now moves a card's allowlisted untracked/ignored files into
+`worktrees/.artifact-cache/<card-id>/` immediately **before** every force-removal (both the
+`addWorktree` reclaim and `removeWorktree`, which the orchestrator calls on a PASS and on a
+cancel), and moves them back into the fresh checkout immediately **after** `git worktree add`.
+It is a `rename`, not a copy: the cache is a sibling of the worktrees on the same filesystem, so
+a multi-GB checkpoint set moves in milliseconds and peak disk never doubles.
+
+Two rules keep it safe:
+
+- **The fresh checkout always wins.** A preserved path that is a *tracked* file in the new tree
+  is never restored over it -- git has just materialized the committed version, and the cached
+  copy is stale by definition. Such paths are logged and left in the cache rather than deleted.
+- **Allowlist, not everything.** A worktree's non-tracked set is mostly `__pycache__/`,
+  `.pytest_cache/`, build output, `.venv/` and the `tools/board/node_modules` symlink -- costly
+  to move and actively harmful to restore into a fresh checkout.
+
+Disk is bounded from both ends: a card's cache is purged when it reaches `done`/`retired`
+(`httpApi.js`'s `handlePatchTask`), each capture replaces that card's previous snapshot rather
+than accumulating, and an LRU bound caps how many cards' caches can exist at once.
+
+- **`BOARD_PRESERVE_ARTIFACTS`** -- default ON; set to `0`/`false`/`off`/`no` (any case) to
+  restore the old wipe-on-reclaim behaviour, mirroring the `BOARD_AUTOPULL` family.
+- **`BOARD_PRESERVED_ARTIFACT_PATHS`** -- comma- or colon-separated worktree-relative paths
+  **added to** the built-in allowlist (`assets/final/lora`, `assets/src/lora/refs`,
+  `assets/out`), so a new kind of artifact can be rescued without a deploy. Absolute paths and
+  anything containing `..` are ignored.
+
 ## Database backups (`scripts/backupDb.js`, `npm run backup:db`)
 
 Phase 1 of `docs/design/cards-to-database.md` moves card state into a SQLite file
