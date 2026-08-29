@@ -225,6 +225,40 @@ def test_v2_provenance_generator_resolves_to_committed_code(v2_provenance):
     )
 
 
+def test_v2_provenance_compositing_script_hash_matches(v2_provenance):
+    """compositing_script_hash is the stage-2 reproducibility seam (the analogue
+    of workflow_hash for stage 1): it must equal the sha256 of the committed
+    `generator` script it names, not a stale value left over from an edit made
+    after the hash was recorded (2026-08-29T11:10:42.878Z review)."""
+    generator = v2_provenance.get("generator", "")
+    assert generator, "Provenance must declare a generator (P-7)"
+    script_path = WORKTREE / generator.split()[0]
+    expected = hashlib.sha256(script_path.read_bytes()).hexdigest()
+    actual = v2_provenance.get("compositing_script_hash", "")
+    assert actual == expected, (
+        f"compositing_script_hash mismatch.\n"
+        f"  provenance says: {actual}\n"
+        f"  file sha256 is:  {expected}\n"
+        f"  (file: {script_path})"
+    )
+
+
+def test_v2_provenance_workflow_hash_matches(v2_provenance):
+    """workflow_hash (stage 1) must equal the sha256 of the committed
+    background_workflow JSON it names."""
+    background_workflow = v2_provenance.get("background_workflow", "")
+    assert background_workflow, "Provenance must declare background_workflow"
+    workflow_path = WORKTREE / background_workflow
+    expected = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
+    actual = v2_provenance.get("workflow_hash", "")
+    assert actual == expected, (
+        f"workflow_hash mismatch.\n"
+        f"  provenance says: {actual}\n"
+        f"  file sha256 is:  {expected}\n"
+        f"  (file: {workflow_path})"
+    )
+
+
 def test_v2_recipe_exists():
     assert V2_RECIPE.exists(), f"Missing recipe: {V2_RECIPE}"
 
