@@ -1,0 +1,47 @@
+{
+  "room": "signal_tower.ground_relay",
+  "room_definition_ref": "docs/design/14-vertical-slice.md §2, §10",
+  "card": "T-0240",
+  "handoff_ref": "HANDOFF §23-j-a",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
+  "generated_new_props": false,
+  "note": "Ground Relay's two prop slots are both satisfied by props already committed and gate-passing from T-0201/T-0221/T-0223. No new geometry was generated for this card (DL-5 requires concept coverage before generation; this room needed none).",
+  "slots": [
+    {
+      "slot": "Dedicated hiding spot (teaching instance)",
+      "class": "hiding",
+      "prop": "locker_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/locker_v1.png",
+      "provenance": "assets/final/props/signal_tower/locker_v1.provenance.json"
+    },
+    {
+      "slot": "Incidental floor dressing",
+      "class": "cover",
+      "prop": "crate_stack_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/crate_stack_v1.png",
+      "provenance": "assets/final/props/signal_tower/crate_stack_v1.provenance.json"
+    }
+  ],
+  "gate_16px_separation": {
+    "requirement": ">= 15.0 luma16 gap between any cover/hiding pair co-located in this room (P-3)",
+    "authoritative_test": "assets/src/concept/tests/test_signal_tower_prop_pack.py::test_cover_vs_hiding_distinguishable_at_16px",
+    "min_required_gap_luma16": 15.0,
+    "how_this_room_clears_it": "The authoritative test already proves, for the full five-prop pack, that every cover prop is >= 15.0 luma16 brighter than every hiding prop (per-prop strict ordering, not just a class-mean check). Ground Relay's pair (locker_v1 hiding, crate_stack_v1 cover) is drawn from that exact COVER_PROPS/HIDE_PROPS set, so it is covered by that gate's own guarantee. This card performs no independent luma recomputation.",
+    "documented_target_values": {
+      "cover_luma_approx": 97,
+      "hiding_luma_approx": 58,
+      "documented_gap_approx": 39,
+      "source": "test_signal_tower_prop_pack.py module docstring / _MIN_COVER_HIDE_GAP rationale comment (ramp10 cover vs ramp04/ramp00 hiding on the home palette)"
+    },
+    "room_pair": {
+      "cover_prop": "crate_stack_v1",
+      "hiding_prop": "locker_v1"
+    },
+    "verified_by": "assets/src/concept/tests/test_ground_relay_room_manifest.py::test_room_pair_is_covered_by_pack_wide_gate"
+  },
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card."
+}
