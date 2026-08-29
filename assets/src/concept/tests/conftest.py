@@ -1235,9 +1235,11 @@ def ensure_signal_tower_structure_concept_sheet():
 # Floor), hiding alcove (Antenna Shaft). v1's five props are untouched.
 #
 # This fixture is a stdlib-only synthetic fallback -- it only runs if the
-# committed sheet is ever missing. The actual committed sheet is real
-# ComfyUI SDXL img2img+LoRA output, conditioned on v1's own PNG per the
-# archetype-first coherence guard (see
+# committed sheet is ever missing. The actual committed sheet is a two-stage
+# pipeline: a real ComfyUI SDXL img2img+LoRA background-texture pass,
+# conditioned on v1's own PNG per the archetype-first coherence guard, with
+# the four prop classes then composited deterministically on top by
+# `_composite_props_v2.py` (see
 # signal_tower_props_concept_sheet_v2.recipe.json / .provenance.json).
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -1401,7 +1403,7 @@ def _generate_props_v2_provenance(concept_hash: str, out_path: Path) -> None:
         "workflow_hash": None,
         "prompt_id": "synth-T-0239",
         "concept_hash": concept_hash,
-        "denoise": 0.88,
+        "denoise": 0.95,
         "conditioning_source": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
         "base_concept_hash": base_concept_hash,
         "lora_name": "soviet_brutalism_style_v1.safetensors",
