@@ -1,0 +1,48 @@
+{
+  "room": "signal_tower.storage_cache",
+  "room_definition_ref": "docs/design/14-vertical-slice.md §2, §10",
+  "card": "T-0241",
+  "handoff_ref": "HANDOFF §23-j-e",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
+  "generated_new_props": false,
+  "note": "Storage Cache's two prop slots are both satisfied by props already committed and gate-passing from T-0201/T-0221/T-0223. No new geometry was generated for this card (DL-5 requires concept coverage before generation; this room needed none). Same room-pair shape as Ground Relay (T-0240) -- crate_stack_v1 cover vs locker_v1 hiding -- reusing the identical, already reviewer-validated sprites.",
+  "slots": [
+    {
+      "slot": "Stored crates (primary dressing)",
+      "class": "cover",
+      "prop": "crate_stack_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/crate_stack_v1.png",
+      "provenance": "assets/final/props/signal_tower/crate_stack_v1.provenance.json"
+    },
+    {
+      "slot": "Closet locker",
+      "class": "hiding",
+      "prop": "locker_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/locker_v1.png",
+      "provenance": "assets/final/props/signal_tower/locker_v1.provenance.json"
+    }
+  ],
+  "gate_16px_separation": {
+    "requirement": ">= 15.0 luma16 gap between any cover/hiding pair co-located in this room (P-3)",
+    "authoritative_test": "assets/src/concept/tests/test_signal_tower_prop_pack.py::test_cover_vs_hiding_distinguishable_at_16px",
+    "min_required_gap_luma16": 15.0,
+    "room_pair": {
+      "cover_prop": "crate_stack_v1",
+      "hiding_prop": "locker_v1"
+    },
+    "verified_by": "assets/src/concept/tests/test_storage_cache_room_manifest.py::test_manifest_gate_measurement_matches_real_sprites and test_manifest_gate_measurement_clears_floor"
+  },
+  "gate_measurements": {
+    "cover_prop": "crate_stack_v1",
+    "hiding_prop": "locker_v1",
+    "cover_luma16": 112.9,
+    "hiding_luma16": 82.0,
+    "gap": 30.9,
+    "how_measured": "16px-longest-side Lanczos downscale + BT.601 mean luma over opaque pixels -- the same rule as test_signal_tower_prop_pack.py's _downscale_to_game_16px/_mean_luma. These are the identical crate_stack_v1.png/locker_v1.png sprite files used by Ground Relay's manifest (T-0240, assets/final/props/signal_tower/ground_relay.manifest.json), byte-unchanged since T-0223's decoder-bug-fix re-measurement, so the same reviewer-validated figures apply here without independent recomputation. Also cross-checked against locker_v1.provenance.json's own _generation_note, which records this same luma16=82.0 figure directly."
+  },
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card."
+}
