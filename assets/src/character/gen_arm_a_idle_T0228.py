@@ -191,16 +191,27 @@ _POSE_LIMBS: list[tuple[int, int, tuple[int, int, int]]] = [
 ]
 
 
-def draw_pose_skeleton_cell(size: int) -> Image.Image:
+def draw_pose_skeleton_cell(
+    size: int, points_norm: dict[int, tuple[float, float]] | None = None
+) -> Image.Image:
     """Deterministic single-figure OpenPose-format skeleton, standing idle,
     front-facing, on a pure black background -- what a real OpenPose
     preprocessor would hand ControlNet, had one been installed on this host
-    (T-0218's report; see module docstring)."""
+    (T-0218's report; see module docstring).
+
+    `points_norm` defaults to the static standing-idle pose (`_POSE_KEYPOINTS_NORM`,
+    every prior caller's behaviour, unchanged). T-0249 (HANDOFF §24.4) reuses this
+    exact function -- rather than re-authoring another renderer -- by passing
+    per-frame keypoints computed from the committed pose rig; see
+    `pose_rig_T0249.render_pose_frame`.
+    """
     from PIL import ImageDraw
 
+    if points_norm is None:
+        points_norm = _POSE_KEYPOINTS_NORM
     img = Image.new("RGB", (size, size), (0, 0, 0))
     draw = ImageDraw.Draw(img)
-    points = {i: (x * size, y * size) for i, (x, y) in _POSE_KEYPOINTS_NORM.items()}
+    points = {i: (x * size, y * size) for i, (x, y) in points_norm.items()}
 
     line_width = max(2, size // 60)
     joint_radius = max(3, size // 45)
