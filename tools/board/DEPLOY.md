@@ -133,7 +133,8 @@ Every tick applies four gates in order and stops at the first that fails, loggin
 under the `assembled-board: auto-launch` prefix (so `journalctl -u assembled-board | grep
 auto-launch` tells you what it decided and why):
 
-1. **Enabled** -- `AUTO_LAUNCH_ENABLED` is set and the interval is non-zero.
+1. **Enabled** -- `AUTO_LAUNCH_ENABLED` is set and the interval is non-zero (default cadence:
+   one tick every 5 hours, see `AUTO_LAUNCH_INTERVAL_MS` below).
 2. **Usage below threshold** -- the newest `rate_limit_event` telemetry the runner recorded must
    report a utilization strictly below `AUTO_LAUNCH_USAGE_MAX`. Undetermined usage skips.
 3. **Board idle** -- `orchestrator.hasActiveRuns()` (the runner's own liveness, *not* a `pgrep`)
@@ -159,8 +160,14 @@ and never interrupts a running card.
   already-running card set in motion; this one starts a brand new card run with nobody having
   asked for that specific one right then, so merging and deploying the code must not be what
   switches it on. Accepts `1`/`true`/`on`/`yes`, case-insensitive.
-- **`AUTO_LAUNCH_INTERVAL_MS`** -- default 5 minutes (`300000`). An explicit `0` also disables
+- **`AUTO_LAUNCH_INTERVAL_MS`** -- default **5 hours** (`18000000`), deliberately matched to the
+  Anthropic 5-hour usage window the usage gate reads. At most one card is started per tick, so
+  the cadence *is* the throughput policy: roughly one auto-started card per usage window, rather
+  than a tight poll that drains a window as fast as cards finish. An explicit `0` also disables
   the poller; invalid/negative input falls back to the default rather than silently disabling.
+  **The first tick is one full interval after the board process starts, and a restart (a deploy,
+  an auto-restart-on-pull) resets that clock** -- a board restarted more often than every 5 hours
+  will rarely reach a tick. Lower this if that is the operating pattern.
 - **`AUTO_LAUNCH_USAGE_MAX`** -- default `0.80`. Utilization is compared with `>=`, so `0.80`
   means "launch only while strictly below 80%". Out-of-range or garbage input falls back to the
   default.
