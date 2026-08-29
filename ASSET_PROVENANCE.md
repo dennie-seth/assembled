@@ -147,13 +147,57 @@ provenance sidecar are untouched by this card — v2 is a pure addition. Attempt
 curation + training; recorded per the round-2 override, not deciding) feeds §23-c's cost table
 alongside the round-1 Arm A/B/C rows in `BAKEOFF_DECISION_T0231.md`.
 
-**Not yet re-run:** this card (§24-a) trains the LoRA only — it does not re-run
-`gen_arm_b_idle_T0229.py`-style generation against `player_identity_v2` to re-measure
-frame-delta under the same DL-21 criteria. Per the round-2 rules, that comparison
-(Arm B generation + `asset_gate.art.check_frame_consistency` re-measured against v2, to
-determine whether the round-1 cross-row drift and green→tan shift are actually fixed) is
-the open question this card's hypothesis motivates, not a "Work" item this card's scope
-covers (see `CANONICAL_COSTUME_SELECTION_T0248.md` and the Work list above) — it is left
-for a follow-up card (HANDOFF §24-b) to run and report, so §24-b..§24-e's necessity can be
-judged from that card's actual measured frame-delta range against both the 0.30 cap and
-Arm C's 0.072-0.112 bar, not fabricated or assumed here.
+**Acceptance-5 correction (2026-08-29, same-day follow-up):** the paragraph above's claim that
+resumability was "confirmed" understated a real gap in the code as it stood at that commit:
+`build_train_args` only ever attached `--save_state` when the smoke-test-only
+`--save-every-n-steps` override was explicitly passed — the plain `save_every_n_epochs=1`
+cadence alone (the reproducibility spec every real training config commits to) wrote LoRA
+weight snapshots at each epoch boundary but never a full resumable state dir. Separately,
+`find_resume_state`'s glob never matched sd-scripts' unnumbered `{name}-state` dir
+(`checkpoint_io.LAST_STATE_NAME`), which is what every run's *final* epoch actually gets
+(`train_network.py` deliberately excludes the last epoch from the numbered per-epoch save) —
+so even with `--save_state` fixed, a completed run's own last checkpoint was never found on
+the next invocation. Both are now fixed in `assets/src/lora/src/lora_train/train.py`, with unit
+tests, and verified end-to-end by actually running training twice against a small scratch
+config (not this deliverable — see `assets/src/lora/CHECKPOINT_RESUME_EVIDENCE_T0248.md` for
+the full commands and log excerpts): run 1 produces a real epoch checkpoint; run 2, invoked
+identically with no resume flag, auto-detects it, logs `[resume] continuing from ...`, and
+sd-scripts itself confirms loading `current_epoch: 1, current_step: 2` rather than restarting
+at step 0. This is the real, non-mocked evidence rule (b) asks for. It does not retroactively
+verify whatever the original `player_identity_v2.safetensors` training invocation's exact CLI
+flags were (not re-run, to avoid overwriting the committed deliverable) — only that the
+mechanism the acceptance criterion names is now actually correct and proven end-to-end.
+
+**Re-run against Arm B, measured (2026-08-29, HANDOFF §24-a Done-when):** `gen_arm_b_idle_v2_T0248.py`
+(reuses `gen_arm_b_idle_T0229.py`'s `build_graph`/`run_attempt`, parameterized to accept an
+identity-LoRA override rather than duplicating the graph) re-ran Arm B's generation against
+`player_identity_v2` under the unchanged DL-21 criteria. Three attempts, none promoted (this is
+a diagnostic measurement, not a new bake-off arm — full trace:
+`assets/src/character/ARM_B_V2_ATTEMPT_LOG_T0248.md`, provenance candidates under
+`assets/out/arm_b_v2/`, gitignored):
+
+- **Attempt 1** — T-0229 attempt 7's exact winning recipe (seed 31416, ControlNet 1.3/1.0, style
+  weight 0.7, identity weight 0.5), only the identity LoRA file swapped: **ratios 0.083–0.273,
+  all 8 adjacent-cell transitions PASS the 0.30 cap**, with more margin than v1's own promoted
+  attempt (0.097–0.295 — the worst transition improved from 0.295 to 0.273). **This beats the
+  0.30 pass/fail floor, comfortably, but does not beat Arm C's 0.072–0.112 bar** (0.273 is more
+  than double Arm C's own worst transition).
+- **Attempt 2** — identical recipe, seed 31417 (a seed that badly failed for v1: 0.31–0.41 per
+  `ARM_B_ATTEMPT_LOG_T0229.md` attempt 3): **still FAILS**, ratios 0.068–0.401, essentially the
+  same magnitude of failure as v1 on this seed. Seed-sensitivity is not fixed.
+- **Attempt 3** — identical recipe, seed 31420 (also badly failed for v1: 0.42–0.63, attempt 5):
+  **still FAILS**, but less severely — ratios 0.068–0.318, barely over the cap versus v1's
+  blowout on the same seed.
+
+**Answering the Done-when question plainly: re-running Arm B against `player_identity_v2` does
+change the drift picture, but only partially.** On the recipe/seed combination already known to
+work, the single-costume LoRA measurably tightens frame-consistency (more margin under the 0.30
+cap) and, on one previously-catastrophic seed, substantially reduces failure severity. It does
+**not** eliminate the underlying row-wrap-transition failure mode, does **not** make the recipe
+seed-invariant (two of three tested seeds still fail the mechanical gate), and does **not** get
+close to Arm C's 0.072–0.112 benchmark on any attempt. §24-a's hypothesis (a single-costume
+identity LoRA alone would resolve round-1's generative drift) is therefore **not confirmed** —
+the improvement is real but partial, so §24-b..§24-e are not rendered unnecessary by this card;
+whether they are worth pursuing is a call for whoever weighs "meaningfully better than v1, still
+short of Arm C, still seed-sensitive" against the override's authorship rationale, not something
+this measurement alone resolves.
