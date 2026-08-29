@@ -28,6 +28,13 @@ record, not decisive — round 1's decision above is unchanged by it.
 | Arm B re-run vs. `player_identity_v2` (diagnostic, not a new bake-off arm) | 1 of 3 attempts PASS (0.083–0.273); 2 of 3 FAIL (seed-sensitive, 0.068–0.401 / 0.068–0.318) | 1/3 | 5.2 | 00:06 | $0.00 | Same recipe as T-0229's promoted attempt 7, only the identity LoRA swapped, across 3 seeds (1 known-good, 2 that badly failed for v1). See `ARM_B_V2_ATTEMPT_LOG_T0248.md`. |
 | **Card total** | — | — | **117.9** | **02:02** | **$0.00** | Sum of the three rows above. Generation re-run intentionally reused T-0229's already-tuned recipe rather than repeating v1's own blind search, so its attempt count is not directly comparable to v1's own 7/8 — see `ASSET_PROVENANCE.md`'s "Re-run against Arm B, measured" entry for the full per-attempt breakdown and the plain answer to whether this changes the drift picture. |
 
+## Round 2 (T-0249, HANDOFF §24-b/§24.4 — "the script becomes the pose authority")
+
+| Stage | Criterion 2 (frame-delta gate) | Attempts | GPU minutes | Wall-clock | $ | Notes |
+|---|---|---|---|---|---|---|
+| Pose-authority generation vs. `player_identity_v2` (mechanism change, not a new bake-off arm) | PASS (0.0522–0.2573, best of 3 measured); does not beat Arm C's 0.072–0.112 | 3/8 measured (5/8 used incl. 2 incomplete) | 31.8 | 01:04 | $0.00 | Per-frame single-figure generation, script-authored OpenPose skeleton per frame, ControlNet-conditioned. See `ARM_POSE_AUTHORITY_ATTEMPT_LOG_T0249.md` and `ROUND2_POSE_AUTHORITY_REPORT_T0249.md`. |
+| **Card total** | — | — | **31.8** | **01:04** | **$0.00** | Copied verbatim from `ROUND2_POSE_AUTHORITY_REPORT_T0249.md`'s "Cost" section. Per the round-2 override, cost here is recorded for the record, not decisive — round 1's decision above is unchanged by it, and this card's own result (clears the 0.30 gate, does not beat the 0.072–0.112 bar) is unchanged by cost either way. |
+
 **Reading this table (mechanical, not the human verdict):** Arm A never reached
 a sheet passing both criteria within the 8-attempt cap, so it is closed as a
 criterion-3 failure regardless of any criterion-1 read (DL-21's attempt-cap

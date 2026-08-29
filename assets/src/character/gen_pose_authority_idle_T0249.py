@@ -552,8 +552,9 @@ def run_attempt(
         "negative_prompt": MAIN_NEGATIVE,
         "pose_source": (
             "script (assets/src/character/pose_rig_T0249.py) -- deterministic per-frame "
-            "OpenPose-format 18-keypoint COCO skeleton, emitted directly (no DWPose/OpenPose "
-            "preprocessor -- none installed on this ComfyUI host)"
+            "OpenPose-format 18-keypoint COCO skeleton, emitted directly by the script, with "
+            "no derivation step in between (this ComfyUI host has no DWPose/OpenPose node "
+            "that could have derived it from an image)"
         ),
         "seed": seed,
         "steps": 30,
