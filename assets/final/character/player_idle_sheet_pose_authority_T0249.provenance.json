@@ -1,0 +1,360 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (player identity, weight 0.5) + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors (per-frame script-authored pose skeleton)",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "style_lora_name": "soviet_brutalism_style_v1.safetensors",
+  "style_lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "style_lora_weight": 0.7,
+  "style_lora_license": "CreativeML OpenRAIL++-M",
+  "identity_lora_name": "player_identity_v2.safetensors",
+  "identity_lora_hash": "fc447cfb886cb6a694c52ae21c9d172bae696ebc175f8daa7d6ecfd22eac36b4",
+  "identity_lora_weight": 0.5,
+  "identity_lora_license": "CreativeML OpenRAIL++-M",
+  "identity_lora_provenance": "assets/final/lora/player_identity_v2.provenance.json",
+  "controlnet": "controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+  "controlnet_strength": 1.3,
+  "controlnet_end_percent": 1.0,
+  "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+  "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+  "pose_source": "script (assets/src/character/pose_rig_T0249.py) -- deterministic per-frame OpenPose-format 18-keypoint COCO skeleton, emitted directly by the script, with no derivation step in between (this ComfyUI host has no DWPose/OpenPose node that could have derived it from an image)",
+  "seed": 31416,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 384,
+  "height": 384,
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "concept_card": "T-0209",
+  "animation_params": "assets/src/character/pose_rig_T0249.json",
+  "animation_state": "idle",
+  "rig_generalization_evidence": "assets/src/character/pose_rig_move_evidence_T0249.json",
+  "frame_generation": [
+    {
+      "frame_index": 0,
+      "cell": [
+        0,
+        0
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_0_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_0_pose_skeleton_384.png",
+      "comfyui_prompt_id": "809d3c8e-40fb-4f85-8367-a8332c964514"
+    },
+    {
+      "frame_index": 1,
+      "cell": [
+        0,
+        1
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_1_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_1_pose_skeleton_384.png",
+      "comfyui_prompt_id": "6c241f0c-9b14-4dc1-ab71-d9065595baa5"
+    },
+    {
+      "frame_index": 2,
+      "cell": [
+        0,
+        2
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_2_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_2_pose_skeleton_384.png",
+      "comfyui_prompt_id": "743e3475-4307-4471-bb96-208959a30d35"
+    },
+    {
+      "frame_index": 3,
+      "cell": [
+        1,
+        0
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_3_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_3_pose_skeleton_384.png",
+      "comfyui_prompt_id": "922e4dc1-b9d1-4c45-9dfd-131c3db38180"
+    },
+    {
+      "frame_index": 4,
+      "cell": [
+        1,
+        1
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_4_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_4_pose_skeleton_384.png",
+      "comfyui_prompt_id": "33816924-b526-4948-9254-4cbb932ee379"
+    },
+    {
+      "frame_index": 5,
+      "cell": [
+        1,
+        2
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_5_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_5_pose_skeleton_384.png",
+      "comfyui_prompt_id": "934e938e-c7e3-4828-9ed9-5413751f3fbb"
+    },
+    {
+      "frame_index": 6,
+      "cell": [
+        2,
+        0
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_6_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_6_pose_skeleton_384.png",
+      "comfyui_prompt_id": "8dde674d-7fb3-4598-9314-b1fead3eb5d3"
+    },
+    {
+      "frame_index": 7,
+      "cell": [
+        2,
+        1
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_7_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_7_pose_skeleton_384.png",
+      "comfyui_prompt_id": "15b046bb-8910-4a61-9739-e9fe2fd5724f"
+    },
+    {
+      "frame_index": 8,
+      "cell": [
+        2,
+        2
+      ],
+      "seed": 31416,
+      "width": 384,
+      "height": 384,
+      "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+      "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+      "pose_keypoints_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_8_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_idle_frame_evidence_T0249/frame_8_pose_skeleton_384.png",
+      "comfyui_prompt_id": "2a3ad83b-3bec-4267-b00f-58ca392e1328"
+    }
+  ],
+  "method": "pose_rig_T0249 derives 18-keypoint COCO frame keypoints from committed animation parameters (pose_rig_T0249.json) -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each frame's skeleton (384x384, reused renderer, not re-authored) -> ControlNetApplyAdvanced (xinsir OpenPose) conditions a single-figure KSampler generation at 384x384 -- identical seed/prompt/negative/latent-size across all 9 frames, only the skeleton varies -> per-frame area descent to 48x48 (same x8 ratio as the grid path) -> frames assembled into a 144x144 sheet -> Oklab-nearest palette quantization (dithering off, \u00a73.1) -> orphan cleanup.",
+  "generator": "assets/src/character/gen_pose_authority_idle_T0249.py",
+  "card": "T-0249",
+  "bake_off_arm": "round 2, pose authority (HANDOFF \u00a724-b/\u00a724.4), stacked on top of \u00a724-a's player_identity_v2 -- not a new bake-off arm competing on DL-21's original criteria",
+  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5 + HANDOFF \u00a724.4",
+  "comfyui_prompt_ids": [
+    "809d3c8e-40fb-4f85-8367-a8332c964514",
+    "6c241f0c-9b14-4dc1-ab71-d9065595baa5",
+    "743e3475-4307-4471-bb96-208959a30d35",
+    "922e4dc1-b9d1-4c45-9dfd-131c3db38180",
+    "33816924-b526-4948-9254-4cbb932ee379",
+    "934e938e-c7e3-4828-9ed9-5413751f3fbb",
+    "8dde674d-7fb3-4598-9314-b1fead3eb5d3",
+    "15b046bb-8910-4a61-9739-e9fe2fd5724f",
+    "2a3ad83b-3bec-4267-b00f-58ca392e1328"
+  ],
+  "attempt": 3,
+  "gpu_seconds": 664.1,
+  "mechanical_gate_passed": true,
+  "frame_deltas": [
+    {
+      "pair": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "ratio": 0.2106299212598425,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "ratio": 0.23154362416107382,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "ratio": 0.07032590051457976,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "ratio": 0.25734024179620035,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "ratio": 0.13745019920318724,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          0
+        ]
+      ],
+      "ratio": 0.1780821917808219,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "ratio": 0.05217391304347826,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "ratio": 0.17647058823529413,
+      "passed": true
+    }
+  ],
+  "frame_delta_range": [
+    0.05217391304347826,
+    0.25734024179620035
+  ],
+  "beats_030_cap": true,
+  "beats_arm_c_benchmark": false,
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "layout": {
+    "sheet_px": [
+      144,
+      144
+    ],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 3,
+    "frame_cells": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        2,
+        1
+      ],
+      [
+        2,
+        2
+      ]
+    ]
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "promoted": true
+}
