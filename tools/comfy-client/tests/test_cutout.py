@@ -449,6 +449,124 @@ def test_generate_cutout_sprite_hash_is_sha256_of_output_bytes(tmp_path, cutout_
 
 
 # ---------------------------------------------------------------------------
+# concept_hash / concept_source (T-0233, HANDOFF §23-j, P-7 compliance)
+#
+# P-7-compliant provenance requires `generator` to resolve, `model_hash` to
+# be non-null, AND `concept_hash` to resolve to the approved concept sheet
+# that conditioned the asset (docs/decision-log.md DL entry on P-7). The
+# cutout path had the first two but never threaded a concept_hash through --
+# every T-0221/T-0223 signal_tower prop shipped without one. These tests
+# cover the fix: generate_cutout() accepts optional concept_hash/
+# concept_source and records both verbatim in the sidecar.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_cutout_concept_hash_recorded_in_sidecar(tmp_path, cutout_recipe):
+    client = FakeClient()
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=client,
+        concept_hash="da676d790f923bcb266225c96445b1be26bec56b0b651befd0c254415fbe87a4",
+        concept_source="assets/src/concept/signal_tower_props_concept_sheet_v1.png",
+    )
+
+    sidecar = tmp_path / f"{cutout_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert (
+        on_disk["concept_hash"]
+        == "da676d790f923bcb266225c96445b1be26bec56b0b651befd0c254415fbe87a4"
+    )
+    assert on_disk["concept_source"] == "assets/src/concept/signal_tower_props_concept_sheet_v1.png"
+
+
+def test_generate_cutout_provenance_object_carries_concept_hash(tmp_path, cutout_recipe):
+    client = FakeClient()
+    result = generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=client,
+        concept_hash="c" * 64,
+        concept_source="assets/src/concept/some_sheet.png",
+    )
+    assert result.provenance.concept_hash == "c" * 64
+    assert result.provenance.concept_source == "assets/src/concept/some_sheet.png"
+
+
+def test_generate_cutout_concept_hash_defaults_to_none(tmp_path, cutout_recipe):
+    """Callers that don't pass concept_hash still get a well-formed sidecar --
+    the field defaults to None rather than being omitted, so downstream P-7
+    checks can distinguish 'never wired' from 'not applicable'."""
+    client = FakeClient()
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=client,
+    )
+
+    sidecar = tmp_path / f"{cutout_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["concept_hash"] is None
+    assert on_disk["concept_source"] is None
+
+
+# ---------------------------------------------------------------------------
+# extra (T-0233, HANDOFF §23-j): caller-supplied domain fields
+#
+# CutoutProvenanceRecord is deliberately generic -- cutout.py serves any
+# RGBA-cutout sprite, not just Signal Tower props. A field like `prop_class`
+# (cover vs hide) is domain-specific to one caller's recipe layer, so it has
+# no place on the shared dataclass. `extra` lets a caller merge structured
+# fields into the written sidecar without generate_cutout() knowing what
+# they mean -- the same mechanism write_provenance_sidecar already exposes,
+# just threaded through.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_cutout_extra_fields_recorded_in_sidecar(tmp_path, cutout_recipe):
+    client = FakeClient()
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=client,
+        extra={"prop_class": "cover"},
+    )
+
+    sidecar = tmp_path / f"{cutout_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["prop_class"] == "cover"
+
+
+def test_generate_cutout_extra_defaults_to_no_extra_fields(tmp_path, cutout_recipe):
+    """Callers that don't pass extra= get a sidecar with no surprise keys."""
+    client = FakeClient()
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=client,
+    )
+
+    sidecar = tmp_path / f"{cutout_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert "prop_class" not in on_disk
+
+
+# ---------------------------------------------------------------------------
 # License / model_hash guards
 # ---------------------------------------------------------------------------
 
