@@ -117,6 +117,37 @@ def deploy_to_comfyui(
     return dest
 
 
+def find_resume_state(output_dir: pathlib.Path, output_name: str) -> pathlib.Path | None:
+    """Find the sd-scripts `--save_state` checkpoint dir to resume from.
+
+    sd-scripts writes a state dir in one of three shapes (`library/checkpoint_io.py`):
+    a numbered `{output_name}-{epoch:06d}-state` per *intermediate* epoch boundary
+    (EPOCH_STATE_NAME), a numbered `{output_name}-step{step:08d}-state` per
+    step-cadence boundary (STEP_STATE_NAME, `--save_every_n_steps`), or a single
+    unnumbered `{output_name}-state` (LAST_STATE_NAME) written whenever a run
+    reaches its actual end (`save_state_on_train_end`) -- which is what every
+    run's FINAL epoch gets, since `train_network.py` deliberately excludes the
+    last epoch from the numbered per-epoch save. A run that completes normally
+    (every real training invocation, not just an interrupted smoke test) always
+    produces this bare, unnumbered shape -- confirmed empirically (T-0248) by
+    running training end-to-end and observing that the original numbered-only
+    glob never matched it, so a real run's own checkpoint was silently never
+    resumable. All three shapes are resumed identically via `--resume <dir>`,
+    so the most-recently-written one (by mtime) is always the correct resume
+    point regardless of which produced it. Returns None for a fresh run (no
+    state dir yet).
+    """
+    prefix = f"{output_name}-"
+    candidates = [
+        p
+        for p in output_dir.iterdir()
+        if p.is_dir() and p.name.startswith(prefix) and p.name.endswith("-state")
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def build_dataset_toml(config: TrainingConfig, refs_dir: pathlib.Path) -> str:
     """Render a kohya sd-scripts `--dataset_config` TOML for `refs_dir`.
 
@@ -144,12 +175,29 @@ def build_train_args(
     dataset_config_path: pathlib.Path,
     output_dir: pathlib.Path,
     max_train_steps: int | None = None,
+    resume_state: pathlib.Path | None = None,
+    save_every_n_steps: int | None = None,
 ) -> list[str]:
     """Build the `sdxl_train_network.py` CLI argument list from `config`.
 
     `max_train_steps` overrides `config.num_epochs` for a short smoke run;
     when omitted, trains the full `num_epochs` specified in
     training_config.toml.
+
+    `resume_state` (from `find_resume_state`) continues an interrupted run
+    instead of restarting at step 0 -- rule (b): this environment's per-call
+    wall-clock budget is well under a full training run's wall-clock, so a
+    single card's training phase is many separate invocations of this
+    module, each resuming where the last left off.
+
+    `config.save_every_n_epochs`'s cadence is always paired with `--save_state`
+    (T-0248), so every epoch boundary writes a full resumable state dir, not
+    just the LoRA weight snapshot. `save_every_n_steps` (independent of
+    `config.save_every_n_epochs`, which stays the reproducibility-spec cadence
+    for the emitted LoRA weights) additionally saves that same full resumable
+    trainer state every N steps -- without it, a run interrupted mid-epoch has
+    no state dir to resume from, since epoch-boundary checkpoints alone can't
+    help a run that never reaches one.
     """
     args = [
         f"--pretrained_model_name_or_path={checkpoint_path}",
@@ -176,14 +224,23 @@ def build_train_args(
     # the tradeoff is: drop caption shuffling (set shuffle=false in
     # training_config.toml) to re-enable this flag.
     # Per-epoch checkpoints so a run cut short by the phase budget resumes instead of
-    # restarting from step 0 (see TrainingConfig.save_every_n_epochs).
+    # restarting from step 0 (see TrainingConfig.save_every_n_epochs). --save_state is
+    # unconditional, not gated on save_every_n_steps below: without it, sd-scripts'
+    # plain epoch cadence writes only the LoRA weight snapshot at each boundary, never
+    # a full resumable state dir, so a run that never passes --save-every-n-steps (i.e.
+    # every real, non-smoke-test invocation) would not actually be resumable -- T-0248.
     args.append(f"--save_every_n_epochs={config.save_every_n_epochs}")
+    args.append("--save_state")
     if config.cache_latents:
         args.append("--cache_latents")
     if max_train_steps is not None:
         args.append(f"--max_train_steps={max_train_steps}")
     else:
         args.append(f"--max_train_epochs={config.num_epochs}")
+    if save_every_n_steps is not None:
+        args.append(f"--save_every_n_steps={save_every_n_steps}")
+    if resume_state is not None:
+        args.append(f"--resume={resume_state}")
     return args
 
 
@@ -209,6 +266,22 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override num_epochs with a fixed step count (smoke tests)",
     )
+    parser.add_argument(
+        "--save-every-n-steps",
+        type=int,
+        default=None,
+        help=(
+            "Save full resumable trainer state every N steps, in addition to "
+            "config.save_every_n_epochs' LoRA weight snapshots -- needed when a "
+            "single invocation's wall-clock budget is shorter than one epoch, "
+            "so there is still a state dir to resume from (rule (b))"
+        ),
+    )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore any existing --save_state checkpoint and start fresh",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print the command, don't run it")
     args = parser.parse_args(argv)
 
@@ -233,12 +306,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"sd-scripts train script not found: {train_script}", file=sys.stderr)
         return 1
 
+    resume_state = None
+    if not args.no_resume:
+        resume_state = find_resume_state(output_dir, config.output_name)
+        if resume_state is not None:
+            print(f"[resume] continuing from {resume_state}")
+
     train_args = build_train_args(
         config,
         checkpoint_path=checkpoint_path,
         dataset_config_path=dataset_config_path,
         output_dir=output_dir,
         max_train_steps=args.max_train_steps,
+        resume_state=resume_state,
+        save_every_n_steps=args.save_every_n_steps,
     )
     # Resolve `accelerate` next to the running interpreter rather than via
     # PATH -- the assets agent invokes this module with the training venv's
