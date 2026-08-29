@@ -1,0 +1,38 @@
+{
+  "room": "signal_tower.broadcast_deck",
+  "room_definition_ref": "docs/design/14-vertical-slice.md §2, §10",
+  "card": "T-0242",
+  "handoff_ref": "HANDOFF §23-j-g",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
+  "generated_new_props": false,
+  "note": "Broadcast Deck's two prop slots are both satisfied by props already committed and gate-passing from T-0201/T-0221/T-0223. No new geometry was generated for this card (DL-5 requires concept coverage before generation; this room needed none). The room's centerpiece is the chain tear, a shader effect (13-asset-pipeline.md §4), not a prop, and is explicitly out of this card's scope. Unlike Ground Relay (T-0240) and Storage Cache (T-0241), this room places no hiding-class prop -- both slots resolve to cover-class dressing (low_duct_v1, relay_cabinet_v1), matching the room's design row: 'No entity -- breathing room before the crossing.'",
+  "slots": [
+    {
+      "slot": "Deck-edge dressing",
+      "class": "cover",
+      "prop": "low_duct_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/low_duct_v1.png",
+      "provenance": "assets/final/props/signal_tower/low_duct_v1.provenance.json"
+    },
+    {
+      "slot": "Transmitter-side dressing",
+      "class": "cover",
+      "prop": "relay_cabinet_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/relay_cabinet_v1.png",
+      "provenance": "assets/final/props/signal_tower/relay_cabinet_v1.provenance.json"
+    }
+  ],
+  "gate_16px_separation": {
+    "requirement": ">= 15.0 luma16 gap between any cover/hiding pair co-located in this room (P-3)",
+    "authoritative_test": "assets/src/concept/tests/test_signal_tower_prop_pack.py::test_cover_vs_hiding_distinguishable_at_16px",
+    "min_required_gap_luma16": 15.0,
+    "applicable": false,
+    "cover_hide_pairs_in_room": [],
+    "why_not_applicable": "Both of this room's slots are cover-class (low_duct_v1, relay_cabinet_v1); it places no hiding-class prop. The P-3 gate constrains cover-vs-hiding legibility only, so with zero hiding-class slots present there are zero cover/hiding pairs to measure. The gate is vacuously satisfied, not skipped -- test_manifest_gate_section_records_vacuous_pairing (test_broadcast_deck_room_manifest.py) asserts this section stays explicit rather than being omitted."
+  },
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card."
+}
