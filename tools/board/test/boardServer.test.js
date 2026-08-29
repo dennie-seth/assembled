@@ -332,6 +332,50 @@ describe("auto-pull poller wiring", () => {
   });
 });
 
+describe("auto-launch poller wiring", () => {
+  it("constructs an auto-launch poller exposed on the returned board object", () => {
+    expect(board.autoLaunchPoller).toBeDefined();
+    expect(typeof board.autoLaunchPoller.tick).toBe("function");
+    expect(typeof board.autoLaunchPoller.start).toBe("function");
+    expect(typeof board.autoLaunchPoller.stop).toBe("function");
+  });
+
+  it("is OFF by default, so merging and deploying the code cannot switch it on", () => {
+    expect(process.env.AUTO_LAUNCH_ENABLED).toBeUndefined();
+    expect(board.autoLaunchPoller.enabled).toBe(false);
+  });
+
+  it("stops the auto-launch poller's timer when the board server closes", async () => {
+    const stopSpy = vi.spyOn(board.autoLaunchPoller, "stop");
+
+    await board.close();
+    // afterEach also calls board.close() -- idempotent, matches every other .close() in this file.
+
+    expect(stopSpy).toHaveBeenCalled();
+  });
+
+  it("is enabled end-to-end when AUTO_LAUNCH_ENABLED is set, and its tick finds nothing to launch on an empty board", async () => {
+    const prior = process.env.AUTO_LAUNCH_ENABLED;
+    process.env.AUTO_LAUNCH_ENABLED = "true";
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-autolaunch-enabled-"));
+    try {
+      const server = await startBoardServer({ tasksDir: dir, port: 0 });
+      try {
+        expect(server.autoLaunchPoller.enabled).toBe(true);
+        // No tasks/.runs directory exists yet on a fresh board, so usage is undetermined and the
+        // tick must skip rather than launch -- the fail-safe contract, end to end.
+        await expect(server.autoLaunchPoller.tick()).resolves.toBeNull();
+      } finally {
+        await server.close();
+      }
+    } finally {
+      if (prior === undefined) delete process.env.AUTO_LAUNCH_ENABLED;
+      else process.env.AUTO_LAUNCH_ENABLED = prior;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("pty terminal integration", () => {
   it("serves a working shell over /ws/pty on the same server", async () => {
     const { port } = board.server.address();

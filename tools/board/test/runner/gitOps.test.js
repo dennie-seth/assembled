@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { rmTemp } from "../helpers/rmTemp.js";
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -58,7 +59,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  // rmTemp, not a bare fs.rm: git's background repacking can write into .git/objects/pack
+  // between this walk's readdir and its rmdir, which surfaced in CI as
+  // "ENOTEMPTY: directory not empty, rmdir '.../.git/objects/pack'" while passing locally.
+  await rmTemp(tmpDir);
 });
 
 describe("addWorktree / removeWorktree", () => {
