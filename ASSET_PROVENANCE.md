@@ -201,3 +201,12 @@ the improvement is real but partial, so §24-b..§24-e are not rendered unnecess
 whether they are worth pursuing is a call for whoever weighs "meaningfully better than v1, still
 short of Arm C, still seed-sensitive" against the override's authorship rationale, not something
 this measurement alone resolves.
+
+**Attachments (2026-08-29):** provenance JSON, `CANONICAL_COSTUME_SELECTION_T0248.md`,
+`CHECKPOINT_RESUME_EVIDENCE_T0248.md`, `ROUND2_BAKEOFF_REPORT_T0248.md`,
+`ARM_B_V2_ATTEMPT_LOG_T0248.md`, and `identity_curation_manifest_T0248.json` are attached to
+card T-0248 via the attachments API. `player_identity_v2.safetensors` itself (109MB) is **not**
+attached — the board's attachments endpoint rejects anything over 25MB
+(`{"error":"Attachment exceeds the 26214400-byte limit"}`, confirmed by trying) — the committed,
+Git-LFS-tracked file in the repo is the actual distribution path for the weight file itself, same
+constraint any large binary deliverable on this board would hit.
