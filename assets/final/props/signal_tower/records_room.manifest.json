@@ -4,20 +4,17 @@
   "card": "T-0243",
   "handoff_ref": "HANDOFF §23-j-b",
   "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
-  "new_prop_concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v2.png",
-  "generated_new_props": true,
-  "note": "Records Room's shelving slot has no coverage on the v1 sheet (DL-5) -- T-0239's v2 sheet adds it as PANEL 1's 'archive shelving row' (class 1, cover). This card generates archive_shelving_v1 through the committed cutout path (tools/comfy-client/src/comfy_client/cutout.py:generate_cutout) conditioned on that panel, and reuses the already-committed crate_stack_v1 (T-0201/T-0221/T-0223) for the second slot. Both slots are cover-class -- this room places no hiding-class prop, so the P-3 cover/hiding gate is vacuously satisfied (same shape as Broadcast Deck, T-0242).",
+  "generated_new_props": false,
+  "status": "blocked",
+  "blocked_reason": "Records Room's shelving slot has no coverage on the approved v1 sheet (DL-5). T-0239's v2 sheet (assets/src/concept/signal_tower_props_concept_sheet_v2.png) depicts the shelving panel, but that sheet is not recorded as human-approved: its own ASSET_PROVENANCE.md row and .provenance.json sidecar both state it 'parks for human direction approval per §23-h's pattern -- not yet approved', and docs/decision-log.md has no approval entry for T-0239 or this sheet. Merging the sheet to develop is not the human direction-approval gate DL-5/P-6 requires. Per this card's own instruction ('If a slot has no approved coverage, the card stops and reports it rather than generating'), archive_shelving_v1 is NOT generated this run. A prior run of this card incorrectly generated it against the v2 sheet and that artifact has been reverted (2026-08-29 validation FAIL). Re-run once docs/decision-log.md records an actual human approval verdict for signal_tower_props_concept_sheet_v2.png.",
   "slots": [
     {
       "slot": "Archive shelving rows (primary dressing)",
       "class": "cover",
-      "prop": "archive_shelving_v1",
-      "status": "committed",
+      "prop": null,
+      "status": "blocked",
       "reused": false,
-      "sprite": "assets/final/props/signal_tower/archive_shelving_v1.png",
-      "provenance": "assets/final/props/signal_tower/archive_shelving_v1.provenance.json",
-      "generated_by": "T-0243",
-      "concept_source": "assets/src/concept/signal_tower_props_concept_sheet_v2.png (PANEL 1, class 1 -- archive shelving row)"
+      "blocked_on": "signal_tower_props_concept_sheet_v2.png human direction approval (T-0239) -- not recorded in docs/decision-log.md"
     },
     {
       "slot": "Incidental crates",
@@ -35,7 +32,7 @@
     "min_required_gap_luma16": 15.0,
     "applicable": false,
     "cover_hide_pairs_in_room": [],
-    "why_not_applicable": "Both of this room's slots are cover-class (archive_shelving_v1, crate_stack_v1); it places no hiding-class prop. The P-3 gate constrains cover-vs-hiding legibility only, so with zero hiding-class slots present there are zero cover/hiding pairs to measure. The gate is vacuously satisfied, not skipped -- test_manifest_gate_section_records_vacuous_pairing (test_records_room_room_manifest.py) asserts this section stays explicit rather than being omitted, matching Broadcast Deck's (T-0242) precedent for a room with no hiding-class slot."
+    "why_not_applicable": "The only committed slot this run (crate_stack_v1) is cover-class; the shelving slot is blocked and places no prop at all. With zero hiding-class props present in this room there are zero cover/hiding pairs to measure -- vacuously satisfied, not skipped, matching Broadcast Deck's (T-0242) precedent for a room with no hiding-class slot."
   },
-  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. archive_shelving_v1 is an additive new file under assets/final/props/signal_tower/ -- no existing prop file was touched."
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. No existing prop file was touched. No new prop file was generated this run; the previously-generated archive_shelving_v1.png/.provenance.json (generated against the unapproved v2 sheet) have been removed."
 }

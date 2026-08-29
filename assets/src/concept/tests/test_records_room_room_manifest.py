@@ -137,11 +137,8 @@ def test_v2_sheet_provenance_still_marked_unapproved():
     to make this card's job easier -- approval is a human gate this card
     cannot grant itself."""
     assert V2_SHEET_PROV_PATH.exists(), f"Missing v2 sheet provenance: {V2_SHEET_PROV_PATH}"
-    text = MANIFEST_PATH.read_text()
-    assert "not yet approved" not in text  # the manifest doesn't need the marker itself
-    prov_text = V2_SHEET_PROV_PATH.read_text()
+    prov = json.loads(V2_SHEET_PROV_PATH.read_text())
     # the sidecar carries no approval field at all -- absence, not a false "approved: true"
-    prov = json.loads(prov_text)
     assert "approved" not in prov or prov["approved"] is not True
 
 
