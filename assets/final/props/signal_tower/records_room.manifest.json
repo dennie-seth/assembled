@@ -1,0 +1,41 @@
+{
+  "room": "signal_tower.records_room",
+  "room_definition_ref": "docs/design/14-vertical-slice.md §2, §10",
+  "card": "T-0243",
+  "handoff_ref": "HANDOFF §23-j-b",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
+  "new_prop_concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v2.png",
+  "generated_new_props": true,
+  "note": "Records Room's shelving slot has no coverage on the v1 sheet (DL-5) -- T-0239's v2 sheet adds it as PANEL 1's 'archive shelving row' (class 1, cover). This card generates archive_shelving_v1 through the committed cutout path (tools/comfy-client/src/comfy_client/cutout.py:generate_cutout) conditioned on that panel, and reuses the already-committed crate_stack_v1 (T-0201/T-0221/T-0223) for the second slot. Both slots are cover-class -- this room places no hiding-class prop, so the P-3 cover/hiding gate is vacuously satisfied (same shape as Broadcast Deck, T-0242).",
+  "slots": [
+    {
+      "slot": "Archive shelving rows (primary dressing)",
+      "class": "cover",
+      "prop": "archive_shelving_v1",
+      "status": "committed",
+      "reused": false,
+      "sprite": "assets/final/props/signal_tower/archive_shelving_v1.png",
+      "provenance": "assets/final/props/signal_tower/archive_shelving_v1.provenance.json",
+      "generated_by": "T-0243",
+      "concept_source": "assets/src/concept/signal_tower_props_concept_sheet_v2.png (PANEL 1, class 1 -- archive shelving row)"
+    },
+    {
+      "slot": "Incidental crates",
+      "class": "cover",
+      "prop": "crate_stack_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/crate_stack_v1.png",
+      "provenance": "assets/final/props/signal_tower/crate_stack_v1.provenance.json"
+    }
+  ],
+  "gate_16px_separation": {
+    "requirement": ">= 15.0 luma16 gap between any cover/hiding pair co-located in this room (P-3)",
+    "authoritative_test": "assets/src/concept/tests/test_signal_tower_prop_pack.py::test_cover_vs_hiding_distinguishable_at_16px",
+    "min_required_gap_luma16": 15.0,
+    "applicable": false,
+    "cover_hide_pairs_in_room": [],
+    "why_not_applicable": "Both of this room's slots are cover-class (archive_shelving_v1, crate_stack_v1); it places no hiding-class prop. The P-3 gate constrains cover-vs-hiding legibility only, so with zero hiding-class slots present there are zero cover/hiding pairs to measure. The gate is vacuously satisfied, not skipped -- test_manifest_gate_section_records_vacuous_pairing (test_records_room_room_manifest.py) asserts this section stays explicit rather than being omitted, matching Broadcast Deck's (T-0242) precedent for a room with no hiding-class slot."
+  },
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. archive_shelving_v1 is an additive new file under assets/final/props/signal_tower/ -- no existing prop file was touched."
+}
