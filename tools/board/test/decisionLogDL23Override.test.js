@@ -148,7 +148,7 @@ describe("the new entry records the override itself", () => {
 describe("the new entry records each arm's round-1 numbers", () => {
   it("Arm A: 4/8 over the 0.30 cap, cross-row identity drift, green -> tan shift", () => {
     const entry = readNewEntry().text;
-    expect(entry).toMatch(/4( of|\/)8/);
+    expect(entry).toMatch(/4( of |\/)8/);
     expect(entry).toContain("0.30");
     expect(entry.toLowerCase()).toContain("cross-row identity drift");
     expect(entry.toLowerCase()).toMatch(/green.*tan/s);
@@ -159,7 +159,7 @@ describe("the new entry records each arm's round-1 numbers", () => {
     const entry = readNewEntry().text;
     expect(entry).toContain("0.097");
     expect(entry).toContain("0.295");
-    expect(entry).toMatch(/7( of|\/)8/);
+    expect(entry).toMatch(/7( of |\/)8/);
     expect(entry).toContain("165.5");
   });
 
