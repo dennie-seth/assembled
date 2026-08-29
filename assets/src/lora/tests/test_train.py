@@ -265,13 +265,21 @@ class TestFindResumeState:
     restarting at step 0 -- this is what makes rule (b) ("a re-run resumes
     from the last checkpoint") actually true rather than aspirational.
 
-    sd-scripts' `--save_state` writes one directory per checkpoint, named
-    either `{output_name}-{epoch:06d}-state` (epoch cadence) or
-    `{output_name}-step{step:08d}-state` (step cadence, `library/checkpoint_io.py`
-    EPOCH_STATE_NAME / STEP_STATE_NAME) -- both end in `-state` and both are
-    resumed the same way (`--resume <dir>`), so the most-recently-written one
-    (by mtime) is always the correct resume point regardless of which cadence
-    produced it.
+    sd-scripts' `--save_state` writes a state dir in one of three shapes
+    (`library/checkpoint_io.py`): a numbered `{output_name}-{epoch:06d}-state`
+    per *intermediate* epoch boundary (EPOCH_STATE_NAME), a numbered
+    `{output_name}-step{step:08d}-state` per step-cadence boundary
+    (STEP_STATE_NAME, `--save_every_n_steps`), or a single unnumbered
+    `{output_name}-state` (LAST_STATE_NAME) written whenever a run reaches its
+    actual end (`save_state_on_train_end`) -- which, confirmed empirically
+    against a real training run (T-0248), is what every run's FINAL epoch
+    gets: `train_network.py` deliberately excludes the last epoch from the
+    numbered per-epoch save (`saving = ... and (epoch + 1) < num_train_epochs`),
+    so a run that completes normally -- every real training invocation, not
+    just a smoke test -- writes the bare, unnumbered form, never a numbered
+    one. All three shapes end in `-state` and are resumed the same way
+    (`--resume <dir>`), so the most-recently-written one (by mtime) is always
+    the correct resume point regardless of which produced it.
     """
 
     def test_returns_none_when_no_state_dir_exists(self, tmp_path):
@@ -292,6 +300,23 @@ class TestFindResumeState:
         state_dir.mkdir()
         assert find_resume_state(tmp_path, "player_identity_v2") == state_dir
 
+    def test_finds_the_bare_last_state_dir(self, tmp_path):
+        """T-0248: the unnumbered `{output_name}-state` dir sd-scripts writes
+        via `save_state_on_train_end` for a run's final epoch -- the shape
+        every normally-completed real training run actually produces, not
+        just an edge case. A find_resume_state that only matched the numbered
+        shapes above would never find this and silently never resume a real
+        run (found by actually running training end-to-end, not by mocking)."""
+        state_dir = tmp_path / "player_identity_v2-state"
+        state_dir.mkdir()
+        assert find_resume_state(tmp_path, "player_identity_v2") == state_dir
+
+    def test_bare_last_state_dir_does_not_match_a_prefix_colliding_output_name(self, tmp_path):
+        """`player_identity_v2_checkpoint_demo-state` must not be mistaken for
+        `player_identity_v2`'s own state dir just because it shares a prefix."""
+        (tmp_path / "player_identity_v2_checkpoint_demo-state").mkdir()
+        assert find_resume_state(tmp_path, "player_identity_v2") is None
+
     def test_picks_the_most_recently_written_state_dir(self, tmp_path):
         import time
 
@@ -299,6 +324,17 @@ class TestFindResumeState:
         older.mkdir()
         time.sleep(0.01)
         newer = tmp_path / "player_identity_v2-step00000016-state"
+        newer.mkdir()
+
+        assert find_resume_state(tmp_path, "player_identity_v2") == newer
+
+    def test_bare_last_state_dir_wins_when_written_most_recently(self, tmp_path):
+        import time
+
+        older = tmp_path / "player_identity_v2-000001-state"
+        older.mkdir()
+        time.sleep(0.01)
+        newer = tmp_path / "player_identity_v2-state"
         newer.mkdir()
 
         assert find_resume_state(tmp_path, "player_identity_v2") == newer

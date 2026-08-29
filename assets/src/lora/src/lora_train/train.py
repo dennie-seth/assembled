@@ -120,15 +120,29 @@ def deploy_to_comfyui(
 def find_resume_state(output_dir: pathlib.Path, output_name: str) -> pathlib.Path | None:
     """Find the sd-scripts `--save_state` checkpoint dir to resume from.
 
-    sd-scripts writes one dir per checkpoint, named either
-    `{output_name}-{epoch:06d}-state` (epoch cadence) or
-    `{output_name}-step{step:08d}-state` (step cadence, when
-    `--save_every_n_steps`/`--save_state` are also passed) -- both are
-    resumed identically via `--resume <dir>`, so the most-recently-written
-    one (by mtime) is always the correct resume point regardless of which
-    cadence produced it. Returns None for a fresh run (no state dir yet).
+    sd-scripts writes a state dir in one of three shapes (`library/checkpoint_io.py`):
+    a numbered `{output_name}-{epoch:06d}-state` per *intermediate* epoch boundary
+    (EPOCH_STATE_NAME), a numbered `{output_name}-step{step:08d}-state` per
+    step-cadence boundary (STEP_STATE_NAME, `--save_every_n_steps`), or a single
+    unnumbered `{output_name}-state` (LAST_STATE_NAME) written whenever a run
+    reaches its actual end (`save_state_on_train_end`) -- which is what every
+    run's FINAL epoch gets, since `train_network.py` deliberately excludes the
+    last epoch from the numbered per-epoch save. A run that completes normally
+    (every real training invocation, not just an interrupted smoke test) always
+    produces this bare, unnumbered shape -- confirmed empirically (T-0248) by
+    running training end-to-end and observing that the original numbered-only
+    glob never matched it, so a real run's own checkpoint was silently never
+    resumable. All three shapes are resumed identically via `--resume <dir>`,
+    so the most-recently-written one (by mtime) is always the correct resume
+    point regardless of which produced it. Returns None for a fresh run (no
+    state dir yet).
     """
-    candidates = [p for p in output_dir.glob(f"{output_name}-*-state") if p.is_dir()]
+    prefix = f"{output_name}-"
+    candidates = [
+        p
+        for p in output_dir.iterdir()
+        if p.is_dir() and p.name.startswith(prefix) and p.name.endswith("-state")
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
