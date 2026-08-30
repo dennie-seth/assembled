@@ -19,6 +19,8 @@ import {
   isAgentActor,
   isApprovalMarker,
   needsApproval,
+  resolveAuthor,
+  resolveHumanActor,
   ApprovalRequiredError,
   APPROVAL_RECORD_FIELDS,
   PARKED_STATUS,
@@ -407,7 +409,11 @@ async function applyApprovalGateToPatch({ store, id, body, actor }) {
   if (agentActor) {
     throw new HttpError(409, new ApprovalRequiredError(id).message);
   }
-  Object.assign(body, approvalRecord({ actor }));
+  // `actor` here is a transport identity (`board-ui` for a drag in the UI, `unknown` for a
+  // bare curl). Recording either verbatim says as little as "Anonymous" did -- resolve it to
+  // the configured operator. `resolveHumanActor` cannot return null on this line: the agent
+  // case threw above.
+  Object.assign(body, approvalRecord({ actor: resolveHumanActor(actor) }));
 }
 
 /**
@@ -594,7 +600,12 @@ async function handleAddComment(
   if (typeof body.text !== "string" || body.text.trim().length === 0) {
     throw new HttpError(400, "text is required and must be a non-empty string");
   }
-  const author = typeof body.author === "string" && body.author.trim().length > 0 ? body.author.trim() : "Anonymous";
+  // The board UI sends text only, so this default is what a person's comment is filed under --
+  // and, for an approval comment, what lands in `approved_by`. It used to be the literal
+  // "Anonymous", which recorded an approval as having come from nobody in particular and so
+  // defeated the point of recording who approved. `resolveAuthor` resolves a UI action to the
+  // configured operator; an agent-originated one can never inherit that name.
+  const author = resolveAuthor({ author: body.author, actor: actorFromHeaders(req.headers) });
 
   const task = await store.get(id);
   if (!task) {
@@ -698,10 +709,13 @@ async function handleUploadAttachment(store, id, req, res, repoRoot, tasksDir, t
   }
   await fs.writeFile(destPath, file.buffer);
 
-  const uploadedBy =
-    typeof fields.uploaded_by === "string" && fields.uploaded_by.trim().length > 0
-      ? fields.uploaded_by.trim()
-      : "Anonymous";
+  // Same resolution as a comment's author (see handleAddComment): a UI upload is the operator,
+  // an agent upload never is. Agents already pass `uploaded_by` explicitly on the one mutating
+  // route they hold, so this only changes what an omitted value falls back to.
+  const uploadedBy = resolveAuthor({
+    author: fields.uploaded_by,
+    actor: actorFromHeaders(req.headers)
+  });
   const attachment = {
     filename: safeName,
     size: file.buffer.length,
