@@ -2,30 +2,32 @@
   "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
   "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA, assembled project T-0072)",
   "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
-  "prompt": "Signal Tower prop concept reference sheet, four isolated prop diagrams assembled into a 2x2 grid: (1) archive shelving row -- cover prop; (2) transformer housings + breaker panel -- cover prop and gate object; (3) crawlspace opening -- hiding spot; (4) hiding alcove -- hiding spot. Each panel generated independently through the committed T-0104 workflow (see `panels` below for the exact per-panel prompt/seed) rather than as one combined prompt -- a single four-class prompt was tried first (seeds 21140, 21150, 21160) and each attempt lost the four distinct prop classes to the soviet_brutalism_style_v1 LoRA's strong whole-building bias (see `_generator_note`); per-panel generation lets each class's own prompt dominate its own sampling run. The transformer-housings + breaker-panel quadrant kept losing its own two distinct sub-objects to the same bias even after per-class splitting, so that quadrant is itself split into two independent sub-generations (`panels[1].sub_panels`) placed side by side.",
+  "prompt": "Signal Tower prop concept reference sheet, four isolated prop diagrams assembled into a 2x2 grid: (1) archive shelving row -- cover prop; (2) transformer housings + breaker panel -- cover prop and gate object; (3) crawlspace opening -- hiding spot; (4) hiding alcove -- hiding spot. Each panel generated independently through the committed T-0104 workflow (see `panels` below for the exact per-panel prompt/seed) rather than as one combined prompt -- a single four-class prompt was tried first (seeds 21140, 21150, 21160) and each attempt lost the four distinct prop classes to the soviet_brutalism_style_v1 LoRA's strong whole-building bias (see `_generator_note`); per-panel generation lets each class's own prompt dominate its own sampling run. The transformer-housings + breaker-panel quadrant kept losing its own two distinct sub-objects to the same bias even after per-class splitting, so that quadrant is itself split into three independent sub-generations (`panels[1].sub_panels`: two transformer housing units, one breaker panel) placed side by side, every one of them at the sheet's own 0.70 style LoRA weight -- no sub-generation runs with the LoRA disabled or reduced.",
   "negative_prompt": "building, architecture, tower, skyscraper, city, facade, windows, rooftop, scaffolding, structure exterior, isometric building, white background, product photography, studio lighting, isolated object shot on white, e-commerce catalog, stock photo, chrome, glossy plastic, metallic reflection, screws, bolts, hardware catalog, realistic photograph, perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, illegible glyphs, blurry small text, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait, locker, server rack, relay cabinet, crate stack, HVAC duct, car, vehicle, automobile",
   "seed": [
     21301,
-    21901,
+    23031,
+    23037,
     21902,
     21203,
-    21504
+    23121
   ],
   "steps": 30,
   "cfg": 7.0,
   "width": 1024,
   "height": 1024,
-  "_top_level_fields_are_sheet_summary": "This entry covers FIVE independent generations, not one. The top-level prompt/negative_prompt/seed/workflow_hash above describe the assembled sheet as a whole (a manifest, matching this file's own `prompt` field), not any single CLIPTextEncode/KSampler call -- width/height are the final assembled canvas size (read from the recipe and used to build the canvas in `assemble()`), not any one generation's sampling resolution (each panel samples at panel_width x panel_height, see `panels` below). The authoritative per-generation prompt/seed/workflow_hash/prompt_id for each of the five real ComfyUI jobs are the corresponding fields inside `panels[]` (the transformer/breaker quadrant's two jobs are under `panels[1].sub_panels`).",
-  "workflow_hash": "8b22df79f4287b2ff3326c98fdfb4fff2f665a5ddcb8826af00c447141da2923",
-  "prompt_id": "adc16fa9-bb39-4873-94cb-2677c6f5901e,d136e316-2da4-48b0-aa4e-d259dceb810e,c09b5226-5f8d-4fbe-a87a-005c87da90b5,e35ebf2f-8551-4e33-9fa6-bca08a44461c,cbe9cb4a-bd64-4729-a6b1-899802f436ce",
+  "_top_level_fields_are_sheet_summary": "This entry covers SIX independent generations, not one. The top-level prompt/negative_prompt/seed/workflow_hash above describe the assembled sheet as a whole (a manifest, matching this file's own `prompt` field), not any single CLIPTextEncode/KSampler call -- width/height are the final assembled canvas size (read from the recipe and used to build the canvas in `assemble()`), not any one generation's sampling resolution (each panel samples at panel_width x panel_height, see `panels` below). The authoritative per-generation prompt/seed/workflow_hash/prompt_id for each of the six real ComfyUI jobs are the corresponding fields inside `panels[]` (the transformer/breaker quadrant's three jobs are under `panels[1].sub_panels`).",
+  "workflow_hash": "7fa59113dadff60a99c0e155e02c159063161b4b2291962f45c5e8913d32ac23",
+  "prompt_id": "95693143-a62d-4491-9ef0-25b302173a21,1b1e5030-355d-45fd-ba10-d72792e56e45,849559ce-afcc-4587-b9aa-432c79b88d40,9aa9606d-1243-48a8-a21c-22a74e94c3ff,19934696-1f96-439e-8d4d-4ff8df461552,ab8ab47a-9e00-44f9-9d04-df17cd282704",
   "prompt_ids": [
-    "adc16fa9-bb39-4873-94cb-2677c6f5901e",
-    "d136e316-2da4-48b0-aa4e-d259dceb810e",
-    "c09b5226-5f8d-4fbe-a87a-005c87da90b5",
-    "e35ebf2f-8551-4e33-9fa6-bca08a44461c",
-    "cbe9cb4a-bd64-4729-a6b1-899802f436ce"
+    "95693143-a62d-4491-9ef0-25b302173a21",
+    "1b1e5030-355d-45fd-ba10-d72792e56e45",
+    "849559ce-afcc-4587-b9aa-432c79b88d40",
+    "9aa9606d-1243-48a8-a21c-22a74e94c3ff",
+    "19934696-1f96-439e-8d4d-4ff8df461552",
+    "ab8ab47a-9e00-44f9-9d04-df17cd282704"
   ],
-  "concept_hash": "5e012cd823a305575d623445581d3431c010ebcef2624c0b8a9fa55ef4f2b60e",
+  "concept_hash": "4206f4a3ad3d29349f8198ad4b9d1f04f7a9bbb7adc09c5d8390ab258c978de2",
   "generator": "assets/src/concept/_gen_signal_tower_props_v3.py",
   "lora_name": "soviet_brutalism_style_v1.safetensors",
   "lora_weight": 0.7,
@@ -40,7 +42,7 @@
       "prompt": "flat side-on prop concept reference sheet, orthographic game asset, no perspective, no vanishing point, isolated on a plain flat backdrop, no scene. Archive shelving unit: a tall open-frame shelf structure in mid-value concrete-grey painted metal, several horizontal shelf boards each stacked with flat rectangular cardboard document boxes and bundled file folders in muted oxide-brown and grey tones, opaque blocky solid form, filled flat painted colour, fully exposed from above and sides -- a cover prop, not an enclosure. Soviet brutalist industrial palette, hard value separation, flat unlit shading, prop silhouette study, game asset reference sheet style, no background scene composition, no gradients, no chrome, no photorealism, no humans, no vehicles.",
       "negative_prompt": "blueprint, technical schematic, wireframe, CAD drawing, line art, monochrome line drawing, white background, beige background, building, architecture, tower, car, vehicle, product photography, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure",
       "seed": 21301,
-      "prompt_id": "adc16fa9-bb39-4873-94cb-2677c6f5901e",
+      "prompt_id": "95693143-a62d-4491-9ef0-25b302173a21",
       "workflow_hash": "aa046fd798a31bc4390d4376d44aa3b947723db679a1bce9c657e57c694fefa5",
       "value_graded": false,
       "value_grade_factor": null
@@ -53,27 +55,37 @@
       "sub_panels": [
         {
           "sub_index": 0,
-          "label": "TRANSFORMER HOUSINGS -- COVER",
-          "prompt": "orthographic front elevation view of industrial electrical equipment, isolated on a plain flat grey backdrop, no scene, no perspective. Three identical squat rectangular transformer housing units standing side by side, wider than tall, mid-value grey metal casings, flat even lighting, hard value separation, simple flat blocky forms, technical illustration, cover props fully exposed from above and sides.",
-          "negative_prompt": "tower, towers, silo, chimney, lighthouse, rocket, building, skyscraper, columns, individual towers, tall, vertical, upright cabinet, robot, mecha, tank, military vehicle, humanoid figure, character, creature, perspective, vanishing point, three-quarter view, isometric, atmospheric haze, depth of field, sky, clouds, scene, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, text, watermark, signature, blurry, low quality",
-          "seed": 22101,
-          "lora_weight": 0.0,
-          "prompt_id": "d136e316-2da4-48b0-aa4e-d259dceb810e",
-          "workflow_hash": "91ebb51ca46d53f5e943dc4fa7a36cba30517eb9c80847d662c2ae32461002d8"
+          "label": "TRANSFORMER HOUSING A -- COVER",
+          "prompt": "single isolated game prop, flat side elevation view, orthographic, no perspective, no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, no text, no diagram, no colour swatches, no palette chips, no pedestal, no sculpture. A large plain rectangular metal utility box, like a filing cabinet lying on its side, wider than tall, completely flat featureless sides, flat top, flush seams only, mid-value grey-green painted metal, sitting directly on the ground, opaque solid blocky form -- a cover prop, not an enclosure. Soviet brutalist industrial palette, hard value separation, flat unlit shading, one single object filling most of the frame, no gradients, no chrome, no photorealism, no humans, no vehicles.",
+          "negative_prompt": "multiple objects, several objects, grid of objects, scattered objects, collage, sheet, array, breakdown, exploded view, colour swatches, colour chips, palette strip, pedestal, plinth display, sphere, ball, abstract sculpture, art installation, control panel, switch panel, breaker panel, instrument panel, dashboard, gauge cluster, dial, window, porthole, door, hatch, cockpit, notch, cutout, irregular shape, blueprint, technical schematic, wireframe, CAD drawing, line art, monochrome line drawing, refrigerator appliance branding, pink, salmon, warm background, white background, beige background, building, architecture, tower, skyscraper, silo, chimney, lighthouse, rocket, robot, mecha, tank, military vehicle, humanoid figure, character, creature, car, vehicle, product photography, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality",
+          "seed": 23031,
+          "lora_weight": 0.7,
+          "prompt_id": "1b1e5030-355d-45fd-ba10-d72792e56e45",
+          "workflow_hash": "5f30a41e48a1c117324b7471e332b20476752b0e4fe162b7d91e1713ea4dee7e"
         },
         {
           "sub_index": 1,
+          "label": "TRANSFORMER HOUSING B -- COVER",
+          "prompt": "single isolated game prop, flat side elevation view, orthographic, no perspective, no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, no text, no diagram, no colour swatches, no palette chips, no pedestal, no sculpture. A large plain rectangular metal utility box, like a filing cabinet lying on its side, wider than tall, completely flat featureless sides, flat top, flush seams only, mid-value grey-green painted metal, sitting directly on the ground, opaque solid blocky form -- a cover prop, not an enclosure. Soviet brutalist industrial palette, hard value separation, flat unlit shading, one single object filling most of the frame, no gradients, no chrome, no photorealism, no humans, no vehicles.",
+          "negative_prompt": "multiple objects, several objects, grid of objects, scattered objects, collage, sheet, array, breakdown, exploded view, colour swatches, colour chips, palette strip, pedestal, plinth display, sphere, ball, abstract sculpture, art installation, control panel, switch panel, breaker panel, instrument panel, dashboard, gauge cluster, dial, window, porthole, door, hatch, cockpit, notch, cutout, irregular shape, blueprint, technical schematic, wireframe, CAD drawing, line art, monochrome line drawing, refrigerator appliance branding, pink, salmon, warm background, white background, beige background, building, architecture, tower, skyscraper, silo, chimney, lighthouse, rocket, robot, mecha, tank, military vehicle, humanoid figure, character, creature, car, vehicle, product photography, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality",
+          "seed": 23037,
+          "lora_weight": 0.7,
+          "prompt_id": "849559ce-afcc-4587-b9aa-432c79b88d40",
+          "workflow_hash": "7dc0e7ee8ff70538fdf58e1167a4a2582d47bbfae7e7b446409036d8fe3e4b9c"
+        },
+        {
+          "sub_index": 2,
           "label": "BREAKER PANEL -- GATE OBJECT",
           "prompt": "flat side-on prop concept reference sheet, orthographic game asset, no perspective, no vanishing point, Signal Tower interior environment props shown as a flat elevation silhouette. A single small wall-mounted breaker panel plate, flat institutional-green painted rectangle, three small square switches in a row on its face, mounted flush against a flat wall segment -- a switch-locked gate object, full sensor block when closed. Soviet brutalist Signal Tower interior, muted institutional green and near-black palette, hard value separation, flat unlit shading, no atmospheric haze, no depth of field, prop silhouette study, game asset reference sheet style, no background scene composition.",
           "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait, tower, building, skyscraper, robot, mecha, tank, vehicle, car, refrigerator, appliance, safe, vault, tall cabinet, humanoid, character",
           "seed": 21902,
           "lora_weight": 0.7,
-          "prompt_id": "c09b5226-5f8d-4fbe-a87a-005c87da90b5",
-          "workflow_hash": "b076a5c5e951c8461f550bdb39d37cbff3189cf014c36567e78ddbecd1017a24"
+          "prompt_id": "9aa9606d-1243-48a8-a21c-22a74e94c3ff",
+          "workflow_hash": "606af363aca677f0f26f1d336d434be3f13bb8903677a3c7cc292cde3a0a71dd"
         }
       ],
-      "prompt_id": "d136e316-2da4-48b0-aa4e-d259dceb810e,c09b5226-5f8d-4fbe-a87a-005c87da90b5",
-      "workflow_hash": "fee34142c633e3c4538df371436c8031d90bb961de3df07cc3ee9cb1feb982c7",
+      "prompt_id": "1b1e5030-355d-45fd-ba10-d72792e56e45,849559ce-afcc-4587-b9aa-432c79b88d40,9aa9606d-1243-48a8-a21c-22a74e94c3ff",
+      "workflow_hash": "e08c0f6f9ae370484a6cd5f22f187c59bc68ae3a2aff205469a8a8d9921ae676",
       "value_graded": false,
       "value_grade_factor": null
     },
@@ -85,7 +97,7 @@
       "prompt": "orthographic technical blueprint diagram of a single object, isolated on a plain flat backdrop, no scene, no perspective, no vanishing point. Crawlspace opening: a small dark rectangular hatch opening cut into a flat wall segment, single-occupant crawl height, interior rendered completely near-black and dark, only a thin lit entry edge visible, fully enclosed dark void -- a hiding spot, not a cover prop. Flat side-on elevation view, opaque dark silhouette. Soviet brutalist industrial palette, near-black and dark concrete-grey, hard value separation, flat unlit shading, technical illustration, blueprint diagram style, no gradients, no chrome, no photorealism, no humans, no vehicles.",
       "negative_prompt": "building, architecture, tower, car, vehicle, white background, product photography, bright, light-coloured, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure",
       "seed": 21203,
-      "prompt_id": "e35ebf2f-8551-4e33-9fa6-bca08a44461c",
+      "prompt_id": "19934696-1f96-439e-8d4d-4ff8df461552",
       "workflow_hash": "742996ea296637b30a3f2337131ce03c52529ec1910c781cf00fe2c59ab534e3",
       "value_graded": true,
       "value_grade_factor": 0.356256253863733
@@ -95,14 +107,14 @@
       "col": 1,
       "label": "HIDING ALCOVE -- HIDING SPOT",
       "class": "hiding",
-      "prompt": "orthographic technical blueprint diagram of a single object, isolated on a plain flat backdrop, no scene, no perspective, no vanishing point. Hiding alcove: a small dark rectangular recess niche cut into a flat wall segment, single-occupant standing height, interior rendered completely near-black and dark, only a thin lit entry edge visible, fully enclosed dark void -- a hiding spot, not a cover prop. Flat side-on elevation view, opaque dark silhouette. Soviet brutalist industrial palette, near-black and dark concrete-grey, hard value separation, flat unlit shading, technical illustration, blueprint diagram style, no gradients, no chrome, no photorealism, no humans, no vehicles.",
-      "negative_prompt": "building, architecture, tower, car, vehicle, white background, product photography, bright, light-coloured, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure, interior scene, room interior, furniture",
-      "seed": 21504,
-      "prompt_id": "cbe9cb4a-bd64-4729-a6b1-899802f436ce",
-      "workflow_hash": "92e35ef8f520cce2eb76a68d29d5bb3cc9788b398c01c5377c909668b620d67f",
+      "prompt": "single isolated game prop, flat side elevation view, orthographic, no perspective, no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, no text, no diagram, no documentation, no inset panels, no colour swatches. Hiding alcove: an empty rectangular recess cut straight into a flat concrete wall panel, single-occupant standing height and width, no door, no hatch, no doorway frame, no cover, no ornamentation, no emblem -- just a plain rectangular hole in the wall whose interior is rendered completely near-black and dark, only a thin lit edge visible around the opening rim where the recess meets the flat wall surface, a hiding spot for a person to stand inside. Soviet brutalist industrial palette, near-black and dark concrete-grey, hard value separation, flat unlit shading, one single object filling most of the frame, no gradients, no chrome, no photorealism, no humans, no vehicles.",
+      "negative_prompt": "text, watermark, caption, label, diagram, documentation, page layout, exploded diagram, inset panel, thumbnail, key, legend, logo, signature, multiple panels, side panel, sidebar, annotation, callout, door, gate, portal, doorway, hatch, frame, ornate, emblem, insignia, circular emblem, badge, decoration, character select, icon grid, blueprint, technical schematic, wireframe, CAD drawing, line art, monochrome line drawing, grid, repeating panels, facade, elevation of many bays, architectural facade, floor plan, multiple rooms, building, architecture, tower, skyscraper, car, vehicle, white background, product photography, bright, light-coloured, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, blurry, low quality, humanoid figure, interior scene, room interior, furniture",
+      "seed": 23121,
+      "prompt_id": "ab8ab47a-9e00-44f9-9d04-df17cd282704",
+      "workflow_hash": "789c0e4b319398a9bd091761efdffbb0f895b93c0284d9cabc67f336f00c763c",
       "value_graded": false,
       "value_grade_factor": null
     }
   ],
-  "_generator_note": "Five independent real txt2img+LoRA generations (EmptyLatentImage, denoise=1.0) across the four prop-class quadrants, each resized and pasted into its quadrant (or half-quadrant) with a typeset caption strip -- no prop geometry is drawn by code. A single four-class prompt was tried first (seeds 21140/21150/21160, see recipe git history) and each attempt lost the four distinct classes to the soviet_brutalism_style_v1 LoRA's strong whole-building bias (v1's own committed sheet shows the same bias -- a full tower rendered from a props-only prompt). Splitting generation per class fixed three of the four; the transformer-housings + breaker-panel quadrant kept losing its two distinct sub-objects to the same whole-building bias even after per-class splitting (six single-image attempts: mecha/robot parts, safes, an icon grid, humanoid green towers, small building facades -- see recipe git history seeds 21201/21212/21302/21402/21502/21602/21702/21802), so that one quadrant is itself split into two independent sub-generations -- transformer housings alone, breaker panel alone -- placed side by side, the same fix applied one level narrower. Hiding-spot panels get a global brightness value-grading pass (ImageEnhance.Brightness, no shape drawn) only if the raw generation didn't already clear the +15 luma cover-vs-hiding gate (T-0223) -- see each panel's `value_graded`/`value_grade_factor` fields above."
+  "_generator_note": "Six independent real txt2img+LoRA generations (EmptyLatentImage, denoise=1.0), every one at the sheet's own 0.70 style LoRA weight, across the four prop-class quadrants, each resized and pasted into its quadrant (or third-quadrant slice) with a typeset caption strip -- no prop geometry is drawn by code. A single four-class prompt was tried first (seeds 21140/21150/21160, see recipe git history) and each attempt lost the four distinct classes to the soviet_brutalism_style_v1 LoRA's strong whole-building bias (v1's own committed sheet shows the same bias -- a full tower rendered from a props-only prompt). Splitting generation per class fixed three of the four; the transformer-housings + breaker-panel quadrant kept losing its two distinct sub-objects to the same whole-building bias even after per-class splitting (many single-image attempts, including one that disabled the LoRA entirely and was rejected on review for reading as a different visual vocabulary from the rest of the sheet -- see recipe git history seeds 21201/21212/21302/21402/21502/21602/21702/21802/21903/22001/22101), so that one quadrant is itself split into three independent sub-generations -- two single transformer-housing units (varying only seed, both at 0.70) plus the breaker panel -- placed side by side, the same fix applied one level narrower and without deviating from the sheet's style lock. Hiding-spot panels get a global brightness value-grading pass (ImageEnhance.Brightness, no shape drawn) only if the raw generation didn't already clear the +15 luma cover-vs-hiding gate (T-0223) -- see each panel's `value_graded`/`value_grade_factor` fields above."
 }

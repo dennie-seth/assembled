@@ -281,6 +281,40 @@ def test_v3_recipe_extends_v1_lora(v3_recipe, v1_recipe):
     )
 
 
+def test_v3_every_generation_uses_the_declared_lora_weight(v3_recipe):
+    """Acceptance criterion 4 ("same checkpoint, style LoRA, palette language,
+    framing") is a claim about every real generation this sheet submits, not
+    just the recipe's top-level declared field -- a sub-panel can override
+    its own effective weight (`generate_sub_panel`'s `lora_strength` escape
+    hatch) without the top-level `lora_strength` changing at all, which is
+    exactly how the previous cut of this sheet shipped one sub-generation at
+    LoRA weight 0.0 (an entirely different visual vocabulary from the rest
+    of the sheet) while `test_v3_recipe_extends_v1_lora` above stayed green
+    (2026-08-30 review, run 2). This test walks every panel AND every
+    sub_panel's effective weight -- `sub_panel.get("lora_strength", declared)`,
+    the same lookup the generator itself uses -- so a future silent
+    weight-zero (or any other) deviation fails here even if it never touches
+    the top-level field."""
+    declared = v3_recipe["lora_strength"]
+    for panel in v3_recipe["panels"]:
+        if "sub_panels" in panel:
+            for sub in panel["sub_panels"]:
+                effective = sub.get("lora_strength", declared)
+                assert effective == declared, (
+                    f"sub-panel {sub.get('label', '?')!r} in panel "
+                    f"({panel['row']},{panel['col']}) runs at LoRA weight {effective}, "
+                    f"not the sheet's declared {declared} -- every real generation must "
+                    "share the same style lock unless a human has explicitly approved "
+                    "a deviation."
+                )
+        else:
+            effective = panel.get("lora_strength", declared)
+            assert effective == declared, (
+                f"panel {panel.get('label', '?')!r} ({panel['row']},{panel['col']}) runs at "
+                f"LoRA weight {effective}, not the sheet's declared {declared}."
+            )
+
+
 def test_v3_recipe_extends_v1_dimensions(v3_recipe, v1_recipe):
     assert v3_recipe["width"] == v1_recipe["width"]
     assert v3_recipe["height"] == v1_recipe["height"]

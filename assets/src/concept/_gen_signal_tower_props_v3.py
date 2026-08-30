@@ -11,7 +11,7 @@ and the txt2img+LoRA graph shape mirrors
 (`sdxl_txt2img_lora_v1` template node IDs) exactly, so the two stay
 interchangeable even though this script doesn't import that package.
 
-**Five independent real generations, not one.** A single prompt describing
+**Six independent real generations, not one.** A single prompt describing
 all four prop classes at once (seeds 21140, 21150, 21160 -- see git history
 of `signal_tower_props_concept_sheet_v3.recipe.json`) repeatedly lost the
 distinct classes to the `soviet_brutalism_style_v1` LoRA's strong
@@ -25,19 +25,24 @@ dominate its own sampling run -- the card's acceptance criterion "record
 the ComfyUI prompt_id(s)" anticipates exactly this (plural). The
 transformer-housings + breaker-panel quadrant kept losing its own two
 distinct sub-objects to the same whole-building bias even after per-class
-splitting (nine further single-image re-rolls -- mecha/robot parts, safes,
+splitting (many further single-image re-rolls -- mecha/robot parts, safes,
 an icon grid, humanoid green towers, small building facades, a rocket/silo
-form -- see recipe git history seeds 21201/21212/21302/21402/21502/21602/
-21702/21802/21903/22001), so that one quadrant is itself split into two
-independent sub-generations (`panels[N].sub_panels`) -- transformer
-housings alone (at LoRA weight 0.0, since the bias persisted even at
-reduced weight and only fully cleared with the LoRA off entirely for that
-one sub-generation; the sheet's own declared/continuity-tested
-`lora_strength` stays 0.70), breaker panel alone (at the sheet's usual
-0.70) -- placed side by side. Every panel's (and sub-panel's) geometry
-still comes out of the diffusion model; assembling the already-generated
-images onto one canvas (resize + paste + a solid-colour caption strip)
-draws no prop geometry of its own, so it is not the `_composite_props_v2.py`
+form, and (2026-08-30 reviewer fix run 3) a first attempt at running that
+sub-generation with the LoRA disabled entirely, which cleared the
+whole-building bias but produced a different visual vocabulary from the
+rest of the sheet and was rejected on review -- see recipe git history
+seeds 21201/21212/21302/21402/21502/21602/21702/21802/21903/22001/22101),
+so that one quadrant is itself split into three independent
+sub-generations (`panels[1].sub_panels`) -- two single transformer-housing
+units generated independently (varying only seed) plus the breaker panel,
+placed side by side, **every one of them at the sheet's own 0.70 style
+LoRA weight** -- avoiding the whole-building bias here came from
+narrowing the prompt to one plain featureless utility box per generation
+and heavily negating multi-object/diagram/furniture drift, not from
+touching the LoRA weight. Every panel's (and sub-panel's) geometry still
+comes out of the diffusion model; assembling the already-generated images
+onto one canvas (resize + paste + a solid-colour caption strip) draws no
+prop geometry of its own, so it is not the `_composite_props_v2.py`
 anti-pattern this card exists to replace -- that script hand-drew every
 prop's shape in code. See `docs/design/13-asset-pipeline.md` §6.9 / this
 card's acceptance: "Labels/captions may be typeset over generated art, but
@@ -367,9 +372,13 @@ def generate_sub_panel(
     A sub-panel may declare its own `lora_strength` to override the sheet's
     recipe-level weight for that one generation only (the sheet's own
     top-level/declared `lora_strength` -- what the v1-continuity test
-    compares -- is unaffected). Used for the transformer-housings sub-panel,
-    where the LoRA's whole-building bias persisted at the sheet's usual 0.70
-    even after per-class splitting (see `_generator_note`)."""
+    compares -- is unaffected). Not currently used by any committed
+    sub-panel -- an earlier attempt used this to disable the LoRA for the
+    transformer-housings sub-panel and was rejected on review for drifting
+    to a different visual vocabulary (see `_generator_note`); every
+    committed sub-panel now runs at the sheet's own 0.70 weight. Kept as a
+    documented escape hatch for a future prop class that genuinely needs a
+    deliberate, human-reviewed deviation -- not a default to reach for."""
     effective_weight = sub.get("lora_strength", lora_weight)
     img, prompt_id, graph_hash = generate_single(
         recipe,
@@ -511,16 +520,16 @@ def main() -> int:
         "width": raw["width"],
         "height": raw["height"],
         "_top_level_fields_are_sheet_summary": (
-            "This entry covers FIVE independent generations, not one. The top-level "
+            "This entry covers SIX independent generations, not one. The top-level "
             "prompt/negative_prompt/seed/workflow_hash above describe the assembled "
             "sheet as a whole (a manifest, matching this file's own `prompt` field), "
             "not any single CLIPTextEncode/KSampler call -- width/height are the final "
             "assembled canvas size (read from the recipe and used to build the canvas "
             "in `assemble()`), not any one generation's sampling resolution (each panel "
             "samples at panel_width x panel_height, see `panels` below). The authoritative "
-            "per-generation prompt/seed/workflow_hash/prompt_id for each of the five real "
+            "per-generation prompt/seed/workflow_hash/prompt_id for each of the six real "
             "ComfyUI jobs are the corresponding fields inside `panels[]` (the transformer/"
-            "breaker quadrant's two jobs are under `panels[1].sub_panels`)."
+            "breaker quadrant's three jobs are under `panels[1].sub_panels`)."
         ),
         "workflow_hash": combined_workflow_hash,
         "prompt_id": ",".join(prompt_ids),
@@ -550,24 +559,27 @@ def main() -> int:
             for p in panels_out
         ],
         "_generator_note": (
-            "Five independent real txt2img+LoRA generations (EmptyLatentImage, denoise=1.0) "
-            "across the four prop-class quadrants, each resized and pasted into its quadrant "
-            "(or half-quadrant) with a typeset caption strip -- no prop geometry is drawn by "
-            "code. A single four-class prompt was tried first (seeds 21140/21150/21160, see "
-            "recipe git history) and each attempt lost the four distinct classes to the "
+            "Six independent real txt2img+LoRA generations (EmptyLatentImage, denoise=1.0), "
+            "every one at the sheet's own 0.70 style LoRA weight, across the four prop-class "
+            "quadrants, each resized and pasted into its quadrant (or third-quadrant slice) "
+            "with a typeset caption strip -- no prop geometry is drawn by code. A single "
+            "four-class prompt was tried first (seeds 21140/21150/21160, see recipe git "
+            "history) and each attempt lost the four distinct classes to the "
             "soviet_brutalism_style_v1 LoRA's strong whole-building bias (v1's own committed "
             "sheet shows the same bias -- a full tower rendered from a props-only prompt). "
             "Splitting generation per class fixed three of the four; the transformer-housings "
             "+ breaker-panel quadrant kept losing its two distinct sub-objects to the same "
-            "whole-building bias even after per-class splitting (six single-image attempts: "
-            "mecha/robot parts, safes, an icon grid, humanoid green towers, small building "
-            "facades -- see recipe git history seeds 21201/21212/21302/21402/21502/21602/21702/21802), "
-            "so that one quadrant is itself split into two independent sub-generations -- "
-            "transformer housings alone, breaker panel alone -- placed side by side, the same "
-            "fix applied one level narrower. Hiding-spot panels get a global brightness "
-            "value-grading pass (ImageEnhance.Brightness, no shape drawn) only if the raw "
-            "generation didn't already clear the +15 luma cover-vs-hiding gate (T-0223) -- see "
-            "each panel's `value_graded`/`value_grade_factor` fields above."
+            "whole-building bias even after per-class splitting (many single-image attempts, "
+            "including one that disabled the LoRA entirely and was rejected on review for "
+            "reading as a different visual vocabulary from the rest of the sheet -- see recipe "
+            "git history seeds 21201/21212/21302/21402/21502/21602/21702/21802/21903/22001/22101), "
+            "so that one quadrant is itself split into three independent sub-generations -- two "
+            "single transformer-housing units (varying only seed, both at 0.70) plus the "
+            "breaker panel -- placed side by side, the same fix applied one level narrower and "
+            "without deviating from the sheet's style lock. Hiding-spot panels get a global "
+            "brightness value-grading pass (ImageEnhance.Brightness, no shape drawn) only if "
+            "the raw generation didn't already clear the +15 luma cover-vs-hiding gate "
+            "(T-0223) -- see each panel's `value_graded`/`value_grade_factor` fields above."
         ),
     }
     OUT_PROV.write_text(json.dumps(provenance, indent=2) + "\n")
