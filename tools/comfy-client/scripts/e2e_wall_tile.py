@@ -74,7 +74,15 @@ def main() -> int:
     FINAL_DIR.mkdir(parents=True, exist_ok=True)
     final_path = FINAL_DIR / f"{recipe.name}_16px.png"
     print(f"descending {result.path} -> {final_path} (target_size={TARGET_SIZE}) ...")
-    descend(result.path, palette=palette, target_size=TARGET_SIZE, out_path=final_path)
+    # background_index=None: a base-field tile is opaque by design (§3.4/§3.7).
+    # A transparent floor tile is a hole in the world, not a cutout.
+    descend(
+        result.path,
+        palette=palette,
+        target_size=TARGET_SIZE,
+        out_path=final_path,
+        background_index=None,
+    )
     print(f"  final -> {final_path}")
 
     palette_bytes = PALETTE_PATH.read_bytes()

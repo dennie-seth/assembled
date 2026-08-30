@@ -51,9 +51,11 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "asset-gate" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from asset_gate import palette as asset_gate_palette  # noqa: E402
+from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 # Reused directly from Arm A (T-0228) -- checkpoint/ControlNet identifiers,
 # the procedural OpenPose skeleton renderer, HTTP client helpers, and the
@@ -422,7 +424,7 @@ def run_attempt(
     raw = Image.open(cell_raw_path).convert("RGB")
     main_img = Image.open(out_dir / "main_384.png").convert("RGB")
     indexed = build_indexed_cell(raw, main_img, palette)
-    indexed.save(out_dir / "cell_48_indexed.png")
+    save_sprite_sheet(indexed, out_dir / "cell_48_indexed.png")
 
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
@@ -504,7 +506,7 @@ def reprocess_attempt_cutout(attempt: int) -> dict:
     raw = Image.open(out_dir / "cell_48_raw.png").convert("RGB")
     main_img = Image.open(out_dir / "main_384.png").convert("RGB")
     indexed = build_indexed_cell(raw, main_img, palette)
-    indexed.save(out_dir / "cell_48_indexed.png")
+    save_sprite_sheet(indexed, out_dir / "cell_48_indexed.png")
 
     provenance["background_cutout_applied"] = True
     provenance["cutout_method"] = CUTOUT_METHOD_DESCRIPTION

@@ -28,11 +28,11 @@
     "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
     "concept_card": "T-0209",
     "comfyui_prompt_id": "e931577d-b764-44c7-a9c1-48de0d5efb78",
-    "method": "Single 384x384 generation: procedurally drawn OpenPose-format skeleton (gen_arm_a_idle_T0228.draw_pose_skeleton_cell) -> ControlNetApplyAdvanced (xinsir OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, chained) -> IPAdapterAdvanced (PLUS, T-0209 concept, applied after both LoRAs) -> KSampler -> area descent to 48x48 -> Oklab-nearest palette quantization (dithering off, \u00a73.1) -> per-pixel background cutout (see cutout_method) -> orphan cleanup. This is the only diffusion-model call in the entire hybrid pipeline (T-0252) -- every other animation frame is derived from this one frame's own pixels by char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252.",
+    "method": "Single 384x384 generation: procedurally drawn OpenPose-format skeleton (gen_arm_a_idle_T0228.draw_pose_skeleton_cell) -> ControlNetApplyAdvanced (xinsir OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, chained) -> IPAdapterAdvanced (PLUS, T-0209 concept, applied after both LoRAs) -> KSampler -> area descent to 48x48 -> Oklab-nearest palette quantization (dithering off, §3.1) -> per-pixel background cutout (see cutout_method) -> orphan cleanup. This is the only diffusion-model call in the entire hybrid pipeline (T-0252) -- every other animation frame is derived from this one frame's own pixels by char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252.",
     "generator": "assets/src/character/gen_hybrid_source_idle_T0252.py",
     "card": "T-0252",
-    "bake_off_arm": "round 2, hybrid (HANDOFF \u00a724-e)",
-    "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5",
+    "bake_off_arm": "round 2, hybrid (HANDOFF §24-e)",
+    "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5",
     "attempt": 3,
     "gpu_seconds": 120.1,
     "layout": {
@@ -105,8 +105,8 @@
   "total_comfyui_generations": 1,
   "generator": "assets/src/character/gen_hybrid_idle_T0252.py",
   "card": "T-0252",
-  "bake_off_arm": "round 2, hybrid (HANDOFF \u00a724-e) -- not a new bake-off arm competing on DL-21's original criteria, a mechanism change layered on top of the round-1 result",
-  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5",
+  "bake_off_arm": "round 2, hybrid (HANDOFF §24-e) -- not a new bake-off arm competing on DL-21's original criteria, a mechanism change layered on top of the round-1 result",
+  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5",
   "attempt": 3,
   "mechanical_gate_passed": true,
   "frame_deltas": [
@@ -288,5 +288,15 @@
     ]
   },
   "palette_source": "assets/final/palette/home_palette.json",
-  "promoted": true
+  "promoted": true,
+  "transparency": {
+    "format": "indexed_png_trns",
+    "background_index": 0,
+    "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
+    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "branch": "feature/sprite-true-transparency",
+    "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
+    "background_px": 16625,
+    "interior_background_px": 81
+  }
 }
