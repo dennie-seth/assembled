@@ -35,6 +35,14 @@ record, not decisive — round 1's decision above is unchanged by it.
 | Pose-authority generation vs. `player_identity_v2` (mechanism change, not a new bake-off arm) | PASS (0.0522–0.2573, best of 3 measured); does not beat Arm C's 0.072–0.112 | 3/8 measured (5/8 used incl. 2 incomplete) | 31.8 | 01:04 | $0.00 | Per-frame single-figure generation, script-authored OpenPose skeleton per frame, ControlNet-conditioned. See `ARM_POSE_AUTHORITY_ATTEMPT_LOG_T0249.md` and `ROUND2_POSE_AUTHORITY_REPORT_T0249.md`. |
 | **Card total** | — | — | **31.8** | **01:04** | **$0.00** | Copied verbatim from `ROUND2_POSE_AUTHORITY_REPORT_T0249.md`'s "Cost" section. Per the round-2 override, cost here is recorded for the record, not decisive — round 1's decision above is unchanged by it, and this card's own result (clears the 0.30 gate, does not beat the 0.072–0.112 bar) is unchanged by cost either way. |
 
+## Round 2 (T-0250, HANDOFF §24-c — chained img2img)
+
+| Stage | Criterion 2 (frame-delta gate) | Attempts | GPU minutes | Wall-clock | $ | Notes |
+|---|---|---|---|---|---|---|
+| Denoise sweep (seed 31416, denoise 0.15/0.25/0.30/0.35/0.45, everything else fixed) | FAIL, all 5 (0.30/0.35/0.37/0.39/0.42 max ratios, all at the same (0,1)->(0,2) transition, rising monotonically with denoise) | 5/8 | 52.0 | 00:52 | $0.00 | See `DENOISE_SWEEP_REPORT_T0250.md`, `DENOISE_SWEEP_T0250.json`. |
+| Seed-sensitivity check (same denoise=0.15, seed 31420 instead of 31416) | PASS (0.0301-0.2134); does not beat Arm C's 0.072-0.112 | 1/8 | 10.4 | 00:10 | $0.00 | Promoted attempt. Same seed-sensitivity failure mode as Arm B/T-0229 and T-0248's own re-run against `player_identity_v2`. |
+| **Card total** | — | 6/8 | **62.4** | **01:04** | **$0.00** | Copied verbatim from `ROUND2_CHAINED_REPORT_T0250.md`'s "Cost" section. Per the round-2 override, cost here is recorded for the record, not decisive — round 1's decision above is unchanged by it, and this card's own result (clears the 0.30 gate, does not beat the 0.072-0.112 bar) is unchanged by cost either way. |
+
 **Reading this table (mechanical, not the human verdict):** Arm A never reached
 a sheet passing both criteria within the 8-attempt cap, so it is closed as a
 criterion-3 failure regardless of any criterion-1 read (DL-21's attempt-cap

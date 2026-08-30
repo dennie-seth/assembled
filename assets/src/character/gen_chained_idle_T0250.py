@@ -230,9 +230,17 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
 
 DEFAULT_DENOISE_JUSTIFICATION = (
     "Chosen from the denoise sweep (assets/src/character/DENOISE_SWEEP_REPORT_T0250.md, "
-    "DENOISE_SWEEP_T0250.json): the lowest-drift value inside the ~0.25-0.35 band that still "
-    "clears the round-2 gate, sampled alongside points below and above the band that show the "
-    "two failure-mode edges (motion stops reading below the band; drift returns above it)."
+    "DENOISE_SWEEP_T0250.json): NOT the naive 'lowest-drift value inside the ~0.25-0.35 band' "
+    "the sweep set out to find -- every denoise sampled on seed 31416 (0.15, 0.25, 0.30, 0.35, "
+    "0.45) FAILS the 0.30 cap at the same (0,1)->(0,2) transition, with that transition's ratio "
+    "rising monotonically with denoise (0.308 -> 0.348 -> 0.366 -> 0.390 -> 0.417). denoise=0.15 "
+    "is chosen because it is the least-bad point in that monotonic trend, matching the "
+    "still-reads-as-motion / drift-returns shape the sweep was designed to find, but the sheet "
+    "actually promoted here reruns that same denoise=0.15 recipe on seed 31420 (attempt 6) -- a "
+    "seed-sensitivity check, the same diagnostic Arm B/T-0248 needed -- which clears the cap "
+    "(0.0301-0.2134) where seed 31416 does not. The chosen denoise is therefore justified by the "
+    "sweep; the chosen seed is not part of the swept variable and is reported as a separate, "
+    "explicit finding, not folded into the denoise story."
 )
 
 
@@ -541,6 +549,20 @@ def write_sweep_report(attempts: list[int], chosen_attempt: int) -> None:
     and assembles the committed sweep report + data file the acceptance
     criteria require -- the measured frame-delta per sampled denoise value,
     not a single chosen value asserted after the fact.
+
+    The prose below is generated from the actual measured numbers, not a
+    fixed assumed narrative -- the original draft of this function asserted
+    a canned "low denoise barely moves, high denoise drifts, something in
+    the middle passes" story before a single real attempt had been run.
+    The real sweep (attempts 1-5, seed 31416, denoise 0.15/0.25/0.30/0.35/
+    0.45) did not match that story: every sampled denoise FAILS the 0.30
+    cap on that seed, all at the same (0,1)->(0,2) transition, with that
+    transition's ratio rising monotonically with denoise. A 6th attempt
+    (seed 31420, same denoise=0.15) is a separate seed-sensitivity check,
+    not part of the swept series -- it is included in `points` (so the
+    promoted sheet's own denoise/seed resolve against this report) but
+    excluded from the "swept" subset used to describe the low/high edges,
+    since only the majority-seed points hold every other parameter fixed.
     """
     points = []
     for attempt in attempts:
@@ -559,39 +581,85 @@ def write_sweep_report(attempts: list[int], chosen_attempt: int) -> None:
         )
     points.sort(key=lambda p: p["denoise"])
 
-    lowest = points[0]
-    highest = points[-1]
+    seed_tally: dict[int, int] = {}
+    for p in points:
+        seed_tally[p["seed"]] = seed_tally.get(p["seed"], 0) + 1
+    primary_seed = max(seed_tally, key=lambda s: seed_tally[s])
+    swept = [p for p in points if p["seed"] == primary_seed]
+    off_seed = [p for p in points if p["seed"] != primary_seed]
+
+    lowest = swept[0]
+    highest = swept[-1]
     chosen = next(p for p in points if p["attempt"] == chosen_attempt)
 
+    trend = ", ".join(f"{p['denoise']}:{p['frame_delta_range'][1]:.3f}" for p in swept)
+    low_gate_sentence = (
+        "This clears the 0.30 cap."
+        if lowest["mechanical_gate_passed"]
+        else (
+            "This does NOT clear the 0.30 cap -- the worst transition, (0,1)->(0,2), a "
+            "same-row pose-to-pose step rather than a row-wrap, already exceeds it even at "
+            "the lowest denoise tested."
+        )
+    )
     failure_mode_low = (
-        f"At denoise={lowest['denoise']}, the img2img pass barely moves off its init image: "
-        f"measured frame-delta range {lowest['frame_delta_range'][0]:.4f}-"
-        f"{lowest['frame_delta_range'][1]:.4f}, well under Arm C's own 0.072 floor for "
-        "legitimate breathing/weight-shift motion. The authored pose from pose_rig_T0249 is "
-        "still applied to the ControlNet each frame, but at this denoise the sampler cannot "
-        "move the silhouette far enough from its predecessor to make that pose read as "
-        "motion -- the sheet would look like the same still frame repeated nine times."
+        f"At denoise={lowest['denoise']} (seed {lowest['seed']}), measured frame-delta range "
+        f"{lowest['frame_delta_range'][0]:.4f}-{lowest['frame_delta_range'][1]:.4f}. "
+        f"{low_gate_sentence} "
+        "Motion still visibly reads at this denoise on every other transition (the other seven "
+        "deltas stay well under the cap) -- "
+        "the failure is concentrated on one problem transition, not a stalled sheet that never "
+        "moves. This does not match the a-priori assumption that the lowest denoise would be "
+        "'too low to read as motion': it is not too low, it is simply not low enough to keep "
+        f"that one transition under the cap on seed {lowest['seed']}."
     )
     failure_mode_high = (
-        f"At denoise={highest['denoise']}, the img2img pass has enough freedom to "
-        "re-invent large parts of the figure each frame instead of only applying the next "
-        f"pose to the inherited one: measured frame-delta range "
-        f"{highest['frame_delta_range'][0]:.4f}-{highest['frame_delta_range'][1]:.4f}"
-        f"{'' if highest['beats_030_cap'] else ', which exceeds the round-2 0.30 cap outright'}"
-        ". This is the same drift failure mode §24-b's independently-sampled frames already "
-        "showed -- chaining stops suppressing it once denoise is high enough to approach a "
-        "fresh generation in practice."
+        f"At denoise={highest['denoise']} (seed {highest['seed']}), measured frame-delta range "
+        f"{highest['frame_delta_range'][0]:.4f}-{highest['frame_delta_range'][1]:.4f}, the worst "
+        "point in the sweep. The same (0,1)->(0,2) transition drives the failure at every "
+        f"denoise tested on seed {primary_seed}, and its own ratio rises monotonically with "
+        f"denoise across the swept series ({trend}) -- more freedom in the img2img pass lets the "
+        "sampler re-invent more of the figure at that specific pose transition, the same drift "
+        "failure mode independent per-frame generation (§24-b/T-0249) already showed, just "
+        "concentrated on one transition instead of spread across all eight."
     )
+    seed_sensitivity_note = ""
+    if off_seed:
+        best_off = min(off_seed, key=lambda p: p["frame_delta_range"][1])
+        matching_swept = next((p for p in swept if p["denoise"] == best_off["denoise"]), None)
+        seed_sensitivity_note = (
+            f"\n## Seed sensitivity (not part of the denoise sweep)\n\n"
+            f"Attempt {best_off['attempt']} reruns denoise={best_off['denoise']} with seed "
+            f"{best_off['seed']} instead of {primary_seed} -- everything else in the recipe "
+            "unchanged. Measured frame-delta range "
+            f"{best_off['frame_delta_range'][0]:.4f}-{best_off['frame_delta_range'][1]:.4f}, "
+            f"which {'clears' if best_off['beats_030_cap'] else 'does not clear'} the 0.30 cap, "
+            + (
+                f"versus seed {primary_seed} at the same denoise "
+                f"({matching_swept['frame_delta_range'][0]:.4f}-"
+                f"{matching_swept['frame_delta_range'][1]:.4f}, "
+                f"{'PASS' if matching_swept['mechanical_gate_passed'] else 'FAIL'}). "
+                if matching_swept
+                else ""
+            )
+            + "This is the same seed-sensitivity failure mode Arm B (T-0229) and its T-0248 "
+            "re-run against player_identity_v2 both already showed: the recipe is not "
+            "seed-invariant, and which seed is used matters as much as which denoise is used. "
+            "The chosen/promoted attempt below uses this off-seed result, not a point from the "
+            "denoise-only-varies sweep, because no point in that sweep clears the gate at all.\n"
+        )
 
     data = {
         "card": "T-0250",
         "based_on_card": "T-0249",
+        "primary_seed": primary_seed,
         "seed": chosen["seed"],
         "points": points,
         "band_low": 0.25,
         "band_high": 0.35,
         "chosen_denoise": chosen["denoise"],
         "chosen_attempt": chosen_attempt,
+        "chosen_seed_is_off_sweep": chosen["seed"] != primary_seed,
         "failure_mode_low": failure_mode_low,
         "failure_mode_high": failure_mode_high,
         "arm_c_benchmark": list(ARM_C_BENCHMARK),
@@ -604,24 +672,29 @@ def write_sweep_report(attempts: list[int], chosen_attempt: int) -> None:
         "Frame 0 generated fresh; frames 1-8 img2img-chained from their predecessor at the "
         "swept denoise value, everything else (seed, ControlNet strength/end, style/identity "
         "LoRA weights) held constant across every sampled point, per the round-2 rules "
-        "(HANDOFF §24.3) -- only the value under test changes between attempts.\n\n",
-        "| Attempt | Denoise | Frame-delta range | Mechanical gate (0.30 cap) | "
+        "(HANDOFF §24.3) -- only the value under test changes between attempts in the swept "
+        f"series (seed {primary_seed}). A separate seed-sensitivity check is reported below the "
+        "table, not folded into the sweep story.\n\n",
+        "| Attempt | Seed | Denoise | Frame-delta range | Mechanical gate (0.30 cap) | "
         "Beats Arm C (0.072-0.112) |\n",
-        "|---|---|---|---|---|\n",
+        "|---|---|---|---|---|---|\n",
     ]
     for p in points:
         lo, hi = p["frame_delta_range"]
         lines.append(
-            f"| {p['attempt']} | {p['denoise']} | {lo:.4f}-{hi:.4f} "
+            f"| {p['attempt']} | {p['seed']} | {p['denoise']} | {lo:.4f}-{hi:.4f} "
             f"| {'PASS' if p['mechanical_gate_passed'] else 'FAIL'} "
             f"| {'yes' if p['beats_arm_c_benchmark'] else 'no'} |\n"
         )
-    lines.append("\n## Failure mode, low end (motion stops reading)\n\n")
+    lines.append("\n## Failure mode, low end of the swept band\n\n")
     lines.append(failure_mode_low + "\n\n")
-    lines.append("## Failure mode, high end (drift returns)\n\n")
-    lines.append(failure_mode_high + "\n\n")
+    lines.append("## Failure mode, high end of the swept band (drift returns)\n\n")
+    lines.append(failure_mode_high + "\n")
+    if seed_sensitivity_note:
+        lines.append(seed_sensitivity_note)
     lines.append(
-        f"## Chosen value: denoise={chosen['denoise']} (attempt {chosen_attempt})\n\n"
+        f"\n## Chosen value: denoise={chosen['denoise']}, seed={chosen['seed']} "
+        f"(attempt {chosen_attempt})\n\n"
     )
     lines.append(DEFAULT_DENOISE_JUSTIFICATION + "\n\n")
     lo, hi = chosen["frame_delta_range"]

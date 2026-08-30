@@ -1,0 +1,92 @@
+{
+  "card": "T-0250",
+  "based_on_card": "T-0249",
+  "primary_seed": 31416,
+  "seed": 31420,
+  "points": [
+    {
+      "attempt": 1,
+      "denoise": 0.15,
+      "seed": 31416,
+      "frame_delta_range": [
+        0.05066250974279034,
+        0.30807453416149067
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false
+    },
+    {
+      "attempt": 6,
+      "denoise": 0.15,
+      "seed": 31420,
+      "frame_delta_range": [
+        0.030136986301369864,
+        0.21335379892555642
+      ],
+      "mechanical_gate_passed": true,
+      "beats_030_cap": true,
+      "beats_arm_c_benchmark": false
+    },
+    {
+      "attempt": 2,
+      "denoise": 0.25,
+      "seed": 31416,
+      "frame_delta_range": [
+        0.03895131086142322,
+        0.34813753581661894
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false
+    },
+    {
+      "attempt": 3,
+      "denoise": 0.3,
+      "seed": 31416,
+      "frame_delta_range": [
+        0.027982326951399118,
+        0.36644295302013424
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false
+    },
+    {
+      "attempt": 4,
+      "denoise": 0.35,
+      "seed": 31416,
+      "frame_delta_range": [
+        0.02710413694721826,
+        0.389937106918239
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false
+    },
+    {
+      "attempt": 5,
+      "denoise": 0.45,
+      "seed": 31416,
+      "frame_delta_range": [
+        0.026243093922651933,
+        0.4170168067226891
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false
+    }
+  ],
+  "band_low": 0.25,
+  "band_high": 0.35,
+  "chosen_denoise": 0.15,
+  "chosen_attempt": 6,
+  "chosen_seed_is_off_sweep": true,
+  "failure_mode_low": "At denoise=0.15 (seed 31416), measured frame-delta range 0.0507-0.3081. This does NOT clear the 0.30 cap -- the worst transition, (0,1)->(0,2), a same-row pose-to-pose step rather than a row-wrap, already exceeds it even at the lowest denoise tested. Motion still visibly reads at this denoise on every other transition (the other seven deltas stay well under the cap) -- the failure is concentrated on one problem transition, not a stalled sheet that never moves. This does not match the a-priori assumption that the lowest denoise would be 'too low to read as motion': it is not too low, it is simply not low enough to keep that one transition under the cap on seed 31416.",
+  "failure_mode_high": "At denoise=0.45 (seed 31416), measured frame-delta range 0.0262-0.4170, the worst point in the sweep. The same (0,1)->(0,2) transition drives the failure at every denoise tested on seed 31416, and its own ratio rises monotonically with denoise across the swept series (0.15:0.308, 0.25:0.348, 0.3:0.366, 0.35:0.390, 0.45:0.417) -- more freedom in the img2img pass lets the sampler re-invent more of the figure at that specific pose transition, the same drift failure mode independent per-frame generation (\u00a724-b/T-0249) already showed, just concentrated on one transition instead of spread across all eight.",
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "max_frame_delta_cap": 0.3
+}
