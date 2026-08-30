@@ -185,6 +185,23 @@ resume from and retrained from step 0.
 | WT-4 | A fresh card — no prior worktree, or a worktree holding no allowlisted artifacts — is a clean no-op: no cache directory is created and worktree creation is unchanged. | The overwhelming majority of cards generate nothing worth preserving. The mechanism must be invisible to them, including leaving no empty directories behind for the reaper or the integrity checker to puzzle over. | ✅ Covered — `gitOps.test.js` "leaves a fresh card with no prior worktree completely unaffected", `artifactPreservation.test.js` (absent worktree, and a worktree with no allowlisted artifacts). |
 | WT-5 | The cache cannot grow without bound: it is purged for a card that reaches `done`/`retired`, each capture replaces that card's previous snapshot rather than accumulating, and an LRU bound caps how many cards' caches can coexist. A capture that finds *nothing* leaves an existing cache untouched. | Checkpoint sets run to gigabytes; an unbounded cache would quietly fill the disk the board and the GPU pipeline share. The "empty capture never clears" rule is the counterpart safety property: a reclaim that moved artifacts out and then crashed must not have its cache wiped by the next run's empty capture — that would destroy exactly what this exists to save. | ✅ Covered — `httpApi.artifactCache.test.js` (purge on `done`/`retired`, kept for in-flight statuses, other cards untouched), `artifactPreservation.test.js` (`pruneArtifactCache` LRU, one-generation replacement, empty-capture-keeps-existing-cache). |
 
+## 9. Character-generation quality reference (asset pipeline)
+
+Unlike §§1–8, this section is not about the board tool — it pins a standing rule about the
+**asset pipeline's** character-generation outputs, recorded here because this file is where
+this project keeps machine-checkable invariants. Its permanent home is
+`docs/design/13-asset-pipeline.md` §3.5 / HANDOFF §24, which is a design-pass edit deferred by
+DL-22, DL-24 and DL-25 — noted so the duplication is deliberate and temporary, not a fork.
+
+Source: **DL-25** (`docs/decision-log.md`), the round-2 character decision, recording
+@DennieSeth's standing guidance: *"Arm-C benchmark will never probably be beaten, but we should
+always verify against it."*
+
+| ID | Invariant | Why | Coverage |
+|----|-----------|-----|----------|
+| CHR-1 | Every character-generation output records **both** its own frame-delta range **and** its comparison against the Arm-C benchmark (0.072–0.112) in its committed provenance sidecar — `frame_delta_range`, `beats_arm_c_benchmark` and the `arm_c_benchmark` bounds it was compared against. The comparison is **recorded, not deciding**. | The benchmark's value is diagnostic, not gating. Arm C (T-0230, deterministic seeded script) is the tightest frame-delta this pipeline has ever produced, and a generative sheet drifting far from the winner's ~0.16 is a signal something broke — but only if the number is on every sheet. DL-25 chose §24-e (0.1576–0.1816) knowing it does **not** beat the benchmark; the number is kept as a permanent quality reference precisely because it is no longer a pass/fail bar and would otherwise quietly stop being written. | ⚠️ **Partially held, by convention only.** The three round-2 arms record it (`player_idle_sheet_pose_authority_T0249`, `_chained_T0250`, `_hybrid_T0252` sidecars) — but each generator implements it independently, and `ARM_C_BENCHMARK = (0.072, 0.112)` is **hardcoded separately** in `gen_hybrid_idle_T0252.py:62` and `gen_pose_authority_idle_T0249.py:127` (`gen_chained_idle_T0250.py:124` re-exports the latter). Of 18 sidecars under `assets/final/character/`, **3 record the Arm-C comparison**, 3 more record frame-delta alone (round-1 arms T-0228/T-0229/T-0230), and **11 record neither** (`player_idle_sheet_v1`/`v2`, `player_move_sheet_v1`/`v2`, `player_crouch_hide_sheet_v1`/`v2`, `player_die_sheet_v1`/`v2`, both `_T0218` sheets, `pose_grid_stage3_T0218`). No shared helper, no asset-gate check. A new character-sheet generator would omit it silently. **Gap — needs a small follow-up card:** hoist `ARM_C_BENCHMARK` to one shared constant, write the pair through a single provenance helper, and assert their presence in the character asset-gate. |
+| CHR-2 | Arm C (T-0230) is retained permanently as the **shipping fallback** and quality reference: its script, committed sheet (`assets/final/character/player_idle_sheet_arm_c_T0230.png`) and gate results stay committed and passing, and are never regressed by a generative arm's work. It is **not** a gate the chosen generative approach must clear. | DL-23 retained Arm C as benchmark *and* fallback when it created round 2; DL-25 kept that standing after choosing §24-e on authorship grounds. The fallback only works if it stays green — and stating "not a gate" explicitly prevents the opposite failure, where a future run reads CHR-1's recorded comparison as a bar and rejects a sheet the project has already accepted. | ✅ Held — Arm C's sheet, provenance, generator and `tests/test_player_idle_arm_c_gate.py` are committed on `develop` and unmodified by any round-2 card (T-0249/T-0250/T-0251/T-0252 add files; none touch Arm C's). Not enforced by a dedicated test — it is a "do not delete/regress" property, covered in practice by Arm C's own gate test staying in CI. |
+
 ---
 
 ## Summary
@@ -199,6 +216,7 @@ resume from and retrained from step 0.
 | Deploy propagation | PULL-2, PULL-3, PULL-4 | — | **PULL-1 (headline)** | — |
 | Detail panel live-update safety | — | — | DP-1, DP-2 | — |
 | Worktree artifact preservation | WT-1..WT-5 | — | — | — |
+| Character-generation quality reference (§9, DL-25) | CHR-2 | CHR-1 | — | CHR-1 (see §9) |
 
 **Deferred, not silently dropped:** LC-7 (no guard against a manual card edit
 racing an active orchestrator run) is a real, confirmed gap found while
