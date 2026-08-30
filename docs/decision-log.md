@@ -1206,3 +1206,91 @@ entry does not make that edit.** What §3.5 should say depends on round 2's outc
 - `docs/decision-log.md` — this entry (DL-23)
 - No other docs. `docs/design/13-asset-pipeline.md` §3.5 is explicitly not edited by this
   entry — see "Out of scope" above.
+
+---
+
+## DL-24 — Character-pipeline round 2: comparison assembled, verdict PENDING (T-0255)
+
+**Date:** 2026-08-30
+**Raised by:** HANDOFF §24, handle §24-f (the round-2 decision run)
+**Status:** **PENDING.** Everything §24.3's pre-registered rule can settle mechanically is
+settled, including Arm C's own criterion-1 sign-off (already given via DL-23's closure of
+DL-22 — see "PENDING — not decided here" below); the rule's human call (criterion 1 —
+silhouette readable at 40px in motion) is still open for the three round-2 arms that ran
+(§24-b, §24-c, §24-e). This entry records the mechanical state and stays PENDING until that
+sign-off lands — do not edit it to declare a winner without that sign-off; append a
+dated closing addendum instead, per this document's own header ("entries are permanent — do
+not remove or amend").
+**Applies to:** the round-2 arms raised by DL-23 (§24-a..§24-e): T-0248 (§24-a, identity-LoRA
+retrain, diagnostic), T-0249 (§24-b, pose authority), T-0250 (§24-c, chained img2img), T-0251
+(§24-d, AnimateDiff — correctly skipped, no usable motion module), T-0252 (§24-e, hybrid),
+judged against Arm C (T-0230, round 1) as the retained benchmark and candidate shipping
+fallback.
+**Full record:** `assets/src/character/ROUND2_DECISION_T0255.md`
+**Comparison artefact:** `assets/final/character/round2_comparison_T0255.webp`
+**Frame-delta gate (re-run):** `assets/final/character/round2_frame_delta_report_T0255.json`
+**Cost table:** `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` (round-2 sections, T-0248
+through T-0252) and the full record's own consolidated table (with attempts-to-first-pass).
+
+### Mechanically settled
+
+- **Every round-2 arm that ran clears the round-2-unchanged 0.30 pass/fail floor. None beats
+  Arm C's 0.072–0.112 benchmark** — the bar §24.3 set out to beat, not merely the gate to
+  clear — independently reconfirmed by this card's own re-run of
+  `asset_gate.art.check_frame_consistency` against each arm's committed sheet: §24-a (T-0248,
+  diagnostic) 0.083–0.273 best of 3 seeds; §24-b (T-0249) 0.0522–0.2573; §24-c (T-0250)
+  0.0000–0.1763; §24-e (T-0252) 0.1576–0.1816; Arm C (T-0230, benchmark) 0.072–0.112.
+- **§24-d (T-0251, AnimateDiff) is correctly closed as a skipped contingent arm, not a missing
+  input**: a 5-query, read-only capability check against the shared ComfyUI host found zero
+  AnimateDiff/AnimateDiff-Evolved node types, no `animatediff_models`/`motion_module` folder
+  type, and 404s on both motion-module model routes. Installing a new custom node pack on the
+  shared host is a standing environment change outside an implementer agent's remit. See
+  `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md`.
+- **Cost is recorded, not deciding, per DL-23's override:**
+
+  | Card | Handle | Attempts-to-first-pass | GPU-min | Wall-clock | $ |
+  |---|---|---|---|---|---|
+  | T-0248 | §24-a | 1/3 (generation re-run; diagnostic, not a bake-off arm) | 117.9 | 02:02 | $0.00 |
+  | T-0249 | §24-b | 3/8 (measured; 5/8 used, incl. 2 incomplete) | 31.8 | 01:04 | $0.00 |
+  | T-0250 | §24-c | 8/8 (attempt cap exhausted) | 87.8 | 01:28 | $0.00 |
+  | T-0251 | §24-d | 0 (no generation attempted) | 0.0 | 00:04 | $0.00 |
+  | T-0252 | §24-e | 6/8 (3 source-frame + 3 sheet-assembly) | 3.70 | 00:07 (+ CPU-only cutout reprocess) | $0.00 |
+  | T-0230 | benchmark (round 1) | 1/8 | 0.0 | 00:14 | $0.00 |
+
+  Copied from each card's own attempt log / `BAKEOFF_COST_TABLE_T0231.md`'s own "Attempts"
+  columns; see that file for the full per-attempt breakdown. Even the cheapest round-2 arm
+  (§24-d, $0, never generated) does not change which arm beat the benchmark, because none did.
+- **Arm C's own criterion-1 read is already confirmed, via DL-23's closure of DL-22** (see
+  "PENDING — not decided here" below). **§24.3's own pre-registered contingency** ("if no
+  round-2 arm beats 0.072–0.112, designate Arm C") **therefore already resolves, on the
+  mechanical evidence above, to Arm C as the round-2 shipping fallback.** That designation is
+  not finalized in this entry — acceptance criterion 6 requires the round-2 arms' own
+  criterion-1 read recorded per arm first (see below), even though none of the three changes
+  this outcome.
+
+### PENDING — not decided here
+
+Criterion 1 (silhouette readable at 40px in motion) is a **human pass/fail call** under DL-21
+(unchanged for round 2 per DL-23), attributed to **Dennie Seth**, requested 2026-08-30, not yet
+given — **for the three round-2 arms that ran (§24-b/T-0249, §24-c/T-0250, §24-e/T-0252).**
+**Arm C's own criterion-1 read is not reopened here — it was already given.** DL-22 recorded it
+PENDING, and DL-23 explicitly closed that PENDING status: DL-23 states in its own words that
+DL-22 "stayed PENDING for the human sign-off DL-21's criterion 1 and criterion 2 drift verdicts
+required, attributed to Dennie Seth. That sign-off has now been given, in the form of this
+override," and records Arm C as "PASSED, best." §24.3's own contingency ("if no round-2 arm
+beats 0.072–0.112, designate Arm C") therefore already resolves, on the mechanical evidence
+above, to Arm C as the round-2 shipping fallback. What still parks this entry is acceptance
+criterion 6's own requirement that the round-2 arms' criterion-1 read be recorded per arm before
+that designation is finalized — even though, per the mechanical evidence, none of the three
+changes the outcome. This card does not invent that verdict — see `ROUND2_DECISION_T0255.md`
+for the full record and what changes in `docs/design/13-asset-pipeline.md` once it lands.
+`docs/design/13-asset-pipeline.md` is **not edited by this entry** — the edit is deferred until
+the round-2 arms' sign-off lands, so as not to pre-empt it. The reference-character promotion is
+likewise deferred — Arm C's committed sheet stays at its existing path
+(`assets/final/character/player_idle_sheet_arm_c_T0230.png`) until designation is finalized.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-24)
+- `assets/src/character/ROUND2_DECISION_T0255.md` — the full round-2 decision record
+- `assets/final/character/round2_comparison_T0255.webp` — the side-by-side comparison artefact
+- `assets/final/character/round2_frame_delta_report_T0255.json` — the re-run mechanical gate
