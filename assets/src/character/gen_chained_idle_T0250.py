@@ -281,18 +281,32 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
 
 
 DEFAULT_DENOISE_JUSTIFICATION = (
-    "Chosen from the denoise sweep (assets/src/character/DENOISE_SWEEP_REPORT_T0250.md, "
-    "DENOISE_SWEEP_T0250.json): NOT the naive 'lowest-drift value inside the ~0.25-0.35 band' "
-    "the sweep set out to find -- every denoise sampled on seed 31416 (0.15, 0.25, 0.30, 0.35, "
-    "0.45) FAILS the 0.30 cap at the same (0,1)->(0,2) transition, with that transition's ratio "
-    "rising monotonically with denoise (0.308 -> 0.348 -> 0.366 -> 0.390 -> 0.417). denoise=0.15 "
-    "is chosen because it is the least-bad point in that monotonic trend, matching the "
-    "still-reads-as-motion / drift-returns shape the sweep was designed to find, but the sheet "
-    "actually promoted here reruns that same denoise=0.15 recipe on seed 31420 (attempt 6) -- a "
-    "seed-sensitivity check, the same diagnostic Arm B/T-0248 needed -- which clears the cap "
-    "(0.0301-0.2134) where seed 31416 does not. The chosen denoise is therefore justified by the "
-    "sweep; the chosen seed is not part of the swept variable and is reported as a separate, "
-    "explicit finding, not folded into the denoise story."
+    "SUPERSEDED BY 2026-08-30 HUMAN REVIEW. The original justification (attempts 1-6, "
+    "chain-from-predecessor mechanism) chose denoise=0.15/seed=31420 because it cleared the "
+    "0.30 cap (0.0301-0.2134) -- but that sheet was rejected on human review for compounding "
+    "background noise every frame (clean background pixels 1280->832 across the sheet), a "
+    "failure check_frame_consistency's relative delta cannot see. The fix applied here -- "
+    "anchoring every frame to frame 0's own decoded output (not its immediate predecessor) "
+    "plus a hard pixel-space background hold -- removes that compounding by construction "
+    "(background_growth now 1.0-1.05x frame 0's baseline across both re-measured denoise "
+    "values, attempts 7-8, well inside the 1.35x bound). denoise=0.30 (attempt 8) is chosen "
+    "over attempt 7's 0.15 only because it is the value actually inside the round's mandated "
+    "~0.25-0.35 sweep band; it is NOT chosen because it demonstrates better motion. Both "
+    "re-measured points are honestly indistinguishable on the property that matters: frame-delta "
+    "collapsed to 0.0000-0.0299 (denoise 0.15) and 0.0000-0.0286 (denoise 0.30), and direct visual "
+    "comparison of frame 0 against frame 4 at both values shows the pose has not visibly moved. "
+    "This is the low-edge 'motion stops reading' failure mode the sweep was designed to detect, "
+    "now occurring throughout the tested range instead of only below it -- background-holding a "
+    "sheet whose idle motion amplitude is already tiny by design (pose_rig_T0249.json: "
+    "breathing_amplitude_norm 0.012, weight_shift_extent_norm 0.018) removes the only channel "
+    "(background speckle) that was previously registering as inter-frame delta. The DL-21 "
+    "8-attempt cap was reached confirming this at two points; whether a higher denoise (>0.35) "
+    "restores legible motion before drift returns under the new mechanism is untested and would "
+    "need a fresh attempt allocation to answer -- see ROUND2_CHAINED_REPORT_T0250.md's 'Human "
+    "review' section for the full account. This sheet clears both the 0.30 cap and Arm C's "
+    "0.072-0.112 benchmark, but only because motion has stalled, not because the chaining "
+    "hypothesis produced a legible-motion, drift-free result -- report this as a qualified "
+    "outcome, not a win, per round-2 rule §23-b."
 )
 
 
@@ -744,6 +758,19 @@ def write_sweep_report(attempts: list[int], chosen_attempt: int) -> None:
         "alone is not sufficient evidence of that -- it is also exactly what a working "
         "background hold plus a genuinely small pose change would produce. See the per-mechanism "
         "tables below for the comparison this edge value needs to be read against."
+        + (
+            " CONFIRMED under the new mechanism: attempts 7 (denoise 0.15) and 8 (denoise 0.30) "
+            "both collapse to frame-delta ranges of 0.0000-0.0299 and 0.0000-0.0286 respectively "
+            "-- direct visual comparison of frame 0 against frame 4 at both values shows the "
+            "figure has not visibly moved. Holding the background static (the human review's own "
+            "required fix) removed the background speckle that was previously registering as "
+            "inter-frame delta on this sheet's already-tiny idle motion (breathing_amplitude_norm "
+            "0.012, weight_shift_extent_norm 0.018), so the low-denoise stalled-motion failure "
+            "mode this sweep was designed to find now occurs at every denoise value the 8-attempt "
+            "cap allowed testing under the fixed mechanism, not only below the ~0.25-0.35 band."
+            if new_points
+            else ""
+        )
     )
     failure_mode_high = _edge_prose(highest, "highest") + (
         " The high-denoise drift-returns failure mode was already established on the original "

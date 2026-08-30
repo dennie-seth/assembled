@@ -251,11 +251,13 @@ def test_background_held_out_of_the_feedback_path(provenance: dict) -> None:
     """Acceptance (2026-08-30 human review fix direction): the background is
     masked/held out of the img2img feedback path entirely, not merely
     hoped to stay clean. `background_held` records that a fixed
-    background-hold mask was applied (in-graph via SetLatentNoiseMask,
-    restricting denoising to the character bounding box, AND a hard
-    pixel-space composite against frame 0's own background after decode --
-    belt and suspenders, since the in-graph mask alone does not guarantee
-    zero drift through the VAE's non-local receptive field)."""
+    background-hold mask was applied: a hard pixel-space composite of the
+    sampled figure onto frame 0's own background after decode, over a
+    soft-edged mask covering that frame's own keypoint bounding box. An
+    in-graph SetLatentNoiseMask was considered but deliberately not used --
+    its polarity convention was unverified on this ComfyUI host, and a
+    wrong guess would have wasted an attempt under DL-21's 8-per-arm cap --
+    so this is pixel-space only, not belt-and-suspenders."""
     assert provenance.get("background_held") is True
     assert isinstance(provenance.get("background_mask_margin_frac"), int | float)
     assert 0.0 < provenance["background_mask_margin_frac"] < 1.0
