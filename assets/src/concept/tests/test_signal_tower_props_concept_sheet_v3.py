@@ -315,6 +315,30 @@ def test_v3_every_generation_uses_the_declared_lora_weight(v3_recipe):
             )
 
 
+_V1_PROP_EXCLUSION_TERMS = ("locker", "server rack", "relay cabinet", "crate stack", "hvac duct")
+
+
+def test_v3_sub_panels_carry_the_v1_prop_exclusion_negatives(v3_recipe):
+    """Acceptance: this sheet is additive, never redrawing v1's own props
+    (archive shelving being read as a generic 'filing cabinet' or 'locker'
+    is exactly that regression). The sheet-level negative_prompt excludes
+    v1's own prop vocabulary (locker/server rack/relay cabinet/crate
+    stack/HVAC duct), but a sub-panel's own negative_prompt is what the
+    sub-generation actually submits (`generate_sub_panel` never merges in
+    the sheet-level negative) -- a sub-panel silently missing this guard
+    is exactly how the transformer-housing sub-panels drifted to rendering
+    as lockers with hinged doors and handles (2026-08-30 review, run 3).
+    Every sub_panel's own negative_prompt must carry each exclusion term."""
+    for panel in v3_recipe["panels"]:
+        for sub in panel.get("sub_panels", []):
+            negative = sub["negative_prompt"].lower()
+            missing = [t for t in _V1_PROP_EXCLUSION_TERMS if t not in negative]
+            assert not missing, (
+                f"sub-panel {sub.get('label', '?')!r} in panel ({panel['row']},{panel['col']}) "
+                f"is missing the v1-prop exclusion terms {missing} from its own negative_prompt."
+            )
+
+
 def test_v3_recipe_extends_v1_dimensions(v3_recipe, v1_recipe):
     assert v3_recipe["width"] == v1_recipe["width"]
     assert v3_recipe["height"] == v1_recipe["height"]
