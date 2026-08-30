@@ -214,7 +214,7 @@ def test_delta_report_records_skipped_arm_with_reason_and_evidence() -> None:
 def test_cost_table_carries_every_round2_card() -> None:
     text = COST_TABLE_PATH.read_text()
     for card in ("T-0248", "T-0249", "T-0250", "T-0251", "T-0252"):
-        assert f"HANDOFF §24-" in text and card in text, f"{card}'s round-2 section not found"
+        assert "HANDOFF §24-" in text and card in text, f"{card}'s round-2 section not found"
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +246,9 @@ def test_decision_record_reports_both_bars_per_ran_arm() -> None:
 def test_decision_record_designates_arm_c_as_shipping_fallback() -> None:
     text = DECISION_PATH.read_text()
     assert "Arm C" in text
-    assert "shipping fallback" in text.lower() or "shipping-fallback" in text.lower()
-    assert "manufactur" not in text.lower() or "not manufactur" in text.lower() or "does not manufacture" in text.lower()
+    lower = text.lower()
+    assert "shipping fallback" in lower or "shipping-fallback" in lower
+    assert "manufactur" not in lower or "not manufactur" in lower
 
 
 def test_decision_record_does_not_fabricate_criterion1_verdicts() -> None:
@@ -285,7 +286,13 @@ def test_decision_log_has_dl24_entry_with_24f_handle() -> None:
 def test_decision_log_dl21_through_dl23_are_untouched() -> None:
     text = DECISION_LOG_PATH.read_text()
     assert "## DL-24" in text, "DL-24 must exist for this pin to check the right range"
-    segment = text[text.index("## DL-21") : text.index("## DL-24")].rstrip() + "\n"
+    segment = text[text.index("## DL-21") : text.index("## DL-24")].rstrip()
+    # Strip the "---" separator this card's own DL-24 append introduces --
+    # DL-21..DL-23 never had a trailing separator of their own (DL-23 was
+    # the last entry in the file before this card).
+    if segment.endswith("---"):
+        segment = segment[:-3].rstrip()
+    segment += "\n"
     digest = hashlib.sha256(segment.encode()).hexdigest()
     assert digest == DL21_THROUGH_DL23_SHA256, (
         "docs/decision-log.md's DL-21..DL-23 text changed -- these entries are permanent, "
@@ -311,8 +318,9 @@ def test_reference_sheet_is_arm_c_bytes() -> None:
 def test_reference_provenance_is_p7_compliant() -> None:
     assert REFERENCE_PROVENANCE_PATH.exists()
     provenance = json.loads(REFERENCE_PROVENANCE_PATH.read_text())
-    generator_path = REPO_ROOT / provenance["generator"]
-    assert generator_path.exists(), f"generator does not resolve as a repo path: {provenance['generator']}"
+    generator = provenance["generator"]
+    generator_path = REPO_ROOT / generator
+    assert generator_path.exists(), f"generator does not resolve as a repo path: {generator}"
     assert provenance.get("model_hash"), "model_hash must be non-null (P-7)"
     assert provenance.get("concept_hash") == CONCEPT_HASH_T0209
 
