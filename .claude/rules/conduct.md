@@ -59,6 +59,20 @@ files add to this, they never relax it.
   file under `assets/final/**`, `assets/src/concept/**`, or
   `assets/src/keyart/**` — a mechanical backstop for exactly the
   misclassification this repo has already seen (below).
+- **A card with `requires_approval: true` in its frontmatter parks; you never
+  approve it.** Its deliverable is a *direction* — concept art, a style or
+  reference sheet — and it is finished only when a human has looked at the
+  artifact and said yes. Produce the artifact, commit it, attach it to the
+  card, and stop. Do **not** write an approval record anywhere (no
+  `approved_by`/`approved_at` on the card, no approval entry in
+  `docs/decision-log.md` or `ASSET_PROVENANCE.md`), do not mark the card done,
+  and do not advance any card that depends on it. On a reviewer PASS the board
+  parks the card in `review` and posts a `PARKED FOR HUMAN APPROVAL` comment
+  saying so; the human approves by dragging it to Done or commenting
+  `APPROVED`, and only then do its dependents unblock. Attempting to approve
+  it yourself is refused (`docs/board-invariants.md` §9) — but the reason not
+  to try is that the human verdict is the whole point of the card, not that
+  the board happens to stop you.
 - **Attach every produced deliverable to its card — not just to the repo.**
   A file committed to the repo is invisible to the board's own attachment
   pipeline (the card's Attachments list, the asset-export stager, Drive

@@ -54,6 +54,51 @@ describe("checkPlannerDiffGuard", () => {
     expect(report.violations[0].message).toMatch(/done/);
   });
 
+  // AP-7 (docs/board-invariants.md §9): the approval record says a *human* signed off on a
+  // card's direction, and downstream cards unblock on it. A planner run writing one would be
+  // forging exactly that signal, so the guard treats it like a status flip.
+  it("catches a planner run forging an approval record", () => {
+    const oldRaw = serializeTask(task({ id: "T-0001", requires_approval: true }));
+    const newRaw = serializeTask(
+      task({
+        id: "T-0001",
+        requires_approval: true,
+        approved_by: "DennieSeth",
+        approved_at: "2026-08-30T00:00:00.000Z"
+      })
+    );
+    const report = checkPlannerDiffGuard([{ file: "tasks/T-0001.md", status: "modified", oldRaw, newRaw }]);
+
+    expect(report.ok).toBe(false);
+    const messages = report.violations.map((v) => v.message).join(" ");
+    expect(messages).toMatch(/approved_by/);
+    expect(messages).toMatch(/approved_at/);
+    expect(messages).toMatch(/only when a human approves/i);
+  });
+
+  it("catches a planner run erasing an existing approval record", () => {
+    const oldRaw = serializeTask(
+      task({
+        id: "T-0001",
+        requires_approval: true,
+        approved_by: "DennieSeth",
+        approved_at: "2026-08-30T00:00:00.000Z"
+      })
+    );
+    const newRaw = serializeTask(task({ id: "T-0001", requires_approval: true }));
+    const report = checkPlannerDiffGuard([{ file: "tasks/T-0001.md", status: "modified", oldRaw, newRaw }]);
+
+    expect(report.ok).toBe(false);
+  });
+
+  it("allows a planner run to ADD the approval gate -- flagging a direction card is spec work", () => {
+    const oldRaw = serializeTask(task({ id: "T-0001" }));
+    const newRaw = serializeTask(task({ id: "T-0001", requires_approval: true }));
+    const report = checkPlannerDiffGuard([{ file: "tasks/T-0001.md", status: "modified", oldRaw, newRaw }]);
+
+    expect(report.ok).toBe(true);
+  });
+
   it("catches a card file deletion", () => {
     const report = checkPlannerDiffGuard([{ file: "tasks/T-0001.md", status: "deleted" }]);
 

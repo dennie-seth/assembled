@@ -15,8 +15,9 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   of `backlog|ready|in-progress|validation|review|done|blocked`, `priority`
   one of `P0..P3`, `phase` an integer, `agent` one of the assignable agent
   names or `null`, `depends_on` an array of valid `T-NNNN` ids, `created` an
-  `YYYY-MM-DD` string, and (optional, defaults to `code`)
-  `deliverable_type` one of `code|artifact`.
+  `YYYY-MM-DD` string, (optional, defaults to `code`) `deliverable_type` one
+  of `code|artifact`, and (optional, defaults to `false`) `requires_approval`
+  a boolean.
 - A card body has a `## Context` section (why this exists, grounded in a
   doc reference) and a `## Acceptance` section (checkable criteria) — the
   shape every existing card already follows (`docs/PLAN.md` §Task file
@@ -58,6 +59,23 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   not a reason to skip setting the field right — an accurate
   `deliverable_type: artifact` is still what drives the reviewer's own
   Acceptance-criteria wording above.
+- **Set `requires_approval: true` on every direction card.** A *direction*
+  card is one whose real deliverable is a choice a human has to sign off on
+  before other work is generated against it: concept art, a style or palette
+  sheet, a reference sheet, a chosen visual/audio direction. The flag makes a
+  reviewer PASS **park** the card in `review` (with a `PARKED FOR HUMAN
+  APPROVAL` comment) instead of leaving it completable by anyone — and since
+  `dependencyGuard` only counts `done`/`retired`, its dependents stay blocked
+  until a human actually approves. See `docs/board-invariants.md` §9 for the
+  mechanism and the T-0239 incident that motivated it (an unapproved synthetic
+  concept sheet reached `done` and unblocked T-0243).
+  **Write the Acceptance to describe producing and parking, never getting
+  approved.** "The card parks awaiting a human verdict, with no approval record
+  written by the agent" is checkable; "@DennieSeth approves the sheet" is not a
+  criterion any agent can satisfy, and writing it as one is what made T-0233
+  unsatisfiable across five attempts. Never write `approved_by`/`approved_at`
+  into a card file — those are the server's to write when a human approves,
+  and `checkPlannerDiffGuard` fails a planner run that touches them.
 - **Acceptance criteria must fully cover the story, not just whatever got
   drafted first.** After writing `## Acceptance`, walk back through the
   card's story and confirm every distinct requirement it states or clearly
