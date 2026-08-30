@@ -1,19 +1,33 @@
 {
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA, assembled project T-0072)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
   "prompt": "Signal Tower prop concept reference sheet, four isolated prop diagrams assembled into a 2x2 grid: (1) archive shelving row -- cover prop; (2) transformer housings + breaker panel -- cover prop and gate object; (3) crawlspace opening -- hiding spot; (4) hiding alcove -- hiding spot. Each panel generated independently through the committed T-0104 workflow (see `panels` below for the exact per-panel prompt/seed) rather than as one combined prompt -- a single four-class prompt was tried first (seeds 21140, 21150, 21160) and each attempt lost the four distinct prop classes to the soviet_brutalism_style_v1 LoRA's strong whole-building bias (see `_generator_note`); per-panel generation lets each class's own prompt dominate its own sampling run.",
   "negative_prompt": "building, architecture, tower, skyscraper, city, facade, windows, rooftop, scaffolding, structure exterior, isometric building, white background, product photography, studio lighting, isolated object shot on white, e-commerce catalog, stock photo, chrome, glossy plastic, metallic reflection, screws, bolts, hardware catalog, realistic photograph, perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, illegible glyphs, blurry small text, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait, locker, server rack, relay cabinet, crate stack, HVAC duct, car, vehicle, automobile",
-  "seed": [21201, 21212, 21203, 21204],
+  "seed": [
+    21201,
+    21212,
+    21203,
+    21204
+  ],
   "steps": 30,
   "cfg": 7.0,
   "width": 1024,
   "height": 1024,
-  "checkpoint": "sd_xl_base_1.0.safetensors",
-  "lora": "soviet_brutalism_style_v1.safetensors",
-  "lora_strength": 0.70,
-  "sampler": "euler",
-  "scheduler": "normal",
-  "name": "signal_tower_props_concept_sheet_v3",
-  "panel_width": 768,
-  "panel_height": 768,
+  "workflow_hash": "fed8a8e8ca8e9aba3ac4290b22e5484d2ebb7b1108e2f7557678e0a57d2eb945",
+  "prompt_id": "f83cd0c1-3c30-4d6b-8229-40161e6b383f,1866571d-001e-41eb-80c9-8c689f3d6c8b,ed2fbd49-602e-4132-b62a-36c4e4ff29d3,56ad4822-519f-41ac-9019-841e358ea804",
+  "prompt_ids": [
+    "f83cd0c1-3c30-4d6b-8229-40161e6b383f",
+    "1866571d-001e-41eb-80c9-8c689f3d6c8b",
+    "ed2fbd49-602e-4132-b62a-36c4e4ff29d3",
+    "56ad4822-519f-41ac-9019-841e358ea804"
+  ],
+  "concept_hash": "4f6b1ed5e7d3f3f22088cf99d7fd5c6400e64566a8658da58ed8c56d410523c5",
+  "generator": "assets/src/concept/_gen_signal_tower_props_v3.py",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "lora_license": "CreativeML OpenRAIL++-M",
+  "card": "T-0257",
   "panels": [
     {
       "row": 0,
@@ -22,7 +36,11 @@
       "class": "cover",
       "prompt": "orthographic technical blueprint diagram of a single object, isolated on a plain flat backdrop, no scene, no perspective, no vanishing point. Archive shelving unit: a tall open-frame shelf structure with several horizontal shelf boards, stacked flat rectangular document boxes and file folders resting on the shelves, flat side-on elevation view, opaque blocky solid silhouette, mid-value concrete-grey, fully exposed from above and sides -- a cover prop, not an enclosure. Soviet brutalist industrial palette, hard value separation, flat unlit shading, technical illustration, blueprint diagram style, no gradients, no chrome, no photorealism, no humans, no vehicles.",
       "negative_prompt": "building, architecture, tower, car, vehicle, white background, product photography, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure",
-      "seed": 21201
+      "seed": 21201,
+      "prompt_id": "f83cd0c1-3c30-4d6b-8229-40161e6b383f",
+      "workflow_hash": "ca227a02f123c61068c2631d65d5665c25d50b702d64685706ae1c0c1cae58a9",
+      "value_graded": false,
+      "value_grade_factor": null
     },
     {
       "row": 0,
@@ -31,7 +49,11 @@
       "class": "cover_and_gate",
       "prompt": "orthographic technical blueprint diagram of objects, isolated on a plain flat backdrop, no scene, no perspective, no vanishing point, no lamps, no light bulbs, no light fixtures. Three large squat rectangular transformer housing tanks in a row, identical size, flat industrial metal casings, mid-value concrete-grey, exposed cover props, standing beside a smaller separate wall-mounted breaker panel plate with three square switches in a row, breaker panel body a distinct flat institutional-green rectangle -- a switch-locked gate object, clearly separate from the transformer housings and not itself a cover prop. Flat side-on elevation view, opaque blocky solid silhouettes, simple geometric shapes. Soviet brutalist industrial palette, hard value separation, flat unlit shading, technical illustration, blueprint diagram style, no gradients, no chrome, no photorealism, no humans, no vehicles, no light bulbs.",
       "negative_prompt": "light bulb, lamp, light fixture, lighting equipment, valve, faucet, plumbing, building, architecture, tower, car, vehicle, white background, product photography, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure",
-      "seed": 21212
+      "seed": 21212,
+      "prompt_id": "1866571d-001e-41eb-80c9-8c689f3d6c8b",
+      "workflow_hash": "f7a0bfbb0dce58e6744e406fffd077115c2e27e1d3531717cd3bea31dda5f56d",
+      "value_graded": false,
+      "value_grade_factor": null
     },
     {
       "row": 1,
@@ -40,7 +62,11 @@
       "class": "hiding",
       "prompt": "orthographic technical blueprint diagram of a single object, isolated on a plain flat backdrop, no scene, no perspective, no vanishing point. Crawlspace opening: a small dark rectangular hatch opening cut into a flat wall segment, single-occupant crawl height, interior rendered completely near-black and dark, only a thin lit entry edge visible, fully enclosed dark void -- a hiding spot, not a cover prop. Flat side-on elevation view, opaque dark silhouette. Soviet brutalist industrial palette, near-black and dark concrete-grey, hard value separation, flat unlit shading, technical illustration, blueprint diagram style, no gradients, no chrome, no photorealism, no humans, no vehicles.",
       "negative_prompt": "building, architecture, tower, car, vehicle, white background, product photography, bright, light-coloured, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure",
-      "seed": 21203
+      "seed": 21203,
+      "prompt_id": "ed2fbd49-602e-4132-b62a-36c4e4ff29d3",
+      "workflow_hash": "742996ea296637b30a3f2337131ce03c52529ec1910c781cf00fe2c59ab534e3",
+      "value_graded": true,
+      "value_grade_factor": 0.356256253863733
     },
     {
       "row": 1,
@@ -49,7 +75,12 @@
       "class": "hiding",
       "prompt": "orthographic technical blueprint diagram of a single object, isolated on a plain flat backdrop, no scene, no perspective, no vanishing point. Hiding alcove: a recessed wall niche sized for one standing person, dark-bodied enclosed recess, interior rendered completely near-black and dark, only the entry opening edge visible, fully enclosed dark void -- a hiding spot, not a cover prop. Flat side-on elevation view, opaque dark silhouette. Soviet brutalist industrial palette, near-black and dark concrete-grey, hard value separation, flat unlit shading, technical illustration, blueprint diagram style, no gradients, no chrome, no photorealism, no humans, no vehicles.",
       "negative_prompt": "building, architecture, tower, car, vehicle, white background, product photography, bright, light-coloured, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure",
-      "seed": 21204
+      "seed": 21204,
+      "prompt_id": "56ad4822-519f-41ac-9019-841e358ea804",
+      "workflow_hash": "375c0f564ff407b18e6e4f3628a8c960a92a7e510760724840376f29b835afdb",
+      "value_graded": true,
+      "value_grade_factor": 0.4157336968740038
     }
-  ]
+  ],
+  "_generator_note": "Four independent real txt2img+LoRA generations (EmptyLatentImage, denoise=1.0), one per prop class, each resized and pasted into its quadrant with a typeset caption strip -- no prop geometry is drawn by code. A single four-class prompt was tried first (seeds 21140/21150/21160, see recipe git history) and each attempt lost the four distinct classes to the soviet_brutalism_style_v1 LoRA's strong whole-building bias (v1's own committed sheet shows the same bias -- a full tower rendered from a props-only prompt). Splitting generation per class fixed this. Hiding-spot panels get a global brightness value-grading pass (ImageEnhance.Brightness, no shape drawn) only if the raw generation didn't already clear the +15 luma cover-vs-hiding gate (T-0223) -- see each panel's `value_graded`/`value_grade_factor` fields above."
 }
