@@ -62,7 +62,11 @@ describe("runMigrations", () => {
   it("records each applied migration file in schema_migrations", () => {
     runMigrations(db, MIGRATIONS_DIR);
     const ids = db.prepare("SELECT id FROM schema_migrations ORDER BY id").all().map((r) => r.id);
-    expect(ids).toEqual(["0001_init.sql", "0002_add_generic_agent.sql"]);
+    expect(ids).toEqual([
+      "0001_init.sql",
+      "0002_add_generic_agent.sql",
+      "0003_add_approval_gate.sql"
+    ]);
   });
 });
 

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
+import http from "node:http";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { resolveAllowedTools, isToolAllowed } from "../../src/runner/toolAllowlist.js";
 
@@ -110,6 +111,41 @@ describe("agentCurl.js end to end", () => {
   it("reports bad usage distinctly from a policy denial", () => {
     expect(run([]).status).toBe(64);
     expect(run(["GET"]).status).toBe(64);
+  });
+
+  // AP-5 (docs/board-invariants.md §10): everything this wrapper forwards is an agent's, and the
+  // board's approval gate needs to be able to tell. Asserted against a real listening server
+  // rather than the argv we constructed, so the header is proven to survive the spawn and reach
+  // the wire. Deliberately NOT on a board port -- this is the pass-through case (ComfyUI, the
+  // audio services), which is exactly where an agent request can still reach a server at all.
+  it("stamps X-Board-Actor: agent on every request it forwards", async () => {
+    const received = [];
+    const echo = http.createServer((req, res) => {
+      received.push(req.headers);
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+    });
+    await new Promise((resolve) => echo.listen(0, "127.0.0.1", resolve));
+    const { port } = echo.address();
+
+    try {
+      // spawn, not spawnSync: the echo server shares this process's event loop, so a
+      // synchronous child would block the very response it is waiting for.
+      const exitCode = await new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, [WRAPPER, "GET", `http://127.0.0.1:${port}/system_stats`, "-s"], {
+          cwd: REPO_ROOT,
+          stdio: "ignore"
+        });
+        child.on("error", reject);
+        child.on("exit", resolve);
+      });
+
+      expect(exitCode).toBe(0);
+      expect(received).toHaveLength(1);
+      expect(received[0]["x-board-actor"]).toBe("agent");
+    } finally {
+      await new Promise((resolve) => echo.close(resolve));
+    }
   });
 });
 
