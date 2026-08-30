@@ -57,12 +57,13 @@ clone.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 import time
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "asset-gate" / "src"))
@@ -113,6 +114,16 @@ FRAME_ORDER = pose_authority.FRAME_ORDER
 
 MAX_FRAME_DELTA_RATIO = pose_authority.MAX_FRAME_DELTA_RATIO
 ARM_C_BENCHMARK = pose_authority.ARM_C_BENCHMARK
+
+# 2026-08-30 human review: check_frame_consistency (inter-frame *delta*) passed
+# a sheet whose background was visibly compounding noise every frame -- a
+# growth-against-a-fixed-baseline failure a delta measure cannot see. 1.35 is
+# derived from T-0249's own natural per-frame fluctuation (421-566px, no
+# trend, ratio 566/421 ~= 1.34); the rejected attempt 6 sheet measured
+# ~1.44x (1024px -> 1472px), above this bound. See
+# tests/test_player_idle_chained_T0250_gate.py's matching constant for the
+# full derivation.
+MAX_BACKGROUND_GROWTH_RATIO = 1.35
 
 # Rig generalisation evidence (the same rig drives 'move' with no code
 # change) is inherited unchanged from §24-b -- nothing about chaining
@@ -175,6 +186,47 @@ def build_chained_graph(
     g[pose_authority.SAMPLER_NODE_ID]["inputs"]["latent_image"] = [VAE_ENCODE_NODE_ID, 0]
     g[pose_authority.SAMPLER_NODE_ID]["inputs"]["denoise"] = denoise
     return g
+
+
+BACKGROUND_MASK_MARGIN_FRAC = 0.14  # fraction of the figure's own bbox extent, each side
+BACKGROUND_MASK_FEATHER_PX = 10  # soften the composite seam at the figure's silhouette edge
+
+
+def background_hold_mask(points_norm: dict[int, tuple[float, float]], size: int) -> Image.Image:
+    """A soft-edged 'L' mask, white (255) over this frame's own figure
+    bounding box (keypoints + BACKGROUND_MASK_MARGIN_FRAC margin), black (0)
+    everywhere else. `Image.composite(sampled, frame_0, mask)` then keeps
+    the sampled pixels only inside the figure region and forces every
+    background pixel to frame 0's own -- the 2026-08-30 human review's
+    "mask/hold the background so noise cannot compound into it" fix
+    direction, applied directly in pixel space rather than trusting a
+    latent-space mask's polarity (untested on this ComfyUI host, and a
+    wrong guess would waste one of the two attempts left under DL-21's
+    8-per-arm cap)."""
+    xs = [x for x, _ in points_norm.values()]
+    ys = [y for _, y in points_norm.values()]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    w, h = x1 - x0, y1 - y0
+    x0 = max(0.0, x0 - w * BACKGROUND_MASK_MARGIN_FRAC)
+    x1 = min(1.0, x1 + w * BACKGROUND_MASK_MARGIN_FRAC)
+    y0 = max(0.0, y0 - h * BACKGROUND_MASK_MARGIN_FRAC)
+    y1 = min(1.0, y1 + h * BACKGROUND_MASK_MARGIN_FRAC)
+
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rectangle([x0 * size, y0 * size, x1 * size, y1 * size], fill=255)
+    return mask.filter(ImageFilter.GaussianBlur(BACKGROUND_MASK_FEATHER_PX))
+
+
+def apply_background_hold(
+    sampled: Image.Image, anchor: Image.Image, mask: Image.Image
+) -> Image.Image:
+    """Composite `sampled` (this frame's own generation) over `anchor`
+    (frame 0's clean output) through `mask` -- every background pixel
+    becomes byte-identical to frame 0's, every frame, so there is no chain
+    of ever-degrading inputs for noise to accumulate along."""
+    return Image.composite(sampled.convert("RGB"), anchor.convert("RGB"), mask)
 
 
 def check_attempt_cap(attempt: int) -> None:
@@ -328,7 +380,8 @@ def run_attempt(
     frame_records = []
     cell_images: dict[tuple[int, int], Image.Image] = {}
     prompt_ids = []
-    prev_main_path: Path | None = None
+    frame0_main_path: Path | None = None
+    frame0_main_img: Image.Image | None = None
 
     for i, cell in enumerate(FRAME_ORDER):
         points = pose_rig_T0249.keypoints_for_frame(state, i, FRAME_COUNT)
@@ -357,8 +410,14 @@ def run_attempt(
             generation_mode = "fresh"
             chained_from = None
         else:
-            assert prev_main_path is not None
-            init_image_filename = upload_image(prev_main_path)
+            # 2026-08-30 human review fix: anchor every frame to frame 0's own
+            # clean output, not the immediately preceding frame -- chaining
+            # from the predecessor let each frame's own background speckle
+            # feed into the next frame's init image, compounding across the
+            # sheet (measured: clean background pixels 1280->832). Anchoring
+            # to a fixed, never-degrading source bounds that by construction.
+            assert frame0_main_path is not None
+            init_image_filename = upload_image(frame0_main_path)
             graph = build_chained_graph(
                 seed=seed,
                 pose_skeleton_filename=skeleton_filename,
@@ -372,20 +431,44 @@ def run_attempt(
             )
             frame_denoise = denoise
             generation_mode = "img2img_chained"
-            chained_from = i - 1
+            chained_from = 0
 
         prompt_id = submit_prompt(graph)
         info = wait_for_completion(prompt_id, timeout_s=300)
         prompt_ids.append(prompt_id)
 
         main_bytes = fetch_save_image(info, pose_authority.MAIN_SAVE_NODE_ID)
-        cell_bytes = fetch_save_image(info, pose_authority.CELL_SAVE_NODE_ID)
-        main_path = out_dir / f"frame_{i}_main_384.png"
-        main_path.write_bytes(main_bytes)
-        cell_raw_path = out_dir / f"frame_{i}_cell_48_raw.png"
-        cell_raw_path.write_bytes(cell_bytes)
-        cell_images[cell] = Image.open(cell_raw_path).convert("RGB")
-        prev_main_path = main_path
+        sampled_img = Image.open(io.BytesIO(main_bytes)).convert("RGB")
+
+        if i == 0:
+            frame0_main_path = out_dir / f"frame_{i}_main_384.png"
+            frame0_main_path.write_bytes(main_bytes)
+            frame0_main_img = sampled_img
+            cell_bytes = fetch_save_image(info, pose_authority.CELL_SAVE_NODE_ID)
+            cell_raw_path = out_dir / f"frame_{i}_cell_48_raw.png"
+            cell_raw_path.write_bytes(cell_bytes)
+            cell_images[cell] = Image.open(cell_raw_path).convert("RGB")
+        else:
+            # Background hold: force every background pixel to frame 0's own,
+            # pixel-space, after decode -- see apply_background_hold's
+            # docstring for why this is done here rather than via an
+            # in-graph latent mask.
+            assert frame0_main_img is not None
+            raw_sampled_path = out_dir / f"frame_{i}_main_384_raw_sampled.png"
+            raw_sampled_path.write_bytes(main_bytes)
+            mask = background_hold_mask(points, GEN_PX)
+            mask.save(out_dir / f"frame_{i}_background_hold_mask.png")
+            held_img = apply_background_hold(sampled_img, frame0_main_img, mask)
+            main_path = out_dir / f"frame_{i}_main_384.png"
+            held_img.save(main_path)
+            cell_raw_path = out_dir / f"frame_{i}_cell_48_raw.png"
+            # Locally computed area-downscale of the held (background-composited)
+            # image -- ComfyUI's own CELL_SAVE_NODE_ID output was area-descended
+            # from the *raw sampled* image, before the background hold, so it
+            # would silently reintroduce the noise this fix removes.
+            cell_img = held_img.resize((FINAL_CELL_PX, FINAL_CELL_PX), Image.Resampling.BOX)
+            cell_img.save(cell_raw_path)
+            cell_images[cell] = cell_img
 
         frame_records.append(
             {
@@ -444,6 +527,16 @@ def run_attempt(
     beats_030_cap = max(ratios) <= MAX_FRAME_DELTA_RATIO
     beats_arm_c_benchmark = max(ratios) <= ARM_C_BENCHMARK[1]
 
+    # 2026-08-30 human review: check_frame_consistency alone missed background
+    # noise compounding frame over frame (the promoted attempt 6 sheet passed it
+    # while dissolving into speckle). Measure growth against a fixed frame-0
+    # baseline too, on every attempt from here on.
+    background_growth_result = asset_gate_art.check_background_growth(
+        [cells[c] for c in FRAME_ORDER],
+        background_index=0,
+        max_growth_ratio=MAX_BACKGROUND_GROWTH_RATIO,
+    )
+
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
         f"+ LoRA {identity_lora_name} (player identity, weight {identity_lora_weight}) "
@@ -491,26 +584,48 @@ def run_attempt(
         "denoise_value": denoise,
         "composes_with_pose_authority_T0249": True,
         "based_on_card": "T-0249",
+        "chaining_anchor_frame": 0,
+        "background_held": True,
+        "background_mask_margin_frac": BACKGROUND_MASK_MARGIN_FRAC,
+        "background_mask_feather_px": BACKGROUND_MASK_FEATHER_PX,
         "chaining_method": (
             "Frame 1 (index 0) generated fresh via "
             "gen_pose_authority_idle_T0249.build_graph unchanged (EmptyLatentImage, "
-            "denoise=1.0). Frames 2-9 (index 1-8) img2img-chained from their immediate "
-            "predecessor's own decoded 384x384 output via VAEEncode, at "
+            "denoise=1.0). Frames 2-9 (index 1-8) img2img-chained from a FIXED anchor -- "
+            "frame 0's own decoded 384x384 output, via VAEEncode -- at "
             f"denoise={denoise}, with each frame's own script-authored ControlNet skeleton "
             "still conditioning the sample on top -- build_chained_graph patches only the "
-            "latent source and denoise on the reused build_graph, nothing else."
+            "latent source and denoise on the reused build_graph, nothing else. Anchoring to "
+            "frame 0 (not the immediate predecessor, the original hypothesis text) and holding "
+            "the background out of the feedback path are both 2026-08-30 human-review fixes: "
+            "the original predecessor-chaining mechanism let each frame's own background "
+            "speckle feed into the next frame's init image, compounding across the sheet until "
+            "the figure visibly dissolved into noise (measured: clean background pixels "
+            "1280->832 across the promoted attempt 6 sheet). After each frame is sampled, "
+            "apply_background_hold composites the sampled figure (via a soft-edged mask over "
+            "that frame's own keypoint bounding box, background_hold_mask) onto frame 0's own "
+            "background, pixel-space, after decode -- so every frame's background is "
+            "byte-anchored to frame 0's, not merely hoped to stay similar. An in-graph "
+            "SetLatentNoiseMask was considered but not used: its polarity convention was "
+            "unverified on this ComfyUI host, and a wrong guess would have wasted one of the "
+            "two attempts remaining under DL-21's 8-per-arm cap; the pixel-space composite "
+            "gives the same guarantee without that risk."
         ),
         "method": (
             "pose_rig_T0249 derives 18-keypoint COCO frame keypoints from committed animation "
             "parameters (pose_rig_T0249.json) -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell "
             "renders each frame's skeleton (384x384, reused renderer, not re-authored) -> "
             "frame 0: ControlNetApplyAdvanced (xinsir OpenPose) conditions a single-figure "
-            "KSampler generation at 384x384 from pure noise -> frames 1-8: the previous "
-            "frame's own decoded output is VAE-encoded and used as the KSampler's latent "
-            f"source at denoise={denoise}, with this frame's own skeleton still ControlNet-"
-            "conditioning the sample -> per-frame area descent to 48x48 (same x8 ratio as "
-            "the grid path) -> frames assembled into a 144x144 sheet -> Oklab-nearest "
-            "palette quantization (dithering off, §3.1) -> orphan cleanup."
+            "KSampler generation at 384x384 from pure noise -> frames 1-8: frame 0's own "
+            "decoded output (a fixed anchor, not the immediately preceding frame) is "
+            f"VAE-encoded and used as the KSampler's latent source at denoise={denoise}, with "
+            "this frame's own skeleton still ControlNet-conditioning the sample -> the sampled "
+            "output is composited back onto frame 0's own background through a soft-edged mask "
+            "over this frame's keypoint bounding box (apply_background_hold), so every "
+            "background pixel is byte-anchored to frame 0's -> per-frame area descent to 48x48 "
+            "(same x8 ratio as the grid path, computed locally from the held/composited image "
+            "for frames 1-8) -> frames assembled into a 144x144 sheet -> Oklab-nearest palette "
+            "quantization (dithering off, §3.1) -> orphan cleanup."
         ),
         "generator": "assets/src/character/gen_chained_idle_T0250.py",
         "card": "T-0250",
@@ -531,6 +646,13 @@ def run_attempt(
         "beats_030_cap": beats_030_cap,
         "beats_arm_c_benchmark": beats_arm_c_benchmark,
         "arm_c_benchmark": list(ARM_C_BENCHMARK),
+        "background_growth": {
+            "counts": background_growth_result.details["counts"],
+            "baseline": background_growth_result.details["baseline"],
+            "max_growth_ratio": MAX_BACKGROUND_GROWTH_RATIO,
+            "passed": bool(background_growth_result.passed),
+        },
+        "passes_all_gates": bool(mechanical_gate_passed and background_growth_result.passed),
         "layout": {
             "sheet_px": [SHEET_PX, SHEET_PX],
             "cell_px": FINAL_CELL_PX,
@@ -547,154 +669,164 @@ def run_attempt(
 def write_sweep_report(attempts: list[int], chosen_attempt: int) -> None:
     """Reads each listed attempt's already-written provenance_candidate.json
     and assembles the committed sweep report + data file the acceptance
-    criteria require -- the measured frame-delta per sampled denoise value,
-    not a single chosen value asserted after the fact.
+    criteria require -- the measured frame-delta (and, since the 2026-08-30
+    human review, background-growth) per sampled denoise value, not a
+    single chosen value asserted after the fact.
 
-    The prose below is generated from the actual measured numbers, not a
-    fixed assumed narrative -- the original draft of this function asserted
-    a canned "low denoise barely moves, high denoise drifts, something in
-    the middle passes" story before a single real attempt had been run.
-    The real sweep (attempts 1-5, seed 31416, denoise 0.15/0.25/0.30/0.35/
-    0.45) did not match that story: every sampled denoise FAILS the 0.30
-    cap on that seed, all at the same (0,1)->(0,2) transition, with that
-    transition's ratio rising monotonically with denoise. A 6th attempt
-    (seed 31420, same denoise=0.15) is a separate seed-sensitivity check,
-    not part of the swept series -- it is included in `points` (so the
-    promoted sheet's own denoise/seed resolve against this report) but
-    excluded from the "swept" subset used to describe the low/high edges,
-    since only the majority-seed points hold every other parameter fixed.
+    Attempts 1-6 (seed-primary sweep + seed-sensitivity check) used the
+    original chain-from-predecessor mechanism and predate the
+    background-growth gate -- their `background_growth_*` fields are
+    `None`, not zero, since that quantity was never measured for them, not
+    because it was measured as zero. Attempts 7+ use the human-review fix
+    (frame-0 anchor + background hold, see gen_chained_idle_T0250's module
+    docstring and `apply_background_hold`) and do carry it. The two
+    mechanisms are reported separately below the combined table so neither
+    is silently averaged into the other.
     """
     points = []
     for attempt in attempts:
         candidate_path = OUT_ROOT / f"attempt_{attempt}" / "provenance_candidate.json"
         candidate = json.loads(candidate_path.read_text())
+        bg = candidate.get("background_growth")
+        bg_ratio = None
+        if bg and bg.get("baseline"):
+            bg_ratio = round(max(c / bg["baseline"] for c in bg["counts"]), 4)
         points.append(
             {
                 "attempt": attempt,
                 "denoise": candidate["denoise_value"],
                 "seed": candidate["seed"],
+                "mechanism": (
+                    "anchor_frame0_background_held"
+                    if candidate.get("background_held")
+                    else "chain_from_predecessor"
+                ),
                 "frame_delta_range": candidate["frame_delta_range"],
                 "mechanical_gate_passed": candidate["mechanical_gate_passed"],
                 "beats_030_cap": candidate["beats_030_cap"],
                 "beats_arm_c_benchmark": candidate["beats_arm_c_benchmark"],
+                "background_growth_max_ratio": bg_ratio,
+                "background_growth_bounded": bg["passed"] if bg else None,
             }
         )
     points.sort(key=lambda p: p["denoise"])
 
-    seed_tally: dict[int, int] = {}
-    for p in points:
-        seed_tally[p["seed"]] = seed_tally.get(p["seed"], 0) + 1
-    primary_seed = max(seed_tally, key=lambda s: seed_tally[s])
-    swept = [p for p in points if p["seed"] == primary_seed]
-    off_seed = [p for p in points if p["seed"] != primary_seed]
-
-    lowest = swept[0]
-    highest = swept[-1]
+    old_points = [p for p in points if p["mechanism"] == "chain_from_predecessor"]
+    new_points = [p for p in points if p["mechanism"] == "anchor_frame0_background_held"]
     chosen = next(p for p in points if p["attempt"] == chosen_attempt)
+    lowest, highest = points[0], points[-1]
 
-    trend = ", ".join(f"{p['denoise']}:{p['frame_delta_range'][1]:.3f}" for p in swept)
-    low_gate_sentence = (
-        "This clears the 0.30 cap."
-        if lowest["mechanical_gate_passed"]
-        else (
-            "This does NOT clear the 0.30 cap -- the worst transition, (0,1)->(0,2), a "
-            "same-row pose-to-pose step rather than a row-wrap, already exceeds it even at "
-            "the lowest denoise tested."
-        )
-    )
-    failure_mode_low = (
-        f"At denoise={lowest['denoise']} (seed {lowest['seed']}), measured frame-delta range "
-        f"{lowest['frame_delta_range'][0]:.4f}-{lowest['frame_delta_range'][1]:.4f}. "
-        f"{low_gate_sentence} "
-        "Motion still visibly reads at this denoise on every other transition (the other seven "
-        "deltas stay well under the cap) -- "
-        "the failure is concentrated on one problem transition, not a stalled sheet that never "
-        "moves. This does not match the a-priori assumption that the lowest denoise would be "
-        "'too low to read as motion': it is not too low, it is simply not low enough to keep "
-        f"that one transition under the cap on seed {lowest['seed']}."
-    )
-    failure_mode_high = (
-        f"At denoise={highest['denoise']} (seed {highest['seed']}), measured frame-delta range "
-        f"{highest['frame_delta_range'][0]:.4f}-{highest['frame_delta_range'][1]:.4f}, the worst "
-        "point in the sweep. The same (0,1)->(0,2) transition drives the failure at every "
-        f"denoise tested on seed {primary_seed}, and its own ratio rises monotonically with "
-        f"denoise across the swept series ({trend}) -- more freedom in the img2img pass lets the "
-        "sampler re-invent more of the figure at that specific pose transition, the same drift "
-        "failure mode independent per-frame generation (§24-b/T-0249) already showed, just "
-        "concentrated on one transition instead of spread across all eight."
-    )
-    seed_sensitivity_note = ""
-    if off_seed:
-        best_off = min(off_seed, key=lambda p: p["frame_delta_range"][1])
-        matching_swept = next((p for p in swept if p["denoise"] == best_off["denoise"]), None)
-        seed_sensitivity_note = (
-            f"\n## Seed sensitivity (not part of the denoise sweep)\n\n"
-            f"Attempt {best_off['attempt']} reruns denoise={best_off['denoise']} with seed "
-            f"{best_off['seed']} instead of {primary_seed} -- everything else in the recipe "
-            "unchanged. Measured frame-delta range "
-            f"{best_off['frame_delta_range'][0]:.4f}-{best_off['frame_delta_range'][1]:.4f}, "
-            f"which {'clears' if best_off['beats_030_cap'] else 'does not clear'} the 0.30 cap, "
-            + (
-                f"versus seed {primary_seed} at the same denoise "
-                f"({matching_swept['frame_delta_range'][0]:.4f}-"
-                f"{matching_swept['frame_delta_range'][1]:.4f}, "
-                f"{'PASS' if matching_swept['mechanical_gate_passed'] else 'FAIL'}). "
-                if matching_swept
-                else ""
+    def _bg_clause(p: dict) -> str:
+        if p["background_growth_max_ratio"] is None:
+            return (
+                "background growth not measured (this attempt predates the "
+                "background-growth gate)"
             )
-            + "This is the same seed-sensitivity failure mode Arm B (T-0229) and its T-0248 "
-            "re-run against player_identity_v2 both already showed: the recipe is not "
-            "seed-invariant, and which seed is used matters as much as which denoise is used. "
-            "The chosen/promoted attempt below uses this off-seed result, not a point from the "
-            "denoise-only-varies sweep, because no point in that sweep clears the gate at all.\n"
+        bounded = "bounded" if p["background_growth_bounded"] else "EXCEEDS"
+        return (
+            f"background-growth ratio {p['background_growth_max_ratio']:.3f}x frame 0's "
+            f"non-background pixel count ({bounded} the {MAX_BACKGROUND_GROWTH_RATIO}x cap)"
         )
+
+    def _edge_prose(p: dict, edge: str) -> str:
+        return (
+            f"At denoise={p['denoise']} (seed {p['seed']}, mechanism={p['mechanism']}, "
+            f"attempt {p['attempt']}), measured frame-delta range "
+            f"{p['frame_delta_range'][0]:.4f}-{p['frame_delta_range'][1]:.4f} "
+            f"({'clears' if p['mechanical_gate_passed'] else 'does NOT clear'} the 0.30 cap), "
+            f"{_bg_clause(p)}. This is the {edge} denoise value sampled across both mechanisms."
+        )
+
+    failure_mode_low = _edge_prose(lowest, "lowest") + (
+        " Motion reads as a stalled sheet (pose stops visibly changing between adjacent "
+        "cells) only if the frame-delta range collapses toward its lower bound at this point "
+        "relative to higher-denoise points in the same mechanism; a low frame-delta range here "
+        "alone is not sufficient evidence of that -- it is also exactly what a working "
+        "background hold plus a genuinely small pose change would produce. See the per-mechanism "
+        "tables below for the comparison this edge value needs to be read against."
+    )
+    failure_mode_high = _edge_prose(highest, "highest") + (
+        " The high-denoise drift-returns failure mode was already established on the original "
+        "mechanism's own sweep (attempts 1-5): the same (0,1)->(0,2) transition's ratio rose "
+        "monotonically with denoise from 0.308 at 0.15 to 0.417 at 0.45. Re-establishing that "
+        "finding under the new mechanism was not attempted here -- only 2 attempts remained "
+        "under DL-21's 8-per-arm cap after the human review, and both were spent confirming the "
+        "fix at/below the original 0.15 floor per the review's explicit direction, not "
+        "re-verifying an already-answered high edge."
+    )
 
     data = {
         "card": "T-0250",
         "based_on_card": "T-0249",
-        "primary_seed": primary_seed,
-        "seed": chosen["seed"],
         "points": points,
         "band_low": 0.25,
         "band_high": 0.35,
         "chosen_denoise": chosen["denoise"],
         "chosen_attempt": chosen_attempt,
-        "chosen_seed_is_off_sweep": chosen["seed"] != primary_seed,
+        "chosen_mechanism": chosen["mechanism"],
         "failure_mode_low": failure_mode_low,
         "failure_mode_high": failure_mode_high,
         "arm_c_benchmark": list(ARM_C_BENCHMARK),
         "max_frame_delta_cap": MAX_FRAME_DELTA_RATIO,
+        "max_background_growth_ratio": MAX_BACKGROUND_GROWTH_RATIO,
+        "human_review_fix_attempts": [p["attempt"] for p in new_points],
     }
     SWEEP_DATA_PATH.write_text(json.dumps(data, indent=2) + "\n")
 
     lines = [
         "# Denoise sweep -- chained img2img idle sheet (T-0250, HANDOFF §24-c)\n\n",
-        "Frame 0 generated fresh; frames 1-8 img2img-chained from their predecessor at the "
-        "swept denoise value, everything else (seed, ControlNet strength/end, style/identity "
-        "LoRA weights) held constant across every sampled point, per the round-2 rules "
-        "(HANDOFF §24.3) -- only the value under test changes between attempts in the swept "
-        f"series (seed {primary_seed}). A separate seed-sensitivity check is reported below the "
-        "table, not folded into the sweep story.\n\n",
-        "| Attempt | Seed | Denoise | Frame-delta range | Mechanical gate (0.30 cap) | "
-        "Beats Arm C (0.072-0.112) |\n",
-        "|---|---|---|---|---|---|\n",
+        "Frame 0 generated fresh; frames 1-8 chained at the swept denoise value, everything "
+        "else (seed, ControlNet strength/end, style/identity LoRA weights) held constant "
+        "across every sampled point, per the round-2 rules (HANDOFF §24.3). Attempts 1-6 use "
+        "the original chain-from-predecessor mechanism (superseded, see "
+        "ROUND2_CHAINED_REPORT_T0250.md's Human review section); attempts 7+ use the "
+        "2026-08-30 human-review fix (frame-0 anchor + background hold). Both are reported "
+        "together below, tagged by mechanism, so neither is silently averaged into the "
+        "other.\n\n",
+        "| Attempt | Seed | Denoise | Mechanism | Frame-delta range | Gate (0.30 cap) | "
+        "Beats Arm C | Background growth (max ratio / bounded) |\n",
+        "|---|---|---|---|---|---|---|---|\n",
     ]
     for p in points:
         lo, hi = p["frame_delta_range"]
+        if p["background_growth_max_ratio"] is not None:
+            bounded_cell = "yes" if p["background_growth_bounded"] else "NO"
+            bg_cell = f"{p['background_growth_max_ratio']:.3f}x / {bounded_cell}"
+        else:
+            bg_cell = "not measured"
         lines.append(
-            f"| {p['attempt']} | {p['seed']} | {p['denoise']} | {lo:.4f}-{hi:.4f} "
+            f"| {p['attempt']} | {p['seed']} | {p['denoise']} | {p['mechanism']} "
+            f"| {lo:.4f}-{hi:.4f} "
             f"| {'PASS' if p['mechanical_gate_passed'] else 'FAIL'} "
-            f"| {'yes' if p['beats_arm_c_benchmark'] else 'no'} |\n"
+            f"| {'yes' if p['beats_arm_c_benchmark'] else 'no'} "
+            f"| {bg_cell} |\n"
         )
-    lines.append("\n## Failure mode, low end of the swept band\n\n")
+    lines.append("\n## Failure mode, lowest denoise sampled\n\n")
     lines.append(failure_mode_low + "\n\n")
-    lines.append("## Failure mode, high end of the swept band (drift returns)\n\n")
+    lines.append("## Failure mode, highest denoise sampled (drift returns)\n\n")
     lines.append(failure_mode_high + "\n")
-    if seed_sensitivity_note:
-        lines.append(seed_sensitivity_note)
+    if old_points:
+        lines.append(
+            "\n## Original mechanism (chain-from-predecessor, attempts 1-6) -- superseded\n\n"
+            "Never cleared the 0.30 cap on its own swept seed (31416) at any denoise; the one "
+            "passing attempt (6, seed 31420 off-sweep) passed the frame-delta gate but was "
+            "rejected on human review for accumulating background noise every frame -- a "
+            "failure the frame-delta gate cannot see (it measures inter-frame delta, not "
+            "growth against a fixed baseline). Full detail: ARM_CHAINED_ATTEMPT_LOG_T0250.md, "
+            "ROUND2_CHAINED_REPORT_T0250.md.\n"
+        )
+    if new_points:
+        lines.append("\n## Human-review fix (frame-0 anchor + background hold)\n\n")
+        for p in new_points:
+            lo, hi = p["frame_delta_range"]
+            lines.append(
+                f"- Attempt {p['attempt']}: denoise={p['denoise']}, seed={p['seed']} -- "
+                f"frame-delta {lo:.4f}-{hi:.4f} "
+                f"({'PASS' if p['mechanical_gate_passed'] else 'FAIL'} 0.30 cap), {_bg_clause(p)}\n"
+            )
     lines.append(
-        f"\n## Chosen value: denoise={chosen['denoise']}, seed={chosen['seed']} "
-        f"(attempt {chosen_attempt})\n\n"
+        f"\n## Chosen value: denoise={chosen['denoise']}, seed={chosen['seed']}, "
+        f"mechanism={chosen['mechanism']} (attempt {chosen_attempt})\n\n"
     )
     lines.append(DEFAULT_DENOISE_JUSTIFICATION + "\n\n")
     lo, hi = chosen["frame_delta_range"]
@@ -702,7 +834,7 @@ def write_sweep_report(attempts: list[int], chosen_attempt: int) -> None:
         f"Measured frame-delta range at the chosen value: **{lo:.4f}-{hi:.4f}**. "
         f"{'Beats' if chosen['beats_030_cap'] else 'Does not beat'} the 0.30 cap. "
         f"{'Beats' if chosen['beats_arm_c_benchmark'] else 'Does not beat'} Arm C's "
-        "0.072-0.112 benchmark.\n"
+        f"0.072-0.112 benchmark. {_bg_clause(chosen)}.\n"
     )
     SWEEP_REPORT_PATH.write_text("".join(lines))
     print(f"wrote {SWEEP_DATA_PATH} and {SWEEP_REPORT_PATH}")
