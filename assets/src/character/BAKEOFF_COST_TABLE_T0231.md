@@ -45,6 +45,13 @@ record, not decisive — round 1's decision above is unchanged by it.
 | Second human review: per-frame background cutout (reprocess of attempt 8's already-sampled pixels, no seed/denoise change) | PASS 0.30 cap (0.0000-0.1763); no longer beats Arm C's 0.072-0.112 (max 0.1763 > 0.112) | 0/8 (no new sampling) | 0.0 | -- | $0.00 | `--reprocess-attempt 8`: cuts the character out of its background per frame before assembly (Oklab border-flood + keypoint-bbox restriction), see `ROUND2_CHAINED_REPORT_T0250.md`'s "Second human review" section. Fixes the still-visible background (dark ground, grey slab, green marks) the first fix left in place; makes the frame-delta measurement more sensitive as a side effect (smaller union denominator), which is why the range moved. |
 | **Card total** | — | 8/8 | **87.8** | **01:28** | **$0.00** | Copied verbatim from `ROUND2_CHAINED_REPORT_T0250.md`'s "Cost" section. Attempt/GPU/wall-clock totals are unchanged by the cutout row above (0 new GPU work). Per the round-2 override, cost here is recorded for the record, not decisive — round 1's decision above is unchanged by it, and this card's own current result (clears the 0.30 gate, does not beat Arm C's benchmark, background now genuinely clean but motion stalled) is unchanged by cost either way. |
 
+## Round 2 (T-0251, HANDOFF §24-d — AnimateDiff capability check)
+
+| Stage | Attempts | GPU minutes | Wall-clock | $ | Notes |
+|---|---|---|---|---|---|
+| Capability check (5 read-only HTTP queries against the installed ComfyUI host, no checkpoint load, no sampling) | 0 | 0.0 | 00:04 | $0.00 | No usable SDXL motion module found — no AnimateDiff/AnimateDiff-Evolved node types, no `animatediff_models`/`motion_module` folder type, no motion-module weight file anywhere. Per this card's own instructions this is a complete, evidence-backed outcome; the card stops here with no generation attempt. See `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md` and `T-0251-animatediff-capability-decision.json`. |
+| **Card total** | **0** | **0.0** | **00:04** | **$0.00** | Copied verbatim from `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md`'s "Cost" section. Per the round-2 override, cost here is recorded for the record, not decisive — outcome is `no_usable_motion_module`, no frame-delta measurement was made, and Arm C's 0.072–0.112 benchmark is unchanged by this finding either way. |
+
 **Reading this table (mechanical, not the human verdict):** Arm A never reached
 a sheet passing both criteria within the 8-attempt cap, so it is closed as a
 criterion-3 failure regardless of any criterion-1 read (DL-21's attempt-cap
