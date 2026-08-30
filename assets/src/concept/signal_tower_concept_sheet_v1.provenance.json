@@ -11,5 +11,6 @@
   "height": 1024,
   "workflow_hash": "17641e4c4d422d796f56571502bbb2663517a7efa4a981768bd5c08eac6e7b63",
   "prompt_id": "bdc6df59-917e-4c02-9c56-70858d793255",
-  "concept_hash": "46f121ebfea0c9241774e347924e5868b8cd64c57bf695fed46d8b41fc9a2f4a"
+  "concept_hash": "46f121ebfea0c9241774e347924e5868b8cd64c57bf695fed46d8b41fc9a2f4a",
+  "_t0236_note": "generator field intentionally left unset -- the genuine recipe could not be recovered. workflow_hash matches no committed file in the repo and prompt_id has aged out of ComfyUI /history. See assets/src/concept/T-0236-recipe-recovery-attempt.json for the full verification attempt; escalated per card, not fabricated."
 }
