@@ -2,35 +2,23 @@
   "card": "T-0236",
   "title": "Recover the genuine generator recipe for signal_tower_concept_sheet_v1",
   "date": "2026-08-30",
-  "outcome": "unresolved -- escalated, not fabricated",
+  "outcome": "resolved -- generator recovered and authenticity demonstrated",
   "target": {
     "provenance": "assets/src/concept/signal_tower_concept_sheet_v1.provenance.json",
     "workflow_hash": "17641e4c4d422d796f56571502bbb2663517a7efa4a981768bd5c08eac6e7b63",
     "prompt_id": "bdc6df59-917e-4c02-9c56-70858d793255"
   },
   "verification_attempted": {
-    "hash_comparison": {
-      "method": "sha256 of every recipe/workflow-shaped file committed under assets/src/concept/, plus every other committed ComfyUI-workflow-shaped JSON found elsewhere in assets/src/, checked against the provenance's recorded workflow_hash. Also grepped the literal hash string repo-wide.",
-      "candidates_checked": [
-        { "path": "assets/src/concept/signal_tower_concept_sheet_v1.recipe.json", "sha256": "598e63b5abd8f781012d37e88ab94bdb893ac74ca2e6719b06b286142dd38427", "match": false, "note": "pre-existing file, plausible fields (same prompt/seed/steps/cfg/checkpoint as the provenance record) but its own hash does not match workflow_hash -- exactly the 'looks plausible but proves nothing' edge case the card called out" },
-        { "path": "assets/src/concept/_comfyui_workflow.json", "sha256": "46e562e80d7070f86114b26047b173e6c671c9b285e01cb0c3a0c1d52ed33325", "match": false, "note": "graph's own filename_prefix is player_character_concept_sheet_v1 -- belongs to a different sheet, not signal_tower" },
-        { "path": "assets/src/concept/_comfyui_props_workflow.json", "sha256": "a77e688ae7706477feea7c1e5229ee9293d74dd29875a7cf7710367843ccec9f", "match": false },
-        { "path": "assets/src/concept/_comfyui_props_v2_bg_workflow.json", "sha256": "fe183e7982562ad3b4883cd99e28ac9c7d2f55325a2876305a9f81edad86c94c", "match": false },
-        { "path": "assets/src/concept/_comfyui_entities_workflow.json", "sha256": "e13d0c0b9ecc21ae8e28c3c4d62c9c55c3d859706237cffaebfba7513df8f2c2", "match": false },
-        { "path": "assets/src/concept/_comfyui_structure_workflow.json", "sha256": "df4b78eb24232a54ff155f4fabde1c5324f587472174da0d913e782ce97a541d", "match": false },
-        { "path": "assets/src/concept/signal_tower_concept_sheet_v3.recipe.json", "sha256": "d48f2fe2eba361f97aebdf1f406fef3e1901c15b1fb826cf4f2e95a0f92fb3ae", "match": false },
-        { "path": "assets/src/concept/signal_tower_material_sheet.recipe.json", "sha256": "5d35a36653689ac033474d1f125e47d313624692eec2d90c1de1630e1cbfe0b9", "match": false },
-        { "path": "assets/src/concept/signal_tower_material_sheet_lora.recipe.json", "sha256": "9ed8e8f67625379035739724b0184127c3bfc9419533cf2105393ebeb498a1a0", "match": false },
-        { "path": "assets/src/concept/signal_tower_props_concept_sheet_v1.recipe.json", "sha256": "ac83dc70213c00bb9660d9652fd7ba82006e418888450a6db4a4a9a3d6cf9e37", "match": false },
-        { "path": "assets/src/concept/signal_tower_props_concept_sheet_v2.recipe.json", "sha256": "f72f9a81fefd59ee1bd9a653e33c180343b842695e6e88de1f557a478d2bf531", "match": false },
-        { "path": "assets/src/concept/signal_tower_structure_concept_sheet_v1.recipe.json", "sha256": "bfe40ae5fc0258550af0187c6c97d6956bd21b3e17a6ce872e10b4afe7cff523", "match": false },
-        { "path": "assets/src/concept/player_character_concept_sheet_v1.recipe.json", "sha256": "705af3b1848b7aaa1d7f8bb67b03652d6d195a83a96bb2e61d53602f3c3e01b3", "match": false },
-        { "path": "assets/src/lora_handshake/comfyui_workflow_ready.json", "sha256": "ba91acd8a78fbb32d482ea4e2171f8fc023c2a0ca40dbdbdcddf492589b44195", "match": false },
-        { "path": "assets/src/character/comfyui_workflow_T0218.json", "sha256": "5e593875f64d43a78ba24b3cc6ff4d211265824238cb1312d0edc8d1b0f443b4", "match": false },
-        { "path": "assets/src/character/comfyui_workflow_v2.json", "sha256": "c494a37503bb634255c8e0ea61d30943df30220403844a35fb187f103e4f4802", "match": false }
-      ],
-      "repo_wide_grep": "the literal string 17641e4c4d422d796f56571502bbb2663517a7efa4a981768bd5c08eac6e7b63 was grepped across the whole repository tree (every worktree checkout); it only ever appears as the recorded workflow_hash value inside signal_tower_concept_sheet_v1.provenance.json itself -- never as a value or filename anywhere else",
-      "conclusion": "no committed file's sha256 matches workflow_hash"
+    "raw_file_hash_comparison": {
+      "method": "sha256 of every recipe/workflow-shaped file committed under assets/src/concept/, plus every other committed ComfyUI-workflow-shaped JSON found elsewhere in assets/src/, checked against the provenance's recorded workflow_hash.",
+      "conclusion": "INVALID CHECK, superseded below. No committed file's raw sha256 matches workflow_hash -- but workflow_hash is never defined as the sha256 of a file on disk (see rendered_graph_hash_comparison). This round's negative result was a false signal from comparing against the wrong quantity, not evidence the recipe is inauthentic. Two of the candidates checked here (_comfyui_props_workflow.json, _comfyui_structure_workflow.json) DO match other sheets' recorded workflow_hash values under the correct definition, which is what exposed the error."
+    },
+    "rendered_graph_hash_comparison": {
+      "method": "The provenance seam's actual definition (tools/comfy-client/src/comfy_client/workflow.py:152-155): workflow_hash = sha256(json.dumps(render_workflow(recipe), sort_keys=True, separators=(',',':'))) over the RENDERED GRAPH, not any file's raw bytes. Loaded assets/src/concept/signal_tower_concept_sheet_v1.recipe.json via comfy_client.recipe.load_recipe(), rendered it with comfy_client.workflow.render_workflow() (default sdxl_txt2img_v1 template), and hashed the result with comfy_client.workflow.workflow_hash(). Run via assets/src/concept/_t0236_verify.py (scratch script, not committed) through /home/dennieseth/dev/lora-train-venv/bin/python3 -- render_workflow/workflow_hash/Recipe/load_recipe are stdlib-only, no comfy_client install required.",
+      "computed": "17641e4c4d422d796f56571502bbb2663517a7efa4a981768bd5c08eac6e7b63",
+      "expected": "17641e4c4d422d796f56571502bbb2663517a7efa4a981768bd5c08eac6e7b63",
+      "match": true,
+      "conclusion": "assets/src/concept/signal_tower_concept_sheet_v1.recipe.json is the genuine recipe -- re-rendering it through the same template reproduces the committed workflow_hash byte-for-byte. This is the deterministic check the card asked for; it needs no ComfyUI host and no surviving /history entry."
     },
     "comfyui_history_lookup": {
       "host": "http://172.18.192.1:8188",
@@ -38,13 +26,8 @@
       "comfyui_version": "0.29.0",
       "request": "GET /history/bdc6df59-917e-4c02-9c56-70858d793255",
       "response": "{}",
-      "full_history_check": "GET /history (no id) currently returns exactly 1 entry total, and it is unrelated to this prompt_id",
-      "conclusion": "prompt_id has aged out of ComfyUI history -- this is an older T-0104-era sheet and the host has cycled through many later runs since; no live payload survives to compare against"
+      "conclusion": "prompt_id has aged out of ComfyUI history (older T-0104-era sheet, host has cycled through many later runs since) -- moot once the rendered-graph hash comparison above proved authenticity by the stronger, deterministic method."
     }
   },
-  "decision": "Escalate rather than fabricate, per this card's own integrity rule. assets/src/concept/signal_tower_concept_sheet_v1.provenance.json is left with no `generator` field, and its generator_baseline.txt exemption is left in place -- it is the one remaining src/concept baseline entry T-0236 could not close on merit.",
-  "what_would_resolve_this": [
-    "A human with access to the original generation session's history/logs (or a Windows-host ComfyUI output-folder backup carrying the embedded PNG workflow metadata for this specific run) could recover the real workflow JSON and let it be verified and committed.",
-    "If genuinely unrecoverable, the likely correct remediation is the T-0221/T-0226 pattern: regenerate the sheet for real through a committed pipeline (new prompt_id, new workflow_hash, new recipe committed alongside) rather than reconstructing a paper trail for a run that can no longer be verified."
-  ]
+  "decision": "generator set to the bare path assets/src/concept/signal_tower_concept_sheet_v1.recipe.json (matching the convention of every other resolved concept-sheet record). generator_baseline.txt's src/concept/signal_tower_concept_sheet_v1.provenance.json line removed; the sheet now resolves on merit like the rest of assets/src/concept/."
 }
