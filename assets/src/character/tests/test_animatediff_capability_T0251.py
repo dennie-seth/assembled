@@ -111,10 +111,10 @@ def test_no_usable_module_outcome_stops_before_generation() -> None:
         "no_usable_motion_module outcome must not carry a generation_run -- "
         "the card stops at the capability check, per its own acceptance"
     )
-    decision_text = data["decision"].lower()
-    assert "sd1.5" not in decision_text.replace(" ", ""), (
+    assert data.get("pipeline_model_switched_to_sd1_5") is False, (
         "must not record switching the character pipeline to SD1.5 to "
-        "manufacture a pass -- explicitly out of scope for this card"
+        "manufacture a pass -- explicitly out of scope for this card, and "
+        "this field must be explicitly recorded false, not merely absent"
     )
 
 
