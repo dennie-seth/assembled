@@ -166,3 +166,50 @@ def test_sweep_of_assets_final_finds_no_false_positives():
     results = sweep_rendered_visibility(assets_final)
     failures = [r for r in results if not r.passed]
     assert not failures, "\n".join(f"{r.details.get('path', '?')}: {r.reason}" for r in failures)
+
+
+# ---- The verdict must not depend on how the background is encoded (P-6) ----
+
+
+def test_transparent_background_counts_as_one_visible_state():
+    """A two-tone figure on a transparent background is a sprite, not a blank."""
+    rgb = np.zeros((8, 8, 3), dtype=np.uint8)
+    rgb[2:6, 2:4] = (60, 60, 60)
+    rgb[2:6, 4:6] = (180, 180, 180)
+    alpha = np.zeros((8, 8), dtype=np.uint8)
+    alpha[2:6, 2:6] = 255
+    result = check_rendered_visibility(_rgba_image(rgb, alpha=alpha))
+    assert result.passed
+    assert result.details["visible_states"] == 3
+    assert result.details["unique_visible_colors"] == 2
+
+
+def test_verdict_is_unchanged_by_a_transparency_re_save():
+    """Same indices, opaque background vs tRNS background -- same verdict.
+
+    This is exactly what the P-6 re-save did to nine committed entity sheets:
+    the background stopped counting as a colour, and a gate that measured only
+    opaque colours flipped them to FAIL without a pixel changing.
+    """
+    rgb = np.zeros((8, 8, 3), dtype=np.uint8)
+    rgb[:, :] = (18, 17, 14)
+    rgb[2:6, 2:4] = (60, 60, 60)
+    rgb[2:6, 4:6] = (180, 180, 180)
+
+    opaque_alpha = np.full((8, 8), 255, dtype=np.uint8)
+    cut_alpha = np.zeros((8, 8), dtype=np.uint8)
+    cut_alpha[2:6, 2:6] = 255
+
+    before = check_rendered_visibility(_rgba_image(rgb, alpha=opaque_alpha))
+    after = check_rendered_visibility(_rgba_image(rgb, alpha=cut_alpha))
+    assert before.passed == after.passed is True
+
+
+def test_a_single_colour_on_transparency_is_still_blank():
+    """Crediting transparency with one state must not let a solid blob through."""
+    rgb = np.full((8, 8, 3), (40, 90, 140), dtype=np.uint8)
+    alpha = np.zeros((8, 8), dtype=np.uint8)
+    alpha[2:6, 2:6] = 255
+    result = check_rendered_visibility(_rgba_image(rgb, alpha=alpha))
+    assert not result.passed
+    assert result.details["visible_states"] == 2

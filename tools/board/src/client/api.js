@@ -3,6 +3,15 @@ const AGENTS_PATH = "/api/agents";
 const WS_PATH = "/ws/board";
 const GIT_STATUS_PATH = "/api/git/status";
 
+/**
+ * Identifies requests from the board UI -- i.e. from a person clicking things -- to the
+ * server's human direction-approval gate (`src/lib/approvalGate.js`), and is what ends up in a
+ * gated card's `approved_by` when someone drags it to Done. The counterpart value is the
+ * `agent` that `scripts/agentCurl.js` stamps, which the gate refuses to approve on. Mirrors
+ * `BOARD_UI_ACTOR` there; sent on the two routes that can approve (`PATCH` and comments).
+ */
+const ACTOR_HEADER = { "X-Board-Actor": "board-ui" };
+
 export async function fetchTasks() {
   const res = await fetch(TASKS_PATH);
   if (!res.ok) {
@@ -44,7 +53,7 @@ export async function deleteTask(id) {
 export async function patchTask(id, updates) {
   const res = await fetch(`${TASKS_PATH}/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...ACTOR_HEADER },
     body: JSON.stringify(updates)
   });
   if (!res.ok) {
@@ -75,7 +84,7 @@ export async function addComment(id, text) {
   const path = `${TASKS_PATH}/${id}/comments`;
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...ACTOR_HEADER },
     body: JSON.stringify({ text })
   });
   if (!res.ok) {

@@ -28,6 +28,14 @@ const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
 const OPTIONAL_FIELDS = ["branch", "commit", "pr"];
 const DELIVERABLE_TYPES = ["code", "artifact"];
 const NUMERIC_FIELDS = ["attempts"];
+// Human direction-approval gate (src/lib/approvalGate.js). `requires_approval` is the explicit,
+// author-set signal that this card's deliverable is a *direction* a human must sign off on --
+// deliberately a field rather than a body-prose marker, so nothing has to guess which cards are
+// gated. The other two record that sign-off and are written only by the server's approval paths
+// (never accepted from a request body); they live in the schema so the record survives a card
+// file round-trip like any other field.
+const APPROVAL_FLAG_FIELD = "requires_approval";
+const APPROVAL_RECORD_FIELDS = ["approved_by", "approved_at"];
 const ARRAY_FIELDS = ["comments", "attachments"];
 const COMMENT_FIELDS = ["author", "text", "timestamp"];
 const ATTACHMENT_STRING_FIELDS = ["filename", "mimetype", "uploaded_by", "uploaded_at"];
@@ -123,6 +131,20 @@ export function validateTask(data) {
       throw new Error(`Invalid ${field} "${data[field]}": expected a non-negative integer`);
     }
   }
+  if (
+    APPROVAL_FLAG_FIELD in data &&
+    data[APPROVAL_FLAG_FIELD] !== null &&
+    typeof data[APPROVAL_FLAG_FIELD] !== "boolean"
+  ) {
+    throw new Error(
+      `Invalid ${APPROVAL_FLAG_FIELD} "${data[APPROVAL_FLAG_FIELD]}": expected true or false`
+    );
+  }
+  for (const field of APPROVAL_RECORD_FIELDS) {
+    if (field in data && data[field] !== null && typeof data[field] !== "string") {
+      throw new Error(`Invalid ${field} "${data[field]}": expected a string or null`);
+    }
+  }
   if ("comments" in data) {
     validateComments(data.comments);
   }
@@ -175,6 +197,9 @@ export function parseTask(raw) {
     commit: data.commit ?? null,
     pr: data.pr ?? null,
     deliverable_type: data.deliverable_type ?? "code",
+    requires_approval: data.requires_approval === true,
+    approved_by: data.approved_by ?? null,
+    approved_at: data.approved_at ?? null,
     attempts: data.attempts ?? 0,
     comments: Array.isArray(data.comments) ? data.comments : [],
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
@@ -192,6 +217,8 @@ export function serializeTask(task) {
     ...REQUIRED_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field])}`),
     ...OPTIONAL_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
     `deliverable_type: ${JSON.stringify(task.deliverable_type ?? "code")}`,
+    `${APPROVAL_FLAG_FIELD}: ${JSON.stringify(task[APPROVAL_FLAG_FIELD] === true)}`,
+    ...APPROVAL_RECORD_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
     ...NUMERIC_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? 0)}`),
     ...ARRAY_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? [])}`)
   ];

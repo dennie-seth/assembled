@@ -185,6 +185,98 @@ resume from and retrained from step 0.
 | WT-4 | A fresh card — no prior worktree, or a worktree holding no allowlisted artifacts — is a clean no-op: no cache directory is created and worktree creation is unchanged. | The overwhelming majority of cards generate nothing worth preserving. The mechanism must be invisible to them, including leaving no empty directories behind for the reaper or the integrity checker to puzzle over. | ✅ Covered — `gitOps.test.js` "leaves a fresh card with no prior worktree completely unaffected", `artifactPreservation.test.js` (absent worktree, and a worktree with no allowlisted artifacts). |
 | WT-5 | The cache cannot grow without bound: it is purged for a card that reaches `done`/`retired`, each capture replaces that card's previous snapshot rather than accumulating, and an LRU bound caps how many cards' caches can coexist. A capture that finds *nothing* leaves an existing cache untouched. | Checkpoint sets run to gigabytes; an unbounded cache would quietly fill the disk the board and the GPU pipeline share. The "empty capture never clears" rule is the counterpart safety property: a reclaim that moved artifacts out and then crashed must not have its cache wiped by the next run's empty capture — that would destroy exactly what this exists to save. | ✅ Covered — `httpApi.artifactCache.test.js` (purge on `done`/`retired`, kept for in-flight statuses, other cards untouched), `artifactPreservation.test.js` (`pruneArtifactCache` LRU, one-generation replacement, empty-capture-keeps-existing-cache). |
 
+## 9. Character-generation quality reference (asset pipeline)
+
+Unlike §§1–8, this section is not about the board tool — it pins a standing rule about the
+**asset pipeline's** character-generation outputs, recorded here because this file is where
+this project keeps machine-checkable invariants. Its permanent home is
+`docs/design/13-asset-pipeline.md` §3.5 / HANDOFF §24, which is a design-pass edit deferred by
+DL-22, DL-24 and DL-25 — noted so the duplication is deliberate and temporary, not a fork.
+
+Source: **DL-25** (`docs/decision-log.md`), the round-2 character decision, recording
+@DennieSeth's standing guidance: *"Arm-C benchmark will never probably be beaten, but we should
+always verify against it."*
+
+| ID | Invariant | Why | Coverage |
+|----|-----------|-----|----------|
+| CHR-1 | Every character-generation output records **both** its own frame-delta range **and** its comparison against the Arm-C benchmark (0.072–0.112) in its committed provenance sidecar — `frame_delta_range`, `beats_arm_c_benchmark` and the `arm_c_benchmark` bounds it was compared against. The comparison is **recorded, not deciding**. | The benchmark's value is diagnostic, not gating. Arm C (T-0230, deterministic seeded script) is the tightest frame-delta this pipeline has ever produced, and a generative sheet drifting far from the winner's ~0.16 is a signal something broke — but only if the number is on every sheet. DL-25 chose §24-e (0.1576–0.1816) knowing it does **not** beat the benchmark; the number is kept as a permanent quality reference precisely because it is no longer a pass/fail bar and would otherwise quietly stop being written. | ⚠️ **Partially held, by convention only.** The three round-2 arms record it (`player_idle_sheet_pose_authority_T0249`, `_chained_T0250`, `_hybrid_T0252` sidecars) — but each generator implements it independently, and `ARM_C_BENCHMARK = (0.072, 0.112)` is **hardcoded separately** in `gen_hybrid_idle_T0252.py:62` and `gen_pose_authority_idle_T0249.py:127` (`gen_chained_idle_T0250.py:124` re-exports the latter). Of 18 sidecars under `assets/final/character/`, **3 record the Arm-C comparison**, 3 more record frame-delta alone (round-1 arms T-0228/T-0229/T-0230), and **11 record neither** (`player_idle_sheet_v1`/`v2`, `player_move_sheet_v1`/`v2`, `player_crouch_hide_sheet_v1`/`v2`, `player_die_sheet_v1`/`v2`, both `_T0218` sheets, `pose_grid_stage3_T0218`). No shared helper, no asset-gate check. A new character-sheet generator would omit it silently. **Gap — needs a small follow-up card:** hoist `ARM_C_BENCHMARK` to one shared constant, write the pair through a single provenance helper, and assert their presence in the character asset-gate. |
+| CHR-2 | Arm C (T-0230) is retained permanently as the **shipping fallback** and quality reference: its script, committed sheet (`assets/final/character/player_idle_sheet_arm_c_T0230.png`) and gate results stay committed and passing, and are never regressed by a generative arm's work. It is **not** a gate the chosen generative approach must clear. | DL-23 retained Arm C as benchmark *and* fallback when it created round 2; DL-25 kept that standing after choosing §24-e on authorship grounds. The fallback only works if it stays green — and stating "not a gate" explicitly prevents the opposite failure, where a future run reads CHR-1's recorded comparison as a bar and rejects a sheet the project has already accepted. | ✅ Held — Arm C's sheet, provenance, generator and `tests/test_player_idle_arm_c_gate.py` are committed on `develop` and unmodified by any round-2 card (T-0249/T-0250/T-0251/T-0252 add files; none touch Arm C's). Not enforced by a dedicated test — it is a "do not delete/regress" property, covered in practice by Arm C's own gate test staying in CI. |
+## 10. Human direction approval
+
+Some cards do not produce *code*, they produce a **direction**: concept art, a
+style sheet, a reference the rest of a track is then generated against. Such a
+card is not finished when the artifact exists — it is finished when a human has
+looked at the artifact and said yes. Before PR #288 the board had no way to say
+that. A reviewer PASS settled every card into `review`
+(`runOrchestrator._handlePass`), and the `review → done` flip was one unlabelled
+drag that recorded nothing about *why* it happened. Since
+[`dependencyGuard`](../tools/board/src/lib/dependencyGuard.js) counts `done` (and
+`retired`) as a satisfied dependency, that flip — made for any reason, including
+"the artifact looks produced" — released every downstream card.
+
+**The incident.** T-0239 produced a *synthetic* Signal Tower props concept sheet
+(labelled silhouettes composited by `_composite_props_v2.py` over an SDXL
+background — drawn by script, not generated geometry). It reached `review` on a
+reviewer PASS at 11:15 on 2026-08-29 and was `done` at 11:19. T-0243 duly
+unblocked and generated `archive_shelving_v1` against a reference no human had
+approved; the room card later caught it and reverted, but only because DL-5
+happened to be checked downstream. Nothing in the board was wrong by its own
+rules. Approval simply was not modelled anywhere — not as a field, not as a
+state, not as a recorded act.
+
+**The fix, in one line:** production parks at `review`; approval moves to `done`.
+`dependencyGuard` is deliberately **unchanged** — it is already exactly the right
+rule. What changed is *who* may write `done` on a gated card, and that the act is
+recorded.
+
+The signal is an explicit field, `requires_approval: true`, not a body-prose
+marker. Body detection was considered and rejected: which cards are gated has to
+be answerable without parsing English, and a card whose prose merely *mentions*
+approval must not become un-completable by accident. The record of the verdict is
+the pair `approved_by` / `approved_at`, written **only** by the server's own
+approval paths — never accepted from a request body, never writable by a planner
+run.
+
+**How a human approves** (either is enough, both are recorded):
+
+- **Comment** `APPROVED` (or `/approve`) on the parked card — the marker must be
+  the *first non-empty line*, case-insensitive, with any explanation below it.
+  This is the preferred route: it is an explicit, logged, attributed act, and the
+  reasoning ends up on the card next to the verdict.
+- **Drag the card to Done** in the board UI — the existing gesture, now stamped
+  with who made it.
+
+**On enforcement strength.** The actor check is a **guardrail, not a sandbox** —
+the same stance [`agentCurlPolicy.js`](../tools/board/src/lib/agentCurlPolicy.js)
+documents for itself. Three layers, in descending order of load-bearing-ness:
+(1) no agent holds an unscoped HTTP grant at all — only `assets`/`audio` get
+`agentCurl.js`, whose policy already refuses every mutating board route except
+attachment upload; (2) `assertRunnerMayApply`, wired into the orchestrator's
+single write chokepoint, makes it *impossible* for any automated run path to
+complete an unapproved gated card, whatever an agent talks it into; (3) the
+`X-Board-Actor` header and the reserved-identity list, which catch a future agent
+that gains comment or PATCH rights.
+
+| ID | Invariant | Why it matters | Status |
+|----|-----------|-----------------|--------|
+| AP-1 | A card carries an explicit `requires_approval` boolean. It defaults to `false` everywhere (parser, both stores, create endpoint), so every pre-existing card behaves exactly as it did before. The record fields `approved_by`/`approved_at` default to `null` and are part of the schema in both fs and db mode (migration `0003_add_approval_gate.sql`). | An implicit signal (body prose, `deliverable_type`, agent name) would make "is this card gated?" a guess. It has to be a fact a human sets and a machine reads. Defaulting to off is what makes this change safe to deploy against 200 live cards. | ✅ Covered — `taskParser.test.js` (round-trip, validation), `taskStoreContract.js` (both stores, identical shape), `dbMigrate.test.js`, `httpApi.approval.test.js` §AP-1. |
+| AP-2 | A reviewer **PASS** on a gated card settles it in `review` — the parked state — and posts a `PARKED FOR HUMAN APPROVAL` comment naming both exits (approve → Done or `APPROVED`; reject → comment the changes and re-run). Branch, commit and PR are recorded exactly as on any other PASS. | `review` is already where a PASS lands, so the status alone cannot distinguish "parked on a human verdict" from "waiting on a PR merge". The comment is that distinction, and it means a human never has to know the ritual in advance. Keeping the PASS metadata intact means approving later needs no re-run. | ✅ Covered — `runOrchestrator.approval.test.js` §AP-2 (parked + metadata, comment content, notice is not itself a marker, ungated card unaffected, no re-post once approved). |
+| AP-2b | No automated write can move a gated, unapproved card to `done`. `assertRunnerMayApply` is called from `RunOrchestrator._updateAndBroadcast`, the single chokepoint every orchestrator write passes through. | Today no run path writes `done` at all, so this never fires — which is exactly why it belongs at the chokepoint rather than at a call site. A future run path, a reviewer shortcut, or an auto-complete added in good faith inherits the guard instead of having to remember it. | ✅ Covered — `runOrchestrator.approval.test.js` §AP-2b (refuses on a gated card; allows once approved; allows on an ungated card), `approvalGate.test.js` (`assertRunnerMayApply` unit cases). |
+| AP-3 | A **human** `PATCH {status: "done"}` on a gated card is the approval: it succeeds and stamps `approved_by`/`approved_at` in the same write as the status. A non-gated card's `review → done` flip is untouched and records nothing. | The drag-to-Done gesture already exists and is already a human act; forcing a separate "approve" step first would be ceremony. Stamping it in the same write means a card can never be `done` with no recorded approver. | ✅ Covered — `httpApi.approval.test.js` §AP-3. |
+| AP-4 | A **human** comment whose first non-empty line is exactly `APPROVED` or `/approve` (case-insensitive) on a **parked** gated card flips it to `done`, stamps the record, and logs an `APPROVAL RECORDED` confirmation. The marker does nothing on an ungated card, a card that is not parked, or an already-approved card. | Dennie's own framing: "some way to record my approval on review, like a comment". A comment is explicit, attributed and logged, and it carries the reasoning next to the verdict. The "first line, exactly" rule is what keeps *discussion* of approval ("not approved yet", "the sheet says APPROVED in the corner") from acting as one. The not-parked exclusion stops an `APPROVED` from silently completing a card out from under its own live run. | ✅ Covered — `httpApi.approval.test.js` §AP-4 (9 cases incl. every negative), `approvalGate.test.js` §isApprovalMarker. |
+| AP-5 | **An agent can never approve.** An agent-stamped request (`X-Board-Actor: agent`, which `agentCurl.js` sets on everything it forwards) is refused with 409 on `PATCH →done` and on any attempt to clear `requires_approval`, and its `APPROVED` comment is stored as an ordinary comment with no effect. A comment authored under a reserved agent identity (`assembled-board`, `reviewer`, an agent name…) never approves either, whatever the request header says. Nobody — human or agent — may write `approved_by`/`approved_at` directly; that is a 400. | This is the whole point: an agent marking its own work approved is exactly the failure the gate exists to prevent, and removing the gate is the same act as approving through it. The author check is independent of the actor check because the board writes its own comments in-process (the parked notice itself contains the word "APPROVE"). | ✅ Covered — `httpApi.approval.test.js` §AP-5 (6 cases), `agentCurlGrant.test.js` ("stamps `X-Board-Actor: agent`", asserted against a real listening server), `approvalGate.test.js` §actor identity. |
+| AP-6 | While a gated card is parked, its dependents stay blocked; the approval — by either route — unblocks them. Nothing in `dependencyGuard` changed. | This is the invariant the whole mechanism exists to produce, and the one T-0239/T-0243 violated. Asserting it end-to-end (rather than trusting that `done` implies unblocked) is what makes the two halves provably connected. | ✅ Covered — `httpApi.approval.test.js` §AP-6 (dependent blocked while parked and unblocked after, for both approval routes; still blocked after an agent tries both). |
+| AP-7 | A planner run may **add** `requires_approval` to a card — flagging a direction card is spec work — but may never write, alter or erase an approval record. Enforced twice: `checkPlannerDiffGuard` fails the run in fs mode, and `plannerFileView`'s `MUTABLE_FIELDS` allowlist (whose `diffPlannerFileView` runs that same guard) fails it in db mode. | The planner is the one agent that legitimately rewrites card frontmatter wholesale, so it is the one agent that could forge an approval as a side effect of ordinary work. Treated exactly like the existing "planner never touches status" rule. | ✅ Covered — `plannerDiffGuard.test.js` (forge, erase, and the legitimate add), `plannerFileView.test.js` (db-mode add applied, db-mode forge rejected). |
+| AP-8 | An approval-by-comment fires the same terminal-status side effects a drag to Done does — artifact-cache purge and the `origin/develop` deploy pull. | Two routes to `done` that do *different* amounts of follow-through is precisely the shape of divergence that produced PULL-1, where one mode silently stopped deploying. Both routes now go through one `applyTerminalStatusEffects`. | ✅ Covered — `httpApi.approval.test.js` ("triggers the same deploy pull…", and not for an ordinary comment). |
+| AP-9 | Cards already `done` before this gate existed are **not** retroactively re-parked. | A migration that reopened settled cards would rewrite history the board has already acted on, and would unblock/reblock downstream work with no human in the loop. The one card this actually matters for (T-0239's synthetic sheet) was already superseded by T-0257 through the normal card flow, which is the right mechanism: a new card carrying the gate, not a retro-edit of an old one. | ✅ By construction — the migration defaults every existing row to `requires_approval = 0`; no code path re-parks a `done` card. |
+
+**The general pattern for direction cards.** Every future concept-art,
+style-direction or reference-producing card sets `requires_approval: true` at
+authoring time. The card's Acceptance must describe *producing and parking* —
+never "get it approved", which is not a criterion an agent can satisfy and is
+what made T-0233 unsatisfiable across five attempts. T-0257 (the real Signal
+Tower prop concept sheet gating T-0243–T-0246) is the first card to carry it.
+
 ---
 
 ## Summary
@@ -199,6 +291,8 @@ resume from and retrained from step 0.
 | Deploy propagation | PULL-2, PULL-3, PULL-4 | — | **PULL-1 (headline)** | — |
 | Detail panel live-update safety | — | — | DP-1, DP-2 | — |
 | Worktree artifact preservation | WT-1..WT-5 | — | — | — |
+| Character-generation quality reference (§9, DL-25) | CHR-2 | CHR-1 | — | CHR-1 (see §9) |
+| Human direction approval | AP-9 | — | AP-1..AP-8 (new mechanism) | — |
 
 **Deferred, not silently dropped:** LC-7 (no guard against a manual card edit
 racing an active orchestrator run) is a real, confirmed gap found while

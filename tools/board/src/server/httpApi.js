@@ -12,6 +12,18 @@ import { listAssignableAgents } from "../lib/agentCatalog.js";
 import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
 import { launchCardRun, CardLaunchError } from "../runner/cardLaunch.js";
 import { artifactCacheRootFor, clearPreservedArtifacts } from "../runner/artifactPreservation.js";
+import {
+  actorFromHeaders,
+  approvalRecord,
+  approvalRecordedComment,
+  isAgentActor,
+  isApprovalMarker,
+  needsApproval,
+  ApprovalRequiredError,
+  APPROVAL_RECORD_FIELDS,
+  PARKED_STATUS,
+  REQUIRES_APPROVAL_FIELD
+} from "../lib/approvalGate.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
@@ -279,6 +291,13 @@ async function handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir
     agent: body.agent ?? DEFAULTS.agent,
     depends_on: body.depends_on ?? DEFAULTS.depends_on,
     created: body.created ?? todayIso(),
+    // Accepted at create time so a direction card can be gated in one call rather than the
+    // POST-then-PATCH dance `deliverable_type` still needs. Only the *flag* is read from the
+    // request: the approval record below is pinned to null regardless of what was sent, so a
+    // card can never be born pre-approved.
+    [REQUIRES_APPROVAL_FIELD]: body[REQUIRES_APPROVAL_FIELD] === true,
+    approved_by: null,
+    approved_at: null,
     body: body.body ?? DEFAULTS.body
   };
 
@@ -343,6 +362,54 @@ async function purgeArtifactCacheIfTerminal({ orchestrator, id, status }) {
 }
 
 /**
+ * The HTTP half of the human direction-approval gate (`approvalGate.js`), applied to every
+ * `PATCH /api/tasks/:id` before the update is written. Three rules, in order:
+ *
+ * 1. `approved_by` / `approved_at` are *derived*, never supplied. A request that sets them is
+ *    rejected outright rather than trusted -- the whole point of the record is that it says
+ *    what actually happened, so the only writer is this file's own approval paths.
+ * 2. An agent may not flip `requires_approval` off. Removing the gate is the same act as
+ *    approving through it, and neither is an agent's to make.
+ * 3. Moving an unapproved `requires_approval` card to `done` is the approval. From a human it
+ *    is allowed and stamped with who did it; from an agent it is a 409. This is the rule that
+ *    keeps dependents blocked: `dependencyGuard` counts only `done`/`retired`, so this handler
+ *    deciding who may write `done` *is* the gate on when downstream cards unblock.
+ *
+ * Mutates `body` in place to add the approval record, so the single `store.update` below still
+ * writes the status and the record together -- there is no window where a card is `done` with
+ * no recorded approver.
+ */
+async function applyApprovalGateToPatch({ store, id, body, actor }) {
+  for (const field of APPROVAL_RECORD_FIELDS) {
+    if (field in body) {
+      throw new HttpError(
+        400,
+        `Cannot set ${field} directly -- the approval record is written by the board when a human approves the card`
+      );
+    }
+  }
+
+  const agentActor = isAgentActor(actor);
+  if (agentActor && REQUIRES_APPROVAL_FIELD in body) {
+    throw new HttpError(
+      409,
+      `Cannot change ${REQUIRES_APPROVAL_FIELD} on ${id}: only a human may add or remove a card's approval gate`
+    );
+  }
+
+  if (body.status !== "done") return;
+
+  const task = await store.get(id);
+  // A missing card is store.update's 404 to report, not this gate's -- fall through untouched.
+  if (!task || !needsApproval(task)) return;
+
+  if (agentActor) {
+    throw new HttpError(409, new ApprovalRequiredError(id).message);
+  }
+  Object.assign(body, approvalRecord({ actor }));
+}
+
+/**
  * Handles ordinary card edits (drag between board columns, editing title/priority/agent/etc.
  * via the UI) -- the one route every routine field/status change goes through, including the
  * Review -> Done flip. Commits the updated card file the same way create/comments/attachments
@@ -350,12 +417,20 @@ async function purgeArtifactCacheIfTerminal({ orchestrator, id, status }) {
  * That matters here specifically: the Done-triggered `pullDevelop` below needs a clean tree to
  * merge, and a prior update's uncommitted diff was exactly what made that pull start failing
  * with "local changes ... would be overwritten by merge" once origin touched the same file.
+ *
+ * This is also the *manual approval* path of the human direction-approval gate
+ * (`approvalGate.js`): dragging a `requires_approval` card into the Done column is a human act
+ * and counts as the approval, which this handler records on the card as `approved_by` /
+ * `approved_at`. An agent-originated PATCH doing the same thing is refused with 409 -- see
+ * `applyApprovalGateToPatch`.
  */
 async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub) {
   const body = requireJsonObject(await readJsonBody(req));
   if ("id" in body && body.id !== id) {
     throw new HttpError(400, "Cannot change a task's id");
   }
+  const actor = actorFromHeaders(req.headers);
+  await applyApprovalGateToPatch({ store, id, body, actor });
 
   if (body.status === "in-progress") {
     try {
@@ -397,32 +472,13 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     hub.broadcast({ type: "changed", id, task: updated });
   }
 
-  // A card that has landed is never going to be re-run, so the untracked artifacts held for it
-  // across worktree reclaims (LoRA checkpoints, generated output -- see artifactPreservation.js)
-  // have no further purpose and are the largest thing the board keeps on disk per card. This is
-  // the primary cleanup; pruneArtifactCache's LRU bound is only the backstop for cards that
-  // never reach a terminal status at all.
-  await purgeArtifactCacheIfTerminal({ orchestrator, id, status: updated.status });
-
-  // Done-triggered pullDevelop exists to fetch code that OTHER merged PRs have pushed to
-  // origin/develop, so it must fire in every task-store mode: `repoRoot` is still a real
-  // git checkout of develop even in db mode (docs/design/cards-to-database.md, Phase 2
-  // keeps tasks/ git-tracked alongside the DB). Whether *this card's own write* touches
-  // git is unrelated and handled separately above -- conflating the two previously gated
-  // this off entirely in db mode, silently killing the live board's only auto-deploy path
-  // after the 2026-08-07 cutover (docs/board-invariants.md PULL-1).
-  if (updated.status === "done" && repoRoot) {
-    // Fire-and-forget: pull (and any restart it triggers) must not block this response.
-    pullDevelop({ repoRoot })
-      .then((result) => {
-        if (restartCoordinator && result && result.advanced) {
-          restartCoordinator.notifyPulled({ hasActiveRuns: Boolean(orchestrator && orchestrator.hasActiveRuns()) });
-        }
-      })
-      .catch((err) => {
-        console.error("pullDevelop failed after card moved to done:", err);
-      });
-  }
+  await applyTerminalStatusEffects({
+    orchestrator,
+    restartCoordinator,
+    id,
+    status: updated.status,
+    repoRoot
+  });
 
   sendJson(res, 200, updated);
 }
@@ -448,12 +504,91 @@ async function handleRunTask(orchestrator, id, res) {
 }
 
 /**
+ * Decides whether an incoming comment is a human approval of an approval-gated card, and if so
+ * builds the extra patch that completes it. Every condition has to hold, and each one is here
+ * for its own reason:
+ *
+ * - the card is flagged `requires_approval` and not already approved -- otherwise there is
+ *   nothing to approve, and the marker is just a word someone typed;
+ * - the card is sitting in the parked status -- an "APPROVED" on a card that is still being
+ *   worked on approves nothing, and silently completing a `ready`/`in-progress` card out from
+ *   under its own run would be worse than ignoring the comment;
+ * - the comment's first non-empty line is exactly the marker (`isApprovalMarker`);
+ * - **and both the request actor and the comment's author are human.** Both, not either: the
+ *   actor catches an agent posting under a human's name, the author catches the board's own
+ *   `assembled-board` comments (the parked notice itself contains the word "APPROVE") and any
+ *   future in-process writer.
+ *
+ * Returns `null` when the comment is an ordinary comment, which is the overwhelmingly common
+ * case and stays entirely unaffected.
+ */
+function approvalPatchForComment({ task, text, author, actor }) {
+  if (!needsApproval(task)) return null;
+  if (task.status !== PARKED_STATUS) return null;
+  if (!isApprovalMarker(text)) return null;
+  if (isAgentActor(actor) || isAgentActor(author)) return null;
+  return approvalRecord({ actor: author });
+}
+
+/**
+ * Fires the side effects that follow a card reaching a terminal status, shared by the two
+ * routes that can put it there: a `PATCH {status: "done"}` and a comment that approves an
+ * approval-gated card. Extracted when the second route appeared -- an approval that skipped
+ * the deploy pull would be a silently different kind of "done" than a drag to the Done column
+ * (docs/board-invariants.md PULL-1 is exactly the bug that shape of divergence causes).
+ */
+async function applyTerminalStatusEffects({ orchestrator, restartCoordinator, id, status, repoRoot }) {
+  // A card that has landed is never going to be re-run, so the untracked artifacts held for it
+  // across worktree reclaims (LoRA checkpoints, generated output -- see artifactPreservation.js)
+  // have no further purpose and are the largest thing the board keeps on disk per card. This is
+  // the primary cleanup; pruneArtifactCache's LRU bound is only the backstop for cards that
+  // never reach a terminal status at all.
+  await purgeArtifactCacheIfTerminal({ orchestrator, id, status });
+
+  // Done-triggered pullDevelop exists to fetch code that OTHER merged PRs have pushed to
+  // origin/develop, so it must fire in every task-store mode: `repoRoot` is still a real
+  // git checkout of develop even in db mode (docs/design/cards-to-database.md, Phase 2
+  // keeps tasks/ git-tracked alongside the DB). Whether *this card's own write* touches
+  // git is unrelated and handled separately by each caller -- conflating the two previously
+  // gated this off entirely in db mode, silently killing the live board's only auto-deploy
+  // path after the 2026-08-07 cutover (docs/board-invariants.md PULL-1).
+  if (status !== "done" || !repoRoot) return;
+  // Fire-and-forget: pull (and any restart it triggers) must not block the response.
+  pullDevelop({ repoRoot })
+    .then((result) => {
+      if (restartCoordinator && result && result.advanced) {
+        restartCoordinator.notifyPulled({ hasActiveRuns: Boolean(orchestrator && orchestrator.hasActiveRuns()) });
+      }
+    })
+    .catch((err) => {
+      console.error("pullDevelop failed after card moved to done:", err);
+    });
+}
+
+/**
  * Appends a human comment to a card (Feature A). Read by the implementer on a re-run
  * (see promptBuilder's `comments` section) so a human can say "CI failed on X, please
  * fix" and have it reach the agent. Committed to git the same way card creation is,
  * so it's tracked immediately instead of sitting as untracked local state.
+ *
+ * This is also the *comment* approval path of the human direction-approval gate: a human
+ * commenting `APPROVED` (or `/approve`) on a parked approval-gated card completes it, which is
+ * the explicit, logged act Dennie asked for -- the approval and its reasoning end up in the
+ * same place, on the card, rather than as an anonymous drag between columns. See
+ * `approvalPatchForComment` for exactly what counts.
  */
-async function handleAddComment(store, id, req, res, repoRoot, tasksDir, taskStoreKind, hub) {
+async function handleAddComment(
+  store,
+  id,
+  req,
+  res,
+  repoRoot,
+  tasksDir,
+  taskStoreKind,
+  hub,
+  orchestrator,
+  restartCoordinator
+) {
   const body = requireJsonObject(await readJsonBody(req));
   if (typeof body.text !== "string" || body.text.trim().length === 0) {
     throw new HttpError(400, "text is required and must be a non-empty string");
@@ -465,12 +600,29 @@ async function handleAddComment(store, id, req, res, repoRoot, tasksDir, taskSto
     throw new HttpError(404, `Task ${id} not found`);
   }
 
-  const comment = { author, text: body.text.trim(), timestamp: new Date().toISOString() };
+  const text = body.text.trim();
+  const comment = { author, text, timestamp: new Date().toISOString() };
   const comments = [...(task.comments ?? []), comment];
+
+  const approval = approvalPatchForComment({
+    task,
+    text,
+    author,
+    actor: actorFromHeaders(req.headers)
+  });
+  if (approval) {
+    // The approval is written in the SAME update as the comment that granted it, so the card
+    // can never be `done` with no record of who approved it (nor the reverse).
+    comments.push({
+      author: "assembled-board",
+      text: approvalRecordedComment({ actor: author, approvedAt: approval.approved_at }),
+      timestamp: approval.approved_at
+    });
+  }
 
   let updated;
   try {
-    updated = await store.update(id, { comments });
+    updated = await store.update(id, approval ? { comments, status: "done", ...approval } : { comments });
   } catch (err) {
     throw new HttpError(400, err.message);
   }
@@ -488,6 +640,18 @@ async function handleAddComment(store, id, req, res, repoRoot, tasksDir, taskSto
 
   if (taskStoreKind === "db" && hub) {
     hub.broadcast({ type: "changed", id, task: updated });
+  }
+
+  if (approval) {
+    // An approval-by-comment lands the card in `done` exactly as a drag to the Done column
+    // does, so it owes the same follow-through -- artifact-cache purge and the deploy pull.
+    await applyTerminalStatusEffects({
+      orchestrator,
+      restartCoordinator,
+      id,
+      status: updated.status,
+      repoRoot
+    });
   }
 
   sendJson(res, 201, updated);
@@ -874,7 +1038,18 @@ export function createRequestListener({
         return await handleCancelTask(orchestrator, cancelMatch[1], res);
       }
       if (commentsMatch && req.method === "POST") {
-        return await handleAddComment(store, commentsMatch[1], req, res, repoRoot, tasksDir, taskStoreKind, hub);
+        return await handleAddComment(
+          store,
+          commentsMatch[1],
+          req,
+          res,
+          repoRoot,
+          tasksDir,
+          taskStoreKind,
+          hub,
+          orchestrator,
+          restartCoordinator
+        );
       }
       if (attachmentsMatch && req.method === "POST") {
         return await handleUploadAttachment(store, attachmentsMatch[1], req, res, repoRoot, tasksDir, taskStoreKind, hub, dataDir);

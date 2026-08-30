@@ -1294,3 +1294,102 @@ likewise deferred — Arm C's committed sheet stays at its existing path
 - `assets/src/character/ROUND2_DECISION_T0255.md` — the full round-2 decision record
 - `assets/final/character/round2_comparison_T0255.webp` — the side-by-side comparison artefact
 - `assets/final/character/round2_frame_delta_report_T0255.json` — the re-run mechanical gate
+
+## DL-25 — Round-2 character decision: §24-e (hybrid) chosen on direction; Arm C becomes the permanent quality reference, not a gate (closes DL-24; T-0255)
+
+**Date:** 2026-08-30
+**Raised by:** @DennieSeth — criterion-1 verdict on T-0255 (§24-f), given 2026-08-30 15:12 UTC
+**Status:** **DECIDED.** This entry closes DL-24's PENDING state by recording the human
+criterion-1 sign-off it was parked on. **DL-21, DL-22, DL-23 and DL-24 are not edited** —
+per this document's header ("entries are permanent — do not remove or amend"), the outcome
+is recorded here as the superseding entry, the same way DL-23 closed DL-22 and DL-17
+superseded DL-16.
+**Applies to:** the round-2 arms raised by DL-23 (§24-b..§24-e) and, going forward, **every**
+character-generation output in this repo.
+**Full record:** `assets/src/character/ROUND2_DECISION_T0255.md`
+**Comparison artefact:** `assets/final/character/round2_comparison_T0255.webp`
+**Frame-delta gate (re-run):** `assets/final/character/round2_frame_delta_report_T0255.json`
+
+### The decision
+
+**§24-e (T-0252, the hybrid arm) is the winning character-generation arm.**
+
+Verbatim verdict, recorded on T-0255: *"24-e looks best to me!"* — @DennieSeth,
+2026-08-30.
+
+The hybrid arm is one SDXL source frame (style LoRA `soviet_brutalism_style_v1` +
+identity LoRA `player_identity_v2` + IP-Adapter + OpenPose ControlNet, descended and
+palette-indexed, with the per-frame background cutout applied), with **every other animation
+frame derived from that one frame's own pixels** by
+`char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252`. It is the only round-2 arm
+in which a single diffusion call produces the whole sheet.
+
+**Chosen on direction and authorship grounds, not on the numbers** — consistent with, and a
+direct continuation of, the DL-21 → DL-22 → DL-23 override: locally generated art is part of
+this game's identity, and GPU time on hardware we own is not a real cost. Criterion 1
+(silhouette readable at 40px in motion) is a human pass/fail call under DL-21, unchanged for
+round 2 per DL-23, and this is that call.
+
+### Measured honestly — this is not a numbers win
+
+| Arm | Card | Frame-delta (re-run) | Clears 0.30 floor | Beats Arm C's 0.072–0.112 |
+|---|---|---|---|---|
+| §24-b pose authority | T-0249 | 0.0522–0.2573 | yes | **no** |
+| §24-c chained img2img | T-0250 | 0.0000–0.1763 | yes | **no** |
+| §24-d AnimateDiff | T-0251 | — (correctly skipped: no usable SDXL motion module) | — | — |
+| **§24-e hybrid (WINNER)** | **T-0252** | **0.1576–0.1816** | **yes** | **no** |
+| Arm C benchmark (round 1) | T-0230 | 0.072–0.112 | yes | — (is the benchmark) |
+
+**§24-e clears the round-2-unchanged 0.30 pass/fail floor at 0.1576–0.1816, and does NOT beat
+Arm C's deterministic 0.072–0.112 benchmark.** Its own committed sidecar records this as
+`"beats_arm_c_benchmark": false`.
+
+**This is expected and accepted.** DL-23 demoted cost from a deciding criterion to a recorded
+one; this entry does the same for the benchmark comparison. No round-2 arm beat Arm C, and
+DL-24 correctly recorded that none did. The choice of §24-e is made *in full knowledge of
+that*, on the same authorship grounds that created round 2 in the first place — not by
+re-reading the numbers until they favour a generative arm, and not by weakening the measure.
+DL-21's criteria, the 0.30 cap and the judging conditions (40px, in motion, in the T-0192
+blockout room) remain **unchanged**; nothing here redefines a gate to fit a result.
+
+### STANDING RULE — always verify against Arm C
+
+Recorded verbatim from @DennieSeth: *"Arm-C benchmark will never probably be beaten, but we
+should always verify against it."*
+
+As a standing rule, binding from this entry forward:
+
+- The deterministic **Arm-C benchmark (0.072–0.112 frame-delta) is NOT a gate** that the
+  chosen generative approach must clear. A character-generation output is not rejected for
+  failing to beat it — §24-e itself does not, and is the winner.
+- **Every character-generation output must ALWAYS record its own frame-delta AND its
+  comparison against the Arm-C benchmark**, as a permanent quality reference. The comparison
+  is *recorded, not deciding* — the same status DL-23 gave cost.
+- **Arm C is retained as the shipping fallback.** Its script, sheet and gate results stay
+  committed and passing (`assets/final/character/player_idle_sheet_arm_c_T0230.png`); nothing
+  regresses them.
+
+The rule exists because the benchmark's value is diagnostic, not gating: a generative sheet
+whose frame-delta drifts far from ~0.16 is telling us something broke, and that signal is only
+available if the number is on every sheet. Losing it silently is the failure mode this rule
+prevents.
+
+Pinned as invariants **CHR-1** and **CHR-2** in `docs/board-invariants.md` §9.
+
+### Consequence: the reference character
+
+**§24-e's committed sheet, `assets/final/character/player_idle_sheet_hybrid_T0252.png`
+(sidecar `player_idle_sheet_hybrid_T0252.provenance.json`), is the winning character
+reference.** It is the artifact **T-0235** (§23-l, the in-engine integration proof) consumes
+when it renders the T-0192 blockout room from pipeline output. DL-24 deferred the
+reference-character promotion pending this sign-off; this entry settles it.
+
+The `docs/design/13-asset-pipeline.md` §3.5 edit that DL-22 deferred and DL-24 left open is
+**still open** — it now has its answer (§3.5 describes the hybrid path, with the Arm-C
+benchmark recorded as a permanent quality reference per CHR-1/CHR-2 rather than as a gate),
+but making that edit is out of this entry's scope and belongs with the §24/`13` design pass.
+Recorded here so the loose end is not silently dropped.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-25)
+- `docs/board-invariants.md` — §9, invariants CHR-1 and CHR-2 (the standing rule)

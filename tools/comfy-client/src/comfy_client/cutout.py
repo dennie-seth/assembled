@@ -29,6 +29,15 @@ render_cutout_workflow() compensates by writing `1.0 - solid_mask_value` to
 node 13, so solid_mask_value=1.0 (user-facing "fully opaque") correctly
 produces alpha=255 in the saved PNG.
 
+IMPORTANT (P-6, §3.7): SolidMask is a *constant*, so the alpha channel it
+produces is uniform -- it can never cut anything out. Every T-0221 signal_tower
+prop shipped as RGBA with alpha=255 on all pixels: a transparent container
+around an opaque image. `generate_cutout` therefore mattes the returned image
+before writing it (`transparency.cut_background_alpha`, border-seeded Oklab
+region growing -- the same content-aware segmentation the committed T-0252
+character cutout uses), on by default. Pass `background_cutout=False` only when
+the caller genuinely wants the raw ComfyUI bytes on disk.
+
 `provenance.generator` is set to `"tools/comfy-client/src/comfy_client/cutout.py"`
 (repo-relative file path) so the T-0219 resolvability gate can verify this
 recipe exists in the repo as a committed file.
@@ -38,21 +47,25 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import assert_checkpoint_allowed
+from PIL import Image
 
 from comfy_client.base_url import resolve_base_url
 from comfy_client.checkpoint_hash import hash_checkpoint_file
 from comfy_client.comfyui_client import ComfyUIClient
-from comfy_client.errors import MissingModelHashError
+from comfy_client.errors import BackgroundCutoutError, MissingModelHashError
 from comfy_client.provenance_sidecar import package_repo_root, write_provenance_sidecar
 from comfy_client.recipe import Recipe
+from comfy_client.transparency import DEFAULT_CUTOUT_TOLERANCE, cut_background_alpha
 from comfy_client.workflow import workflow_hash
 
 CUTOUT_TEMPLATE_NAME = "sdxl_cutout_lora_v1"
@@ -109,6 +122,16 @@ class CutoutProvenanceRecord:
     # None for a cutout with no concept-sheet dependency.
     concept_hash: str | None = None
     concept_source: str | None = None
+    # Post-generation background matte (P-6). `background_cutout` records
+    # whether the matte ran; `cutout_opaque_fraction` is the share of the
+    # canvas left opaque, so a near-miss is visible in the sidecar rather than
+    # only in the pixels. `output_hash` is sha256 of the bytes actually written
+    # to disk -- it differs from `sprite_hash` (the raw ComfyUI output) exactly
+    # when the matte changed something.
+    background_cutout: bool = False
+    cutout_tolerance: float | None = None
+    cutout_opaque_fraction: float | None = None
+    output_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -212,6 +235,8 @@ def generate_cutout(
     gen_height: int | None = None,
     concept_hash: str | None = None,
     concept_source: str | None = None,
+    background_cutout: bool = True,
+    cutout_tolerance: float = DEFAULT_CUTOUT_TOLERANCE,
     extra: dict[str, Any] | None = None,
 ) -> CutoutResult:
     """recipe + LoRA -> RGBA-cutout PNG at game-pixel dimensions + provenance sidecar.
@@ -243,6 +268,15 @@ def generate_cutout(
     recipe was directionally conditioned on (T-0233, P-7 compliance). Not
     enforced at generation time -- callers pass the sheet's own
     `concept_hash` from its `.provenance.json`.
+
+    `background_cutout=True` (the default, P-6) mattes the returned image
+    before writing it: the border-connected background region is grown in Oklab
+    space at `cutout_tolerance` and its alpha forced to 0, so the saved PNG has
+    a genuinely transparent background instead of the uniform SolidMask alpha
+    the node graph produces. Raises `BackgroundCutoutError` -- after preserving
+    the raw ComfyUI output as `<name>.raw.png` so the GPU time is not lost --
+    when the matte would leave almost nothing opaque, which is what happens on
+    an edge-to-edge crop that has no background to key on.
 
     `extra` merges caller-supplied structured fields (e.g. a recipe layer's
     `prop_class`) into the written sidecar. `CutoutProvenanceRecord` stays
@@ -297,7 +331,28 @@ def generate_cutout(
     out_dir_path = Path(out_dir)
     out_dir_path.mkdir(parents=True, exist_ok=True)
     image_path = out_dir_path / f"{recipe.name}.png"
-    image_path.write_bytes(raw_bytes)
+
+    output_bytes = raw_bytes
+    opaque_fraction: float | None = None
+    if background_cutout:
+        try:
+            matted = cut_background_alpha(
+                Image.open(io.BytesIO(raw_bytes)), tolerance=cutout_tolerance
+            )
+        except BackgroundCutoutError:
+            # Keep the generation rather than discard it: the operator needs to
+            # see what came back to decide whether the recipe or the tolerance
+            # is wrong.
+            (out_dir_path / f"{recipe.name}.raw.png").write_bytes(raw_bytes)
+            raise
+        alpha = np.array(matted)[:, :, 3]
+        opaque_fraction = float((alpha > 0).mean())
+        buffer = io.BytesIO()
+        matted.save(buffer, format="PNG")
+        output_bytes = buffer.getvalue()
+
+    image_path.write_bytes(output_bytes)
+    output_hash = hashlib.sha256(output_bytes).hexdigest()
 
     provenance = CutoutProvenanceRecord(
         model=f"{recipe.checkpoint} + LoRA {lora_name} (weight {lora_weight})",
@@ -322,6 +377,10 @@ def generate_cutout(
         sprite_hash=sprite_hash,
         concept_hash=concept_hash,
         concept_source=concept_source,
+        background_cutout=background_cutout,
+        cutout_tolerance=cutout_tolerance if background_cutout else None,
+        cutout_opaque_fraction=opaque_fraction,
+        output_hash=output_hash,
     )
 
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"

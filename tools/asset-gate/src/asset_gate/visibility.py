@@ -32,11 +32,19 @@ def check_rendered_visibility(
 
     1. Fully transparent: alpha is 0 on every pixel. Any RGB data
        underneath is invisible -- this is exactly the T-0215 bug.
-    2. Blank/uniform: among the opaque (alpha > 0) pixels, fewer than
-       *min_visible_colors* distinct RGB values appear -- a solid fill
-       or placeholder canvas rather than real art. Transparent pixels
-       are excluded from this count so a real sprite on a transparent
-       background isn't penalized for the background.
+    2. Blank/uniform: fewer than *min_visible_colors* visually distinct
+       states appear -- a solid fill or placeholder canvas rather than
+       real art. A state is either a distinct RGB value among the opaque
+       (alpha > 0) pixels, or "transparent" if any pixel is fully
+       transparent.
+
+       Counting transparency as a state keeps the verdict invariant to how
+       a sprite encodes its background (P-6). Before that, a two-tone
+       figure on an opaque index-0 background counted three colours and
+       passed; re-saving the very same indices with a tRNS chunk dropped it
+       to two and failed it. Nothing about the art had changed. Transparent
+       pixels are still excluded from the *colour* count, so a sprite is
+       never credited for the size of its background -- only for having one.
     """
     arr = np.array(image.convert("RGBA"))
     alpha = arr[:, :, 3]
@@ -54,22 +62,39 @@ def check_rendered_visibility(
     unique_colors = np.unique(visible.reshape(-1, 3), axis=0)
     n_unique = len(unique_colors)
 
-    if n_unique < min_visible_colors:
+    has_transparency = bool((alpha == 0).any())
+    n_states = n_unique + (1 if has_transparency else 0)
+
+    if n_states < min_visible_colors:
         return CheckResult(
             check="rendered_visibility",
             passed=False,
             reason=(
-                f"only {n_unique} distinct color(s) among opaque pixels "
-                f"(need >= {min_visible_colors}) -- image reads as blank/uniform"
+                f"only {n_states} distinct visible state(s) -- {n_unique} color(s) among "
+                f"opaque pixels"
+                + (" plus a transparent background" if has_transparency else "")
+                + f" (need >= {min_visible_colors}) -- image reads as blank/uniform"
             ),
-            details={"unique_visible_colors": n_unique},
+            details={
+                "unique_visible_colors": n_unique,
+                "has_transparency": has_transparency,
+                "visible_states": n_states,
+            },
         )
 
     return CheckResult(
         check="rendered_visibility",
         passed=True,
-        reason=f"{n_unique} distinct color(s) among opaque pixels -- renders as visible content",
-        details={"unique_visible_colors": n_unique},
+        reason=(
+            f"{n_unique} distinct color(s) among opaque pixels"
+            + (" plus a transparent background" if has_transparency else "")
+            + " -- renders as visible content"
+        ),
+        details={
+            "unique_visible_colors": n_unique,
+            "has_transparency": has_transparency,
+            "visible_states": n_states,
+        },
     )
 
 
