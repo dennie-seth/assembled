@@ -362,19 +362,117 @@ def test_v3_quadrant_has_real_generated_content(v3_image, box, label):
     )
 
 
-def test_v3_preserves_cover_vs_hiding_visual_grammar(v3_image):
-    """v1's grammar: cover props are opaque mid-value blocky forms open from
-    above; hiding props are dark-bodied enclosed forms. T-0223 established a
-    16px +15 luma gate (locker measured -34 luma against the +15 required);
-    this checks the same separation holds for the real committed v3 image:
-    archive-shelving (cover) quadrant vs. the average of the two hiding
-    quadrants (crawlspace + alcove)."""
-    cover_luma = _region_luma_mean(v3_image, ARCHIVE_SHELVING_BOX)
-    hide_luma = (
-        _region_luma_mean(v3_image, CRAWLSPACE_BOX) + _region_luma_mean(v3_image, ALCOVE_BOX)
-    ) / 2
+@pytest.mark.parametrize(
+    "hiding_box,hiding_label",
+    [
+        (CRAWLSPACE_BOX, "crawlspace"),
+        (ALCOVE_BOX, "hiding alcove"),
+    ],
+)
+def test_v3_hiding_props_clear_luma_gate_against_power_substation_cover(v3_image, hiding_box, hiding_label):
+    """T-0223 established a 16px +15 luma gate (locker measured -34 luma
+    against the +15 required) between a hiding prop and the cover prop it
+    actually shares a room with. Of this sheet's four prop classes, only
+    Power Substation is on record (`docs/design/14-vertical-slice.md` line
+    150: "Cover-break behind the housings between flips; one dedicated
+    hiding spot near the panel as a fallback") as needing both a cover prop
+    AND a hiding spot -- Records Room's archive shelving has no hiding-spot
+    need (`14` line 149: safety valve "N/A"), so a shelving-vs-hiding
+    comparison is not evidence for any real room pairing (2026-08-30 review).
+    Power Substation's own cover prop is TRANSFORMER_BREAKER_BOX; both of
+    this sheet's hiding panels are checked against it since either could be
+    the room's "fallback" hiding spot."""
+    cover_luma = _region_luma_mean(v3_image, TRANSFORMER_BREAKER_BOX)
+    hide_luma = _region_luma_mean(v3_image, hiding_box)
     delta = cover_luma - hide_luma
     assert delta >= 15, (
-        f"Cover-quadrant avg luma {cover_luma:.1f} vs hiding-quadrant avg luma {hide_luma:.1f} "
-        f"-- separation {delta:.1f} is below the required 15 (T-0223 gate)."
+        f"Power Substation cover-quadrant avg luma {cover_luma:.1f} vs {hiding_label} avg luma "
+        f"{hide_luma:.1f} -- separation {delta:.1f} is below the required 15 (T-0223 gate)."
+    )
+
+
+def test_v3_all_hiding_panels_darker_than_all_cover_panels(v3_image):
+    """General grammar sanity check (not room-pairing evidence, see the test
+    above for that): v1's grammar is that cover props read as mid-value and
+    hiding props read as dark, sheet-wide. Every cover-class panel should be
+    lighter than every hiding-class panel."""
+    cover_lumas = [
+        _region_luma_mean(v3_image, ARCHIVE_SHELVING_BOX),
+        _region_luma_mean(v3_image, TRANSFORMER_BREAKER_BOX),
+    ]
+    hiding_lumas = [
+        _region_luma_mean(v3_image, CRAWLSPACE_BOX),
+        _region_luma_mean(v3_image, ALCOVE_BOX),
+    ]
+    assert min(cover_lumas) > max(hiding_lumas), (
+        f"cover-panel lumas {cover_lumas} must all be lighter than hiding-panel lumas "
+        f"{hiding_lumas} to preserve v1's cover-vs-hiding grammar."
+    )
+
+
+def test_v3_archive_shelving_is_mid_value_not_near_white(v3_image):
+    """Acceptance: archive shelving must be 'mid-value concrete-grey' and
+    match v1's 'same palette language' -- not a near-white/empty render. An
+    earlier committed cut (2026-08-30 review) was measured near-white and
+    empty, contradicting its own prompt."""
+    luma = _region_luma_mean(v3_image, ARCHIVE_SHELVING_BOX)
+    assert luma < 200, (
+        f"Archive shelving quadrant mean luma {luma:.1f} reads as near-white, not the "
+        "mid-value concrete-grey the prompt and v1's palette language call for."
+    )
+
+
+def test_v3_transformer_breaker_quadrant_shows_institutional_green(v3_image):
+    """Acceptance: the breaker panel must be depicted as a distinct gate
+    object -- this sheet's own recipe/prompt commits to it being a flat
+    institutional-green plate, distinguishable from the grey transformer
+    housings it shares the quadrant with. A meaningful fraction of clearly
+    green-hued pixels is required, not just any pixel variance (the
+    2026-08-30 review's finding: a >50-distinct-colours check alone stayed
+    green against a quadrant with no breaker panel or transformer housings
+    at all)."""
+    pixels = list(v3_image.crop(TRANSFORMER_BREAKER_BOX).getdata())
+    green_pixels = sum(1 for r, g, b in pixels if g > r + 15 and g > b + 15)
+    fraction = green_pixels / len(pixels)
+    assert fraction >= 0.02, (
+        f"Only {fraction:.1%} of the transformer/breaker quadrant is green-hued -- too "
+        "little to read as a distinct institutional-green breaker panel gate object."
+    )
+
+
+@pytest.mark.parametrize(
+    "row,col,label",
+    [(0, 0, "archive shelving"), (0, 1, "transformer/breaker"), (1, 0, "crawlspace"), (1, 1, "hiding alcove")],
+)
+def test_v3_captions_stay_within_own_quadrant(v3_image, row, col, label):
+    """Acceptance: each panel must be clearly labelled -- the 2026-08-30
+    review found the top-right caption ('...BREAKER PANEL -- GATE OBJECT')
+    clipped at the image edge, silently dropping the exact classification
+    text the card calls out three times. Checks the "dead zone" no panel's
+    own caption should ever draw into -- the gutter after this quadrant (for
+    col 0) or the right margin past the last quadrant (for col 1) -- for
+    text-coloured pixels, within this panel's own caption row range. (A
+    naive scan across the panel's own row-range but full canvas width would
+    false-positive on the *next* quadrant's own, legitimately drawn caption
+    sharing the same row -- this checks only the strip neither panel's
+    caption should ever reach.)"""
+    x0 = _MARGIN + col * (_PW + _GUTTER)
+    y0 = _MARGIN + row * (_PH + _GUTTER)
+    x1 = x0 + _PW - 1
+    y1 = y0 + _PH - 1
+    strip_top = y1 - _CAPTION_BAND + 1
+    canvas_w, canvas_h = v3_image.size
+    dead_zone_start = x1 + 1
+    dead_zone_end = (x1 + _GUTTER) if col == 0 else (canvas_w - 1)
+    text_colour = (168, 164, 160)
+    max_x_seen = -1
+    for y in range(strip_top, min(y1, canvas_h - 1) + 1):
+        for x in range(dead_zone_start, min(dead_zone_end, canvas_w - 1) + 1):
+            px = v3_image.getpixel((x, y))
+            if all(abs(px[i] - text_colour[i]) <= 12 for i in range(3)):
+                max_x_seen = max(max_x_seen, x)
+    assert max_x_seen == -1, (
+        f"{label} caption has text-coloured pixels at x={max_x_seen}, inside the gutter/margin "
+        f"dead zone [{dead_zone_start}, {dead_zone_end}] past this panel's own right edge x={x1} "
+        "-- the caption is clipping past its own quadrant."
     )
