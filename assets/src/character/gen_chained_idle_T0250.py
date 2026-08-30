@@ -75,6 +75,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "asset-gate" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Reused directly -- checkpoint/ControlNet identifiers, HTTP client helpers,
@@ -85,6 +86,7 @@ import gen_pose_authority_idle_T0249 as pose_authority  # noqa: E402
 import pose_rig_T0249  # noqa: E402
 from asset_gate import art as asset_gate_art  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
+from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 from gen_arm_a_idle_T0228 import (  # noqa: E402
     CHECKPOINT,
     CHECKPOINT_HASH,
@@ -772,7 +774,7 @@ def run_attempt(
     indexed = apply_cutout_masks(indexed, cutout_masks, cell_size=FINAL_CELL_PX, background_index=0)
     indexed = enforce_cell_margin(indexed, cell_size=FINAL_CELL_PX, margin=2, background_index=0)
     indexed = cleanup_orphans(indexed, background_index=0, size_threshold=4)
-    indexed.save(out_dir / "sheet_144_indexed.png")
+    save_sprite_sheet(indexed, out_dir / "sheet_144_indexed.png")
 
     gates = compute_sheet_gates(indexed)
     frame_deltas = gates["frame_deltas"]
@@ -965,7 +967,7 @@ def reprocess_attempt_cutout(attempt: int) -> dict:
     indexed = apply_cutout_masks(indexed, cutout_masks, cell_size=FINAL_CELL_PX, background_index=0)
     indexed = enforce_cell_margin(indexed, cell_size=FINAL_CELL_PX, margin=2, background_index=0)
     indexed = cleanup_orphans(indexed, background_index=0, size_threshold=4)
-    indexed.save(out_dir / "sheet_144_indexed.png")
+    save_sprite_sheet(indexed, out_dir / "sheet_144_indexed.png")
 
     gates = compute_sheet_gates(indexed)
 

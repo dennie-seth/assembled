@@ -24,7 +24,8 @@ import json
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+
+from char_gen.sprite_io import save_sprite_sheet
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
@@ -90,7 +91,8 @@ def _draw_figure(cell_arr: np.ndarray, head_offset: int = 0) -> None:
 
 
 def generate(palette: list[tuple[int, int, int]], out_path: Path) -> Path:
-    """Build the 144×144 idle sheet and save as a mode-P indexed PNG."""
+    """Build the 144×144 idle sheet and save as a mode-P indexed PNG with a
+    transparent background (tRNS on BG_IDX)."""
     # (height, width) — numpy convention
     sheet = np.zeros((SHEET_H, SHEET_W), dtype=np.uint8)
 
@@ -108,18 +110,11 @@ def generate(palette: list[tuple[int, int, int]], out_path: Path) -> Path:
         _draw_figure(cell_view, head_offset=ho)
     # Remaining cells (1,1), (1,2), (2,0), (2,1), (2,2) stay at BG_IDX — spare.
 
-    # Assemble mode-P image with the full home palette embedded
-    img = Image.fromarray(sheet, mode="P")
-    flat_palette = [0] * (256 * 3)
-    for i, (r, g, b) in enumerate(palette):
-        flat_palette[3 * i] = r
-        flat_palette[3 * i + 1] = g
-        flat_palette[3 * i + 2] = b
-    img.putpalette(flat_palette)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(out_path)
-    return out_path
+    # Assemble the mode-P image with the full home palette embedded and write
+    # it with BG_IDX marked transparent (P-6). This used to call Image.save()
+    # directly, which emits no tRNS chunk -- the sheet's own comment has said
+    # "background / transparent" since T-0198 while the file said otherwise.
+    return save_sprite_sheet(sheet, out_path, palette=palette, background_index=BG_IDX)
 
 
 def main() -> None:

@@ -1,0 +1,66 @@
+# Documented opaque-background exemptions for the sprite-transparency sweep.
+#
+# Paths are relative to the assets/final/ root, forward slashes.
+#
+# Everything here is an asset that CANNOT be fixed by a save-format change:
+# either it was never cut out at all (so there is no background region to mark
+# transparent without inventing one), or it is not a sprite in the first place.
+# The 21 sheets that *were* cut out were re-saved as mode 'P' + tRNS in this
+# same change and are deliberately NOT listed -- they pass on merit.
+#
+# Do NOT add an entry here to silence a fresh violation. New sprite output goes
+# through comfy_client.transparency / char_gen.sprite_io, both of which emit
+# tRNS by default; a failure means the writer was bypassed. Fix the writer.
+
+# ---------------------------------------------------------------------------
+# Review/evidence artwork, not game sprites. These are contact sheets and
+# ControlNet inputs committed as evidence for T-0218; they are RGB by nature
+# and are never loaded by the client.
+# ---------------------------------------------------------------------------
+character/T0218-game-scale-comparison.png
+character/T0218-room-scene-comparison.png
+character/T0218-stage3-room-comparison.png
+character/pose_grid_stage3_T0218.png
+character/player_idle_sheet_sdxl_T0218.png
+character/player_idle_sheet_stage3_sdxl_T0218.png
+
+# ---------------------------------------------------------------------------
+# T-0199/T-0201 v2 character sheets: img2img full-bleed output with no cutout
+# step at all. The background is textured art, not a single index, so there is
+# no lossless format re-save -- these need regeneration through the cutout
+# path. Their own gate suites (tests/test_player_*_v2_gate.py) are already red
+# on develop for the same underlying reason.
+# ---------------------------------------------------------------------------
+character/player_crouch_hide_sheet_v2.png
+character/player_die_sheet_v2.png
+character/player_idle_sheet_v2.png
+character/player_move_sheet_v2.png
+
+# ---------------------------------------------------------------------------
+# T-0214 entity v2 sheets: raw SDXL RGB at 1152x768, "indexed PNG descent
+# pending" per their own sidecars. Not finalized sprites yet -- descent is what
+# will produce the indexed sheet, and that path now emits tRNS by default.
+# ---------------------------------------------------------------------------
+entity/sound_idle_sheet_v2.png
+entity/sound_move_sheet_v2.png
+entity/sound_trapped_sheet_v2.png
+entity/still_air_idle_sheet_v2.png
+entity/still_air_move_sheet_v2.png
+entity/still_air_trapped_sheet_v2.png
+entity/watcher_idle_sheet_v2.png
+entity/watcher_move_sheet_v2.png
+entity/watcher_trapped_sheet_v2.png
+
+# ---------------------------------------------------------------------------
+# T-0221 signal_tower props: RGBA containers whose alpha is 255 on every pixel
+# (`generate_cutout`'s SolidMask is a constant, so it could never cut anything
+# out). They are also edge-to-edge crops -- the subject fills the whole canvas
+# and there is no background region to key on -- so no format re-save can fix
+# them. `cutout.generate_cutout` now applies a real matte by default, so their
+# next regeneration lands transparent.
+# ---------------------------------------------------------------------------
+props/signal_tower/crate_stack_v1.png
+props/signal_tower/locker_v1.png
+props/signal_tower/low_duct_v1.png
+props/signal_tower/relay_cabinet_v1.png
+props/signal_tower/server_rack_v1.png

@@ -10,18 +10,39 @@
   "card": "T-0198",
   "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
   "layout": {
-    "sheet_px": [144, 144],
+    "sheet_px": [
+      144,
+      144
+    ],
     "cell_px": 48,
     "cols": 3,
     "rows": 3,
     "figure_height_px": 40,
     "frame_cells": [
-      {"cell": "(0,0)", "head_offset": 0},
-      {"cell": "(0,1)", "head_offset": 1},
-      {"cell": "(0,2)", "head_offset": 0},
-      {"cell": "(1,0)", "head_offset": 1}
+      {
+        "cell": "(0,0)",
+        "head_offset": 0
+      },
+      {
+        "cell": "(0,1)",
+        "head_offset": 1
+      },
+      {
+        "cell": "(0,2)",
+        "head_offset": 0
+      },
+      {
+        "cell": "(1,0)",
+        "head_offset": 1
+      }
     ],
-    "spare_cells": ["(1,1)", "(1,2)", "(2,0)", "(2,1)", "(2,2)"]
+    "spare_cells": [
+      "(1,1)",
+      "(1,2)",
+      "(2,0)",
+      "(2,1)",
+      "(2,2)"
+    ]
   },
   "palette_source": "assets/final/palette/home_palette.json",
   "gate_results": {
@@ -31,5 +52,15 @@
     "orphan_pixels_threshold_4": "PASS (design-verified: figure is one 4-connected component, no isolated blobs)",
     "frame_consistency_delta_30pct": "PASS (design-verified: 1-px head-bob yields ~3-6% delta ratio between adjacent frames)",
     "total": "5/5 passed (synthetic image; SDXL descent pending Windows-side run)"
+  },
+  "transparency": {
+    "format": "indexed_png_trns",
+    "background_index": 0,
+    "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
+    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "branch": "feature/sprite-true-transparency",
+    "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
+    "background_px": 18404,
+    "interior_background_px": 0
   }
 }
