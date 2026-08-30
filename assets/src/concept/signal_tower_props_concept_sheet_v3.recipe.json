@@ -1,0 +1,15 @@
+{
+  "prompt": "flat side-on prop concept reference sheet, orthographic game asset, no perspective, no vanishing point, four labeled reference panels arranged in a 2x2 grid, Signal Tower interior environment props. TOP-LEFT PANEL - COVER PROP (archive shelving row, records-office dressing): tall open-frame shelving unit with several horizontal shelves, stacked document boxes and file folders resting on the shelves, opaque blocky solid form, mid-value concrete grey, open from above, fully exposed, player crouches behind but sound sensors still detect. TOP-RIGHT PANEL - COVER + GATE OBJECT (power substation dressing): two to three squat transformer housings with ribbed cooling fins as cover props, mid-value concrete grey, exposed opaque blocky forms, standing beside a separate wall-mounted breaker panel that is a switch-locked gate object with three distinct labelled breaker switches in a row and three small round indicator lamps glowing amber above the switches, the breaker panel body a distinct darker institutional-green metal casing, clearly a mounted control gate and not a cover prop. BOTTOM-LEFT PANEL - HIDING SPOT (crawlspace opening, equipment floor dressing): a low dark rectangular opening cut into a wall or floor segment, single-occupant crawl height, interior rendered near-black, only the entry edge lit, fully enclosed sensor-blocking space, much darker in value than the cover props above. BOTTOM-RIGHT PANEL - HIDING SPOT (hiding alcove, antenna shaft dressing): a recessed wall niche sized for one standing person, dark-bodied enclosed recess with near-black interior shadow, only the entry opening visible, fully enclosed sensor-blocking space, much darker in value than the cover props above. Soviet brutalist Signal Tower interior, muted concrete grey and institutional green and near-black palette, hard value separation, flat unlit shading, hiding-spot interiors rendered much darker than cover-prop bodies, no atmospheric haze, no depth of field, prop silhouette study, game asset reference sheet style, no background scene composition, no humans, no characters",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, illegible glyphs, blurry small text, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait, locker, server rack, relay cabinet, crate stack, HVAC duct",
+  "seed": 21140,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_strength": 0.70,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "name": "signal_tower_props_concept_sheet_v3"
+}
