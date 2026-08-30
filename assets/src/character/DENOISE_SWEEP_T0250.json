@@ -1,0 +1,143 @@
+{
+  "card": "T-0250",
+  "based_on_card": "T-0249",
+  "points": [
+    {
+      "attempt": 1,
+      "denoise": 0.15,
+      "seed": 31416,
+      "mechanism": "chain_from_predecessor",
+      "frame_delta_range": [
+        0.05066250974279034,
+        0.30807453416149067
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false,
+      "background_growth_max_ratio": null,
+      "background_growth_bounded": null
+    },
+    {
+      "attempt": 6,
+      "denoise": 0.15,
+      "seed": 31420,
+      "mechanism": "chain_from_predecessor",
+      "frame_delta_range": [
+        0.030136986301369864,
+        0.21335379892555642
+      ],
+      "mechanical_gate_passed": true,
+      "beats_030_cap": true,
+      "beats_arm_c_benchmark": false,
+      "background_growth_max_ratio": null,
+      "background_growth_bounded": null
+    },
+    {
+      "attempt": 7,
+      "denoise": 0.15,
+      "seed": 31420,
+      "mechanism": "anchor_frame0_background_held",
+      "frame_delta_range": [
+        0.0,
+        0.029865125240847785
+      ],
+      "mechanical_gate_passed": true,
+      "beats_030_cap": true,
+      "beats_arm_c_benchmark": true,
+      "background_growth_max_ratio": 1.0127,
+      "background_growth_bounded": true
+    },
+    {
+      "attempt": 2,
+      "denoise": 0.25,
+      "seed": 31416,
+      "mechanism": "chain_from_predecessor",
+      "frame_delta_range": [
+        0.03895131086142322,
+        0.34813753581661894
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false,
+      "background_growth_max_ratio": null,
+      "background_growth_bounded": null
+    },
+    {
+      "attempt": 3,
+      "denoise": 0.3,
+      "seed": 31416,
+      "mechanism": "chain_from_predecessor",
+      "frame_delta_range": [
+        0.027982326951399118,
+        0.36644295302013424
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false,
+      "background_growth_max_ratio": null,
+      "background_growth_bounded": null
+    },
+    {
+      "attempt": 8,
+      "denoise": 0.3,
+      "seed": 31420,
+      "mechanism": "anchor_frame0_background_held",
+      "frame_delta_range": [
+        0.0,
+        0.02862595419847328
+      ],
+      "mechanical_gate_passed": true,
+      "beats_030_cap": true,
+      "beats_arm_c_benchmark": true,
+      "background_growth_max_ratio": 1.0234,
+      "background_growth_bounded": true
+    },
+    {
+      "attempt": 4,
+      "denoise": 0.35,
+      "seed": 31416,
+      "mechanism": "chain_from_predecessor",
+      "frame_delta_range": [
+        0.02710413694721826,
+        0.389937106918239
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false,
+      "background_growth_max_ratio": null,
+      "background_growth_bounded": null
+    },
+    {
+      "attempt": 5,
+      "denoise": 0.45,
+      "seed": 31416,
+      "mechanism": "chain_from_predecessor",
+      "frame_delta_range": [
+        0.026243093922651933,
+        0.4170168067226891
+      ],
+      "mechanical_gate_passed": false,
+      "beats_030_cap": false,
+      "beats_arm_c_benchmark": false,
+      "background_growth_max_ratio": null,
+      "background_growth_bounded": null
+    }
+  ],
+  "band_low": 0.25,
+  "band_high": 0.35,
+  "chosen_denoise": 0.3,
+  "chosen_attempt": 8,
+  "chosen_mechanism": "anchor_frame0_background_held",
+  "failure_mode_low": "At denoise=0.15 (seed 31416, mechanism=chain_from_predecessor, attempt 1), measured frame-delta range 0.0507-0.3081 (does NOT clear the 0.30 cap), background growth not measured (this attempt predates the background-growth gate). This is the lowest denoise value sampled across both mechanisms. Motion reads as a stalled sheet (pose stops visibly changing between adjacent cells) only if the frame-delta range collapses toward its lower bound at this point relative to higher-denoise points in the same mechanism; a low frame-delta range here alone is not sufficient evidence of that -- it is also exactly what a working background hold plus a genuinely small pose change would produce. See the per-mechanism tables below for the comparison this edge value needs to be read against. CONFIRMED under the new mechanism: attempts 7 (denoise 0.15) and 8 (denoise 0.30) both collapse to frame-delta ranges of 0.0000-0.0299 and 0.0000-0.0286 respectively -- direct visual comparison of frame 0 against frame 4 at both values shows the figure has not visibly moved. Holding the background static (the human review's own required fix) removed the background speckle that was previously registering as inter-frame delta on this sheet's already-tiny idle motion (breathing_amplitude_norm 0.012, weight_shift_extent_norm 0.018), so the low-denoise stalled-motion failure mode this sweep was designed to find now occurs at every denoise value the 8-attempt cap allowed testing under the fixed mechanism, not only below the ~0.25-0.35 band.",
+  "failure_mode_high": "At denoise=0.45 (seed 31416, mechanism=chain_from_predecessor, attempt 5), measured frame-delta range 0.0262-0.4170 (does NOT clear the 0.30 cap), background growth not measured (this attempt predates the background-growth gate). This is the highest denoise value sampled across both mechanisms. The high-denoise drift-returns failure mode was already established on the original mechanism's own sweep (attempts 1-5): the same (0,1)->(0,2) transition's ratio rose monotonically with denoise from 0.308 at 0.15 to 0.417 at 0.45. Re-establishing that finding under the new mechanism was not attempted here -- only 2 attempts remained under DL-21's 8-per-arm cap after the human review, and both were spent confirming the fix at/below the original 0.15 floor per the review's explicit direction, not re-verifying an already-answered high edge.",
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "max_frame_delta_cap": 0.3,
+  "max_background_growth_ratio": 1.35,
+  "human_review_fix_attempts": [
+    7,
+    8
+  ]
+}

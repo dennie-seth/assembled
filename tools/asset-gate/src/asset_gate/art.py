@@ -221,6 +221,55 @@ def check_frame_consistency(
     )
 
 
+def check_background_growth(
+    frames: Sequence[Image.Image],
+    background_index: int,
+    max_growth_ratio: float,
+) -> CheckResult:
+    """Non-background pixel count must not grow past `max_growth_ratio` of
+    frame 0's count, for any frame in the sequence.
+
+    Catches img2img-chaining noise accumulation (T-0250, HANDOFF §24-c,
+    human review 2026-08-30): each frame's own background speckle feeding
+    into the next frame's init image, so the figure visibly dissolves into
+    noise by the end of the sheet even though `check_frame_consistency`
+    (inter-frame silhouette *delta*, not absolute pixel-count growth against
+    a fixed baseline) passed. Ordinary pose-driven fluctuation (no trend)
+    stays within a fairly tight ratio of frame 0's count; a compounding
+    chain does not.
+    """
+    if not frames:
+        raise ValueError("frames must be non-empty")
+    counts = [int(np.count_nonzero(_to_array(f) != background_index)) for f in frames]
+    baseline = counts[0]
+    if baseline == 0:
+        offending = [(i, c) for i, c in enumerate(counts) if c > 0]
+    else:
+        offending = [
+            (i, c) for i, c in enumerate(counts) if c / baseline > max_growth_ratio
+        ]
+    passed = not offending
+    if not passed:
+        return CheckResult(
+            check="background_growth",
+            passed=False,
+            reason=(
+                f"{len(offending)} frame(s) exceed {max_growth_ratio}x frame 0's "
+                f"non-background pixel count ({baseline}px): {offending}"
+            ),
+            details={"counts": counts, "baseline": baseline, "max_growth_ratio": max_growth_ratio},
+        )
+    return CheckResult(
+        check="background_growth",
+        passed=True,
+        reason=(
+            f"non-background pixel count stays within {max_growth_ratio}x of "
+            f"frame 0's count ({baseline}px) across all {len(frames)} frames"
+        ),
+        details={"counts": counts, "baseline": baseline, "max_growth_ratio": max_growth_ratio},
+    )
+
+
 def check_atlas_determinism(
     pack_fn: Callable[[Sequence[Image.Image]], Image.Image],
     inputs: Sequence[Image.Image],
