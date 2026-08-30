@@ -165,11 +165,11 @@
       "comfyui_prompt_id": "2a3ad83b-3bec-4267-b00f-58ca392e1328"
     }
   ],
-  "method": "pose_rig_T0249 derives 18-keypoint COCO frame keypoints from committed animation parameters (pose_rig_T0249.json) -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each frame's skeleton (384x384, reused renderer, not re-authored) -> ControlNetApplyAdvanced (xinsir OpenPose) conditions a single-figure KSampler generation at 384x384 -- identical seed/prompt/negative/latent-size across all 9 frames, only the skeleton varies -> per-frame area descent to 48x48 (same x8 ratio as the grid path) -> frames assembled into a 144x144 sheet -> Oklab-nearest palette quantization (dithering off, \u00a73.1) -> orphan cleanup.",
+  "method": "pose_rig_T0249 derives 18-keypoint COCO frame keypoints from committed animation parameters (pose_rig_T0249.json) -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each frame's skeleton (384x384, reused renderer, not re-authored) -> ControlNetApplyAdvanced (xinsir OpenPose) conditions a single-figure KSampler generation at 384x384 -- identical seed/prompt/negative/latent-size across all 9 frames, only the skeleton varies -> per-frame area descent to 48x48 (same x8 ratio as the grid path) -> frames assembled into a 144x144 sheet -> Oklab-nearest palette quantization (dithering off, §3.1) -> orphan cleanup.",
   "generator": "assets/src/character/gen_pose_authority_idle_T0249.py",
   "card": "T-0249",
-  "bake_off_arm": "round 2, pose authority (HANDOFF \u00a724-b/\u00a724.4), stacked on top of \u00a724-a's player_identity_v2 -- not a new bake-off arm competing on DL-21's original criteria",
-  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5 + HANDOFF \u00a724.4",
+  "bake_off_arm": "round 2, pose authority (HANDOFF §24-b/§24.4), stacked on top of §24-a's player_identity_v2 -- not a new bake-off arm competing on DL-21's original criteria",
+  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5 + HANDOFF §24.4",
   "comfyui_prompt_ids": [
     "809d3c8e-40fb-4f85-8367-a8332c964514",
     "6c241f0c-9b14-4dc1-ab71-d9065595baa5",
@@ -356,5 +356,15 @@
     ]
   },
   "palette_source": "assets/final/palette/home_palette.json",
-  "promoted": true
+  "promoted": true,
+  "transparency": {
+    "format": "indexed_png_trns",
+    "background_index": 0,
+    "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
+    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "branch": "feature/sprite-true-transparency",
+    "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
+    "background_px": 16422,
+    "interior_background_px": 55
+  }
 }

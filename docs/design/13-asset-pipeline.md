@@ -1,6 +1,6 @@
 # 13 — Asset Pipeline
 
-> **Author:** Claude · **Reviewed:** pending · **Status:** v5, art + audio + concept locked
+> **Author:** Claude · **Reviewed:** pending · **Status:** v5.2, art + audio + concept locked
 > Related: `05-art-direction.md` (direction), `01-vision.md` §8 (chroma), `PLAN.md` Phase 6/7, `14-vertical-slice.md` (first concept subject)
 > **Purpose:** how generated assets get from a prompt to a shipped file. `05` decides what it looks like; this decides how it is made.
 
@@ -51,6 +51,7 @@ Since nothing is fixed by hand, acceptance must be machine-checkable. These are 
 | **Frame consistency** | Silhouette delta between adjacent frames within bounds. Catches identity drift. |
 | **Atlas determinism** | Same input set → byte-identical atlas layout. |
 | **Indexed preservation** | Packed atlas is still PIL mode `P` with the expected palette. Pillow silently converts to RGB on several operations. |
+| **Background transparency** | Every sprite declares a transparent background: mode `P` + a tRNS chunk on the background index, or real alpha. An opaque sprite fails. See P-6. |
 
 **Human review remains the terminal gate.** The agent takes a set to `review`; a person accepts or rejects. `done` stays human-only (`PLAN.md` Phase 2). The automated checks decide whether a set is *eligible* for review, not whether it is good.
 
@@ -157,6 +158,20 @@ Vertical-slice character volume: player 28 + three entities ~54 = **~82 frames**
 > **Atlases are build artifacts and are not committed.** Per-archetype atlases would otherwise be written by two different `art/*` branches — the tileset branch and the prop-pack branch — which violates `PLAN.md` §2 rule 3 (branches strictly additive, never touching the same binary). Committing individual sprites and packing in CI resolves it: branches only ever add files.
 
 This moves **T-0074** from an authoring-time tool to a build step, and adds a determinism requirement — same inputs must produce byte-identical layout, or dev and CI disagree on sprite coordinates. Stable input sort; tested.
+
+### 3.7 Transparency
+
+> **P-6 — Sprite output is transparent.** Every character, entity and prop sprite ships with a genuinely transparent background: indexed PNG (mode `P`) **plus a tRNS chunk** marking the background index fully transparent. Tiles and the palette LUT are the deliberate exceptions — they are opaque by design.
+
+**Applying a cutout is not the same as shipping transparency.** The §24-e character sheet (`player_idle_sheet_hybrid_T0252.png`) had its cutout correctly applied — every background pixel really was index 0 — and still rendered as an opaque black rectangle, because no writer in the pipeline emitted a tRNS chunk. Pillow does not add one unless asked. The gates could not see it either: the palette and index-semantics checks read indices, not alpha, and the rendered-visibility check (§2) was built for the opposite failure, PR #231's props with alpha 0 everywhere.
+
+**Why `P` + tRNS and not RGBA.** Indexed mode is what P-4 needs: index `N` means palette slot `N`, and the chroma swap (`01` §8) is defined on indices. RGBA would throw the index away. tRNS costs nothing — it is a handful of bytes of metadata that changes no pixel index and no palette slot — and Godot's PNG decoder expands it into a real alpha channel on load. Verified against the engine build `client/project.godot` targets (4.7.1): with tRNS an indexed PNG loads as `FORMAT_RGBA8` with alpha `0.0` on the background index; the same file without it loads as `FORMAT_RGB8`, alpha `1.0` everywhere. `client/shaders/chroma_palette_swap.gdshader` multiplies its output by `TEXTURE.a` to preserve the silhouette, so alpha is load-bearing for the chroma mechanic, not decoration.
+
+**Slot 0 is the background key**, everywhere, by the same argument as P-4: uniform semantics or nothing. The gate stack has always treated it that way — cell fit, orphan pixels and frame consistency all compute the silhouette as "not index 0" — so tRNS only makes the file say what the pipeline already means.
+
+**Where it is enforced.** Not in each writer's own `save()` call — that is exactly how §24-e shipped. One save path per package: `comfy_client.transparency.save_indexed_sprite` (generation, descent) and `char_gen.sprite_io.save_sprite_sheet` (character/entity sheets), both transparent by default with an explicit `background_index=None` opt-out for tiles. `generate_cutout` (§6.15) mattes its RGBA output before writing, because SolidMask is a *constant* and cannot cut anything out. `asset_gate.transparency` is the single gate holding all of them to it, swept over `assets/final/` in CI.
+
+**A cutout, not an erasure.** Transparency and visibility are complementary bounds: a sprite must have transparent pixels *and* opaque ones. PR #231 failed the lower bound, §24-e failed the upper one. Both gates run.
 
 ---
 
@@ -449,3 +464,4 @@ documented escalation path, not something v1 does.
 | 2026-08-02 | v4: **V-5/P-A resolved as a process** — palette extracted from an approved concept sheet (cluster -> value ramp -> LUT, T-0105), not a fixed hex list; new §6 Concept Art (concept is a committed full-colour source, P-1/P-3 inverted, two human gates, archetype-first coherence guard); §1 chain now starts with concept for art | Claude, rev. pending |
 | 2026-08-02 | v5: §6.8–§6.11 added, synced from canonical Notion doc 13 — key art vs. concept sheet split (`assets/src/keyart/` vs. `assets/src/concept/`, only the latter feeds the pipeline/palette extraction); concept-sheet framing/legibility/value-separation requirements; palette extraction is interior-only (mask sky/veg on exteriors); round-1 assessment of the two 2026-08-02 Signal Tower sheets as key art, not concept sheets; stitching rules (stitch layout, never style, never LoRA training) | Claude, rev. pending |
 | 2026-08-08 | v5.1: §4.2 (AU-1) archetype-count corrected — a run assembles **exactly 3** archetypes (was “5–7”), matching `01` §7 and `12`; density-cap wording adjusted to “more than one” accordingly | Claude, rev. pending |
+| 2026-08-30 | v5.2: **§3.7 Transparency / P-6** — sprite output ships as mode `P` + tRNS on the background index, always; new **Background transparency** gate row in §2 and a CI sweep over `assets/final/`; enforcement moved out of individual `save()` calls into one save path per package; `generate_cutout` mattes its own output. Prompted by the §24-e sheet shipping cut-out but opaque | Claude, rev. pending |

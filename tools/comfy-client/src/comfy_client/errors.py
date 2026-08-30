@@ -50,3 +50,14 @@ class MissingModelHashError(ComfyClientError):
     cannot be proven.  Call generate() with checkpoint_dir= or set
     recipe.model_hash before generating.
     """
+
+
+class BackgroundCutoutError(ComfyClientError):
+    """The background matte would have erased the subject (P-6).
+
+    `transparency.cut_background_alpha` grows the background region from the
+    image border; on an edge-to-edge crop with no background to key on that
+    region swallows the whole canvas.  PR #231 shipped five props whose alpha
+    was 0 on every pixel -- refusing to write such an image is the safer
+    failure, and the caller can opt out with background_cutout=False.
+    """
