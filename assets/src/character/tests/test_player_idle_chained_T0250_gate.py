@@ -418,6 +418,31 @@ def test_denoise_value_justified(provenance: dict) -> None:
     )
 
 
+def test_denoise_justification_does_not_misreport_the_arm_c_result(provenance: dict) -> None:
+    """2026-08-30 second human review FAIL: `promote_attempt`'s
+    `DEFAULT_DENOISE_JUSTIFICATION` was written against the pre-cutout
+    numbers (attempt 8, frame-delta 0.0000-0.0286, which does beat Arm C)
+    and was never updated when the cutout reprocess (`--reprocess-attempt`)
+    recomputed `beats_arm_c_benchmark` to False on the currently-promoted
+    sheet (frame-delta 0.0000-0.1763) -- so the shipped sidecar claimed a
+    win on the exact field ("why this denoise value") most likely to
+    wrongly favour this arm over Arm C. Pin the two fields so the
+    justification's claim can never again silently diverge from the
+    sidecar's own measured `beats_arm_c_benchmark`."""
+    justification = provenance["denoise_justification"]
+    beats_arm_c = provenance["beats_arm_c_benchmark"]
+    if beats_arm_c:
+        return
+    assert "clears both the 0.30 cap and Arm C" not in justification, (
+        "denoise_justification claims the sheet clears both the 0.30 cap and Arm C's "
+        "benchmark, but this sidecar's own beats_arm_c_benchmark is False"
+    )
+    assert "does not beat Arm C" in justification, (
+        "denoise_justification must explicitly say Arm C's benchmark was not beaten when "
+        "beats_arm_c_benchmark is False"
+    )
+
+
 def test_per_frame_keypoint_files_resolve(provenance: dict) -> None:
     for frame in provenance["frame_generation"]:
         for field in ("pose_keypoints_file", "pose_skeleton_file"):
