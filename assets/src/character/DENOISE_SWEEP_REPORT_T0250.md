@@ -35,3 +35,21 @@ Never cleared the 0.30 cap on its own swept seed (31416) at any denoise; the one
 SUPERSEDED BY 2026-08-30 HUMAN REVIEW. The original justification (attempts 1-6, chain-from-predecessor mechanism) chose denoise=0.15/seed=31420 because it cleared the 0.30 cap (0.0301-0.2134) -- but that sheet was rejected on human review for compounding background noise every frame (clean background pixels 1280->832 across the sheet), a failure check_frame_consistency's relative delta cannot see. The fix applied here -- anchoring every frame to frame 0's own decoded output (not its immediate predecessor) plus a hard pixel-space background hold -- removes that compounding by construction (background_growth now 1.0-1.05x frame 0's baseline across both re-measured denoise values, attempts 7-8, well inside the 1.35x bound). denoise=0.30 (attempt 8) is chosen over attempt 7's 0.15 only because it is the value actually inside the round's mandated ~0.25-0.35 sweep band; it is NOT chosen because it demonstrates better motion. Both re-measured points are honestly indistinguishable on the property that matters: frame-delta collapsed to 0.0000-0.0299 (denoise 0.15) and 0.0000-0.0286 (denoise 0.30), and direct visual comparison of frame 0 against frame 4 at both values shows the pose has not visibly moved. This is the low-edge 'motion stops reading' failure mode the sweep was designed to detect, now occurring throughout the tested range instead of only below it -- background-holding a sheet whose idle motion amplitude is already tiny by design (pose_rig_T0249.json: breathing_amplitude_norm 0.012, weight_shift_extent_norm 0.018) removes the only channel (background speckle) that was previously registering as inter-frame delta. The DL-21 8-attempt cap was reached confirming this at two points; whether a higher denoise (>0.35) restores legible motion before drift returns under the new mechanism is untested and would need a fresh attempt allocation to answer -- see ROUND2_CHAINED_REPORT_T0250.md's 'Human review' section for the full account. This sheet clears both the 0.30 cap and Arm C's 0.072-0.112 benchmark, but only because motion has stalled, not because the chaining hypothesis produced a legible-motion, drift-free result -- report this as a qualified outcome, not a win, per round-2 rule §23-b.
 
 Measured frame-delta range at the chosen value: **0.0000-0.0286**. Beats the 0.30 cap. Beats Arm C's 0.072-0.112 benchmark. background-growth ratio 1.023x frame 0's non-background pixel count (bounded the 1.35x cap).
+
+## Addendum (2026-08-30 second human review) -- denoise unchanged, do not re-sweep
+
+The number above (0.0000-0.0286) is the pre-cutout measurement, frozen at
+the point this sweep was written, and is left as-is per the round-2 rule
+"do not re-sweep denoise, do not change ... the fix that fixed the
+accumulation" -- this sweep answers "which denoise" and that answer is
+unchanged. A **separate, additive** fix (per-frame background cutout, see
+`ROUND2_CHAINED_REPORT_T0250.md`'s "Second human review" section) was
+applied on top of the promoted attempt 8 sheet afterward, with no seed or
+denoise change and no new GPU work. Because that fix genuinely removes the
+sheet's static background, `check_frame_consistency`'s ratio denominator
+shrinks and the frame-delta measurement on the **currently-promoted**
+sheet moved to **0.0000-0.1763** -- still clears the 0.30 cap, no longer
+beats Arm C. The promoted sheet's own provenance
+(`assets/final/character/player_idle_sheet_chained_T0250.provenance.json`)
+carries this current number; this sweep file intentionally does not, so as
+not to conflate "which denoise" with "was the background cut out."

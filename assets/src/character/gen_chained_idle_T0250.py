@@ -67,8 +67,10 @@ import io
 import json
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -92,10 +94,10 @@ from gen_arm_a_idle_T0228 import (  # noqa: E402
     LORA_LICENSE,
     LORA_NAME,
     LORA_PATH,
+    _srgb_to_oklab,
     cleanup_orphans,
     enforce_cell_margin,
     fetch_save_image,
-    force_cell_corner_background,
     quantize_to_palette,
     sha256_of,
     submit_prompt,
@@ -233,6 +235,225 @@ def apply_background_hold(
     becomes byte-identical to frame 0's, every frame, so there is no chain
     of ever-degrading inputs for noise to accumulate along."""
     return Image.composite(sampled.convert("RGB"), anchor.convert("RGB"), mask)
+
+
+# ── Background cutout (2026-08-30 second human review) ─────────────────────
+#
+# The frame-0-anchor + background-hold fix (above) bounded noise accumulation
+# but the human-reviewed sheet still carried a visible background: a dark
+# ground plane, a distinct grey slab and scattered green marks, none of them
+# character. `docs/design/13-asset-pipeline.md`'s prop cutout path
+# (`tools/comfy-client/src/comfy_client/cutout.py`) bakes RGBA alpha at
+# *generation* time via a full-canvas SolidMask -- correct for a prop LoRA'd
+# to fill its whole canvas, but a uniform full-canvas alpha cannot separate a
+# character from the visible background margin this sheet's cells still
+# have, so that mechanism does not apply here unmodified. This does the
+# equivalent job -- opaque character, background forced to
+# `background_index` -- as a genuine per-pixel segmentation of the already
+# generated frame, applied per-frame BEFORE the frames are assembled into the
+# sheet (per the review's explicit direction), not to the assembled sheet:
+#
+#   1. `border_flood_background_mask` -- a border-connected, tolerance-chained
+#      region grow in Oklab space over that frame's own 384x384 sampled/held
+#      image: every border pixel seeds the background region, and a neighbour
+#      joins if it is within `CUTOUT_OKLAB_TOLERANCE` of the pixel it grows
+#      from (not a single fixed seed colour), so a gradual background
+#      gradient or artifact connected to the frame edge is swept regardless
+#      of how many distinct palette indices it later quantizes to -- a
+#      strict superset of the old corner-flood-on-exact-quantized-index
+#      approach (`force_cell_corner_background`, now superseded here).
+#   2. Unioned with "outside this frame's own keypoint bounding box +
+#      `BACKGROUND_MASK_MARGIN_FRAC` margin" (the same constant the
+#      background-hold mask already uses) -- catches clutter that is NOT
+#      border-connected (a floor-plane wedge, faint side ghosting) by
+#      position instead of colour, without risking the character (the margin
+#      is the same one already proven, by the background-hold compositing
+#      above, to contain the full figure across all 9 frames).
+#
+# Measured on the already-promoted attempt 8 frames before this shipped:
+# tolerance 0.03 recovers a foreground fraction stable across frames
+# (23.1-23.4% of the 384x384 frame) with no visible clipping of the figure's
+# silhouette; below ~0.02 residual background survives, above ~0.08 the
+# fraction becomes frame-inconsistent (0.070-0.131 across otherwise-identical
+# frames) -- a sign the flood is starting to eat into the character
+# unevenly.
+CUTOUT_OKLAB_TOLERANCE = 0.03
+
+
+def _oklab_grid(rgb_uint8: np.ndarray) -> np.ndarray:
+    h, w = rgb_uint8.shape[:2]
+    flat = _srgb_to_oklab(rgb_uint8.reshape(-1, 3).astype(np.float64))
+    return flat.reshape(h, w, 3)
+
+
+def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarray:
+    """Boolean HxW array, True = background. Multi-source BFS seeded from
+    every border pixel, growing through 4-connected neighbours whose Oklab
+    distance to the pixel it grows *from* (not the original seed) is within
+    `tolerance` -- a tolerance-chained ("magic wand, contiguous") flood, so a
+    gradual gradient connected to the edge is swept even where no single
+    pixel is close to the border's own colour."""
+    arr = np.array(img.convert("RGB"), dtype=np.uint8)
+    h, w = arr.shape[:2]
+    oklab = _oklab_grid(arr)
+    visited = np.zeros((h, w), dtype=bool)
+    queue: deque[tuple[int, int]] = deque()
+
+    def seed(y: int, x: int) -> None:
+        if not visited[y, x]:
+            visited[y, x] = True
+            queue.append((y, x))
+
+    for x in range(w):
+        seed(0, x)
+        seed(h - 1, x)
+    for y in range(h):
+        seed(y, 0)
+        seed(y, w - 1)
+
+    tol2 = tolerance * tolerance
+    while queue:
+        y, x = queue.popleft()
+        cur = oklab[y, x]
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx]:
+                diff = oklab[ny, nx] - cur
+                if diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2] <= tol2:
+                    visited[ny, nx] = True
+                    queue.append((ny, nx))
+    return visited
+
+
+def cutout_foreground_mask(
+    img: Image.Image,
+    points_norm: dict[int, tuple[float, float]],
+    tolerance: float,
+    bbox_margin_frac: float,
+) -> np.ndarray:
+    """Boolean HxW array, True = character. Background is the union of the
+    border-connected tolerant flood and everything outside this frame's own
+    keypoint bounding box (+margin); the character is the complement -- see
+    the module-level comment above for why both are needed."""
+    size = img.size[0]
+    background = border_flood_background_mask(img, tolerance)
+
+    xs = [x for x, _ in points_norm.values()]
+    ys = [y for _, y in points_norm.values()]
+    x0n, x1n = min(xs), max(xs)
+    y0n, y1n = min(ys), max(ys)
+    wn, hn = x1n - x0n, y1n - y0n
+    x0n -= wn * bbox_margin_frac
+    x1n += wn * bbox_margin_frac
+    y0n -= hn * bbox_margin_frac
+    y1n += hn * bbox_margin_frac
+    x0, x1 = int(max(0.0, x0n) * size), int(min(1.0, x1n) * size)
+    y0, y1 = int(max(0.0, y0n) * size), int(min(1.0, y1n) * size)
+
+    outside_bbox = np.ones((size, size), dtype=bool)
+    outside_bbox[y0:y1, x0:x1] = False
+    return ~(background | outside_bbox)
+
+
+def downscale_mask(fg_mask: np.ndarray, target_size: int) -> np.ndarray:
+    """Area-downscale a boolean mask to `target_size`x`target_size` (matches
+    the BOX filter already used for the RGB image itself) and re-threshold
+    at 50% coverage."""
+    mask_img = Image.fromarray((fg_mask * 255).astype(np.uint8))
+    small = mask_img.resize((target_size, target_size), Image.Resampling.BOX)
+    return np.array(small) >= 128
+
+
+def apply_cutout_masks(
+    indexed: Image.Image,
+    fg_masks: dict[tuple[int, int], np.ndarray],
+    cell_size: int,
+    background_index: int,
+) -> Image.Image:
+    """Force every cell's non-character pixels (per that cell's own
+    downscaled cutout mask) to `background_index`. Supersedes
+    `force_cell_corner_background`: a per-frame content-aware segmentation
+    is a strict superset of a same-index corner flood fill."""
+    arr = np.array(indexed)
+    out = arr.copy()
+    for (r, c), mask in fg_masks.items():
+        y0, x0 = r * cell_size, c * cell_size
+        sub = out[y0 : y0 + cell_size, x0 : x0 + cell_size]
+        sub[~mask] = background_index
+    result = Image.fromarray(out, mode="P")
+    result.putpalette(indexed.getpalette())
+    return result
+
+
+CUTOUT_METHOD_DESCRIPTION = (
+    "Per-frame border-connected tolerant region-growing in Oklab space "
+    f"(tolerance={CUTOUT_OKLAB_TOLERANCE}) over that frame's own 384x384 sampled/held image, "
+    "seeded from every border pixel and grown through 4-connected neighbours within the "
+    "tolerance of the pixel it grows from -- removes background clutter connected to the frame "
+    "edge regardless of how many distinct palette indices it quantizes to. Unioned with "
+    "'outside this frame's own keypoint bounding box + margin' (background_hold_mask's own "
+    "BACKGROUND_MASK_MARGIN_FRAC) to remove disconnected clutter (a floor-plane wedge, faint "
+    "side ghosting) by position. Applied to each frame's own image and downscaled alongside it "
+    "BEFORE the frames are assembled into the sheet -- not to the assembled sheet. "
+    "Character-foreground pixels keep their quantized palette index; every other pixel is "
+    "forced to background_index=0. Supersedes force_cell_corner_background (a strict superset: "
+    "content-aware per-frame segmentation vs. same-index corner flood fill)."
+)
+
+
+def compute_sheet_gates(indexed: Image.Image) -> dict:
+    """DL-21 criterion 2 (frame-consistency) + the 2026-08-30 human-review
+    background-growth gate, factored out so both a fresh generation run and
+    a cutout-only reprocess of an already-sampled attempt compute identical
+    gates the identical way."""
+    cells = {}
+    for r in range(3):
+        for c in range(3):
+            cells[(r, c)] = indexed.crop(
+                (
+                    c * FINAL_CELL_PX,
+                    r * FINAL_CELL_PX,
+                    c * FINAL_CELL_PX + FINAL_CELL_PX,
+                    r * FINAL_CELL_PX + FINAL_CELL_PX,
+                )
+            )
+    frame_deltas = []
+    for a, b in zip(FRAME_ORDER, FRAME_ORDER[1:]):
+        result = asset_gate_art.check_frame_consistency(
+            cells[a], cells[b], background_index=0, max_delta_ratio=MAX_FRAME_DELTA_RATIO
+        )
+        frame_deltas.append(
+            {
+                "pair": [list(a), list(b)],
+                "ratio": float(result.details["ratio"]),
+                "passed": bool(result.passed),
+            }
+        )
+    mechanical_gate_passed = all(d["passed"] for d in frame_deltas)
+    ratios = [d["ratio"] for d in frame_deltas]
+    frame_delta_range = [min(ratios), max(ratios)]
+    beats_030_cap = max(ratios) <= MAX_FRAME_DELTA_RATIO
+    beats_arm_c_benchmark = max(ratios) <= ARM_C_BENCHMARK[1]
+
+    background_growth_result = asset_gate_art.check_background_growth(
+        [cells[c] for c in FRAME_ORDER],
+        background_index=0,
+        max_growth_ratio=MAX_BACKGROUND_GROWTH_RATIO,
+    )
+    return {
+        "frame_deltas": frame_deltas,
+        "mechanical_gate_passed": mechanical_gate_passed,
+        "frame_delta_range": frame_delta_range,
+        "beats_030_cap": beats_030_cap,
+        "beats_arm_c_benchmark": beats_arm_c_benchmark,
+        "background_growth": {
+            "counts": background_growth_result.details["counts"],
+            "baseline": background_growth_result.details["baseline"],
+            "max_growth_ratio": MAX_BACKGROUND_GROWTH_RATIO,
+            "passed": bool(background_growth_result.passed),
+        },
+        "passes_all_gates": bool(mechanical_gate_passed and background_growth_result.passed),
+    }
 
 
 def check_attempt_cap(attempt: int) -> None:
@@ -399,6 +620,8 @@ def run_attempt(
     t0 = time.monotonic()
     frame_records = []
     cell_images: dict[tuple[int, int], Image.Image] = {}
+    frame_main_images: dict[tuple[int, int], Image.Image] = {}
+    frame_points: dict[tuple[int, int], dict[int, tuple[float, float]]] = {}
     prompt_ids = []
     frame0_main_path: Path | None = None
     frame0_main_img: Image.Image | None = None
@@ -460,10 +683,13 @@ def run_attempt(
         main_bytes = fetch_save_image(info, pose_authority.MAIN_SAVE_NODE_ID)
         sampled_img = Image.open(io.BytesIO(main_bytes)).convert("RGB")
 
+        frame_points[cell] = points
+
         if i == 0:
             frame0_main_path = out_dir / f"frame_{i}_main_384.png"
             frame0_main_path.write_bytes(main_bytes)
             frame0_main_img = sampled_img
+            frame_main_images[cell] = sampled_img
             cell_bytes = fetch_save_image(info, pose_authority.CELL_SAVE_NODE_ID)
             cell_raw_path = out_dir / f"frame_{i}_cell_48_raw.png"
             cell_raw_path.write_bytes(cell_bytes)
@@ -481,6 +707,7 @@ def run_attempt(
             held_img = apply_background_hold(sampled_img, frame0_main_img, mask)
             main_path = out_dir / f"frame_{i}_main_384.png"
             held_img.save(main_path)
+            frame_main_images[cell] = held_img
             cell_raw_path = out_dir / f"frame_{i}_cell_48_raw.png"
             # Locally computed area-downscale of the held (background-composited)
             # image -- ComfyUI's own CELL_SAVE_NODE_ID output was area-descended
@@ -517,52 +744,43 @@ def run_attempt(
 
     palette = asset_gate_palette.load_palette(PALETTE_PATH)
     indexed = quantize_to_palette(raw_sheet, palette)
-    indexed = force_cell_corner_background(indexed, cell_size=FINAL_CELL_PX, background_index=0)
+
+    # 2026-08-30 second human review: cut the character out of its background
+    # per-frame, before assembly -- see the module-level comment above
+    # border_flood_background_mask for the full rationale. Supersedes
+    # force_cell_corner_background.
+    cutout_masks = {
+        cell: downscale_mask(
+            cutout_foreground_mask(
+                frame_main_images[cell],
+                frame_points[cell],
+                CUTOUT_OKLAB_TOLERANCE,
+                BACKGROUND_MASK_MARGIN_FRAC,
+            ),
+            FINAL_CELL_PX,
+        )
+        for cell in FRAME_ORDER
+    }
+    indexed = apply_cutout_masks(indexed, cutout_masks, cell_size=FINAL_CELL_PX, background_index=0)
     indexed = enforce_cell_margin(indexed, cell_size=FINAL_CELL_PX, margin=2, background_index=0)
     indexed = cleanup_orphans(indexed, background_index=0, size_threshold=4)
     indexed.save(out_dir / "sheet_144_indexed.png")
 
-    cells = {}
-    for r in range(3):
-        for c in range(3):
-            cells[(r, c)] = indexed.crop(
-                (c * FINAL_CELL_PX, r * FINAL_CELL_PX, c * FINAL_CELL_PX + FINAL_CELL_PX,
-                 r * FINAL_CELL_PX + FINAL_CELL_PX)
-            )
-    frame_deltas = []
-    for a, b in zip(FRAME_ORDER, FRAME_ORDER[1:]):
-        result = asset_gate_art.check_frame_consistency(
-            cells[a], cells[b], background_index=0, max_delta_ratio=MAX_FRAME_DELTA_RATIO
-        )
-        frame_deltas.append(
-            {
-                "pair": [list(a), list(b)],
-                "ratio": float(result.details["ratio"]),
-                "passed": bool(result.passed),
-            }
-        )
-    mechanical_gate_passed = all(d["passed"] for d in frame_deltas)
-    ratios = [d["ratio"] for d in frame_deltas]
-    frame_delta_range = [min(ratios), max(ratios)]
-    beats_030_cap = max(ratios) <= MAX_FRAME_DELTA_RATIO
-    beats_arm_c_benchmark = max(ratios) <= ARM_C_BENCHMARK[1]
-
-    # 2026-08-30 human review: check_frame_consistency alone missed background
-    # noise compounding frame over frame (the promoted attempt 6 sheet passed it
-    # while dissolving into speckle). Measure growth against a fixed frame-0
-    # baseline too, on every attempt from here on.
-    background_growth_result = asset_gate_art.check_background_growth(
-        [cells[c] for c in FRAME_ORDER],
-        background_index=0,
-        max_growth_ratio=MAX_BACKGROUND_GROWTH_RATIO,
-    )
+    gates = compute_sheet_gates(indexed)
+    frame_deltas = gates["frame_deltas"]
+    mechanical_gate_passed = gates["mechanical_gate_passed"]
+    frame_delta_range = gates["frame_delta_range"]
+    beats_030_cap = gates["beats_030_cap"]
+    beats_arm_c_benchmark = gates["beats_arm_c_benchmark"]
 
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
         f"+ LoRA {identity_lora_name} (player identity, weight {identity_lora_weight}) "
         f"+ ControlNet {CONTROLNET_NAME} (per-frame script-authored pose skeleton) "
         f"+ img2img chaining (frames 1-8 anchored to frame 0's own output, "
-        f"background held out of the feedback path, denoise {denoise})"
+        f"background held out of the feedback path, denoise {denoise}) "
+        f"+ per-frame background cutout before sheet assembly (Oklab border-flood "
+        f"tolerance={CUTOUT_OKLAB_TOLERANCE})"
     )
     provenance = {
         "model": model_summary,
@@ -667,13 +885,12 @@ def run_attempt(
         "beats_030_cap": beats_030_cap,
         "beats_arm_c_benchmark": beats_arm_c_benchmark,
         "arm_c_benchmark": list(ARM_C_BENCHMARK),
-        "background_growth": {
-            "counts": background_growth_result.details["counts"],
-            "baseline": background_growth_result.details["baseline"],
-            "max_growth_ratio": MAX_BACKGROUND_GROWTH_RATIO,
-            "passed": bool(background_growth_result.passed),
-        },
-        "passes_all_gates": bool(mechanical_gate_passed and background_growth_result.passed),
+        "background_growth": gates["background_growth"],
+        "passes_all_gates": gates["passes_all_gates"],
+        "background_cutout_applied": True,
+        "cutout_method": CUTOUT_METHOD_DESCRIPTION,
+        "cutout_oklab_tolerance": CUTOUT_OKLAB_TOLERANCE,
+        "cutout_bbox_margin_frac": BACKGROUND_MASK_MARGIN_FRAC,
         "layout": {
             "sheet_px": [SHEET_PX, SHEET_PX],
             "cell_px": FINAL_CELL_PX,
@@ -684,6 +901,107 @@ def run_attempt(
         "palette_source": "assets/final/palette/home_palette.json",
     }
     (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    return provenance
+
+
+def reprocess_attempt_cutout(attempt: int) -> dict:
+    """Re-derive `attempt`'s indexed sheet with the background-cutout step
+    (2026-08-30 second human review) from that attempt's ALREADY SAMPLED
+    per-frame images on disk -- no new ComfyUI calls, no seed or denoise
+    change, no re-sweep. Additive on top of the frame-0-anchor +
+    background-hold fix per the review's explicit direction: "This is
+    additive ... do not re-sweep denoise, do not change the identity
+    re-anchoring or masking that fixed the accumulation, and do not regress
+    the frame-delta result."
+
+    Reads back frame_{i}_cell_48_raw.png (the exact pixels the previous run
+    assembled into the sheet), frame_{i}_main_384.png (that frame's own
+    sampled/held image, for the cutout mask) and frame_{i}_keypoints.json
+    from `attempt`'s own out_dir, rebuilds the sheet through
+    quantize -> cutout -> margin -> orphan-cleanup, recomputes the gates on
+    the result, and overwrites both `sheet_144_indexed.png` and
+    `provenance_candidate.json` in place. `--promote-attempt` then promotes
+    the result exactly as for a fresh run.
+    """
+    out_dir = OUT_ROOT / f"attempt_{attempt}"
+    candidate_path = out_dir / "provenance_candidate.json"
+    provenance = json.loads(candidate_path.read_text())
+
+    palette = asset_gate_palette.load_palette(PALETTE_PATH)
+    cell_images: dict[tuple[int, int], Image.Image] = {}
+    frame_main_images: dict[tuple[int, int], Image.Image] = {}
+    frame_points: dict[tuple[int, int], dict[int, tuple[float, float]]] = {}
+    for i, cell in enumerate(FRAME_ORDER):
+        cell_images[cell] = Image.open(out_dir / f"frame_{i}_cell_48_raw.png").convert("RGB")
+        frame_main_images[cell] = Image.open(out_dir / f"frame_{i}_main_384.png").convert("RGB")
+        coco_list = json.loads((out_dir / f"frame_{i}_keypoints.json").read_text())
+        frame_points[cell] = {p["joint"]: (p["x"], p["y"]) for p in coco_list}
+
+    raw_sheet = Image.new("RGB", (SHEET_PX, SHEET_PX))
+    for (r, c), cell_img in cell_images.items():
+        raw_sheet.paste(cell_img, (c * FINAL_CELL_PX, r * FINAL_CELL_PX))
+
+    indexed = quantize_to_palette(raw_sheet, palette)
+    cutout_masks = {
+        cell: downscale_mask(
+            cutout_foreground_mask(
+                frame_main_images[cell],
+                frame_points[cell],
+                CUTOUT_OKLAB_TOLERANCE,
+                BACKGROUND_MASK_MARGIN_FRAC,
+            ),
+            FINAL_CELL_PX,
+        )
+        for cell in FRAME_ORDER
+    }
+    indexed = apply_cutout_masks(indexed, cutout_masks, cell_size=FINAL_CELL_PX, background_index=0)
+    indexed = enforce_cell_margin(indexed, cell_size=FINAL_CELL_PX, margin=2, background_index=0)
+    indexed = cleanup_orphans(indexed, background_index=0, size_threshold=4)
+    indexed.save(out_dir / "sheet_144_indexed.png")
+
+    gates = compute_sheet_gates(indexed)
+
+    # Rebuild the chaining clause fresh rather than trusting whatever the
+    # on-disk candidate's `model` string currently says: this gitignored
+    # out_dir file predates 516241d's model-field-wording fix (it still says
+    # "from their predecessor" on this ComfyUI host's disk, even though the
+    # COMMITTED sidecar was hand-corrected) -- an append-only patch would
+    # have left that stale clause in place, reproducing the exact P-7 defect
+    # 516241d already fixed once.
+    denoise_value = provenance["denoise_value"]
+    prefix = provenance["model"].split(" + img2img chaining")[0]
+    model = (
+        f"{prefix} + img2img chaining (frames 1-8 anchored to frame 0's own output, "
+        f"background held out of the feedback path, denoise {denoise_value}) "
+        f"+ per-frame background cutout before sheet assembly (Oklab border-flood "
+        f"tolerance={CUTOUT_OKLAB_TOLERANCE})"
+    )
+
+    provenance = dict(provenance)
+    provenance["model"] = model
+    provenance["mechanical_gate_passed"] = gates["mechanical_gate_passed"]
+    provenance["frame_deltas"] = gates["frame_deltas"]
+    provenance["frame_delta_range"] = gates["frame_delta_range"]
+    provenance["beats_030_cap"] = gates["beats_030_cap"]
+    provenance["beats_arm_c_benchmark"] = gates["beats_arm_c_benchmark"]
+    provenance["background_growth"] = gates["background_growth"]
+    provenance["passes_all_gates"] = gates["passes_all_gates"]
+    provenance["background_cutout_applied"] = True
+    provenance["cutout_method"] = CUTOUT_METHOD_DESCRIPTION
+    provenance["cutout_oklab_tolerance"] = CUTOUT_OKLAB_TOLERANCE
+    provenance["cutout_bbox_margin_frac"] = BACKGROUND_MASK_MARGIN_FRAC
+    provenance["cutout_reprocessed_from_attempt"] = attempt
+    provenance["cutout_reprocess_note"] = (
+        "2026-08-30 second human review: the frame-0-anchor + background-hold fix (attempt "
+        f"{attempt}) bounded noise accumulation but still shipped a visible background (dark "
+        "ground, a distinct grey slab, scattered green marks). This reprocesses the SAME "
+        "already-sampled per-frame pixels from that attempt with a per-frame background-cutout "
+        "step added before sheet assembly -- no new ComfyUI sampling, no seed or denoise "
+        "change, the identity re-anchoring and background-hold masking are unchanged. "
+        "frame_delta_range/beats_030_cap/beats_arm_c_benchmark above are recomputed on the "
+        "cutout sheet, not carried over from the pre-cutout candidate."
+    )
+    candidate_path.write_text(json.dumps(provenance, indent=2) + "\n")
     return provenance
 
 
@@ -905,7 +1223,20 @@ def main() -> None:
         type=int,
         help="which --write-sweep-report attempt was chosen/promoted",
     )
+    parser.add_argument(
+        "--reprocess-attempt",
+        type=int,
+        help=(
+            "re-derive an existing attempt's sheet with the background-cutout step from its "
+            "already-sampled per-frame images -- no new ComfyUI calls -- then exit"
+        ),
+    )
     args = parser.parse_args()
+
+    if args.reprocess_attempt is not None:
+        provenance = reprocess_attempt_cutout(args.reprocess_attempt)
+        print(json.dumps(provenance, indent=2))
+        return
 
     if args.write_sweep_report is not None:
         attempts = [int(a) for a in args.write_sweep_report.split(",")]

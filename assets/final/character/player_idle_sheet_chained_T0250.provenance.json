@@ -1,5 +1,5 @@
 {
-  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (player identity, weight 0.5) + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors (per-frame script-authored pose skeleton) + img2img chaining (frames 1-8 anchored to frame 0's own output, background held out of the feedback path, denoise 0.3)",
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (player identity, weight 0.5) + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors (per-frame script-authored pose skeleton) + img2img chaining (frames 1-8 anchored to frame 0's own output, background held out of the feedback path, denoise 0.3) + per-frame background cutout before sheet assembly (Oklab border-flood tolerance=0.03)",
   "model_license": "CreativeML Open RAIL++-M",
   "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
   "style_lora_name": "soviet_brutalism_style_v1.safetensors",
@@ -231,7 +231,7 @@
           1
         ]
       ],
-      "ratio": 0.02666666666666667,
+      "ratio": 0.17625899280575538,
       "passed": true
     },
     {
@@ -259,7 +259,7 @@
           0
         ]
       ],
-      "ratio": 0.02862595419847328,
+      "ratio": 0.007722007722007722,
       "passed": true
     },
     {
@@ -273,7 +273,7 @@
           1
         ]
       ],
-      "ratio": 0.0,
+      "ratio": 0.011583011583011582,
       "passed": true
     },
     {
@@ -287,7 +287,7 @@
           2
         ]
       ],
-      "ratio": 0.0,
+      "ratio": 0.003861003861003861,
       "passed": true
     },
     {
@@ -301,7 +301,7 @@
           0
         ]
       ],
-      "ratio": 0.00196078431372549,
+      "ratio": 0.011494252873563218,
       "passed": true
     },
     {
@@ -315,7 +315,7 @@
           1
         ]
       ],
-      "ratio": 0.00196078431372549,
+      "ratio": 0.019157088122605363,
       "passed": true
     },
     {
@@ -329,33 +329,33 @@
           2
         ]
       ],
-      "ratio": 0.0009813542688910696,
+      "ratio": 0.011538461538461539,
       "passed": true
     }
   ],
   "frame_delta_range": [
     0.0,
-    0.02862595419847328
+    0.17625899280575538
   ],
   "beats_030_cap": true,
-  "beats_arm_c_benchmark": true,
+  "beats_arm_c_benchmark": false,
   "arm_c_benchmark": [
     0.072,
     0.112
   ],
   "background_growth": {
     "counts": [
-      1024,
-      1048,
-      1048,
-      1018,
-      1018,
-      1018,
-      1020,
-      1018,
-      1019
+      248,
+      259,
+      259,
+      257,
+      258,
+      259,
+      260,
+      257,
+      260
     ],
-    "baseline": 1024,
+    "baseline": 248,
     "max_growth_ratio": 1.35,
     "passed": true
   },
@@ -409,6 +409,12 @@
   },
   "palette_source": "assets/final/palette/home_palette.json",
   "promoted": true,
+  "background_cutout_applied": true,
+  "cutout_method": "Per-frame border-connected tolerant region-growing in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image, seeded from every border pixel and grown through 4-connected neighbours within the tolerance of the pixel it grows from -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it quantizes to. Unioned with 'outside this frame's own keypoint bounding box + margin' (background_hold_mask's own BACKGROUND_MASK_MARGIN_FRAC) to remove disconnected clutter (a floor-plane wedge, faint side ghosting) by position. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0. Supersedes force_cell_corner_background (a strict superset: content-aware per-frame segmentation vs. same-index corner flood fill).",
+  "cutout_oklab_tolerance": 0.03,
+  "cutout_bbox_margin_frac": 0.14,
+  "cutout_reprocessed_from_attempt": 8,
+  "cutout_reprocess_note": "2026-08-30 second human review: the frame-0-anchor + background-hold fix (attempt 8) bounded noise accumulation but still shipped a visible background (dark ground, a distinct grey slab, scattered green marks). This reprocesses the SAME already-sampled per-frame pixels from that attempt with a per-frame background-cutout step added before sheet assembly -- no new ComfyUI sampling, no seed or denoise change, the identity re-anchoring and background-hold masking are unchanged. frame_delta_range/beats_030_cap/beats_arm_c_benchmark above are recomputed on the cutout sheet, not carried over from the pre-cutout candidate.",
   "denoise_justification": "SUPERSEDED BY 2026-08-30 HUMAN REVIEW. The original justification (attempts 1-6, chain-from-predecessor mechanism) chose denoise=0.15/seed=31420 because it cleared the 0.30 cap (0.0301-0.2134) -- but that sheet was rejected on human review for compounding background noise every frame (clean background pixels 1280->832 across the sheet), a failure check_frame_consistency's relative delta cannot see. The fix applied here -- anchoring every frame to frame 0's own decoded output (not its immediate predecessor) plus a hard pixel-space background hold -- removes that compounding by construction (background_growth now 1.0-1.05x frame 0's baseline across both re-measured denoise values, attempts 7-8, well inside the 1.35x bound). denoise=0.30 (attempt 8) is chosen over attempt 7's 0.15 only because it is the value actually inside the round's mandated ~0.25-0.35 sweep band; it is NOT chosen because it demonstrates better motion. Both re-measured points are honestly indistinguishable on the property that matters: frame-delta collapsed to 0.0000-0.0299 (denoise 0.15) and 0.0000-0.0286 (denoise 0.30), and direct visual comparison of frame 0 against frame 4 at both values shows the pose has not visibly moved. This is the low-edge 'motion stops reading' failure mode the sweep was designed to detect, now occurring throughout the tested range instead of only below it -- background-holding a sheet whose idle motion amplitude is already tiny by design (pose_rig_T0249.json: breathing_amplitude_norm 0.012, weight_shift_extent_norm 0.018) removes the only channel (background speckle) that was previously registering as inter-frame delta. The DL-21 8-attempt cap was reached confirming this at two points; whether a higher denoise (>0.35) restores legible motion before drift returns under the new mechanism is untested and would need a fresh attempt allocation to answer -- see ROUND2_CHAINED_REPORT_T0250.md's 'Human review' section for the full account. This sheet clears both the 0.30 cap and Arm C's 0.072-0.112 benchmark, but only because motion has stalled, not because the chaining hypothesis produced a legible-motion, drift-free result -- report this as a qualified outcome, not a win, per round-2 rule \u00a723-b.",
   "denoise_sweep_report": "assets/src/character/DENOISE_SWEEP_REPORT_T0250.md",
   "denoise_sweep_data": "assets/src/character/DENOISE_SWEEP_T0250.json"

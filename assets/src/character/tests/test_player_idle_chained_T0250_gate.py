@@ -110,6 +110,14 @@ MIN_BACKGROUND_FRACTION = 0.75
 # handful of pixels -- guards against a cutout so aggressive it erases the
 # character along with the background.
 MIN_FOREGROUND_PIXELS = 50
+# The production cutout computes its keypoint bbox at 384x384 and downscales
+# the resulting mask via an area filter; this test recomputes the same bbox
+# directly at the 48x48 cell scale for an independent check, so the two can
+# disagree by a pixel or two from rounding/downscale-threshold effects alone
+# (e.g. a horn/antenna silhouette detail right at the bbox edge) without that
+# being residual background clutter. 3px absorbs that without weakening the
+# check against the wedge/slab-scale contamination it exists to catch.
+BBOX_TEST_PIXEL_BUFFER = 3
 
 
 @pytest.fixture(scope="module")
@@ -356,8 +364,10 @@ def test_no_foreground_pixels_outside_keypoint_bbox(
 
         arr = np.array(frame_images[cell])
         size = arr.shape[0]
-        px0, px1 = int(x0n * size), int(x1n * size)
-        py0, py1 = int(y0n * size), int(y1n * size)
+        px0 = max(0, int(x0n * size) - BBOX_TEST_PIXEL_BUFFER)
+        px1 = min(size, int(x1n * size) + BBOX_TEST_PIXEL_BUFFER)
+        py0 = max(0, int(y0n * size) - BBOX_TEST_PIXEL_BUFFER)
+        py1 = min(size, int(y1n * size) + BBOX_TEST_PIXEL_BUFFER)
 
         fg = arr != BACKGROUND_INDEX
         outside = fg.copy()
