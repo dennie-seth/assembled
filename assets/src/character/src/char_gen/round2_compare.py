@@ -9,9 +9,9 @@ already pins this in its own gate suite (e.g. `test_identity_lora_is_v2`).
 This module only re-verifies and assembles outputs the round-2 cards already
 produced: it generates no new character pixels and invents no criterion-1
 verdict. See `assets/src/character/ROUND2_DECISION_T0255.md` for how the
-human read is recorded and why it is not load-bearing for round 2's own
-outcome (no round-2 arm beats Arm C's benchmark regardless of its own
-criterion-1 read).
+human read is recorded and parked -- for the round-2 arms and, since none of
+them beats Arm C's benchmark, for Arm C's own still-outstanding criterion-1
+sign-off too.
 """
 
 from __future__ import annotations

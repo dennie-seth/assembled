@@ -124,8 +124,6 @@ Generation: **1024×1024 for a 16px tile (×64)**, or a sheet at an integer mult
 
 **Characters — the hard class.** At 384×216 a figure is **40px tall**, so the pipeline optimizes for *silhouette clarity and stable proportion*, not detail. Nearly all generated detail is destroyed in the descent; what survives is shape and a few value blocks.
 
-> **The player idle sheet ships from a deterministic script, not a diffusion model** (`docs/decision-log.md` DL-21/DL-24, scope: player idle state only — move/crouch-hide/die and foreign-entity states are unaffected and still follow this section's generative pipeline as written). A two-round bake-off (HANDOFF §23/§24) raced a co-generated-grid SDXL arm, a per-frame identity-LoRA arm, an img2img-chained arm, and a hybrid SDXL-plus-script arm against a hand-authored, seeded script drawing directly into palette-indexed arrays. The script won round 1 on cost; round 1's mechanical outcome was overridden on authorship grounds (locally-generated art is part of this game's identity, GPU time on owned hardware is not a real cost) and round 2 re-ran the generative path on a retrained single-costume identity LoRA — four independent mechanisms, none of which beat the script's own 0.072–0.112 frame-silhouette-delta result (DL-24). For the player idle state specifically, **deterministic synthesis is what handles it**, not a diffusion model stacked with pose conditioning and an identity LoRA; a generative path was pursued in good faith and did not close the gap. The committed reference sheet lives at `assets/final/character/player_idle_sheet_reference.png`.
-
 | | |
 |---|---|
 | Figure height | **40px** (~5.4 on screen) |

@@ -10,20 +10,24 @@ check with no generation attempt. This card's own automatable work (per its
 "Human-in-the-loop" section) is: assemble all four arms plus the Arm C
 benchmark side by side, independently re-run the mechanical frame-delta gate
 over each arm's own committed sheet, and record the state -- not to invent
-the human criterion-1 (silhouette) verdict for the round-2 arms, which DL-21
-reserves to a human and which this card records as PENDING-but-not-load-
-bearing (see ROUND2_DECISION_T0255.md: none of the round-2 arms beat Arm C's
-benchmark regardless of their own criterion-1 read, so no round-2 arm's
-criterion-1 verdict is decisive either way).
+the human criterion-1 (silhouette) verdict, which DL-21 reserves to a human.
+That verdict has not been given for any arm, Arm C included (DL-22 recorded
+Arm C's own criterion-1 read PENDING in round 1 and DL-23's cost override
+never supplied it), so this card parks: see ROUND2_DECISION_T0255.md's "What
+the decision rule resolves to, contingent on that sign-off."
 
 RED state: char_gen.round2_compare does not exist yet -> the importorskip
            below fails collection; all referenced artefacts/records absent.
-GREEN state: the comparison artefact/delta report exist and are correct,
-             the skipped arm (T-0251) is recorded with its evidence, no
-             round-2 arm beats Arm C's benchmark, the decision record and
-             DL-24 decision-log entry exist and do not touch DL-21/DL-22/
-             DL-23, the reference sheet is promoted with P-7-compliant
-             provenance, and ASSET_PROVENANCE.md carries the new rows.
+GREEN state: the comparison artefact/delta report exist and are correct, the
+             skipped arm (T-0251) is recorded with its evidence, no round-2
+             arm beats Arm C's benchmark, and the decision record and DL-24
+             decision-log entry exist, stay PENDING pending Dennie's
+             criterion-1 sign-off (for the round-2 arms and for Arm C
+             itself), and do not touch DL-21/DL-22/DL-23. The reference-sheet
+             promotion, the ASSET_PROVENANCE.md row for it, and the
+             docs/design/13-asset-pipeline.md §3.5 edit are all deferred
+             until that sign-off lands, per the same deferral DL-22 gave the
+             identical shape in round 1.
 
 Install:
     pip install -e ".[dev]" -e ../../../../tools/asset-gate
@@ -55,7 +59,6 @@ REFERENCE_SHEET_PATH = FINAL_DIR / "player_idle_sheet_reference.png"
 REFERENCE_PROVENANCE_PATH = FINAL_DIR / "player_idle_sheet_reference.provenance.json"
 ARM_C_SHEET_PATH = FINAL_DIR / "player_idle_sheet_arm_c_T0230.png"
 ARM_C_PROVENANCE_PATH = FINAL_DIR / "player_idle_sheet_arm_c_T0230.provenance.json"
-CONCEPT_HASH_T0209 = "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b"
 
 ARMS = round2_compare.ARMS
 SKIPPED_ARMS = round2_compare.SKIPPED_ARMS
@@ -243,7 +246,10 @@ def test_decision_record_reports_both_bars_per_ran_arm() -> None:
     assert "0.072" in text and "0.112" in text
 
 
-def test_decision_record_designates_arm_c_as_shipping_fallback() -> None:
+def test_decision_record_states_arm_c_as_contingent_shipping_fallback() -> None:
+    """Arm C is the outcome the mechanical evidence points to, but the record
+    must not declare it decided -- only contingent on the still-open
+    criterion-1 sign-off (see test_decision_record_parks_on_criterion1)."""
     text = DECISION_PATH.read_text()
     assert "Arm C" in text
     lower = text.lower()
@@ -251,11 +257,16 @@ def test_decision_record_designates_arm_c_as_shipping_fallback() -> None:
     assert "manufactur" not in lower or "not manufactur" in lower
 
 
-def test_decision_record_does_not_fabricate_criterion1_verdicts() -> None:
+def test_decision_record_parks_on_criterion1_and_does_not_decide() -> None:
+    """The criterion-1 verdict has not been given for any arm, Arm C
+    included -- the record must park (PENDING), not invent a human call or
+    fall back to deciding on frame-delta alone (the card's own Edge cases
+    section; DL-22/T-0231 is the binding precedent for this exact shape)."""
     text = DECISION_PATH.read_text()
     assert "PENDING" in text
     assert "Dennie" in text
-    assert "not load-bearing" in text.lower() or "load-bearing" in text.lower()
+    assert "Status: **PENDING**" in text, "decision record must not declare itself Decided"
+    assert "Decided" not in text.split("Status:", 1)[1].split("\n", 1)[0]
 
 
 def test_decision_record_references_cost_table() -> None:
@@ -283,6 +294,17 @@ def test_decision_log_has_dl24_entry_with_24f_handle() -> None:
     assert "Arm C" in dl24
 
 
+def test_decision_log_dl24_stays_pending_on_criterion1() -> None:
+    """Mirrors DL-22/T-0231's own precedent for the identical shape: even
+    when cost/frame-delta mechanically points to one arm, the entry stays
+    PENDING until the human criterion-1 sign-off lands -- it must not
+    declare a Decided outcome or apply the deferred §3.5 edit early."""
+    text = DECISION_LOG_PATH.read_text()
+    dl24 = text[text.index("## DL-24") :]
+    assert "**Status:** **PENDING.**" in dl24
+    assert "not edited by this entry" in dl24
+
+
 def test_decision_log_dl21_through_dl23_are_untouched() -> None:
     text = DECISION_LOG_PATH.read_text()
     assert "## DL-24" in text, "DL-24 must exist for this pin to check the right range"
@@ -301,44 +323,49 @@ def test_decision_log_dl21_through_dl23_are_untouched() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Reference-character promotion (acceptance bullet 8)
+# Reference-character promotion is DEFERRED pending Dennie's criterion-1
+# sign-off (acceptance bullet 8 states what the promotion must look like
+# *when it happens*; the card's own Edge cases section forbids doing it
+# before the human verdict lands, and DL-22/T-0231 is the binding precedent
+# for parking on the identical shape).
 # ---------------------------------------------------------------------------
 
 
-def test_reference_sheet_is_arm_c_bytes() -> None:
-    assert REFERENCE_SHEET_PATH.exists(), f"reference sheet not found: {REFERENCE_SHEET_PATH}"
-    ref_bytes = REFERENCE_SHEET_PATH.read_bytes()
-    arm_c_bytes = ARM_C_SHEET_PATH.read_bytes()
-    assert hashlib.sha256(ref_bytes).hexdigest() == hashlib.sha256(arm_c_bytes).hexdigest(), (
-        "reference sheet must be Arm C's committed sheet, byte-identical -- Arm C is the "
-        "shipping fallback, not a re-derived copy"
+def test_reference_sheet_promotion_is_deferred_pending_verdict() -> None:
+    assert not REFERENCE_SHEET_PATH.exists(), (
+        f"reference sheet must not be promoted yet -- Arm C's own criterion-1 sign-off is "
+        f"still PENDING, see ROUND2_DECISION_T0255.md: {REFERENCE_SHEET_PATH}"
+    )
+    assert not REFERENCE_PROVENANCE_PATH.exists()
+    assert ARM_C_SHEET_PATH.exists(), "Arm C's own committed sheet must stay in place unchanged"
+    assert ARM_C_PROVENANCE_PATH.exists()
+
+
+def test_asset_provenance_lists_comparison_artefact_only() -> None:
+    text = PROVENANCE_INDEX_PATH.read_text()
+    assert "round2_comparison_T0255.webp" in text
+    assert "player_idle_sheet_reference.png" not in text, (
+        "no ASSET_PROVENANCE.md row for the reference sheet until it is actually promoted"
     )
 
 
-def test_reference_provenance_is_p7_compliant() -> None:
-    assert REFERENCE_PROVENANCE_PATH.exists()
-    provenance = json.loads(REFERENCE_PROVENANCE_PATH.read_text())
-    generator = provenance["generator"]
-    generator_path = REPO_ROOT / generator
-    assert generator_path.exists(), f"generator does not resolve as a repo path: {generator}"
-    assert provenance.get("model_hash"), "model_hash must be non-null (P-7)"
-    assert provenance.get("concept_hash") == CONCEPT_HASH_T0209
-
-
-def test_asset_provenance_lists_new_rows() -> None:
-    text = PROVENANCE_INDEX_PATH.read_text()
-    assert "round2_comparison_T0255.webp" in text
-    assert "player_idle_sheet_reference.png" in text
-
-
 # ---------------------------------------------------------------------------
-# docs/design/13-asset-pipeline.md §3.5
+# docs/design/13-asset-pipeline.md §3.5 -- deferred, same as DL-22/T-0231
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_doc_records_round2_outcome_under_35() -> None:
+def test_pipeline_doc_35_is_unedited_pending_verdict() -> None:
+    """Editing §3.5 now would pre-empt the still-open criterion-1 sign-off
+    -- deferred until the verdict lands, per ROUND2_DECISION_T0255.md's own
+    'Consequence for docs/design/13-asset-pipeline.md' section."""
     text = PIPELINE_DOC_PATH.read_text()
     assert "### 3.5 Props and Characters" in text
     section = text[text.index("### 3.5 Props and Characters") : text.index("### 3.6 Atlas")]
-    assert "DL-24" in section or "DL-21" in section
-    assert "deterministic" in section.lower()
+    assert "DL-24" not in section and "DL-21" not in section
+    assert "player_idle_sheet_reference.png" not in section
+
+
+def test_decision_record_states_pipeline_doc_consequence_deferred() -> None:
+    text = DECISION_PATH.read_text()
+    assert "does **not** edit" in text or "does not edit" in text.lower()
+    assert "§3.5" in text
