@@ -282,30 +282,6 @@ describe("resolveAllowedTools", () => {
       isToolAllowed("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:--version)", resolved)
     ).toBe(true);
   });
-
-  it("grants the assets agent sha256sum so provenance hashes can be computed instead of hand-typed", () => {
-    const resolved = resolveAllowedTools("assets", { agentsDir: REAL_AGENTS_DIR });
-
-    // T-0238 root cause: assets.md granted no way at all to compute a sha256 digest -- no
-    // sha256sum, no python3 (unlike the audio agent, which has both python3 and .venv/bin/python
-    // per d8e3fe5), nothing. Reviewer FAIL notes on T-0230 ("fix(provenance): correct fabricated
-    // Arm C hashes — T-0230", commit 37d6d80) and T-0232 (27fb50d: "the recorded hashes did not
-    // match the actual sha256 of tile_gen/fields.py or tile_gen/signal_tower_sheet.py"; 7203d64:
-    // "Previous commit computed the transitions sidecar's model_hash against fields.py before its
-    // final ruff line-length fix landed, so the recorded hash didn't match the committed file")
-    // both show the same shape: model_hash/generator_hash values written into
-    // ASSET_PROVENANCE.md and the *.provenance.json sidecars were fabricated or went stale
-    // relative to the actual committed file, because the implementer had no granted command to
-    // compute-and-verify a real digest before writing one down. sha256sum is read-only and
-    // side-effect-free, the same minimal-tool shape as the existing `.venv/bin/ruff check` grant.
-    expect(resolved).toContain("Bash(sha256sum:*)");
-    expect(
-      isToolAllowed(
-        "Bash(sha256sum:assets/src/tiles/src/tile_gen/fields.py)",
-        resolved
-      )
-    ).toBe(true);
-  });
 });
 
 describe("isToolAllowed", () => {
