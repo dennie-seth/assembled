@@ -48,6 +48,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -96,6 +97,19 @@ MAX_BACKGROUND_GROWTH_RATIO = 1.35
 
 SWEEP_BAND_LOW = 0.25
 SWEEP_BAND_HIGH = 0.35
+
+# 2026-08-30 second human review: the frame-0-anchor + background-hold fix
+# bounded noise accumulation but the promoted sheet still shipped a visible
+# background -- a dark ground plane, a distinct grey slab, scattered green
+# marks -- none of it character. A cutout step now removes it. 0.75 sits
+# well below the measured clean value (~0.89, attempt 8) and well above the
+# pre-cutout sheet's ~0.55 -- it separates "cutout applied" from "cutout
+# absent/broken" without being brittle to minor pose/seed variation.
+MIN_BACKGROUND_FRACTION = 0.75
+# A 40px-tall figure at DL-21's spec cannot legitimately collapse to a
+# handful of pixels -- guards against a cutout so aggressive it erases the
+# character along with the background.
+MIN_FOREGROUND_PIXELS = 50
 
 
 @pytest.fixture(scope="module")
@@ -261,6 +275,98 @@ def test_background_held_out_of_the_feedback_path(provenance: dict) -> None:
     assert provenance.get("background_held") is True
     assert isinstance(provenance.get("background_mask_margin_frac"), int | float)
     assert 0.0 < provenance["background_mask_margin_frac"] < 1.0
+
+
+def test_background_cutout_applied(provenance: dict) -> None:
+    """Acceptance (2026-08-30 second human review): the character is cut out
+    of its background per frame -- checkable via the provenance record, not
+    merely asserted in prose."""
+    assert provenance.get("background_cutout_applied") is True
+    method = provenance.get("cutout_method")
+    assert method and len(method) > 40, "cutout_method missing or too short"
+    assert isinstance(provenance.get("cutout_oklab_tolerance"), int | float)
+    assert isinstance(provenance.get("cutout_bbox_margin_frac"), int | float)
+    assert 0.0 < provenance["cutout_bbox_margin_frac"] < 1.0
+
+
+def test_cutout_applied_before_assembly(provenance: dict) -> None:
+    """Acceptance: cutout must run on each generated frame before the frames
+    are assembled into the sheet, not on the assembled sheet."""
+    method = provenance["cutout_method"].lower()
+    assert "before" in method and "assemb" in method
+    assert "to the assembled sheet" not in method or "not to the assembled sheet" in method
+
+
+def test_sheet_background_is_mostly_clean(
+    frame_images: dict[tuple[int, int], Image.Image]
+) -> None:
+    """Acceptance (2026-08-30 second human review): background pixels must
+    actually be background_index, not merely a lower-delta shade of
+    background clutter (the grey slab / green marks / dark-ground bands the
+    review flagged). A real per-pixel cutout leaves the great majority of
+    each cell as background_index; the pre-cutout sheet measured ~55%."""
+    for cell, img in frame_images.items():
+        arr = np.array(img)
+        bg_fraction = float((arr == BACKGROUND_INDEX).mean())
+        assert bg_fraction >= MIN_BACKGROUND_FRACTION, (
+            f"cell {cell}: only {bg_fraction:.2%} background -- expected >= "
+            f"{MIN_BACKGROUND_FRACTION:.0%}, residual background clutter likely survived cutout"
+        )
+
+
+def test_character_silhouette_not_erased(
+    frame_images: dict[tuple[int, int], Image.Image]
+) -> None:
+    """Acceptance ('do not clip the character during cutout'): every cell
+    must retain a plausible amount of character silhouette -- a cutout
+    aggressive enough to erase the figure along with the background is a
+    failure, not a pass."""
+    for cell, img in frame_images.items():
+        arr = np.array(img)
+        fg_count = int((arr != BACKGROUND_INDEX).sum())
+        assert fg_count >= MIN_FOREGROUND_PIXELS, (
+            f"cell {cell}: only {fg_count}px of character survived cutout (floor "
+            f"{MIN_FOREGROUND_PIXELS}px) -- the cutout likely clipped the figure itself"
+        )
+
+
+def test_no_foreground_pixels_outside_keypoint_bbox(
+    provenance: dict, frame_images: dict[tuple[int, int], Image.Image]
+) -> None:
+    """Acceptance (2026-08-30 second human review): no residual background
+    clutter (the reported grey slab / green marks / floor-plane wedge) may
+    survive far from the character. Every non-background pixel in a cell
+    must fall within that frame's own keypoint bounding box, expanded by the
+    same margin the cutout itself used -- a direct, mechanical check that
+    the specific contamination the review reported cannot silently
+    reappear."""
+    margin = provenance["cutout_bbox_margin_frac"]
+    for frame in provenance["frame_generation"]:
+        cell = tuple(frame["cell"])
+        keypoints = json.loads((REPO_ROOT / frame["pose_keypoints_file"]).read_text())
+        xs = [p["x"] for p in keypoints]
+        ys = [p["y"] for p in keypoints]
+        x0n, x1n = min(xs), max(xs)
+        y0n, y1n = min(ys), max(ys)
+        wn, hn = x1n - x0n, y1n - y0n
+        x0n = max(0.0, x0n - wn * margin)
+        x1n = min(1.0, x1n + wn * margin)
+        y0n = max(0.0, y0n - hn * margin)
+        y1n = min(1.0, y1n + hn * margin)
+
+        arr = np.array(frame_images[cell])
+        size = arr.shape[0]
+        px0, px1 = int(x0n * size), int(x1n * size)
+        py0, py1 = int(y0n * size), int(y1n * size)
+
+        fg = arr != BACKGROUND_INDEX
+        outside = fg.copy()
+        outside[py0:py1, px0:px1] = False
+        stray = int(outside.sum())
+        assert stray == 0, (
+            f"cell {cell}: {stray} foreground px outside the keypoint bbox+margin "
+            f"({px0},{py0})-({px1},{py1}) -- residual background clutter survived cutout"
+        )
 
 
 def test_model_field_describes_the_shipped_chaining_mechanism(provenance: dict) -> None:
