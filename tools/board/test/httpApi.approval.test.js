@@ -6,6 +6,7 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
 import { assertCanMoveToInProgress, UnmetDependencyError } from "../src/lib/dependencyGuard.js";
+import { DEFAULT_HUMAN_ACTOR } from "../src/lib/approvalGate.js";
 
 // Same shape as httpApi.done.test.js: a fake repoRoot plus a mocked gitOps, so the Done path's
 // deploy pull is observable without a real git remote (and cannot race the temp-dir cleanup).
@@ -263,7 +264,10 @@ describe("AP-3: approval by moving the card to Done", () => {
     const updated = await (await patch(task.id, { status: "done" })).json();
 
     expect(updated.status).toBe("done");
-    expect(updated.approved_by).toBe("board-ui");
+    // Was "board-ui" -- the transport identity, which named a browser rather than a person and
+    // said about as little as the comment path's old "Anonymous". A placeholder actor now
+    // resolves to the configured operator (approvalGate's `resolveHumanActor`).
+    expect(updated.approved_by).toBe(DEFAULT_HUMAN_ACTOR);
     expect(typeof updated.approved_at).toBe("string");
   });
 
