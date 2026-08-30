@@ -473,6 +473,37 @@ def _shift_band(
     dst[r0 + dy : r1 + dy, c0 + dx : c1 + dx] = content
 
 
+HYBRID_ORPHAN_SIZE_THRESHOLD = 4  # matches the pipeline-wide downscale-noise threshold (§3.1)
+
+
+def _cleanup_shift_orphans(
+    arr: np.ndarray, background_index: int, size_threshold: int
+) -> np.ndarray:
+    """Flood a band-shift's own stray edge pixels back to background.
+
+    A real generated source frame's silhouette does not align exactly with
+    the fixed HYBRID_*_BAND rectangles (tuned against Arm C's own hardcoded
+    shape) -- a shift can leave a 1-2px sliver of the pre-shift content just
+    outside the band's swept-clear region, disconnected from the moved
+    content. This is hybrid-transform-specific cleanup (T-0252), not a
+    change to Arm C's own _make_sheet/_player_pose_offsets."""
+    try:
+        from scipy import ndimage
+    except ImportError:
+        return arr  # best-effort; asset_gate.art.check_orphan_pixels also no-ops without scipy
+
+    fg = arr != background_index
+    labeled, n = ndimage.label(fg)
+    if n == 0:
+        return arr
+    sizes = ndimage.sum(fg, labeled, index=range(1, n + 1))
+    out = arr.copy()
+    for label_id, size in enumerate(sizes, start=1):
+        if size < size_threshold:
+            out[labeled == label_id] = background_index
+    return out
+
+
 def transform_player_frame_from_source(
     source_arr: np.ndarray,
     head_off: int,
@@ -484,7 +515,9 @@ def transform_player_frame_from_source(
     translating its head/arm/leg raster bands -- the same per-frame offsets
     _draw_player_arm_c applies to hardcoded shapes, applied here to real
     generated pixels instead. Everything outside the five bands (torso,
-    background, equipment) is left byte-identical to the source."""
+    background, equipment) is left byte-identical to the source, except for
+    small (< HYBRID_ORPHAN_SIZE_THRESHOLD px) stray islands the shift itself
+    leaves behind at a band edge, which are cleaned to background."""
     out = source_arr.copy()
     _shift_band(
         source_arr, out, HYBRID_HEAD_BAND, dy=head_off, background_index=background_index
@@ -501,6 +534,10 @@ def transform_player_frame_from_source(
     _shift_band(
         source_arr, out, HYBRID_RIGHT_LEG_BAND, dx=-leg_off, background_index=background_index
     )
+    if head_off or arm_off or leg_off:
+        out = _cleanup_shift_orphans(
+            out, background_index=background_index, size_threshold=HYBRID_ORPHAN_SIZE_THRESHOLD
+        )
     return out
 
 

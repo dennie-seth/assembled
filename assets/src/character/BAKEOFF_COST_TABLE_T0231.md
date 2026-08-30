@@ -52,6 +52,14 @@ record, not decisive — round 1's decision above is unchanged by it.
 | Capability check (5 read-only HTTP queries against the installed ComfyUI host, no checkpoint load, no sampling) | 0 | 0.0 | 00:04 | $0.00 | No usable SDXL motion module found — no AnimateDiff/AnimateDiff-Evolved node types, no `animatediff_models`/`motion_module` folder type, no motion-module weight file anywhere. Per this card's own instructions this is a complete, evidence-backed outcome; the card stops here with no generation attempt. See `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md` and `T-0251-animatediff-capability-decision.json`. |
 | **Card total** | **0** | **0.0** | **00:04** | **$0.00** | Copied verbatim from `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md`'s "Cost" section. Per the round-2 override, cost here is recorded for the record, not decisive — outcome is `no_usable_motion_module`, no frame-delta measurement was made, and Arm C's 0.072–0.112 benchmark is unchanged by this finding either way. |
 
+## Round 2 (T-0252, HANDOFF §24-e — hybrid: SDXL for the look, deterministic script for the motion)
+
+| Stage | Criterion 2 (frame-delta gate) | Attempts | GPU minutes | Wall-clock | $ | Notes |
+|---|---|---|---|---|---|---|
+| Source-frame generation (exactly one SDXL call per attempt, feeds all 9 assembled frames) | n/a (visual composition check, not the frame-delta gate) | 3/8 | 3.70 | -- (included in card total) | $0.00 | Attempt 1 (untuned defaults) unrecognisable, concept-sheet composition bleeding through; attempt 2 (ControlNet 1.3, T-0249's recipe) fixed the figure but not the background bleed; attempt 3 (IP-Adapter weight 0.6->0.3) clean and promoted. See `ARM_HYBRID_SOURCE_ATTEMPT_LOG_T0252.md`. |
+| Sheet assembly (deterministic transform of the one promoted source frame, zero GPU cost) | Attempt 1 PASS on frame-delta (0.0660-0.0667) but FAIL on `orphan_pixels`; attempt 2 PASS all 5 mechanical checks, **0.0660-0.0701 — beats Arm C's 0.072-0.112 benchmark** | 2/8 | 0.0 | -- (included in card total) | $0.00 | Fix: `char_gen.synth_entities._cleanup_shift_orphans`, new hybrid-transform-specific cleanup, does not touch Arm C's own `_make_sheet`/`_player_pose_offsets`. See `ARM_HYBRID_ATTEMPT_LOG_T0252.md`. |
+| **Card total** | **PASS, beats Arm C's benchmark (0.0660-0.0701 vs. 0.072-0.112)** | **5/8 total (3 source + 2 assembly)** | **3.70** | **00:07** | **$0.00** | Copied verbatim from `ROUND2_HYBRID_REPORT_T0252.md`'s "Cost" section. Per the round-2 override, cost here is recorded for the record, not decisive — this card's own result (first round-2 generative arm to beat, not merely clear, the real bar) stands regardless of cost. |
+
 **Reading this table (mechanical, not the human verdict):** Arm A never reached
 a sheet passing both criteria within the 8-attempt cap, so it is closed as a
 criterion-3 failure regardless of any criterion-1 read (DL-21's attempt-cap
