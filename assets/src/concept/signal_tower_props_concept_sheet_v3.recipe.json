@@ -1,0 +1,72 @@
+{
+  "prompt": "Signal Tower prop concept reference sheet, four isolated prop diagrams assembled into a 2x2 grid: (1) archive shelving row -- cover prop; (2) transformer housings + breaker panel -- cover prop and gate object; (3) crawlspace opening -- hiding spot; (4) hiding alcove -- hiding spot. Each panel generated independently through the committed T-0104 workflow (see `panels` below for the exact per-panel prompt/seed) rather than as one combined prompt -- a single four-class prompt was tried first (seeds 21140, 21150, 21160) and each attempt lost the four distinct prop classes to the soviet_brutalism_style_v1 LoRA's strong whole-building bias (see `_generator_note`); per-panel generation lets each class's own prompt dominate its own sampling run. The transformer-housings + breaker-panel quadrant kept losing its own two distinct sub-objects to the same bias even after per-class splitting, so that quadrant is itself split into three independent sub-generations (`panels[1].sub_panels`: two transformer housing units, one breaker panel) placed side by side, every one of them at the sheet's own 0.70 style LoRA weight -- no sub-generation runs with the LoRA disabled or reduced.",
+  "negative_prompt": "building, architecture, tower, skyscraper, city, facade, windows, rooftop, scaffolding, structure exterior, isometric building, white background, product photography, studio lighting, isolated object shot on white, e-commerce catalog, stock photo, chrome, glossy plastic, metallic reflection, screws, bolts, hardware catalog, realistic photograph, perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, illegible glyphs, blurry small text, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait, locker, server rack, relay cabinet, crate stack, HVAC duct, car, vehicle, automobile",
+  "seed": [21301, 24012, 24099, 24030, 21203, 23121],
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_strength": 0.70,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "name": "signal_tower_props_concept_sheet_v3",
+  "panel_width": 768,
+  "panel_height": 768,
+  "panels": [
+    {
+      "row": 0,
+      "col": 0,
+      "label": "ARCHIVE SHELVING -- COVER",
+      "class": "cover",
+      "prompt": "flat side-on prop concept reference sheet, orthographic game asset, no perspective, no vanishing point, isolated on a plain flat backdrop, no scene. Archive shelving unit: a tall open-frame shelf structure in mid-value concrete-grey painted metal, several horizontal shelf boards each stacked with flat rectangular cardboard document boxes and bundled file folders in muted oxide-brown and grey tones, opaque blocky solid form, filled flat painted colour, fully exposed from above and sides -- a cover prop, not an enclosure. Soviet brutalist industrial palette, hard value separation, flat unlit shading, prop silhouette study, game asset reference sheet style, no background scene composition, no gradients, no chrome, no photorealism, no humans, no vehicles.",
+      "negative_prompt": "blueprint, technical schematic, wireframe, CAD drawing, line art, monochrome line drawing, white background, beige background, building, architecture, tower, car, vehicle, product photography, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure",
+      "seed": 21301
+    },
+    {
+      "row": 0,
+      "col": 1,
+      "label": "TRANSFORMER HOUSINGS -- COVER | BREAKER PANEL -- GATE OBJECT",
+      "class": "cover_and_gate",
+      "sub_panels": [
+        {
+          "label": "TRANSFORMER HOUSING A -- COVER",
+          "prompt": "single isolated game prop, flat side elevation view, orthographic, no perspective, no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, no text, no diagram, no colour swatches, no palette chips, no pedestal, no sculpture. A squat horizontal industrial transformer housing tank, a simple sealed rectangular metal box, low and wide, much wider than tall, flat rectangular top with sharp square corners, a row of horizontal cooling fins along its lower side, completely flush featureless front face otherwise, no doors, no hinges, no handles, no legs, no feet, no rounded base, no beveled roof, no booth shape, mid-value grey-green painted heavy metal, sitting flush on the ground with no visible gap underneath, opaque solid inert blocky form -- an electrical cover prop, not an enclosure, not a piece of furniture. Soviet brutalist industrial palette, hard value separation, flat unlit shading, one single object filling most of the frame, no gradients, no chrome, no photorealism, no humans, no vehicles.",
+          "negative_prompt": "kiosk, booth, phone booth, sentry box, rounded base, pedestal base, feet, stubby legs, beveled roof, angled roof, sloped roof, locker, wardrobe, cabinet, filing cabinet, storage cabinet, hinged door, door, door handle, latch, louvre vent, vertical louvres, legs, stand, tall narrow, taller than wide, standing height, server rack, relay cabinet, crate stack, HVAC duct, multiple objects, several objects, grid of objects, scattered objects, collage, sheet, array, breakdown, exploded view, colour swatches, colour chips, palette strip, pedestal, plinth display, sphere, ball, abstract sculpture, art installation, control panel, switch panel, breaker panel, instrument panel, dashboard, gauge cluster, dial, window, porthole, hatch, cockpit, notch, cutout, irregular shape, blueprint, technical schematic, wireframe, CAD drawing, line art, monochrome line drawing, refrigerator appliance branding, pink, salmon, warm background, white background, beige background, building, architecture, tower, skyscraper, silo, chimney, lighthouse, rocket, robot, mecha, tank, military vehicle, humanoid figure, character, creature, car, vehicle, product photography, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality",
+          "seed": 24012
+        },
+        {
+          "label": "TRANSFORMER HOUSING B -- COVER",
+          "prompt": "single isolated game prop, flat side elevation view, orthographic, no perspective, no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, no text, no diagram, no colour swatches, no palette chips, no pedestal, no sculpture, no creature, no figure of any kind. A squat horizontal industrial transformer housing tank, a simple sealed rectangular metal box, low and wide, much wider than tall, flat-topped with a shallow bolted top plate and a row of horizontal cooling fins along its lower side, completely flush featureless front face otherwise, no doors, no hinges, no handles, no legs, no feet, no limbs, no head, no eyes, mid-value grey-green painted heavy metal, sitting flush on the ground with no visible gap underneath, opaque solid inert blocky form -- an electrical cover prop, not an enclosure, not a piece of furniture, not a machine that moves. Soviet brutalist industrial palette, hard value separation, flat unlit shading, one single object filling most of the frame, no gradients, no chrome, no photorealism, no humans, no vehicles.",
+          "negative_prompt": "robot, mecha, mech, gundam, transformer robot, giant robot, humanoid mecha, biped, quadruped, walking machine, legs, limbs, arms, head, face, eyes, visor, antenna weapon, gun, cannon, turret, weapon, blaster, laser, creature, animal, insect, spider, character, figurine, action figure, toy, statue, locker, wardrobe, cabinet, filing cabinet, storage cabinet, hinged door, door, door handle, latch, louvre vent, vertical louvres, stand, tall narrow, taller than wide, standing height, server rack, relay cabinet, crate stack, HVAC duct, multiple objects, several objects, grid of objects, scattered objects, collage, sheet, array, breakdown, exploded view, colour swatches, colour chips, palette strip, pedestal, plinth display, sphere, ball, abstract sculpture, art installation, control panel, switch panel, breaker panel, instrument panel, dashboard, gauge cluster, dial, window, porthole, hatch, cockpit, notch, cutout, irregular shape, blueprint, technical schematic, wireframe, CAD drawing, line art, monochrome line drawing, refrigerator appliance branding, pink, salmon, warm background, white background, beige background, building, architecture, tower, skyscraper, silo, chimney, lighthouse, rocket, tank, military vehicle, humanoid figure, car, vehicle, product photography, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality",
+          "seed": 24099
+        },
+        {
+          "label": "BREAKER PANEL -- GATE OBJECT",
+          "prompt": "single isolated game prop, exactly one object, flat side elevation view, orthographic, no perspective, no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, no text, no diagram, no multiple panels, no collage, no catalog page, no repeating pattern. One single small wall-mounted breaker panel plate, a single rectangular flat institutional-green painted plate mounted flush against a flat concrete wall segment, exactly three small square switches in one single horizontal row across its face with one small round indicator lamp above each switch, nothing else on the plate -- a switch-locked gate object, one isolated object filling most of the frame. Soviet brutalist industrial palette, muted institutional green and near-black, hard value separation, flat unlit shading, no atmospheric haze, no depth of field, one single object study, no background scene composition.",
+          "negative_prompt": "locker, server rack, relay cabinet, crate stack, HVAC duct, multiple panels, several panels, dozens of switches, many switches, repeated switches, grid, tiled, tiling, rows and columns, grid of panels, grid of switches, collage, catalog page, product sheet, montage, breakdown, exploded view, array, sheet, documentation, pink, salmon, warm background, orange background, brown background, white background, beige background, illegible glyphs, speckled texture, noise texture, fragments, disconnected pieces, perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait, tower, building, skyscraper, robot, mecha, tank, vehicle, car, refrigerator, appliance, safe, vault, tall cabinet, humanoid, character",
+          "seed": 24030
+        }
+      ]
+    },
+    {
+      "row": 1,
+      "col": 0,
+      "label": "CRAWLSPACE OPENING -- HIDING SPOT",
+      "class": "hiding",
+      "prompt": "orthographic technical blueprint diagram of a single object, isolated on a plain flat backdrop, no scene, no perspective, no vanishing point. Crawlspace opening: a small dark rectangular hatch opening cut into a flat wall segment, single-occupant crawl height, interior rendered completely near-black and dark, only a thin lit entry edge visible, fully enclosed dark void -- a hiding spot, not a cover prop. Flat side-on elevation view, opaque dark silhouette. Soviet brutalist industrial palette, near-black and dark concrete-grey, hard value separation, flat unlit shading, technical illustration, blueprint diagram style, no gradients, no chrome, no photorealism, no humans, no vehicles.",
+      "negative_prompt": "building, architecture, tower, car, vehicle, white background, product photography, bright, light-coloured, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, text, watermark, blurry, low quality, humanoid figure",
+      "seed": 21203
+    },
+    {
+      "row": 1,
+      "col": 1,
+      "label": "HIDING ALCOVE -- HIDING SPOT",
+      "class": "hiding",
+      "prompt": "single isolated game prop, flat side elevation view, orthographic, no perspective, no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, no text, no diagram, no documentation, no inset panels, no colour swatches. Hiding alcove: an empty rectangular recess cut straight into a flat concrete wall panel, single-occupant standing height and width, no door, no hatch, no doorway frame, no cover, no ornamentation, no emblem -- just a plain rectangular hole in the wall whose interior is rendered completely near-black and dark, only a thin lit edge visible around the opening rim where the recess meets the flat wall surface, a hiding spot for a person to stand inside. Soviet brutalist industrial palette, near-black and dark concrete-grey, hard value separation, flat unlit shading, one single object filling most of the frame, no gradients, no chrome, no photorealism, no humans, no vehicles.",
+      "negative_prompt": "text, watermark, caption, label, diagram, documentation, page layout, exploded diagram, inset panel, thumbnail, key, legend, logo, signature, multiple panels, side panel, sidebar, annotation, callout, door, gate, portal, doorway, hatch, frame, ornate, emblem, insignia, circular emblem, badge, decoration, character select, icon grid, blueprint, technical schematic, wireframe, CAD drawing, line art, monochrome line drawing, grid, repeating panels, facade, elevation of many bays, architectural facade, floor plan, multiple rooms, building, architecture, tower, skyscraper, car, vehicle, white background, product photography, bright, light-coloured, chrome, glossy, photorealistic, 3d render, perspective, vanishing point, blurry, low quality, humanoid figure, interior scene, room interior, furniture",
+      "seed": 23121
+    }
+  ]
+}
