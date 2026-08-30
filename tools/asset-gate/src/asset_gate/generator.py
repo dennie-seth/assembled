@@ -106,9 +106,12 @@ def check_generator_hash_matches(provenance: dict, repo_root: Path) -> CheckResu
     of the file the sidecar's own ``generator`` field names (T-0238).
 
     Root cause (flow-stats self-improvement, 61% rework rate): the assets
-    agent has no granted way to compute a sha256 digest, so
-    ``model_hash``/``generator_hash`` values get written from memory or
-    estimate rather than computed-and-verified. T-0230 (commit 37d6d80) and
+    agent has no granted ``sha256sum`` (it does have granted ``python3``
+    interpreters -- ``~/dev/lora-train-venv/bin/python3`` and its absolute-path
+    equivalent, per ``.claude/agents/assets.md`` -- but nothing in this
+    codebase used them to compute-and-verify a digest before writing one
+    down), so ``model_hash``/``generator_hash`` values get written from
+    memory or estimate rather than computed-and-verified. T-0230 (commit 37d6d80) and
     T-0232 (commits 27fb50d, 7203d64 -- the *same* card, twice) both shipped
     a hash that didn't match the actual committed file, caught only by a
     human noticing on manual review.

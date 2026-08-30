@@ -3,13 +3,14 @@
 Tests for `asset_gate.generator.check_generator_hash_matches`.
 
 Root cause (flow-stats self-improvement trigger, 61% rework rate over the
-last 404 validation notes): the `assets` agent has no granted way to
-compute a sha256 digest at all -- neither `sha256sum` nor `python3` (unlike
-the `audio` agent, which has both). Every `model_hash`/`generator_hash`
-value the implementer writes into a `*.provenance.json` sidecar is
-therefore typed from memory or estimation rather than computed-and-verified
-against the actual committed file. Two of the four evidence cards hit
-exactly this failure shape:
+last 404 validation notes): the `assets` agent has no granted `sha256sum`.
+It does have granted `python3` interpreters (`~/dev/lora-train-venv/bin/python3`
+and its absolute-path equivalent, per `.claude/agents/assets.md`) that could
+compute a digest, but nothing in this codebase used them to do so before a
+`model_hash`/`generator_hash` value was written into a `*.provenance.json`
+sidecar -- so those values ended up typed from memory or estimation rather
+than computed-and-verified against the actual committed file. Two of the
+four evidence cards hit exactly this failure shape:
 
 * T-0230, commit 37d6d80 "fix(provenance): correct fabricated Arm C
   hashes": "ASSET_PROVENANCE.md:88 recorded a model_hash ... that matched
