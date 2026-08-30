@@ -83,6 +83,17 @@ MAX_FRAME_DELTA_RATIO = 0.30  # round-2 rule: same 0.30 cap as round 1 (DL-21 cr
 ARM_C_BENCHMARK_UPPER = 0.112  # round-2 rule: the real bar to beat, not the pass/fail floor
 ORPHAN_SIZE_THRESHOLD = 4  # blobs < 4 connected px are orphans (downscale noise)
 
+# 2026-08-30 human review: check_frame_consistency (inter-frame silhouette delta)
+# passed a sheet that was visually unusable -- background noise accumulating frame
+# over frame, invisible to a *relative* delta measure. 1.35 is the T-0249 (§24-b,
+# independent per-frame generation, no chaining) baseline shape: non-background
+# pixel count fluctuates 421-566px across its 9 frames with no trend, a ratio of
+# 566/421 ~= 1.34. The promoted attempt this review rejected measured 1280->832
+# *clean* background pixels (i.e. non-background 1024px->1472px, ratio ~1.44) --
+# above this bound. 1.35 sits just above ordinary pose-driven fluctuation and
+# below the rejected sheet's measured growth, so it separates the two.
+MAX_BACKGROUND_GROWTH_RATIO = 1.35
+
 SWEEP_BAND_LOW = 0.25
 SWEEP_BAND_HIGH = 0.35
 
@@ -197,20 +208,57 @@ def test_frame_zero_is_fresh(provenance: dict) -> None:
 
 
 def test_every_subsequent_frame_is_img2img_chained(provenance: dict) -> None:
-    """Acceptance: every subsequent frame is an img2img pass from its
-    predecessor with the next pose applied -- checkable via the provenance
-    record, not merely asserted in prose."""
+    """Acceptance: every subsequent frame is an img2img pass with the next
+    pose applied -- checkable via the provenance record, not merely
+    asserted in prose.
+
+    `chained_from_frame` is pinned to **0** (a fixed anchor), not
+    `frame_index - 1`, per the 2026-08-30 human review: chaining from the
+    immediate predecessor let each frame's own background speckle feed into
+    the next frame's init image, compounding across the sheet until the
+    figure dissolved into noise by row 3 -- confirmed objectively (clean
+    background pixel count decayed monotonically 1280->832 across the
+    promoted attempt 6 sheet). Anchoring every frame to frame 0's own clean
+    output (`chaining_anchor_frame`) bounds that compounding by
+    construction: there is no chain of ever-degrading inputs to accumulate
+    along, only nine independent low-denoise passes off the same clean
+    source. See `test_background_growth_bounded` for the direct measurement
+    this fixes, and ROUND2_CHAINED_REPORT_T0250.md's "Human review" section
+    for the full account.
+    """
     frames = provenance["frame_generation"]
     denoise_value = provenance.get("denoise_value")
     assert isinstance(denoise_value, int | float) and 0.0 < denoise_value < 1.0
+    assert provenance.get("chaining_anchor_frame") == 0, (
+        "chaining_anchor_frame must be pinned to 0 -- chaining from the immediate "
+        "predecessor is the mechanism the 2026-08-30 human review found causes "
+        "background-noise accumulation"
+    )
     for f in frames:
         if f["frame_index"] == 0:
             continue
         assert f["generation_mode"] == "img2img_chained", (
             f"frame {f['frame_index']} not chained: {f['generation_mode']!r}"
         )
-        assert f["chained_from_frame"] == f["frame_index"] - 1
+        assert f["chained_from_frame"] == 0, (
+            f"frame {f['frame_index']} chained from {f['chained_from_frame']!r}, expected the "
+            "fixed anchor frame 0 (see this test's docstring)"
+        )
         assert f["denoise"] == denoise_value
+
+
+def test_background_held_out_of_the_feedback_path(provenance: dict) -> None:
+    """Acceptance (2026-08-30 human review fix direction): the background is
+    masked/held out of the img2img feedback path entirely, not merely
+    hoped to stay clean. `background_held` records that a fixed
+    background-hold mask was applied (in-graph via SetLatentNoiseMask,
+    restricting denoising to the character bounding box, AND a hard
+    pixel-space composite against frame 0's own background after decode --
+    belt and suspenders, since the in-graph mask alone does not guarantee
+    zero drift through the VAE's non-local receptive field)."""
+    assert provenance.get("background_held") is True
+    assert isinstance(provenance.get("background_mask_margin_frac"), int | float)
+    assert 0.0 < provenance["background_mask_margin_frac"] < 1.0
 
 
 def test_frames_share_seed_and_prompt_except_pose(provenance: dict) -> None:
@@ -423,3 +471,26 @@ def test_frame_consistency(
         max_delta_ratio=MAX_FRAME_DELTA_RATIO,
     )
     assert result.passed, f"cells {cell_a}->{cell_b}: {result.reason}"
+
+
+# ---------------------------------------------------------------------------
+# Background-noise accumulation (2026-08-30 human review) -- a *relative*
+# inter-frame delta gate can pass a sheet whose background is compounding
+# noise every frame, because each step's delta is small even though the
+# cumulative drift across the whole sheet is not. This measures growth
+# against a fixed baseline (frame 0) instead.
+# ---------------------------------------------------------------------------
+
+
+def test_background_growth_bounded(frame_images: dict[tuple[int, int], Image.Image]) -> None:
+    """Non-background pixel count must not grow past MAX_BACKGROUND_GROWTH_RATIO
+    of frame 0's count in any frame -- catches the img2img-chaining
+    compounding-noise failure the human review found and
+    check_frame_consistency does not measure."""
+    ordered_frames = [frame_images[cell] for cell in FRAME_CELLS]
+    result = asset_gate_art.check_background_growth(
+        ordered_frames,
+        background_index=BACKGROUND_INDEX,
+        max_growth_ratio=MAX_BACKGROUND_GROWTH_RATIO,
+    )
+    assert result.passed, result.reason
