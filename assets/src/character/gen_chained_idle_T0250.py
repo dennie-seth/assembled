@@ -530,10 +530,18 @@ DEFAULT_DENOISE_JUSTIFICATION = (
     "8-attempt cap was reached confirming this at two points; whether a higher denoise (>0.35) "
     "restores legible motion before drift returns under the new mechanism is untested and would "
     "need a fresh attempt allocation to answer -- see ROUND2_CHAINED_REPORT_T0250.md's 'Human "
-    "review' section for the full account. This sheet clears both the 0.30 cap and Arm C's "
-    "0.072-0.112 benchmark, but only because motion has stalled, not because the chaining "
-    "hypothesis produced a legible-motion, drift-free result -- report this as a qualified "
-    "outcome, not a win, per round-2 rule §23-b."
+    "review' section for the full account. Both re-measured points, as originally sampled "
+    "pre-cutout, cleared both the 0.30 cap and Arm C's 0.072-0.112 benchmark, but only because "
+    "motion had stalled, not because the chaining hypothesis produced a legible-motion, "
+    "drift-free result. A separate, additive fix (per-frame background cutout, 2026-08-30 "
+    "second human review) was then applied on top of the promoted attempt 8 sheet, with no "
+    "seed or denoise change and no new GPU work; because it genuinely removes the sheet's "
+    "static background, check_frame_consistency's ratio denominator shrinks and the "
+    "frame-delta measurement on this currently-promoted, cutout-reprocessed sheet moved to "
+    "0.0000-0.1763 (see cutout_reprocess_note above). This sheet clears the 0.30 cap but does "
+    "not beat Arm C's 0.072-0.112 benchmark (max ratio 0.1763 > 0.112) -- report this as a "
+    "qualified pass on the mechanical gate and a fail against Arm C, not a win, per round-2 "
+    "rule §23-b."
 )
 
 
