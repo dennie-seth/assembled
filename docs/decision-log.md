@@ -1214,9 +1214,11 @@ entry does not make that edit.** What §3.5 should say depends on round 2's outc
 **Date:** 2026-08-30
 **Raised by:** HANDOFF §24, handle §24-f (the round-2 decision run)
 **Status:** **PENDING.** Everything §24.3's pre-registered rule can settle mechanically is
-settled; the rule's human call (criterion 1 — silhouette readable at 40px in motion) is not,
-for any arm, **including Arm C**. This entry records the mechanical state and stays PENDING
-until that sign-off lands — do not edit it to declare a winner without that sign-off; append a
+settled, including Arm C's own criterion-1 sign-off (already given via DL-23's closure of
+DL-22 — see "PENDING — not decided here" below); the rule's human call (criterion 1 —
+silhouette readable at 40px in motion) is still open for the three round-2 arms that ran
+(§24-b, §24-c, §24-e). This entry records the mechanical state and stays PENDING until that
+sign-off lands — do not edit it to declare a winner without that sign-off; append a
 dated closing addendum instead, per this document's own header ("entries are permanent — do
 not remove or amend").
 **Applies to:** the round-2 arms raised by DL-23 (§24-a..§24-e): T-0248 (§24-a, identity-LoRA
@@ -1258,26 +1260,34 @@ through T-0252) and the full record's own consolidated table (with attempts-to-f
   Copied from each card's own attempt log / `BAKEOFF_COST_TABLE_T0231.md`'s own "Attempts"
   columns; see that file for the full per-attempt breakdown. Even the cheapest round-2 arm
   (§24-d, $0, never generated) does not change which arm beat the benchmark, because none did.
-- **If Arm C is confirmed on criterion 1, §24.3's own pre-registered contingency** ("if no
-  round-2 arm beats 0.072–0.112, designate Arm C") **resolves to Arm C as the round-2 shipping
-  fallback.** This is the outcome the mechanical evidence above already points to, but — per
-  the identical treatment DL-22 gave this same shape in round 1 (cost resolved to Arm C there
-  too, and that card still stayed PENDING) — it is not ratified until the sign-off below lands.
+- **Arm C's own criterion-1 read is already confirmed, via DL-23's closure of DL-22** (see
+  "PENDING — not decided here" below). **§24.3's own pre-registered contingency** ("if no
+  round-2 arm beats 0.072–0.112, designate Arm C") **therefore already resolves, on the
+  mechanical evidence above, to Arm C as the round-2 shipping fallback.** That designation is
+  not finalized in this entry — acceptance criterion 6 requires the round-2 arms' own
+  criterion-1 read recorded per arm first (see below), even though none of the three changes
+  this outcome.
 
 ### PENDING — not decided here
 
 Criterion 1 (silhouette readable at 40px in motion) is a **human pass/fail call** under DL-21
 (unchanged for round 2 per DL-23), attributed to **Dennie Seth**, requested 2026-08-30, not yet
-given — **for the round-2 arms and for Arm C itself.** Arm C's own criterion-1 read was never
-actually given a human sign-off in round 1: DL-22 recorded it PENDING, and DL-23's
-authorship-grounds override answered a different question (whether cost decides), not this
-one. This card does not invent it — see `ROUND2_DECISION_T0255.md` for the full contingency
-table (what each possible verdict resolves to) and what changes in
-`docs/design/13-asset-pipeline.md` under each outcome. `docs/design/13-asset-pipeline.md` is
-**not edited by this entry** — the edit is deferred until the sign-off lands, so as not to
-pre-empt it, per the same deferral DL-22 and DL-23 both gave it. The reference-character
-promotion is likewise deferred — Arm C's committed sheet stays at its existing path
-(`assets/final/character/player_idle_sheet_arm_c_T0230.png`) until designation is ratified.
+given — **for the three round-2 arms that ran (§24-b/T-0249, §24-c/T-0250, §24-e/T-0252).**
+**Arm C's own criterion-1 read is not reopened here — it was already given.** DL-22 recorded it
+PENDING, and DL-23 explicitly closed that PENDING status: DL-23 states in its own words that
+DL-22 "stayed PENDING for the human sign-off DL-21's criterion 1 and criterion 2 drift verdicts
+required, attributed to Dennie Seth. That sign-off has now been given, in the form of this
+override," and records Arm C as "PASSED, best." §24.3's own contingency ("if no round-2 arm
+beats 0.072–0.112, designate Arm C") therefore already resolves, on the mechanical evidence
+above, to Arm C as the round-2 shipping fallback. What still parks this entry is acceptance
+criterion 6's own requirement that the round-2 arms' criterion-1 read be recorded per arm before
+that designation is finalized — even though, per the mechanical evidence, none of the three
+changes the outcome. This card does not invent that verdict — see `ROUND2_DECISION_T0255.md`
+for the full record and what changes in `docs/design/13-asset-pipeline.md` once it lands.
+`docs/design/13-asset-pipeline.md` is **not edited by this entry** — the edit is deferred until
+the round-2 arms' sign-off lands, so as not to pre-empt it. The reference-character promotion is
+likewise deferred — Arm C's committed sheet stays at its existing path
+(`assets/final/character/player_idle_sheet_arm_c_T0230.png`) until designation is finalized.
 
 **Touched docs (this card):**
 - `docs/decision-log.md` — this entry (DL-24)

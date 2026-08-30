@@ -19,21 +19,28 @@ requires.
 
 ---
 
-## Status: **PENDING** — parked for Dennie's verdict, not decided here
+## Status: **PENDING** — parked for Dennie's verdict on the three round-2 arms
 
 Per this card's own human-in-the-loop note: criterion 1 (silhouette readable
 at 40px in motion) is a **human pass/fail call** under DL-21, unchanged for
 round 2 per DL-23, not something an implementer agent is entitled to answer
-on the panel's behalf — for the round-2 arms *or* for Arm C. Arm C's own
-criterion-1 read was never actually given a human sign-off in round 1 either:
-DL-22 recorded it PENDING, and DL-23's authorship-grounds override answered
-a different question (whether cost decides) — it did not supply the
-criterion-1 read DL-21 still requires before any arm, Arm C included, can be
-designated a winner or a fallback. Everything mechanical §24.3's own
-pre-registered rule can settle without a human is settled below. What is
-still open is recorded as **PENDING**, attributed to **Dennie Seth**, not
-invented — the same treatment T-0231/DL-22 gave the identical shape in round
-1, even though that card's own mechanical evidence was just as one-sided.
+on the panel's behalf. **Arm C's own criterion-1 read was already given**:
+DL-22 recorded it PENDING, and DL-23's authorship-grounds override explicitly
+closed that PENDING status — in DL-23's own words, DL-22 "stayed PENDING for
+the human sign-off DL-21's criterion 1 and criterion 2 drift verdicts
+required, attributed to Dennie Seth. That sign-off has now been given, in
+the form of this override" (`docs/decision-log.md` DL-23). DL-23 further
+records Arm C as "PASSED, best" and pre-registers it as the shipping
+fallback if round 2 does not beat the benchmark. Re-opening that read here
+would be relitigating a closed, binding prior decision, which §24.3
+forbids.
+
+What is still open, and not invented here, is the **round-2 arms' own
+criterion-1 read** (§24-b/T-0249, §24-c/T-0250, §24-e/T-0252) — acceptance
+criterion 6 requires it recorded per arm, even though, per the mechanical
+evidence below, none of the three changes this card's outcome (none beats
+the benchmark regardless of its own criterion-1 read). That is recorded as
+**PENDING**, attributed to **Dennie Seth**, not invented.
 
 ---
 
@@ -104,71 +111,80 @@ instructions — see `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md` and
 
 ## What is **not** settled here — recorded PENDING
 
-| Verdict | §24-b (T-0249) | §24-c (T-0250) | §24-e (T-0252) | Arm C (T-0230) |
-|---|---|---|---|---|
-| Criterion 1 — silhouette readable @ 40px in motion | **PENDING** | **PENDING** | **PENDING** | **PENDING** |
-| Attributed to | Dennie Seth | Dennie Seth | Dennie Seth | Dennie Seth |
-| Date recorded | 2026-08-30 (requested; not yet given) | 2026-08-30 (requested; not yet given) | 2026-08-30 (requested; not yet given) | 2026-08-30 (requested; not yet given) |
+| Verdict | §24-b (T-0249) | §24-c (T-0250) | §24-e (T-0252) |
+|---|---|---|---|
+| Criterion 1 — silhouette readable @ 40px in motion | **PENDING** | **PENDING** | **PENDING** |
+| Attributed to | Dennie Seth | Dennie Seth | Dennie Seth |
+| Date recorded | 2026-08-30 (requested; not yet given) | 2026-08-30 (requested; not yet given) | 2026-08-30 (requested; not yet given) |
 
-Arm C's own criterion-1 row is included here, not skipped, because — unlike
-round 1, where a criterion-1 fail would simply hand the win to whichever
-other arm passed — round 2 has **no other candidate**: every round-2 arm
-already fails to beat the benchmark regardless of its own criterion-1 read,
-so Arm C's own criterion-1 read is the one that is actually load-bearing for
-this card's outcome. It is not reopening round 1's comparison (DL-23 does not
-revisit Arm B vs. Arm C); it is the sign-off DL-21 always required before Arm
-C could be designated anything, in either round.
+**Arm C's own criterion-1 read is not in this table** — it was already
+given, per DL-23 (see "Status" above). DL-23 explicitly closed DL-22's
+PENDING status on the grounds that Dennie's sign-off "has now been given, in
+the form of this override," and records Arm C as "PASSED, best." Reopening
+it here would relitigate a closed, binding prior decision, which §24.3
+forbids.
 
-Review `round2_comparison_T0255.webp` (attached to this card) and confirm or
-override, per arm — the same two questions DL-21 asks: is it a person, which
-way is it facing, what is it doing? Each arm's own self-assessment (recorded
-in its own report) is not a substitute for the independent human read; it is
-noted for reference only, not counted as the verdict.
+What remains open is the three round-2 arms' own criterion-1 read —
+required by acceptance criterion 6 ("recorded per arm") even though, per
+the mechanical frame-delta evidence above, none of the three changes this
+card's outcome (none beats the benchmark regardless of its own criterion-1
+read). Review `round2_comparison_T0255.webp` (attached to this card) and
+confirm or override, per arm — the same two questions DL-21 asks: is it a
+person, which way is it facing, what is it doing? Each arm's own
+self-assessment (recorded in its own report) is not a substitute for the
+independent human read; it is noted for reference only, not counted as the
+verdict.
 
 ---
 
-## What the decision rule resolves to, contingent on that sign-off
+## What the decision rule resolves to, contingent on the round-2 arms' sign-off
 
-- **If Dennie confirms PASS for Arm C on criterion 1:** §24.3's contingency
-  resolves to **Arm C designated the round-2 shipping fallback** — this is
-  the outcome the mechanical evidence above already points to. The
-  round-2 arms' own criterion-1 reads do not change this outcome either way
-  (none of them beat the benchmark regardless), but are still worth
-  recording for the round-2 record's own completeness.
-- **If Dennie fails Arm C on criterion 1:** DL-21's rule is explicit that "a
-  fail eliminates the arm — it is out of the bake-off entirely." Since no
-  round-2 arm beats the benchmark either, this would leave **no arm
-  currently eligible** to ship as the reference character. DL-21/§24.3 do
-  not explicitly cover this case — flagged here rather than resolved, per
-  §23-b ("reject unsatisfiable acceptance criteria; stop and report rather
-  than weakening a test or fabricating a result"); it would need its own
-  follow-up card rather than an invented rule here.
+**Arm C's own criterion-1 read is already settled (PASS, per DL-23) and is
+not reopened here.** §24.3's contingency — "if no round-2 arm beats
+0.072–0.112, designate Arm C" — already resolves, on the mechanical evidence
+above, to **Arm C designated the round-2 shipping fallback**. What still
+parks this card is acceptance criterion 6's own requirement that the
+round-2 arms' criterion-1 read be recorded per arm before that designation
+is finalized, even though none of the three changes the outcome (none beats
+the benchmark regardless of its own criterion-1 read):
 
-## Consequence for `docs/design/13-asset-pipeline.md` §3.5, stated for each outcome above, applied to neither
+- **Once Dennie's criterion-1 verdicts for §24-b/§24-c/§24-e are recorded**
+  (whatever they are — none of the three beat the benchmark, so no possible
+  verdict for them installs a different winner): the designation above is
+  finalized, the reference sheet is promoted, and the §3.5 edit below is
+  applied.
+- **Until then**, this card records the mechanical result and parks, per
+  this card's own human-in-the-loop clause and §23-b ("reject unsatisfiable
+  acceptance criteria; stop and report rather than weakening a test or
+  fabricating a result") — recording a verdict that has not been given is
+  exactly the invented call this card must not make.
+
+## Consequence for `docs/design/13-asset-pipeline.md` §3.5, stated for the pending outcome, applied to neither yet
 
 This card does **not** edit `docs/design/13-asset-pipeline.md`. Making that
-edit now, ahead of the sign-off above, would pre-empt the same human call
-this record is deliberately leaving open — the same deferral T-0231's own
-decision record gave §3.5 while DL-22 was PENDING.
+edit now, ahead of the round-2 arms' criterion-1 sign-off, would finalize a
+designation acceptance criterion 6 requires be recorded per arm first — the
+same deferral T-0231's own decision record gave §3.5 while DL-22 was
+PENDING, applied here to the one thing still open.
 
-- **If Arm C is confirmed (the outcome the mechanical evidence points to):**
-  §3.5 would be updated to record that round 2 — four independent attempts
-  at the generative path (identity retrain, per-frame pose authority, img2img
-  chaining, and a hybrid SDXL-plus-script approach), pursued in good faith on
-  @DennieSeth's own authorship-grounds override — **confirmed** round 1's
-  result rather than overturning it: deterministic character synthesis
-  remains what handles the player idle state.
-- **If Arm C is not confirmed:** no arm is currently eligible to ship (see
-  above); §3.5 stands as written pending a follow-up card.
+Once §24-b/§24-c/§24-e's criterion-1 verdicts are recorded: §3.5 would be
+updated to record that round 2 — four independent attempts at the
+generative path (identity retrain, per-frame pose authority, img2img
+chaining, and a hybrid SDXL-plus-script approach), pursued in good faith on
+@DennieSeth's own authorship-grounds override — **confirmed** round 1's
+result rather than overturning it: deterministic character synthesis
+remains what handles the player idle state.
 
 ## Numbering / closure note
 
-DL-22's `PENDING` status was already closed **procedurally** by DL-23 — the
-override itself served as the human sign-off DL-21 required for whether cost
-decides. What DL-23 explicitly did **not** supply is either round 2's actual
-result or the still-outstanding criterion-1 sign-off for Arm C itself. This
+DL-22's `PENDING` status was already closed by DL-23 — the override itself
+served as the human sign-off DL-21 required for both criterion 1 and
+criterion 2's drift verdict, for Arm C (DL-23's own words: DL-22 "stayed
+PENDING for the human sign-off DL-21's criterion 1 and criterion 2 drift
+verdicts required... That sign-off has now been given, in the form of this
+override"). What DL-23 did **not** supply is round 2's actual result. This
 card's own DL-24 entry records round 2's substantive result and stays
-PENDING for the same reason DL-22 did — a criterion-1 human call this card
+PENDING for the round-2 arms' own criterion-1 human call, which this card
 does not invent.
 
 ## Cost (recorded, not deciding — per the round-2 override, §24.3)
@@ -193,8 +209,10 @@ beat the benchmark, because none did.
 
 ## Recording, once the verdict lands
 
-When Dennie's criterion-1 verdict for Arm C (and, for the record, the
-round-2 arms) is given, a follow-up card should: fill the PENDING cells above
+When Dennie's criterion-1 verdict for the round-2 arms (§24-b/T-0249,
+§24-c/T-0250, §24-e/T-0252) is given — Arm C's own criterion-1 read is
+already settled per DL-23 and does not need to be re-asked — a follow-up
+card should: fill the PENDING cells above
 with the actual verdict (attributed, dated); apply the resulting
 `13-asset-pipeline.md` §3.5 edit from the matching bullet above; promote Arm
 C's committed sheet (`player_idle_sheet_arm_c_T0230.png`) byte-for-byte to a
