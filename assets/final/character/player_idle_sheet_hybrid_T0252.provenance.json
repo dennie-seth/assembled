@@ -1,0 +1,292 @@
+{
+  "source_frame": {
+    "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (player identity, weight 0.5) + IP-Adapter ip-adapter-plus_sdxl_vit-h.safetensors (weight 0.3) + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+    "model_license": "CreativeML Open RAIL++-M",
+    "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+    "style_lora_name": "soviet_brutalism_style_v1.safetensors",
+    "style_lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+    "style_lora_weight": 0.7,
+    "style_lora_license": "CreativeML OpenRAIL++-M",
+    "identity_lora_name": "player_identity_v2.safetensors",
+    "identity_lora_hash": "fc447cfb886cb6a694c52ae21c9d172bae696ebc175f8daa7d6ecfd22eac36b4",
+    "identity_lora_weight": 0.5,
+    "identity_lora_license": "CreativeML OpenRAIL++-M",
+    "identity_lora_provenance": "assets/final/lora/player_identity_v2.provenance.json",
+    "ip_adapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
+    "ip_adapter_weight": 0.3,
+    "controlnet": "controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+    "controlnet_strength": 1.3,
+    "controlnet_end_percent": 1.0,
+    "prompt": "sbrutalistplayer, pixel art idle animation frame, single standing figure, flat front-on orthographic view, exactly one figure matching the pose skeleton exactly, same uniform and same equipment loadout, both feet on ground, arms relaxed at sides, upright standing posture, solid flat black background, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no text, no UI",
+    "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+    "seed": 31416,
+    "steps": 30,
+    "cfg": 7.0,
+    "width": 384,
+    "height": 384,
+    "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+    "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
+    "concept_card": "T-0209",
+    "comfyui_prompt_id": "e931577d-b764-44c7-a9c1-48de0d5efb78",
+    "method": "Single 384x384 generation: procedurally drawn OpenPose-format skeleton (gen_arm_a_idle_T0228.draw_pose_skeleton_cell) -> ControlNetApplyAdvanced (xinsir OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, chained) -> IPAdapterAdvanced (PLUS, T-0209 concept, applied after both LoRAs) -> KSampler -> area descent to 48x48 -> Oklab-nearest palette quantization (dithering off, \u00a73.1) -> per-pixel background cutout (see cutout_method) -> orphan cleanup. This is the only diffusion-model call in the entire hybrid pipeline (T-0252) -- every other animation frame is derived from this one frame's own pixels by char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252.",
+    "generator": "assets/src/character/gen_hybrid_source_idle_T0252.py",
+    "card": "T-0252",
+    "bake_off_arm": "round 2, hybrid (HANDOFF \u00a724-e)",
+    "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5",
+    "attempt": 3,
+    "gpu_seconds": 120.1,
+    "layout": {
+      "cell_px": 48
+    },
+    "palette_source": "assets/final/palette/home_palette.json",
+    "promoted": true,
+    "background_cutout_applied": true,
+    "cutout_method": "Per-frame border-connected tolerant region-growing in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image, seeded from every border pixel and grown through 4-connected neighbours within the tolerance of the pixel it grows from -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it quantizes to. Unioned with 'outside this frame's own keypoint bounding box + margin' (background_hold_mask's own BACKGROUND_MASK_MARGIN_FRAC) to remove disconnected clutter (a floor-plane wedge, faint side ghosting) by position. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0. Supersedes force_cell_corner_background (a strict superset: content-aware per-frame segmentation vs. same-index corner flood fill).",
+    "cutout_oklab_tolerance": 0.03,
+    "cutout_bbox_margin_frac": 0.14
+  },
+  "derived_frames": {
+    "generator": "assets/src/character/src/char_gen/synth_entities.py:generate_player_idle_sheet_hybrid_T0252",
+    "seed": 31416,
+    "offsets": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        -1,
+        1
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        -1,
+        1,
+        -1
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        -1,
+        1
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        -1,
+        1,
+        -1
+      ],
+      [
+        0,
+        0,
+        0
+      ]
+    ],
+    "palette_assignment": "transform_of_generated_source",
+    "quantization": "none at assembly time -- the source frame was already quantized once (gen_hybrid_source_idle_T0252.py); every derived frame only translates its already-quantized indices, it never re-quantizes",
+    "method": "char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252: the single promoted source frame's head/arm/leg pixel bands (HYBRID_HEAD_BAND / HYBRID_LEFT_ARM_BAND / HYBRID_RIGHT_ARM_BAND / HYBRID_LEFT_LEG_BAND / HYBRID_RIGHT_LEG_BAND) are translated per-frame by the same (head, arm, leg) offsets Arm C's _player_pose_offsets(seed) already selects (T-0230, reused unchanged) -- everything outside those bands (torso, equipment, background) stays byte-identical to the source. Frame 0 is the untouched source frame (every _PLAYER_POSE_PATTERNS entry starts at offset 0)."
+  },
+  "seed": 31416,
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "total_comfyui_generations": 1,
+  "generator": "assets/src/character/gen_hybrid_idle_T0252.py",
+  "card": "T-0252",
+  "bake_off_arm": "round 2, hybrid (HANDOFF \u00a724-e) -- not a new bake-off arm competing on DL-21's original criteria, a mechanism change layered on top of the round-1 result",
+  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5",
+  "attempt": 3,
+  "mechanical_gate_passed": true,
+  "frame_deltas": [
+    {
+      "pair": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "ratio": 0.15757575757575756,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "ratio": 0.15757575757575756,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "ratio": 0.18163672654690619,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "ratio": 0.18163672654690619,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "ratio": 0.15757575757575756,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          0
+        ]
+      ],
+      "ratio": 0.15757575757575756,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "ratio": 0.18163672654690619,
+      "passed": true
+    },
+    {
+      "pair": [
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "ratio": 0.18163672654690619,
+      "passed": true
+    }
+  ],
+  "frame_delta_range": [
+    0.15757575757575756,
+    0.18163672654690619
+  ],
+  "beats_030_cap": true,
+  "beats_arm_c_benchmark": false,
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "gate_results": {
+    "palette_membership": true,
+    "index_semantics": true,
+    "cell_fit": true,
+    "orphan_pixels": true,
+    "frame_consistency": true
+  },
+  "layout": {
+    "sheet_px": [
+      144,
+      144
+    ],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 3,
+    "frame_cells": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        2,
+        1
+      ],
+      [
+        2,
+        2
+      ]
+    ]
+  },
+  "palette_source": "assets/final/palette/home_palette.json",
+  "promoted": true
+}
