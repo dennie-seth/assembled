@@ -35,6 +35,7 @@ const AGENTS_PATH = "/api/agents";
 const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const DONE_EXPORT_PATH = "/api/tasks/export/done";
 const GIT_STATUS_PATH = "/api/git/status";
+const HEALTH_PATH = "/api/health";
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
 /**
@@ -889,6 +890,39 @@ function formatBacklogExport(tasks, date) {
   return lines.join("\n");
 }
 
+/**
+ * Liveness probe. Answers from process state ONLY -- no store read, no git call, no
+ * filesystem access.
+ *
+ * That constraint is the whole design. The two callers that ask "is the board up?" are a
+ * human at a terminal and the deploy/restart tooling, and both ask precisely when the board
+ * is least healthy. A probe that read the task store would report the board *down* every time
+ * SQLite is briefly locked -- the nightly backup, an integrity-check sweep -- flapping on
+ * something with no bearing on whether the process is serving requests. So it reports only
+ * what is already in memory:
+ *
+ *  - `taskStore`   the configured mode (fs/db), so a probe can tell which one it is talking
+ *                  to without querying it.
+ *  - `activeRuns`  the orchestrator's in-process run-set size as a boolean -- the same idle
+ *                  signal `deploy.sh` and the orphan reaper care about. Previously the only
+ *                  way to ask was to fetch and parse all ~200 cards from `/api/tasks` and
+ *                  scan for `in-progress`/`validation`; this is that answer for free, and
+ *                  from the orchestrator's own state rather than inferred from statuses.
+ *  - `uptimeSeconds`  distinguishes "up" from "just restarted", which is exactly what you
+ *                  want to know after a deploy.
+ *
+ * `orchestrator` is optional (plenty of callers construct the API without one), hence the
+ * guard rather than an assumption.
+ */
+function handleHealth(res, { taskStoreKind, orchestrator }) {
+  sendJson(res, 200, {
+    status: "ok",
+    taskStore: taskStoreKind,
+    activeRuns: Boolean(orchestrator && orchestrator.hasActiveRuns()),
+    uptimeSeconds: Math.round(process.uptime())
+  });
+}
+
 async function handleGitStatus(gitInfoImpl, res) {
   if (!gitInfoImpl) {
     return sendJson(res, 200, { branch: null, head: null, headTimestamp: null });
@@ -993,6 +1027,13 @@ export function createRequestListener({
       const attachmentsMatch = TASK_ATTACHMENTS_PATH_RE.exec(pathname);
       const attachmentFileMatch = TASK_ATTACHMENT_FILE_PATH_RE.exec(pathname);
 
+      // First route in the chain, deliberately: a liveness probe should do the least work of
+      // anything the server serves, and should not sit behind any check that could itself be
+      // what is unhealthy. Nothing above it does any work either, so this is cheap ordering
+      // rather than a load-bearing guarantee -- but it is the ordering to keep.
+      if (pathname === HEALTH_PATH && req.method === "GET") {
+        return handleHealth(res, { taskStoreKind, orchestrator });
+      }
       if (pathname === GIT_STATUS_PATH && req.method === "GET") {
         return await handleGitStatus(gitInfoImpl, res);
       }
@@ -1079,6 +1120,7 @@ export function createRequestListener({
         );
       }
       if (
+        pathname === HEALTH_PATH ||
         pathname === GIT_STATUS_PATH ||
         pathname === AGENTS_PATH ||
         pathname === "/api/tasks" ||
