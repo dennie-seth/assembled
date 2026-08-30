@@ -83,6 +83,27 @@ jobs:
       # through the committed cutout path they pass this gate on merit.
       - run: python -m asset_gate.cli generator-sweep ../../assets --repo-root ../../
 
+  generator-hash-sweep:
+    name: generator_hash correctness sweep (T-0238)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # Recursively validates that, for every committed *.provenance.json under
+      # assets/ that sets a generator_hash, the recorded value actually matches
+      # sha256(<the file its own "generator" field names>). T-0230 (37d6d80) and
+      # T-0232 (27fb50d, 7203d64) both shipped a model_hash/generator_hash that
+      # didn't match the real committed file, caught only by a human noticing on
+      # manual review -- this sweep is the mechanical backstop so a future
+      # fabricated or stale hash fails the PR instead of merging silently.
+      - run: python -m asset_gate.cli generator-hash-sweep ../../assets --repo-root ../../
+
   visibility-sweep:
     name: rendered-visibility sweep (PR #231 / T-0215 alpha-zero bug)
     runs-on: ubuntu-latest
