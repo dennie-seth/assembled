@@ -1,4 +1,4 @@
--- Human direction-approval gate (src/lib/approvalGate.js, docs/board-invariants.md §9).
+-- Human direction-approval gate (src/lib/approvalGate.js, docs/board-invariants.md §10).
 --
 -- Adds the three columns the gate needs: the explicit `requires_approval` flag an author sets
 -- on a card whose deliverable is a *direction* a human must sign off on, and the pair recording

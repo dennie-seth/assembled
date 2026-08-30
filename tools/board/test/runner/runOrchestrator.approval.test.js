@@ -4,7 +4,7 @@ import { RunOrchestrator } from "../../src/runner/runOrchestrator.js";
 import { ApprovalRequiredError, isApprovalMarker } from "../../src/lib/approvalGate.js";
 
 /**
- * The runner half of the human direction-approval gate (docs/board-invariants.md §9).
+ * The runner half of the human direction-approval gate (docs/board-invariants.md §10).
  *
  * Two claims, and they are different claims:
  *  - AP-2: a PASS on an approval-gated card settles it into the parked status and *says so* on

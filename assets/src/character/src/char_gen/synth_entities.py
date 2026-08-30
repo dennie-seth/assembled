@@ -38,6 +38,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from char_gen.sprite_io import save_sprite_sheet, to_indexed_image
+
 REPO_ROOT = Path(__file__).resolve().parents[5]
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 ENTITY_OUT = REPO_ROOT / "assets" / "final" / "entity"
@@ -66,20 +68,17 @@ def _load_palette(path: Path) -> list[tuple[int, int, int]]:
 
 
 def _to_pil(arr: np.ndarray, palette: list[tuple[int, int, int]]) -> Image.Image:
-    img = Image.fromarray(arr, mode="P")
-    flat = [0] * (256 * 3)
-    for i, (r, g, b) in enumerate(palette):
-        flat[3 * i] = r
-        flat[3 * i + 1] = g
-        flat[3 * i + 2] = b
-    img.putpalette(flat)
-    return img
+    return to_indexed_image(arr, palette)
 
 
 def _save(arr: np.ndarray, palette: list[tuple[int, int, int]], out_path: Path) -> Path:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    _to_pil(arr, palette).save(out_path)
-    return out_path
+    """Write the sheet with a transparent background (P-6).
+
+    Delegates to `char_gen.sprite_io`, the one place that knows how a sprite
+    sheet is written. This used to call `Image.save()` directly, which emits no
+    tRNS chunk -- which is how the §24-e sheet shipped opaque.
+    """
+    return save_sprite_sheet(arr, out_path, palette=palette)
 
 
 def _make_sheet(

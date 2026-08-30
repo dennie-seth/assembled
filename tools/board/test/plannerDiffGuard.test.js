@@ -54,7 +54,7 @@ describe("checkPlannerDiffGuard", () => {
     expect(report.violations[0].message).toMatch(/done/);
   });
 
-  // AP-7 (docs/board-invariants.md §9): the approval record says a *human* signed off on a
+  // AP-7 (docs/board-invariants.md §10): the approval record says a *human* signed off on a
   // card's direction, and downstream cards unblock on it. A planner run writing one would be
   // forging exactly that signal, so the guard treats it like a status flip.
   it("catches a planner run forging an approval record", () => {

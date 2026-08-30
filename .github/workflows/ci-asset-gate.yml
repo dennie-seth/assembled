@@ -104,6 +104,30 @@ jobs:
       # fabricated or stale hash fails the PR instead of merging silently.
       - run: python -m asset_gate.cli generator-hash-sweep ../../assets --repo-root ../../
 
+  transparency-sweep:
+    name: sprite background-transparency sweep (P-6 / T-0252 §24-e opaque sheet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # The §24-e character sheet shipped as mode 'P' with its background on a
+      # single palette index and NO tRNS chunk -- the cutout was applied, the
+      # file carried no alpha, and Godot rendered an opaque black rectangle.
+      # visibility-sweep below cannot catch that: it was built for the opposite
+      # failure (alpha=0 everywhere) and an opaque sheet passes it happily.
+      # This sweep requires every sprite under assets/final to declare a
+      # transparent background. Tiles and the palette LUT are exempt by asset
+      # class; individually documented exceptions -- assets that were never cut
+      # out and need regeneration, not a re-save -- live in
+      # src/asset_gate/transparency_baseline.txt.
+      - run: python -m asset_gate.cli transparency-sweep ../../assets/final
+
   visibility-sweep:
     name: rendered-visibility sweep (PR #231 / T-0215 alpha-zero bug)
     runs-on: ubuntu-latest

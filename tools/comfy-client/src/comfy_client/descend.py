@@ -5,8 +5,14 @@ provenance` (`13-asset-pipeline.md` §1/§3.1).
 box/area downscale (exact integer factor)
   -> quantize to locked palette (Oklab nearest-colour, dithering OFF)
   -> cleanup (orphan single pixels)
-  -> indexed PNG (mode 'P', palette == the locked LUT)
+  -> indexed PNG (mode 'P', palette == the locked LUT, tRNS on the background index)
 ```
+
+Output is transparent by default (P-6, §3.7): the indexed PNG carries a tRNS
+chunk marking `background_index` fully transparent, so the file renders with a
+real alpha channel while keeping the 16-slot palette P-4 requires. Base-field
+tiles are the deliberate exception -- pass `background_index=None` there, since
+a transparent floor tile is a hole in the world.
 
 `descend_stub` (identity passthrough) stays as the T-0071 seam's default --
 `pipeline.generate()` doesn't require a palette to run (concept sheets,
@@ -24,6 +30,7 @@ from PIL import Image
 from PIL.Image import Resampling
 
 from comfy_client.oklab import srgb_to_oklab
+from comfy_client.transparency import BACKGROUND_INDEX, save_indexed_sprite
 
 
 def descend_stub(raw_path: Path) -> Path:
@@ -96,10 +103,16 @@ def descend(
     palette: list[tuple[int, int, int]],
     target_size: int,
     out_path: Path | None = None,
+    background_index: int | None = BACKGROUND_INDEX,
 ) -> Path:
     """The real T-0073 chain. `palette` is index-ordered RGB (as returned by
     `comfy_client.palette.load_palette_lut`) -- index i in the output PNG
-    means `palette[i]`, satisfying P-4 by construction."""
+    means `palette[i]`, satisfying P-4 by construction.
+
+    `background_index` is the palette slot the output declares fully
+    transparent (P-6). It defaults to slot 0, the background/transparent key
+    every sprite in the game shares; pass `None` for base-field tiles and other
+    output that is opaque by design."""
     image = Image.open(raw_path)
     downscaled = _box_downscale(image, target_size)
     index_arr = _quantize_to_palette(downscaled, palette)
@@ -107,5 +120,4 @@ def descend(
     out_image = _to_indexed_image(index_arr, palette)
 
     out_path = out_path or raw_path.with_name(f"{raw_path.stem}_{target_size}px.png")
-    out_image.save(out_path)
-    return out_path
+    return save_indexed_sprite(out_image, out_path, background_index=background_index)

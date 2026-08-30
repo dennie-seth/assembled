@@ -113,7 +113,7 @@ describe("agentCurl.js end to end", () => {
     expect(run(["GET"]).status).toBe(64);
   });
 
-  // AP-5 (docs/board-invariants.md §9): everything this wrapper forwards is an agent's, and the
+  // AP-5 (docs/board-invariants.md §10): everything this wrapper forwards is an agent's, and the
   // board's approval gate needs to be able to tell. Asserted against a real listening server
   // rather than the argv we constructed, so the header is proven to survive the spawn and reach
   // the wire. Deliberately NOT on a board port -- this is the pass-through case (ComfyUI, the

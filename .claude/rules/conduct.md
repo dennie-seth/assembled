@@ -70,7 +70,7 @@ files add to this, they never relax it.
   parks the card in `review` and posts a `PARKED FOR HUMAN APPROVAL` comment
   saying so; the human approves by dragging it to Done or commenting
   `APPROVED`, and only then do its dependents unblock. Attempting to approve
-  it yourself is refused (`docs/board-invariants.md` §9) — but the reason not
+  it yourself is refused (`docs/board-invariants.md` §10) — but the reason not
   to try is that the human verdict is the whole point of the card, not that
   the board happens to stop you.
 - **Attach every produced deliverable to its card — not just to the repo.**

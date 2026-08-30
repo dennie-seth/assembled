@@ -181,7 +181,7 @@ describe("diffPlannerFileView + applyPlannerFileViewDiff", () => {
     expect(stdout.trim()).toBe("");
   });
 
-  // AP-7 (docs/board-invariants.md §9), db-mode half. The fs-mode counterpart lives in
+  // AP-7 (docs/board-invariants.md §10), db-mode half. The fs-mode counterpart lives in
   // plannerDiffGuard.test.js; here the enforcement is the MUTABLE_FIELDS allowlist.
   it("applies a planner run ADDING the approval gate -- flagging a direction card is spec work", async () => {
     const { tasksDir, before } = await setupWorktree("T-0014");

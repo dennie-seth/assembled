@@ -10,7 +10,10 @@
   "card": "T-0200",
   "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
   "layout": {
-    "sheet_px": [144, 96],
+    "sheet_px": [
+      144,
+      96
+    ],
     "cell_px": 48,
     "cols": 3,
     "rows": 2,
@@ -30,5 +33,15 @@
     "orphan_pixels_threshold_4": "PASS (design-verified: single connected body rectangle, accent inside body, no isolated blobs)",
     "frame_consistency_delta_30pct": "PASS (design-verified: 1-2px vertical float yields ~5-10% delta ratio, well under 30%)",
     "total": "5/5 passed (synthetic image)"
+  },
+  "transparency": {
+    "format": "indexed_png_trns",
+    "background_index": 0,
+    "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
+    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "branch": "feature/sprite-true-transparency",
+    "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
+    "background_px": 10464,
+    "interior_background_px": 0
   }
 }

@@ -20,7 +20,7 @@ import { pullDevelop } from "../src/runner/gitOps.js";
 
 /**
  * The human direction-approval gate, end to end over the real HTTP API
- * (docs/board-invariants.md §9, src/lib/approvalGate.js).
+ * (docs/board-invariants.md §10, src/lib/approvalGate.js).
  *
  * The bug these pin down: a card whose deliverable is a *direction* (concept art, a style
  * sheet) reached `review` on a reviewer PASS and could then be moved to `done` by anything,

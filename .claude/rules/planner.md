@@ -66,7 +66,7 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   reviewer PASS **park** the card in `review` (with a `PARKED FOR HUMAN
   APPROVAL` comment) instead of leaving it completable by anyone — and since
   `dependencyGuard` only counts `done`/`retired`, its dependents stay blocked
-  until a human actually approves. See `docs/board-invariants.md` §9 for the
+  until a human actually approves. See `docs/board-invariants.md` §10 for the
   mechanism and the T-0239 incident that motivated it (an unapproved synthetic
   concept sheet reached `done` and unblocked T-0243).
   **Write the Acceptance to describe producing and parking, never getting
