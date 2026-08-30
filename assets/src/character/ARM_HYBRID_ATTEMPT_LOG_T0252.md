@@ -4,6 +4,6 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Ass
 
 | Attempt | Seed | Frame-delta range | Mechanical gate | Beats Arm C (0.072-0.112) | Promoted | Notes |
 |---|---|---|---|---|---|---|
-| 1 | 31416 | 0.0660-0.0667 | FAIL | yes | no |  |
-| 2 | 31416 | 0.0660-0.0701 | PASS | yes | no |  |
-| 2 | 31416 | 0.0660-0.0701 | PASS | yes | yes |  |
+| 1 | 31416 | 0.0660-0.0667 | FAIL | yes | no | superseded: pre-cutout source frame, inflated background denominator (2026-08-30 second human review) |
+| 2 | 31416 | 0.0660-0.0701 | PASS | yes | no | superseded: pre-cutout source frame, inflated background denominator (2026-08-30 second human review); a bookkeeping bug also logged this attempt twice (dedup fix in append_attempt_log) -- this is the corrected single row |
+| 3 | 31416 | 0.1576-0.1816 | PASS | no | yes |  |

@@ -37,13 +37,21 @@ Install:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image
 
 asset_gate_art = pytest.importorskip("asset_gate.art")
 asset_gate_palette = pytest.importorskip("asset_gate.palette")
+
+_CHARACTER_DIR = Path(__file__).resolve().parents[1]
+if str(_CHARACTER_DIR) not in sys.path:
+    sys.path.insert(0, str(_CHARACTER_DIR))
+
+from gen_arm_a_idle_T0228 import _POSE_KEYPOINTS_NORM  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FINAL_CHARACTER_DIR = REPO_ROOT / "assets" / "final" / "character"
@@ -70,6 +78,29 @@ BACKGROUND_INDEX = 0
 MAX_FRAME_DELTA_RATIO = 0.30  # round-2 rule: same 0.30 cap as round 1 (DL-21 criterion 2)
 ARM_C_BENCHMARK_UPPER = 0.112  # round-2 rule: the real bar to beat, not the pass/fail floor
 ORPHAN_SIZE_THRESHOLD = 4  # blobs < 4 connected px are orphans (downscale noise)
+
+# 2026-08-30 second human review: force_cell_corner_background (an exact-index,
+# corner-connected flood) left a near-black halo around the figure -- a different
+# quantized palette index from background_index but visually indistinguishable --
+# counted as "foreground", inflating check_frame_consistency's union denominator
+# (measured: 1470px of a 2304px cell, i.e. only 63.8% background). A real per-pixel
+# cutout (gen_chained_idle_T0250.cutout_foreground_mask, reused unchanged, T-0250's
+# own fix for the identical defect) leaves the great majority of the cell as
+# background_index; Arm C's own committed frames measure background fraction
+# 72.7%-73.4% (union 613-629px of 2304). 0.65 sits well above the broken 63.8%
+# and comfortably below Arm C's own range, so it separates "cutout applied" from
+# "cutout absent/broken" without being brittle to minor pose/seed variation.
+MIN_BACKGROUND_FRACTION = 0.65
+# A 40px-tall figure at DL-21's spec cannot legitimately collapse to a handful of
+# pixels -- guards against a cutout so aggressive it erases the character along
+# with the background.
+MIN_FOREGROUND_PIXELS = 50
+# The production cutout computes its keypoint bbox at 384x384 and downscales the
+# resulting mask via an area filter; this test recomputes the same bbox directly
+# at the 48x48 cell scale for an independent check, so the two can disagree by a
+# pixel or two from rounding/downscale-threshold effects alone without that being
+# residual background clutter.
+BBOX_TEST_PIXEL_BUFFER = 3
 
 
 @pytest.fixture(scope="module")
@@ -218,6 +249,80 @@ def test_frame_delta_range_reported_against_both_bars(provenance: dict) -> None:
     assert provenance.get("beats_arm_c_benchmark") == (measured_max <= ARM_C_BENCHMARK_UPPER)
 
 
+def test_source_frame_background_cutout_applied(provenance: dict) -> None:
+    """Acceptance (2026-08-30 second human review, same defect T-0250 already
+    fixed once): the generated source frame must be cut out of its background
+    with a real per-pixel segmentation, not a same-index corner flood --
+    checkable via the provenance record, not merely asserted in prose."""
+    source = provenance["source_frame"]
+    assert source.get("background_cutout_applied") is True
+    method = source.get("cutout_method")
+    assert method and len(method) > 40, "cutout_method missing or too short"
+    assert isinstance(source.get("cutout_oklab_tolerance"), int | float)
+    assert isinstance(source.get("cutout_bbox_margin_frac"), int | float)
+    assert 0.0 < source["cutout_bbox_margin_frac"] < 1.0
+
+
+def test_source_frame_background_is_mostly_clean() -> None:
+    """The committed source frame's own background pixels must actually be
+    background_index, not merely a lower-delta shade of background clutter --
+    a real per-pixel cutout leaves the great majority of the cell as
+    background_index."""
+    img = Image.open(SOURCE_FRAME_PATH)
+    arr = np.array(img)
+    bg_fraction = float((arr == BACKGROUND_INDEX).mean())
+    assert bg_fraction >= MIN_BACKGROUND_FRACTION, (
+        f"source frame: only {bg_fraction:.2%} background -- expected >= "
+        f"{MIN_BACKGROUND_FRACTION:.0%}, residual background clutter likely survived cutout"
+    )
+
+
+def test_source_frame_silhouette_not_erased() -> None:
+    """Acceptance ('do not clip the character during cutout'): the source
+    frame must retain a plausible amount of character silhouette."""
+    img = Image.open(SOURCE_FRAME_PATH)
+    arr = np.array(img)
+    fg_count = int((arr != BACKGROUND_INDEX).sum())
+    assert fg_count >= MIN_FOREGROUND_PIXELS, (
+        f"source frame: only {fg_count}px of character survived cutout (floor "
+        f"{MIN_FOREGROUND_PIXELS}px) -- the cutout likely clipped the figure itself"
+    )
+
+
+def test_source_frame_no_foreground_outside_keypoint_bbox(provenance: dict) -> None:
+    """No residual background clutter may survive far from the character: every
+    non-background pixel in the source frame must fall within the fixed
+    standing-idle pose's own keypoint bounding box (`_POSE_KEYPOINTS_NORM`,
+    the same skeleton `draw_pose_skeleton_cell` rendered for this generation),
+    expanded by the same margin the cutout itself used."""
+    margin = provenance["source_frame"]["cutout_bbox_margin_frac"]
+    xs = [x for x, _ in _POSE_KEYPOINTS_NORM.values()]
+    ys = [y for _, y in _POSE_KEYPOINTS_NORM.values()]
+    x0n, x1n = min(xs), max(xs)
+    y0n, y1n = min(ys), max(ys)
+    wn, hn = x1n - x0n, y1n - y0n
+    x0n = max(0.0, x0n - wn * margin)
+    x1n = min(1.0, x1n + wn * margin)
+    y0n = max(0.0, y0n - hn * margin)
+    y1n = min(1.0, y1n + hn * margin)
+
+    arr = np.array(Image.open(SOURCE_FRAME_PATH))
+    size = arr.shape[0]
+    px0 = max(0, int(x0n * size) - BBOX_TEST_PIXEL_BUFFER)
+    px1 = min(size, int(x1n * size) + BBOX_TEST_PIXEL_BUFFER)
+    py0 = max(0, int(y0n * size) - BBOX_TEST_PIXEL_BUFFER)
+    py1 = min(size, int(y1n * size) + BBOX_TEST_PIXEL_BUFFER)
+
+    fg = arr != BACKGROUND_INDEX
+    outside = fg.copy()
+    outside[py0:py1, px0:px1] = False
+    stray = int(outside.sum())
+    assert stray == 0, (
+        f"source frame: {stray} foreground px outside the keypoint bbox+margin "
+        f"({px0},{py0})-({px1},{py1}) -- residual background clutter survived cutout"
+    )
+
+
 def test_judging_preview_gif_committed() -> None:
     """DL-21 judging conditions: at 40px, in motion, inside the T-0192
     blockout room -- not at native generation resolution, not as a static
@@ -256,6 +361,22 @@ def test_cell_fit() -> None:
     )
     failures = [r for r in results if not r.passed]
     assert not failures, "\n".join(f"cell {r.details['cell']}: {r.reason}" for r in failures)
+
+
+def test_sheet_background_is_mostly_clean(
+    frame_images: dict[tuple[int, int], Image.Image]
+) -> None:
+    """Every derived frame only translates the source frame's own already-
+    cutout-clean bands (transform_player_frame_from_source never re-quantizes
+    or reintroduces background), so this must hold across all 9 assembled
+    cells, not just the single source frame."""
+    for cell, img in frame_images.items():
+        arr = np.array(img)
+        bg_fraction = float((arr == BACKGROUND_INDEX).mean())
+        assert bg_fraction >= MIN_BACKGROUND_FRACTION, (
+            f"cell {cell}: only {bg_fraction:.2%} background -- expected >= "
+            f"{MIN_BACKGROUND_FRACTION:.0%}, residual background clutter likely survived cutout"
+        )
 
 
 # ---------------------------------------------------------------------------

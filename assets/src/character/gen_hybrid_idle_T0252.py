@@ -85,6 +85,11 @@ ATTEMPT_LOG_HEADER = (
 
 
 def append_attempt_log(provenance: dict, notes: str = "") -> None:
+    """Record `attempt`'s row, replacing any row already logged for that same
+    attempt number (a run re-invoked with --promote after an earlier
+    non-promoting run of the same attempt must not leave two rows for one
+    attempt -- see this file's own history: attempt 2 was logged twice, once
+    without --promote and once with, before this dedup was added)."""
     if not ATTEMPT_LOG_PATH.exists():
         ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
     lo, hi = provenance["frame_delta_range"]
@@ -96,8 +101,15 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
         f"| {'yes' if provenance.get('promoted') else 'no'} "
         f"| {notes} |\n"
     )
-    with ATTEMPT_LOG_PATH.open("a") as f:
-        f.write(row)
+    lines = ATTEMPT_LOG_PATH.read_text().splitlines(keepends=True)
+    attempt_str = str(provenance["attempt"])
+    kept = [
+        line
+        for line in lines
+        if not (line.startswith("|") and line.split("|")[1].strip() == attempt_str)
+    ]
+    kept.append(row)
+    ATTEMPT_LOG_PATH.write_text("".join(kept))
 
 
 def promote_attempt(out_dir: Path, provenance: dict) -> None:

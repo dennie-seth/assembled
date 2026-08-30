@@ -59,6 +59,7 @@ from asset_gate import palette as asset_gate_palette  # noqa: E402
 # the procedural OpenPose skeleton renderer, HTTP client helpers, and the
 # §3.1 descent chain are unchanged.
 from gen_arm_a_idle_T0228 import (  # noqa: E402
+    _POSE_KEYPOINTS_NORM,
     CHECKPOINT,
     CHECKPOINT_HASH,
     CHECKPOINT_LICENSE,
@@ -73,12 +74,29 @@ from gen_arm_a_idle_T0228 import (  # noqa: E402
     draw_pose_skeleton_cell,
     enforce_cell_margin,
     fetch_save_image,
-    force_cell_corner_background,
     quantize_to_palette,
     sha256_of,
     submit_prompt,
     upload_image,
     wait_for_completion,
+)
+
+# Reused directly from the T-0250 second human review's own fix for the
+# identical defect: a same-index, corner-connected flood
+# (force_cell_corner_background, now superseded here) leaves a near-black
+# halo around the figure -- a different quantized palette index from
+# background_index but visually indistinguishable -- as "foreground",
+# inflating check_frame_consistency's union denominator. cutout_foreground_mask
+# does a real per-pixel, content-aware segmentation instead: a border-connected
+# Oklab-tolerant flood over the frame's own 384x384 sampled image, unioned with
+# "outside this frame's own keypoint bounding box + margin".
+from gen_chained_idle_T0250 import (  # noqa: E402
+    BACKGROUND_MASK_MARGIN_FRAC,
+    CUTOUT_METHOD_DESCRIPTION,
+    CUTOUT_OKLAB_TOLERANCE,
+    apply_cutout_masks,
+    cutout_foreground_mask,
+    downscale_mask,
 )
 
 # Reused directly from the pose-authority round (T-0249) -- the already
@@ -313,6 +331,36 @@ def promote_attempt(out_dir: Path, provenance: dict) -> None:
     FINAL_FRAME_PROVENANCE_PATH.write_text(json.dumps(promoted, indent=2) + "\n")
 
 
+def build_indexed_cell(
+    raw_cell: Image.Image, main_384: Image.Image, palette: list[tuple[int, int, int]]
+) -> Image.Image:
+    """Quantize the descended 48x48 raw cell to the home palette, then cut the
+    character out of its background with a real per-pixel segmentation
+    (`cutout_foreground_mask`, T-0250's own committed fix for the identical
+    defect, reused unchanged): a border-connected Oklab-tolerant flood over
+    `main_384` (this frame's own 384x384 sampled image, before descent),
+    unioned with "outside the fixed standing-idle pose's own keypoint
+    bounding box + margin" (`_POSE_KEYPOINTS_NORM`, the same skeleton
+    `draw_pose_skeleton_cell` rendered for this generation). Supersedes
+    `force_cell_corner_background`, which only flooded pixels at the exact
+    background quantized index from the corner and left a near-black halo
+    (a *different* index, visually indistinguishable from background) as
+    foreground -- inflating check_frame_consistency's union denominator."""
+    indexed = quantize_to_palette(raw_cell, palette)
+    fg_mask = downscale_mask(
+        cutout_foreground_mask(
+            main_384, _POSE_KEYPOINTS_NORM, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
+        ),
+        FINAL_CELL_PX,
+    )
+    indexed = apply_cutout_masks(
+        indexed, {(0, 0): fg_mask}, cell_size=FINAL_CELL_PX, background_index=0
+    )
+    indexed = enforce_cell_margin(indexed, cell_size=FINAL_CELL_PX, margin=2, background_index=0)
+    indexed = cleanup_orphans(indexed, background_index=0, size_threshold=4)
+    return indexed
+
+
 def run_attempt(
     attempt: int,
     seed: int,
@@ -372,10 +420,8 @@ def run_attempt(
 
     palette = asset_gate_palette.load_palette(PALETTE_PATH)
     raw = Image.open(cell_raw_path).convert("RGB")
-    indexed = quantize_to_palette(raw, palette)
-    indexed = force_cell_corner_background(indexed, cell_size=FINAL_CELL_PX, background_index=0)
-    indexed = enforce_cell_margin(indexed, cell_size=FINAL_CELL_PX, margin=2, background_index=0)
-    indexed = cleanup_orphans(indexed, background_index=0, size_threshold=4)
+    main_img = Image.open(out_dir / "main_384.png").convert("RGB")
+    indexed = build_indexed_cell(raw, main_img, palette)
     indexed.save(out_dir / "cell_48_indexed.png")
 
     model_summary = (
@@ -418,9 +464,10 @@ def run_attempt(
             "OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, "
             "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept, applied after both LoRAs) -> "
             "KSampler -> area descent to 48x48 -> Oklab-nearest palette quantization (dithering "
-            "off, §3.1) -> orphan cleanup. This is the only diffusion-model call in the entire "
-            "hybrid pipeline (T-0252) -- every other animation frame is derived from this one "
-            "frame's own pixels by char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252."
+            "off, §3.1) -> per-pixel background cutout (see cutout_method) -> orphan cleanup. "
+            "This is the only diffusion-model call in the entire hybrid pipeline (T-0252) -- "
+            "every other animation frame is derived from this one frame's own pixels by "
+            "char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252."
         ),
         "generator": "assets/src/character/gen_hybrid_source_idle_T0252.py",
         "card": "T-0252",
@@ -428,10 +475,53 @@ def run_attempt(
         "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5",
         "attempt": attempt,
         "gpu_seconds": round(gpu_seconds, 1),
+        "background_cutout_applied": True,
+        "cutout_method": CUTOUT_METHOD_DESCRIPTION,
+        "cutout_oklab_tolerance": CUTOUT_OKLAB_TOLERANCE,
+        "cutout_bbox_margin_frac": BACKGROUND_MASK_MARGIN_FRAC,
         "layout": {"cell_px": FINAL_CELL_PX},
         "palette_source": "assets/final/palette/home_palette.json",
     }
     (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    return provenance
+
+
+def reprocess_attempt_cutout(attempt: int) -> dict:
+    """Re-derive `attempt`'s indexed cell with the background-cutout fix from
+    that attempt's ALREADY SAMPLED pixels on disk -- no new ComfyUI call, no
+    seed change, no re-sweep. Reads back `main_384.png` (the frame's own
+    sampled image, for the cutout mask) and `cell_48_raw.png` (the exact
+    pre-quantization pixels the previous run descended) from `attempt`'s own
+    out_dir, rebuilds the indexed cell through `build_indexed_cell`, and
+    overwrites both `cell_48_indexed.png` and `provenance_candidate.json` in
+    place. `--promote-attempt` then promotes the result exactly as for a
+    fresh run."""
+    out_dir = REPO_ROOT / "assets" / "out" / "hybrid_source" / f"attempt_{attempt}"
+    candidate_path = out_dir / "provenance_candidate.json"
+    provenance = json.loads(candidate_path.read_text())
+
+    palette = asset_gate_palette.load_palette(PALETTE_PATH)
+    raw = Image.open(out_dir / "cell_48_raw.png").convert("RGB")
+    main_img = Image.open(out_dir / "main_384.png").convert("RGB")
+    indexed = build_indexed_cell(raw, main_img, palette)
+    indexed.save(out_dir / "cell_48_indexed.png")
+
+    provenance["background_cutout_applied"] = True
+    provenance["cutout_method"] = CUTOUT_METHOD_DESCRIPTION
+    provenance["cutout_oklab_tolerance"] = CUTOUT_OKLAB_TOLERANCE
+    provenance["cutout_bbox_margin_frac"] = BACKGROUND_MASK_MARGIN_FRAC
+    provenance["method"] = (
+        "Single 384x384 generation: procedurally drawn OpenPose-format skeleton "
+        "(gen_arm_a_idle_T0228.draw_pose_skeleton_cell) -> ControlNetApplyAdvanced (xinsir "
+        "OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, "
+        "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept, applied after both LoRAs) -> "
+        "KSampler -> area descent to 48x48 -> Oklab-nearest palette quantization (dithering "
+        "off, §3.1) -> per-pixel background cutout (see cutout_method) -> orphan cleanup. "
+        "This is the only diffusion-model call in the entire hybrid pipeline (T-0252) -- "
+        "every other animation frame is derived from this one frame's own pixels by "
+        "char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252."
+    )
+    candidate_path.write_text(json.dumps(provenance, indent=2) + "\n")
     return provenance
 
 
@@ -450,7 +540,20 @@ def main() -> None:
         type=int,
         help="promote an existing attempt's cell to assets/final/character/ and exit",
     )
+    parser.add_argument(
+        "--reprocess-cutout",
+        type=int,
+        help=(
+            "re-derive an existing attempt's indexed cell with the background-cutout fix "
+            "from its already-sampled pixels on disk, no new ComfyUI call, and exit"
+        ),
+    )
     args = parser.parse_args()
+
+    if args.reprocess_cutout is not None:
+        provenance = reprocess_attempt_cutout(args.reprocess_cutout)
+        print(json.dumps(provenance, indent=2))
+        return
 
     if args.promote_attempt is not None:
         out_dir = REPO_ROOT / "assets" / "out" / "hybrid_source" / f"attempt_{args.promote_attempt}"

@@ -28,7 +28,7 @@
     "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
     "concept_card": "T-0209",
     "comfyui_prompt_id": "e931577d-b764-44c7-a9c1-48de0d5efb78",
-    "method": "Single 384x384 generation: procedurally drawn OpenPose-format skeleton (gen_arm_a_idle_T0228.draw_pose_skeleton_cell) -> ControlNetApplyAdvanced (xinsir OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, chained) -> IPAdapterAdvanced (PLUS, T-0209 concept, applied after both LoRAs) -> KSampler -> area descent to 48x48 -> Oklab-nearest palette quantization (dithering off, \u00a73.1) -> orphan cleanup. This is the only diffusion-model call in the entire hybrid pipeline (T-0252) -- every other animation frame is derived from this one frame's own pixels by char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252.",
+    "method": "Single 384x384 generation: procedurally drawn OpenPose-format skeleton (gen_arm_a_idle_T0228.draw_pose_skeleton_cell) -> ControlNetApplyAdvanced (xinsir OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, chained) -> IPAdapterAdvanced (PLUS, T-0209 concept, applied after both LoRAs) -> KSampler -> area descent to 48x48 -> Oklab-nearest palette quantization (dithering off, \u00a73.1) -> per-pixel background cutout (see cutout_method) -> orphan cleanup. This is the only diffusion-model call in the entire hybrid pipeline (T-0252) -- every other animation frame is derived from this one frame's own pixels by char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252.",
     "generator": "assets/src/character/gen_hybrid_source_idle_T0252.py",
     "card": "T-0252",
     "bake_off_arm": "round 2, hybrid (HANDOFF \u00a724-e)",
@@ -39,7 +39,11 @@
       "cell_px": 48
     },
     "palette_source": "assets/final/palette/home_palette.json",
-    "promoted": true
+    "promoted": true,
+    "background_cutout_applied": true,
+    "cutout_method": "Per-frame border-connected tolerant region-growing in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image, seeded from every border pixel and grown through 4-connected neighbours within the tolerance of the pixel it grows from -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it quantizes to. Unioned with 'outside this frame's own keypoint bounding box + margin' (background_hold_mask's own BACKGROUND_MASK_MARGIN_FRAC) to remove disconnected clutter (a floor-plane wedge, faint side ghosting) by position. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0. Supersedes force_cell_corner_background (a strict superset: content-aware per-frame segmentation vs. same-index corner flood fill).",
+    "cutout_oklab_tolerance": 0.03,
+    "cutout_bbox_margin_frac": 0.14
   },
   "derived_frames": {
     "generator": "assets/src/character/src/char_gen/synth_entities.py:generate_player_idle_sheet_hybrid_T0252",
@@ -103,7 +107,7 @@
   "card": "T-0252",
   "bake_off_arm": "round 2, hybrid (HANDOFF \u00a724-e) -- not a new bake-off arm competing on DL-21's original criteria, a mechanism change layered on top of the round-1 result",
   "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5",
-  "attempt": 2,
+  "attempt": 3,
   "mechanical_gate_passed": true,
   "frame_deltas": [
     {
@@ -117,7 +121,7 @@
           1
         ]
       ],
-      "ratio": 0.06598639455782312,
+      "ratio": 0.15757575757575756,
       "passed": true
     },
     {
@@ -131,7 +135,7 @@
           2
         ]
       ],
-      "ratio": 0.06598639455782312,
+      "ratio": 0.15757575757575756,
       "passed": true
     },
     {
@@ -145,7 +149,7 @@
           0
         ]
       ],
-      "ratio": 0.07006802721088436,
+      "ratio": 0.18163672654690619,
       "passed": true
     },
     {
@@ -159,7 +163,7 @@
           1
         ]
       ],
-      "ratio": 0.07006802721088436,
+      "ratio": 0.18163672654690619,
       "passed": true
     },
     {
@@ -173,7 +177,7 @@
           2
         ]
       ],
-      "ratio": 0.06598639455782312,
+      "ratio": 0.15757575757575756,
       "passed": true
     },
     {
@@ -187,7 +191,7 @@
           0
         ]
       ],
-      "ratio": 0.06598639455782312,
+      "ratio": 0.15757575757575756,
       "passed": true
     },
     {
@@ -201,7 +205,7 @@
           1
         ]
       ],
-      "ratio": 0.07006802721088436,
+      "ratio": 0.18163672654690619,
       "passed": true
     },
     {
@@ -215,16 +219,16 @@
           2
         ]
       ],
-      "ratio": 0.07006802721088436,
+      "ratio": 0.18163672654690619,
       "passed": true
     }
   ],
   "frame_delta_range": [
-    0.06598639455782312,
-    0.07006802721088436
+    0.15757575757575756,
+    0.18163672654690619
   ],
   "beats_030_cap": true,
-  "beats_arm_c_benchmark": true,
+  "beats_arm_c_benchmark": false,
   "arm_c_benchmark": [
     0.072,
     0.112

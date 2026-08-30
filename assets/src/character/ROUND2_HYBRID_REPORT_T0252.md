@@ -25,15 +25,45 @@ this card was not unnecessary; proceeding was correct.
 
 ## Result
 
-**Mechanical gate: PASS. Arm C benchmark: BEATEN.**
+**Mechanical gate: PASS. Arm C benchmark: NOT beaten.**
 
-The promoted sheet (source-frame attempt 3 + assembly attempt 2, seed 31416
-throughout) measures a frame-delta range of **0.0660–0.0701** across all 8
-adjacent-cell transitions — inside the round-2-unchanged **0.30 cap** *and*
-inside **Arm C's 0.072–0.112 benchmark** (max 0.0701 < Arm C's own floor of
-0.072). This is the first round-2 card to beat the real bar, not merely clear
-the pass/fail floor. Promoted to
+**2026-08-30 human review correction.** The number this section originally
+reported (0.0660–0.0701, claimed to beat Arm C) was wrong: it was measured
+over a sheet whose background was never actually cut to `background_index` —
+`gen_hybrid_source_idle_T0252.py`'s original `force_cell_corner_background`
+step only flooded pixels at the exact quantized background index from the
+cell's corner, and left a near-black halo around the figure (a *different*
+quantized index, visually indistinguishable from background) counted as
+"foreground". That inflated `check_frame_consistency`'s union denominator
+(measured: 1470px of a 2304px cell treated as silhouette, only 63.8%
+background) so the *ratio* read low even though the *absolute* pixel change
+between frames (97–103px) was larger than Arm C's own (44–70px). This is the
+identical defect T-0250 already hit and fixed once (`ROUND2_CHAINED_REPORT_T0250.md`),
+and the binding round-2 rule "changing the measure voids the round-1
+comparison" was violated by comparing an inflated denominator against Arm
+C's own background-free measurement.
+
+The fix, reusing T-0250's own committed cutout mechanism unchanged
+(`cutout_foreground_mask`/`apply_cutout_masks`/`downscale_mask` from
+`gen_chained_idle_T0250.py`, applied to the source frame's own 384x384
+sampled image with the fixed standing-idle pose's own keypoint bounding box,
+`_POSE_KEYPOINTS_NORM`): the corrected, re-derived sheet (source-frame
+attempt 3 + assembly attempt 3, seed 31416 throughout, no new GPU work — the
+cutout was applied to attempt 3's already-sampled pixels on disk) measures a
+frame-delta range of **0.1576–0.1816** across all 8 adjacent-cell
+transitions. That clears the round-2-unchanged **0.30 cap** (mechanical gate
+PASS) but sits well above **Arm C's 0.072–0.112 benchmark** — it does **not**
+beat the real bar, only the pass/fail floor. Promoted to
 `assets/final/character/player_idle_sheet_hybrid_T0252.png`.
+
+Per the round-2 rules, this is a valid, reportable outcome: "a qualified/
+negative finding is an acceptable outcome ... an inflated denominator is
+not." The hybrid mechanism removes identity drift by construction (see
+below) but, at this recipe, moves *more* silhouette pixels between adjacent
+frames than Arm C's hand-authored shapes do — plausibly because
+`HYBRID_*_BAND` was tuned against Arm C's own drawn shapes, not against an
+organic SDXL silhouette whose head/limb pixels don't align as tightly with
+the fixed band rectangles.
 
 ## Source-frame attempts (3 of 8 used, `ARM_HYBRID_SOURCE_ATTEMPT_LOG_T0252.md`)
 
@@ -51,12 +81,13 @@ resolved it without touching ControlNet/LoRA weights that were already
 working (T-0249 precedent). No prior round-2 card had combined IP-Adapter
 with the identity LoRA, so this failure mode was previously unobserved.
 
-## Assembly attempts (2 of 8 used, `ARM_HYBRID_ATTEMPT_LOG_T0252.md`)
+## Assembly attempts (3 of 8 used, `ARM_HYBRID_ATTEMPT_LOG_T0252.md`)
 
 | Attempt | Frame-delta range | Mechanical gate | Notes |
 |---|---|---|---|
-| 1 | 0.0660–0.0667 | **FAIL** (`orphan_pixels` only — cells (1,0) and (2,1), both offset (-1,1,-1)) | Already beat both bars on frame-delta alone; failed only the orphan check. |
-| **2** | 0.0660–0.0701 | **PASS** (all 5 checks) | Fixed by adding `_cleanup_shift_orphans` to `transform_player_frame_from_source` (see below). Promoted. |
+| 1 | 0.0660–0.0667 | **FAIL** (`orphan_pixels` only — cells (1,0) and (2,1), both offset (-1,1,-1)) | Superseded: pre-cutout source frame, inflated background denominator (see Result). |
+| 2 | 0.0660–0.0701 | **PASS** (all 5 checks) | Superseded: pre-cutout source frame, inflated background denominator (see Result). Fixed the orphan-pixel failure by adding `_cleanup_shift_orphans` to `transform_player_frame_from_source` (see below); that fix is unaffected by the cutout correction and remains in place. |
+| **3** | **0.1576–0.1816** | **PASS** (all 5 checks) | Re-derived from the same seed against the cutout-corrected source frame (attempt 3 of `ARM_HYBRID_SOURCE_ATTEMPT_LOG_T0252.md`) — no new GPU work. This is the honest, currently-promoted result. |
 
 **The bug and fix.** Attempt 1's frame-delta already beat both bars, but 2 of
 the 8 assembled cells (both using offset triple (-1, 1, -1)) failed
@@ -79,14 +110,21 @@ the fix.
 
 ## The real question: does the derived motion still read as motion at 40px?
 
-**Yes.** `hybrid_judging_preview_T0252.gif` renders all 9 frames at 40px
-figure height inside the T-0192 blockout-room mockup, per DL-21's judging
-conditions. Direct pixel comparison between a neutral frame (offset 0,0,0)
-and an adjacent offset frame (±1,∓1,±1) shows a real, non-trivial, confined
-change: 22534–23265 summed absolute RGB difference over the ~2000px figure
-region, localised to the arm/leg bands exactly as designed — not sensor
-noise, not a rounding artifact. This is a small, single-pixel-band idle sway
-(head bob + opposing arm/leg shift), the same amplitude class Arm C's own
+**Yes.** `hybrid_judging_preview_T0252.gif` (re-rendered against the
+cutout-corrected sheet) composites the figure cleanly onto the T-0192
+blockout-room mockup at 40px figure height with **no background box** — the
+prior committed GIF (pre-cutout) rendered a solid opaque rectangle around the
+figure because `render_judging_preview_hybrid_T0252.py` only makes exact
+`background_index` pixels transparent, and the halo of near-background pixels
+the corner-flood missed was not `background_index`; that defect made the
+motion-readability question genuinely unanswerable under DL-21's judging
+conditions, not merely visually noisy. With the background actually clean,
+the figure is directly judgeable: adjacent frames show a real, localised
+pixel change (78–91 delta pixels over a 495–501px silhouette union, per
+`check_frame_consistency`'s own `delta_pixels`/`union_pixels`), concentrated
+in the head/arm/leg bands exactly as designed — not sensor noise, not a
+rounding artifact. This is a small, single-pixel-band idle sway (head bob +
+opposing arm/leg shift), the same amplitude class Arm C's own
 `_player_pose_offsets` already selects and that round 1 judged as reading as
 motion. It is subtle by design (Arm C's whole premise is a small,
 identity-safe offset pool), not a dramatic walk-in-place, but it is a real,
@@ -130,17 +168,22 @@ diagnostic-only frame-delta number.
 
 - **Attempts-to-first-pass:** source frame 3/8 (attempts 1-2 diagnosed and
   fixed the IP-Adapter composition-bleed failure mode, attempt 3 passed
-  visually and was promoted); assembly 2/8 (attempt 1 already beat both
-  frame-delta bars but failed `orphan_pixels`, attempt 2 passed after the
-  `_cleanup_shift_orphans` fix).
+  visually and was promoted; the 2026-08-30 human-review cutout fix
+  re-derived attempt 3's *own already-sampled pixels* in place — it is not a
+  new attempt against the 8-per-arm cap, no new ComfyUI call was made);
+  assembly 3/8 (attempt 1 already beat both frame-delta bars but failed
+  `orphan_pixels`, attempt 2 passed after the `_cleanup_shift_orphans` fix,
+  attempt 3 re-derived the sheet from the cutout-corrected source frame with
+  the same transform code — the honest, currently-promoted result).
 - **GPU-minutes:** 3.70 (222.2 GPU-seconds total across the 3 source-frame
   attempts: 3.0 + 99.1 + 120.1, from `ARM_HYBRID_SOURCE_ATTEMPT_LOG_T0252.md`;
-  assembly attempts are pure CPU/script work, 0 GPU cost, same as Arm C's own
-  transform).
-- **Wall-clock:** ~00:07 (2026-08-30 13:07–13:14 UTC, from the first
-  source-frame attempt's provenance write to the rendered judging-preview
-  GIF's write time; excludes the code-authoring time that produced this
-  card's earlier RED/prior-session commits).
+  unchanged by the cutout fix, which reprocessed attempt 3's already-sampled
+  pixels with 0 additional GPU cost; assembly attempts are pure CPU/script
+  work, 0 GPU cost, same as Arm C's own transform).
+- **Wall-clock:** ~00:07 for the original attempts (2026-08-30 13:07–13:14
+  UTC) + the 2026-08-30 human-review cutout fix and re-derivation (script +
+  test changes, one CPU-only reprocess/reassembly/re-render pass, no GPU
+  time).
 - **$:** $0.00 (local GPU, hardware already owned — the entire premise of
   @DennieSeth's round-2 override).
 
@@ -149,15 +192,23 @@ copied verbatim from this section per that file's own convention.
 
 ## Bottom line
 
-The hybrid mechanism **works as designed**: exactly one SDXL generation feeds
-the entire sheet, identity drift is structurally impossible because there is
-nothing for a second generation to drift away from, and the derived motion
-reads as a real, visible (if intentionally subtle) idle sway at 40px in the
-T-0192 blockout room — the same amplitude class Arm C's own script already
-uses. Frame-delta (0.0660–0.0701) **beats Arm C's own 0.072–0.112
-benchmark**, not merely the 0.30 pass/fail floor, on the first fully-promoted
-attempt. This keeps the authored, locally-generated SDXL look that motivated
-@DennieSeth's override while inheriting Arm C's consistency guarantee by
-construction — per the card's own framing, this is now the strongest
-candidate among the generative arms for what round 2 ships, contingent on
-the human silhouette-read this report's judging preview enables.
+The hybrid mechanism **works as designed on the identity-drift question**:
+exactly one SDXL generation feeds the entire sheet, so identity drift is
+structurally impossible — there is nothing for a second generation to drift
+away from — and the derived motion reads as a real, visible (if
+intentionally subtle) idle sway at 40px in the T-0192 blockout room, now
+that the background-cutout fix makes the judging preview actually
+judgeable (no background box). But on the metric round 2 actually competes
+on, it **does not beat Arm C**: frame-delta 0.1576–0.1816 clears the 0.30
+pass/fail floor but sits above Arm C's own 0.072–0.112 benchmark, moving
+*more* silhouette pixels between adjacent frames (78–91px) than Arm C's
+hand-authored shapes do (44–70px), most likely because `HYBRID_*_BAND` was
+tuned against Arm C's own drawn geometry, not against an organic SDXL
+silhouette whose limbs don't align as tightly with the fixed band
+rectangles. This keeps the authored, locally-generated SDXL look that
+motivated @DennieSeth's override and removes drift by construction, but at
+this recipe it is **not** the strongest candidate among the generative arms
+on round 2's own pass/fail-plus-benchmark criteria — see the other round-2
+cards (T-0248/T-0249/T-0250) for how it compares. A qualified, negative
+finding against the benchmark is the honest result here, per the round-2
+rule that an inflated denominator is not an acceptable way to clear it.
