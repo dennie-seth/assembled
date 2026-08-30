@@ -190,7 +190,7 @@ resume from and retrained from step 0.
 Some cards do not produce *code*, they produce a **direction**: concept art, a
 style sheet, a reference the rest of a track is then generated against. Such a
 card is not finished when the artifact exists — it is finished when a human has
-looked at the artifact and said yes. Before PR #287 the board had no way to say
+looked at the artifact and said yes. Before PR #288 the board had no way to say
 that. A reviewer PASS settled every card into `review`
 (`runOrchestrator._handlePass`), and the `review → done` flip was one unlabelled
 drag that recorded nothing about *why* it happened. Since
