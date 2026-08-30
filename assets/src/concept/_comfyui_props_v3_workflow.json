@@ -1,0 +1,28 @@
+{
+  "panels": [
+    {
+      "panel": "00",
+      "graph_hash": "aa046fd798a31bc4390d4376d44aa3b947723db679a1bce9c657e57c694fefa5"
+    },
+    {
+      "panel": "01_sub0",
+      "graph_hash": "2de0a30fd74edbbc7369a295b05e97f8ef4c8a58ed42aec80271cb4cafbf0a04"
+    },
+    {
+      "panel": "01_sub1",
+      "graph_hash": "dc6a6a8b568bcd2d950b5598bf01a6c6e17d72ea629585da7ac5926800b1f0e9"
+    },
+    {
+      "panel": "01_sub2",
+      "graph_hash": "405f720e39d6dd791d2a22cc99068961d2e1a470691f12a3631dcd16039e705a"
+    },
+    {
+      "panel": "10",
+      "graph_hash": "742996ea296637b30a3f2337131ce03c52529ec1910c781cf00fe2c59ab534e3"
+    },
+    {
+      "panel": "11",
+      "graph_hash": "789c0e4b319398a9bd091761efdffbb0f895b93c0284d9cabc67f336f00c763c"
+    }
+  ]
+}
