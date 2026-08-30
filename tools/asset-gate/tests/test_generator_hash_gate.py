@@ -210,7 +210,12 @@ def test_transitions_16px_generator_hash_matches_the_real_committed_generator_fi
     caught both of T-0232's FAIL rounds before a human had to notice by hand.
     """
     sidecar_path = (
-        REPO_ROOT / "assets" / "final" / "tiles" / "signal_tower" / "transitions_16px.provenance.json"
+        REPO_ROOT
+        / "assets"
+        / "final"
+        / "tiles"
+        / "signal_tower"
+        / "transitions_16px.provenance.json"
     )
     assert sidecar_path.exists(), f"sidecar not found: {sidecar_path}"
     prov = json.loads(sidecar_path.read_text())

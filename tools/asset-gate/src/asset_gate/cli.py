@@ -76,6 +76,13 @@ def _cmd_generator_sweep(args: argparse.Namespace) -> int:
     return _report_and_exit(results)
 
 
+def _cmd_generator_hash_sweep(args: argparse.Namespace) -> int:
+    results = generator_mod.sweep_generator_hash_matches(args.root, repo_root=args.repo_root)
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
 def _cmd_art_visibility(args: argparse.Namespace) -> int:
     image = Image.open(args.image)
     result = visibility_mod.check_rendered_visibility(
@@ -142,6 +149,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="repository root used to resolve generator paths (default: current directory)",
     )
     p.set_defaults(func=_cmd_generator_sweep)
+
+    p = sub.add_parser(
+        "generator-hash-sweep",
+        help=(
+            "recursively validate that the generator_hash field in every "
+            "*.provenance.json (where present) matches the actual sha256 of its "
+            "generator file (T-0238 -- catches fabricated/stale hashes)"
+        ),
+    )
+    p.add_argument("root", help="directory to search recursively (e.g. assets/)")
+    p.add_argument(
+        "--repo-root",
+        default=".",
+        help="repository root used to resolve generator paths (default: current directory)",
+    )
+    p.set_defaults(func=_cmd_generator_hash_sweep)
 
     p = sub.add_parser("art-palette", help="palette membership + index semantics (P-4)")
     p.add_argument("image")
