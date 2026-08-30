@@ -74,6 +74,43 @@ export const BOARD_UI_ACTOR = "board-ui";
 export const UNKNOWN_ACTOR = "unknown";
 
 /**
+ * Transport identities, not people. `board-ui` says "a browser sent this" and `unknown` says
+ * "nothing said otherwise" -- both mean *the operator*, and neither is worth writing into an
+ * approval record. `resolveHumanActor` swaps them for the configured name.
+ */
+const PLACEHOLDER_ACTORS = Object.freeze(new Set([BOARD_UI_ACTOR, UNKNOWN_ACTOR]));
+
+/**
+ * Who a human action on this board is. The board is single-user and unauthenticated -- it
+ * binds to 127.0.0.1 and there is no login -- so there is no identity to *derive* from a
+ * request; there is only one to configure.
+ *
+ * `@DennieSeth` matches how `docs/decision-log.md` already attributes him, so an approval
+ * record reads the same as every other decision this project has recorded. The `@` also keeps
+ * a person visibly distinct from the board's own system identities (`assembled-board`,
+ * `board-ui`), which matters now that one name grants approval and the other cannot.
+ */
+export const DEFAULT_HUMAN_ACTOR = "@DennieSeth";
+/** Author recorded for an agent-originated write that supplied no author of its own. */
+export const AGENT_AUTHOR_FALLBACK = "agent";
+
+/**
+ * The configured operator identity (`BOARD_HUMAN_ACTOR`), read per call so a systemd drop-in
+ * change takes effect on restart without any other plumbing.
+ *
+ * A value that collides with a reserved agent identity is refused in favour of the default:
+ * `BOARD_HUMAN_ACTOR=reviewer` would otherwise make every reviewer-authored comment read as
+ * the operator and quietly disable the whole carve-out -- a one-word misconfiguration turning
+ * off the gate is not a failure mode worth having.
+ */
+export function humanActorFromEnv(env = process.env) {
+  const raw = typeof env.BOARD_HUMAN_ACTOR === "string" ? env.BOARD_HUMAN_ACTOR.trim() : "";
+  if (raw.length === 0) return DEFAULT_HUMAN_ACTOR;
+  if (isAgentActor(raw)) return DEFAULT_HUMAN_ACTOR;
+  return raw;
+}
+
+/**
  * The approval markers. A comment approves only when its **first non-empty line** is exactly
  * one of these (case-insensitive, surrounding whitespace ignored). Requiring the first line --
  * rather than "contains the word somewhere" -- is what stops a comment that merely *discusses*
@@ -115,8 +152,52 @@ function normalizeActor(value) {
 export function isAgentActor(value) {
   const actor = normalizeActor(value);
   if (actor.length === 0) return false;
-  if (actor.startsWith("agent:")) return true;
-  return AGENT_ACTOR_IDENTITIES.has(actor);
+
+  // Node collapses duplicate request headers into one comma-joined string, so a caller that
+  // sends a SECOND `X-Board-Actor` arrives here as "agent, @DennieSeth". Verified against a
+  // real server, and reachable in practice: `agentCurl.js` always stamps `agent` first but
+  // deliberately does not forbid a caller's own `-H` (agents legitimately need it for
+  // ComfyUI), so an agent can append a value of its choosing. Before this check, that joined
+  // string matched no reserved identity and was therefore classified *human* -- an identity
+  // forgery, and one that only became worth attempting once a named operator existed to
+  // impersonate.
+  //
+  // Fail closed on the whole shape rather than picking a value to trust: a browser sends
+  // exactly one actor, so more than one is never a claim worth believing.
+  const values = actor.split(",").map((part) => part.trim()).filter(Boolean);
+  if (values.length > 1) return true;
+
+  return values.some((one) => one.startsWith("agent:") || AGENT_ACTOR_IDENTITIES.has(one));
+}
+
+/**
+ * The identity to record for a human-originated request. A transport placeholder
+ * (`board-ui`, `unknown`) resolves to the configured operator -- "board-ui approved this" is
+ * no more useful than "Anonymous approved this". An actor that names someone specific is kept
+ * as given, so a second person at a terminal can still sign their own approval.
+ *
+ * Returns `null` for an agent actor: agents have no human identity to resolve to, and the
+ * callers treat that as "cannot approve" rather than substituting anything.
+ */
+export function resolveHumanActor(actor, env = process.env) {
+  if (isAgentActor(actor)) return null;
+  const trimmed = typeof actor === "string" ? actor.trim() : "";
+  if (trimmed.length === 0 || PLACEHOLDER_ACTORS.has(trimmed.toLowerCase())) {
+    return humanActorFromEnv(env);
+  }
+  return trimmed;
+}
+
+/**
+ * The author to record on a comment or attachment. An explicitly supplied author always wins
+ * -- that is someone naming themselves, and the board has never second-guessed it. Otherwise
+ * the default depends on who is asking: a UI action is the operator, an agent action is
+ * never allowed to inherit the operator's name and falls back to an agent identity instead.
+ */
+export function resolveAuthor({ author, actor } = {}, env = process.env) {
+  const explicit = typeof author === "string" ? author.trim() : "";
+  if (explicit.length > 0) return explicit;
+  return resolveHumanActor(actor, env) ?? AGENT_AUTHOR_FALLBACK;
 }
 
 /** Convenience inverse of `isAgentActor`, for the "may this caller approve?" question. */

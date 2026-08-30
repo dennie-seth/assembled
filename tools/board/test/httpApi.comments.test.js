@@ -7,6 +7,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { DEFAULT_HUMAN_ACTOR } from "../src/lib/approvalGate.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -86,7 +87,11 @@ describe("POST /api/tasks/:id/comments", () => {
     expect(updated.comments.map((c) => c.text)).toEqual(["first", "second"]);
   });
 
-  it("defaults the author to Anonymous when not provided", async () => {
+  // Was "defaults the author to Anonymous". The board is single-user, so an unattributed
+  // comment is the operator's -- and once an approval comment's author became `approved_by`,
+  // "Anonymous" meant recording that nobody in particular approved the card. See
+  // `humanActor.test.js` and approvalGate's `resolveAuthor`.
+  it("defaults the author to the configured operator when not provided", async () => {
     const task = await createTask();
 
     const res = await fetch(`${baseUrl}/api/tasks/${task.id}/comments`, {
@@ -96,7 +101,7 @@ describe("POST /api/tasks/:id/comments", () => {
     });
 
     const updated = await res.json();
-    expect(updated.comments[0].author).toBe("Anonymous");
+    expect(updated.comments[0].author).toBe(DEFAULT_HUMAN_ACTOR);
   });
 
   it("returns 400 when text is missing or empty", async () => {

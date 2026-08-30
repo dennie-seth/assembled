@@ -101,7 +101,10 @@ export async function uploadAttachment(id, file, uploadedBy) {
   if (uploadedBy) {
     formData.append("uploaded_by", uploadedBy);
   }
-  const res = await fetch(path, { method: "POST", body: formData });
+  // No Content-Type here on purpose -- the browser sets the multipart boundary itself. The
+  // actor header is what lets the server attribute an omitted `uploaded_by` to the operator
+  // rather than to an agent.
+  const res = await fetch(path, { method: "POST", headers: { ...ACTOR_HEADER }, body: formData });
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
     throw new Error(payload.error || `POST ${path} failed: ${res.status}`);
