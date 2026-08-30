@@ -423,6 +423,120 @@ def main_player_idle_arm_c() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Player -- hybrid idle sheet (T-0252, HANDOFF §24-e, round 2)
+#
+# Hypothesis: "SDXL for the look, Arm C's deterministic script for the
+# motion". Exactly one idle frame is generated through the full SDXL stack
+# (gen_hybrid_source_idle_T0252.py); every other frame is *derived* from that
+# single generated frame by translating its own head/arm/leg pixel bands,
+# using the exact same per-frame offsets Arm C's _player_pose_offsets already
+# selects (T-0230, reused unchanged, not forked) -- only the *content* being
+# moved differs (real generated pixels here, a hardcoded shape in Arm C).
+#
+# Band bounds below are Arm C's own hardcoded part positions (_draw_player_arm_c
+# above), padded by 1px to tolerate a generated silhouette that is not
+# pixel-identical to the synthetic one. This is not a guess: the SDXL source
+# frame is conditioned by the same OpenPose skeleton
+# (gen_arm_a_idle_T0228._POSE_KEYPOINTS_NORM) whose normalised keypoints land,
+# in 48px-cell pixels, at head/neck ~0.075-0.21 (3.6-10.1px), elbow/wrist
+# ~0.39-0.54 (18.7-25.9px), knee/ankle ~0.75-0.93 (36-44.6px) -- the same rows
+# Arm C's own head/forearm/shin boxes already occupy.
+# ---------------------------------------------------------------------------
+
+# (row_start, row_end, col_start, col_end) -- half-open, matching numpy slicing.
+HYBRID_HEAD_BAND = (3, 19, 17, 31)  # head + neck, bobs vertically with head_off
+HYBRID_LEFT_ARM_BAND = (24, 33, 7, 13)  # left forearm/hand, shifts horizontally
+HYBRID_RIGHT_ARM_BAND = (24, 33, 35, 41)  # right forearm/hand (mirrors left)
+HYBRID_LEFT_LEG_BAND = (36, 45, 17, 24)  # left shin/foot, shifts horizontally
+HYBRID_RIGHT_LEG_BAND = (36, 45, 25, 32)  # right shin/foot (mirrors left)
+
+
+def _shift_band(
+    src: np.ndarray,
+    dst: np.ndarray,
+    band: tuple[int, int, int, int],
+    dy: int = 0,
+    dx: int = 0,
+    background_index: int = 0,
+) -> None:
+    """Cut `band` out of `src`, clear its swept area (band ∪ shifted band) in
+    `dst`, then paste the content back at the shifted position. Generalises
+    _draw_player_arm_c's "redraw this part at a new offset" move to arbitrary
+    raster content: instead of drawing a hardcoded shape at the offset
+    position, it moves whatever pixels the generated source frame actually
+    has there."""
+    r0, r1, c0, c1 = band
+    content = src[r0:r1, c0:c1].copy()
+    rr0, rr1 = min(r0, r0 + dy), max(r1, r1 + dy)
+    cc0, cc1 = min(c0, c0 + dx), max(c1, c1 + dx)
+    dst[rr0:rr1, cc0:cc1] = background_index
+    dst[r0 + dy : r1 + dy, c0 + dx : c1 + dx] = content
+
+
+def transform_player_frame_from_source(
+    source_arr: np.ndarray,
+    head_off: int,
+    arm_off: int,
+    leg_off: int,
+    background_index: int = 0,
+) -> np.ndarray:
+    """Derive one animation frame from the single generated source frame by
+    translating its head/arm/leg raster bands -- the same per-frame offsets
+    _draw_player_arm_c applies to hardcoded shapes, applied here to real
+    generated pixels instead. Everything outside the five bands (torso,
+    background, equipment) is left byte-identical to the source."""
+    out = source_arr.copy()
+    _shift_band(
+        source_arr, out, HYBRID_HEAD_BAND, dy=head_off, background_index=background_index
+    )
+    _shift_band(
+        source_arr, out, HYBRID_LEFT_ARM_BAND, dx=arm_off, background_index=background_index
+    )
+    _shift_band(
+        source_arr, out, HYBRID_RIGHT_ARM_BAND, dx=-arm_off, background_index=background_index
+    )
+    _shift_band(
+        source_arr, out, HYBRID_LEFT_LEG_BAND, dx=leg_off, background_index=background_index
+    )
+    _shift_band(
+        source_arr, out, HYBRID_RIGHT_LEG_BAND, dx=-leg_off, background_index=background_index
+    )
+    return out
+
+
+def generate_player_idle_sheet_hybrid_T0252(
+    seed: int,
+    source_frame_path: Path,
+    palette: list[tuple[int, int, int]],
+    out_path: Path,
+) -> Path:
+    """144x144 (3x3) player idle sheet, T-0252 hybrid round -- exactly one
+    generated SDXL frame (`source_frame_path`), every other frame derived
+    from it by translating its head/arm/leg bands per
+    _player_pose_offsets(seed) -- Arm C's own committed motion-selection
+    function, unchanged. Frame 0 is always the untouched source pixels
+    (every _PLAYER_POSE_PATTERNS entry starts at offset 0), which is what
+    makes "exactly one frame is generated" literally true of frame 0 too."""
+    source_img = Image.open(source_frame_path)
+    if source_img.mode != "P":
+        raise ValueError(f"source frame must be indexed mode 'P', got {source_img.mode!r}")
+    if source_img.size != (CELL_SIZE, CELL_SIZE):
+        raise ValueError(f"source frame must be {CELL_SIZE}x{CELL_SIZE}, got {source_img.size}")
+    source_arr = np.array(source_img)
+
+    frame_cells = [(r, c) for r in range(3) for c in range(3)]
+    offsets = _player_pose_offsets(seed, n_frames=len(frame_cells))
+
+    def draw(cell_arr: np.ndarray, idx: int) -> None:
+        head_off, arm_off, leg_off = offsets[idx]
+        cell_arr[:] = transform_player_frame_from_source(
+            source_arr, head_off, arm_off, leg_off
+        )
+
+    return _make_sheet(3, 3, palette, out_path, draw, frame_cells)
+
+
+# ---------------------------------------------------------------------------
 # CLI entry points (registered in pyproject.toml [project.scripts])
 # ---------------------------------------------------------------------------
 
