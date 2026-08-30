@@ -263,6 +263,22 @@ def test_background_held_out_of_the_feedback_path(provenance: dict) -> None:
     assert 0.0 < provenance["background_mask_margin_frac"] < 1.0
 
 
+def test_model_field_describes_the_shipped_chaining_mechanism(provenance: dict) -> None:
+    """2026-08-30 human review FAIL: the `model` summary string still said
+    "frames 1-8 from their predecessor" after the fix moved to anchoring
+    every frame at frame 0 -- a stale description of the recipe that
+    contradicts the sidecar's own `chaining_anchor_frame`/`chaining_method`
+    fields it sits next to. `model` is P-7's primary field, so this pins its
+    wording to the actual mechanism so the two cannot silently diverge
+    again."""
+    model = provenance["model"]
+    assert "predecessor" not in model, (
+        "model field describes the superseded predecessor-chaining mechanism, not the "
+        "frame-0-anchor + background-hold mechanism that actually shipped"
+    )
+    assert "frame 0" in model or "anchor" in model
+
+
 def test_frames_share_seed_and_prompt_except_pose(provenance: dict) -> None:
     """Seed, initial latent size and prompt are identical across every
     frame's call by construction; only each frame's own skeleton differs."""

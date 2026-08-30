@@ -1,5 +1,5 @@
 {
-  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (player identity, weight 0.5) + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors (per-frame script-authored pose skeleton) + img2img chaining (frames 1-8 from their predecessor, denoise 0.3)",
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (player identity, weight 0.5) + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors (per-frame script-authored pose skeleton) + img2img chaining (frames 1-8 anchored to frame 0's own output, background held out of the feedback path, denoise 0.3)",
   "model_license": "CreativeML Open RAIL++-M",
   "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
   "style_lora_name": "soviet_brutalism_style_v1.safetensors",

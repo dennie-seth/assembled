@@ -9,14 +9,20 @@ one fresh 384x384 KSampler call per frame conditioned only on that frame's
 skeleton), **chain the frames** -- frame 1 is generated fresh; frame n is an
 img2img pass from frame n-1's own decoded output at low denoise, with the
 next pose applied. Each frame then starts from a figure that is already
-correct, so identity is inherited rather than re-invented.
+correct, so identity is inherited rather than re-invented. That was the
+original hypothesis; see the 2026-08-30 human-review revision below for
+what actually ships.
 
 This composes directly on top of §24-b, not a rewrite of it:
 `build_chained_graph` calls `gen_pose_authority_idle_T0249.build_graph`
-unchanged and patches only two things -- the latent source
-(EmptyLatentImage -> VAEEncode of the previous frame's own output) and
-denoise (1.0 -> the swept value). Frame 0 uses
-`gen_pose_authority_idle_T0249.build_graph` directly, unpatched.
+unchanged and patches only two things -- the latent source and denoise
+(1.0 -> the swept value). Frame 0 uses `gen_pose_authority_idle_T0249.build_graph`
+directly, unpatched. As shipped (2026-08-30 human-review fix, see below),
+the latent source is EmptyLatentImage -> VAEEncode of **frame 0's own**
+decoded output for every subsequent frame (a fixed anchor), not the
+immediately preceding frame -- chaining from the predecessor let each
+frame's own background speckle feed into the next frame's init image,
+compounding across the sheet.
 
 Two honest limits, inherited from §24-b and unchanged here:
   1. A pose skeleton is strong conditioning, not absolute control.
@@ -555,7 +561,8 @@ def run_attempt(
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
         f"+ LoRA {identity_lora_name} (player identity, weight {identity_lora_weight}) "
         f"+ ControlNet {CONTROLNET_NAME} (per-frame script-authored pose skeleton) "
-        f"+ img2img chaining (frames 1-8 from their predecessor, denoise {denoise})"
+        f"+ img2img chaining (frames 1-8 anchored to frame 0's own output, "
+        f"background held out of the feedback path, denoise {denoise})"
     )
     provenance = {
         "model": model_summary,
