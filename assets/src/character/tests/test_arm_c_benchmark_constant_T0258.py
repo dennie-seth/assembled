@@ -59,31 +59,50 @@ def test_no_arm_c_benchmark_literal_in_any_character_generator_source():
     )
 
 
+#: Test/doc files legitimately describe the historical literal in prose (see
+#: this very file's own docstring above) -- the defect this guards against is
+#: a *generator* restating the value as code, not documentation mentioning it.
+_EXCLUDED_DIRS = frozenset({"tests"})
+
+
 def test_no_arm_c_benchmark_literal_anywhere_under_assets_src_character():
     """Broader than the flat *.py glob above -- also covers src/char_gen/**
-    and any future subpackage, so a literal cannot hide one directory down."""
+    and any future subpackage, so a literal cannot hide one directory down.
+    Excludes tests/ (this file's own directory) -- prose describing the
+    historical bug, like this module's docstring, is not the defect."""
     offenders = []
     for path in _CHARACTER_DIR.rglob("*.py"):
+        rel = path.relative_to(_CHARACTER_DIR)
+        if rel.parts[0] in _EXCLUDED_DIRS:
+            continue
         if path.resolve() == _ALLOWED_DEFINITION_FILE.resolve():
             continue
         if _ARM_C_BENCHMARK_LITERAL_RE.search(path.read_text()):
-            offenders.append(str(path.relative_to(_CHARACTER_DIR)))
+            offenders.append(str(rel))
     assert not offenders, (
         f"ARM_C_BENCHMARK literal (0.072, 0.112) copy-pasted in {offenders} -- import "
         "ARM_C_BENCHMARK from comfy_client.provenance_sidecar instead (CHR-1, T-0258)"
     )
 
 
-def test_pose_authority_and_hybrid_generators_import_the_shared_constant():
+def test_pose_authority_and_hybrid_generators_import_the_shared_write_helper():
     """Pins the fix, not just the absence of the literal -- a generator could
     otherwise satisfy the grep by defining the pair as e.g. `(0.0720, 0.1120)`
-    while still never importing the shared constant."""
+    while still never importing the shared helper."""
     for filename in ("gen_hybrid_idle_T0252.py", "gen_pose_authority_idle_T0249.py"):
         text = (_CHARACTER_DIR / filename).read_text()
         assert "from comfy_client.provenance_sidecar import" in text, (
-            f"{filename} must import ARM_C_BENCHMARK from comfy_client.provenance_sidecar"
+            f"{filename} must import apply_arm_c_benchmark_fields from comfy_client.provenance_sidecar"
         )
-        assert "ARM_C_BENCHMARK" in text
+        assert "apply_arm_c_benchmark_fields" in text
+
+
+def test_pose_authority_generator_imports_arm_c_benchmark_for_reexport():
+    """gen_chained_idle_T0250.py re-exports ARM_C_BENCHMARK as
+    `pose_authority.ARM_C_BENCHMARK` -- that only works if
+    gen_pose_authority_idle_T0249.py itself imports the name."""
+    text = (_CHARACTER_DIR / "gen_pose_authority_idle_T0249.py").read_text()
+    assert "ARM_C_BENCHMARK" in text
 
 
 def test_chained_generator_still_reexports_pose_authoritys_constant():

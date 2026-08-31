@@ -38,10 +38,19 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "asset-gate" / "src"))
+# comfy-client is not a declared dependency of this package's pyproject.toml
+# (char-gen only lists pillow/numpy) -- same informal sys.path convention
+# already used for asset-gate above, not a formal pip dependency, per
+# gen_idle_v2_diffusers.py's existing precedent. CHR-1's shared
+# apply_arm_c_benchmark_fields helper (T-0258) lives in
+# comfy_client.provenance_sidecar, the established home for this pipeline's
+# other shared provenance surface.
+sys.path.insert(0, str(REPO_ROOT / "tools" / "comfy-client" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from asset_gate import art as asset_gate_art  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
+from comfy_client.provenance_sidecar import apply_arm_c_benchmark_fields  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from char_gen.synth_entities import (  # noqa: E402
@@ -59,7 +68,10 @@ FINAL_PX = 144
 CELL_PX = 48
 
 MAX_FRAME_DELTA_RATIO = 0.30  # round-2 rule: same 0.30 cap as round 1 (DL-21 criterion 2)
-ARM_C_BENCHMARK = (0.072, 0.112)  # the real bar to beat, not the pass/fail floor
+# The Arm-C benchmark pair itself (the real bar to beat, not the pass/fail
+# floor) is not defined here -- apply_arm_c_benchmark_fields (imported above
+# from comfy_client.provenance_sidecar, CHR-1's single shared home, T-0258)
+# derives frame_delta_range/arm_c_benchmark/beats_arm_c_benchmark from it.
 
 ATTEMPT_LOG_PATH = REPO_ROOT / "assets" / "src" / "character" / "ARM_HYBRID_ATTEMPT_LOG_T0252.md"
 FINAL_CHARACTER_DIR = REPO_ROOT / "assets" / "final" / "character"
@@ -173,9 +185,10 @@ def run_attempt(attempt: int, seed: int) -> dict:
         )
     frame_consistency_passed = all(d["passed"] for d in frame_deltas)
     ratios = [d["ratio"] for d in frame_deltas]
-    frame_delta_range = [min(ratios), max(ratios)]
     beats_030_cap = max(ratios) <= MAX_FRAME_DELTA_RATIO
-    beats_arm_c_benchmark = max(ratios) <= ARM_C_BENCHMARK[1]
+    arm_c_fields = apply_arm_c_benchmark_fields({}, ratios)
+    frame_delta_range = arm_c_fields["frame_delta_range"]
+    beats_arm_c_benchmark = arm_c_fields["beats_arm_c_benchmark"]
 
     mechanical_gate_passed = (
         membership.passed
@@ -230,7 +243,7 @@ def run_attempt(attempt: int, seed: int) -> dict:
         "frame_delta_range": frame_delta_range,
         "beats_030_cap": beats_030_cap,
         "beats_arm_c_benchmark": beats_arm_c_benchmark,
-        "arm_c_benchmark": list(ARM_C_BENCHMARK),
+        "arm_c_benchmark": arm_c_fields["arm_c_benchmark"],
         "gate_results": {
             "palette_membership": membership.passed,
             "index_semantics": semantics.passed,

@@ -128,6 +128,28 @@ jobs:
       # src/asset_gate/transparency_baseline.txt.
       - run: python -m asset_gate.cli transparency-sweep ../../assets/final
 
+  character-arm-c-sweep:
+    name: character CHR-1 provenance sweep (docs/board-invariants.md CHR-1, T-0258)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # CHR-1 requires every character-generation output to record both its own
+      # frame_delta_range and its Arm-C benchmark comparison (arm_c_benchmark +
+      # beats_arm_c_benchmark) -- before T-0258 this was convention only, so a new
+      # character generator could drop the fields silently. This sweep is scoped
+      # to the `character` asset class only (props/tiles/concept/entity sheets
+      # never fail it); paths listed in character_arm_c_baseline.txt are the 15
+      # sidecars that predate CHR-1 and are tracked for backfill/regeneration in a
+      # follow-up card, not fixed here.
+      - run: python -m asset_gate.cli character-arm-c-sweep ../../assets/final
+
   visibility-sweep:
     name: rendered-visibility sweep (PR #231 / T-0215 alpha-zero bug)
     runs-on: ubuntu-latest

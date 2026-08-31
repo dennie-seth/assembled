@@ -75,6 +75,14 @@ from PIL import Image, ImageDraw, ImageFilter
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "asset-gate" / "src"))
+# comfy-client is not a declared dependency of this package's pyproject.toml
+# (char-gen only lists pillow/numpy) -- same informal sys.path convention
+# already used for asset-gate above, not a formal pip dependency, per
+# gen_idle_v2_diffusers.py's existing precedent. CHR-1's shared
+# apply_arm_c_benchmark_fields helper (T-0258) lives in
+# comfy_client.provenance_sidecar, the established home for this pipeline's
+# other shared provenance surface.
+sys.path.insert(0, str(REPO_ROOT / "tools" / "comfy-client" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -87,6 +95,7 @@ import pose_rig_T0249  # noqa: E402
 from asset_gate import art as asset_gate_art  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
+from comfy_client.provenance_sidecar import apply_arm_c_benchmark_fields  # noqa: E402
 from gen_arm_a_idle_T0228 import (  # noqa: E402
     CHECKPOINT,
     CHECKPOINT_HASH,
@@ -433,21 +442,17 @@ def compute_sheet_gates(indexed: Image.Image) -> dict:
         )
     mechanical_gate_passed = all(d["passed"] for d in frame_deltas)
     ratios = [d["ratio"] for d in frame_deltas]
-    frame_delta_range = [min(ratios), max(ratios)]
     beats_030_cap = max(ratios) <= MAX_FRAME_DELTA_RATIO
-    beats_arm_c_benchmark = max(ratios) <= ARM_C_BENCHMARK[1]
 
     background_growth_result = asset_gate_art.check_background_growth(
         [cells[c] for c in FRAME_ORDER],
         background_index=0,
         max_growth_ratio=MAX_BACKGROUND_GROWTH_RATIO,
     )
-    return {
+    gates = {
         "frame_deltas": frame_deltas,
         "mechanical_gate_passed": mechanical_gate_passed,
-        "frame_delta_range": frame_delta_range,
         "beats_030_cap": beats_030_cap,
-        "beats_arm_c_benchmark": beats_arm_c_benchmark,
         "background_growth": {
             "counts": background_growth_result.details["counts"],
             "baseline": background_growth_result.details["baseline"],
@@ -456,6 +461,9 @@ def compute_sheet_gates(indexed: Image.Image) -> dict:
         },
         "passes_all_gates": bool(mechanical_gate_passed and background_growth_result.passed),
     }
+    # CHR-1 (T-0258): frame_delta_range/arm_c_benchmark/beats_arm_c_benchmark
+    # are derived and owned by the shared helper, not computed here.
+    return apply_arm_c_benchmark_fields(gates, ratios)
 
 
 def check_attempt_cap(attempt: int) -> None:
@@ -782,6 +790,7 @@ def run_attempt(
     frame_delta_range = gates["frame_delta_range"]
     beats_030_cap = gates["beats_030_cap"]
     beats_arm_c_benchmark = gates["beats_arm_c_benchmark"]
+    arm_c_benchmark = gates["arm_c_benchmark"]
 
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
@@ -894,7 +903,7 @@ def run_attempt(
         "frame_delta_range": frame_delta_range,
         "beats_030_cap": beats_030_cap,
         "beats_arm_c_benchmark": beats_arm_c_benchmark,
-        "arm_c_benchmark": list(ARM_C_BENCHMARK),
+        "arm_c_benchmark": arm_c_benchmark,
         "background_growth": gates["background_growth"],
         "passes_all_gates": gates["passes_all_gates"],
         "background_cutout_applied": True,

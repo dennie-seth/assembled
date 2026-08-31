@@ -48,6 +48,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -281,4 +282,66 @@ def write_provenance_sidecar(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
+
+
+#: Arm C's own measured frame-delta range (T-0230, deterministic seeded
+#: script) -- the tightest silhouette-delta result this pipeline has ever
+#: produced. `docs/board-invariants.md` CHR-1 (DL-25, PR #287) requires every
+#: character-generation output to record both its own frame-delta and a
+#: comparison against this pair; CHR-2 clarifies the comparison is recorded,
+#: not deciding -- the shipped winning arm (§24-e, T-0252) does not itself
+#: beat it. Before T-0258 this pair was hardcoded independently in
+#: `gen_hybrid_idle_T0252.py` and `gen_pose_authority_idle_T0249.py`
+#: (`gen_chained_idle_T0250.py` re-exported the latter) -- one shared home,
+#: imported everywhere, is the point of this module gaining it.
+ARM_C_BENCHMARK = (0.072, 0.112)
+
+#: The three CHR-1 fields `apply_arm_c_benchmark_fields` owns outright, same
+#: idiom as `_WRITER_OWNED_KEYS` above: a record's own values for these keys
+#: are discarded, not merged, so a caller cannot pass `beats_arm_c_benchmark
+#: =True` for a sheet whose measured ratios do not actually clear the bound.
+_ARM_C_BENCHMARK_OWNED_KEYS = ("frame_delta_range", "arm_c_benchmark", "beats_arm_c_benchmark")
+
+
+def apply_arm_c_benchmark_fields(record: dict, ratios: Sequence[float]) -> dict:
+    """Derive and attach CHR-1's frame-delta + Arm-C benchmark fields.
+
+    Callers pass the measured per-adjacent-frame silhouette-delta ratios
+    (one `asset_gate.art.check_frame_consistency` result's ``ratio`` per
+    adjacent-cell pair of a character sheet); this derives and sets:
+
+    - ``frame_delta_range``: ``[min(ratios), max(ratios)]``
+    - ``arm_c_benchmark``: the shared benchmark pair as a list (JSON has no
+      tuple type)
+    - ``beats_arm_c_benchmark``: whether the worst (max) ratio clears Arm
+      C's upper bound -- always derived from *ratios*, never trusted from
+      *record* (see ``_ARM_C_BENCHMARK_OWNED_KEYS``)
+
+    Args:
+        record: a dict to extend -- a provenance record in progress, or a
+            plain dict of gate results a caller merges into one later. Not
+            mutated; a new dict is returned.
+        ratios: the measured frame-delta ratios this sheet's own adjacent
+            frames produced. Must be non-empty.
+
+    Returns:
+        A new dict: *record* with the three owned keys set from *ratios*.
+
+    Raises:
+        ValueError: *ratios* is empty -- there is nothing to derive a range
+            or a comparison from.
+    """
+    if not ratios:
+        raise ValueError(
+            "ratios must be non-empty -- CHR-1's frame-delta range has nothing to derive from"
+        )
+
+    payload = dict(record)
+    for key in _ARM_C_BENCHMARK_OWNED_KEYS:
+        payload.pop(key, None)
+
+    payload["frame_delta_range"] = [min(ratios), max(ratios)]
+    payload["arm_c_benchmark"] = list(ARM_C_BENCHMARK)
+    payload["beats_arm_c_benchmark"] = max(ratios) <= ARM_C_BENCHMARK[1]
     return payload
