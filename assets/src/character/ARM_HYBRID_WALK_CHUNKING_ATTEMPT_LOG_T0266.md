@@ -133,36 +133,77 @@ frame is an independent txt2img sample with only the ControlNet skeleton
 pinned in common — and no per-pixel segmentation heuristic run *after*
 sampling can fix instability that happened *during* sampling.
 
+## Attempt 4 — the img2img chain fix, and a passing sheet
+
+The reviewer's second FAIL on this card named the untried structural
+lever directly: a true img2img frame-chain (VAEEncode the previous frame,
+denoise below 1.0), the same mechanism `gen_chained_idle_T0250.py`
+already proved for idle, not yet wired into this generator's own
+multi-frame loop. Implemented as `build_chained_graph` +
+`apply_background_hold` (both TDD'd RED then GREEN,
+`tests/test_gen_hybrid_walk_chained_T0266.py`, 6 tests, no GPU needed):
+frame 0 still samples fresh (`EmptyLatentImage`, denoise 1.0, a real
+independent generation, not a derived frame); frames 1-7 VAE-encode frame
+0's own decoded output as the KSampler's latent source at denoise=0.45,
+with this frame's own walk-gait skeleton still conditioning the
+ControlNet, then are background-held against frame 0 so only the figure
+region is allowed to vary.
+
+**Attempt 4 (seed 27182, denoise 0.45): frame-delta range 0.0337-0.2532
+— PASSES the 0.30 cap.** Driven to completion across two sequential
+foreground chunks (frames 0-3, then 4-7), exactly per the runbook, no
+`run_in_background`. GPU seconds 801.7. Visual inspection of the promoted
+sheet (`sheet_192x96_indexed.png`) confirms the fix: a single consistent
+character across all 8 cells, no panel-grid duplication, no per-frame
+background clutter, no costume-colour drift — the defect every prior
+attempt in this log diagnosed is gone.
+
+**Denoise was checked at two more points before promoting (attempts 5 and
+6, seed 27182, denoise 0.75 and 0.90) — both left incomplete
+deliberately** (chunk 1 / frames 0-3 only, never run through chunk 2 or
+the mechanical gate) once visual inspection answered the question they
+were run to ask: does raising denoise reveal more visible leg
+articulation? Cropping and zooming the leg region of frame 0 vs frame 2/4
+at all three denoise values (0.45/0.75/0.90) shows the same long-coat
+silhouette covering the legs in every case, with no visible stride
+change — and comparing against attempt 3's own independent-sampling
+frames (which *do* show some leg separation, but inside wildly
+inconsistent, gate-failing costume/background) confirms this is a
+costume-design characteristic (the coat visually obscures the legs
+regardless of the underlying skeleton pose), not a chaining artifact or a
+denoise-tuning problem. Attempt 4 — the lowest denoise tried, and the
+only one of the three driven to full completion and through the gate —
+is the promoted result; spending more of the DL-21 cap chasing leg
+visibility the costume itself forecloses would not be a good use of the
+2 attempts (7, 8) now remaining.
+
 ## What this means for T-0266's own "end state is a committed sheet" criterion
 
-No attempt (1, 2, or 3) can be honestly promoted: `promote_attempt` (and
-this card's own instruction to leave "the existing gate applies unchanged")
-correctly refuses a `mechanical_gate_passed: false` attempt, and this log
-is not going to route around that by hand-editing a provenance file or
-weakening the gate. `assets/final/character/player_walk_sheet_hybrid.png`
-does not exist on this branch, and
-`tests/test_player_walk_hybrid_T0259_gate.py` (ported onto this branch RED,
-per its own documented RED/GREEN states) stays RED — exactly as its own
-docstring says it will until a real passing sheet exists.
+`assets/final/character/player_walk_sheet_hybrid.png` and its
+`.provenance.json` sidecar are now committed on this branch (attempt 4,
+promoted). `tests/test_player_walk_hybrid_T0259_gate.py`'s module-level
+skip (added when no sheet existed, see the 2026-08-31 run 2 validation
+note) now self-activates to GREEN — all 36 of its tests pass against the
+real, promoted sheet, not a stub. CHR-1's fields
+(`frame_delta_range`/`arm_c_benchmark`/`beats_arm_c_benchmark`) are
+present via `apply_arm_c_benchmark_fields` (T-0258's shared helper,
+unchanged), true-RGBA (mode P + `tRNS`) matches every other promoted
+sheet's own convention, and `concept_hash` + `identity_lora_provenance`
+resolve to committed files (P-7). **DL-21 criterion 1** (silhouette
+readable at 40px, in motion — a human call) is explicitly out of this
+card's scope, same as every other arm's own promoted-but-criterion-1-
+pending sheet before it (Arm B, Arm C, T-0250, T-0252); this log's own
+denoise comparison above is evidence for that future human read, not a
+substitute for it.
 
-What **is** committed and green on this branch: `char_gen.chunked_frames`
-(15 tests), the wiring test proving `gen_hybrid_walk_T0259.run_attempt`
-actually resumes and completes with no GPU required for the test itself (4
-tests), the identity-reference-crop fix and its own 3 tests (a real,
-verified improvement — it eliminated the panel-grid-duplication failure
-mode entirely), and three real-generation attempt records as evidence the
-chunking mechanism works against the live host end to end. The remaining
-gap — getting a walk sheet that actually passes the frame-consistency
-gate — is now narrower and better-characterised than when this card
-started, but is still real generation R&D: per-frame KSampler colour/
-costume instability that no post-processing segmentation can mask. 5 of
-the DL-21 8-attempt cap remain for T-0259 to continue with, informed by
-this diagnosis — the two levers this log has *not* yet tried are (a) a
-true img2img frame-chain (VAEEncode the previous frame, denoise well below
-1.0, so each frame is perturbed from a shared starting point instead of
-independently sampled from pure noise — `gen_chained_idle_T0250.py`'s own
-`apply_background_hold` machinery is the precedent, currently used only
-for idle's single-frame derivation, not wired into any multi-frame
-txt2img loop) or (b) raising `identity_lora_weight`/`ipadapter_weight`
-now that the crop fix means IP-Adapter is no longer competing against its
-own reference's grid structure.
+What is committed and green on this branch: `char_gen.chunked_frames`
+(15 tests, the shared resume/chunk infrastructure HIDE/ACTION also
+inherit), the wiring test proving `gen_hybrid_walk_T0259.run_attempt`
+actually resumes and completes with no GPU required for the test itself
+(4 tests), the identity-reference-crop fix and its own 3 tests, the
+img2img-chain fix and its own 6 tests, and 6 real-generation attempt
+records (4 complete, 2 deliberately partial) as evidence the chunking
+mechanism and the chain fix both work against the live host end to end.
+6 of the DL-21 8-attempt cap are now used; 2 remain for T-0259 to
+continue with if a future card wants to pursue leg-visibility further
+(most likely a costume-silhouette change, not another denoise sweep).
