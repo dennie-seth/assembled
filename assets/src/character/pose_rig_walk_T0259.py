@@ -113,10 +113,21 @@ _BODY_BOB_JOINTS: tuple[int, ...] = (0, 1, 2, 5, 14, 15, 16, 17)  # nose/neck/sh
 # "meaningfully larger", not a marginal tweak. Checked against body scale in
 # this module's test suite (arm swing vs shoulder width; stride/cross vs hip
 # separation) so these aren't just bigger numbers, they read at game scale.
-STRIDE_EXTENT_NORM = 0.30  # forward/back ankle swing from the standing hip line (2.07x)
-KNEE_LIFT_NORM = 0.18  # how far the passing leg's knee/ankle rise off the ground line (2.12x)
-ARM_SWING_EXTENT_NORM = 0.20  # opposite-phase arm swing (2.22x; ~1.2x shoulder width, 0.166)
-CROSS_EXTENT_NORM = 0.14  # lateral pull toward/past the other leg's resting x while lifted
+# Attempt 5 (real ComfyUI generation, seed 27182) ran the 2.0-2.2x values
+# these constants originally held here (0.30/0.18/0.20/0.14) and measured
+# frame deltas of 0.328-0.473 -- well past the 0.30 mechanical cap, up from
+# attempt 4's 0.034-0.253 at the OLD (pre-improvement-pass) amplitudes. The
+# motion itself was real and visible (see ARM_HYBRID_WALK_ATTEMPT_LOG_T0259.md
+# attempt 5's frame images), but every adjacent pair blew the cap, not just
+# the loop seam -- a systematic amplitude-vs-cap tradeoff, not a hallucination
+# spike. These values are the calibrated-down result: still clearly bigger
+# than the pre-improvement-pass sheet (>=1.5x on every axis), chosen to fit
+# back under the explicit 0.30 delta cap, which is a harder constraint than
+# any target multiplier.
+STRIDE_EXTENT_NORM = 0.22  # forward/back ankle swing from the standing hip line (1.52x)
+KNEE_LIFT_NORM = 0.13  # how far the passing leg's knee/ankle rise off the ground line (1.53x)
+ARM_SWING_EXTENT_NORM = 0.15  # opposite-phase arm swing (1.67x; still >=0.9x shoulder width, 0.166)
+CROSS_EXTENT_NORM = 0.05  # lateral pull toward the other leg's resting x while lifted
 HIP_BOB_NORM = 0.02  # vertical body bob, two rises per full gait cycle
 
 

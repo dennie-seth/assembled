@@ -39,3 +39,4 @@ identity keyframe generated first, rather than reskinning the front view." Per t
 acceptance criteria, this is reported as a finding rather than forced or faked (no squash/shear/
 mirror of the front view was attempted) -- the profile view is out of scope for T-0259 and should
 be its own card if wanted, seeded by this finding.
+| 5 | 27182 | 0.3283-0.4732 | FAIL | no | 819.9 | no | T-0259 improvement pass: frame-0 contact pose fix + wider stride/knee/arm amplitudes + leg cross, front-facing (profile probed and reported as its own finding) |
