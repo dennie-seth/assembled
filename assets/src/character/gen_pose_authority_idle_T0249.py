@@ -68,6 +68,14 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "asset-gate" / "src"))
+# comfy-client is not a declared dependency of this package's pyproject.toml
+# (char-gen only lists pillow/numpy) -- same informal sys.path convention
+# already used for asset-gate above, not a formal pip dependency, per
+# gen_idle_v2_diffusers.py's existing precedent. See CHR-1 (T-0258): the
+# shared ARM_C_BENCHMARK constant + apply_arm_c_benchmark_fields helper live
+# in comfy_client.provenance_sidecar, the established home for this pipeline's
+# other shared provenance surface.
+sys.path.insert(0, str(REPO_ROOT / "tools" / "comfy-client" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -75,6 +83,13 @@ import pose_rig_T0249  # noqa: E402
 from asset_gate import art as asset_gate_art  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
+from comfy_client.provenance_sidecar import (  # noqa: E402
+    # Not referenced directly below -- gen_chained_idle_T0250.py re-exports this
+    # as `pose_authority.ARM_C_BENCHMARK` (any module-level name is an attribute
+    # of the module, import or assignment alike).
+    ARM_C_BENCHMARK,  # noqa: F401
+    apply_arm_c_benchmark_fields,
+)
 
 # Reused directly from Arm A (T-0228) -- checkpoint/ControlNet identifiers,
 # HTTP client helpers, and the §3.1 descent chain are unchanged; only the
@@ -126,7 +141,9 @@ FRAME_COUNT = 9
 FRAME_ORDER: list[tuple[int, int]] = [(r, c) for r in range(3) for c in range(3)]  # row-major
 
 MAX_FRAME_DELTA_RATIO = 0.30  # round-2 rule: same 0.30 cap as round 1 (DL-21 criterion 2)
-ARM_C_BENCHMARK = (0.072, 0.112)  # the real bar to beat, not the pass/fail floor
+# ARM_C_BENCHMARK: the real bar to beat, not the pass/fail floor -- imported
+# above from comfy_client.provenance_sidecar (CHR-1's single shared home,
+# T-0258), not redefined here.
 
 RIG_GENERALIZATION_EVIDENCE_PATH = (
     REPO_ROOT / "assets" / "src" / "character" / "pose_rig_move_evidence_T0249.json"
@@ -562,9 +579,10 @@ def run_attempt(
         )
     mechanical_gate_passed = all(d["passed"] for d in frame_deltas)
     ratios = [d["ratio"] for d in frame_deltas]
-    frame_delta_range = [min(ratios), max(ratios)]
     beats_030_cap = max(ratios) <= MAX_FRAME_DELTA_RATIO
-    beats_arm_c_benchmark = max(ratios) <= ARM_C_BENCHMARK[1]
+    arm_c_fields = apply_arm_c_benchmark_fields({}, ratios)
+    frame_delta_range = arm_c_fields["frame_delta_range"]
+    beats_arm_c_benchmark = arm_c_fields["beats_arm_c_benchmark"]
 
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
@@ -636,7 +654,7 @@ def run_attempt(
         "frame_delta_range": frame_delta_range,
         "beats_030_cap": beats_030_cap,
         "beats_arm_c_benchmark": beats_arm_c_benchmark,
-        "arm_c_benchmark": list(ARM_C_BENCHMARK),
+        "arm_c_benchmark": arm_c_fields["arm_c_benchmark"],
         "layout": {
             "sheet_px": [SHEET_PX, SHEET_PX],
             "cell_px": FINAL_CELL_PX,
