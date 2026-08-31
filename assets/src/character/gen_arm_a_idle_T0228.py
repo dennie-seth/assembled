@@ -76,6 +76,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from asset_gate import art as asset_gate_art  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
+
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 COMFYUI_HOST = "172.18.192.1"
