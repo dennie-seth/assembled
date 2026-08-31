@@ -176,6 +176,19 @@ SHEET_H = FINAL_CELL_PX * ROWS  # 96
 # exact fit for 8 frames -- see this card's own note on layout choice).
 FRAME_CELLS: list[tuple[int, int]] = [(r, c) for r in range(ROWS) for c in range(COLS)]
 
+# IP-Adapter identity reference crop (T-0266 recipe finding). The full
+# concept sheet (assets/src/concept/player_character_concept_sheet_v1.png,
+# T-0209) is a ~24-panel costume/turnaround grid, not a single clean
+# identity image. Attempts 1-2 fed that WHOLE grid into IPAdapterAdvanced;
+# visual inspection of the raw frames showed each independently-sampled
+# frame partially reproducing the grid's own panel/gutter structure (a
+# duplicated prop-like shape recurring per quadrant) -- IP-Adapter's
+# image-level conditioning leaking the sheet's own layout, which text
+# negative prompting cannot reach. This box crops out one clean front-on
+# panel (green coat, front view -- row 3, column 1 of the sheet) so
+# IP-Adapter conditions on the character alone.
+IDENTITY_REFERENCE_CROP_BOX = (8, 298, 195, 498)  # left, upper, right, lower
+
 MAX_FRAME_DELTA_RATIO = 0.30  # same cap every round-2 arm uses (DL-21 criterion 2)
 # The Arm-C benchmark pair itself is derived by apply_arm_c_benchmark_fields
 # (comfy_client.provenance_sidecar, CHR-1's single shared home, T-0258).
@@ -357,6 +370,16 @@ def build_graph(
         "inputs": {"filename_prefix": "hybrid_walk_T0259_cell_48", "images": [DESCENT_NODE_ID, 0]},
     }
     return g
+
+
+def crop_identity_reference(concept_sheet_path: Path, dest_path: Path) -> Path:
+    """Crop the full concept-sheet turnaround grid down to one clean
+    front-on panel (`IDENTITY_REFERENCE_CROP_BOX`) and write it to
+    `dest_path` -- this crop, not the full sheet, is what gets uploaded to
+    ComfyUI and fed to IPAdapterAdvanced. See the T-0266 recipe finding
+    above `IDENTITY_REFERENCE_CROP_BOX` for why."""
+    Image.open(concept_sheet_path).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX).save(dest_path)
+    return dest_path
 
 
 def check_attempt_cap(attempt: int) -> None:
@@ -542,7 +565,9 @@ def run_attempt(
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_walk" / f"attempt_{attempt}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    concept_filename = upload_image(CONCEPT_SHEET_PATH)
+    identity_reference_path = out_dir / "identity_reference_crop.png"
+    crop_identity_reference(CONCEPT_SHEET_PATH, identity_reference_path)
+    concept_filename = upload_image(identity_reference_path)
 
     def generate_frame(frame_index: int) -> None:
         _generate_one_frame(
@@ -711,6 +736,14 @@ def run_attempt(
         "concept_hash": concept_hash,
         "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
         "concept_card": "T-0209",
+        "ip_adapter_reference_crop_box": list(IDENTITY_REFERENCE_CROP_BOX),
+        "ip_adapter_reference_note": (
+            "IP-Adapter is fed a crop of the concept sheet (IDENTITY_REFERENCE_CROP_BOX, one "
+            "clean front-on panel), not the full ~24-panel turnaround grid -- T-0266 recipe "
+            "finding: the full grid's own panel/gutter structure leaked into independently-"
+            "sampled frames via IP-Adapter's image-level conditioning, driving attempts 1-2's "
+            "frame deltas past the 0.30 cap"
+        ),
         "frame_generation": frame_records,
         "method": (
             "pose_rig_walk_T0259 derives 18-keypoint COCO walk-gait frame keypoints "
