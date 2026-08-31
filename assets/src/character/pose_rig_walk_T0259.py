@@ -127,7 +127,15 @@ _BODY_BOB_JOINTS: tuple[int, ...] = (0, 1, 2, 5, 14, 15, 16, 17)  # nose/neck/sh
 STRIDE_EXTENT_NORM = 0.22  # forward/back ankle swing from the standing hip line (1.52x)
 KNEE_LIFT_NORM = 0.13  # how far the passing leg's knee/ankle rise off the ground line (1.53x)
 ARM_SWING_EXTENT_NORM = 0.15  # opposite-phase arm swing (1.67x; still >=0.9x shoulder width, 0.166)
-CROSS_EXTENT_NORM = 0.05  # lateral pull toward the other leg's resting x while lifted
+# Attempts 6-7 (real ComfyUI generation, seed 27182) showed the recoil->
+# passing transition (where this term ramps in) as the specific remaining
+# source of over-cap deltas, even after STRIDE/KNEE/ARM were calibrated
+# down (attempt 6: 0.212-0.375; attempt 7, denoise also lowered 0.45->0.30:
+# 0.161-0.340, only the recoil->passing pairs still over). Calibrated down
+# further to a small nudge -- real, but a narrowing rather than a full
+# cross -- rather than removed outright, so passing still reads as the two
+# ankles coming closer together instead of no lateral pull at all.
+CROSS_EXTENT_NORM = 0.02  # lateral pull toward the other leg's resting x while lifted
 HIP_BOB_NORM = 0.02  # vertical body bob, two rises per full gait cycle
 
 
