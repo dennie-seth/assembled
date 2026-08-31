@@ -94,7 +94,6 @@ import gen_pose_authority_idle_T0249 as pose_authority  # noqa: E402
 import pose_rig_T0249  # noqa: E402
 from asset_gate import art as asset_gate_art  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
-from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 from comfy_client.provenance_sidecar import apply_arm_c_benchmark_fields  # noqa: E402
 from gen_arm_a_idle_T0228 import (  # noqa: E402
     CHECKPOINT,
@@ -115,6 +114,8 @@ from gen_arm_a_idle_T0228 import (  # noqa: E402
     upload_image,
     wait_for_completion,
 )
+
+from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 IDENTITY_LORA_NAME = pose_authority.IDENTITY_LORA_NAME
 IDENTITY_LORA_PATH = pose_authority.IDENTITY_LORA_PATH

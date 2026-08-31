@@ -76,7 +76,8 @@ const PYTHON_PACKAGE_ROOTS = [
   "assets/src/audio/",
   "assets/src/lora/",
   "assets/src/tiles/",
-  "assets/src/ambience_synth/"
+  "assets/src/ambience_synth/",
+  "assets/src/character/"
 ];
 
 function detectChangedGodotTests(changedPaths) {

@@ -45,19 +45,36 @@ read as the same character as this sheet" is a checkable claim, and is the
 sheet a human (or this script's own curation pass, via the Read tool) holds
 the generated walk frames against before promoting an attempt.
 
+**Chunked and resumable (T-0266).** Measured per-frame cost from real
+ComfyUI history is ~100s/frame (95.2s, 100.4s, 118.0s), so an 8-frame sheet
+is ~14 minutes -- longer than a single foreground shell call's 10-minute
+cap. This script generates at most `--max-frames` frames per invocation
+(default `char_gen.chunked_frames.DEFAULT_MAX_FRAMES`, derived from that
+measured cost) and skips any frame already complete on disk, via the
+shared `char_gen.chunked_frames` module every §24-e per-frame generator
+uses. **Drive a sheet to completion with sequential foreground calls of
+the identical command, inside one implementer session** -- never
+`run_in_background: true` followed by ending the turn; the background
+child is torn down with the session and orphans the run mid-sheet with no
+resume logic reachable from outside that session (this is exactly how
+T-0259 got stuck at signature `3f1568f9...` twice). Each call prints
+whether the sheet is complete yet; re-run the same command until it is.
+
 Usage (from the repo root, against the WSL2->Windows ComfyUI host, after
 player_identity_v2.safetensors -- T-0248 -- is loadable by ComfyUI's
 LoraLoader):
     python3 assets/src/character/gen_hybrid_walk_T0259.py --attempt 1 --seed 31416
+    python3 assets/src/character/gen_hybrid_walk_T0259.py --attempt 1 --seed 31416  # resume
     python3 assets/src/character/gen_hybrid_walk_T0259.py --attempt 1 --promote-attempt 1
 
 Writes (always, so every attempt is logged whether it passes or not):
     assets/out/hybrid_walk/attempt_<N>/frame_<i>_pose_skeleton_384.png  (x8)
     assets/out/hybrid_walk/attempt_<N>/frame_<i>_keypoints.json         (x8)
     assets/out/hybrid_walk/attempt_<N>/frame_<i>_main_384.png           (x8)
+    assets/out/hybrid_walk/attempt_<N>/frame_<i>_meta.json              (x8, resume bookkeeping)
     assets/out/hybrid_walk/attempt_<N>/sheet_192x96_indexed.png
     assets/out/hybrid_walk/attempt_<N>/provenance_candidate.json
-    assets/src/character/ARM_HYBRID_WALK_ATTEMPT_LOG_T0259.md (appended)
+    assets/src/character/ARM_HYBRID_WALK_ATTEMPT_LOG_T0259.md (appended, once complete)
 
 Promotion to assets/final/character/ (only for an attempt whose mechanical
 gate passes) is a separate, explicit step -- a discarded attempt's bytes
@@ -71,6 +88,7 @@ on a fresh clone.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 import time
@@ -127,7 +145,9 @@ from gen_chained_idle_T0250 import (  # noqa: E402
     BACKGROUND_MASK_MARGIN_FRAC,
     CUTOUT_METHOD_DESCRIPTION,
     CUTOUT_OKLAB_TOLERANCE,
+    apply_background_hold,
     apply_cutout_masks,
+    background_hold_mask,
     cutout_foreground_mask,
     downscale_mask,
 )
@@ -142,6 +162,7 @@ from gen_pose_authority_idle_T0249 import (  # noqa: E402
 )
 from gen_pose_authority_idle_T0249 import MAIN_NEGATIVE as IDLE_MAIN_NEGATIVE  # noqa: E402
 
+from char_gen import chunked_frames  # noqa: E402
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
@@ -158,9 +179,28 @@ SHEET_H = FINAL_CELL_PX * ROWS  # 96
 # exact fit for 8 frames -- see this card's own note on layout choice).
 FRAME_CELLS: list[tuple[int, int]] = [(r, c) for r in range(ROWS) for c in range(COLS)]
 
+# IP-Adapter identity reference crop (T-0266 recipe finding). The full
+# concept sheet (assets/src/concept/player_character_concept_sheet_v1.png,
+# T-0209) is a ~24-panel costume/turnaround grid, not a single clean
+# identity image. Attempts 1-2 fed that WHOLE grid into IPAdapterAdvanced;
+# visual inspection of the raw frames showed each independently-sampled
+# frame partially reproducing the grid's own panel/gutter structure (a
+# duplicated prop-like shape recurring per quadrant) -- IP-Adapter's
+# image-level conditioning leaking the sheet's own layout, which text
+# negative prompting cannot reach. This box crops out one clean front-on
+# panel (green coat, front view -- row 3, column 1 of the sheet) so
+# IP-Adapter conditions on the character alone.
+IDENTITY_REFERENCE_CROP_BOX = (8, 298, 195, 498)  # left, upper, right, lower
+
 MAX_FRAME_DELTA_RATIO = 0.30  # same cap every round-2 arm uses (DL-21 criterion 2)
 # The Arm-C benchmark pair itself is derived by apply_arm_c_benchmark_fields
 # (comfy_client.provenance_sidecar, CHR-1's single shared home, T-0258).
+
+# The two *output* files that make a frame complete, per char_gen.chunked_frames'
+# contract -- deliberately excludes frame_{i}_keypoints.json/frame_{i}_pose_skeleton_384.png
+# (that frame's *inputs*, written before generation) so a frame killed after its inputs
+# landed but before ComfyUI returned is always regenerated, never skipped (T-0259's defect).
+REQUIRED_OUTPUT_NAMES = ("frame_{i}_main_384.png", "frame_{i}_cell_48_raw.png")
 
 WALK_PROMPT = (
     f"{TRIGGER_TOKEN}, pixel art walk cycle animation frame, single figure mid-stride walking, "
@@ -190,6 +230,20 @@ VAE_DECODE_NODE_ID = "22"
 MAIN_SAVE_NODE_ID = "23"
 DESCENT_NODE_ID = "24"
 CELL_SAVE_NODE_ID = "25"
+# img2img chain nodes (T-0266) -- only present on frames 1+'s submitted
+# graph, in place of LATENT_NODE_ID. Same ids gen_chained_idle_T0250 uses
+# for the analogous nodes on its own graph.
+INIT_IMAGE_NODE_ID = "30"
+VAE_ENCODE_NODE_ID = "31"
+
+# Default denoise for the img2img chain (T-0266, iter 3). Idle's own chained
+# arm (T-0250) settled on 0.15-0.30 for a near-static breathing pose; a walk
+# gait swings limbs through a much larger structural change frame to frame,
+# so a higher value is chosen here to leave the sampler enough of the
+# schedule to actually relocate limbs against the ControlNet skeleton rather
+# than being biased toward frame 0's own pose. Not yet swept -- first real
+# attempt at this value, adjust per its own attempt-log result.
+DEFAULT_DENOISE = 0.45
 
 
 def build_graph(
@@ -335,6 +389,64 @@ def build_graph(
     return g
 
 
+def build_chained_graph(
+    seed: int,
+    concept_filename: str,
+    pose_skeleton_filename: str,
+    init_image_filename: str,
+    denoise: float,
+    controlnet_strength: float,
+    controlnet_end: float,
+    ipadapter_weight: float,
+    style_lora_weight: float,
+    identity_lora_weight: float,
+    *,
+    identity_lora_name: str = IDENTITY_LORA_NAME,
+) -> dict:
+    """Frame 1+ of the img2img chain (T-0266): reuses `build_graph` unchanged
+    for every node except the latent source -- `EmptyLatentImage` swapped for
+    `VAEEncode` of frame 0's own decoded output, denoise lowered from 1.0.
+    Same pattern as `gen_chained_idle_T0250.build_chained_graph`, applied to
+    this module's own graph (which additionally carries IP-Adapter/identity
+    LoRA, absent from pose_authority's)."""
+    g = build_graph(
+        seed=seed,
+        concept_filename=concept_filename,
+        pose_skeleton_filename=pose_skeleton_filename,
+        controlnet_strength=controlnet_strength,
+        controlnet_end=controlnet_end,
+        ipadapter_weight=ipadapter_weight,
+        style_lora_weight=style_lora_weight,
+        identity_lora_weight=identity_lora_weight,
+        identity_lora_name=identity_lora_name,
+    )
+    del g[LATENT_NODE_ID]
+    g[INIT_IMAGE_NODE_ID] = {
+        "class_type": "LoadImage",
+        "inputs": {"image": init_image_filename},
+    }
+    g[VAE_ENCODE_NODE_ID] = {
+        "class_type": "VAEEncode",
+        "inputs": {
+            "pixels": [INIT_IMAGE_NODE_ID, 0],
+            "vae": [CHECKPOINT_NODE_ID, 2],
+        },
+    }
+    g[SAMPLER_NODE_ID]["inputs"]["latent_image"] = [VAE_ENCODE_NODE_ID, 0]
+    g[SAMPLER_NODE_ID]["inputs"]["denoise"] = denoise
+    return g
+
+
+def crop_identity_reference(concept_sheet_path: Path, dest_path: Path) -> Path:
+    """Crop the full concept-sheet turnaround grid down to one clean
+    front-on panel (`IDENTITY_REFERENCE_CROP_BOX`) and write it to
+    `dest_path` -- this crop, not the full sheet, is what gets uploaded to
+    ComfyUI and fed to IPAdapterAdvanced. See the T-0266 recipe finding
+    above `IDENTITY_REFERENCE_CROP_BOX` for why."""
+    Image.open(concept_sheet_path).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX).save(dest_path)
+    return dest_path
+
+
 def check_attempt_cap(attempt: int) -> None:
     if not (1 <= attempt <= 8):
         raise SystemExit("attempt cap is 8 per round (DL-21) -- refusing to run a 9th attempt")
@@ -417,6 +529,119 @@ def promote_attempt(out_dir: Path, provenance: dict) -> None:
     FINAL_PROVENANCE_PATH.write_text(json.dumps(promoted, indent=2) + "\n")
 
 
+def _generate_one_frame(
+    *,
+    out_dir: Path,
+    frame_index: int,
+    seed: int,
+    concept_filename: str,
+    controlnet_strength: float,
+    controlnet_end: float,
+    ipadapter_weight: float,
+    style_lora_weight: float,
+    identity_lora_weight: float,
+    denoise: float,
+) -> None:
+    """The `generate_frame(i)` callback `char_gen.chunked_frames.run_chunk`
+    calls for one frame: writes this frame's inputs (skeleton PNG,
+    keypoints JSON), submits the full §24-e stack to ComfyUI, and writes
+    its two required outputs plus a small `_meta.json` sidecar carrying the
+    one piece of per-frame state that cannot be re-derived from disk on a
+    later, separate invocation (the ComfyUI prompt id + generation time).
+
+    Frame 0 is a fresh independent sample (`build_graph`, `EmptyLatentImage`,
+    denoise fixed at 1.0). Frames 1+ (T-0266 img2img chain) are an img2img
+    pass anchored to frame 0's own decoded output (`build_chained_graph`,
+    `VAEEncode`, this `denoise`), with the decoded result background-held
+    against frame 0 so noise/clutter cannot compound or vary across frames
+    -- see `gen_chained_idle_T0250.apply_background_hold`, the same
+    mechanism used unchanged here.
+    """
+    points = pose_rig_walk_T0259.walk_keypoints_for_frame(frame_index, FRAME_COUNT)
+    skeleton_img = pose_rig_walk_T0259.render_pose_frame(points, GEN_PX)
+    skeleton_path = out_dir / f"frame_{frame_index}_pose_skeleton_384.png"
+    skeleton_img.save(skeleton_path)
+
+    keypoints_path = out_dir / f"frame_{frame_index}_keypoints.json"
+    keypoints_path.write_text(
+        json.dumps(pose_rig_walk_T0259.keypoints_to_coco_list(points), indent=2) + "\n"
+    )
+
+    skeleton_filename = upload_image(skeleton_path)
+
+    if frame_index == 0:
+        graph = build_graph(
+            seed=seed,
+            concept_filename=concept_filename,
+            pose_skeleton_filename=skeleton_filename,
+            controlnet_strength=controlnet_strength,
+            controlnet_end=controlnet_end,
+            ipadapter_weight=ipadapter_weight,
+            style_lora_weight=style_lora_weight,
+            identity_lora_weight=identity_lora_weight,
+        )
+    else:
+        frame0_main_path = out_dir / "frame_0_main_384.png"
+        init_image_filename = upload_image(frame0_main_path)
+        graph = build_chained_graph(
+            seed=seed,
+            concept_filename=concept_filename,
+            pose_skeleton_filename=skeleton_filename,
+            init_image_filename=init_image_filename,
+            denoise=denoise,
+            controlnet_strength=controlnet_strength,
+            controlnet_end=controlnet_end,
+            ipadapter_weight=ipadapter_weight,
+            style_lora_weight=style_lora_weight,
+            identity_lora_weight=identity_lora_weight,
+        )
+
+    frame_t0 = time.monotonic()
+    prompt_id = submit_prompt(graph)
+    info = wait_for_completion(prompt_id, timeout_s=300)
+    generation_seconds = time.monotonic() - frame_t0
+
+    main_bytes = fetch_save_image(info, MAIN_SAVE_NODE_ID)
+
+    if frame_index == 0:
+        cell_bytes = fetch_save_image(info, CELL_SAVE_NODE_ID)
+        (out_dir / f"frame_{frame_index}_main_384.png").write_bytes(main_bytes)
+        (out_dir / f"frame_{frame_index}_cell_48_raw.png").write_bytes(cell_bytes)
+    else:
+        # Background hold happens in pixel space, after decode -- see
+        # apply_background_hold's docstring for why. ComfyUI's own
+        # CELL_SAVE_NODE_ID descent ran on the pre-hold sampled image, so it
+        # would silently reintroduce the noise the hold removes; the cell is
+        # instead locally area-descended from the held image below.
+        raw_sampled_path = out_dir / f"frame_{frame_index}_main_384_raw_sampled.png"
+        raw_sampled_path.write_bytes(main_bytes)
+        sampled_img = Image.open(io.BytesIO(main_bytes)).convert("RGB")
+        frame0_main_img = Image.open(out_dir / "frame_0_main_384.png").convert("RGB")
+        mask = background_hold_mask(points, GEN_PX)
+        mask.save(out_dir / f"frame_{frame_index}_background_hold_mask.png")
+        held_img = apply_background_hold(sampled_img, frame0_main_img, mask)
+        held_img.save(out_dir / f"frame_{frame_index}_main_384.png")
+        cell_img = held_img.resize((FINAL_CELL_PX, FINAL_CELL_PX), Image.Resampling.BOX)
+        cell_img.save(out_dir / f"frame_{frame_index}_cell_48_raw.png")
+
+    generation_mode = "fresh" if frame_index == 0 else "img2img_chained"
+    chained_from_frame = None if frame_index == 0 else 0
+    frame_denoise = 1.0 if frame_index == 0 else denoise
+    (out_dir / f"frame_{frame_index}_meta.json").write_text(
+        json.dumps(
+            {
+                "comfyui_prompt_id": prompt_id,
+                "generation_seconds": generation_seconds,
+                "generation_mode": generation_mode,
+                "chained_from_frame": chained_from_frame,
+                "denoise": frame_denoise,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
 def run_attempt(
     attempt: int,
     seed: int,
@@ -425,7 +650,19 @@ def run_attempt(
     ipadapter_weight: float,
     style_lora_weight: float,
     identity_lora_weight: float,
-) -> dict:
+    max_frames: int = chunked_frames.DEFAULT_MAX_FRAMES,
+    denoise: float = DEFAULT_DENOISE,
+) -> dict | None:
+    """Generate up to `max_frames` still-incomplete frames of this attempt,
+    then, only once every frame is complete, assemble the sheet and return
+    its provenance candidate. Returns None when the sheet is not yet
+    complete -- callers (this module's own `main`, or a script driving
+    sequential foreground chunks) re-invoke with identical arguments until
+    a dict comes back. See `char_gen.chunked_frames` for the resume/chunk
+    contract this relies on.
+    """
+    if not (0.0 < denoise < 1.0):
+        raise ValueError(f"denoise must be in (0, 1) -- got {denoise}")
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
 
@@ -452,46 +689,59 @@ def run_attempt(
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_walk" / f"attempt_{attempt}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    t0 = time.monotonic()
-    concept_filename = upload_image(CONCEPT_SHEET_PATH)
+    identity_reference_path = out_dir / "identity_reference_crop.png"
+    crop_identity_reference(CONCEPT_SHEET_PATH, identity_reference_path)
+    concept_filename = upload_image(identity_reference_path)
 
+    def generate_frame(frame_index: int) -> None:
+        _generate_one_frame(
+            out_dir=out_dir,
+            frame_index=frame_index,
+            seed=seed,
+            concept_filename=concept_filename,
+            controlnet_strength=controlnet_strength,
+            controlnet_end=controlnet_end,
+            ipadapter_weight=ipadapter_weight,
+            style_lora_weight=style_lora_weight,
+            identity_lora_weight=identity_lora_weight,
+            denoise=denoise,
+        )
+
+    chunk_result = chunked_frames.run_chunk(
+        out_dir=out_dir,
+        frame_indices=range(FRAME_COUNT),
+        required_names=REQUIRED_OUTPUT_NAMES,
+        max_frames=max_frames,
+        generate_frame=generate_frame,
+    )
+    print(
+        f"attempt {attempt}: generated {chunk_result.generated}, "
+        f"skipped (already complete) {chunk_result.skipped}, "
+        f"remaining {chunk_result.remaining}"
+    )
+    if not chunk_result.complete:
+        return None
+
+    # Every frame is complete on disk -- assemble by READING every frame's
+    # outputs back, never from this invocation's own in-memory state, since
+    # most frames were very likely generated by an earlier, separate
+    # foreground invocation.
+    gpu_seconds = 0.0
     frame_records = []
     prompt_ids = []
     raw_cells: dict[tuple[int, int], Image.Image] = {}
     fg_masks: dict[tuple[int, int], object] = {}
 
     for i, cell in enumerate(FRAME_CELLS):
-        points = pose_rig_walk_T0259.walk_keypoints_for_frame(i, FRAME_COUNT)
-        skeleton_img = pose_rig_walk_T0259.render_pose_frame(points, GEN_PX)
-        skeleton_path = out_dir / f"frame_{i}_pose_skeleton_384.png"
-        skeleton_img.save(skeleton_path)
-
         keypoints_path = out_dir / f"frame_{i}_keypoints.json"
-        keypoints_path.write_text(
-            json.dumps(pose_rig_walk_T0259.keypoints_to_coco_list(points), indent=2) + "\n"
-        )
-
-        skeleton_filename = upload_image(skeleton_path)
-        graph = build_graph(
-            seed=seed,
-            concept_filename=concept_filename,
-            pose_skeleton_filename=skeleton_filename,
-            controlnet_strength=controlnet_strength,
-            controlnet_end=controlnet_end,
-            ipadapter_weight=ipadapter_weight,
-            style_lora_weight=style_lora_weight,
-            identity_lora_weight=identity_lora_weight,
-        )
-        prompt_id = submit_prompt(graph)
-        info = wait_for_completion(prompt_id, timeout_s=300)
-        prompt_ids.append(prompt_id)
-
-        main_bytes = fetch_save_image(info, MAIN_SAVE_NODE_ID)
-        cell_bytes = fetch_save_image(info, CELL_SAVE_NODE_ID)
+        skeleton_path = out_dir / f"frame_{i}_pose_skeleton_384.png"
         main_path = out_dir / f"frame_{i}_main_384.png"
-        main_path.write_bytes(main_bytes)
         cell_raw_path = out_dir / f"frame_{i}_cell_48_raw.png"
-        cell_raw_path.write_bytes(cell_bytes)
+        meta = json.loads((out_dir / f"frame_{i}_meta.json").read_text())
+        points = pose_rig_walk_T0259.walk_keypoints_for_frame(i, FRAME_COUNT)
+
+        prompt_ids.append(meta["comfyui_prompt_id"])
+        gpu_seconds += meta["generation_seconds"]
 
         raw_cells[cell] = Image.open(cell_raw_path).convert("RGB")
         main_img = Image.open(main_path).convert("RGB")
@@ -506,17 +756,18 @@ def run_attempt(
             {
                 "frame_index": i,
                 "cell": list(cell),
-                "comfyui_prompt_id": prompt_id,
+                "comfyui_prompt_id": meta["comfyui_prompt_id"],
                 "pose_keypoints_file": str(keypoints_path.relative_to(REPO_ROOT)),
                 "pose_skeleton_file": str(skeleton_path.relative_to(REPO_ROOT)),
                 "background_cutout_applied": True,
                 "cutout_method": CUTOUT_METHOD_DESCRIPTION,
                 "cutout_oklab_tolerance": CUTOUT_OKLAB_TOLERANCE,
                 "cutout_bbox_margin_frac": BACKGROUND_MASK_MARGIN_FRAC,
+                "generation_mode": meta["generation_mode"],
+                "chained_from_frame": meta["chained_from_frame"],
+                "denoise": meta["denoise"],
             }
         )
-
-    gpu_seconds = time.monotonic() - t0
 
     raw_sheet = Image.new("RGB", (SHEET_W, SHEET_H))
     for (r, c), cell_img in raw_cells.items():
@@ -576,7 +827,9 @@ def run_attempt(
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
         f"+ LoRA {IDENTITY_LORA_NAME} (player identity, weight {identity_lora_weight}) "
-        f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME}"
+        f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME} "
+        f"+ img2img chain (frames 1-7 anchored to frame 0's own output via VAEEncode, "
+        f"denoise {denoise}, background held out of the feedback path)"
     )
     provenance = {
         "model": model_summary,
@@ -606,6 +859,7 @@ def run_attempt(
         ),
         "identity_anchor": identity_anchor,
         "seed": seed,
+        "denoise": denoise,
         "steps": 30,
         "cfg": 7.0,
         "width": GEN_PX,
@@ -613,17 +867,29 @@ def run_attempt(
         "concept_hash": concept_hash,
         "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
         "concept_card": "T-0209",
+        "ip_adapter_reference_crop_box": list(IDENTITY_REFERENCE_CROP_BOX),
+        "ip_adapter_reference_note": (
+            "IP-Adapter is fed a crop of the concept sheet (IDENTITY_REFERENCE_CROP_BOX, one "
+            "clean front-on panel), not the full ~24-panel turnaround grid -- T-0266 recipe "
+            "finding: the full grid's own panel/gutter structure leaked into independently-"
+            "sampled frames via IP-Adapter's image-level conditioning, driving attempts 1-2's "
+            "frame deltas past the 0.30 cap"
+        ),
         "frame_generation": frame_records,
         "method": (
             "pose_rig_walk_T0259 derives 18-keypoint COCO walk-gait frame keypoints "
             "deterministically -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each "
             "frame's skeleton (384x384, reused renderer) -> ControlNetApplyAdvanced (xinsir "
             "OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, "
-            "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- identical seed/"
-            "prompt/negative/latent-size across all 8 frames, only the skeleton varies -> "
-            "per-frame area descent to 48x48 -> per-frame background cutout (this frame's own "
-            "keypoint bbox) -> frames assembled into a 192x96 sheet -> Oklab-nearest palette "
-            "quantization (dithering off, §3.1) -> orphan cleanup -> true-RGBA sprite write."
+            "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- frame 0 samples "
+            "fresh from EmptyLatentImage (denoise 1.0); frames 1-7 (T-0266) img2img-chain from "
+            "frame 0's own decoded output via VAEEncode at the recorded denoise, with the "
+            "decoded result background-held against frame 0 (apply_background_hold) so only the "
+            "figure region -- not the background -- is allowed to vary per frame -> per-frame "
+            "area descent to 48x48 (frame 0 from ComfyUI, frames 1-7 locally from the held "
+            "image) -> per-frame background cutout (this frame's own keypoint bbox) -> frames "
+            "assembled into a 192x96 sheet -> Oklab-nearest palette quantization (dithering off, "
+            "§3.1) -> orphan cleanup -> true-RGBA sprite write."
         ),
         "generator": "assets/src/character/gen_hybrid_walk_T0259.py",
         "card": "T-0259",
@@ -667,7 +933,28 @@ def main() -> None:
     parser.add_argument("--ipadapter-weight", type=float, default=0.6)
     parser.add_argument("--style-lora-weight", type=float, default=0.70)
     parser.add_argument("--identity-lora-weight", type=float, default=0.50)
+    parser.add_argument(
+        "--denoise",
+        type=float,
+        default=DEFAULT_DENOISE,
+        help=(
+            f"img2img denoise for frames 1-7's chain to frame 0's own output (default "
+            f"{DEFAULT_DENOISE} -- T-0266). Frame 0 always samples fresh at denoise 1.0, "
+            "unaffected by this flag."
+        ),
+    )
     parser.add_argument("--notes", type=str, default="")
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=chunked_frames.DEFAULT_MAX_FRAMES,
+        help=(
+            "generate at most this many still-incomplete frames this invocation, then stop "
+            f"(default {chunked_frames.DEFAULT_MAX_FRAMES}, derived from the measured "
+            "~100s/frame cost against the 10-minute shell timeout -- T-0266). Re-run the "
+            "identical command to resume; already-complete frames are skipped."
+        ),
+    )
     parser.add_argument(
         "--promote-attempt",
         type=int,
@@ -702,7 +989,16 @@ def main() -> None:
         ipadapter_weight=args.ipadapter_weight,
         style_lora_weight=args.style_lora_weight,
         identity_lora_weight=args.identity_lora_weight,
+        max_frames=args.max_frames,
+        denoise=args.denoise,
     )
+    if provenance is None:
+        print(
+            "chunk complete, frames remain -- re-run the identical command to continue "
+            "(sequential foreground chunks, never --background)"
+        )
+        return
+
     provenance["promoted"] = False
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_walk" / f"attempt_{args.attempt}"
     (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
