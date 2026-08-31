@@ -197,7 +197,9 @@ def build_parser() -> argparse.ArgumentParser:
             "(docs/board-invariants.md CHR-1, T-0258)"
         ),
     )
-    p.add_argument("root", help="directory whose subdirectories are asset classes (e.g. assets/final)")
+    p.add_argument(
+        "root", help="directory whose subdirectories are asset classes (e.g. assets/final)"
+    )
     p.set_defaults(func=_cmd_character_arm_c_sweep)
 
     p = sub.add_parser("art-palette", help="palette membership + index semantics (P-4)")

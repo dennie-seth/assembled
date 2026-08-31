@@ -136,7 +136,9 @@ def test_sweep_fails_for_character_sidecar_missing_fields(tmp_path):
 
 
 def test_sweep_passes_for_character_sidecar_with_both_fields(tmp_path):
-    _write_prov(tmp_path / "character" / "player_idle_sheet_hybrid_T0252.provenance.json", **_BOTH_FIELDS)
+    _write_prov(
+        tmp_path / "character" / "player_idle_sheet_hybrid_T0252.provenance.json", **_BOTH_FIELDS
+    )
 
     results = sweep_character_arm_c_provenance(tmp_path)
 
@@ -185,8 +187,9 @@ def test_sweep_baseline_exempts_documented_pre_existing_gaps(tmp_path):
     by_path = {r.details["path"]: r for r in results}
     assert by_path["character/player_idle_sheet_v1.provenance.json"].passed
     assert by_path["character/player_idle_sheet_v1.provenance.json"].details["baseline_exempt"]
-    assert not by_path["character/player_idle_sheet_new.provenance.json"].passed
-    assert "baseline_exempt" not in by_path["character/player_idle_sheet_new.provenance.json"].details
+    new_entry = by_path["character/player_idle_sheet_new.provenance.json"]
+    assert not new_entry.passed
+    assert "baseline_exempt" not in new_entry.details
 
 
 def test_sweep_does_not_baseline_exempt_a_passing_file(tmp_path):
@@ -209,7 +212,9 @@ def test_load_character_arm_c_baseline_returns_empty_set_when_file_missing(tmp_p
 
 def test_load_character_arm_c_baseline_parses_lines_and_skips_comments_and_blanks(tmp_path):
     baseline_file = tmp_path / "baseline.txt"
-    baseline_file.write_text("# a comment\ncharacter/foo.provenance.json\n\ncharacter/bar.provenance.json\n")
+    baseline_file.write_text(
+        "# a comment\ncharacter/foo.provenance.json\n\ncharacter/bar.provenance.json\n"
+    )
 
     assert load_character_arm_c_baseline(baseline_file) == frozenset(
         {"character/foo.provenance.json", "character/bar.provenance.json"}

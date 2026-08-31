@@ -92,7 +92,8 @@ def test_pose_authority_and_hybrid_generators_import_the_shared_write_helper():
     for filename in ("gen_hybrid_idle_T0252.py", "gen_pose_authority_idle_T0249.py"):
         text = (_CHARACTER_DIR / filename).read_text()
         assert "from comfy_client.provenance_sidecar import" in text, (
-            f"{filename} must import apply_arm_c_benchmark_fields from comfy_client.provenance_sidecar"
+            f"{filename} must import apply_arm_c_benchmark_fields "
+            "from comfy_client.provenance_sidecar"
         )
         assert "apply_arm_c_benchmark_fields" in text
 

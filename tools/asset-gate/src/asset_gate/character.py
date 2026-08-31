@@ -185,7 +185,9 @@ def sweep_character_arm_c_provenance(
                 CheckResult(
                     check="character_arm_c_provenance",
                     passed=True,
-                    reason=f"{rel_str}: asset class {cls!r} is not character -- CHR-1 does not apply",
+                    reason=(
+                        f"{rel_str}: asset class {cls!r} is not character -- CHR-1 does not apply"
+                    ),
                     details={"path": rel_str, "asset_class": cls, "skipped": True},
                 )
             )
