@@ -138,7 +138,7 @@ def test_next_chunk_rejects_non_positive_max_frames(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _fake_generate(out_dir: Path) -> "list[int]":
+def _fake_generate(out_dir: Path) -> list[int]:
     """Returns a callback recording every frame index it was asked to
     generate, and writes both required output files for that frame -- a
     stand-in for the real ComfyUI submit/poll/fetch/save, so this whole
