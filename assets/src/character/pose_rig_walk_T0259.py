@@ -22,26 +22,66 @@ existing primitive the card names, not a re-authored renderer.
 The gait model (frame index i of frame_count N, phase t = i / N, all offsets
 in the same 0..1-normalised unit-square space `_POSE_KEYPOINTS_NORM` uses):
 
-  - each leg's knee/ankle swing forward/back in x, sinusoidally, 180 degrees
-    out of phase between legs -- the "opposed leg swing" the motion spec
-    asks for: one leg's forward reach is the other's back reach.
-  - each leg lifts its own knee/ankle off the ground line at its own
-    mid-swing point (the "pass" pose where the free leg clears) and settles
-    back to the ground line at its own contact pose (t=0 for the right leg,
-    t=0.5 for the left) -- a leg only clears the ground while it is not the
-    one bearing weight.
+  - each leg's knee/ankle swing forward/back in x, following
+    `cos(2*pi*t)`, 180 degrees out of phase between legs -- the "opposed
+    leg swing" the motion spec asks for: one leg's forward reach is the
+    other's back reach. `cos` puts each leg's own stride EXTREME (contact)
+    exactly at t=0 and t=0.5, not at a zero-crossing -- see the 2026-08-31
+    IMPROVEMENT PASS note below for why that choice matters.
+  - each leg lifts its own knee/ankle off the ground line (`max(0,
+    -sin(2*pi*t))`) throughout its own swing half of the cycle, peaking at
+    its own mid-swing "passing" point (t=0.75 for the right leg, t=0.25 for
+    the left) where its own offset has returned to 0 (ankle back under the
+    hip) -- and is exactly 0 throughout its own stance half, so a leg only
+    clears the ground while it is not the one bearing weight.
+  - while lifted, each leg's knee/ankle is additionally pulled laterally
+    toward, and slightly past, the OTHER leg's resting x
+    (`CROSS_EXTENT_NORM`, scaled by that leg's own lift) -- the "passing"
+    pose is a real cross (the swinging leg's foot visibly passes the
+    planted leg), not two legs independently hovering back to bilateral
+    symmetry. Zero at every contact pose (lift is 0 there), so it never
+    distorts the wide stride the contact pose needs.
   - arms swing opposite-phase to the SAME-side leg (right arm forward when
-    the left leg is forward -- the real-gait convention), at a smaller
-    amplitude than the legs.
+    the left leg is forward -- the real-gait convention), at an amplitude
+    comparable to shoulder width so the opposition reads at game scale.
   - the hip line (and everything above it) bobs down at each foot's own
-    contact pose and rises as weight passes over the single stance leg --
-    two dips per full cycle, one per foot contact.
+    contact pose (t=0, t=0.5, where the stride is at rest) and rises as
+    weight passes over the single stance leg, peaking at each leg's own
+    passing point -- two rises per full cycle, one per stance leg.
 
 Every term above is a periodic function of `t` with period 1, so frame
 `frame_count` (one full cycle later) is mathematically identical to frame 0
 -- the loop seam (frame N-1 -> frame 0) is not a special case patched in
 afterwards, it falls out of the same parameterisation as every other
 adjacent pair.
+
+**2026-08-31 IMPROVEMENT PASS (art direction).** The previously-committed
+sheet hitched at the loop seam (measured 5.31x the interior mean, raw
+changed-pixel count) because frame 0 sampled a near-neutral passing pose,
+not a contact pose: the old model offset each leg with a plain
+`sin(2*pi*t)` (whose CONTACT extremes sit at t=0.25/0.75, not at a frame
+boundary under 8-way slicing) and sampled at the CENTRE of each 8-way phase
+slice specifically to dodge a real degeneracy at t=0/0.5 (both legs'
+`sin`-based offsets are simultaneously 0 there, an indistinguishable
+double-neutral frame) -- which put frame 0 near-neutral instead of at a
+stride extreme, off by a quarter cycle from the nearest contact pose.
+
+Swapping the offset curve to `cos` (this revision) moves the informative
+extremes to exactly t=0 and t=0.5 and moves the *neutral* crossing to
+t=0.25/0.75 -- and that neutral crossing is no longer degenerate, because
+`lift` (an independent `sin`-based term, not derived from the same zero as
+the offset) is at its own PEAK there, not zero: the two legs are
+distinguished by elevation (one flat/stance, one lifted/swinging) even
+though their horizontal offsets briefly coincide. That is not a special
+case worked around -- it is the correct biomechanical "legs pass" moment,
+and it is why the plain, even grid `t = k/N` (no center-of-slice shift) can
+be sampled directly: frame 0 lands exactly on a contact pose, every one of
+the 8 samples (loop seam included) is exactly `1/N` apart, and the old
+degeneracy simply does not exist under this parameterisation.
+
+`STRIDE_EXTENT_NORM`, `KNEE_LIFT_NORM` and `ARM_SWING_EXTENT_NORM` are also
+raised well past the previous sheet's barely-visible values (0.145/0.085/
+0.09) -- see the module constants below for the chosen values and why.
 """
 
 from __future__ import annotations
@@ -68,41 +108,46 @@ _R_HIP, _R_KNEE, _R_ANKLE = 8, 9, 10
 _L_HIP, _L_KNEE, _L_ANKLE = 11, 12, 13
 _BODY_BOB_JOINTS: tuple[int, ...] = (0, 1, 2, 5, 14, 15, 16, 17)  # nose/neck/shoulders/eyes/ears
 
-STRIDE_EXTENT_NORM = 0.145  # forward/back ankle swing from the standing hip line
-KNEE_LIFT_NORM = 0.085  # how far the passing leg's knee/ankle rise off the ground line
-ARM_SWING_EXTENT_NORM = 0.09  # opposite-phase arm swing, smaller than the leg's
-HIP_BOB_NORM = 0.02  # vertical body bob, two dips per full gait cycle
+# Chosen to be at least 1.8x the previous sheet's values (0.145/0.085/0.09),
+# which produced barely-visible limb motion per the art-direction review --
+# "meaningfully larger", not a marginal tweak. Checked against body scale in
+# this module's test suite (arm swing vs shoulder width; stride/cross vs hip
+# separation) so these aren't just bigger numbers, they read at game scale.
+STRIDE_EXTENT_NORM = 0.30  # forward/back ankle swing from the standing hip line (2.07x)
+KNEE_LIFT_NORM = 0.18  # how far the passing leg's knee/ankle rise off the ground line (2.12x)
+ARM_SWING_EXTENT_NORM = 0.20  # opposite-phase arm swing (2.22x; ~1.2x shoulder width, 0.166)
+CROSS_EXTENT_NORM = 0.14  # lateral pull toward/past the other leg's resting x while lifted
+HIP_BOB_NORM = 0.02  # vertical body bob, two rises per full gait cycle
 
 
-def _leg_swing(t: float) -> float:
+def _leg_offset(t: float) -> float:
     """t in [0,1) -> forward(+1)/back(-1) position, period 1.
 
-    A pure `sin(2*pi*t)` is mirror-symmetric about t=0.25 and t=0.75
-    (`sin(2*pi*(0.5-t)) == sin(2*pi*t)`) -- the reach-forward half and the
-    snap-back half would pass through exactly the same position values, so
-    two frames placed symmetrically around a quarter-cycle point sample
-    byte-identical leg positions. A real gait is not symmetric this way --
-    the swing-through leg snaps back faster than it reaches forward -- so a
-    second harmonic is added to break the mirror (the standard walk-cycle
-    curve-shaping technique), which is also what keeps `walk_keypoints_for_frame`
-    honestly yielding 8 distinct frames rather than 4 mirrored pairs."""
-    return math.sin(2 * math.pi * t) + 0.25 * math.sin(4 * math.pi * t)
+    `cos(2*pi*t)` puts this leg's own stride EXTREMES (contact, both feet
+    planted) at t=0 and t=0.5 -- not at a zero-crossing -- so a plain, even
+    8-way grid `t=k/8` lands frame 0 exactly on a contact pose. See the
+    module's IMPROVEMENT PASS docstring for why this differs from the
+    original `sin`-based curve."""
+    return math.cos(2 * math.pi * t)
 
 
-def _knee_lift(t: float) -> float:
-    """Positive through the leg's forward-swing half (peaking near
-    t=0.2-0.25 -- the 'pass' point where the free leg clears the ground)
-    and zero through its backward stance-drag half (foot planted/dragging,
-    no lift). Derived from the same asymmetric `_leg_swing` curve (not a
-    plain `sin`) so it inherits that curve's broken t=0.25 mirror symmetry
-    instead of reintroducing one."""
-    return max(0.0, _leg_swing(t))
+def _leg_lift(t: float) -> float:
+    """Zero throughout this leg's stance half (t in [0, 0.5], where its own
+    offset is doing the useful work) and positive throughout its swing half
+    (t in [0.5, 1]), peaking at t=0.75 -- the mid-swing 'passing' point,
+    where `_leg_offset` has returned to 0 (ankle back under the hip) but the
+    leg is fully lifted. Independent of `_leg_offset`'s own zero, so the
+    t=0.25/0.75 crossing is informative (one leg flat, the other lifted),
+    never a degenerate double-zero."""
+    return max(0.0, -math.sin(2 * math.pi * t))
 
 
 def _hip_bob(t: float) -> float:
-    """Negative = up in this normalised space (y grows downward); dips
-    (less negative) at each foot's own contact pose, rises between."""
-    return -abs(math.cos(2 * math.pi * t)) * HIP_BOB_NORM
+    """Negative = up in this normalised space (y grows downward); 0 (no
+    bob) at each foot's own contact pose (t=0, t=0.5, stride at rest),
+    rising (more negative) as the body vaults over the single stance leg,
+    peaking at each leg's own passing point (t=0.25, t=0.75)."""
+    return -(1.0 - abs(math.cos(2 * math.pi * t))) * HIP_BOB_NORM
 
 
 def walk_keypoints_for_frame(
@@ -117,48 +162,57 @@ def walk_keypoints_for_frame(
     same points. `frame_index` is read mod `frame_count`, so frame
     `frame_count` (the loop seam) is identical to frame 0 by construction.
 
-    Sampled at the CENTRE of each frame's phase slice (`+0.5`), not its
-    leading edge -- a sample exactly at t=0 or t=0.5 lands on the gait's own
-    symmetric neutral-crossing, where every joint's offset, lift and hip-bob
-    term is simultaneously at its shared degenerate value regardless of
-    which leg is swinging vs planted, producing two genuinely identical
-    frames (see this module's test suite, `test_frames_vary_across_the_cycle`).
+    Sampled on the plain, even grid `t = k / frame_count` -- frame 0 is
+    `t=0`, a genuine contact pose under `_leg_offset`'s `cos` curve, and
+    every one of the `frame_count` samples (loop seam included) is exactly
+    `1 / frame_count` of a cycle apart. See this module's IMPROVEMENT PASS
+    docstring for why the previous centre-of-slice `+0.5` shift is no
+    longer needed (the degeneracy it dodged doesn't exist under this
+    parameterisation).
     """
-    t = ((frame_index % frame_count) + 0.5) / frame_count
+    t = (frame_index % frame_count) / frame_count
     points = dict(base_points)
 
-    right_phase = _leg_swing(t)
-    left_phase = _leg_swing(t + 0.5)
-    right_lift = _knee_lift(t)
-    left_lift = _knee_lift(t + 0.5)
+    right_off = _leg_offset(t)
+    left_off = _leg_offset(t + 0.5)
+    right_lift = _leg_lift(t)
+    left_lift = _leg_lift(t + 0.5)
     bob = _hip_bob(t)
 
-    for hip, knee, ankle, phase, lift in (
-        (_R_HIP, _R_KNEE, _R_ANKLE, right_phase, right_lift),
-        (_L_HIP, _L_KNEE, _L_ANKLE, left_phase, left_lift),
+    # cross_sign pulls each leg's knee/ankle, while lifted, toward and past
+    # the OTHER leg's resting x -- +1 for the right leg (whose resting x is
+    # smaller, per _POSE_KEYPOINTS_NORM), -1 for the left. Zero contribution
+    # whenever lift is 0 (every contact pose), so the wide-stride contact
+    # pose is never distorted by it.
+    for hip, knee, ankle, off, lift, cross_sign in (
+        (_R_HIP, _R_KNEE, _R_ANKLE, right_off, right_lift, 1.0),
+        (_L_HIP, _L_KNEE, _L_ANKLE, left_off, left_lift, -1.0),
     ):
         hx, hy = points[hip]
         points[hip] = (hx, hy + bob)
         kx, ky = points[knee]
         points[knee] = (
-            kx + phase * STRIDE_EXTENT_NORM * 0.5,
+            kx + off * STRIDE_EXTENT_NORM * 0.5 + cross_sign * lift * CROSS_EXTENT_NORM * 0.5,
             ky + bob - lift * KNEE_LIFT_NORM * 0.5,
         )
         ax, ay = points[ankle]
-        points[ankle] = (ax + phase * STRIDE_EXTENT_NORM, ay + bob - lift * KNEE_LIFT_NORM)
+        points[ankle] = (
+            ax + off * STRIDE_EXTENT_NORM + cross_sign * lift * CROSS_EXTENT_NORM,
+            ay + bob - lift * KNEE_LIFT_NORM,
+        )
 
     # Arms swing opposite-phase to the SAME-side leg (real-gait convention):
     # right arm forward when the left leg is forward.
-    for shoulder, elbow, wrist, phase in (
-        (_R_SHOULDER, _R_ELBOW, _R_WRIST, left_phase),
-        (_L_SHOULDER, _L_ELBOW, _L_WRIST, right_phase),
+    for shoulder, elbow, wrist, off in (
+        (_R_SHOULDER, _R_ELBOW, _R_WRIST, left_off),
+        (_L_SHOULDER, _L_ELBOW, _L_WRIST, right_off),
     ):
         sx, sy = points[shoulder]
         points[shoulder] = (sx, sy + bob)
         ex, ey = points[elbow]
-        points[elbow] = (ex + phase * ARM_SWING_EXTENT_NORM * 0.5, ey + bob)
+        points[elbow] = (ex + off * ARM_SWING_EXTENT_NORM * 0.5, ey + bob)
         wx, wy = points[wrist]
-        points[wrist] = (wx + phase * ARM_SWING_EXTENT_NORM, wy + bob)
+        points[wrist] = (wx + off * ARM_SWING_EXTENT_NORM, wy + bob)
 
     for j in _BODY_BOB_JOINTS:
         x, y = points[j]
