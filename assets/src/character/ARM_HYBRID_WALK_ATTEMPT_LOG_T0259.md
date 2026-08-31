@@ -40,3 +40,50 @@ acceptance criteria, this is reported as a finding rather than forced or faked (
 mirror of the front view was attempted) -- the profile view is out of scope for T-0259 and should
 be its own card if wanted, seeded by this finding.
 | 5 | 27182 | 0.3283-0.4732 | FAIL | no | 819.9 | no | T-0259 improvement pass: frame-0 contact pose fix + wider stride/knee/arm amplitudes + leg cross, front-facing (profile probed and reported as its own finding) |
+| 6 | 27182 | 0.2119-0.3752 | FAIL | no | 801.8 | no | T-0259 improvement pass, calibrated: STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.05, frame-0 contact fix, front-facing |
+| 7 | 27182 | 0.1607-0.3398 | FAIL | no | 807.9 | no | T-0259 calibration: same amplitudes as attempt 6 (STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.05), denoise lowered 0.45->0.30 to test whether tighter anchor conformity reduces the independent-chain noise floor observed in attempts 5-6 |
+| 8 | 27182 | 0.1086-0.3020 | FAIL | no | 799.1 | no | T-0259 final DL-21 calibration: STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.02, denoise 0.45->0.24, targeting the 3 remaining recoil->passing pairs that failed at denoise 0.30 |
+
+## 2026-08-31 improvement pass -- DL-21 budget exhausted, one pair short (summary)
+
+Four real generation attempts this session (5-8, all seed 27182, all real ComfyUI runs against
+172.18.192.1:8188, ~800 GPU-seconds each), on top of the four already spent promoting the
+sheet currently committed (1-4). `check_attempt_cap` refuses a 9th attempt (`attempt cap is 8
+per round (DL-21)`) and DL-21's own precedent (`docs/decision-log.md` DL-22, Arm A) treats an
+exhausted cap without a passing sheet as closed, not silently extended -- so attempt 8 is the
+last one this card can run without a human/board decision to grant more budget.
+
+**Calibration trail, all real generation, no synthetic shortcuts:**
+
+| Attempt | STRIDE / KNEE / ARM / CROSS | Denoise | Frame-delta range | Pairs over 0.30 |
+|---|---|---|---|---|
+| 4 (pre-existing) | 0.145 / 0.085 / 0.09 / (none) | 0.45 | 0.034-0.253 | 0/8 (motion barely visible) |
+| 5 | 0.30 / 0.18 / 0.20 / 0.14 | 0.45 | 0.328-0.473 | 8/8 |
+| 6 | 0.22 / 0.13 / 0.15 / 0.05 | 0.45 | 0.212-0.375 | 6/8 |
+| 7 | 0.22 / 0.13 / 0.15 / 0.05 | 0.30 | 0.161-0.340 | 3/8 |
+| 8 | 0.22 / 0.13 / 0.15 / 0.02 | 0.24 | **0.109-0.302** | **1/8** |
+
+Attempt 8 is a single pair, frame 1 -> frame 2 (the right-recoil-into-left-passing
+transition), at **0.30198 against the 0.30 cap -- 0.00198 over**. Every other pair,
+including the loop seam (0.183) and the previously-worst pairs, is comfortably under. This is
+not a repeat of the original hitch (that was a 5.31x seam/interior ratio; attempt 8's spread is
+2.8x max/min, and the seam itself is nowhere near the worst pair) -- it is the last residue of
+the amplitude-vs-delta tradeoff this whole calibration trail has been narrowing.
+
+**Reassembly-only check (no new GPU generation, cached attempt-8 frames):** raising the
+post-quantization orphan-cleanup `size_threshold` from 4 to 8 (a legitimate noise-cleanup knob,
+not a new generation) was tried to see if it removed edge-speckle noise contributing to the
+delta -- it made the failing pair marginally *worse* (0.306), not better, so it was reverted;
+this failure mode is genuine silhouette (limb-shape) difference between two independently
+img2img-chained frames, not a cleanup artifact, and there is no free post-processing lever left
+that isn't a new generation.
+
+**Not promoted.** `promote_attempt` correctly refuses (`mechanical_gate_passed: false`) --
+attempt 8's sheet is not committed to `assets/final/character/`, per this card's NO SYNTHETIC
+ASSETS rule and the conduct.md rule against shipping a sheet that fails its own gate.
+
+**Recommendation if more budget is granted:** the trend across attempts 6-7-8 (denoise
+0.45 -> 0.30 -> 0.24 monotonically closing the gap, most recently by 0.038) strongly suggests
+one more notch (denoise ~0.20, or KNEE_LIFT_NORM trimmed by another ~10%) closes the remaining
+0.002 -- this is a converging calibration, not a stuck one. A 9th attempt at denoise 0.20 with
+the same amplitudes is the concrete next step.
