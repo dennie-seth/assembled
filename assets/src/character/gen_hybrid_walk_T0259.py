@@ -82,7 +82,12 @@ never land in assets/final/, even transiently. Promotion also re-homes the
 promoted attempt's per-frame ControlNet conditioning inputs from the
 gitignored assets/out/ into a committed evidence directory under
 assets/src/, since the promoted provenance's file references must resolve
-on a fresh clone.
+on a fresh clone, and emits a looping, upscaled GIF preview
+(`char_gen.gif_export`, shared with T-0260/T-0261) alongside the sheet:
+
+    assets/final/character/player_walk_sheet_hybrid.png
+    assets/final/character/player_walk_sheet_hybrid.provenance.json
+    assets/final/character/player_walk_sheet_hybrid.gif
 """
 
 from __future__ import annotations
@@ -162,7 +167,7 @@ from gen_pose_authority_idle_T0249 import (  # noqa: E402
 )
 from gen_pose_authority_idle_T0249 import MAIN_NEGATIVE as IDLE_MAIN_NEGATIVE  # noqa: E402
 
-from char_gen import chunked_frames  # noqa: E402
+from char_gen import chunked_frames, gif_export  # noqa: E402
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
@@ -458,6 +463,7 @@ ATTEMPT_LOG_PATH = (
 FINAL_CHARACTER_DIR = REPO_ROOT / "assets" / "final" / "character"
 FINAL_SHEET_PATH = FINAL_CHARACTER_DIR / "player_walk_sheet_hybrid.png"
 FINAL_PROVENANCE_PATH = FINAL_CHARACTER_DIR / "player_walk_sheet_hybrid.provenance.json"
+FINAL_GIF_PATH = FINAL_CHARACTER_DIR / "player_walk_sheet_hybrid.gif"
 IDLE_KEYFRAME_PATH = FINAL_CHARACTER_DIR / "player_idle_sheet_hybrid_T0252.png"
 WALK_FRAME_EVIDENCE_DIR = (
     REPO_ROOT / "assets" / "src" / "character" / "pose_rig_walk_frame_evidence_T0259"
@@ -503,12 +509,24 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
 
 def promote_attempt(out_dir: Path, provenance: dict) -> None:
     """Copy this attempt's indexed sheet + provenance into
-    assets/final/character/, and re-home its 8 per-frame ControlNet
+    assets/final/character/, re-home its 8 per-frame ControlNet
     conditioning inputs from the gitignored assets/out/ into a committed
-    evidence directory under assets/src/ -- otherwise the promoted
-    provenance's file references dangle on a fresh clone."""
+    evidence directory under assets/src/ (otherwise the promoted
+    provenance's file references dangle on a fresh clone), and emit a
+    looping, upscaled GIF preview alongside the sheet -- baked into
+    promotion itself (the only path that ships a sheet to
+    assets/final/character/) so the GIF is produced on every promoted run,
+    never a manual afterthought."""
     FINAL_CHARACTER_DIR.mkdir(parents=True, exist_ok=True)
     FINAL_SHEET_PATH.write_bytes((out_dir / "sheet_192x96_indexed.png").read_bytes())
+
+    indexed_sheet = Image.open(out_dir / "sheet_192x96_indexed.png")
+    gif_export.make_looping_gif(
+        indexed_sheet,
+        frame_cells=FRAME_CELLS,
+        cell_px=FINAL_CELL_PX,
+        out_path=FINAL_GIF_PATH,
+    )
 
     WALK_FRAME_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     promoted = dict(provenance)
@@ -526,6 +544,7 @@ def promote_attempt(out_dir: Path, provenance: dict) -> None:
     promoted["frame_generation"] = promoted_frames
 
     promoted["promoted"] = True
+    promoted["gif"] = str(FINAL_GIF_PATH.relative_to(REPO_ROOT))
     FINAL_PROVENANCE_PATH.write_text(json.dumps(promoted, indent=2) + "\n")
 
 

@@ -58,27 +58,23 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 FINAL_CHARACTER_DIR = REPO_ROOT / "assets" / "final" / "character"
 SHEET_PATH = FINAL_CHARACTER_DIR / "player_walk_sheet_hybrid.png"
 PROVENANCE_PATH = FINAL_CHARACTER_DIR / "player_walk_sheet_hybrid.provenance.json"
+GIF_PATH = FINAL_CHARACTER_DIR / "player_walk_sheet_hybrid.gif"
 IDLE_KEYFRAME_PATH = FINAL_CHARACTER_DIR / "player_idle_sheet_hybrid_T0252.png"
 OLD_MOVE_SHEET_PATH = FINAL_CHARACTER_DIR / "player_move_sheet_v2.png"
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 
-# T-0266: three real 8-frame generation attempts (see
-# ARM_HYBRID_WALK_ATTEMPT_LOG_T0259.md and this package's own
-# ARM_HYBRID_WALK_CHUNKING_ATTEMPT_LOG_T0266.md) have not yet produced a
-# sheet that clears the frame-consistency gate -- diagnosed as raw per-frame
-# KSampler colour/costume instability, not a chunking or cutout defect. This
-# suite is real and already correct against the moment a passing sheet
-# exists; skip it at module level rather than let 35 tests fail/error on a
-# precondition (a promoted sheet) that generation R&D has not yet met, per
-# the DL-21 attempt budget (5 of 8 remain) -- the same reasoning
+# A promoted sheet is a real-generation precondition this suite cannot
+# manufacture (see ARM_HYBRID_WALK_ATTEMPT_LOG_T0259.md for the attempt
+# history). Skip at module level rather than let every test fail/error on a
+# missing artifact during the window between committing this suite and a
+# real ComfyUI run landing the sheet -- the same reasoning
 # `pytest.importorskip` above already applies to an optional dependency,
 # applied here to an optional *artifact*.
 if not SHEET_PATH.exists():
     pytest.skip(
-        f"{SHEET_PATH} does not exist yet -- 3 of 8 DL-21 real-generation attempts have not "
-        "produced a sheet passing the frame-consistency gate (see "
-        "ARM_HYBRID_WALK_CHUNKING_ATTEMPT_LOG_T0266.md). This suite activates automatically "
-        "once a passing sheet is promoted.",
+        f"{SHEET_PATH} does not exist yet -- see ARM_HYBRID_WALK_ATTEMPT_LOG_T0259.md for the "
+        "real-generation attempt history. This suite activates automatically once a passing "
+        "sheet is promoted.",
         allow_module_level=True,
     )
 
@@ -374,6 +370,41 @@ def test_chr1_provenance_fields_pass_gate(provenance: dict) -> None:
         provenance, sheet_name="player_walk_sheet_hybrid.png"
     )
     assert result.passed, result.reason
+
+
+# ---------------------------------------------------------------------------
+# Animated GIF preview -- a committed deliverable, baked into the generator
+# ---------------------------------------------------------------------------
+
+
+def test_gif_deliverable_committed_and_loops() -> None:
+    """Acceptance: 'the generator emits a looping, upscaled GIF every run,
+    committed in assets/final/character/.' One frame per sheet cell, and it
+    must loop forever (loop=0), not play once."""
+    assert GIF_PATH.exists(), (
+        f"walk GIF not found: {GIF_PATH}\n"
+        "gen_hybrid_walk_T0259.py's promote_attempt must emit this on every promoted run."
+    )
+    with Image.open(GIF_PATH) as gif:
+        assert gif.format == "GIF"
+        assert gif.n_frames == FRAME_COUNT
+        assert gif.info.get("loop") == 0, "GIF must loop infinitely (loop=0)"
+
+
+def test_gif_is_integer_upscaled_for_crisp_pixels() -> None:
+    with Image.open(GIF_PATH) as gif:
+        width, height = gif.size
+        assert width % CELL_SIZE == 0 and height % CELL_SIZE == 0, (
+            "GIF dimensions must be an integer multiple of the native cell size, "
+            "not an arbitrary resize that would blur pixel edges"
+        )
+        assert width // CELL_SIZE == height // CELL_SIZE >= 2, "must be genuinely upscaled"
+
+
+def test_provenance_records_gif_path(provenance: dict) -> None:
+    gif_field = provenance.get("gif")
+    assert gif_field, "provenance must record the committed GIF's path"
+    assert (REPO_ROOT / gif_field).resolve() == GIF_PATH.resolve()
 
 
 def test_layout_recorded() -> None:
