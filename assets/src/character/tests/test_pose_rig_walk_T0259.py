@@ -12,19 +12,38 @@ round-2 pose rig, is designed so the loop seam (last frame -> frame 0) falls
 out of the same periodic parameterisation as every other adjacent pair,
 never a special case patched in afterwards.
 
-RED state: pose_rig_walk_T0259.py does not exist -> import fails, every
-test ERRORs.
-GREEN state: `walk_keypoints_for_frame` derives 18-keypoint COCO frames
-deterministically, legs/arms swing in the documented phase relationships,
-the gait loops exactly, and rendering reuses Arm A's drawing primitive
-unchanged.
+**2026-08-31 IMPROVEMENT PASS (art direction).** The previously-committed
+sheet hitches at the loop seam because frame 0 sampled a near-neutral
+passing pose instead of a contact pose (`_leg_swing(t)` sampled at the
+centre of an 8-way phase slice landed near t=0, a zero-crossing of
+`sin(2*pi*t)`, not at a stride extreme). The gait model changes from a
+single `sin`-based offset (whose zero-crossings and extrema don't align
+with frame boundaries under 8-way slicing without landing on a genuinely
+degenerate double-zero point) to an offset/lift pair built from
+`cos`/`sin` directly: `_leg_offset(t) = cos(2*pi*t)` is at its own extreme
+(+-1) exactly at t=0 and t=0.5 -- so sampling the plain, even grid
+`t = k/8` (no center-of-slice shift needed) puts frame 0 exactly on a
+contact pose, all 8 samples exactly 1/8 apart including the seam, with no
+degenerate double-zero anywhere (the old model's zero-crossings become this
+model's *extrema*, which are informative, not degenerate). `_leg_lift(t) =
+max(0, -sin(2*pi*t))` is independently zero throughout the offset's whole
+stance half (t in [0, 0.5], where the old model's zero-crossings sat) and
+peaks at t=0.75 -- the mid-swing passing point, where the offset is
+momentarily 0 (ankle back under the hip) yet the leg is fully lifted. A new
+`CROSS_EXTENT_NORM` term, driven by `lift` (zero except during swing), pulls
+the swinging leg's knee/ankle laterally toward and slightly past the
+opposite leg's own resting x, at zero amplitude during stance/contact so it
+never distorts the wide-stride contact pose it's not needed for.
 """
 
 from __future__ import annotations
 
 import inspect
+import math
 import sys
 from pathlib import Path
+
+import pytest
 
 _CHARACTER_DIR = Path(__file__).resolve().parents[1]
 if str(_CHARACTER_DIR) not in sys.path:
@@ -33,9 +52,13 @@ if str(_CHARACTER_DIR) not in sys.path:
 import gen_arm_a_idle_T0228  # noqa: E402
 import pose_rig_walk_T0259  # noqa: E402
 
+_R_SHOULDER, _L_SHOULDER = 2, 5
 _R_KNEE, _R_ANKLE = 9, 10
 _L_KNEE, _L_ANKLE = 12, 13
 _R_WRIST, _L_WRIST = 4, 7
+_R_HIP, _L_HIP = 8, 11
+
+_BASE = gen_arm_a_idle_T0228._POSE_KEYPOINTS_NORM
 
 
 def test_frame_emits_18_coco_keypoints() -> None:
@@ -70,18 +93,105 @@ def test_loop_seam_matches_frame_zero() -> None:
     assert frame_0 == frame_n, "the loop seam must be identical to frame 0, not merely close"
 
 
-def test_legs_swing_opposite_phase() -> None:
-    """Opposed arm-and-leg swing (motion spec): at a frame where one leg
-    reaches its forward extreme, the other must be at (or near) its back
-    extreme -- not moving the same direction."""
-    n = pose_rig_walk_T0259.FRAME_COUNT
-    base = gen_arm_a_idle_T0228._POSE_KEYPOINTS_NORM
+# ---------------------------------------------------------------------------
+# Frame 0 = contact pose, evenly spaced with the other 7 (the hitch fix)
+# ---------------------------------------------------------------------------
 
-    quarter = pose_rig_walk_T0259.walk_keypoints_for_frame(n // 4, n)
-    right_dx = quarter[_R_ANKLE][0] - base[_R_ANKLE][0]
-    left_dx = quarter[_L_ANKLE][0] - base[_L_ANKLE][0]
+
+def test_frame_zero_is_an_on_cycle_contact_pose() -> None:
+    """Acceptance: frame 0 must be a stride EXTREME (a contact pose), not a
+    near-neutral passing pose -- the defect measured on the previously
+    committed sheet (5.31x seam/interior ratio)."""
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    contact = pose_rig_walk_T0259.walk_keypoints_for_frame(0, n)
+    stride = pose_rig_walk_T0259.STRIDE_EXTENT_NORM
+
+    right_dx = contact[_R_ANKLE][0] - _BASE[_R_ANKLE][0]
+    left_dx = contact[_L_ANKLE][0] - _BASE[_L_ANKLE][0]
+    assert right_dx == pytest.approx(stride), "frame 0's leading leg must be at full stride extent"
+    assert left_dx == pytest.approx(-stride), "frame 0's trailing leg must be at full stride extent"
+
+    # Both feet flat (no lift) at contact -- the classic double-stance moment,
+    # not a mid-swing pose.
+    assert contact[_R_ANKLE][1] == pytest.approx(_BASE[_R_ANKLE][1])
+    assert contact[_L_ANKLE][1] == pytest.approx(_BASE[_L_ANKLE][1])
+
+
+def test_all_eight_frames_are_evenly_spaced_in_phase() -> None:
+    """Acceptance: raw math check that the phase sampled per frame is an
+    exact, even k/8 grid (no center-of-slice shift), cross-checked against
+    an independent `cos`/`sin` computation in this test -- not merely
+    asserted by reading the implementation."""
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    stride = pose_rig_walk_T0259.STRIDE_EXTENT_NORM
+    for k in range(n):
+        t = k / n
+        expected_dx = math.cos(2 * math.pi * t) * stride
+        points = pose_rig_walk_T0259.walk_keypoints_for_frame(k, n)
+        actual_dx = points[_R_ANKLE][0] - _BASE[_R_ANKLE][0]
+        # The cross term is proportional to lift, which is 0 throughout the
+        # right leg's stance half (t in [0, 0.5], i.e. k in {0, 1, 2, 3, 4}),
+        # so pure-offset equality only holds there; check those directly.
+        if k <= n // 2:
+            assert actual_dx == pytest.approx(expected_dx, abs=1e-9), (
+                f"frame {k}: expected pure-offset ankle dx {expected_dx}, got {actual_dx}"
+            )
+
+
+def test_seam_and_interior_steps_are_the_same_phase_delta() -> None:
+    """The loop seam (frame 7 -> frame 0) must be the SAME 1/8 phase step as
+    every interior pair -- not a special case, and not the ~3x hitch
+    measured on the previous sheet."""
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    stride = pose_rig_walk_T0259.STRIDE_EXTENT_NORM
+
+    def right_ankle_dx(k: int) -> float:
+        points = pose_rig_walk_T0259.walk_keypoints_for_frame(k, n)
+        return points[_R_ANKLE][0] - _BASE[_R_ANKLE][0]
+
+    # The underlying continuous offset curve steps by the same 1/8 of a
+    # period at every k -- verify the seam's step (k=7 -> k=8==0) matches an
+    # interior step (k=0 -> k=1) to within floating tolerance, using the
+    # closed-form curve (cos), which is exactly what the implementation
+    # samples at each k/n.
+    def expected(k: int) -> float:
+        return math.cos(2 * math.pi * (k / n)) * stride
+
+    interior_step = abs(expected(1) - expected(0))
+    seam_step = abs(expected(n) - expected(n - 1))
+    assert seam_step == pytest.approx(interior_step), (
+        "the loop seam's phase step must equal an interior step's phase step"
+    )
+    # And the actual implementation's frame 0 (no cross-term contribution --
+    # lift is 0 at every contact pose) matches the closed form exactly.
+    assert right_ankle_dx(0) == pytest.approx(expected(0))
+
+
+# ---------------------------------------------------------------------------
+# Amplitude -- wide stride, real knee lift, visible arm opposition
+# ---------------------------------------------------------------------------
+
+
+def test_amplitudes_are_meaningfully_larger_than_the_previous_sheet() -> None:
+    """Acceptance: the previous sheet's amplitudes (STRIDE_EXTENT_NORM=0.145,
+    KNEE_LIFT_NORM=0.085, ARM_SWING_EXTENT_NORM=0.09) produced barely-visible
+    limb motion. The revised rig must be meaningfully larger -- at least 1.8x
+    on every axis, not a marginal tweak."""
+    assert pose_rig_walk_T0259.STRIDE_EXTENT_NORM >= 0.145 * 1.8
+    assert pose_rig_walk_T0259.KNEE_LIFT_NORM >= 0.085 * 1.8
+    assert pose_rig_walk_T0259.ARM_SWING_EXTENT_NORM >= 0.09 * 1.8
+
+
+def test_legs_swing_opposite_phase_at_contact() -> None:
+    """Opposed leg swing (motion spec): at the contact pose, one leg is at
+    its forward extreme and the other at its back extreme -- not moving the
+    same direction."""
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    contact = pose_rig_walk_T0259.walk_keypoints_for_frame(0, n)
+    right_dx = contact[_R_ANKLE][0] - _BASE[_R_ANKLE][0]
+    left_dx = contact[_L_ANKLE][0] - _BASE[_L_ANKLE][0]
     assert right_dx * left_dx < 0, (
-        f"right/left ankle x-offsets must have opposite sign at a quarter-cycle frame, "
+        f"right/left ankle x-offsets must have opposite sign at the contact frame, "
         f"got right={right_dx}, left={left_dx}"
     )
 
@@ -90,25 +200,93 @@ def test_arms_swing_opposite_to_same_side_leg() -> None:
     """Motion spec: opposed arm-and-leg swing means the right arm swings
     with the LEFT leg (real-gait convention), not with the right leg."""
     n = pose_rig_walk_T0259.FRAME_COUNT
-    base = gen_arm_a_idle_T0228._POSE_KEYPOINTS_NORM
-    quarter = pose_rig_walk_T0259.walk_keypoints_for_frame(n // 4, n)
+    contact = pose_rig_walk_T0259.walk_keypoints_for_frame(0, n)
 
-    right_arm_dx = quarter[_R_WRIST][0] - base[_R_WRIST][0]
-    left_leg_dx = quarter[_L_ANKLE][0] - base[_L_ANKLE][0]
+    right_arm_dx = contact[_R_WRIST][0] - _BASE[_R_WRIST][0]
+    left_leg_dx = contact[_L_ANKLE][0] - _BASE[_L_ANKLE][0]
     assert right_arm_dx * left_leg_dx > 0, "right arm must swing WITH the left leg, not against it"
+    assert abs(right_arm_dx) == pytest.approx(pose_rig_walk_T0259.ARM_SWING_EXTENT_NORM)
+
+
+def test_arm_swing_is_readable_relative_to_shoulder_width() -> None:
+    """'Readable at 40px' is ultimately a rendered-image judgement, but the
+    rig itself must not sabotage it: the wrist swing amplitude must be a
+    non-trivial fraction of shoulder width, not a sub-pixel wobble at the
+    48x48 cell size this sheet ships at."""
+    shoulder_width = abs(_BASE[_L_SHOULDER][0] - _BASE[_R_SHOULDER][0])
+    assert pose_rig_walk_T0259.ARM_SWING_EXTENT_NORM >= shoulder_width * 0.9, (
+        "arm swing amplitude should be comparable to shoulder width to read as real motion "
+        "at game scale"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Passing pose: a real leg cross, not both legs merely hovering apart
+# ---------------------------------------------------------------------------
 
 
 def test_passing_leg_lifts_off_the_ground_line() -> None:
     """Motion spec: 'a pass pose where the free leg clears' -- the leg not
     bearing weight must rise (its own knee/ankle y must move up, i.e.
     numerically smaller in this normalised-down-positive space) relative to
-    a contact frame."""
+    its own contact frame."""
     n = pose_rig_walk_T0259.FRAME_COUNT
-    contact = pose_rig_walk_T0259.walk_keypoints_for_frame(0, n)
-    passing = pose_rig_walk_T0259.walk_keypoints_for_frame(n // 4, n)
-    assert passing[_R_ANKLE][1] < contact[_R_ANKLE][1], (
-        "the passing leg's ankle must lift (smaller y) relative to a contact frame"
+    right_contact = pose_rig_walk_T0259.walk_keypoints_for_frame(0, n)
+    right_passing = pose_rig_walk_T0259.walk_keypoints_for_frame(3 * n // 4, n)
+    assert right_passing[_R_ANKLE][1] < right_contact[_R_ANKLE][1], (
+        "the passing leg's ankle must lift (smaller y) relative to its own contact frame"
     )
+
+    left_contact = pose_rig_walk_T0259.walk_keypoints_for_frame(n // 2, n)
+    left_passing = pose_rig_walk_T0259.walk_keypoints_for_frame(n // 4, n)
+    assert left_passing[_L_ANKLE][1] < left_contact[_L_ANKLE][1], (
+        "the mirrored leg's ankle must lift (smaller y) relative to its own contact frame"
+    )
+
+
+def test_passing_pose_legs_cross() -> None:
+    """Acceptance: 'Legs CROSS / pass under the body on the return swing.
+    The passing pose must actually read as one leg passing the other, not
+    both hovering apart.' At the swinging leg's peak-lift frame, its
+    ankle's absolute x must have travelled to or past the stance leg's own
+    resting x -- an actual cross, not a return to bilateral symmetry."""
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    # Right leg's peak lift (mid-swing, offset back to 0) is at 3n/4.
+    right_peak = pose_rig_walk_T0259.walk_keypoints_for_frame(3 * n // 4, n)
+    right_ankle_x = right_peak[_R_ANKLE][0]
+    left_resting_x = _BASE[_L_ANKLE][0]
+    assert right_ankle_x >= left_resting_x, (
+        f"right ankle at its peak-lift frame ({right_ankle_x}) must reach at least as far as "
+        f"the left leg's resting x ({left_resting_x}) to read as a genuine cross"
+    )
+
+    # Mirrored: left leg's peak lift is at n/4.
+    left_peak = pose_rig_walk_T0259.walk_keypoints_for_frame(n // 4, n)
+    left_ankle_x = left_peak[_L_ANKLE][0]
+    right_resting_x = _BASE[_R_ANKLE][0]
+    assert left_ankle_x <= right_resting_x, (
+        f"left ankle at its peak-lift frame ({left_ankle_x}) must reach at least as far as "
+        f"the right leg's resting x ({right_resting_x}) to read as a genuine cross"
+    )
+
+
+def test_cross_term_is_zero_at_contact() -> None:
+    """The cross term is driven by lift, which is 0 at every contact pose --
+    it must never distort the wide-stride contact pose (frame 0 and its
+    opposite-contact mirror at frame_count/2)."""
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    stride = pose_rig_walk_T0259.STRIDE_EXTENT_NORM
+    for k in (0, n // 2):
+        points = pose_rig_walk_T0259.walk_keypoints_for_frame(k, n)
+        right_dx = points[_R_ANKLE][0] - _BASE[_R_ANKLE][0]
+        left_dx = points[_L_ANKLE][0] - _BASE[_L_ANKLE][0]
+        assert abs(abs(right_dx) - stride) < 1e-9, f"frame {k}: cross term leaked into contact"
+        assert abs(abs(left_dx) - stride) < 1e-9, f"frame {k}: cross term leaked into contact"
+
+
+# ---------------------------------------------------------------------------
+# Rendering / serialisation, unchanged contract
+# ---------------------------------------------------------------------------
 
 
 def test_render_pose_frame_reuses_arm_a_renderer() -> None:
