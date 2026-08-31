@@ -146,7 +146,9 @@ def test_head_turned_sideways() -> None:
     one)."""
     points = pose_rig_profile_T0272.profile_keypoints()
     nose_offset = points[_NOSE][0] - points[_NECK][0]
-    assert abs(nose_offset) > 0.03, f"nose must be turned off the neck's x position, got {nose_offset}"
+    assert abs(nose_offset) > 0.03, (
+        f"nose must be turned off the neck's x position, got {nose_offset}"
+    )
 
     front_eye_spread = _spread(_FRONT, _R_EYE, _L_EYE)
     front_ear_spread = _spread(_FRONT, _R_EAR, _L_EAR)
