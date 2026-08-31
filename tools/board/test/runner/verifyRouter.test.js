@@ -81,12 +81,25 @@ describe("resolveVerifyRoutes", () => {
       "assets/src/audio",
       "assets/src/lora",
       "assets/src/tiles",
-      "assets/src/ambience_synth"
+      "assets/src/ambience_synth",
+      "assets/src/character"
     ];
     for (const root of roots) {
       const routes = resolveVerifyRoutes([`${root}/tests/test_smoke.py`]);
       expect(routes.map((r) => r.id)).toEqual([`python-verify:${root}`]);
     }
+  });
+
+  it("routes an assets/src/character/** diff to python-verify -- T-0264's package, missing from PYTHON_PACKAGE_ROOTS so no route fired on a character-package diff", () => {
+    const routes = resolveVerifyRoutes(["assets/src/character/src/character/gen_entities_v2.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:assets/src/character"]);
+    const route = routes[0];
+    expect(route.command).toContain("cd assets/src/character");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check --fix .");
+    expect(route.command).toContain(".venv/bin/ruff check .");
   });
 
   it("routes an assets/src/ambience_synth/** diff to python-verify -- T-0202's package, added after three consecutive runs blocked on a missing reviewer grant", () => {
