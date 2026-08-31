@@ -88,6 +88,7 @@ on a fresh clone.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 import time
@@ -144,7 +145,9 @@ from gen_chained_idle_T0250 import (  # noqa: E402
     BACKGROUND_MASK_MARGIN_FRAC,
     CUTOUT_METHOD_DESCRIPTION,
     CUTOUT_OKLAB_TOLERANCE,
+    apply_background_hold,
     apply_cutout_masks,
+    background_hold_mask,
     cutout_foreground_mask,
     downscale_mask,
 )
@@ -227,6 +230,20 @@ VAE_DECODE_NODE_ID = "22"
 MAIN_SAVE_NODE_ID = "23"
 DESCENT_NODE_ID = "24"
 CELL_SAVE_NODE_ID = "25"
+# img2img chain nodes (T-0266) -- only present on frames 1+'s submitted
+# graph, in place of LATENT_NODE_ID. Same ids gen_chained_idle_T0250 uses
+# for the analogous nodes on its own graph.
+INIT_IMAGE_NODE_ID = "30"
+VAE_ENCODE_NODE_ID = "31"
+
+# Default denoise for the img2img chain (T-0266, iter 3). Idle's own chained
+# arm (T-0250) settled on 0.15-0.30 for a near-static breathing pose; a walk
+# gait swings limbs through a much larger structural change frame to frame,
+# so a higher value is chosen here to leave the sampler enough of the
+# schedule to actually relocate limbs against the ControlNet skeleton rather
+# than being biased toward frame 0's own pose. Not yet swept -- first real
+# attempt at this value, adjust per its own attempt-log result.
+DEFAULT_DENOISE = 0.45
 
 
 def build_graph(
@@ -372,6 +389,54 @@ def build_graph(
     return g
 
 
+def build_chained_graph(
+    seed: int,
+    concept_filename: str,
+    pose_skeleton_filename: str,
+    init_image_filename: str,
+    denoise: float,
+    controlnet_strength: float,
+    controlnet_end: float,
+    ipadapter_weight: float,
+    style_lora_weight: float,
+    identity_lora_weight: float,
+    *,
+    identity_lora_name: str = IDENTITY_LORA_NAME,
+) -> dict:
+    """Frame 1+ of the img2img chain (T-0266): reuses `build_graph` unchanged
+    for every node except the latent source -- `EmptyLatentImage` swapped for
+    `VAEEncode` of frame 0's own decoded output, denoise lowered from 1.0.
+    Same pattern as `gen_chained_idle_T0250.build_chained_graph`, applied to
+    this module's own graph (which additionally carries IP-Adapter/identity
+    LoRA, absent from pose_authority's)."""
+    g = build_graph(
+        seed=seed,
+        concept_filename=concept_filename,
+        pose_skeleton_filename=pose_skeleton_filename,
+        controlnet_strength=controlnet_strength,
+        controlnet_end=controlnet_end,
+        ipadapter_weight=ipadapter_weight,
+        style_lora_weight=style_lora_weight,
+        identity_lora_weight=identity_lora_weight,
+        identity_lora_name=identity_lora_name,
+    )
+    del g[LATENT_NODE_ID]
+    g[INIT_IMAGE_NODE_ID] = {
+        "class_type": "LoadImage",
+        "inputs": {"image": init_image_filename},
+    }
+    g[VAE_ENCODE_NODE_ID] = {
+        "class_type": "VAEEncode",
+        "inputs": {
+            "pixels": [INIT_IMAGE_NODE_ID, 0],
+            "vae": [CHECKPOINT_NODE_ID, 2],
+        },
+    }
+    g[SAMPLER_NODE_ID]["inputs"]["latent_image"] = [VAE_ENCODE_NODE_ID, 0]
+    g[SAMPLER_NODE_ID]["inputs"]["denoise"] = denoise
+    return g
+
+
 def crop_identity_reference(concept_sheet_path: Path, dest_path: Path) -> Path:
     """Crop the full concept-sheet turnaround grid down to one clean
     front-on panel (`IDENTITY_REFERENCE_CROP_BOX`) and write it to
@@ -475,6 +540,7 @@ def _generate_one_frame(
     ipadapter_weight: float,
     style_lora_weight: float,
     identity_lora_weight: float,
+    denoise: float,
 ) -> None:
     """The `generate_frame(i)` callback `char_gen.chunked_frames.run_chunk`
     calls for one frame: writes this frame's inputs (skeleton PNG,
@@ -482,6 +548,14 @@ def _generate_one_frame(
     its two required outputs plus a small `_meta.json` sidecar carrying the
     one piece of per-frame state that cannot be re-derived from disk on a
     later, separate invocation (the ComfyUI prompt id + generation time).
+
+    Frame 0 is a fresh independent sample (`build_graph`, `EmptyLatentImage`,
+    denoise fixed at 1.0). Frames 1+ (T-0266 img2img chain) are an img2img
+    pass anchored to frame 0's own decoded output (`build_chained_graph`,
+    `VAEEncode`, this `denoise`), with the decoded result background-held
+    against frame 0 so noise/clutter cannot compound or vary across frames
+    -- see `gen_chained_idle_T0250.apply_background_hold`, the same
+    mechanism used unchanged here.
     """
     points = pose_rig_walk_T0259.walk_keypoints_for_frame(frame_index, FRAME_COUNT)
     skeleton_img = pose_rig_walk_T0259.render_pose_frame(points, GEN_PX)
@@ -494,28 +568,75 @@ def _generate_one_frame(
     )
 
     skeleton_filename = upload_image(skeleton_path)
-    graph = build_graph(
-        seed=seed,
-        concept_filename=concept_filename,
-        pose_skeleton_filename=skeleton_filename,
-        controlnet_strength=controlnet_strength,
-        controlnet_end=controlnet_end,
-        ipadapter_weight=ipadapter_weight,
-        style_lora_weight=style_lora_weight,
-        identity_lora_weight=identity_lora_weight,
-    )
+
+    if frame_index == 0:
+        graph = build_graph(
+            seed=seed,
+            concept_filename=concept_filename,
+            pose_skeleton_filename=skeleton_filename,
+            controlnet_strength=controlnet_strength,
+            controlnet_end=controlnet_end,
+            ipadapter_weight=ipadapter_weight,
+            style_lora_weight=style_lora_weight,
+            identity_lora_weight=identity_lora_weight,
+        )
+    else:
+        frame0_main_path = out_dir / "frame_0_main_384.png"
+        init_image_filename = upload_image(frame0_main_path)
+        graph = build_chained_graph(
+            seed=seed,
+            concept_filename=concept_filename,
+            pose_skeleton_filename=skeleton_filename,
+            init_image_filename=init_image_filename,
+            denoise=denoise,
+            controlnet_strength=controlnet_strength,
+            controlnet_end=controlnet_end,
+            ipadapter_weight=ipadapter_weight,
+            style_lora_weight=style_lora_weight,
+            identity_lora_weight=identity_lora_weight,
+        )
+
     frame_t0 = time.monotonic()
     prompt_id = submit_prompt(graph)
     info = wait_for_completion(prompt_id, timeout_s=300)
     generation_seconds = time.monotonic() - frame_t0
 
     main_bytes = fetch_save_image(info, MAIN_SAVE_NODE_ID)
-    cell_bytes = fetch_save_image(info, CELL_SAVE_NODE_ID)
-    (out_dir / f"frame_{frame_index}_main_384.png").write_bytes(main_bytes)
-    (out_dir / f"frame_{frame_index}_cell_48_raw.png").write_bytes(cell_bytes)
+
+    if frame_index == 0:
+        cell_bytes = fetch_save_image(info, CELL_SAVE_NODE_ID)
+        (out_dir / f"frame_{frame_index}_main_384.png").write_bytes(main_bytes)
+        (out_dir / f"frame_{frame_index}_cell_48_raw.png").write_bytes(cell_bytes)
+    else:
+        # Background hold happens in pixel space, after decode -- see
+        # apply_background_hold's docstring for why. ComfyUI's own
+        # CELL_SAVE_NODE_ID descent ran on the pre-hold sampled image, so it
+        # would silently reintroduce the noise the hold removes; the cell is
+        # instead locally area-descended from the held image below.
+        raw_sampled_path = out_dir / f"frame_{frame_index}_main_384_raw_sampled.png"
+        raw_sampled_path.write_bytes(main_bytes)
+        sampled_img = Image.open(io.BytesIO(main_bytes)).convert("RGB")
+        frame0_main_img = Image.open(out_dir / "frame_0_main_384.png").convert("RGB")
+        mask = background_hold_mask(points, GEN_PX)
+        mask.save(out_dir / f"frame_{frame_index}_background_hold_mask.png")
+        held_img = apply_background_hold(sampled_img, frame0_main_img, mask)
+        held_img.save(out_dir / f"frame_{frame_index}_main_384.png")
+        cell_img = held_img.resize((FINAL_CELL_PX, FINAL_CELL_PX), Image.Resampling.BOX)
+        cell_img.save(out_dir / f"frame_{frame_index}_cell_48_raw.png")
+
+    generation_mode = "fresh" if frame_index == 0 else "img2img_chained"
+    chained_from_frame = None if frame_index == 0 else 0
+    frame_denoise = 1.0 if frame_index == 0 else denoise
     (out_dir / f"frame_{frame_index}_meta.json").write_text(
         json.dumps(
-            {"comfyui_prompt_id": prompt_id, "generation_seconds": generation_seconds}, indent=2
+            {
+                "comfyui_prompt_id": prompt_id,
+                "generation_seconds": generation_seconds,
+                "generation_mode": generation_mode,
+                "chained_from_frame": chained_from_frame,
+                "denoise": frame_denoise,
+            },
+            indent=2,
         )
         + "\n"
     )
@@ -530,6 +651,7 @@ def run_attempt(
     style_lora_weight: float,
     identity_lora_weight: float,
     max_frames: int = chunked_frames.DEFAULT_MAX_FRAMES,
+    denoise: float = DEFAULT_DENOISE,
 ) -> dict | None:
     """Generate up to `max_frames` still-incomplete frames of this attempt,
     then, only once every frame is complete, assemble the sheet and return
@@ -539,6 +661,8 @@ def run_attempt(
     a dict comes back. See `char_gen.chunked_frames` for the resume/chunk
     contract this relies on.
     """
+    if not (0.0 < denoise < 1.0):
+        raise ValueError(f"denoise must be in (0, 1) -- got {denoise}")
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
 
@@ -580,6 +704,7 @@ def run_attempt(
             ipadapter_weight=ipadapter_weight,
             style_lora_weight=style_lora_weight,
             identity_lora_weight=identity_lora_weight,
+            denoise=denoise,
         )
 
     chunk_result = chunked_frames.run_chunk(
@@ -638,6 +763,9 @@ def run_attempt(
                 "cutout_method": CUTOUT_METHOD_DESCRIPTION,
                 "cutout_oklab_tolerance": CUTOUT_OKLAB_TOLERANCE,
                 "cutout_bbox_margin_frac": BACKGROUND_MASK_MARGIN_FRAC,
+                "generation_mode": meta["generation_mode"],
+                "chained_from_frame": meta["chained_from_frame"],
+                "denoise": meta["denoise"],
             }
         )
 
@@ -699,7 +827,9 @@ def run_attempt(
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
         f"+ LoRA {IDENTITY_LORA_NAME} (player identity, weight {identity_lora_weight}) "
-        f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME}"
+        f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME} "
+        f"+ img2img chain (frames 1-7 anchored to frame 0's own output via VAEEncode, "
+        f"denoise {denoise}, background held out of the feedback path)"
     )
     provenance = {
         "model": model_summary,
@@ -729,6 +859,7 @@ def run_attempt(
         ),
         "identity_anchor": identity_anchor,
         "seed": seed,
+        "denoise": denoise,
         "steps": 30,
         "cfg": 7.0,
         "width": GEN_PX,
@@ -750,11 +881,15 @@ def run_attempt(
             "deterministically -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each "
             "frame's skeleton (384x384, reused renderer) -> ControlNetApplyAdvanced (xinsir "
             "OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, "
-            "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- identical seed/"
-            "prompt/negative/latent-size across all 8 frames, only the skeleton varies -> "
-            "per-frame area descent to 48x48 -> per-frame background cutout (this frame's own "
-            "keypoint bbox) -> frames assembled into a 192x96 sheet -> Oklab-nearest palette "
-            "quantization (dithering off, §3.1) -> orphan cleanup -> true-RGBA sprite write."
+            "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- frame 0 samples "
+            "fresh from EmptyLatentImage (denoise 1.0); frames 1-7 (T-0266) img2img-chain from "
+            "frame 0's own decoded output via VAEEncode at the recorded denoise, with the "
+            "decoded result background-held against frame 0 (apply_background_hold) so only the "
+            "figure region -- not the background -- is allowed to vary per frame -> per-frame "
+            "area descent to 48x48 (frame 0 from ComfyUI, frames 1-7 locally from the held "
+            "image) -> per-frame background cutout (this frame's own keypoint bbox) -> frames "
+            "assembled into a 192x96 sheet -> Oklab-nearest palette quantization (dithering off, "
+            "§3.1) -> orphan cleanup -> true-RGBA sprite write."
         ),
         "generator": "assets/src/character/gen_hybrid_walk_T0259.py",
         "card": "T-0259",
@@ -798,6 +933,16 @@ def main() -> None:
     parser.add_argument("--ipadapter-weight", type=float, default=0.6)
     parser.add_argument("--style-lora-weight", type=float, default=0.70)
     parser.add_argument("--identity-lora-weight", type=float, default=0.50)
+    parser.add_argument(
+        "--denoise",
+        type=float,
+        default=DEFAULT_DENOISE,
+        help=(
+            f"img2img denoise for frames 1-7's chain to frame 0's own output (default "
+            f"{DEFAULT_DENOISE} -- T-0266). Frame 0 always samples fresh at denoise 1.0, "
+            "unaffected by this flag."
+        ),
+    )
     parser.add_argument("--notes", type=str, default="")
     parser.add_argument(
         "--max-frames",
@@ -845,6 +990,7 @@ def main() -> None:
         style_lora_weight=args.style_lora_weight,
         identity_lora_weight=args.identity_lora_weight,
         max_frames=args.max_frames,
+        denoise=args.denoise,
     )
     if provenance is None:
         print(
