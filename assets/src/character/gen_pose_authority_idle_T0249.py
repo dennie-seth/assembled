@@ -82,7 +82,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pose_rig_T0249  # noqa: E402
 from asset_gate import art as asset_gate_art  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
-from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 from comfy_client.provenance_sidecar import (  # noqa: E402
     # Not referenced directly below -- gen_chained_idle_T0250.py re-exports this
     # as `pose_authority.ARM_C_BENCHMARK` (any module-level name is an attribute
@@ -114,6 +113,8 @@ from gen_arm_a_idle_T0228 import (  # noqa: E402
     upload_image,
     wait_for_completion,
 )
+
+from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 IDENTITY_LORA_NAME = "player_identity_v2.safetensors"
 IDENTITY_LORA_PATH = REPO_ROOT / "assets" / "final" / "lora" / IDENTITY_LORA_NAME

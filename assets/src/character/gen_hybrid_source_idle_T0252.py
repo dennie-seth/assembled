@@ -55,7 +55,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from asset_gate import palette as asset_gate_palette  # noqa: E402
-from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 # Reused directly from Arm A (T-0228) -- checkpoint/ControlNet identifiers,
 # the procedural OpenPose skeleton renderer, HTTP client helpers, and the
@@ -111,6 +110,8 @@ from gen_pose_authority_idle_T0249 import (  # noqa: E402
     MAIN_NEGATIVE,
     MAIN_PROMPT,
 )
+
+from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 CONCEPT_SHEET_PATH = (
     REPO_ROOT / "assets" / "src" / "concept" / "player_character_concept_sheet_v1.png"
