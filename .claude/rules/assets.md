@@ -18,15 +18,18 @@ paths: ["assets/**"]
   stops you actually generating, write what happened to
   `assets/src/<area>/ARM_<NAME>_ATTEMPT_LOG_<CARD>.md` (the shape
   `ARM_HYBRID_ATTEMPT_LOG_T0252.md` already uses) and commit it: the exact
-  command, its exact error or denial message, and what you tried. **Never
-  substitute a hand-made stand-in for a generated asset** — refusing to fake
-  it is correct — but stopping quietly is not. On T-0259 the implementer
-  could not execute the generator (the `assets` agent had no `.venv/bin/python`
-  grant), correctly refused to synthesize a sheet, and said so only in a commit
-  message; with no attempt log, two runs produced an identical failure
-  signature, the retry loop aborted, and the cause read from the outside as a
-  ComfyUI outage when ComfyUI was up the whole time. An unrunnable tool is a
-  reportable blocker, not a silent no-op.
+  command, its exact error or denial message, and what you tried. **Write that
+  file with the `Write` tool, not shell redirection** — a `>` redirect is
+  denied even inside your own worktree, so `... > ARM_..._ATTEMPT_LOG.md`
+  fails, and would leave you with no log at exactly the moment this rule
+  exists for. **Never substitute a hand-made stand-in for a generated
+  asset** — refusing to fake it is correct — but stopping quietly is not.
+  On T-0259 the implementer could not execute the generator (the `assets`
+  agent had no `.venv/bin/python` grant), correctly refused to synthesize a
+  sheet, and said so only in a commit message; with no attempt log, two runs
+  produced an identical failure signature, the retry loop aborted, and the
+  cause read from the outside as a ComfyUI outage when ComfyUI was up the
+  whole time. An unrunnable tool is a reportable blocker, not a silent no-op.
 - `assets/out/` is gitignored — generation is reproducible from
   `assets/src/` (workflow JSON + prompt + seed + model hash). Only curated
   finals under `assets/final/` are committed.
