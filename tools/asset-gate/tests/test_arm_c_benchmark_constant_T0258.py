@@ -10,8 +10,17 @@ future generator that copy-pastes the literal instead of importing the shared
 constant fails CI here, rather than passing review on the strength of
 producing the same numbers by coincidence.
 
-RED state: any generator source under this directory contains the literal
-`(0.072, 0.112)` -> the grep below finds it, the test fails.
+This test lives in `tools/asset-gate/tests/` rather than alongside the
+generators it greps (`assets/src/character/tests/`) because that package has
+no CI job of its own -- `pytest -q` there never runs in any workflow, so a
+grep test committed there would pass locally and merge silently uncontested.
+`ci-asset-gate.yml`'s `lint-test` job already runs `pytest -q` against this
+package on every PR touching `assets/**` (which includes
+`assets/src/character/**`), so living here is what actually makes this a CI
+gate rather than a local-only check.
+
+RED state: any generator source under `assets/src/character/` contains the
+literal `(0.072, 0.112)` -> the grep below finds it, the test fails.
 """
 
 from __future__ import annotations
@@ -19,7 +28,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_CHARACTER_DIR = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_CHARACTER_DIR = _REPO_ROOT / "assets" / "src" / "character"
 
 # Deliberately tolerant of whitespace variation (e.g. "(0.072,0.112)") -- the
 # defect this guards against is the *value* being restated, not one specific
@@ -29,12 +39,7 @@ _ARM_C_BENCHMARK_LITERAL_RE = re.compile(r"\(\s*0\.072\s*,\s*0\.112\s*\)")
 # The one place the pair is allowed to be spelled out as a literal: the
 # shared constant's own definition. Everything else must import it.
 _ALLOWED_DEFINITION_FILE = (
-    Path(__file__).resolve().parents[4]
-    / "tools"
-    / "comfy-client"
-    / "src"
-    / "comfy_client"
-    / "provenance_sidecar.py"
+    _REPO_ROOT / "tools" / "comfy-client" / "src" / "comfy_client" / "provenance_sidecar.py"
 )
 
 
