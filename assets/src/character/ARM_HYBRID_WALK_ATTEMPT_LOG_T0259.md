@@ -6,3 +6,4 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 |---|---|---|---|---|---|---|---|
 | 1 | 31416 | 0.3051-0.6274 | FAIL | no | 813.9 | no |  |
 | 2 | 31416 | 0.3955-0.5954 | FAIL | no | 843.7 | no | T-0266 tuning pass: stronger style/identity/IP-Adapter weights to suppress background-room hallucination diagnosed in attempt 1 (frame deltas 0.31-0.63, clutter surviving per-frame cutout) |
+| 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
