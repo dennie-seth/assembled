@@ -108,18 +108,21 @@ def test_second_identical_chunk_resumes_and_completes(out_dir: Path) -> None:
         assert (out_dir / f"frame_{i}_main_384.png").exists()
 
 
-def test_completed_frames_are_not_regenerated(out_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_completed_frames_are_not_regenerated(
+    out_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The first 4 frames from chunk 1 must not be re-submitted to
     ComfyUI in chunk 2 -- that is the whole point of resuming."""
     _run(max_frames=4)
 
     submitted: list[str] = []
     original_submit = walk.submit_prompt
-    monkeypatch.setattr(
-        walk,
-        "submit_prompt",
-        lambda graph: (submitted.append(graph[walk.POSE_IMAGE_NODE_ID]["inputs"]["image"]) or original_submit(graph)),
-    )
+
+    def fake_submit(graph: dict) -> str:
+        submitted.append(graph[walk.POSE_IMAGE_NODE_ID]["inputs"]["image"])
+        return original_submit(graph)
+
+    monkeypatch.setattr(walk, "submit_prompt", fake_submit)
 
     result = _run(max_frames=4)
     assert result is not None
