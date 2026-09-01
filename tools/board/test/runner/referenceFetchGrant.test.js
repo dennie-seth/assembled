@@ -18,12 +18,15 @@ const REFERENCE_FETCH_GRANTED_AGENTS = ["assets"];
  * `agentCurlGrant.test.js`, which exists for the identical failure mode on `agentCurl.js` (T-0221).
  *
  * The three tests below that assert the grant *itself* (not just that the wrapper exists, or that
- * `assets` still carries no raw curl grant) are `.skip`-ed as of review run 2: this session's Edit
- * calls to `.claude/agents/assets.md` and `.claude/rules/assets.md` were refused outright by the
- * runner's own permission mode ("which is a sensitive file") -- see
- * docs/reference-sourcing-security.md's "Not yet applied" section for the full record, now updated
- * for this second blocked attempt. Un-skip these three once a session with that edit permission
- * lands the one-line grant + doc bullet docs/reference-sourcing-security.md already specifies.
+ * `assets` still carries no raw curl grant) are `.skip`-ed as of review run 2, reconfirmed by a
+ * third implementer session: every `Edit` call against `.claude/agents/assets.md` and
+ * `.claude/rules/assets.md` is refused outright by the runner's own permission mode -- see
+ * docs/reference-sourcing-security.md's "Not yet applied" section for the full record across all
+ * three attempts. This is very likely a deliberate policy boundary (an implementer agent granting
+ * itself or another agent new Bash capability via `.claude/agents/*.md` is exactly the escalation
+ * shape a permission system should refuse), not a bug to route around. Un-skip these three once a
+ * human (or a session with that edit permission explicitly granted) lands the one-line grant + doc
+ * bullet docs/reference-sourcing-security.md already specifies.
  */
 describe("agent grants: referenceFetch.js wrapper", () => {
   it("the wrapper the grant names actually exists at that path", () => {

@@ -94,20 +94,25 @@ not a raw capability. No other agent should get network access through this
 tool, and `assets` should otherwise still have no raw `curl`/browsing grant of
 its own.
 
-**Still not applied, as of a second session (review run 2).** `.claude/agents/assets.md`
-and `.claude/rules/assets.md` are flagged as sensitive files in the runner's
-permission mode. This session's `Edit` calls against both files were refused
-outright — the second attempt returned an explicit
-`"...which is a sensitive file"` denial, confirming this is a deliberate
-policy gate, not a transient or pending-approval state. Per this repo's
-conduct rules, routing around a denied tool call — e.g. writing the same
-bytes through a different tool (`Write`, a `git` plumbing command, etc.) — is
-itself a conduct violation, not a workaround, so this session did not attempt
-that. `tools/board/test/runner/referenceFetchGrant.test.js` (added this
-session) encodes the exact regression this gap causes and is currently
-`.skip`-ed for the same reason, with a comment pointing back here — un-skip it
-in the same change that lands the edits below. The exact edits a human (or a
-follow-up session with the permission granted) should apply:
+**Still not applied, as of a third session (review run 2, then this implementer
+run).** `.claude/agents/assets.md` and `.claude/rules/assets.md` are refused for
+`Edit` in this runner's permission mode. This session repeated the exact `Edit`
+call against `.claude/agents/assets.md` twice, independently of the prior
+session's attempt; both returned `"Claude requested permissions to write to
+.../.claude/agents/assets.md, but you haven't granted it yet"` — the same
+outcome as the previous session's `"...which is a sensitive file"` denial, not
+a one-off flake. Three consecutive implementer sessions now hit an identical
+wall on the same one-line edit. Per this repo's conduct rules, routing around a
+denied tool call — e.g. writing the same bytes through a different tool
+(`Write`, a `Bash(node:*)` script, a `git` plumbing command, etc.) — is itself a
+conduct violation, not a workaround, so this session did not attempt that
+either. `tools/board/test/runner/referenceFetchGrant.test.js` (added in the
+prior session) encodes the exact regression this gap causes and remains
+`.skip`-ed for the same reason — un-skip it in the same change that lands the
+edits below. **This blocker will not clear through further automated retries**:
+it needs either a human applying the two edits below directly, or an explicit
+grant of `Edit` permission on these two specific files to an implementer
+session. The exact edits to apply:
 
 1. In `.claude/agents/assets.md`'s frontmatter `tools:` line, add
    `Bash(node tools/board/scripts/referenceFetch.js:*)` alongside the existing
