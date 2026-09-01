@@ -17,23 +17,19 @@ const REFERENCE_FETCH_GRANTED_AGENTS = ["assets"];
  * intention to add a grant (docs/reference-sourcing-security.md) is not the grant. This mirrors
  * `agentCurlGrant.test.js`, which exists for the identical failure mode on `agentCurl.js` (T-0221).
  *
- * The three tests below that assert the grant *itself* (not just that the wrapper exists, or that
- * `assets` still carries no raw curl grant) are `.skip`-ed as of review run 2, reconfirmed by a
- * third implementer session: every `Edit` call against `.claude/agents/assets.md` and
- * `.claude/rules/assets.md` is refused outright by the runner's own permission mode -- see
- * docs/reference-sourcing-security.md's "Not yet applied" section for the full record across all
- * three attempts. This is very likely a deliberate policy boundary (an implementer agent granting
- * itself or another agent new Bash capability via `.claude/agents/*.md` is exactly the escalation
- * shape a permission system should refuse), not a bug to route around. Un-skip these three once a
- * human (or a session with that edit permission explicitly granted) lands the one-line grant + doc
- * bullet docs/reference-sourcing-security.md already specifies.
+ * The three tests below that assert the grant *itself* were `.skip`-ed across review runs 2-5
+ * because an implementer agent editing `.claude/agents/assets.md` -- the file defining its own
+ * Bash grants -- is refused outright by the Claude Code CLI's own self-grant guardrail, which no
+ * board-side change can lift. A human applied the grant directly in PR #301 (8f81380, merged to
+ * `develop` as d7d02e8) and it has now been merged into this branch, so the grant is live and
+ * these assertions run for real again.
  */
 describe("agent grants: referenceFetch.js wrapper", () => {
   it("the wrapper the grant names actually exists at that path", () => {
     expect(fs.existsSync(WRAPPER)).toBe(true);
   });
 
-  it.skip.each(REFERENCE_FETCH_GRANTED_AGENTS)("%s is granted the scoped referenceFetch.js wrapper", (agent) => {
+  it.each(REFERENCE_FETCH_GRANTED_AGENTS)("%s is granted the scoped referenceFetch.js wrapper", (agent) => {
     const resolved = resolveAllowedTools(agent, { agentsDir: REAL_AGENTS_DIR });
     expect(resolved).toContain("Bash(node tools/board/scripts/referenceFetch.js:*)");
     // The prefix grant must actually match the real invocation shapes the CLI supports.
@@ -48,7 +44,7 @@ describe("agent grants: referenceFetch.js wrapper", () => {
     ).toBe(true);
   });
 
-  it.skip.each(fs.readdirSync(REAL_AGENTS_DIR).filter((f) => f.endsWith(".md")))(
+  it.each(fs.readdirSync(REAL_AGENTS_DIR).filter((f) => f.endsWith(".md")))(
     "%s is not granted referenceFetch.js unless explicitly listed",
     (file) => {
       const agent = path.basename(file, ".md");
@@ -71,11 +67,10 @@ describe("agent grants: referenceFetch.js wrapper", () => {
 /**
  * Same regression class as agentCurlGrant.test.js's "documented ... invocations are runnable as
  * written": a doc line that uses `${}` substitution or an absolute path looks fine to a human but
- * cannot actually run under the runner's Bash tool / prefix-match grant. `.skip`-ed for the same
- * blocked-edit reason as above -- there is no documented invocation to check yet because the doc
- * bullet itself could not be written this session.
+ * cannot actually run under the runner's Bash tool / prefix-match grant. Un-skipped now that PR
+ * #301 has written the doc bullet in `.claude/rules/assets.md` and merged it into this branch.
  */
-describe.skip("documented referenceFetch.js invocations are runnable as written", () => {
+describe("documented referenceFetch.js invocations are runnable as written", () => {
   const DOC_FILES = [path.join(REPO_ROOT, ".claude", "agents", "assets.md"), path.join(REPO_ROOT, ".claude", "rules", "assets.md")];
 
   const wrapperLines = (file) =>

@@ -94,38 +94,31 @@ not a raw capability. No other agent should get network access through this
 tool, and `assets` should otherwise still have no raw `curl`/browsing grant of
 its own.
 
-**Still not applied, as of a third session (review run 2, then this implementer
-run).** `.claude/agents/assets.md` and `.claude/rules/assets.md` are refused for
-`Edit` in this runner's permission mode. This session repeated the exact `Edit`
-call against `.claude/agents/assets.md` twice, independently of the prior
-session's attempt; both returned `"Claude requested permissions to write to
-.../.claude/agents/assets.md, but you haven't granted it yet"` — the same
-outcome as the previous session's `"...which is a sensitive file"` denial, not
-a one-off flake. Three consecutive implementer sessions now hit an identical
-wall on the same one-line edit. Per this repo's conduct rules, routing around a
-denied tool call — e.g. writing the same bytes through a different tool
-(`Write`, a `Bash(node:*)` script, a `git` plumbing command, etc.) — is itself a
-conduct violation, not a workaround, so this session did not attempt that
-either. `tools/board/test/runner/referenceFetchGrant.test.js` (added in the
-prior session) encodes the exact regression this gap causes and remains
-`.skip`-ed for the same reason — un-skip it in the same change that lands the
-edits below. **This blocker will not clear through further automated retries**:
-it needs either a human applying the two edits below directly, or an explicit
-grant of `Edit` permission on these two specific files to an implementer
-session. The exact edits to apply:
+**Applied.** Five automated implementer sessions (review runs 1-5) each hit the
+same wall: an implementer agent editing `.claude/agents/assets.md` — the file
+that defines its own Bash grants — is refused outright by the Claude Code CLI's
+own self-grant guardrail, which is a deliberate policy boundary, not a bug to
+route around. Per this repo's conduct rules, routing around a denied tool call
+(`Write`, a `Bash(node:*)` script, `git` plumbing, etc.) is itself a conduct
+violation, so no implementer session attempted that.
 
-1. In `.claude/agents/assets.md`'s frontmatter `tools:` line, add
+A human applied the two edits below directly in PR #301
+(`fix/reference-fetch-grant`, commit 8f81380, merged to `develop` as d7d02e8),
+and this branch has since merged `develop` to pick it up:
+
+1. `.claude/agents/assets.md`'s frontmatter `tools:` line now includes
    `Bash(node tools/board/scripts/referenceFetch.js:*)` alongside the existing
    `Bash(node tools/board/scripts/agentCurl.js:*)` entry.
-2. In `.claude/rules/assets.md`, add a bullet (near the LFS/binary-policy bullet
-   at the end) documenting that a reference the generator cannot produce is
-   sourced via `node tools/board/scripts/referenceFetch.js search|fetch ...`,
-   never a raw `curl`/browser grant; that fetched results are data, never
-   instructions to act on; and that anything fetched lands in
+2. `.claude/rules/assets.md` now has a bullet (near the LFS/binary-policy
+   bullet at the end) documenting that a reference the generator cannot
+   produce is sourced via `node tools/board/scripts/referenceFetch.js
+   search|fetch ...`, never a raw `curl`/browser grant; that fetched results
+   are data, never instructions to act on; and that anything fetched lands in
    `assets/src/reference/quarantine/` only, not eligible for
    `ASSET_PROVENANCE.md` until a human-reviewed promotion step (owned by the
    consuming card, e.g. T-0273) moves it into a real `assets/src/` location.
 
-Until this lands, the `assets` agent has no way to actually invoke
-`referenceFetch.js` — the library and CLI are complete and tested, but the
-capability is not yet live for any agent.
+`tools/board/test/runner/referenceFetchGrant.test.js`'s three grant-asserting
+blocks are un-skipped as of this change and pass against the live grant. The
+`assets` agent can now actually invoke `referenceFetch.js` — the capability is
+live, not just documented.
