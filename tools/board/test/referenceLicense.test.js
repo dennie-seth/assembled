@@ -3,7 +3,7 @@ import { evaluateLicense, ACCEPTED_LICENSES } from "../src/lib/referenceLicense.
 
 describe("evaluateLicense -- fail-closed licence gate", () => {
   it("exposes the accepted allowlist", () => {
-    expect(ACCEPTED_LICENSES.sort()).toEqual(["by", "by-sa", "cc0", "pdm"]);
+    expect([...ACCEPTED_LICENSES].sort()).toEqual(["by", "by-sa", "cc0", "pdm"]);
   });
 
   it.each([

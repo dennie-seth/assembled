@@ -56,8 +56,11 @@ function attachmentMaxBytesFromEnv() {
   const raw = Number(process.env.BOARD_ATTACHMENT_MAX_BYTES);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_ATTACHMENT_MAX_BYTES;
 }
-const PREVIEWABLE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-const REJECTED_SNIFFED_MIMES = new Set(["image/svg+xml", "text/html", "application/xhtml+xml"]);
+// Exported for reuse by tools/board/src/lib/referenceQuarantine.js (T-0276) -- the
+// reference-sourcing wrapper's byte-quarantine gate reuses this exact allowlist rather than
+// defining a second one, per that card's design pointer to this module.
+export const PREVIEWABLE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+export const REJECTED_SNIFFED_MIMES = new Set(["image/svg+xml", "text/html", "application/xhtml+xml"]);
 const MARKUP_SNIFF_RE = /<\s*(?:svg|script|html|!doctype\s+html)/i;
 
 const DEFAULTS = {

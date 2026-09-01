@@ -102,6 +102,11 @@ tasks/.id-allocator.json
 # matches at any depth, root included.
 **/assets/out/
 
+# Reference-sourcing quarantine (T-0276): fetched-but-unreviewed external references. Nothing
+# here is ever git-add-ed by tools/board/scripts/referenceFetch.js itself -- promotion out of
+# quarantine into a real assets/src/ location is a separate, deliberate, human-reviewed step.
+assets/src/reference/quarantine/
+
 # Packed sprite atlases: CI build artifacts, not authored source (T-0074).
 # docs/design/13-asset-pipeline.md §3.6: atlases are build artifacts, never committed.
 # Individual sprites live in assets/final/; the packer runs in CI and writes
