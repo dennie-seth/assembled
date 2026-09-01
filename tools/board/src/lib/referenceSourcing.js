@@ -96,7 +96,7 @@ export async function searchReferences({ sourceId, query, limit = 10, transport 
     throw new ReferenceRejectedError(verdict.reason);
   }
 
-  rateLimiter?.take();
+  await rateLimiter?.take();
   const res = await transport(url);
   const json = parseJsonBody(res, `search request to ${sourceId}`);
   return { sourceId, results: parseSearchResults(sourceId, json) };
@@ -134,7 +134,7 @@ export async function fetchReference({
   if (!metadataVerdict.allowed) {
     throw new ReferenceRejectedError(metadataVerdict.reason);
   }
-  rateLimiter?.take();
+  await rateLimiter?.take();
   const metadataRes = await transport(metadataUrl);
   const metadataJson = parseJsonBody(metadataRes, `metadata request to ${sourceId}`);
   const { rawLicense, url: assetUrl, title } = extractAssetMetadata(sourceId, metadataJson, assetId);
@@ -158,7 +158,7 @@ export async function fetchReference({
       throw new ReferenceRejectedError(fetchVerdict.reason);
     }
 
-    rateLimiter?.take();
+    await rateLimiter?.take();
     bytesRes = await transport(currentUrl, { maxBytes });
 
     if (bytesRes.status >= 300 && bytesRes.status < 400) {

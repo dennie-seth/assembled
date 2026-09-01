@@ -94,14 +94,20 @@ not a raw capability. No other agent should get network access through this
 tool, and `assets` should otherwise still have no raw `curl`/browsing grant of
 its own.
 
-**Not yet applied in this session.** `.claude/agents/assets.md` and
-`.claude/rules/assets.md` are flagged as sensitive files in this session's
-permission mode, and editing them was refused pending explicit human approval
-that this non-interactive implementer run cannot obtain (per this repo's
-conduct rules, routing around a denied tool call — e.g. writing the same bytes
-through a different tool — is itself a conduct violation, not a workaround).
-The exact edits a human (or a follow-up session with the permission granted)
-should apply:
+**Still not applied, as of a second session (review run 2).** `.claude/agents/assets.md`
+and `.claude/rules/assets.md` are flagged as sensitive files in the runner's
+permission mode. This session's `Edit` calls against both files were refused
+outright — the second attempt returned an explicit
+`"...which is a sensitive file"` denial, confirming this is a deliberate
+policy gate, not a transient or pending-approval state. Per this repo's
+conduct rules, routing around a denied tool call — e.g. writing the same
+bytes through a different tool (`Write`, a `git` plumbing command, etc.) — is
+itself a conduct violation, not a workaround, so this session did not attempt
+that. `tools/board/test/runner/referenceFetchGrant.test.js` (added this
+session) encodes the exact regression this gap causes and is currently
+`.skip`-ed for the same reason, with a comment pointing back here — un-skip it
+in the same change that lands the edits below. The exact edits a human (or a
+follow-up session with the permission granted) should apply:
 
 1. In `.claude/agents/assets.md`'s frontmatter `tools:` line, add
    `Bash(node tools/board/scripts/referenceFetch.js:*)` alongside the existing

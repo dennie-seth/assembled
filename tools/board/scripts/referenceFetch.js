@@ -21,11 +21,13 @@
  * wrapper delegates to.
  *
  * Both commands print a single JSON object to stdout -- structured data only, never prose for
- * the caller to "follow". Exit codes: 0 success, 2 rejected (policy/licence/quarantine/rate
- * limit), 64 bad usage, 1 unexpected error.
+ * the caller to "follow". Exit codes: 0 success, 2 rejected (policy/licence/quarantine), 64 bad
+ * usage, 1 unexpected error. A rate limit never rejects the call -- it paces internal requests
+ * (see referenceRateLimit.js) so a single `fetch` invocation's several network calls don't trip
+ * over each other.
  */
 import { searchReferences, fetchReference } from "../src/lib/referenceSourcing.js";
-import { createRateLimiter, DEFAULT_MIN_INTERVAL_MS, RateLimitExceededError } from "../src/lib/referenceRateLimit.js";
+import { createRateLimiter, DEFAULT_MIN_INTERVAL_MS } from "../src/lib/referenceRateLimit.js";
 import { listSourceIds } from "../src/lib/referenceSourcePolicy.js";
 import { ReferenceRejectedError } from "../src/lib/referenceQuarantine.js";
 
@@ -84,7 +86,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  if (err instanceof ReferenceRejectedError || err instanceof RateLimitExceededError) {
+  if (err instanceof ReferenceRejectedError) {
     fail(2, `referenceFetch: rejected -- ${err.message}`);
     return;
   }
