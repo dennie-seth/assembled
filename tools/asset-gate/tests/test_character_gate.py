@@ -24,6 +24,8 @@ import json
 from asset_gate.character import (
     asset_class,
     check_character_arm_c_provenance,
+    check_character_frame_delta_cap,
+    frame_delta_cap_for_motion_class,
     load_character_arm_c_baseline,
     sweep_character_arm_c_provenance,
 )
@@ -229,3 +231,138 @@ def test_load_character_arm_c_baseline_default_path_excludes_the_three_round2_wi
     assert "character/player_idle_sheet_pose_authority_T0249.provenance.json" not in baseline
     assert "character/player_idle_sheet_chained_T0250.provenance.json" not in baseline
     assert "character/player_idle_sheet_hybrid_T0252.provenance.json" not in baseline
+
+
+# ---- motion-class-aware frame-delta cap (T-0271) ----
+#
+# DL-21's 0.30 cap was pre-registered against the player IDLE sheet. Every
+# character animation since inherited that number regardless of what the
+# character is doing, and T-0259's walk-cycle calibration trail shows the
+# result: a correct, smooth walk legitimately moves far more silhouette
+# pixels per frame than an idle, so it scores *worse* against a cap sized for
+# standing still. These tests pin the fix -- idle keeps 0.30 unchanged,
+# locomotion/transition/loop get the higher ~0.50 cap DL-26 justifies from
+# T-0259's own measured data, a missing/unrecognised class fails closed to
+# 0.30, and gross drift still fails even under the higher cap.
+
+# T-0259 attempt 4 (committed, §24/hybrid-walk lineage) -- motion barely
+# visible, well inside the idle cap.
+_T0259_ATTEMPT_4_IDLE_LIKE = [0.034, 0.253]
+# T-0259 attempt 6 -- reads as a real walk on human review, and its own
+# upper bound (0.375) exceeds the idle-only 0.30 cap outright.
+_T0259_ATTEMPT_6_REALISTIC_WALK = [0.212, 0.375]
+
+
+def test_frame_delta_cap_for_idle_is_030():
+    assert frame_delta_cap_for_motion_class("idle") == 0.30
+
+
+def test_frame_delta_cap_for_locomotion_is_050():
+    assert frame_delta_cap_for_motion_class("locomotion") == 0.50
+
+
+def test_frame_delta_cap_for_transition_is_050():
+    assert frame_delta_cap_for_motion_class("transition") == 0.50
+
+
+def test_frame_delta_cap_for_loop_is_050():
+    assert frame_delta_cap_for_motion_class("loop") == 0.50
+
+
+def test_frame_delta_cap_fails_closed_to_idle_cap_for_missing_class():
+    assert frame_delta_cap_for_motion_class(None) == 0.30
+
+
+def test_frame_delta_cap_fails_closed_to_idle_cap_for_unrecognised_class():
+    assert frame_delta_cap_for_motion_class("sprint") == 0.30
+
+
+def test_check_frame_delta_cap_passes_idle_sheet_within_030():
+    prov = {"frame_delta_range": _T0259_ATTEMPT_4_IDLE_LIKE, "motion_class": "idle"}
+    result = check_character_frame_delta_cap(prov)
+    assert result.passed
+
+
+def test_check_frame_delta_cap_fails_idle_sheet_exceeding_030():
+    """(a) idle stays capped at 0.30, unchanged -- this is not a loosening."""
+    prov = {"frame_delta_range": [0.05, 0.34], "motion_class": "idle"}
+    result = check_character_frame_delta_cap(prov)
+    assert not result.passed
+
+
+def test_check_frame_delta_cap_passes_realistic_walk_that_030_would_reject():
+    """(b) a locomotion sheet whose measured range 0.30 would reject (T-0259
+    attempt 6, human-confirmed as reading like a real walk) passes under the
+    locomotion cap."""
+    assert _T0259_ATTEMPT_6_REALISTIC_WALK[1] > 0.30  # sanity: 0.30 would reject this
+    prov = {"frame_delta_range": _T0259_ATTEMPT_6_REALISTIC_WALK, "motion_class": "locomotion"}
+    result = check_character_frame_delta_cap(prov)
+    assert result.passed
+
+
+def test_check_frame_delta_cap_still_fails_gross_drift_under_locomotion():
+    """(c) the gate is not defanged -- drift beyond the new ~0.50 cap still
+    fails even for a locomotion-class sheet."""
+    prov = {"frame_delta_range": [0.10, 0.55], "motion_class": "locomotion"}
+    result = check_character_frame_delta_cap(prov)
+    assert not result.passed
+
+
+def test_check_frame_delta_cap_still_fails_gross_drift_under_transition():
+    prov = {"frame_delta_range": [0.10, 0.61], "motion_class": "transition"}
+    result = check_character_frame_delta_cap(prov)
+    assert not result.passed
+
+
+def test_check_frame_delta_cap_still_fails_gross_drift_under_loop():
+    prov = {"frame_delta_range": [0.10, 0.58], "motion_class": "loop"}
+    result = check_character_frame_delta_cap(prov)
+    assert not result.passed
+
+
+def test_check_frame_delta_cap_fails_closed_when_motion_class_missing():
+    """A range that would pass locomotion's 0.50 cap must still fail when no
+    motion class is recorded at all -- an unlabelled sheet never gets the
+    permissive cap."""
+    prov = {"frame_delta_range": [0.34, 0.40]}
+    result = check_character_frame_delta_cap(prov)
+    assert not result.passed
+
+
+def test_check_frame_delta_cap_fails_closed_for_unrecognised_motion_class():
+    prov = {"frame_delta_range": [0.34, 0.40], "motion_class": "sprint"}
+    result = check_character_frame_delta_cap(prov)
+    assert not result.passed
+
+
+def test_check_frame_delta_cap_fails_when_frame_delta_range_missing():
+    result = check_character_frame_delta_cap({"motion_class": "idle"})
+    assert not result.passed
+    assert "frame_delta_range" in result.reason
+
+
+def test_check_frame_delta_cap_fails_when_frame_delta_range_malformed():
+    prov = {"frame_delta_range": [0.05], "motion_class": "idle"}
+    result = check_character_frame_delta_cap(prov)
+    assert not result.passed
+
+
+def test_check_frame_delta_cap_reason_names_sheet_and_cap():
+    prov = {"frame_delta_range": [0.05, 0.34], "motion_class": "idle"}
+    result = check_character_frame_delta_cap(prov, sheet_name="player_walk_sheet_x.png")
+    assert "player_walk_sheet_x.png" in result.reason
+    assert "0.3" in result.reason
+
+
+def test_check_frame_delta_cap_does_not_affect_chr1_pass():
+    """CHR-1's own gate (presence/shape of frame_delta_range +
+    arm_c_benchmark comparison) is unchanged by this card -- it must keep
+    passing regardless of motion class or the new cap."""
+    prov = {
+        "frame_delta_range": _T0259_ATTEMPT_6_REALISTIC_WALK,
+        "arm_c_benchmark": [0.072, 0.112],
+        "beats_arm_c_benchmark": False,
+        "motion_class": "locomotion",
+    }
+    result = check_character_arm_c_provenance(prov)
+    assert result.passed
