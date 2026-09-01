@@ -1393,3 +1393,86 @@ Recorded here so the loose end is not silently dropped.
 **Touched docs (this entry):**
 - `docs/decision-log.md` — this entry (DL-25)
 - `docs/board-invariants.md` — §9, invariants CHR-1 and CHR-2 (the standing rule)
+
+---
+
+## DL-26 — Motion-class-aware frame-delta cap: idle keeps DL-21's 0.30, locomotion/transition/loop get 0.50 (T-0271)
+
+**Date:** 2026-09-01
+**Raised by:** T-0271, drawing on T-0259's walk-cycle calibration trail
+**Resolved by:** T-0271 (`tools/asset-gate`,
+`asset_gate.character.frame_delta_cap_for_motion_class` /
+`check_character_frame_delta_cap`)
+
+### The problem
+
+DL-21 criterion 2's 0.30 frame-delta cap was pre-registered against **the player idle
+sheet only** — the subject-and-state section of that entry is explicit: "Player character,
+idle state only." DL-24 restated the constraint for round 2 as "same subject (the player
+idle sheet), same output spec, same criteria," carrying the number forward unchanged for
+another idle comparison. Neither entry considered locomotion; every character animation
+generated since — including walk cycles — has nonetheless inherited the idle-calibrated
+0.30 by default, because nothing distinguished the two.
+
+A walk cycle legitimately moves far more silhouette pixels per frame than an idle pose: the
+whole point of a stride is that limbs travel. Capping it at a bound sized for standing still
+does not measure identity drift — the failure mode the cap exists to catch — it measures
+motion amplitude, and penalizes a sheet for doing its job. This is not hypothetical: T-0259's
+four real ComfyUI attempts (~800 GPU-s each, seed 27182) show it directly.
+
+### The evidence — T-0259's calibration trail
+
+| Attempt | STRIDE / KNEE / ARM / CROSS | Denoise | Frame-delta | Pairs over 0.30 |
+|---|---|---|---|---|
+| 4 (committed) | 0.145 / 0.085 / 0.09 / — | 0.45 | 0.034–0.253 | 0/8 — motion barely visible |
+| 5 | 0.30 / 0.18 / 0.20 / 0.14 | 0.45 | 0.328–0.473 | 8/8 |
+| 6 | 0.22 / 0.13 / 0.15 / 0.05 | 0.45 | 0.212–0.375 | 6/8 |
+| 7 | 0.22 / 0.13 / 0.15 / 0.05 | 0.30 | 0.161–0.340 | 3/8 |
+| 8 | 0.22 / 0.13 / 0.15 / 0.02 | 0.24 | 0.109–0.302 | 1/8 |
+
+Chasing the 0.30 cap monotonically traded away the motion the card asked for: attempt 8
+missed by 0.00198 on a single pair, and only got that close after `CROSS_EXTENT_NORM` — the
+parameter controlling how far the legs visibly cross — was cut from 0.14 to 0.02, a 7x
+reduction from the value that actually read as a leg cross on human review. Attempts 5 and 6,
+the ones that read as an honest walk, measured 0.328–0.473 and 0.212–0.375 respectively — both
+partly or wholly outside the idle cap, precisely because they look like walking and attempt 4
+does not.
+
+### Decision
+
+**The frame-delta cap is now a function of the sheet's motion class, read from the
+provenance sidecar's `motion_class` field** (`idle` | `locomotion` | `transition` | `loop`).
+The sidecar was chosen over card metadata because it makes the sheet self-describing — a gate
+run against a committed `.provenance.json` needs no board lookup to know which cap applies,
+consistent with every other field this pipeline already treats as sidecar-owned
+(`frame_delta_range`, `arm_c_benchmark`, `beats_arm_c_benchmark`, per CHR-1).
+
+- **`idle` (and DL-21's original scope) keeps exactly 0.30.** This is not loosened. Every
+  committed idle sheet, including the round-1/round-2 arms DL-21/DL-24/DL-25 already judged,
+  keeps the bar it was measured against.
+- **`locomotion`, `transition`, and `loop` get 0.50.** Derived from the table above: the
+  sheets that read as a real walk on human review ran 0.328–0.473 (attempt 5) and
+  0.212–0.375 (attempt 6), and attempt 5's own upper bound of 0.473 is the highest measured
+  value that still reads as legitimate locomotion rather than drift — restoring the leg-cross
+  amplitude attempt 8 sacrificed would push a genuine walk higher still. 0.50 clears 0.473
+  with headroom (≈0.03, deliberately not a hairline the way 0.30 was for attempt 8), while
+  remaining well below the range that would read as gross drift rather than motion — this
+  package's own test suite pins a drift fixture at 0.55/0.58/0.61 for locomotion/loop/
+  transition respectively and confirms the cap still rejects it.
+- **A missing or unrecognised `motion_class` fails closed to the idle cap (0.30), never to
+  the permissive one.** An unlabelled sheet must not silently receive the loosest bar; this
+  is enforced by `frame_delta_cap_for_motion_class` falling through to 0.30 for anything not
+  literally `locomotion`, `transition`, or `loop`.
+- **CHR-1 and CHR-2 (DL-25, `docs/board-invariants.md` §9) are unchanged.** This entry adds
+  a new cap check (`check_character_frame_delta_cap`); it does not touch
+  `check_character_arm_c_provenance`, and the Arm-C benchmark comparison remains recorded,
+  not gating — `beats_arm_c_benchmark: false` continues to pass.
+- **No existing sheet is retro-fitted.** Committed sheets keep the grading they were produced
+  and judged under; this cap applies going forward, to sheets that record a `motion_class`.
+
+**This does not void DL-21's round-1 idle comparison, or DL-25's round-2 decision.** Both
+were judged with the idle cap against idle-state sheets, which is exactly the cap this entry
+keeps unchanged for that class. Nothing here re-opens or re-grades either verdict.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-26)

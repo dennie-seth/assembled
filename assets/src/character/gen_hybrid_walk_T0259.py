@@ -108,6 +108,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pose_rig_walk_T0259  # noqa: E402
 from asset_gate import art as asset_gate_art  # noqa: E402
+from asset_gate import character as asset_gate_character  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
 from comfy_client.provenance_sidecar import apply_arm_c_benchmark_fields  # noqa: E402
 
@@ -192,7 +193,14 @@ FRAME_CELLS: list[tuple[int, int]] = [(r, c) for r in range(ROWS) for c in range
 # IP-Adapter conditions on the character alone.
 IDENTITY_REFERENCE_CROP_BOX = (8, 298, 195, 498)  # left, upper, right, lower
 
-MAX_FRAME_DELTA_RATIO = 0.30  # same cap every round-2 arm uses (DL-21 criterion 2)
+# T-0271/DL-26: a walk cycle is locomotion, not idle -- DL-21's 0.30 was
+# pre-registered against the player IDLE sheet, and grading a real walk
+# against it is exactly the bug this sheet's own calibration trail exposed
+# (see the card evidence table). Graded at the locomotion cap instead, via
+# the same predicate asset_gate.character's enforcement sweep uses, so this
+# script and the sweep cannot drift apart.
+MOTION_CLASS = "locomotion"
+MAX_FRAME_DELTA_RATIO = asset_gate_character.frame_delta_cap_for_motion_class(MOTION_CLASS)
 # The Arm-C benchmark pair itself is derived by apply_arm_c_benchmark_fields
 # (comfy_client.provenance_sidecar, CHR-1's single shared home, T-0258).
 
@@ -812,7 +820,7 @@ def run_attempt(
     mechanical_gate_passed = all(d["passed"] for d in frame_deltas)
     ratios = [d["ratio"] for d in frame_deltas]
     beats_030_cap = max(ratios) <= MAX_FRAME_DELTA_RATIO
-    arm_c_fields = apply_arm_c_benchmark_fields({}, ratios)
+    arm_c_fields = apply_arm_c_benchmark_fields({}, ratios, motion_class=MOTION_CLASS)
 
     identity_anchor = {
         "path": str(IDLE_KEYFRAME_PATH.relative_to(REPO_ROOT)),

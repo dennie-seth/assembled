@@ -382,3 +382,31 @@ def test_apply_arm_c_benchmark_fields_preserves_other_keys():
 def test_apply_arm_c_benchmark_fields_rejects_empty_ratios():
     with pytest.raises(ValueError):
         apply_arm_c_benchmark_fields({}, [])
+
+
+# ---------------------------------------------------------------------------
+# motion_class (T-0271, docs/decision-log.md DL-26) -- the writer half of the
+# motion-class-aware frame-delta cap. asset_gate.character reads this field
+# from the sidecar to pick idle's 0.30 vs. locomotion/transition/loop's
+# 0.50; this is where a generator records which one it is.
+# ---------------------------------------------------------------------------
+
+
+def test_apply_arm_c_benchmark_fields_records_motion_class_when_provided():
+    result = apply_arm_c_benchmark_fields({}, [0.05], motion_class="locomotion")
+    assert result["motion_class"] == "locomotion"
+
+
+def test_apply_arm_c_benchmark_fields_omits_motion_class_when_not_provided():
+    """Backward compatible: a caller that has not been updated to classify its
+    own motion (yet) writes exactly what it always has -- no motion_class key
+    at all, which asset_gate.character's fail-closed read treats as idle's
+    0.30, never the permissive cap."""
+    result = apply_arm_c_benchmark_fields({}, [0.05])
+    assert "motion_class" not in result
+
+
+def test_apply_arm_c_benchmark_fields_motion_class_does_not_affect_derived_fields():
+    result = apply_arm_c_benchmark_fields({}, [0.05, 0.09, 0.03], motion_class="loop")
+    assert result["frame_delta_range"] == [0.03, 0.09]
+    assert result["arm_c_benchmark"] == [0.072, 0.112]
