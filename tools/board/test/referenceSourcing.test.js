@@ -5,6 +5,7 @@ import path from "node:path";
 import { searchReferences, fetchReference } from "../src/lib/referenceSourcing.js";
 import { ReferenceRejectedError } from "../src/lib/referenceQuarantine.js";
 import { REFERENCE_SOURCES } from "../src/lib/referenceSourcePolicy.js";
+import { createRateLimiter } from "../src/lib/referenceRateLimit.js";
 
 const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -355,5 +356,37 @@ describe("fetchReference -- licence-gated, allowlist-confined, quarantine-only",
     });
     await fetchReference({ sourceId: "wikimedia", assetId: "File:Example.jpg", quarantineDir: dir, transport, rateLimiter });
     expect(takes).toBe(2); // one metadata call, one byte fetch
+  });
+
+  it("regression (T-0276 review run 1): a real rate limiter does not self-trip a fetch that makes several internal calls", async () => {
+    // The real createRateLimiter, not a stub -- this is exactly what referenceFetch.js's CLI
+    // wires up. A single fetchReference call takes it twice (metadata, then bytes); before the
+    // fix, the second take() threw and the whole `fetch` subcommand could never succeed.
+    const dir = await makeTmpDir();
+    const rateLimiter = createRateLimiter({ minIntervalMs: 5 }); // small real interval, keeps the test fast
+    const transport = fakeTransport({
+      [WIKIMEDIA_METADATA_URL]: json({
+        query: {
+          pages: {
+            123: {
+              title: "File:Example.jpg",
+              imageinfo: [
+                { url: "https://upload.wikimedia.org/wikipedia/commons/a/aa/Example.jpg", extmetadata: { LicenseShortName: { value: "CC0" } } }
+              ]
+            }
+          }
+        }
+      }),
+      "https://upload.wikimedia.org/wikipedia/commons/a/aa/Example.jpg": { status: 200, headers: {}, body: TINY_PNG }
+    });
+
+    const { record } = await fetchReference({
+      sourceId: "wikimedia",
+      assetId: "File:Example.jpg",
+      quarantineDir: dir,
+      transport,
+      rateLimiter
+    });
+    expect(record.license).toBe("CC0");
   });
 });
