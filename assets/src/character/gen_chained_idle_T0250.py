@@ -132,6 +132,7 @@ SHEET_PX = pose_authority.SHEET_PX
 FRAME_COUNT = pose_authority.FRAME_COUNT
 FRAME_ORDER = pose_authority.FRAME_ORDER
 
+MOTION_CLASS = pose_authority.MOTION_CLASS
 MAX_FRAME_DELTA_RATIO = pose_authority.MAX_FRAME_DELTA_RATIO
 ARM_C_BENCHMARK = pose_authority.ARM_C_BENCHMARK
 
@@ -464,7 +465,7 @@ def compute_sheet_gates(indexed: Image.Image) -> dict:
     }
     # CHR-1 (T-0258): frame_delta_range/arm_c_benchmark/beats_arm_c_benchmark
     # are derived and owned by the shared helper, not computed here.
-    return apply_arm_c_benchmark_fields(gates, ratios)
+    return apply_arm_c_benchmark_fields(gates, ratios, motion_class=MOTION_CLASS)
 
 
 def check_attempt_cap(attempt: int) -> None:

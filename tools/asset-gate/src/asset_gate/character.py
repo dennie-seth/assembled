@@ -307,3 +307,74 @@ def sweep_character_arm_c_provenance(
             )
         )
     return results
+
+
+def sweep_character_frame_delta_cap(
+    root: Path | str, baseline: frozenset[str] = frozenset()
+) -> list[CheckResult]:
+    """Run `check_character_frame_delta_cap` against every `*.provenance.json`
+    under *root*, scoped to the `character` asset class -- the T-0271/DL-26
+    motion-class-aware cap's actual enforcement path.
+
+    Same shape and scope as `sweep_character_arm_c_provenance`, and reuses
+    that check's baseline idiom: a sidecar predating CHR-1 has no
+    `frame_delta_range` at all (there is no cap to evaluate it against), so
+    it is exempted by the same `character_arm_c_baseline.txt` list, not a
+    second one -- the two sweeps share exactly the same set of pre-CHR-1
+    gaps by construction.
+
+    Args:
+        root: directory to search recursively (e.g. `assets/final`). Asset
+            class is read from each sidecar's path relative to *root* --
+            pass a root whose immediate subdirectories are the asset
+            classes (`character/`, `props/`, `tiles/`, ...), not a directory
+            already scoped to `character/` itself.
+        baseline: paths (relative to *root*, forward-slashed) allowed to
+            keep failing -- documented pre-existing gaps (see
+            `load_character_arm_c_baseline`). Anything not in *baseline*
+            must pass.
+    """
+    root_path = Path(root)
+    results = []
+    for path in sorted(root_path.rglob("*.provenance.json")):
+        rel = path.relative_to(root_path)
+        rel_str = rel.as_posix()
+        cls = asset_class(rel)
+
+        if cls != CHARACTER_CLASS:
+            results.append(
+                CheckResult(
+                    check="character_frame_delta_cap",
+                    passed=True,
+                    reason=(
+                        f"{rel_str}: asset class {cls!r} is not character -- "
+                        "the motion-class frame-delta cap does not apply"
+                    ),
+                    details={"path": rel_str, "asset_class": cls, "skipped": True},
+                )
+            )
+            continue
+
+        provenance = json.loads(path.read_text())
+        single = check_character_frame_delta_cap(provenance, sheet_name=rel_str)
+
+        if not single.passed and rel_str in baseline:
+            results.append(
+                CheckResult(
+                    check="character_frame_delta_cap",
+                    passed=True,
+                    reason=f"{single.reason} [baseline-exempt: predates CHR-1, T-0258]",
+                    details={**single.details, "path": rel_str, "baseline_exempt": True},
+                )
+            )
+            continue
+
+        results.append(
+            CheckResult(
+                check="character_frame_delta_cap",
+                passed=single.passed,
+                reason=single.reason,
+                details={**single.details, "path": rel_str},
+            )
+        )
+    return results

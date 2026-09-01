@@ -81,6 +81,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pose_rig_T0249  # noqa: E402
 from asset_gate import art as asset_gate_art  # noqa: E402
+from asset_gate import character as asset_gate_character  # noqa: E402
 from asset_gate import palette as asset_gate_palette  # noqa: E402
 from comfy_client.provenance_sidecar import (  # noqa: E402
     # Not referenced directly below -- gen_chained_idle_T0250.py re-exports this
@@ -141,7 +142,12 @@ SHEET_PX = FINAL_CELL_PX * 3  # 144 -- assembled sheet, 3x3 of 48px cells
 FRAME_COUNT = 9
 FRAME_ORDER: list[tuple[int, int]] = [(r, c) for r in range(3) for c in range(3)]  # row-major
 
-MAX_FRAME_DELTA_RATIO = 0.30  # round-2 rule: same 0.30 cap as round 1 (DL-21 criterion 2)
+# T-0271/DL-26: this sheet is idle -- DL-21's 0.30 stays the cap, unchanged,
+# derived via the shared motion-class predicate so this script and the
+# enforcement sweep cannot drift apart. gen_chained_idle_T0250.py imports
+# this constant (and shares MOTION_CLASS below) rather than redefining it.
+MOTION_CLASS = "idle"
+MAX_FRAME_DELTA_RATIO = asset_gate_character.frame_delta_cap_for_motion_class(MOTION_CLASS)
 # ARM_C_BENCHMARK: the real bar to beat, not the pass/fail floor -- imported
 # above from comfy_client.provenance_sidecar (CHR-1's single shared home,
 # T-0258), not redefined here.
@@ -581,7 +587,7 @@ def run_attempt(
     mechanical_gate_passed = all(d["passed"] for d in frame_deltas)
     ratios = [d["ratio"] for d in frame_deltas]
     beats_030_cap = max(ratios) <= MAX_FRAME_DELTA_RATIO
-    arm_c_fields = apply_arm_c_benchmark_fields({}, ratios)
+    arm_c_fields = apply_arm_c_benchmark_fields({}, ratios, motion_class=MOTION_CLASS)
     frame_delta_range = arm_c_fields["frame_delta_range"]
     beats_arm_c_benchmark = arm_c_fields["beats_arm_c_benchmark"]
 

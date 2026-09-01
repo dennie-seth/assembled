@@ -99,7 +99,12 @@ ADJACENT_PAIRS: list[tuple[tuple[int, int], tuple[int, int]]] = [
 ] + [(FRAME_CELLS[-1], FRAME_CELLS[0])]
 
 BACKGROUND_INDEX = 0
-MAX_FRAME_DELTA_RATIO = 0.30
+# T-0271/DL-26: this sheet is a walk cycle -- locomotion, not idle -- so it is
+# graded at the locomotion cap, not DL-21's idle-only 0.30. Derived from the
+# same asset_gate.character predicate the enforcement sweep uses, so this
+# test and the sweep cannot drift apart.
+MOTION_CLASS = "locomotion"
+MAX_FRAME_DELTA_RATIO = asset_gate_character.frame_delta_cap_for_motion_class(MOTION_CLASS)
 ARM_C_BENCHMARK_UPPER = 0.112
 ORPHAN_SIZE_THRESHOLD = 4
 MIN_BACKGROUND_FRACTION = 0.65
@@ -351,8 +356,9 @@ def test_frame_deltas_include_loop_seam(provenance: dict) -> None:
 
 
 def test_frame_delta_range_reported_against_both_bars(provenance: dict) -> None:
-    """Report the measured range against both 0.30 and Arm C's 0.072-0.112,
-    including the loop seam in the measured set (not just interior pairs)."""
+    """Report the measured range against both the locomotion cap and Arm C's
+    0.072-0.112, including the loop seam in the measured set (not just
+    interior pairs)."""
     frame_deltas = provenance.get("frame_deltas")
     ratios = [d["ratio"] for d in frame_deltas]
     measured_min, measured_max = min(ratios), max(ratios)
@@ -365,12 +371,37 @@ def test_frame_delta_range_reported_against_both_bars(provenance: dict) -> None:
     assert provenance.get("beats_arm_c_benchmark") == (measured_max <= ARM_C_BENCHMARK_UPPER)
 
 
+def test_motion_class_when_recorded_is_locomotion_not_something_else(provenance: dict) -> None:
+    """T-0271/DL-26: this sheet is a walk cycle, so if its sidecar records a
+    motion_class at all, it must say locomotion, not idle or anything else --
+    a mislabelled class is worse than an absent one (it could silently borrow
+    the wrong cap for a *different* sheet's data). Not a requirement that
+    motion_class be present: DL-26 is explicit that no existing sheet is
+    retro-fitted, so a sheet promoted before T-0271 (as this one currently
+    is -- attempt 4, committed pre-T-0271) may still have none, which
+    correctly falls closed to the idle cap rather than the locomotion one."""
+    motion_class = provenance.get("motion_class")
+    if motion_class is not None:
+        assert motion_class == MOTION_CLASS
+
+
 def test_chr1_provenance_fields_pass_gate(provenance: dict) -> None:
     """CHR-1 (docs/board-invariants.md, T-0258): every character-generation
     output must record frame_delta_range + the Arm-C comparison, written
     through the shared helper -- checked via the actual enforcement
     predicate, not hand-duplicated assertions."""
     result = asset_gate_character.check_character_arm_c_provenance(
+        provenance, sheet_name="player_walk_sheet_hybrid.png"
+    )
+    assert result.passed, result.reason
+
+
+def test_frame_delta_cap_gate_passes_at_locomotion_cap(provenance: dict) -> None:
+    """T-0271/DL-26: the actual enforcement predicate -- not just the 0.30
+    literal above -- must pass this sheet at the locomotion cap. This is the
+    check the reviewer found nothing wired to a real sheet; this sheet is
+    that wiring's proof once one is promoted."""
+    result = asset_gate_character.check_character_frame_delta_cap(
         provenance, sheet_name="player_walk_sheet_hybrid.png"
     )
     assert result.passed, result.reason

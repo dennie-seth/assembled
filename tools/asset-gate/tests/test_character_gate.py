@@ -28,6 +28,7 @@ from asset_gate.character import (
     frame_delta_cap_for_motion_class,
     load_character_arm_c_baseline,
     sweep_character_arm_c_provenance,
+    sweep_character_frame_delta_cap,
 )
 
 
@@ -366,3 +367,110 @@ def test_check_frame_delta_cap_does_not_affect_chr1_pass():
     }
     result = check_character_arm_c_provenance(prov)
     assert result.passed
+
+
+# ---- sweep_character_frame_delta_cap (T-0271) ----
+#
+# check_character_frame_delta_cap above is only a predicate -- these tests
+# cover the actual enforcement path a real `assets/final/character/*.provenance.json`
+# tree is graded through (`asset-gate character-frame-delta-cap-sweep`, cli.py),
+# the thing the T-0271 reviewer found nothing invoked. Mirrors
+# sweep_character_arm_c_provenance's own shape/scope/baseline tests above.
+
+
+def test_sweep_frame_delta_cap_fails_idle_sidecar_exceeding_030(tmp_path):
+    _write_prov(
+        tmp_path / "character" / "player_idle_sheet_new.provenance.json",
+        frame_delta_range=[0.05, 0.34],
+        motion_class="idle",
+    )
+
+    results = sweep_character_frame_delta_cap(tmp_path)
+
+    assert len(results) == 1
+    assert not results[0].passed
+    assert "character/player_idle_sheet_new.provenance.json" in results[0].reason
+
+
+def test_sweep_frame_delta_cap_passes_locomotion_sheet_using_attempt6_range(tmp_path):
+    """The fixture proving the enforcement path -- not just the predicate --
+    now passes a realistic walk: T-0259 attempt 6's measured range
+    (0.212-0.375, human-confirmed as reading like a real walk) exceeds the
+    idle-only 0.30 cap but clears the locomotion cap once the sidecar
+    records motion_class."""
+    _write_prov(
+        tmp_path / "character" / "player_walk_sheet_hybrid.provenance.json",
+        frame_delta_range=_T0259_ATTEMPT_6_REALISTIC_WALK,
+        motion_class="locomotion",
+    )
+
+    results = sweep_character_frame_delta_cap(tmp_path)
+
+    assert len(results) == 1
+    assert results[0].passed
+
+
+def test_sweep_frame_delta_cap_still_fails_gross_drift_for_locomotion_sheet(tmp_path):
+    _write_prov(
+        tmp_path / "character" / "player_walk_sheet_drifted.provenance.json",
+        frame_delta_range=[0.10, 0.55],
+        motion_class="locomotion",
+    )
+
+    results = sweep_character_frame_delta_cap(tmp_path)
+
+    assert len(results) == 1
+    assert not results[0].passed
+
+
+def test_sweep_frame_delta_cap_fails_closed_for_sidecar_missing_motion_class(tmp_path):
+    """A range that would pass locomotion's 0.50 cap must still fail the
+    sweep when no motion class is recorded at all."""
+    _write_prov(
+        tmp_path / "character" / "unlabelled.provenance.json",
+        frame_delta_range=[0.34, 0.40],
+    )
+
+    results = sweep_character_frame_delta_cap(tmp_path)
+
+    assert len(results) == 1
+    assert not results[0].passed
+
+
+def test_sweep_frame_delta_cap_does_not_fire_on_prop_tile_concept_or_entity_sheets(tmp_path):
+    _write_prov(tmp_path / "props" / "signal_tower" / "crate_stack_v1.provenance.json")
+    _write_prov(tmp_path / "tiles" / "signal_tower_concrete_wall_16px.provenance.json")
+    _write_prov(tmp_path / "concept" / "player_character_concept_sheet_v1.provenance.json")
+    _write_prov(tmp_path / "entity" / "watcher_idle_sheet_v1.provenance.json")
+
+    results = sweep_character_frame_delta_cap(tmp_path)
+
+    assert len(results) == 4
+    assert all(r.passed for r in results)
+    assert all(r.details.get("skipped") for r in results)
+
+
+def test_sweep_frame_delta_cap_baseline_exempts_documented_pre_existing_gaps(tmp_path):
+    """Sidecars predating CHR-1 (no frame_delta_range at all) are exempt from
+    this sweep the same way they are exempt from the CHR-1 presence sweep --
+    reuses the same baseline file/set, since a range that was never measured
+    has no cap to evaluate it against either."""
+    _write_prov(tmp_path / "character" / "player_idle_sheet_v1.provenance.json")
+    _write_prov(
+        tmp_path / "character" / "player_idle_sheet_new.provenance.json",
+        frame_delta_range=[0.05, 0.09],
+        motion_class="idle",
+    )
+
+    results = sweep_character_frame_delta_cap(
+        tmp_path, baseline=frozenset({"character/player_idle_sheet_v1.provenance.json"})
+    )
+
+    by_path = {r.details["path"]: r for r in results}
+    assert by_path["character/player_idle_sheet_v1.provenance.json"].passed
+    assert by_path["character/player_idle_sheet_v1.provenance.json"].details["baseline_exempt"]
+    assert by_path["character/player_idle_sheet_new.provenance.json"].passed
+
+
+def test_sweep_frame_delta_cap_of_empty_tree_returns_no_results(tmp_path):
+    assert sweep_character_frame_delta_cap(tmp_path) == []
