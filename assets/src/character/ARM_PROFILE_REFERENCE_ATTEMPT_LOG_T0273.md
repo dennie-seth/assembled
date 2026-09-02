@@ -84,3 +84,70 @@ already-identified lead for whoever revisits sourcing once Wikimedia's
 asset IDs are recorded above so a future session does not have to redo the
 `search` step. See `../concept/player_profile_reference_SUMMARY.md` for the
 full curation writeup and the disclosed coverage shortfall.
+
+## 2026-09-02T11:07Z re-verification — outage persists, both endpoints, third session
+
+This is a fresh (not cached, not re-narrated) re-verification session, run per
+the reviewer's "re-fetch fresh" instruction and the 2026-09-02T11:00Z card
+comment. Six independent live calls, spread across the two endpoints, all
+reproduce the identical signature the two prior VALIDATION runs already
+recorded:
+
+```
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal Locomotion - side view of old man walking (pl. 555) LCCN2005697037.jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:A naked man walking. Collotype after Muybridge, 1887. Wellcome L0075728.jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal Locomotion - side and rear views of man walking (pl. 546) LCCN2005697038.jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:A naked man walking. Collotype after Muybridge, 1887. Wellcome L0075726.jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal locomotion. Plate 470 - DPLA - ff7a3fecd28d7f97f340abcbdb1af1c6.jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js search openverse "man walking side profile silhouette" 20
+referenceFetch: rejected -- search request to openverse failed with status 504
+
+$ node tools/board/scripts/referenceFetch.js search openverse "silhouette man side profile" 15
+referenceFetch: rejected -- search request to openverse failed with status 504
+
+$ node tools/board/scripts/referenceFetch.js search openverse "walking man" 5
+referenceFetch: rejected -- search request to openverse failed with status 504
+```
+
+`referenceFetch.js search wikimedia` itself still works fine (confirmed
+again this session — it is only `upload.wikimedia.org`'s byte-fetch path
+that 429s) and surfaced five new, previously-unlisted Muybridge/Wellcome
+plates beyond the three already logged above, all genuinely side-on or
+side-and-rear multi-frame walking-gait studies, all 1887/public-domain by
+title. They are not listed individually here because none of them could
+actually be fetched either — the blocker is identical regardless of which
+specific asset is requested.
+
+**Observation worth escalating, not just re-stating:** this is the third
+independent session (T-0281 on 2026-09-01, this card's first two VALIDATION
+runs, and now this one) to hit the *exact same pair* of failures —
+`upload.wikimedia.org` 429 and Openverse search 504 — spanning more than 24
+hours of wall-clock time, across two unrelated third-party services, with
+every fetch attempt failing regardless of which specific asset or query is
+used. Two independent public services coincidentally being down in the same
+way for over a day is a much less likely explanation than this sandbox's own
+network egress not actually reaching (or being rate-limited ahead of) these
+two specific hosts. This agent has no tooling to distinguish "real upstream
+outage" from "this environment's egress is blocked/throttled for these
+hosts" — `referenceFetch.js` is the entire network surface available, and it
+only reports the HTTP status it receives, not where in the path the failure
+originates. Flagging this explicitly so a human with visibility into the
+sandbox's network policy can check that distinction before a fourth retry
+reproduces the same result for the same underlying reason.
+
+No new image was fetched this session as a result. Nothing was mirrored,
+synthesized, or substituted to force progress. The committed set is
+unchanged from the prior run: still the single already-promoted openverse
+image, still missing its exact `sourceUrl`/`assetId` for the reason recorded
+in its provenance JSON (Openverse search — the only way to recover them — is
+itself down).

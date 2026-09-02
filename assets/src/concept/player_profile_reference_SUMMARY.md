@@ -70,9 +70,32 @@ pad the count. That is the exact failure mode [T-0272](T-0272) proved
 impossible and correctly declined to fake, and doing it here would poison
 whatever T-0274 trains on this set.
 
+## Re-verified fresh 2026-09-02T11:07Z — outage confirmed still live, third session
+
+Per the card's "RE-FETCH FRESH" amendment, this pass did not curate from
+T-0281's leftovers — it re-ran `referenceFetch.js` live against both
+`wikimedia` and `openverse` before touching anything already committed.
+Both endpoints reproduced the identical 429 (`upload.wikimedia.org` fetch)
+/ 504 (Openverse search) failures the two prior VALIDATION runs already
+recorded, across five newly-tried Wikimedia assets and three newly-tried
+Openverse queries — see
+`../character/ARM_PROFILE_REFERENCE_ATTEMPT_LOG_T0273.md`'s
+"2026-09-02T11:07Z re-verification" section for the exact commands and
+errors. No new image could be fetched or recovered as a result; the set
+below is unchanged from the prior run.
+
+This is now the third independent session (T-0281, two prior T-0273 runs,
+this one) to hit the exact same pair of failures across more than 24 hours
+of wall-clock time. The attempt log flags a hypothesis worth a human
+checking directly: two unrelated third-party services failing identically
+for over a day is less likely than this sandbox's own egress not reaching
+(or being throttled ahead of) these two specific hosts — something this
+agent's tooling (`referenceFetch.js` only reports the HTTP status it
+receives) cannot distinguish from the outside.
+
 ## Recommendation for @DennieSeth's approval decision
 
-Three options, not a recommendation to pick one over the other:
+Four options, not a recommendation to pick one over the other:
 
 1. **Approve this single-image set as a seed**, with T-0274 (or a follow-up
    sourcing pass once Wikimedia/Openverse recover) expected to supplement it
@@ -84,6 +107,11 @@ Three options, not a recommendation to pick one over the other:
    because they don't exist or aren't licensed cleanly.
 3. **Reject and request a different sourcing strategy** if a single image is
    not an acceptable seed at any coverage level.
+4. **Check whether this is actually a sandbox egress restriction** rather
+   than a genuine multi-day outage on both Wikimedia and Openverse's
+   infrastructure — if so, no amount of further agent retries against
+   `referenceFetch.js` will succeed until that's addressed, regardless of
+   which of options 1–3 is also chosen.
 
 This card parks for approval either way per `requires_approval: true` — no
 approval record is written by this card regardless of which of the above
