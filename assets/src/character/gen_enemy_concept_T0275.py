@@ -135,18 +135,21 @@ ENEMY_SPECS: dict[str, dict] = {
     },
     "still_air": {
         "sensor_role": "proximity / patrol",
-        "seed": 27503,
+        "seed": 27510,
         "prompt": (
-            f"{_SHEET_FRAMING}. An eight-legged spider creature with a smooth blank head "
-            "carapace that has absolutely no eyes and no eye clusters anywhere on its body, "
-            "long sensory pedipalps and legs built for sensing vibration and proximity, a "
-            "low wide stance, dark utilitarian concrete grey and near-black biomechanical "
-            f"plating, {_STEALTH_OBSTACLE}. It is completely eyeless -- it never spots you, "
-            "you are simply within reach when it arrives."
+            "a single giant spider creature, arachnid monster concept art, eight long "
+            "segmented legs, a smooth rounded blank head with absolutely no eyes and no "
+            "eye clusters anywhere on its body, long thin sensory pedipalps built for "
+            f"sensing vibration and proximity, a low wide crouching stance. {_SHEET_FRAMING}. "
+            "Dark utilitarian concrete grey and near-black chitinous exoskeleton, "
+            f"{_STEALTH_OBSTACLE}. It is completely eyeless -- it never spots you, you are "
+            "simply within reach when it arrives."
         ),
         "negative_prompt": (
             f"{_SHEET_NEGATIVE}, {_STEALTH_NEGATIVE}, eyes, eye cluster, pupils, glowing "
-            "eyes, face, fangs bared aggressively, venom drip, humanoid body, robot"
+            "eyes, face, fangs bared aggressively, venom drip, humanoid body, robot, "
+            "vehicle, truck, bus, van, car, trailer, blueprint, technical drawing, "
+            "engineering schematic, wheels"
         ),
     },
 }
