@@ -1126,3 +1126,353 @@ until the sign-off lands, so as not to pre-empt it.
 - `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` — the assembled §23-c cost table
 - `assets/final/character/bakeoff_comparison_T0231.webp` — the side-by-side comparison artefact
 - `assets/final/character/bakeoff_frame_delta_report_T0231.json` — the re-run mechanical gate
+
+---
+
+## DL-23 — DL-21 override: Arm C's mechanical win is overridden on authorship grounds, round 2 pursues Arms A/B, Arm C retained as benchmark (closes DL-22; T-0253)
+
+**Date:** 2026-08-30
+**Raised by:** HANDOFF §24, handle "DL-22" — see the numbering note below.
+**Resolved by:** T-0253 (actioned directly by Dispatch on behalf of @DennieSeth)
+**Status:** Closed. This entry closes DL-22's PENDING status.
+**Applies to:** the outcome of DL-21 as recorded by DL-22 (§23-d Arm A/T-0228, §23-e Arm
+B/T-0229/T-0237, §23-f Arm C/T-0230), and to HANDOFF §24 round 2 (§24-a..§24-e, T-0248,
+T-0249, and successor cards in that set).
+**Full record (round 1):** `assets/src/character/BAKEOFF_DECISION_T0231.md` (T-0231)
+
+### Numbering note
+
+HANDOFF §24 calls this handle "DL-22", but `DL-22` was already allocated by T-0231 for the
+comparison entry above. This entry takes the next free number, **DL-23**, and carries the
+HANDOFF §24 "DL-22" handle.
+
+### What DL-21's rule mechanically decided
+
+Both Arm B and Arm C passed criterion 2, and Arm C was lowest cost, so **Arm C won under
+DL-21's rule** — DL-21 step 2 ("among the passers, lowest cost wins") resolved to Arm C
+without needing the tie-break.
+
+Round-1 numbers, restated here so this entry stands on its own:
+
+- **Arm A** (T-0228) — **FAILED.** 4 of 8 adjacent-cell frame-silhouette deltas over the
+  0.30 cap, the 8-attempt cap exhausted without a pass. Also showed cross-row identity
+  drift and a green -> tan colour shift between rows. Closed as a **criterion-3 failure**
+  (the attempt cap answers criterion 3 by failing it, per DL-21).
+- **Arm B** (T-0229/T-0237) — **PASSED.** 0.097-0.295 frame-delta, 7 of 8 attempts,
+  165.5 GPU-min.
+- **Arm C** (T-0230) — **PASSED, best.** 0.072-0.112 frame-delta, 1 attempt, 0 GPU-min.
+
+### The override
+
+**That outcome is overridden on authorship grounds by @DennieSeth:** locally-generated art
+is part of this game's identity, and GPU time on hardware the project owns is not a real
+cost. **Cost is demoted from a deciding criterion to a recorded one** for round 2 — DL-21's
+step 2 no longer settles the question by itself.
+
+**Arms A/B are pursued in round 2** (HANDOFF §24, cards §24-a..§24-e), continuing the
+generative path rather than shipping the script.
+
+**Arm C is retained**, not discarded, as two things at once:
+
+1. The **benchmark** — every round-2 result is measured against Arm C's **0.072-0.112**
+   frame-delta result.
+2. The **shipping fallback** — if round 2 does not beat that benchmark, Arm C ships.
+
+Arm C's script and sheet stay committed and gate-passing; nothing in this entry, or in the
+round-2 card set, regresses them.
+
+### Unchanged for round 2
+
+**DL-21's criteria, the 0.30 frame-delta cap, and the judging conditions (40px, in motion,
+inside the T-0192 blockout room, not at 1152, not as a contact sheet) are unchanged for
+round 2.** Changing the measure would void the round-1 comparison round 2 is being measured
+against.
+
+### Closes DL-22
+
+This closes DL-22's PENDING status. DL-22 recorded everything DL-21's decision rule could
+settle mechanically and stayed PENDING for the human sign-off DL-21's criterion 1 and
+criterion 2 drift verdicts required, attributed to Dennie Seth. That sign-off has now been
+given, in the form of this override. DL-22 is left unmodified above; this entry is the
+closure record it called for — the same pattern as DL-17 closing DL-16.
+
+### Out of scope — flagged, not actioned
+
+DL-22 deferred the `docs/design/13-asset-pipeline.md` §3.5 edit until sign-off landed. **This
+entry does not make that edit.** What §3.5 should say depends on round 2's outcome
+(§24-a..§24-e), which has not run yet, so the edit **remains open, pending round 2**.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-23)
+- No other docs. `docs/design/13-asset-pipeline.md` §3.5 is explicitly not edited by this
+  entry — see "Out of scope" above.
+
+---
+
+## DL-24 — Character-pipeline round 2: comparison assembled, verdict PENDING (T-0255)
+
+**Date:** 2026-08-30
+**Raised by:** HANDOFF §24, handle §24-f (the round-2 decision run)
+**Status:** **PENDING.** Everything §24.3's pre-registered rule can settle mechanically is
+settled, including Arm C's own criterion-1 sign-off (already given via DL-23's closure of
+DL-22 — see "PENDING — not decided here" below); the rule's human call (criterion 1 —
+silhouette readable at 40px in motion) is still open for the three round-2 arms that ran
+(§24-b, §24-c, §24-e). This entry records the mechanical state and stays PENDING until that
+sign-off lands — do not edit it to declare a winner without that sign-off; append a
+dated closing addendum instead, per this document's own header ("entries are permanent — do
+not remove or amend").
+**Applies to:** the round-2 arms raised by DL-23 (§24-a..§24-e): T-0248 (§24-a, identity-LoRA
+retrain, diagnostic), T-0249 (§24-b, pose authority), T-0250 (§24-c, chained img2img), T-0251
+(§24-d, AnimateDiff — correctly skipped, no usable motion module), T-0252 (§24-e, hybrid),
+judged against Arm C (T-0230, round 1) as the retained benchmark and candidate shipping
+fallback.
+**Full record:** `assets/src/character/ROUND2_DECISION_T0255.md`
+**Comparison artefact:** `assets/final/character/round2_comparison_T0255.webp`
+**Frame-delta gate (re-run):** `assets/final/character/round2_frame_delta_report_T0255.json`
+**Cost table:** `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` (round-2 sections, T-0248
+through T-0252) and the full record's own consolidated table (with attempts-to-first-pass).
+
+### Mechanically settled
+
+- **Every round-2 arm that ran clears the round-2-unchanged 0.30 pass/fail floor. None beats
+  Arm C's 0.072–0.112 benchmark** — the bar §24.3 set out to beat, not merely the gate to
+  clear — independently reconfirmed by this card's own re-run of
+  `asset_gate.art.check_frame_consistency` against each arm's committed sheet: §24-a (T-0248,
+  diagnostic) 0.083–0.273 best of 3 seeds; §24-b (T-0249) 0.0522–0.2573; §24-c (T-0250)
+  0.0000–0.1763; §24-e (T-0252) 0.1576–0.1816; Arm C (T-0230, benchmark) 0.072–0.112.
+- **§24-d (T-0251, AnimateDiff) is correctly closed as a skipped contingent arm, not a missing
+  input**: a 5-query, read-only capability check against the shared ComfyUI host found zero
+  AnimateDiff/AnimateDiff-Evolved node types, no `animatediff_models`/`motion_module` folder
+  type, and 404s on both motion-module model routes. Installing a new custom node pack on the
+  shared host is a standing environment change outside an implementer agent's remit. See
+  `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md`.
+- **Cost is recorded, not deciding, per DL-23's override:**
+
+  | Card | Handle | Attempts-to-first-pass | GPU-min | Wall-clock | $ |
+  |---|---|---|---|---|---|
+  | T-0248 | §24-a | 1/3 (generation re-run; diagnostic, not a bake-off arm) | 117.9 | 02:02 | $0.00 |
+  | T-0249 | §24-b | 3/8 (measured; 5/8 used, incl. 2 incomplete) | 31.8 | 01:04 | $0.00 |
+  | T-0250 | §24-c | 8/8 (attempt cap exhausted) | 87.8 | 01:28 | $0.00 |
+  | T-0251 | §24-d | 0 (no generation attempted) | 0.0 | 00:04 | $0.00 |
+  | T-0252 | §24-e | 6/8 (3 source-frame + 3 sheet-assembly) | 3.70 | 00:07 (+ CPU-only cutout reprocess) | $0.00 |
+  | T-0230 | benchmark (round 1) | 1/8 | 0.0 | 00:14 | $0.00 |
+
+  Copied from each card's own attempt log / `BAKEOFF_COST_TABLE_T0231.md`'s own "Attempts"
+  columns; see that file for the full per-attempt breakdown. Even the cheapest round-2 arm
+  (§24-d, $0, never generated) does not change which arm beat the benchmark, because none did.
+- **Arm C's own criterion-1 read is already confirmed, via DL-23's closure of DL-22** (see
+  "PENDING — not decided here" below). **§24.3's own pre-registered contingency** ("if no
+  round-2 arm beats 0.072–0.112, designate Arm C") **therefore already resolves, on the
+  mechanical evidence above, to Arm C as the round-2 shipping fallback.** That designation is
+  not finalized in this entry — acceptance criterion 6 requires the round-2 arms' own
+  criterion-1 read recorded per arm first (see below), even though none of the three changes
+  this outcome.
+
+### PENDING — not decided here
+
+Criterion 1 (silhouette readable at 40px in motion) is a **human pass/fail call** under DL-21
+(unchanged for round 2 per DL-23), attributed to **Dennie Seth**, requested 2026-08-30, not yet
+given — **for the three round-2 arms that ran (§24-b/T-0249, §24-c/T-0250, §24-e/T-0252).**
+**Arm C's own criterion-1 read is not reopened here — it was already given.** DL-22 recorded it
+PENDING, and DL-23 explicitly closed that PENDING status: DL-23 states in its own words that
+DL-22 "stayed PENDING for the human sign-off DL-21's criterion 1 and criterion 2 drift verdicts
+required, attributed to Dennie Seth. That sign-off has now been given, in the form of this
+override," and records Arm C as "PASSED, best." §24.3's own contingency ("if no round-2 arm
+beats 0.072–0.112, designate Arm C") therefore already resolves, on the mechanical evidence
+above, to Arm C as the round-2 shipping fallback. What still parks this entry is acceptance
+criterion 6's own requirement that the round-2 arms' criterion-1 read be recorded per arm before
+that designation is finalized — even though, per the mechanical evidence, none of the three
+changes the outcome. This card does not invent that verdict — see `ROUND2_DECISION_T0255.md`
+for the full record and what changes in `docs/design/13-asset-pipeline.md` once it lands.
+`docs/design/13-asset-pipeline.md` is **not edited by this entry** — the edit is deferred until
+the round-2 arms' sign-off lands, so as not to pre-empt it. The reference-character promotion is
+likewise deferred — Arm C's committed sheet stays at its existing path
+(`assets/final/character/player_idle_sheet_arm_c_T0230.png`) until designation is finalized.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-24)
+- `assets/src/character/ROUND2_DECISION_T0255.md` — the full round-2 decision record
+- `assets/final/character/round2_comparison_T0255.webp` — the side-by-side comparison artefact
+- `assets/final/character/round2_frame_delta_report_T0255.json` — the re-run mechanical gate
+
+## DL-25 — Round-2 character decision: §24-e (hybrid) chosen on direction; Arm C becomes the permanent quality reference, not a gate (closes DL-24; T-0255)
+
+**Date:** 2026-08-30
+**Raised by:** @DennieSeth — criterion-1 verdict on T-0255 (§24-f), given 2026-08-30 15:12 UTC
+**Status:** **DECIDED.** This entry closes DL-24's PENDING state by recording the human
+criterion-1 sign-off it was parked on. **DL-21, DL-22, DL-23 and DL-24 are not edited** —
+per this document's header ("entries are permanent — do not remove or amend"), the outcome
+is recorded here as the superseding entry, the same way DL-23 closed DL-22 and DL-17
+superseded DL-16.
+**Applies to:** the round-2 arms raised by DL-23 (§24-b..§24-e) and, going forward, **every**
+character-generation output in this repo.
+**Full record:** `assets/src/character/ROUND2_DECISION_T0255.md`
+**Comparison artefact:** `assets/final/character/round2_comparison_T0255.webp`
+**Frame-delta gate (re-run):** `assets/final/character/round2_frame_delta_report_T0255.json`
+
+### The decision
+
+**§24-e (T-0252, the hybrid arm) is the winning character-generation arm.**
+
+Verbatim verdict, recorded on T-0255: *"24-e looks best to me!"* — @DennieSeth,
+2026-08-30.
+
+The hybrid arm is one SDXL source frame (style LoRA `soviet_brutalism_style_v1` +
+identity LoRA `player_identity_v2` + IP-Adapter + OpenPose ControlNet, descended and
+palette-indexed, with the per-frame background cutout applied), with **every other animation
+frame derived from that one frame's own pixels** by
+`char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252`. It is the only round-2 arm
+in which a single diffusion call produces the whole sheet.
+
+**Chosen on direction and authorship grounds, not on the numbers** — consistent with, and a
+direct continuation of, the DL-21 → DL-22 → DL-23 override: locally generated art is part of
+this game's identity, and GPU time on hardware we own is not a real cost. Criterion 1
+(silhouette readable at 40px in motion) is a human pass/fail call under DL-21, unchanged for
+round 2 per DL-23, and this is that call.
+
+### Measured honestly — this is not a numbers win
+
+| Arm | Card | Frame-delta (re-run) | Clears 0.30 floor | Beats Arm C's 0.072–0.112 |
+|---|---|---|---|---|
+| §24-b pose authority | T-0249 | 0.0522–0.2573 | yes | **no** |
+| §24-c chained img2img | T-0250 | 0.0000–0.1763 | yes | **no** |
+| §24-d AnimateDiff | T-0251 | — (correctly skipped: no usable SDXL motion module) | — | — |
+| **§24-e hybrid (WINNER)** | **T-0252** | **0.1576–0.1816** | **yes** | **no** |
+| Arm C benchmark (round 1) | T-0230 | 0.072–0.112 | yes | — (is the benchmark) |
+
+**§24-e clears the round-2-unchanged 0.30 pass/fail floor at 0.1576–0.1816, and does NOT beat
+Arm C's deterministic 0.072–0.112 benchmark.** Its own committed sidecar records this as
+`"beats_arm_c_benchmark": false`.
+
+**This is expected and accepted.** DL-23 demoted cost from a deciding criterion to a recorded
+one; this entry does the same for the benchmark comparison. No round-2 arm beat Arm C, and
+DL-24 correctly recorded that none did. The choice of §24-e is made *in full knowledge of
+that*, on the same authorship grounds that created round 2 in the first place — not by
+re-reading the numbers until they favour a generative arm, and not by weakening the measure.
+DL-21's criteria, the 0.30 cap and the judging conditions (40px, in motion, in the T-0192
+blockout room) remain **unchanged**; nothing here redefines a gate to fit a result.
+
+### STANDING RULE — always verify against Arm C
+
+Recorded verbatim from @DennieSeth: *"Arm-C benchmark will never probably be beaten, but we
+should always verify against it."*
+
+As a standing rule, binding from this entry forward:
+
+- The deterministic **Arm-C benchmark (0.072–0.112 frame-delta) is NOT a gate** that the
+  chosen generative approach must clear. A character-generation output is not rejected for
+  failing to beat it — §24-e itself does not, and is the winner.
+- **Every character-generation output must ALWAYS record its own frame-delta AND its
+  comparison against the Arm-C benchmark**, as a permanent quality reference. The comparison
+  is *recorded, not deciding* — the same status DL-23 gave cost.
+- **Arm C is retained as the shipping fallback.** Its script, sheet and gate results stay
+  committed and passing (`assets/final/character/player_idle_sheet_arm_c_T0230.png`); nothing
+  regresses them.
+
+The rule exists because the benchmark's value is diagnostic, not gating: a generative sheet
+whose frame-delta drifts far from ~0.16 is telling us something broke, and that signal is only
+available if the number is on every sheet. Losing it silently is the failure mode this rule
+prevents.
+
+Pinned as invariants **CHR-1** and **CHR-2** in `docs/board-invariants.md` §9.
+
+### Consequence: the reference character
+
+**§24-e's committed sheet, `assets/final/character/player_idle_sheet_hybrid_T0252.png`
+(sidecar `player_idle_sheet_hybrid_T0252.provenance.json`), is the winning character
+reference.** It is the artifact **T-0235** (§23-l, the in-engine integration proof) consumes
+when it renders the T-0192 blockout room from pipeline output. DL-24 deferred the
+reference-character promotion pending this sign-off; this entry settles it.
+
+The `docs/design/13-asset-pipeline.md` §3.5 edit that DL-22 deferred and DL-24 left open is
+**still open** — it now has its answer (§3.5 describes the hybrid path, with the Arm-C
+benchmark recorded as a permanent quality reference per CHR-1/CHR-2 rather than as a gate),
+but making that edit is out of this entry's scope and belongs with the §24/`13` design pass.
+Recorded here so the loose end is not silently dropped.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-25)
+- `docs/board-invariants.md` — §9, invariants CHR-1 and CHR-2 (the standing rule)
+
+---
+
+## DL-26 — Motion-class-aware frame-delta cap: idle keeps DL-21's 0.30, locomotion/transition/loop get 0.50 (T-0271)
+
+**Date:** 2026-09-01
+**Raised by:** T-0271, drawing on T-0259's walk-cycle calibration trail
+**Resolved by:** T-0271 (`tools/asset-gate`,
+`asset_gate.character.frame_delta_cap_for_motion_class` /
+`check_character_frame_delta_cap`)
+
+### The problem
+
+DL-21 criterion 2's 0.30 frame-delta cap was pre-registered against **the player idle
+sheet only** — the subject-and-state section of that entry is explicit: "Player character,
+idle state only." DL-24 restated the constraint for round 2 as "same subject (the player
+idle sheet), same output spec, same criteria," carrying the number forward unchanged for
+another idle comparison. Neither entry considered locomotion; every character animation
+generated since — including walk cycles — has nonetheless inherited the idle-calibrated
+0.30 by default, because nothing distinguished the two.
+
+A walk cycle legitimately moves far more silhouette pixels per frame than an idle pose: the
+whole point of a stride is that limbs travel. Capping it at a bound sized for standing still
+does not measure identity drift — the failure mode the cap exists to catch — it measures
+motion amplitude, and penalizes a sheet for doing its job. This is not hypothetical: T-0259's
+four real ComfyUI attempts (~800 GPU-s each, seed 27182) show it directly.
+
+### The evidence — T-0259's calibration trail
+
+| Attempt | STRIDE / KNEE / ARM / CROSS | Denoise | Frame-delta | Pairs over 0.30 |
+|---|---|---|---|---|
+| 4 (committed) | 0.145 / 0.085 / 0.09 / — | 0.45 | 0.034–0.253 | 0/8 — motion barely visible |
+| 5 | 0.30 / 0.18 / 0.20 / 0.14 | 0.45 | 0.328–0.473 | 8/8 |
+| 6 | 0.22 / 0.13 / 0.15 / 0.05 | 0.45 | 0.212–0.375 | 6/8 |
+| 7 | 0.22 / 0.13 / 0.15 / 0.05 | 0.30 | 0.161–0.340 | 3/8 |
+| 8 | 0.22 / 0.13 / 0.15 / 0.02 | 0.24 | 0.109–0.302 | 1/8 |
+
+Chasing the 0.30 cap monotonically traded away the motion the card asked for: attempt 8
+missed by 0.00198 on a single pair, and only got that close after `CROSS_EXTENT_NORM` — the
+parameter controlling how far the legs visibly cross — was cut from 0.14 to 0.02, a 7x
+reduction from the value that actually read as a leg cross on human review. Attempts 5 and 6,
+the ones that read as an honest walk, measured 0.328–0.473 and 0.212–0.375 respectively — both
+partly or wholly outside the idle cap, precisely because they look like walking and attempt 4
+does not.
+
+### Decision
+
+**The frame-delta cap is now a function of the sheet's motion class, read from the
+provenance sidecar's `motion_class` field** (`idle` | `locomotion` | `transition` | `loop`).
+The sidecar was chosen over card metadata because it makes the sheet self-describing — a gate
+run against a committed `.provenance.json` needs no board lookup to know which cap applies,
+consistent with every other field this pipeline already treats as sidecar-owned
+(`frame_delta_range`, `arm_c_benchmark`, `beats_arm_c_benchmark`, per CHR-1).
+
+- **`idle` (and DL-21's original scope) keeps exactly 0.30.** This is not loosened. Every
+  committed idle sheet, including the round-1/round-2 arms DL-21/DL-24/DL-25 already judged,
+  keeps the bar it was measured against.
+- **`locomotion`, `transition`, and `loop` get 0.50.** Derived from the table above: the
+  sheets that read as a real walk on human review ran 0.328–0.473 (attempt 5) and
+  0.212–0.375 (attempt 6), and attempt 5's own upper bound of 0.473 is the highest measured
+  value that still reads as legitimate locomotion rather than drift — restoring the leg-cross
+  amplitude attempt 8 sacrificed would push a genuine walk higher still. 0.50 clears 0.473
+  with headroom (≈0.03, deliberately not a hairline the way 0.30 was for attempt 8), while
+  remaining well below the range that would read as gross drift rather than motion — this
+  package's own test suite pins a drift fixture at 0.55/0.58/0.61 for locomotion/loop/
+  transition respectively and confirms the cap still rejects it.
+- **A missing or unrecognised `motion_class` fails closed to the idle cap (0.30), never to
+  the permissive one.** An unlabelled sheet must not silently receive the loosest bar; this
+  is enforced by `frame_delta_cap_for_motion_class` falling through to 0.30 for anything not
+  literally `locomotion`, `transition`, or `loop`.
+- **CHR-1 and CHR-2 (DL-25, `docs/board-invariants.md` §9) are unchanged.** This entry adds
+  a new cap check (`check_character_frame_delta_cap`); it does not touch
+  `check_character_arm_c_provenance`, and the Arm-C benchmark comparison remains recorded,
+  not gating — `beats_arm_c_benchmark: false` continues to pass.
+- **No existing sheet is retro-fitted.** Committed sheets keep the grading they were produced
+  and judged under; this cap applies going forward, to sheets that record a `motion_class`.
+
+**This does not void DL-21's round-1 idle comparison, or DL-25's round-2 decision.** Both
+were judged with the idle cap against idle-state sheets, which is exactly the cap this entry
+keeps unchanged for that class. Nothing here re-opens or re-grades either verdict.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-26)

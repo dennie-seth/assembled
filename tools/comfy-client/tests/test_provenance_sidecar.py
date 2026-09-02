@@ -22,8 +22,10 @@ import pytest
 from asset_gate.generator import check_provenance_generator_resolvable
 
 from comfy_client.provenance_sidecar import (
+    ARM_C_BENCHMARK,
     GeneratorFieldError,
     GeneratorNotCommittedError,
+    apply_arm_c_benchmark_fields,
     validate_generator_field,
     write_provenance_sidecar,
 )
@@ -305,3 +307,106 @@ def test_repo_root_is_discovered_from_the_sidecar_path_when_not_given(repo, monk
     write_provenance_sidecar(out, RECORD, generator=rel)
 
     assert json.loads(out.read_text())["generator"] == rel
+
+
+# ---------------------------------------------------------------------------
+# CHR-1 (docs/board-invariants.md, DL-25/PR #287, T-0258): a single shared
+# Arm-C benchmark constant + a write helper that owns frame_delta_range /
+# arm_c_benchmark / beats_arm_c_benchmark, so a character generator cannot
+# silently stop recording the comparison. See
+# assets/src/character/gen_hybrid_idle_T0252.py,
+# gen_pose_authority_idle_T0249.py and gen_chained_idle_T0250.py for the
+# callers this replaces.
+# ---------------------------------------------------------------------------
+
+
+def test_arm_c_benchmark_is_the_documented_pair():
+    """docs/board-invariants.md CHR-1: Arm C's own measured frame-delta range
+    (T-0230), the tightest this pipeline has produced."""
+    assert ARM_C_BENCHMARK == (0.072, 0.112)
+
+
+def test_apply_arm_c_benchmark_fields_derives_range_from_ratios():
+    ratios = [0.05, 0.09, 0.03]
+    result = apply_arm_c_benchmark_fields({}, ratios)
+    assert result["frame_delta_range"] == [0.03, 0.09]
+
+
+def test_apply_arm_c_benchmark_fields_records_the_shared_benchmark_pair():
+    result = apply_arm_c_benchmark_fields({}, [0.05])
+    assert result["arm_c_benchmark"] == [0.072, 0.112]
+
+
+def test_apply_arm_c_benchmark_fields_beats_when_worst_ratio_clears_upper_bound():
+    result = apply_arm_c_benchmark_fields({}, [0.05, 0.112, 0.02])
+    assert result["beats_arm_c_benchmark"] is True
+
+
+def test_apply_arm_c_benchmark_fields_does_not_beat_when_worst_ratio_exceeds_upper_bound():
+    """CHR-2: false is a legitimate, expected outcome (the shipped §24-e winner
+    is itself false) -- this only checks the derivation is honest, not that
+    beating the benchmark is required."""
+    result = apply_arm_c_benchmark_fields({}, [0.05, 0.1763, 0.02])
+    assert result["beats_arm_c_benchmark"] is False
+
+
+def test_apply_arm_c_benchmark_fields_owns_beats_arm_c_benchmark_not_caller_supplied():
+    """A caller must not be able to force `beats_arm_c_benchmark=True` for a
+    sheet that does not actually beat the benchmark -- the field is always
+    derived from `ratios`, never trusted from the input record."""
+    smuggled = {"beats_arm_c_benchmark": True, "frame_delta_range": [0.0, 0.0]}
+    result = apply_arm_c_benchmark_fields(smuggled, [0.5])
+    assert result["beats_arm_c_benchmark"] is False
+    assert result["frame_delta_range"] == [0.5, 0.5]
+
+
+def test_apply_arm_c_benchmark_fields_owns_arm_c_benchmark_not_caller_supplied():
+    smuggled = {"arm_c_benchmark": [0.0, 999.0]}
+    result = apply_arm_c_benchmark_fields(smuggled, [0.05])
+    assert result["arm_c_benchmark"] == [0.072, 0.112]
+
+
+def test_apply_arm_c_benchmark_fields_does_not_mutate_the_input_record():
+    record = {"seed": 1}
+    apply_arm_c_benchmark_fields(record, [0.05])
+    assert record == {"seed": 1}
+
+
+def test_apply_arm_c_benchmark_fields_preserves_other_keys():
+    record = {"seed": 1, "model": "sd_xl"}
+    result = apply_arm_c_benchmark_fields(record, [0.05])
+    assert result["seed"] == 1
+    assert result["model"] == "sd_xl"
+
+
+def test_apply_arm_c_benchmark_fields_rejects_empty_ratios():
+    with pytest.raises(ValueError):
+        apply_arm_c_benchmark_fields({}, [])
+
+
+# ---------------------------------------------------------------------------
+# motion_class (T-0271, docs/decision-log.md DL-26) -- the writer half of the
+# motion-class-aware frame-delta cap. asset_gate.character reads this field
+# from the sidecar to pick idle's 0.30 vs. locomotion/transition/loop's
+# 0.50; this is where a generator records which one it is.
+# ---------------------------------------------------------------------------
+
+
+def test_apply_arm_c_benchmark_fields_records_motion_class_when_provided():
+    result = apply_arm_c_benchmark_fields({}, [0.05], motion_class="locomotion")
+    assert result["motion_class"] == "locomotion"
+
+
+def test_apply_arm_c_benchmark_fields_omits_motion_class_when_not_provided():
+    """Backward compatible: a caller that has not been updated to classify its
+    own motion (yet) writes exactly what it always has -- no motion_class key
+    at all, which asset_gate.character's fail-closed read treats as idle's
+    0.30, never the permissive cap."""
+    result = apply_arm_c_benchmark_fields({}, [0.05])
+    assert "motion_class" not in result
+
+
+def test_apply_arm_c_benchmark_fields_motion_class_does_not_affect_derived_fields():
+    result = apply_arm_c_benchmark_fields({}, [0.05, 0.09, 0.03], motion_class="loop")
+    assert result["frame_delta_range"] == [0.03, 0.09]
+    assert result["arm_c_benchmark"] == [0.072, 0.112]

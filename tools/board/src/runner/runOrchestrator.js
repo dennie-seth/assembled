@@ -24,6 +24,12 @@ import { findExistingRemediationCard, draftRemediationCard } from "../lib/escala
 import { createCard as createCardDefault } from "./cardCreation.js";
 import { checkAcceptancePreflight } from "./acceptancePreflight.js";
 import { checkCapabilityPreflight } from "./capabilityPreflight.js";
+import {
+  assertRunnerMayApply,
+  needsApproval,
+  parkedForApprovalComment,
+  PARKED_STATUS
+} from "../lib/approvalGate.js";
 
 /**
  * Hard cap on total implementer/reviewer runs a card can consume across its bounded
@@ -326,6 +332,15 @@ export class RunOrchestrator {
    * depended on the commit in the first place.
    */
   async _updateAndBroadcast(taskId, patch) {
+    // The runner half of the human direction-approval gate (approvalGate.js): no automated
+    // write may complete a card whose deliverable a human still has to sign off on. This is
+    // the chokepoint every orchestrator write passes through, which is why the check lives
+    // here rather than at each call site -- a future run path that sets `done` gets the guard
+    // for free instead of having to remember it. See docs/board-invariants.md AP-2.
+    if (patch && patch.status === "done") {
+      assertRunnerMayApply(await this.store.get(taskId), patch);
+    }
+
     const updated = await this.store.update(taskId, patch);
     this.hub.broadcast({ type: "changed", id: taskId, task: updated });
 
@@ -1180,6 +1195,20 @@ export class RunOrchestrator {
     }
 
     await this._updateAndBroadcast(taskId, patch);
+
+    // Human direction-approval gate (approvalGate.js, docs/board-invariants.md AP-1/AP-3): a
+    // card flagged `requires_approval` has now produced its artifact and passed review, but
+    // "produced" is not "approved". `review` is already where a PASS settles -- what was
+    // missing is any signal that this particular card is *parked* on a human verdict rather
+    // than waiting on a PR merge, and any record of the verdict when it comes. The comment is
+    // that signal, and it names both exits so a human never has to go looking for the ritual.
+    //
+    // Deliberately posted after the status write, and only when the card actually settled into
+    // the parked status: a card that ended up `blocked` by the develop-sync failure above has a
+    // different, more urgent thing to say, and is not parked on anything.
+    if (patch.status === PARKED_STATUS && needsApproval(current)) {
+      await this._appendComment(taskId, "assembled-board", parkedForApprovalComment(taskId));
+    }
   }
 
   /**

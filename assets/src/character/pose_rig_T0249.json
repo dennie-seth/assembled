@@ -1,0 +1,28 @@
+{
+  "_comment": "Committed animation parameters for the pose-authority rig (T-0249, HANDOFF §24.4: 'the script becomes the pose authority'). The script owns keypoints, frame count, timing and the animation curve; the model owns silhouette, costume, shading and texture only. Edit these numbers to redirect the animation -- breathing amplitude, weight-shift extent, stride extent, per-cycle count and easing are all here, not constants buried in pose_rig_T0249.py.",
+  "frame_keypoint_layout": "18-keypoint OpenPose/COCO body layout, same joint numbering as gen_arm_a_idle_T0228._POSE_KEYPOINTS_NORM (0=nose, 1=neck, 2/3/4=right shoulder/elbow/wrist, 5/6/7=left shoulder/elbow/wrist, 8/9/10=right hip/knee/ankle, 11/12/13=left hip/knee/ankle, 14/15=right/left eye, 16/17=right/left ear).",
+  "states": {
+    "idle": {
+      "_comment": "Standing idle: subtle breathing (chest/head rise-fall) and a slight weight shift between the two hips/legs. No stride -- both feet stay planted, matching the idle pose spec.",
+      "frame_count": 9,
+      "easing": "sine",
+      "breathing_cycles": 1,
+      "weight_shift_cycles": 1,
+      "phase_offset": 0.0,
+      "breathing_amplitude_norm": 0.012,
+      "weight_shift_extent_norm": 0.018,
+      "stride_extent_norm": 0.0
+    },
+    "move": {
+      "_comment": "Generalisation evidence (acceptance: 'the rig generalises'): same generator, different committed numbers -- larger weight shift, non-zero stride (legs alternate fore/aft), lighter breathing (motion itself carries the read, not the chest). Frames are not yet generated against SDXL for this state -- see ROUND2_POSE_AUTHORITY_REPORT_T0249.md 'What this buys beyond consistency' / 'rig generalisation' section for what would still need authoring (a walking base pose, not just idle's offsets) before a move sheet could be produced from this config.",
+      "frame_count": 9,
+      "easing": "sine",
+      "breathing_cycles": 1,
+      "weight_shift_cycles": 1,
+      "phase_offset": 0.0,
+      "breathing_amplitude_norm": 0.008,
+      "weight_shift_extent_norm": 0.010,
+      "stride_extent_norm": 0.09
+    }
+  }
+}

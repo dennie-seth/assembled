@@ -31,6 +31,11 @@ function taskRowToTask(db, row) {
     commit: row.commit_sha,
     pr: row.pr,
     deliverable_type: row.deliverable_type,
+    // SQLite has no boolean type (migration 0003 stores 0/1) -- coerce here so the API and the
+    // fs store hand out the identical shape, which is what taskStoreContract.js asserts.
+    requires_approval: row.requires_approval === 1,
+    approved_by: row.approved_by,
+    approved_at: row.approved_at,
     attempts: row.attempts,
     comments,
     attachments,
@@ -104,9 +109,10 @@ export class DbTaskStore extends TaskStore {
       .prepare(
         `INSERT INTO tasks
            (id, title, status, priority, phase, agent, created, branch, commit_sha, pr,
-            deliverable_type, attempts, body)
+            deliverable_type, requires_approval, approved_by, approved_at, attempts, body)
          VALUES (@id, @title, @status, @priority, @phase, @agent, @created, @branch, @commit_sha,
-                 @pr, @deliverable_type, @attempts, @body)`
+                 @pr, @deliverable_type, @requires_approval, @approved_by, @approved_at,
+                 @attempts, @body)`
       )
       .run({
         id: task.id,
@@ -120,6 +126,9 @@ export class DbTaskStore extends TaskStore {
         commit_sha: task.commit ?? null,
         pr: task.pr ?? null,
         deliverable_type: task.deliverable_type ?? "code",
+        requires_approval: task.requires_approval === true ? 1 : 0,
+        approved_by: task.approved_by ?? null,
+        approved_at: task.approved_at ?? null,
         attempts: task.attempts ?? 0,
         body: task.body
       });
@@ -148,7 +157,9 @@ export class DbTaskStore extends TaskStore {
         `UPDATE tasks SET
            title = @title, status = @status, priority = @priority, phase = @phase,
            agent = @agent, created = @created, branch = @branch, commit_sha = @commit_sha,
-           pr = @pr, deliverable_type = @deliverable_type, attempts = @attempts, body = @body
+           pr = @pr, deliverable_type = @deliverable_type,
+           requires_approval = @requires_approval, approved_by = @approved_by,
+           approved_at = @approved_at, attempts = @attempts, body = @body
          WHERE id = @id`
       ).run({
         id,
@@ -162,6 +173,9 @@ export class DbTaskStore extends TaskStore {
         commit_sha: merged.commit ?? null,
         pr: merged.pr ?? null,
         deliverable_type: merged.deliverable_type ?? "code",
+        requires_approval: merged.requires_approval === true ? 1 : 0,
+        approved_by: merged.approved_by ?? null,
+        approved_at: merged.approved_at ?? null,
         attempts: merged.attempts ?? 0,
         body: merged.body
       });

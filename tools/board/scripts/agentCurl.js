@@ -36,9 +36,17 @@ if (!verdict.allowed) {
   process.exit(2);
 }
 
-const child = spawn("curl", ["--request", method.toUpperCase(), ...rest, "--url", url], {
-  stdio: "inherit"
-});
+// Every request this wrapper forwards is, by definition, an agent's. Stamping that identity is
+// what lets the board's human direction-approval gate (src/lib/approvalGate.js) refuse to read
+// an agent action as a human approval on the routes it *does* allow through. Third layer of
+// defence, not the first: the policy above already refuses every mutating board route bar
+// attachment upload, and the orchestrator's own write path refuses to complete an unapproved
+// approval-gated card regardless of what any request claims.
+const child = spawn(
+  "curl",
+  ["--request", method.toUpperCase(), "--header", "X-Board-Actor: agent", ...rest, "--url", url],
+  { stdio: "inherit" }
+);
 
 child.on("error", (err) => {
   console.error(`agentCurl: failed to run curl: ${err.message}`);

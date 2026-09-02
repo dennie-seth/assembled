@@ -24,7 +24,7 @@ from comfy_client.cutout import (
     generate_cutout,
     render_cutout_workflow,
 )
-from comfy_client.errors import MissingModelHashError
+from comfy_client.errors import BackgroundCutoutError, MissingModelHashError
 from comfy_client.recipe import Recipe
 
 # ---------------------------------------------------------------------------
@@ -33,9 +33,12 @@ from comfy_client.recipe import Recipe
 
 
 class FakeClient(GenerationClient):
-    def __init__(self, prompt_id: str = "fake123", image_bytes: bytes = b"PNGDATA") -> None:
+    def __init__(self, prompt_id: str = "fake123", image_bytes: bytes | None = None) -> None:
         self.prompt_id = prompt_id
-        self.image_bytes = image_bytes
+        # A real, mattable RGBA PNG by default: generate_cutout() now decodes
+        # what ComfyUI returned so it can cut the background out (P-6), so an
+        # opaque placeholder like b"PNGDATA" is no longer a valid response.
+        self.image_bytes = _make_cuttable_rgba_png() if image_bytes is None else image_bytes
         self.calls: list[tuple] = []
 
     def submit(self, workflow):
@@ -54,6 +57,22 @@ class FakeClient(GenerationClient):
 def _make_rgba_png(width: int = 4, height: int = 4, alpha: int = 200) -> bytes:
     """Minimal valid RGBA PNG with a uniform, non-zero alpha channel."""
     img = Image.new("RGBA", (width, height), (100, 150, 200, alpha))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _make_cuttable_rgba_png(size: int = 12) -> bytes:
+    """A valid RGBA PNG with a distinct subject on a flat background.
+
+    What a real cutout generation returns: a subject the border-seeded matte
+    can separate from the surround. `_make_rgba_png`'s uniform fill has no
+    background/subject boundary at all, so the matte correctly refuses it.
+    """
+    img = Image.new("RGBA", (size, size), (18, 17, 14, 255))
+    for y in range(size // 4, size - size // 4):
+        for x in range(size // 4, size - size // 4):
+            img.putpixel((x, y), (220, 60, 40, 255))
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return buf.getvalue()
@@ -83,7 +102,8 @@ LORA_LICENSE = "Apache-2.0"
 
 
 def test_generate_cutout_writes_output_and_returns_result(tmp_path, cutout_recipe):
-    client = FakeClient()
+    """Plumbing only -- background_cutout=False keeps the response byte-exact."""
+    client = FakeClient(image_bytes=b"PNGDATA")
     result = generate_cutout(
         cutout_recipe,
         lora_name=LORA_NAME,
@@ -91,6 +111,7 @@ def test_generate_cutout_writes_output_and_returns_result(tmp_path, cutout_recip
         lora_license=LORA_LICENSE,
         out_dir=tmp_path,
         client=client,
+        background_cutout=False,
     )
 
     assert isinstance(result, CutoutResult)
@@ -267,15 +288,13 @@ def test_render_cutout_workflow_solid_mask_value_is_configurable(cutout_recipe):
 
 
 def test_generate_cutout_alpha_coverage_nonzero(tmp_path, cutout_recipe):
-    """When ComfyUI returns RGBA PNG bytes, the saved file has non-zero alpha coverage.
+    """The saved file has both opaque and transparent pixels.
 
-    The alpha correctness in a live run comes from the SolidMask +
-    JoinImageWithAlpha nodes baked into the submitted workflow. Here a
-    synthetic RGBA PNG mock response confirms the generation path preserves
-    the RGBA data from the client response unchanged.
+    PR #231 shipped props that were transparent everywhere; T-0221 overcorrected
+    to opaque everywhere. Neither is a cutout. The saved sprite must carry real
+    subject pixels *and* a real hole where the background was.
     """
-    rgba_bytes = _make_rgba_png(width=4, height=4, alpha=200)
-    client = FakeClient(image_bytes=rgba_bytes)
+    client = FakeClient(image_bytes=_make_cuttable_rgba_png())
     result = generate_cutout(
         cutout_recipe,
         lora_name=LORA_NAME,
@@ -287,9 +306,9 @@ def test_generate_cutout_alpha_coverage_nonzero(tmp_path, cutout_recipe):
 
     saved = Image.open(result.path)
     assert saved.mode == "RGBA"
-    _, _, _, alpha_channel = saved.split()
-    alpha_values = list(alpha_channel.getdata())
-    assert any(v > 0 for v in alpha_values), "all alpha values are zero -- expected non-zero"
+    alpha_values = list(saved.split()[3].getdata())
+    assert any(v > 0 for v in alpha_values), "no opaque pixels -- nothing renders"
+    assert any(v == 0 for v in alpha_values), "no transparent pixels -- background is opaque"
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +325,7 @@ def test_generate_cutout_writes_provenance_sidecar(tmp_path, cutout_recipe):
         lora_license=LORA_LICENSE,
         out_dir=tmp_path,
         client=client,
+        background_cutout=False,
     )
 
     sidecar = tmp_path / f"{cutout_recipe.name}.provenance.json"
@@ -441,6 +461,7 @@ def test_generate_cutout_sprite_hash_is_sha256_of_output_bytes(tmp_path, cutout_
         lora_license=LORA_LICENSE,
         out_dir=tmp_path,
         client=client,
+        background_cutout=False,
     )
 
     sidecar = tmp_path / f"{cutout_recipe.name}.provenance.json"
@@ -658,3 +679,118 @@ def test_generate_cutout_checkpoint_dir_hash_overrides_recipe_model_hash(tmp_pat
         checkpoint_dir=ckpt_dir,
     )
     assert result.provenance.model_hash == file_hash
+
+
+# ---------------------------------------------------------------------------
+# P-6: the background matte (13-asset-pipeline.md §3.7)
+#
+# SolidMask is a constant, so the alpha channel the node graph produces is
+# uniform and cannot cut anything out. Every T-0221 signal_tower prop shipped
+# RGBA with alpha=255 on every pixel. generate_cutout() now mattes the returned
+# image itself, on by default.
+# ---------------------------------------------------------------------------
+
+
+def test_matte_runs_by_default_and_clears_the_background(tmp_path, cutout_recipe):
+    result = generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=FakeClient(),
+    )
+    saved = Image.open(result.path).convert("RGBA")
+    assert saved.getpixel((0, 0))[3] == 0
+    assert saved.getpixel((6, 6))[3] == 255
+
+
+def test_matte_leaves_subject_rgb_untouched(tmp_path, cutout_recipe):
+    raw = _make_cuttable_rgba_png()
+    result = generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=FakeClient(image_bytes=raw),
+    )
+    before = Image.open(io.BytesIO(raw)).convert("RGBA")
+    after = Image.open(result.path).convert("RGBA")
+    assert [p[:3] for p in before.getdata()] == [p[:3] for p in after.getdata()]
+
+
+def test_matte_is_recorded_in_the_sidecar(tmp_path, cutout_recipe):
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=FakeClient(),
+    )
+    on_disk = json.loads((tmp_path / f"{cutout_recipe.name}.provenance.json").read_text())
+    assert on_disk["background_cutout"] is True
+    assert on_disk["cutout_tolerance"] == pytest.approx(0.03)
+    assert 0.0 < on_disk["cutout_opaque_fraction"] < 1.0
+    assert on_disk["output_hash"] != on_disk["sprite_hash"]
+
+
+def test_sprite_hash_still_fingerprints_the_raw_generation(tmp_path, cutout_recipe):
+    """`sprite_hash` keeps its documented meaning; `output_hash` is the file."""
+    raw = _make_cuttable_rgba_png()
+    result = generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=FakeClient(image_bytes=raw),
+    )
+    assert result.provenance.sprite_hash == hashlib.sha256(raw).hexdigest()
+    assert result.provenance.output_hash == hashlib.sha256(result.path.read_bytes()).hexdigest()
+
+
+def test_opting_out_records_no_matte_in_the_sidecar(tmp_path, cutout_recipe):
+    generate_cutout(
+        cutout_recipe,
+        lora_name=LORA_NAME,
+        lora_weight=LORA_WEIGHT,
+        lora_license=LORA_LICENSE,
+        out_dir=tmp_path,
+        client=FakeClient(),
+        background_cutout=False,
+    )
+    on_disk = json.loads((tmp_path / f"{cutout_recipe.name}.provenance.json").read_text())
+    assert on_disk["background_cutout"] is False
+    assert on_disk["cutout_tolerance"] is None
+    assert on_disk["cutout_opaque_fraction"] is None
+
+
+def test_edge_to_edge_crop_raises_instead_of_erasing_the_subject(tmp_path, cutout_recipe):
+    """The signal_tower prop shape: the subject fills the canvas, no background."""
+    with pytest.raises(BackgroundCutoutError):
+        generate_cutout(
+            cutout_recipe,
+            lora_name=LORA_NAME,
+            lora_weight=LORA_WEIGHT,
+            lora_license=LORA_LICENSE,
+            out_dir=tmp_path,
+            client=FakeClient(image_bytes=_make_rgba_png(width=8, height=8)),
+        )
+
+
+def test_failed_matte_preserves_the_raw_generation_on_disk(tmp_path, cutout_recipe):
+    """A refused matte must not throw away two minutes of GPU time."""
+    raw = _make_rgba_png(width=8, height=8)
+    with pytest.raises(BackgroundCutoutError):
+        generate_cutout(
+            cutout_recipe,
+            lora_name=LORA_NAME,
+            lora_weight=LORA_WEIGHT,
+            lora_license=LORA_LICENSE,
+            out_dir=tmp_path,
+            client=FakeClient(image_bytes=raw),
+        )
+    assert (tmp_path / f"{cutout_recipe.name}.raw.png").read_bytes() == raw
+    assert not (tmp_path / f"{cutout_recipe.name}.png").exists()

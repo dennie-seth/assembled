@@ -237,15 +237,40 @@ def test_load_generator_baseline_default_path_excludes_signal_tower_props():
     assert "final/props/signal_tower/low_duct_v1.provenance.json" not in baseline
     assert "final/props/signal_tower/relay_cabinet_v1.provenance.json" not in baseline
     assert "final/props/signal_tower/server_rack_v1.provenance.json" not in baseline
-    # 22 pre-existing gaps. Excluded from this list, for three different reasons:
-    # the 5 signal_tower props (motivating failure case, regenerated on merit by
-    # T-0221); final/tiles/..._wall_floor_transitions_16px.provenance.json, whose
-    # exemption was dead -- it resolves to a committed generator
+    # T-0236: 5 more dead concept-sheet exemptions dropped. T-0226's own audit
+    # (SIGNAL_TOWER_CONCEPT_AUDIT.md, "what this card did" #4) backfilled a
+    # generator field on every pre-existing sheet's provenance that was missing
+    # one -- but never removed their now-stale baseline lines. Verified dead
+    # (each `generator` already resolves to a committed, existing file) rather
+    # than assumed:
+    assert "src/concept/player_character_concept_sheet_v1.provenance.json" not in baseline
+    assert "src/concept/signal_tower_concept_sheet_v3.provenance.json" not in baseline
+    assert "src/concept/signal_tower_material_sheet.provenance.json" not in baseline
+    assert "src/concept/signal_tower_material_sheet_lora.provenance.json" not in baseline
+    assert "src/concept/signal_tower_props_concept_sheet_v1.provenance.json" not in baseline
+    # T-0236: the last src/concept generator gap, resolved on merit rather than
+    # dropped as dead. signal_tower_concept_sheet_v1.provenance.json had no
+    # `generator` field at all (unlike the other four above, which had a
+    # stale-but-real one). Recovery: re-rendered the sibling
+    # signal_tower_concept_sheet_v1.recipe.json via
+    # comfy_client.recipe.load_recipe() + comfy_client.workflow.render_workflow()
+    # + comfy_client.workflow.workflow_hash() and it reproduces the provenance
+    # record's workflow_hash (17641e4c...eac6e7b63) byte-for-byte -- proof the
+    # recipe is genuine, without needing ComfyUI /history (the prompt_id has
+    # aged out). generator now points at that recipe path; see
+    # assets/src/concept/T-0236-recipe-recovery-attempt.json for the full check.
+    assert "src/concept/signal_tower_concept_sheet_v1.provenance.json" not in baseline
+    # 16 pre-existing gaps remain. Excluded from this list, for four different
+    # reasons: the 5 signal_tower props (motivating failure case, regenerated on
+    # merit by T-0221); final/tiles/..._wall_floor_transitions_16px.provenance.json,
+    # whose exemption was dead -- it resolves to a committed generator
     # (assets/src/tiles/src/tile_gen/transition_sheet.py) and passes without it;
-    # and src/concept/entities_concept_sheet_v1.provenance.json, remediated by
+    # src/concept/entities_concept_sheet_v1.provenance.json, remediated by
     # T-0226 -- its generator had a free-text parenthetical appended to an
-    # otherwise-committed path, and with that stripped it resolves on merit.
-    assert len(baseline) == 22
+    # otherwise-committed path, and with that stripped it resolves on merit;
+    # and the 6 src/concept entries above (5 dead exemptions dropped, plus
+    # signal_tower_concept_sheet_v1 resolved on merit), all by T-0236.
+    assert len(baseline) == 16
 
 
 # ---- Regression: the 5 T-0215 signal_tower props must fail ----

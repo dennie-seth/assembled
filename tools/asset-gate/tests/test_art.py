@@ -2,6 +2,7 @@ import numpy as np
 
 from asset_gate.art import (
     check_atlas_determinism,
+    check_background_growth,
     check_cell_fit,
     check_frame_consistency,
     check_indexed_preservation,
@@ -106,6 +107,36 @@ def test_frame_consistency_fails_beyond_bound():
     frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
     result = check_frame_consistency(frame_a, frame_b, background_index=0, max_delta_ratio=0.1)
     assert not result.passed
+
+
+def test_background_growth_passes_when_stable():
+    """T-0250 HANDOFF §24-c human review: non-background pixel count
+    fluctuating frame to frame (pose-driven, no trend) must pass -- this is
+    the T-0249 baseline shape (421-566px, ratio 566/421 ~= 1.34)."""
+    counts = [10, 11, 9, 10, 13, 9, 10, 11, 9]
+    frames = [
+        make_indexed_image(np.array([[1] * c + [0] * (20 - c)], dtype=np.uint8), TEST_PALETTE_HEX)
+        for c in counts
+    ]
+    result = check_background_growth(frames, background_index=0, max_growth_ratio=1.35)
+    assert result.passed
+
+
+def test_background_growth_fails_when_accumulating():
+    """The failure this check exists to catch: each frame's non-background
+    pixel count grows past frame 0's by more than max_growth_ratio -- img2img
+    chaining feeding a frame's own noise into the next frame's init image
+    (T-0250 promoted attempt 6: 1024px -> 1472px, ratio ~1.44), invisible to
+    check_frame_consistency (which measures inter-frame delta, not absolute
+    growth against a fixed baseline)."""
+    counts = [10, 10, 12, 13, 14, 15, 16, 17, 18]  # baseline 10, ends at 1.8x
+    frames = [
+        make_indexed_image(np.array([[1] * c + [0] * (20 - c)], dtype=np.uint8), TEST_PALETTE_HEX)
+        for c in counts
+    ]
+    result = check_background_growth(frames, background_index=0, max_growth_ratio=1.35)
+    assert not result.passed
+    assert result.details["baseline"] == 10
 
 
 def test_atlas_determinism_passes_for_deterministic_packer():

@@ -3,6 +3,12 @@ import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { schedulePush } from "./autoPush.js";
+import {
+  artifactCacheRootFor,
+  artifactPreservationEnabledFromEnv,
+  preserveArtifacts,
+  restoreArtifacts
+} from "./artifactPreservation.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,6 +43,59 @@ async function branchHasUniqueCommits({ repoRoot, branch, baseBranch }) {
   return stdout.trim().length > 0;
 }
 
+/** Default preservation cache for a card worktree: `<its worktrees dir>/.artifact-cache`. */
+function defaultArtifactCacheRoot(worktreeDir) {
+  return artifactCacheRootFor({ worktreesDir: path.dirname(worktreeDir) });
+}
+
+/**
+ * Moves a card's resumable, untracked artifacts out of the way of an imminent
+ * `git worktree remove --force`, which deletes the *entire* directory -- untracked and ignored
+ * files included -- and so, before this existed, destroyed everything a run had generated but not
+ * committed. `addWorktree` puts them back into the fresh checkout (see `restorePreservedArtifacts`).
+ *
+ * Deliberately non-throwing. Preservation is an optimisation on top of a reclaim that has to
+ * happen either way: a failure here degrades to exactly the previous behaviour (artifacts lost)
+ * rather than blocking the run that needed the worktree.
+ */
+async function preserveArtifactsBeforeRemoval({ worktreeDir, artifactCacheRoot }) {
+  if (!artifactPreservationEnabledFromEnv()) return;
+  try {
+    const { preserved } = await preserveArtifacts({
+      worktreeDir,
+      cacheRoot: artifactCacheRoot ?? defaultArtifactCacheRoot(worktreeDir)
+    });
+    if (preserved.length > 0) {
+      console.log(
+        `Board: preserved ${preserved.length} untracked artifact file(s) from ${worktreeDir} across worktree removal`
+      );
+    }
+  } catch (err) {
+    console.warn(`Board: could not preserve untracked artifacts from ${worktreeDir}: ${err.message}`);
+  }
+}
+
+/** Counterpart to `preserveArtifactsBeforeRemoval`, run once the fresh worktree exists. Non-throwing for the same reason. */
+async function restorePreservedArtifacts({ worktreeDir, artifactCacheRoot }) {
+  if (!artifactPreservationEnabledFromEnv()) return;
+  try {
+    const { restored, skippedTracked } = await restoreArtifacts({
+      worktreeDir,
+      cacheRoot: artifactCacheRoot ?? defaultArtifactCacheRoot(worktreeDir)
+    });
+    if (restored.length > 0) {
+      console.log(`Board: restored ${restored.length} preserved artifact file(s) into ${worktreeDir}`);
+    }
+    if (skippedTracked.length > 0) {
+      console.warn(
+        `Board: left ${skippedTracked.length} preserved path(s) out of ${worktreeDir} -- the fresh checkout tracks them: ${skippedTracked.join(", ")}`
+      );
+    }
+  } catch (err) {
+    console.warn(`Board: could not restore preserved artifacts into ${worktreeDir}: ${err.message}`);
+  }
+}
+
 /**
  * A dead/killed run -- or a card sent back for another pass after review -- can leave
  * `feature/T-XXXX` (and its worktree) behind, which makes every future addWorktree() for
@@ -46,11 +105,16 @@ async function branchHasUniqueCommits({ repoRoot, branch, baseBranch }) {
  * destroying it, reattach a worktree to the existing branch so the run continues on top of
  * it instead of starting over.
  */
-async function reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch }) {
+async function reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch, artifactCacheRoot }) {
   if (!(await branchExists({ repoRoot, branch }))) {
     return false;
   }
   if (await pathExists(worktreeDir)) {
+    // Must happen before the removal, not after: `remove --force` deletes the whole directory,
+    // untracked and ignored files and all. T-0248 lost ~86 minutes of LoRA training here, its
+    // per-epoch `--save_state` checkpoint dirs going down with the worktree so the re-run's
+    // `find_resume_state` had nothing to resume from and retrained from step 0.
+    await preserveArtifactsBeforeRemoval({ worktreeDir, artifactCacheRoot });
     try {
       await git(["worktree", "remove", "--force", worktreeDir], repoRoot);
     } catch {
@@ -189,8 +253,15 @@ export async function syncBaseBranch({ repoRoot, branch = "develop" }) {
  * baseBranch is fast-forwarded to origin first (see `syncBaseBranch`); the resulting
  * `{ baseSync }` says whether that succeeded, so a run cut from a lagging base is at least
  * visible rather than silent.
+ *
+ * Untracked/ignored artifacts a previous run left in this card's worktree -- LoRA training
+ * checkpoints above all -- are carried across the reclaim and restored into the fresh checkout,
+ * so a re-run resumes from them instead of regenerating them (see `artifactPreservation.js`, and
+ * `restorePreservedArtifacts` for the rule that a tracked file in the new tree always wins).
+ * `artifactCacheRoot` overrides where they are parked; it defaults to a `.artifact-cache` dir
+ * alongside the card worktrees.
  */
-export async function addWorktree({ repoRoot, worktreeDir, branch, baseBranch = "develop" }) {
+export async function addWorktree({ repoRoot, worktreeDir, branch, baseBranch = "develop", artifactCacheRoot }) {
   const baseSync = await syncBaseBranch({ repoRoot, branch: baseBranch });
   if (baseSync.status !== "current" && baseSync.status !== "fast-forwarded" && baseSync.status !== "created") {
     // Not fatal -- the worktree is still cut, just from a base that may lag origin. Loud,
@@ -199,17 +270,27 @@ export async function addWorktree({ repoRoot, worktreeDir, branch, baseBranch = 
       `Board: ${baseBranch} was not synced to origin before cutting ${branch} (${baseSync.status}): ${baseSync.reason}`
     );
   }
-  const reused = await reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch });
+  const reused = await reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch, artifactCacheRoot });
   if (reused) {
     await git(["worktree", "add", worktreeDir, branch], repoRoot);
   } else {
     await git(["worktree", "add", "-b", branch, worktreeDir, baseBranch], repoRoot);
   }
+  await restorePreservedArtifacts({ worktreeDir, artifactCacheRoot });
   return { reused, baseSync };
 }
 
-/** Force-removes a worktree, even if it has uncommitted changes. Never deletes the branch. */
-export async function removeWorktree({ repoRoot, worktreeDir }) {
+/**
+ * Force-removes a worktree, even if it has uncommitted changes. Never deletes the branch.
+ *
+ * Preserves the card's untracked/ignored artifacts first, for the same reason the reclaim path
+ * does: this is the *other* door onto the same wipe. The orchestrator calls this on a PASS (once
+ * the branch is pushed and the PR opened) and on a cancel, so without it a card that passed
+ * review once and was then re-run would still find its checkpoints gone -- the reclaim would have
+ * nothing left to preserve, because this call already deleted them.
+ */
+export async function removeWorktree({ repoRoot, worktreeDir, artifactCacheRoot }) {
+  await preserveArtifactsBeforeRemoval({ worktreeDir, artifactCacheRoot });
   await git(["worktree", "remove", "--force", worktreeDir], repoRoot);
 }
 

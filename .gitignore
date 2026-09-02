@@ -82,6 +82,16 @@ __pycache__/
 assets/src/lora/refs/
 assets/src/lora/.train-scratch/
 
+# sd-scripts `--save_state` checkpoints (`<output_name>-step<N>-state/`): resumable
+# *intermediate* trainer state (optimizer, scheduler, RNG, a raw model.safetensors),
+# not a deliverable — the deliverable is the LoRA weights file beside them, which
+# .gitattributes routes through LFS. A single run leaves gigabytes of these, and
+# `assets/final/lora/*.safetensors` in .gitattributes matches only direct children,
+# so a state dir's own model.safetensors would go in as a raw blob. The runner
+# preserves these across worktree resets on disk instead (tools/board/src/runner/
+# artifactPreservation.js) — they never need to be in git to be resumable.
+assets/final/lora/*-state/
+
 # Board tool runtime state (not source)
 tasks/.id-allocator.json
 
@@ -91,6 +101,11 @@ tasks/.id-allocator.json
 # tools/comfy-client/assets/out/, tools/asset-gate test scratch). "**/"
 # matches at any depth, root included.
 **/assets/out/
+
+# Reference-sourcing quarantine (T-0276): fetched-but-unreviewed external references. Nothing
+# here is ever git-add-ed by tools/board/scripts/referenceFetch.js itself -- promotion out of
+# quarantine into a real assets/src/ location is a separate, deliberate, human-reviewed step.
+assets/src/reference/quarantine/
 
 # Packed sprite atlases: CI build artifacts, not authored source (T-0074).
 # docs/design/13-asset-pipeline.md §3.6: atlases are build artifacts, never committed.

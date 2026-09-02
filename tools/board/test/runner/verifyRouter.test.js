@@ -81,12 +81,25 @@ describe("resolveVerifyRoutes", () => {
       "assets/src/audio",
       "assets/src/lora",
       "assets/src/tiles",
-      "assets/src/ambience_synth"
+      "assets/src/ambience_synth",
+      "assets/src/character"
     ];
     for (const root of roots) {
       const routes = resolveVerifyRoutes([`${root}/tests/test_smoke.py`]);
       expect(routes.map((r) => r.id)).toEqual([`python-verify:${root}`]);
     }
+  });
+
+  it("routes an assets/src/character/** diff to python-verify -- T-0264's package, missing from PYTHON_PACKAGE_ROOTS so no route fired on a character-package diff", () => {
+    const routes = resolveVerifyRoutes(["assets/src/character/src/character/gen_entities_v2.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:assets/src/character"]);
+    const route = routes[0];
+    expect(route.command).toContain("cd assets/src/character");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check --fix .");
+    expect(route.command).toContain(".venv/bin/ruff check .");
   });
 
   it("routes an assets/src/ambience_synth/** diff to python-verify -- T-0202's package, added after three consecutive runs blocked on a missing reviewer grant", () => {
@@ -153,6 +166,51 @@ describe("resolveVerifyRoutes", () => {
   it("leaves a non-Python diff (e.g. server/**) unaffected by python-verify routing -- routes to server-db-verify only", () => {
     const routes = resolveVerifyRoutes(["server/src/main.cpp"]);
     expect(routes.map((r) => r.id)).toEqual(["server-db-verify"]);
+  });
+});
+
+describe("resolveVerifyRoutes -- reference-batch-summary-provenance (T-0282: assetId/sourceUrl must survive quarantine reclamation)", () => {
+  it("routes a diff touching a batch-fetch summary file to the provenance check, naming that file", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/T-0300-profile-summary.md"]);
+    expect(routes.map((r) => r.id)).toEqual(["reference-batch-summary-provenance"]);
+    expect(routes[0].command).toBe(
+      "node tools/board/scripts/checkReferenceBatchSummary.js assets/src/reference/T-0300-profile-summary.md"
+    );
+  });
+
+  it("names every matching summary file when a diff touches more than one", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/src/reference/T-0300-profile-summary.md",
+      "assets/src/reference/T-0300-sitting-summary.md"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["reference-batch-summary-provenance"]);
+    expect(routes[0].command).toBe(
+      "node tools/board/scripts/checkReferenceBatchSummary.js " +
+        "assets/src/reference/T-0300-profile-summary.md assets/src/reference/T-0300-sitting-summary.md"
+    );
+  });
+
+  it("does not route a quarantine-directory change -- quarantine is gitignored and never part of a diff, and this route only concerns the committed summary", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/quarantine/abc123.provenance.json"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("does not route an unrelated file under assets/src/reference/ that isn't a *-summary.md", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/README.md"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("does not route a summary-shaped filename outside assets/src/reference/", () => {
+    const routes = resolveVerifyRoutes(["assets/src/other/T-0300-profile-summary.md"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("composes with an unrelated route on the same diff (tools/board diff + a summary file)", () => {
+    const routes = resolveVerifyRoutes([
+      "tools/board/src/lib/fsTaskStore.js",
+      "assets/src/reference/T-0300-profile-summary.md"
+    ]);
+    expect(routes.map((r) => r.id).sort()).toEqual(["board-suite", "reference-batch-summary-provenance"]);
   });
 });
 

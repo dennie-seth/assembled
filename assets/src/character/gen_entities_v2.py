@@ -555,7 +555,7 @@ def generate_entity_sheet(spec: dict, palette: list[tuple[int, int, int]], conce
     print(f"  Init image: {cols * CELL_GEN}×{rows * CELL_GEN}px tiled from concept crop")
 
     # 2. Upload init image
-    print(f"  Uploading init image to ComfyUI...")
+    print("  Uploading init image to ComfyUI...")
     uploaded_name = _comfyui_upload_image(init_bytes, init_filename)
     print(f"  Uploaded as: {uploaded_name}")
 
@@ -578,7 +578,7 @@ def generate_entity_sheet(spec: dict, palette: list[tuple[int, int, int]], conce
 
     # 4. Poll until complete
     job_result = _poll_until_done(prompt_id)
-    print(f"  Generation complete.")
+    print("  Generation complete.")
 
     # 5. Fetch raw output
     raw_bytes = _comfyui_fetch_output(job_result)
@@ -673,7 +673,7 @@ def generate_entity_sheet(spec: dict, palette: list[tuple[int, int, int]], conce
 
 
 def main() -> None:
-    print(f"T-0214 Entity Sheets v2 Generation")
+    print("T-0214 Entity Sheets v2 Generation")
     print(f"ComfyUI: {COMFYUI_URL}")
     print(f"Concept sheet: {CONCEPT_SHEET}")
 
@@ -699,13 +699,13 @@ def main() -> None:
     for spec in ENTITY_SPECS:
         generate_entity_sheet(spec, palette, concept_hash)
 
-    print(f"\n✓ All 9 entity sheets generated successfully.")
+    print("\n✓ All 9 entity sheets generated successfully.")
     print(f"  Sheets in: {ENTITY_OUT}")
-    print(f"\nNext steps:")
-    print(f"  1. Run gate tests: cd assets/src/character && pytest tests/*gate_v2*")
-    print(f"  2. Attach sheets to card T-0214 via attachments API")
-    print(f"  3. Update ASSET_PROVENANCE.md")
-    print(f"  4. Commit everything")
+    print("\nNext steps:")
+    print("  1. Run gate tests: cd assets/src/character && pytest tests/*gate_v2*")
+    print("  2. Attach sheets to card T-0214 via attachments API")
+    print("  3. Update ASSET_PROVENANCE.md")
+    print("  4. Commit everything")
 
 
 if __name__ == "__main__":

@@ -83,6 +83,73 @@ jobs:
       # through the committed cutout path they pass this gate on merit.
       - run: python -m asset_gate.cli generator-sweep ../../assets --repo-root ../../
 
+  generator-hash-sweep:
+    name: generator_hash correctness sweep (T-0238)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # Recursively validates that, for every committed *.provenance.json under
+      # assets/ that sets a generator_hash, the recorded value actually matches
+      # sha256(<the file its own "generator" field names>). T-0230 (37d6d80) and
+      # T-0232 (27fb50d, 7203d64) both shipped a model_hash/generator_hash that
+      # didn't match the real committed file, caught only by a human noticing on
+      # manual review -- this sweep is the mechanical backstop so a future
+      # fabricated or stale hash fails the PR instead of merging silently.
+      - run: python -m asset_gate.cli generator-hash-sweep ../../assets --repo-root ../../
+
+  transparency-sweep:
+    name: sprite background-transparency sweep (P-6 / T-0252 §24-e opaque sheet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # The §24-e character sheet shipped as mode 'P' with its background on a
+      # single palette index and NO tRNS chunk -- the cutout was applied, the
+      # file carried no alpha, and Godot rendered an opaque black rectangle.
+      # visibility-sweep below cannot catch that: it was built for the opposite
+      # failure (alpha=0 everywhere) and an opaque sheet passes it happily.
+      # This sweep requires every sprite under assets/final to declare a
+      # transparent background. Tiles and the palette LUT are exempt by asset
+      # class; individually documented exceptions -- assets that were never cut
+      # out and need regeneration, not a re-save -- live in
+      # src/asset_gate/transparency_baseline.txt.
+      - run: python -m asset_gate.cli transparency-sweep ../../assets/final
+
+  character-arm-c-sweep:
+    name: character CHR-1 provenance sweep (docs/board-invariants.md CHR-1, T-0258)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # CHR-1 requires every character-generation output to record both its own
+      # frame_delta_range and its Arm-C benchmark comparison (arm_c_benchmark +
+      # beats_arm_c_benchmark) -- before T-0258 this was convention only, so a new
+      # character generator could drop the fields silently. This sweep is scoped
+      # to the `character` asset class only (props/tiles/concept/entity sheets
+      # never fail it); paths listed in character_arm_c_baseline.txt are the 15
+      # sidecars that predate CHR-1 and are tracked for backfill/regeneration in a
+      # follow-up card, not fixed here.
+      - run: python -m asset_gate.cli character-arm-c-sweep ../../assets/final
+
   visibility-sweep:
     name: rendered-visibility sweep (PR #231 / T-0215 alpha-zero bug)
     runs-on: ubuntu-latest

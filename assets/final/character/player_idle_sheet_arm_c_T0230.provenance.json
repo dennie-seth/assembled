@@ -1,5 +1,5 @@
 {
-  "model": "N/A -- deterministic script, no diffusion model anywhere in the generation path (DL-21 \u00a723-f). model_hash pins the exact committed generator source (char_gen/synth_entities.py) that produced this sheet.",
+  "model": "N/A -- deterministic script, no diffusion model anywhere in the generation path (DL-21 §23-f). model_hash pins the exact committed generator source (char_gen/synth_entities.py) that produced this sheet.",
   "model_license": "N/A",
   "model_hash": "8a19c740065a00f6a7de98477bd8c3744dbda1572d63ae5ad84a1e4a3894aabf",
   "prompt": null,
@@ -13,8 +13,8 @@
   "method": "char_gen.synth_entities.generate_player_idle_sheet_arm_c: an articulated player figure (head, neck, torso, two-segment arms, two-segment legs) is drawn directly into a 3x3 grid of 48x48 numpy index arrays using the home palette's own indices -- BG_IDX/HEAD_IDX/BODY_IDX/LEG_IDX -- as literal constants in the drawing code, then saved as mode-P PNG with the home palette embedded. No image is ever rendered to RGB and quantised down; the indices are correct from the first assignment. Per-frame pose (head-bob, arm-swing, leg weight-shift) is chosen from six hand-verified, adjacent-step<=1 patterns via random.Random(seed), so the same seed always selects the same three patterns and produces byte-identical pixels.",
   "generator": "assets/src/character/gen_arm_c_idle_T0230.py",
   "card": "T-0230",
-  "bake_off_arm": "C (\u00a723-f)",
-  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5",
+  "bake_off_arm": "C (§23-f)",
+  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5",
   "attempt": 1,
   "gpu_seconds": 0.0,
   "gpu_minutes_note": "CPU-only PIL/numpy rendering -- no GPU involved at any step",
@@ -194,5 +194,15 @@
     ]
   },
   "palette_source": "assets/final/palette/home_palette.json",
-  "promoted": true
+  "promoted": true,
+  "transparency": {
+    "format": "indexed_png_trns",
+    "background_index": 0,
+    "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
+    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "branch": "feature/sprite-true-transparency",
+    "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
+    "background_px": 15409,
+    "interior_background_px": 0
+  }
 }

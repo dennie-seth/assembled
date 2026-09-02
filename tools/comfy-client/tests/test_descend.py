@@ -155,3 +155,59 @@ def test_writes_to_explicit_out_path(tmp_path):
     out_path = descend(raw, palette=TEST_PALETTE, target_size=4, out_path=explicit)
     assert out_path == explicit
     assert explicit.exists()
+
+
+# ---- P-6: descent output is transparent by default -----------------------
+
+
+def _descend_fixture(tmp_path):
+    """A 16x16 image with a dark border and a bright centre -> 4px indexed sheet.
+
+    Quantizes to index 0 (darkest palette slot) around a non-zero centre, which
+    is the shape every character sheet has: a background index plus a subject.
+    """
+    arr = np.zeros((16, 16, 3), dtype=np.uint8)
+    arr[4:12, 4:12] = (240, 240, 240)
+    raw = tmp_path / "raw.png"
+    Image.fromarray(arr, mode="RGB").save(raw)
+    return raw
+
+
+def test_descent_output_carries_a_trns_chunk_by_default(tmp_path):
+    out_path = descend(_descend_fixture(tmp_path), palette=TEST_PALETTE, target_size=4)
+    assert Image.open(out_path).info.get("transparency") == 0
+
+
+def test_descent_transparency_can_be_pointed_at_another_slot(tmp_path):
+    out_path = descend(
+        _descend_fixture(tmp_path), palette=TEST_PALETTE, target_size=4, background_index=3
+    )
+    assert Image.open(out_path).info.get("transparency") == 3
+
+
+def test_descent_can_opt_out_for_base_field_tiles(tmp_path):
+    """A transparent floor tile is a hole in the world -- tiles pass None."""
+    out_path = descend(
+        _descend_fixture(tmp_path), palette=TEST_PALETTE, target_size=4, background_index=None
+    )
+    assert "transparency" not in Image.open(out_path).info
+
+
+def test_transparency_does_not_change_indices_or_the_palette(tmp_path):
+    """tRNS is metadata: the same descent with and without it differs only there."""
+    raw = _descend_fixture(tmp_path)
+    transparent = Image.open(
+        descend(raw, palette=TEST_PALETTE, target_size=4, out_path=tmp_path / "t.png")
+    )
+    opaque = Image.open(
+        descend(
+            raw,
+            palette=TEST_PALETTE,
+            target_size=4,
+            out_path=tmp_path / "o.png",
+            background_index=None,
+        )
+    )
+    assert np.array_equal(np.array(transparent), np.array(opaque))
+    assert transparent.getpalette() == opaque.getpalette()
+    assert transparent.mode == opaque.mode == "P"

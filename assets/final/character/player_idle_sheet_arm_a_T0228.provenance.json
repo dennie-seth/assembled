@@ -23,11 +23,11 @@
   "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
   "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
   "concept_card": "T-0209",
-  "method": "Procedurally drawn OpenPose-format skeleton (single 336x336 cell, PIL, 18-keypoint COCO layout, standard OpenPose limb colours) tiled bit-for-bit identical into a 1008x1008 pose grid, uploaded once -> ControlNetApplyAdvanced (xinsir OpenPose) + IPAdapterAdvanced (PLUS, T-0209 concept) + LoraLoader (soviet_brutalism_style_v1) -> KSampler 1008x1008 -> area downscale to 144x144 -> Oklab-nearest palette quantization (dithering off, \u00a73.1) -> orphan cleanup.",
+  "method": "Procedurally drawn OpenPose-format skeleton (single 336x336 cell, PIL, 18-keypoint COCO layout, standard OpenPose limb colours) tiled bit-for-bit identical into a 1008x1008 pose grid, uploaded once -> ControlNetApplyAdvanced (xinsir OpenPose) + IPAdapterAdvanced (PLUS, T-0209 concept) + LoraLoader (soviet_brutalism_style_v1) -> KSampler 1008x1008 -> area downscale to 144x144 -> Oklab-nearest palette quantization (dithering off, §3.1) -> orphan cleanup.",
   "generator": "assets/src/character/gen_arm_a_idle_T0228.py",
   "card": "T-0228",
-  "bake_off_arm": "A (\u00a723-d)",
-  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md \u00a73.5",
+  "bake_off_arm": "A (§23-d)",
+  "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5",
   "comfyui_prompt_id": "39c51e26-075f-466b-ae94-e7bdc053acbc",
   "attempt": 8,
   "gpu_seconds": 294.4,
@@ -195,5 +195,15 @@
   },
   "palette_source": "assets/final/palette/home_palette.json",
   "promoted": true,
-  "bake_off_result": "criterion-3 failure -- DL-21 8-attempt cap exhausted without a mechanical criterion-2 pass; delivered as the best-effort candidate for \u00a723-g's criterion-1 inspection, not as a passing sheet"
+  "bake_off_result": "criterion-3 failure -- DL-21 8-attempt cap exhausted without a mechanical criterion-2 pass; delivered as the best-effort candidate for §23-g's criterion-1 inspection, not as a passing sheet",
+  "transparency": {
+    "format": "indexed_png_trns",
+    "background_index": 0,
+    "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
+    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "branch": "feature/sprite-true-transparency",
+    "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
+    "background_px": 8479,
+    "interior_background_px": 43
+  }
 }

@@ -13,7 +13,15 @@
 
 // docs/comfyui-setup.md (T-0070): sd_xl_base_1.0.safetensors, checkpoints/ dir.
 // ASSET_PROVENANCE.md (T-0072 LoRA training run): soviet_brutalism_style_v1.safetensors.
-export const INSTALLED_MODELS = Object.freeze(["sd_xl_base_1.0.safetensors", "soviet_brutalism_style_v1.safetensors"]);
+// ASSET_PROVENANCE.md (T-0237 Arm B stage-1 training run, PR #258):
+// player_identity_v1.safetensors, committed at assets/final/lora/ and present on the GPU host.
+// It was trained and left on disk but never listed here, so any card naming it as a genuine
+// prerequisite would have falsely blocked -- the mirror image of the T-0248 false positive.
+export const INSTALLED_MODELS = Object.freeze([
+  "sd_xl_base_1.0.safetensors",
+  "soviet_brutalism_style_v1.safetensors",
+  "player_identity_v1.safetensors"
+]);
 
 // ComfyUI built-in node classes actually exercised by a committed workflow in this repo, or
 // confirmed present per docs/comfyui-setup.md's test-generation graph -- not an exhaustive list

@@ -10,22 +10,70 @@
   "card": "T-0199",
   "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
   "layout": {
-    "sheet_px": [144, 144],
+    "sheet_px": [
+      144,
+      144
+    ],
     "cell_px": 48,
     "cols": 3,
     "rows": 3,
     "figure_height_px_standing": 40,
     "figure_height_px_crouched": 24,
     "frame_cells": [
-      {"cell": "(0,0)", "step": 0, "head_rows": "4:14", "note": "standing"},
-      {"cell": "(0,1)", "step": 1, "head_rows": "6:16", "note": "slight crouch"},
-      {"cell": "(0,2)", "step": 2, "head_rows": "8:18", "note": "crouch"},
-      {"cell": "(1,0)", "step": 3, "head_rows": "10:20", "note": "deeper crouch"},
-      {"cell": "(1,1)", "step": 4, "head_rows": "12:22", "note": "head meets body"},
-      {"cell": "(1,2)", "step": 5, "head_rows": "14:24", "note": "head inside body"},
-      {"cell": "(2,0)", "step": 6, "head_rows": "16:26", "note": "crouched"},
-      {"cell": "(2,1)", "step": 7, "head_rows": "18:28", "note": "deep crouch"},
-      {"cell": "(2,2)", "step": 8, "head_rows": "20:30", "note": "fully crouched/hidden"}
+      {
+        "cell": "(0,0)",
+        "step": 0,
+        "head_rows": "4:14",
+        "note": "standing"
+      },
+      {
+        "cell": "(0,1)",
+        "step": 1,
+        "head_rows": "6:16",
+        "note": "slight crouch"
+      },
+      {
+        "cell": "(0,2)",
+        "step": 2,
+        "head_rows": "8:18",
+        "note": "crouch"
+      },
+      {
+        "cell": "(1,0)",
+        "step": 3,
+        "head_rows": "10:20",
+        "note": "deeper crouch"
+      },
+      {
+        "cell": "(1,1)",
+        "step": 4,
+        "head_rows": "12:22",
+        "note": "head meets body"
+      },
+      {
+        "cell": "(1,2)",
+        "step": 5,
+        "head_rows": "14:24",
+        "note": "head inside body"
+      },
+      {
+        "cell": "(2,0)",
+        "step": 6,
+        "head_rows": "16:26",
+        "note": "crouched"
+      },
+      {
+        "cell": "(2,1)",
+        "step": 7,
+        "head_rows": "18:28",
+        "note": "deep crouch"
+      },
+      {
+        "cell": "(2,2)",
+        "step": 8,
+        "head_rows": "20:30",
+        "note": "fully crouched/hidden"
+      }
     ],
     "spare_cells": []
   },
@@ -37,5 +85,15 @@
     "orphan_pixels_threshold_4": "PASS (design-verified: head connects to body via neck bridge or direct overlap; all parts 4-connected through body-core; no isolated blobs)",
     "frame_consistency_delta_65pct": "PASS (design-verified: adjacent frames shift head 2px, legs 1px; delta/union < 8% per pair — well under 65% limit)",
     "total": "5/5 passed (synthetic image; SDXL img2img pending Windows-side ComfyUI access)"
+  },
+  "transparency": {
+    "format": "indexed_png_trns",
+    "background_index": 0,
+    "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
+    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "branch": "feature/sprite-true-transparency",
+    "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
+    "background_px": 14304,
+    "interior_background_px": 0
   }
 }

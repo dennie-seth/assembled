@@ -19,6 +19,7 @@ verify that the named process can actually be re-run.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -98,6 +99,141 @@ def check_provenance_generator_resolvable(provenance: dict, repo_root: Path) -> 
         reason=f"generator resolves to an existing repo file: {generator}",
         details={"generator": generator},
     )
+
+
+def check_generator_hash_matches(provenance: dict, repo_root: Path) -> CheckResult:
+    """Fail if ``generator_hash`` is present but doesn't match the actual sha256
+    of the file the sidecar's own ``generator`` field names (T-0238).
+
+    Root cause (flow-stats self-improvement, 61% rework rate): the assets
+    agent has no granted ``sha256sum`` (it does have granted ``python3``
+    interpreters -- ``~/dev/lora-train-venv/bin/python3`` and its absolute-path
+    equivalent, per ``.claude/agents/assets.md`` -- but nothing in this
+    codebase used them to compute-and-verify a digest before writing one
+    down), so ``model_hash``/``generator_hash`` values get written from
+    memory or estimate rather than computed-and-verified. T-0230 (commit 37d6d80) and
+    T-0232 (commits 27fb50d, 7203d64 -- the *same* card, twice) both shipped
+    a hash that didn't match the actual committed file, caught only by a
+    human noticing on manual review.
+
+    ``generator_hash`` is deliberately the only field this check verifies:
+    every sidecar that sets it documents it as pinning the ``generator``
+    field's own file (e.g. transitions_16px.provenance.json's
+    ``model_hash_note``: "generator_hash ... pins the sheet-composition
+    script itself"), so the file to recompute against is unambiguous.
+    ``model_hash`` is not checked here -- it sometimes pins an external,
+    uncommitted checkpoint (not verifiable from repo contents) and
+    sometimes pins a different committed file than ``generator`` entirely,
+    documented only in free text.
+
+    A sidecar with no ``generator_hash`` field, an unresolvable
+    ``generator`` field, or a ``generator`` that escapes the repo tree is
+    "not applicable" (``passed=True``, ``details["applicable"] = False``)
+    -- those gaps are covered by ``check_provenance_generator_resolvable``
+    and ``check_provenance_model_hash``; this check does not duplicate them.
+
+    Args:
+        provenance: dict loaded from a ``.provenance.json`` sidecar.
+        repo_root: absolute ``Path`` to the repository root -- used to
+            resolve the ``generator`` field as a file path.
+
+    Returns:
+        ``CheckResult`` with ``passed=True`` iff not applicable, or the
+        recomputed sha256 matches the recorded ``generator_hash``.
+    """
+    generator_hash = provenance.get("generator_hash")
+    if not generator_hash:
+        return CheckResult(
+            check="generator_hash_matches",
+            passed=True,
+            reason="generator_hash field not present -- not applicable",
+            details={"applicable": False},
+        )
+
+    generator = provenance.get("generator")
+    if not generator:
+        return CheckResult(
+            check="generator_hash_matches",
+            passed=True,
+            reason=(
+                "generator field missing -- cannot verify generator_hash "
+                "(see provenance_generator_resolvable)"
+            ),
+            details={"applicable": False},
+        )
+
+    resolved = (Path(repo_root) / generator).resolve()
+    try:
+        resolved.relative_to(Path(repo_root).resolve())
+    except ValueError:
+        return CheckResult(
+            check="generator_hash_matches",
+            passed=True,
+            reason=(
+                f"generator '{generator}' escapes the repo tree -- cannot verify "
+                "(see provenance_generator_resolvable)"
+            ),
+            details={"applicable": False},
+        )
+
+    if not resolved.is_file():
+        return CheckResult(
+            check="generator_hash_matches",
+            passed=True,
+            reason=(
+                f"generator '{generator}' does not resolve to a committed file -- cannot "
+                "verify (see provenance_generator_resolvable)"
+            ),
+            details={"applicable": False},
+        )
+
+    actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    if actual != generator_hash:
+        return CheckResult(
+            check="generator_hash_matches",
+            passed=False,
+            reason=(
+                f"generator_hash {generator_hash!r} does not match the actual sha256 of "
+                f"'{generator}' ({actual!r}) -- recorded hash is stale or fabricated (T-0238)"
+            ),
+            details={"generator": generator, "recorded": generator_hash, "actual": actual},
+        )
+
+    return CheckResult(
+        check="generator_hash_matches",
+        passed=True,
+        reason=f"generator_hash matches the actual sha256 of '{generator}'",
+        details={"generator": generator, "hash": generator_hash},
+    )
+
+
+def sweep_generator_hash_matches(root: Path | str, repo_root: Path | str) -> list[CheckResult]:
+    """Run ``check_generator_hash_matches`` against every ``*.provenance.json``
+    under *root*, recursively (T-0238).
+
+    Writer-agnostic, same shape as ``sweep_provenance_generator_resolvable``
+    and ``sweep_provenance_model_hash``: reads the sidecars that actually
+    landed in the repo, so a stale/fabricated ``generator_hash`` from any
+    writer is caught here regardless of how the file was produced. No
+    baseline exemption -- unlike the pre-existing gaps
+    ``sweep_provenance_generator_resolvable`` grandfathers, there is no
+    known-bad ``generator_hash`` in the committed tree today (T-0232's own
+    sidecar, the motivating case, was corrected before this gate existed).
+    """
+    results = []
+    for path in sorted(Path(root).rglob("*.provenance.json")):
+        provenance = json.loads(path.read_text())
+        single = check_generator_hash_matches(provenance, Path(repo_root))
+        rel = path.relative_to(root) if path.is_relative_to(root) else path
+        results.append(
+            CheckResult(
+                check="generator_hash_matches",
+                passed=single.passed,
+                reason=f"{rel}: {single.reason}",
+                details={**single.details, "path": str(rel).replace("\\", "/")},
+            )
+        )
+    return results
 
 
 def _default_generator_baseline_path() -> Path:
