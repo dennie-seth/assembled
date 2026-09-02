@@ -20,14 +20,28 @@ resolvability gate expects. Run with a Python 3.12 interpreter that has
 `~/dev/lora-train-venv/bin/python3`, the LoRA-training venv, which happens
 to carry exactly those three packages already).
 
-Each new prop's prompt/negative_prompt is copied **verbatim** from
+Each new prop's prompt/negative_prompt started as a **verbatim** copy of
 `signal_tower_props_concept_sheet_v3.recipe.json`'s own reviewed sub-panel
 text (`panels[1].sub_panels`) -- the same "reuse the approved sheet's own
-prompt" pattern T-0243 used for `archive_shelving_v1` -- rather than being
-freshly authored, since that text is what DL-5 approval actually covers.
-Only the seed changes (cutout generation is independent of the sheet's own
-generation, per T-0243 precedent) and the target dimensions (game-pixel
-cutout size, not the sheet's 768x768 panel canvas).
+prompt" pattern T-0243 used for `archive_shelving_v1` -- since that text is
+what DL-5 approval actually covers. The transformer-housing prompts have
+since been amended (2026-09-02, this card's own art-direction re-gate): the
+first generation of both housings came back three-quarter/isometric (two
+box faces visible), matching the v3 sheet's own sub-panel art, which is
+itself rendered in three-quarter view -- but @DennieSeth's direction
+("object should face the camera, no isometry or perspective") requires flat
+front elevation regardless of how the concept sheet itself is rendered. The
+object identity (squat sealed grey-green metal box, cooling fins, no
+doors/legs/etc.) is unchanged from the sheet's own description; only the
+framing/projection language changed (explicit "single flat front face only,
+no top face visible, no side face visible" + matching negative terms), and
+the seeds were re-rolled until the returned sprite was visually confirmed
+flat (see the generation note below). breaker_panel_v1's prompt is
+untouched -- it already rendered as a flat wall plate, camera-facing, on
+its first generation. Only the seed changes otherwise (cutout generation is
+independent of the sheet's own generation, per T-0243 precedent) and the
+target dimensions (game-pixel cutout size, not the sheet's 768x768 panel
+canvas).
 
 Usage (from repo root):
     ~/dev/lora-train-venv/bin/python3 assets/src/concept/_gen_power_substation_props.py
@@ -62,10 +76,14 @@ LORA_NAME = "soviet_brutalism_style_v1.safetensors"
 LORA_WEIGHT = 0.70
 LORA_LICENSE = "CreativeML OpenRAIL++-M"
 
-# Verbatim from signal_tower_props_concept_sheet_v3.recipe.json panels[1].sub_panels
+# Started as verbatim text from signal_tower_props_concept_sheet_v3.recipe.json
+# panels[1].sub_panels; amended 2026-09-02 to force flat front elevation
+# (art-direction re-gate -- see module docstring).
 _TRANSFORMER_A_PROMPT = (
     "single isolated game prop, flat side elevation view, orthographic, no perspective, "
-    "no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, "
+    "no vanishing point, single flat front face only, no top face visible, no side face "
+    "visible, no corner of the box visible, viewed dead-on at eye level, "
+    "plain flat concrete-grey backdrop, no other objects, no scene, "
     "no text, no diagram, no colour swatches, no palette chips, no pedestal, no sculpture. "
     "A squat horizontal industrial transformer housing tank, a simple sealed rectangular "
     "metal box, low and wide, much wider than tall, flat rectangular top with sharp square "
@@ -79,6 +97,8 @@ _TRANSFORMER_A_PROMPT = (
     "no humans, no vehicles."
 )
 _TRANSFORMER_A_NEGATIVE = (
+    "isometric, three-quarter view, top face visible, side face visible, two faces visible, "
+    "box corner, cube corner, "
     "kiosk, booth, phone booth, sentry box, rounded base, pedestal base, feet, stubby legs, "
     "beveled roof, angled roof, sloped roof, locker, wardrobe, cabinet, filing cabinet, "
     "storage cabinet, hinged door, door, door handle, latch, louvre vent, vertical louvres, "
@@ -98,20 +118,25 @@ _TRANSFORMER_A_NEGATIVE = (
 )
 _TRANSFORMER_B_PROMPT = (
     "single isolated game prop, flat side elevation view, orthographic, no perspective, "
-    "no vanishing point, plain flat concrete-grey backdrop, no other objects, no scene, no "
+    "no vanishing point, single flat front face only, no top face visible, no side face "
+    "visible, no corner of the box visible, viewed dead-on at eye level, "
+    "plain flat concrete-grey backdrop, no other objects, no scene, no "
     "text, no diagram, no colour swatches, no palette chips, no pedestal, no sculpture, no "
     "creature, no figure of any kind. A squat horizontal industrial transformer housing "
     "tank, a simple sealed rectangular metal box, low and wide, much wider than tall, "
     "flat-topped with a shallow bolted top plate and a row of horizontal cooling fins along "
     "its lower side, completely flush featureless front face otherwise, no doors, no "
-    "hinges, no handles, no legs, no feet, no limbs, no head, no eyes, mid-value grey-green "
-    "painted heavy metal, sitting flush on the ground with no visible gap underneath, "
+    "hinges, no handles, no legs, no feet, no limbs, no head, no eyes, pale light grey-green "
+    "painted heavy metal, noticeably lighter in value than surrounding concrete, sitting "
+    "flush on the ground with no visible gap underneath, "
     "opaque solid inert blocky form -- an electrical cover prop, not an enclosure, not a "
     "piece of furniture, not a machine that moves. Soviet brutalist industrial palette, "
     "hard value separation, flat unlit shading, one single object filling most of the "
     "frame, no gradients, no chrome, no photorealism, no humans, no vehicles."
 )
 _TRANSFORMER_B_NEGATIVE = (
+    "isometric, three-quarter view, top face visible, side face visible, two faces visible, "
+    "box corner, cube corner, "
     "robot, mecha, mech, gundam, transformer robot, giant robot, humanoid mecha, biped, "
     "quadruped, walking machine, legs, limbs, arms, head, face, eyes, visor, antenna "
     "weapon, gun, cannon, turret, weapon, blaster, laser, creature, animal, insect, "
@@ -174,10 +199,14 @@ def main() -> None:
             # disconnected edge fragments, not a solid prop. Re-rolled
             # (24511/24521/24531/24541/24551/24571 all rejected on visual
             # review -- fragmented, weapon-like, or window/porthole drift);
-            # 24561 renders a clean solid rectangular tank, matte opaque
-            # fraction 0.875, matching the prompt's "sealed rectangular
-            # metal box ... sitting flush on the ground" shape.
-            seed=24561,
+            # 24561 rendered a clean solid rectangular tank (0.875 opaque)
+            # but in three-quarter/isometric view (two box faces visible) --
+            # rejected on the 2026-09-02 art-direction re-gate. Re-rolled
+            # against the amended front-elevation prompt above: 24562
+            # (23.96% opaque) is a genuinely flat single-face front
+            # elevation -- a plain wide rectangle silhouette, no visible top
+            # or side face, matching "much wider than tall".
+            seed=24562,
             width=44,
             height=24,
             prop_class="cover",
@@ -186,7 +215,20 @@ def main() -> None:
             name="transformer_housing_b_v1",
             prompt=_TRANSFORMER_B_PROMPT,
             negative_prompt=_TRANSFORMER_B_NEGATIVE,
-            seed=24502,
+            # seed=24502 (first attempt) also rendered in three-quarter view
+            # (visible top+front faces, sloped roofline) -- rejected on the
+            # same art-direction re-gate as housing A. Re-rolled against the
+            # amended front-elevation prompt: seed=24562 (9.28% opaque) was a
+            # clean flat single-face rectangle in projection, but at
+            # mid-value grey-green its 16px luma16 gap vs locker_v1 (82.01)
+            # was only 14.49 -- below the 15.0 P-3 floor. Bumped the prompt's
+            # colour to "pale light grey-green ... noticeably lighter in
+            # value than surrounding concrete" (still flat-front-elevation
+            # framing, no geometry change) and re-rolled again: 24562 against
+            # the lightened prompt (18.3% opaque) is a clean flat single-face
+            # rectangle at a materially lighter value, luma16 gap 63.74 --
+            # comfortably clears the floor.
+            seed=24562,
             width=44,
             height=24,
             prop_class="cover",
