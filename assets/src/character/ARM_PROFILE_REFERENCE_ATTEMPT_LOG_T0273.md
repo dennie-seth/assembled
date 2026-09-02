@@ -223,3 +223,70 @@ Openverse `search` responds. This card cannot clear criteria 2/3/6/7/10 by
 further retrying the same blocked transport — it needs either the
 transport fix above, upstream recovery, or a human decision to amend those
 criteria to accept a single-image seed set.
+
+## 2026-09-02 (fifth session) — identical signature, fifth independent confirmation
+
+Fresh implementer session, called in to fix the VALIDATION-run-4 findings. Before
+touching anything, re-ran live probes against both endpoints to check whether the
+outage window (now spanning >24h across four prior independent sessions) had
+cleared:
+
+```
+$ node tools/board/scripts/referenceFetch.js search wikimedia "man walking side profile silhouette gait study" 10
+-> 200, 10 results (search still healthy, as in every prior session)
+
+$ node tools/board/scripts/referenceFetch.js search wikimedia "Muybridge Animal Locomotion walking man plate" 20
+-> 200, 20 results incl. the same pl.555, pl.546/443, pl.470, pl.559, and Wellcome
+   Collotype plates already identified in the third/fourth sessions above
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal Locomotion - side view of old man walking (pl. 555) LCCN2005697037.jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:A naked man walking. Collotype after Muybridge, 1887. Wellcome L0075728.jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal Locomotion I, Plate 27 - Nude Man Walking and Carrying a 75 lb stone on head, hands raised 01.gif"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js search openverse "man walking side profile silhouette" 15
+referenceFetch: rejected -- search request to openverse failed with status 504
+
+$ node tools/board/scripts/referenceFetch.js search openverse "walking man" 5
+referenceFetch: rejected -- search request to openverse failed with status 504
+```
+
+Same asymmetry as every prior session: `search wikimedia` (commons.wikimedia.org)
+always succeeds; every `fetch wikimedia` (upload.wikimedia.org byte-fetch, any
+asset, any extension) 429s; `search openverse` (api.openverse.org) 504s outright
+on every query, so no Openverse `fetch` was even attempted (no assetId to fetch).
+
+This is the **fifth independent session** (T-0281, three prior VALIDATION runs of
+this card, and now this one) to reproduce the identical pair of failures, now
+spanning **more than 24 hours of wall-clock time**. Two diagnostic options were
+considered and deliberately not taken:
+- Probing `upload.wikimedia.org` directly via `agentCurl.js` to see the raw
+  response — **not done**, because this card's conduct rule is explicit that
+  `referenceFetch.js`'s two subcommands are the entire sourcing surface
+  ("no raw curl, no alternate host"); routing a diagnostic request around the
+  licence-gate/quarantine flow that `referenceFetch.js` enforces would itself be
+  the kind of workaround `.claude/rules/assets.md` and `conduct.md` forbid, even
+  in service of narrowing down a bug report.
+- Inspecting the sandbox's proxy/env configuration (`HTTP_PROXY`/`HTTPS_PROXY`) —
+  **attempted, denied**: `env`/`grep` are not in this agent's Bash grant list, so
+  this agent has no tooling to distinguish "upstream outage" from "this sandbox's
+  own egress" any more precisely than the fourth session already established.
+
+**No further bare retry of this card can make progress.** Five sessions across
+>24h have produced the exact same two failures with no variance by asset, query,
+extension, or elapsed time. The blocked transport is `tools/board/src/lib/
+referenceTransport.js` / the two upstream services it calls — both outside this
+card's `assets/**` path scope and outside this agent's edit grant. Per the last
+VALIDATION verdict, clearing this card requires one of: (a) a T-0276 fix to the
+fetch transport (User-Agent per Wikimedia's policy is a hypothesis worth testing,
+though the fourth session's own evidence shows it doesn't fully explain the
+Openverse 504) followed by a retry to fetch the already-identified Muybridge/
+Wellcome plates (assetIds logged in the third and fourth sessions above) and to
+recover the kept openverse image's `sourceUrl`/`assetId`; or (b) upstream
+recovery; or (c) @DennieSeth amending criteria 2/3/6/7/10 on the card to accept
+the single-image seed set as delivered. This session made no code or asset
+changes — the committed deliverable is unchanged from the prior run.
