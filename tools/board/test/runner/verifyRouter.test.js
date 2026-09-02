@@ -169,6 +169,51 @@ describe("resolveVerifyRoutes", () => {
   });
 });
 
+describe("resolveVerifyRoutes -- reference-batch-summary-provenance (T-0282: assetId/sourceUrl must survive quarantine reclamation)", () => {
+  it("routes a diff touching a batch-fetch summary file to the provenance check, naming that file", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/T-0300-profile-summary.md"]);
+    expect(routes.map((r) => r.id)).toEqual(["reference-batch-summary-provenance"]);
+    expect(routes[0].command).toBe(
+      "node tools/board/scripts/checkReferenceBatchSummary.js assets/src/reference/T-0300-profile-summary.md"
+    );
+  });
+
+  it("names every matching summary file when a diff touches more than one", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/src/reference/T-0300-profile-summary.md",
+      "assets/src/reference/T-0300-sitting-summary.md"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["reference-batch-summary-provenance"]);
+    expect(routes[0].command).toBe(
+      "node tools/board/scripts/checkReferenceBatchSummary.js " +
+        "assets/src/reference/T-0300-profile-summary.md assets/src/reference/T-0300-sitting-summary.md"
+    );
+  });
+
+  it("does not route a quarantine-directory change -- quarantine is gitignored and never part of a diff, and this route only concerns the committed summary", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/quarantine/abc123.provenance.json"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("does not route an unrelated file under assets/src/reference/ that isn't a *-summary.md", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/README.md"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("does not route a summary-shaped filename outside assets/src/reference/", () => {
+    const routes = resolveVerifyRoutes(["assets/src/other/T-0300-profile-summary.md"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("composes with an unrelated route on the same diff (tools/board diff + a summary file)", () => {
+    const routes = resolveVerifyRoutes([
+      "tools/board/src/lib/fsTaskStore.js",
+      "assets/src/reference/T-0300-profile-summary.md"
+    ]);
+    expect(routes.map((r) => r.id).sort()).toEqual(["board-suite", "reference-batch-summary-provenance"]);
+  });
+});
+
 describe("resolveVerifyRoutes -- server-db-verify", () => {
   it("routes a server/** diff to server-db-verify", () => {
     const routes = resolveVerifyRoutes(["server/src/main.cpp"]);
