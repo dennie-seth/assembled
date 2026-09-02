@@ -114,6 +114,17 @@ function touchesArtifactProducingPath(changedPaths) {
   });
 }
 
+/**
+ * A committed batch-fetch reference summary (T-0282) -- `assets/src/reference/<slug>-summary.md`,
+ * never `assets/src/reference/quarantine/**` (gitignored, never part of a diff) and never some
+ * other markdown file under the same directory (a README, a design note).
+ */
+const REFERENCE_BATCH_SUMMARY_RE = /^assets\/src\/reference\/[^/]+-summary\.md$/;
+
+function detectReferenceBatchSummaryPaths(changedPaths) {
+  return changedPaths.filter((changedPath) => REFERENCE_BATCH_SUMMARY_RE.test(changedPath));
+}
+
 function detectPythonPackageRoots(changedPaths) {
   const touched = new Set();
   for (const path of changedPaths) {
@@ -157,10 +168,15 @@ function detectPythonPackageRoots(changedPaths) {
  * only, not every `client/**` diff -- there's no reliable way to infer which existing tests
  * cover an arbitrary changed scene/GDExtension source file from the diff alone, and running the
  * wrong ones would say nothing about what was actually changed (see this module's own docstring
- * principle at the top of the `verify` skill). A diff touching several of these routes at once
- * returns all of them, one route per package/test for a multi-match diff. Diffs outside all of
- * these prefixes (client/** godot-cpp, etc.) return no routes here -- their verification stays
- * qualitatively described by the `verify` skill's table, unchanged.
+ * principle at the top of the `verify` skill). A diff touching `assets/src/reference/*-summary.md`
+ * (a committed batch-fetch reference summary, T-0282) runs `checkReferenceBatchSummary.js` against
+ * every such file in the diff -- the mechanical backstop for T-0281, where a committed summary
+ * recorded sha256/licence/retrievedAt for each kept image but not the `assetId`/`sourceUrl` that
+ * let a human re-verify the licence claim after the gitignored quarantine directory backing it was
+ * reclaimed with the worktree. A diff touching several of these routes at once returns all of
+ * them, one route per package/test for a multi-match diff. Diffs outside all of these prefixes
+ * (client/** godot-cpp, etc.) return no routes here -- their verification stays qualitatively
+ * described by the `verify` skill's table, unchanged.
  */
 export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" } = {}) {
   const touchesTasks = changedPaths.some((p) => p.startsWith(TASKS_PREFIX));
@@ -186,6 +202,14 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
       id: "board-suite",
       label: "Board test/lint suite",
       command: "cd tools/board && npm test && npx eslint ."
+    });
+  }
+  const referenceBatchSummaries = detectReferenceBatchSummaryPaths(changedPaths);
+  if (referenceBatchSummaries.length > 0) {
+    routes.push({
+      id: "reference-batch-summary-provenance",
+      label: "Reference batch-fetch summary provenance check (assetId/sourceUrl per kept image)",
+      command: `node tools/board/scripts/checkReferenceBatchSummary.js ${referenceBatchSummaries.join(" ")}`
     });
   }
   if (touchesServerRoots(changedPaths)) {
