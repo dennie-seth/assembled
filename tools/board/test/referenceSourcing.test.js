@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { searchReferences, fetchReference } from "../src/lib/referenceSourcing.js";
+import { searchReferences, fetchReference, searchAcrossSources } from "../src/lib/referenceSourcing.js";
 import { ReferenceRejectedError } from "../src/lib/referenceQuarantine.js";
 import { REFERENCE_SOURCES } from "../src/lib/referenceSourcePolicy.js";
 import { createRateLimiter } from "../src/lib/referenceRateLimit.js";
@@ -104,6 +104,77 @@ describe("searchReferences -- returns structured data only, never prose the call
     await expect(searchReferences({ sourceId: "wikimedia", query: "   ", transport })).rejects.toThrow(
       ReferenceRejectedError
     );
+  });
+
+  it("(T-0283) a non-2xx search response surfaces its diagnostic headers -- Retry-After, X-RateLimit-*, CDN/proxy -- in the rejection message", async () => {
+    const transport = fakeTransport({
+      [OPENVERSE_SEARCH_URL]: {
+        status: 429,
+        headers: {
+          "retry-after": "30",
+          "x-ratelimit-remaining": "0",
+          "cf-ray": "abc123-SEA",
+          "content-type": "application/json"
+        },
+        body: Buffer.from("{}", "utf8")
+      }
+    });
+    await expect(searchReferences({ sourceId: "openverse", query: "lighthouse", transport })).rejects.toThrow(
+      /status 429.*retry-after=30.*x-ratelimit-remaining=0.*cf-ray=abc123-SEA/s
+    );
+  });
+
+  it("(T-0283) never surfaces a credential header from a non-2xx search response, even if the upstream sent one", async () => {
+    const transport = fakeTransport({
+      [OPENVERSE_SEARCH_URL]: {
+        status: 429,
+        headers: { "retry-after": "30", "set-cookie": "session=abc; HttpOnly" },
+        body: Buffer.from("{}", "utf8")
+      }
+    });
+    let caught;
+    try {
+      await searchReferences({ sourceId: "openverse", query: "lighthouse", transport });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ReferenceRejectedError);
+    expect(caught.message).not.toMatch(/session=abc/);
+  });
+});
+
+describe("searchAcrossSources -- required sources are fatal, best-effort sources are recorded and skipped (T-0283)", () => {
+  it("returns wikimedia's results and records openverse's failure, without throwing, when openverse is down", async () => {
+    const transport = fakeTransport({
+      [WIKIMEDIA_SEARCH_URL]: json({ query: { search: [{ ns: 6, title: "File:Example.jpg", pageid: 1 }] } }),
+      [OPENVERSE_SEARCH_URL]: { status: 504, headers: {}, body: Buffer.from("", "utf8") }
+    });
+    const outcome = await searchAcrossSources({ query: "lighthouse", limit: 10, transport });
+    expect(outcome.results).toEqual([{ sourceId: "wikimedia", assetId: "File:Example.jpg", title: "File:Example.jpg" }]);
+    expect(outcome.failures).toEqual([{ sourceId: "openverse", reason: expect.stringMatching(/status 504/) }]);
+  });
+
+  it("propagates a required source's (wikimedia) failure instead of recording it", async () => {
+    const transport = fakeTransport({
+      [WIKIMEDIA_SEARCH_URL]: { status: 429, headers: {}, body: Buffer.from("", "utf8") },
+      [OPENVERSE_SEARCH_URL]: json({ results: [{ id: "abc-123", title: "Example", license: "cc0" }] })
+    });
+    await expect(searchAcrossSources({ query: "lighthouse", limit: 10, transport })).rejects.toThrow(
+      ReferenceRejectedError
+    );
+  });
+
+  it("succeeds with both sources' results when everything is up", async () => {
+    const transport = fakeTransport({
+      [WIKIMEDIA_SEARCH_URL]: json({ query: { search: [{ ns: 6, title: "File:Example.jpg", pageid: 1 }] } }),
+      [OPENVERSE_SEARCH_URL]: json({ results: [{ id: "abc-123", title: "Example", license: "cc0" }] })
+    });
+    const outcome = await searchAcrossSources({ query: "lighthouse", limit: 10, transport });
+    expect(outcome.results).toEqual([
+      { sourceId: "wikimedia", assetId: "File:Example.jpg", title: "File:Example.jpg" },
+      { sourceId: "openverse", assetId: "abc-123", title: "Example" }
+    ]);
+    expect(outcome.failures).toEqual([]);
   });
 });
 
@@ -356,6 +427,40 @@ describe("fetchReference -- licence-gated, allowlist-confined, quarantine-only",
     });
     await fetchReference({ sourceId: "wikimedia", assetId: "File:Example.jpg", quarantineDir: dir, transport, rateLimiter });
     expect(takes).toBe(2); // one metadata call, one byte fetch
+  });
+
+  it("(T-0283) a non-2xx byte-fetch response (the 429 seen in T-0273's sandbox) surfaces its diagnostic headers in the rejection message", async () => {
+    const dir = await makeTmpDir();
+    const transport = fakeTransport({
+      [WIKIMEDIA_METADATA_URL]: json({
+        query: {
+          pages: {
+            123: {
+              title: "File:Example.jpg",
+              imageinfo: [
+                { url: "https://upload.wikimedia.org/wikipedia/commons/a/aa/Example.jpg", extmetadata: { LicenseShortName: { value: "CC0" } } }
+              ]
+            }
+          }
+        }
+      }),
+      "https://upload.wikimedia.org/wikipedia/commons/a/aa/Example.jpg": {
+        status: 429,
+        headers: { "retry-after": "60", server: "cloudflare", authorization: "Bearer should-never-appear" },
+        body: Buffer.alloc(0)
+      }
+    });
+    let caught;
+    try {
+      await fetchReference({ sourceId: "wikimedia", assetId: "File:Example.jpg", quarantineDir: dir, transport });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ReferenceRejectedError);
+    expect(caught.message).toMatch(/status 429/);
+    expect(caught.message).toMatch(/retry-after=60/);
+    expect(caught.message).toMatch(/server=cloudflare/);
+    expect(caught.message).not.toMatch(/should-never-appear/);
   });
 
   it("regression (T-0276 review run 1): a real rate limiter does not self-trip a fetch that makes several internal calls", async () => {
