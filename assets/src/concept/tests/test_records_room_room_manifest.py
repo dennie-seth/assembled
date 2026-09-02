@@ -4,18 +4,22 @@ Records Room (`signal_tower.records_room`) needs exactly two prop slots per
 `docs/design/14-vertical-slice.md` §10: dense archive shelving rows (primary
 dressing) and incidental crates.
 
-**Fix cycle (2026-08-29 validation FAIL).** The prior GREEN generated
+**Fix cycle (2026-08-29 validation FAIL).** The first GREEN generated
 `archive_shelving_v1` against `signal_tower_props_concept_sheet_v2.png`
-(T-0239). That sheet is not an approved concept sheet: its own
-`ASSET_PROVENANCE.md` row and `.provenance.json` sidecar both say it "parks
-for human direction approval ... not yet approved", and
-`docs/decision-log.md` has no approval entry for T-0239 or the v2 sheet.
-Merging a sheet to `develop` is not the human direction-approval gate DL-5
-requires. Per this card's own instruction ("If a slot has no approved
-coverage, the card stops and reports it rather than generating"), the
-shelving slot is now reported as **blocked** and no new prop geometry is
-generated. Only the already-committed `crate_stack_v1` slot is resolved
-this run.
+(T-0239). That sheet was not an approved concept sheet and the artifact was
+reverted; the shelving slot was reported **blocked** on T-0239's approval.
+
+**Re-gate (2026-08-30 human comment).** @DennieSeth declined the v2 sheet
+outright — it is synthetic composited icon art, not real LoRA-generated
+prop geometry, and is **superseded**; its "not yet approved" provenance
+rows are not something a future approval record would ever clear. The
+shelving slot is now gated on **T-0257** (real prop concept art, generated
+via the style LoRA + IP-Adapter + `comfy_client.cutout` path, no prop LoRA)
+instead of T-0239. As of this fix cycle, T-0257 has no concept sheet and no
+task card anywhere in the repo, and `docs/decision-log.md` has no approval
+entry for it either — so the slot stays **blocked**, and the manifest must
+say so pointing at T-0257, not at the superseded v2 sheet's own approval
+status.
 
 Gate references:
   - DL-5 / P-6 — concept art precedes generation. No prop may be generated
@@ -41,6 +45,7 @@ WORKTREE = Path(__file__).resolve().parents[4]
 CONCEPT_DIR = WORKTREE / "assets" / "src" / "concept"
 PROPS_DIR = WORKTREE / "assets" / "final" / "props" / "signal_tower"
 MANIFEST_PATH = PROPS_DIR / "records_room.manifest.json"
+DECISION_LOG_PATH = WORKTREE / "docs" / "decision-log.md"
 
 V2_SHEET_PROV_PATH = CONCEPT_DIR / "signal_tower_props_concept_sheet_v2.provenance.json"
 
@@ -123,23 +128,57 @@ def test_manifest_non_regression_note_present(manifest):
     assert manifest["non_regression"]
 
 
-def test_manifest_blocked_reason_cites_lack_of_recorded_approval(manifest):
-    """DL-5: the manifest must explain *why* the slot is blocked, and that
-    explanation must point at the actual gap -- no recorded human approval
-    verdict for the v2 sheet -- not at a vaguer or incorrect reason."""
+def test_manifest_blocked_reason_cites_current_gate_t0257(manifest):
+    """DL-5: the manifest must explain *why* the slot is blocked, pointing at
+    the *current* gate -- T-0257 -- per the 2026-08-30 human re-gate comment,
+    not at T-0239/the superseded v2 sheet's own approval status."""
     reason = manifest.get("blocked_reason", "")
-    assert "signal_tower_props_concept_sheet_v2.png" in reason
+    assert "T-0257" in reason
     assert "decision-log" in reason or "approval" in reason
+
+
+def test_manifest_blocked_reason_notes_v2_sheet_declined_not_pending(manifest):
+    """The v2 sheet was reviewed and declined outright (2026-08-29 human
+    comment) -- it is superseded, not merely 'not yet approved'. The
+    blocked_reason must not read as if a future approval of v2 would clear
+    this slot."""
+    reason = manifest.get("blocked_reason", "")
+    assert "declined" in reason.lower() or "supersed" in reason.lower()
+
+
+def test_shelving_slot_blocked_on_cites_t0257(manifest):
+    slot = next(s for s in manifest["slots"] if s["slot"] == BLOCKED_SLOT)
+    assert "T-0257" in slot["blocked_on"]
 
 
 def test_v2_sheet_provenance_still_marked_unapproved():
     """Guards against silently flipping the v2 sheet's own approval marker
     to make this card's job easier -- approval is a human gate this card
-    cannot grant itself."""
+    cannot grant itself. (The sheet is also superseded/declined per the
+    2026-08-30 human comment, but that does not make "not yet approved"
+    false -- it never became true.)"""
     assert V2_SHEET_PROV_PATH.exists(), f"Missing v2 sheet provenance: {V2_SHEET_PROV_PATH}"
     prov = json.loads(V2_SHEET_PROV_PATH.read_text())
     # the sidecar carries no approval field at all -- absence, not a false "approved: true"
     assert "approved" not in prov or prov["approved"] is not True
+
+
+def test_t0257_concept_sheet_does_not_exist_yet():
+    """Documents the actual precondition this run found true: T-0257 has no
+    concept sheet committed anywhere under assets/src/concept. If this
+    starts failing, T-0257 has landed and this card's shelving slot should
+    be re-examined against the newly-approved sheet -- that is the signal
+    to re-run this card, not a regression."""
+    t0257_sheets = list(CONCEPT_DIR.glob("*0257*"))
+    assert t0257_sheets == [], f"Unexpected T-0257 sheet(s) present: {t0257_sheets}"
+
+
+def test_decision_log_has_no_t0257_approval_entry():
+    """Mirrors the human instruction: do not run this card's generation path
+    until T-0257's approval verdict is recorded in docs/decision-log.md."""
+    assert DECISION_LOG_PATH.exists(), f"Missing {DECISION_LOG_PATH}"
+    text = DECISION_LOG_PATH.read_text()
+    assert "T-0257" not in text
 
 
 # ── Gate measurement re-derivation ──────────────────────────────────────────
