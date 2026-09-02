@@ -1,0 +1,90 @@
+# T-0273 — player profile reference set (curated)
+
+## What this is
+
+The direction-approved PROFILE-view reference set for the player character
+(the profile analogue of [T-0209](T-0209)'s front-view concept sheet).
+[T-0272](T-0272) established that the §24-e ComfyUI/ControlNet stack cannot
+produce a true side profile by construction — `player_identity_v2` and
+`_POSE_KEYPOINTS_NORM` both encode front-facing topology that ControlNet's
+structural conditioning enforces over the prompt. Per @DennieSeth's
+2026-09-01 decision, the sourcing approach is an agent searching the open
+internet through [T-0276](T-0276)'s scoped, licence-enforcing wrapper
+(`tools/board/scripts/referenceFetch.js`) instead.
+
+## Provenance chain
+
+[T-0281](T-0281) ran the actual `referenceFetch.js search` / `fetch` calls
+for this pose (among three others) and attached its results to this card:
+one kept image (`b1006b0a7269...jpg`) plus a per-pose summary
+(`T-0281-profile-summary.md`, also attached to this card). This card
+(T-0273) is the human-reviewed promotion step named in
+`.claude/rules/assets.md`'s reference-sourcing bullet: it reviews, curates,
+and promotes the candidate out of the (now-gone) quarantine directory into
+a committed `assets/src/concept/` location with its own provenance record.
+
+## Candidates: fetched 2, kept 1
+
+| File (sha256 prefix) | Title | Source | Licence | Retrieved | Verdict |
+|---|---|---|---|---|---|
+| `b1006b0a72...` | Silhouette walking man png illustration | openverse | cc0 | 2026-09-01T17:16:17.577Z | **KEPT** |
+| `fc7fbd13ce...` | Man walking in silhouette | openverse | by | 2026-09-01T17:16:15.750Z | REJECTED — small, distant, back/three-quarter facing figure; does not read as a true side profile at any legible scale |
+
+I re-opened the kept image before promoting it and re-checked it against the
+card's own edge case ("a 'profile' that is actually three-quarter is not a
+profile" — [T-0259](T-0259)): it is a clean, unambiguous, mid-stride side-on
+silhouette — head, torso lean, both arms and legs read as a true 90°
+profile, not a three-quarter angle. Character-likeness was correctly not a
+factor in either direction (per the card's own instruction) — this is
+anonymous pose/form reference, not a costume match; [T-0209](T-0209)
+remains the identity authority.
+
+## Coverage — disclosed shortfall, not papered over
+
+**This set is one image.** The card's acceptance criteria ask for "enough
+coverage to be useful for training — multiple images/angles around the
+profile, not a single picture." This pass does not clear that bar, and I am
+not overstating it as if it did. What happened:
+
+- T-0281's own pass tried four additional openverse queries and one
+  wikimedia query for profile-pose material and came back empty (documented
+  in `T-0281-profile-summary.md`, "Also attempted, not obtainable this
+  pass").
+- This card (T-0273) then spent roughly 25 minutes making further attempts
+  to supplement the set — three promising Muybridge "Animal Locomotion"
+  plates were located via `wikimedia search` (true side-view / side-and-rear
+  multi-frame walk-cycle photographs, clearly public domain, exactly the
+  kind of additional side-profile gait coverage this card needs) but every
+  `wikimedia fetch` of them failed with a persistent HTTP 429, and every
+  `openverse search` retried in parallel failed with HTTP 504. See
+  `../character/ARM_PROFILE_REFERENCE_ATTEMPT_LOG_T0273.md` for the full,
+  timestamped attempt log — both sources were still down as of this card's
+  last retry.
+- This mirrors a pattern [T-0281](T-0281)'s own attempt log already
+  recorded: Wikimedia's `upload.wikimedia.org` binary-fetch path is far more
+  rate-limit-prone than its search API, "not a single Wikimedia binary fetch
+  succeeded" in that session either.
+
+**What I did not do:** synthesize, mirror, shear, or squash a front view to
+pad the count. That is the exact failure mode [T-0272](T-0272) proved
+impossible and correctly declined to fake, and doing it here would poison
+whatever T-0274 trains on this set.
+
+## Recommendation for @DennieSeth's approval decision
+
+Three options, not a recommendation to pick one over the other:
+
+1. **Approve this single-image set as a seed**, with T-0274 (or a follow-up
+   sourcing pass once Wikimedia/Openverse recover) expected to supplement it
+   before or during training.
+2. **Hold approval** and re-run sourcing once the two source APIs are
+   healthy again — the Muybridge plates identified in the attempt log are a
+   strong, already-located lead (public-domain, multi-frame, genuine side
+   profile) that could not be fetched only because of the outage, not
+   because they don't exist or aren't licensed cleanly.
+3. **Reject and request a different sourcing strategy** if a single image is
+   not an acceptable seed at any coverage level.
+
+This card parks for approval either way per `requires_approval: true` — no
+approval record is written by this card regardless of which of the above
+@DennieSeth picks.

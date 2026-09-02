@@ -219,3 +219,9 @@ attached — the board's attachments endpoint rejects anything over 25MB
 (`{"error":"Attachment exceeds the 26214400-byte limit"}`, confirmed by trying) — the committed,
 Git-LFS-tracked file in the repo is the actual distribution path for the weight file itself, same
 constraint any large binary deliverable on this board would hit.
+
+**Sourced, not generated (2026-09-02, T-0273 — the first entry of this kind):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/src/concept/player_profile_reference_b1006b0a72.jpg` (T-0273, promoted from a candidate [T-0281](tasks/T-0281.md) sourced via [T-0276](tasks/T-0276.md)'s `referenceFetch.js`) | N/A — sourced from the open web via `tools/board/scripts/referenceFetch.js search/fetch openverse`, not AI-generated and not produced by the §24-e stack | CC0 ("Silhouette walking man png illustration", openverse) | N/A — no generation prompt; a true side-on, mid-stride human silhouette, hand-curated against the "not three-quarter" bar ([T-0259](tasks/T-0259.md)'s edge case) as pose/form reference for the player profile identity ([T-0272](tasks/T-0272.md) established the §24-e stack cannot render this angle). One of 2 candidates fetched, 1 kept — the rejected candidate (`by`-licensed, three-quarter/back-facing) is recorded in the sidecar. Full curation writeup: `assets/src/concept/player_profile_reference_SUMMARY.md`; per-image sidecar: `assets/src/concept/player_profile_reference_b1006b0a72.provenance.json`; blocked-supplementation attempt log (Wikimedia 429 / Openverse 504, ~25 min of retries): `assets/src/character/ARM_PROFILE_REFERENCE_ATTEMPT_LOG_T0273.md`. **Coverage disclosed as below the card's own "multiple images" bar — parked for @DennieSeth's approval per `requires_approval: true`, not silently treated as sufficient.** | N/A (sourced, no seed; retrieved 2026-09-01T17:16:17.577Z per the original `fetch`, re-verified and promoted 2026-09-02) |
