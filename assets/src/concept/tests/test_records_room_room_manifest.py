@@ -15,11 +15,25 @@ prop geometry, and is **superseded**; its "not yet approved" provenance
 rows are not something a future approval record would ever clear. The
 shelving slot is now gated on **T-0257** (real prop concept art, generated
 via the style LoRA + IP-Adapter + `comfy_client.cutout` path, no prop LoRA)
-instead of T-0239. As of this fix cycle, T-0257 has no concept sheet and no
-task card anywhere in the repo, and `docs/decision-log.md` has no approval
-entry for it either — so the slot stays **blocked**, and the manifest must
-say so pointing at T-0257, not at the superseded v2 sheet's own approval
-status.
+instead of T-0239.
+
+**Merge-forward fix (2026-09-02 validation FAIL, run 1 of 5).** This branch
+had gone stale against `develop`: T-0257's real sheet
+(`signal_tower_props_concept_sheet_v3.png`) landed on `develop` (commit
+`958c561`) with an "ARCHIVE SHELVING -- COVER" panel, but this branch's
+manifest and this test file still claimed T-0257 "has no concept sheet and
+no task card anywhere in this repo" — true only inside the stale worktree,
+and the `test_t0257_concept_sheet_does_not_exist_yet` guard that made that
+claim globbed for a `*0257*`-named file that no concept sheet in this repo
+is ever named after (sheets are named subject+version), so it could never
+have caught the sheet landing. After merging `develop` in, the sheet is
+real and present, but `ASSET_PROVENANCE.md`'s own row for it
+(`signal_tower_props_concept_sheet_v3.png`) still reads "**Not yet
+approved**", the sidecar carries no `approved: true`, and
+`docs/decision-log.md` still has zero `T-0257` entries — so the slot stays
+**blocked** on the same DL-5 human-approval gate, just for the accurate
+reason: the sheet exists and depicts the geometry, but no human direction
+verdict has been recorded for it yet.
 
 Gate references:
   - DL-5 / P-6 — concept art precedes generation. No prop may be generated
@@ -46,8 +60,11 @@ CONCEPT_DIR = WORKTREE / "assets" / "src" / "concept"
 PROPS_DIR = WORKTREE / "assets" / "final" / "props" / "signal_tower"
 MANIFEST_PATH = PROPS_DIR / "records_room.manifest.json"
 DECISION_LOG_PATH = WORKTREE / "docs" / "decision-log.md"
+ASSET_PROVENANCE_PATH = WORKTREE / "ASSET_PROVENANCE.md"
 
 V2_SHEET_PROV_PATH = CONCEPT_DIR / "signal_tower_props_concept_sheet_v2.provenance.json"
+V3_SHEET_PATH = CONCEPT_DIR / "signal_tower_props_concept_sheet_v3.png"
+V3_SHEET_PROV_PATH = CONCEPT_DIR / "signal_tower_props_concept_sheet_v3.provenance.json"
 
 BLOCKED_SLOT = "Archive shelving rows (primary dressing)"
 BLOCKED_PROP_NAME = "archive_shelving_v1"
@@ -151,6 +168,30 @@ def test_shelving_slot_blocked_on_cites_t0257(manifest):
     assert "T-0257" in slot["blocked_on"]
 
 
+def test_manifest_does_not_falsely_claim_t0257_sheet_is_missing(manifest):
+    """2026-09-02 validation FAIL: this branch had gone stale against
+    develop, and its blocked_reason/blocked_on text claimed T-0257 'has no
+    concept sheet ... anywhere in this repo' -- true only inside the stale
+    worktree. The sheet (signal_tower_props_concept_sheet_v3.png) landed on
+    develop via commit 958c561 well before this run. The record must not
+    assert a fact contradicted by the repo it is committed into."""
+    reason = manifest.get("blocked_reason", "")
+    slot = next(s for s in manifest["slots"] if s["slot"] == BLOCKED_SLOT)
+    blocked_on = slot["blocked_on"]
+    for text in (reason, blocked_on):
+        assert "no concept sheet" not in text.lower()
+        assert "has not landed" not in text.lower()
+
+
+def test_manifest_blocked_reason_states_sheet_exists_but_unapproved(manifest):
+    """The accurate reason: T-0257's sheet exists and depicts the shelving
+    geometry, but carries no recorded human approval verdict -- DL-5 still
+    forbids generating against it."""
+    reason = manifest.get("blocked_reason", "")
+    assert "v3" in reason.lower() or "signal_tower_props_concept_sheet_v3" in reason
+    assert "approv" in reason.lower()
+
+
 def test_v2_sheet_provenance_still_marked_unapproved():
     """Guards against silently flipping the v2 sheet's own approval marker
     to make this card's job easier -- approval is a human gate this card
@@ -163,14 +204,31 @@ def test_v2_sheet_provenance_still_marked_unapproved():
     assert "approved" not in prov or prov["approved"] is not True
 
 
-def test_t0257_concept_sheet_does_not_exist_yet():
-    """Documents the actual precondition this run found true: T-0257 has no
-    concept sheet committed anywhere under assets/src/concept. If this
-    starts failing, T-0257 has landed and this card's shelving slot should
-    be re-examined against the newly-approved sheet -- that is the signal
-    to re-run this card, not a regression."""
-    t0257_sheets = list(CONCEPT_DIR.glob("*0257*"))
-    assert t0257_sheets == [], f"Unexpected T-0257 sheet(s) present: {t0257_sheets}"
+def test_t0257_concept_sheet_exists_but_is_not_yet_approved():
+    """T-0257's real sheet has landed (assets/src/concept/
+    signal_tower_props_concept_sheet_v3.png, commit 958c561 on develop) --
+    unlike the prior guard here, this asserts against the sheet's *actual*
+    filename, not a `*0257*` glob that no concept sheet in this repo is ever
+    named to match (sheets are named subject+version, never by card id), so
+    this guard actually fires. The sheet's existence alone does not clear
+    DL-5: its sidecar carries no `approved: true`, and ASSET_PROVENANCE.md's
+    own row for it must still read as unapproved. If ASSET_PROVENANCE.md
+    stops saying "not yet approved" for this sheet, a human approval verdict
+    has been recorded and this card's shelving slot should be re-examined --
+    that is the signal to re-run this card, not a regression."""
+    assert V3_SHEET_PATH.exists(), (
+        f"Expected T-0257's sheet to exist at {V3_SHEET_PATH} (it landed on "
+        "develop via commit 958c561) -- if it is genuinely absent, this "
+        "branch has gone stale against develop again and needs re-merging."
+    )
+    assert V3_SHEET_PROV_PATH.exists(), f"Missing v3 sheet provenance: {V3_SHEET_PROV_PATH}"
+    prov = json.loads(V3_SHEET_PROV_PATH.read_text())
+    assert "approved" not in prov or prov["approved"] is not True
+
+    assert ASSET_PROVENANCE_PATH.exists(), f"Missing {ASSET_PROVENANCE_PATH}"
+    provenance_text = ASSET_PROVENANCE_PATH.read_text()
+    assert "signal_tower_props_concept_sheet_v3.png" in provenance_text
+    assert "Not yet approved" in provenance_text
 
 
 def test_decision_log_has_no_t0257_approval_entry():
