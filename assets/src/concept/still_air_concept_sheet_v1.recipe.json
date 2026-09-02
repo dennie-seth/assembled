@@ -1,0 +1,16 @@
+{
+  "name": "still_air_concept_sheet_v1",
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "prompt": "a single giant spider creature, arachnid monster concept art, eight long segmented legs, a smooth rounded blank head with absolutely no eyes and no eye clusters anywhere on its body, long thin sensory pedipalps built for sensing vibration and proximity, a low wide crouching stance. flat side-on concept sheet, orthographic full-body elevation, no perspective, no vanishing point, single figure centred on a plain background, Soviet brutalist institutional aesthetic, muted desaturated home palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, pixel art game asset reference sheet style, silhouette study. Dark utilitarian concrete grey and near-black chitinous exoskeleton, hands empty, unarmed, standing in a neutral relaxed posture, a passive stealth obstacle to route around, not a combatant. It is completely eyeless -- it never spots you, you are simply within reach when it arrives.",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, multiple figures, weapon, gun, sword, blade, knife, rifle, armor, armour, aggressive combat pose, battle stance, fighting stance, eyes, eye cluster, pupils, glowing eyes, face, fangs bared aggressively, venom drip, humanoid body, robot, vehicle, truck, bus, van, car, trailer, blueprint, technical drawing, engineering schematic, wheels",
+  "seed": 27510,
+  "steps": 30,
+  "cfg": 7.0,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "width": 1024,
+  "height": 1024,
+  "generator": "assets/src/character/gen_enemy_concept_T0275.py"
+}
