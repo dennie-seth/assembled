@@ -6,7 +6,8 @@ import {
   getSource,
   checkSearchUrl,
   checkFetchUrl,
-  checkRedirect
+  checkRedirect,
+  isSourceRequired
 } from "../src/lib/referenceSourcePolicy.js";
 
 describe("referenceSourcePolicy -- in-code allowlist of reputable open-licence sources", () => {
@@ -21,6 +22,22 @@ describe("referenceSourcePolicy -- in-code allowlist of reputable open-licence s
 
   it("getSource returns null for an unknown id (fail closed, no default source)", () => {
     expect(getSource("some-random-cdn")).toBeNull();
+  });
+});
+
+describe("isSourceRequired -- required-vs-best-effort is a policy decision every consumer inherits (T-0283)", () => {
+  it("wikimedia is required -- it alone can meet the multi-image bar", () => {
+    expect(REFERENCE_SOURCES.wikimedia.required).toBe(true);
+    expect(isSourceRequired("wikimedia")).toBe(true);
+  });
+
+  it("openverse is best-effort, not required -- a downed Openverse must not fail an otherwise-valid run", () => {
+    expect(REFERENCE_SOURCES.openverse.required).toBe(false);
+    expect(isSourceRequired("openverse")).toBe(false);
+  });
+
+  it("fails closed (treats as required) for an unknown source id", () => {
+    expect(isSourceRequired("some-random-cdn")).toBe(true);
   });
 });
 
