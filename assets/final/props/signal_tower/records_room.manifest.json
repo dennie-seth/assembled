@@ -3,18 +3,19 @@
   "room_definition_ref": "docs/design/14-vertical-slice.md §2, §10",
   "card": "T-0243",
   "handoff_ref": "HANDOFF §23-j-b",
-  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
-  "generated_new_props": false,
-  "status": "blocked",
-  "blocked_reason": "Records Room's shelving slot has no coverage on the approved v1 sheet (DL-5). T-0239's v2 sheet (assets/src/concept/signal_tower_props_concept_sheet_v2.png) depicted the shelving panel, but per @DennieSeth's 2026-08-29 human comment it was reviewed and declined outright as a generation reference -- it is synthetic composited icon art, not real LoRA-generated prop geometry -- and is now superseded. It is not merely pending approval; no future approval of v2 will clear this slot. Per the 2026-08-30 human re-gate comment, this slot is now gated on T-0257 (real prop concept art, generated via the style LoRA + IP-Adapter + comfy_client.cutout path, no prop LoRA) instead of T-0239. T-0257's real sheet, assets/src/concept/signal_tower_props_concept_sheet_v3.png, HAS landed (on develop via commit 958c561, merged into this branch) and depicts an 'ARCHIVE SHELVING -- COVER' panel covering exactly this slot's geometry -- but ASSET_PROVENANCE.md's own row for that sheet still reads 'Not yet approved', its sidecar carries no approved:true, and docs/decision-log.md has no approval entry for T-0257 either. The sheet existing is not the same as the human direction-approval gate closing (DL-5): per this card's own instruction ('If a slot has no approved coverage, the card stops and reports it rather than generating'), archive_shelving_v1 is NOT generated this run. A prior run of this card incorrectly generated it against the v2 sheet and that artifact has been reverted (2026-08-29 validation FAIL). Re-run once docs/decision-log.md and ASSET_PROVENANCE.md record an actual human approval verdict for signal_tower_props_concept_sheet_v3.png.",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v3.png",
+  "generated_new_props": true,
+  "status": "committed",
+  "generation_note": "T-0257's real sheet, assets/src/concept/signal_tower_props_concept_sheet_v3.png, depicts an 'ARCHIVE SHELVING -- COVER' panel covering this slot's geometry. PR #307 (commit 9757b16) propagated T-0257's existing board approval verdict (approved_by/approved_at, card moved to done via PR #291) into ASSET_PROVENANCE.md: the v3 sheet's row now reads 'APPROVED 2026-08-30' (was 'Not yet approved'). DL-5's human direction-approval gate is therefore cleared for this slot. archive_shelving_v1 is generated this run via the committed cutout path (tools/comfy-client/src/comfy_client/cutout.py, sdxl_cutout_lora_v1.json), reusing the v3 sheet's own reviewed 'ARCHIVE SHELVING -- COVER' panel prompt/negative_prompt verbatim (already shipped as part of the approved sheet), style LoRA soviet_brutalism_style_v1 @ 0.70 only -- no prop LoRA, per the 2026-08-30 human re-gate comment. The prior run's archive_shelving_v1 generated against the unapproved v2 sheet remains reverted; this is a fresh generation against the v3 sheet, not a restoration of that reverted artifact.",
   "slots": [
     {
       "slot": "Archive shelving rows (primary dressing)",
       "class": "cover",
-      "prop": null,
-      "status": "blocked",
+      "prop": "archive_shelving_v1",
+      "status": "committed",
       "reused": false,
-      "blocked_on": "T-0257 concept sheet + human direction approval -- the sheet (signal_tower_props_concept_sheet_v3.png) HAS landed on develop (commit 958c561) and depicts this slot's geometry, but no human direction-approval verdict is recorded for it (ASSET_PROVENANCE.md still reads 'Not yet approved', no docs/decision-log.md entry); the v2 sheet (T-0239) is declined and superseded, do not use it"
+      "sprite": "assets/final/props/signal_tower/archive_shelving_v1.png",
+      "provenance": "assets/final/props/signal_tower/archive_shelving_v1.provenance.json"
     },
     {
       "slot": "Incidental crates",
@@ -32,7 +33,7 @@
     "min_required_gap_luma16": 15.0,
     "applicable": false,
     "cover_hide_pairs_in_room": [],
-    "why_not_applicable": "The only committed slot this run (crate_stack_v1) is cover-class; the shelving slot is blocked and places no prop at all. With zero hiding-class props present in this room there are zero cover/hiding pairs to measure -- vacuously satisfied, not skipped, matching Broadcast Deck's (T-0242) precedent for a room with no hiding-class slot."
+    "why_not_applicable": "Both committed slots in this room (archive_shelving_v1, crate_stack_v1) are cover-class. With zero hiding-class props present in this room there are zero cover/hiding pairs to measure -- vacuously satisfied, not skipped, matching Broadcast Deck's (T-0242) precedent for a room with no hiding-class slot."
   },
-  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. No existing prop file was touched. No new prop file was generated this run; the previously-generated archive_shelving_v1.png/.provenance.json (generated against the unapproved v2 sheet) have been removed."
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. No existing prop file was touched. archive_shelving_v1 is a new file under assets/final/props/signal_tower/ that did not previously exist on develop."
 }

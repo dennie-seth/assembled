@@ -96,7 +96,7 @@ def test_t0257_concept_sheet_is_approved():
     row = next(
         line
         for line in ASSET_PROVENANCE_PATH.read_text().splitlines()
-        if "signal_tower_props_concept_sheet_v3.png" in line
+        if line.startswith("| `assets/src/concept/signal_tower_props_concept_sheet_v3.png`")
     )
     assert "APPROVED" in row, (
         "signal_tower_props_concept_sheet_v3.png's ASSET_PROVENANCE.md row "
