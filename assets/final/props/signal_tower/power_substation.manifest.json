@@ -1,0 +1,74 @@
+{
+  "room": "signal_tower.power_substation",
+  "room_definition_ref": "docs/design/14-vertical-slice.md §2, §4, §10",
+  "card": "T-0244",
+  "handoff_ref": "HANDOFF §23-j-c",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v3.png",
+  "generated_new_props": true,
+  "status": "committed",
+  "note": "Power Substation's three prop slots per 14 §10 ('Rectangular, breaker panel along the back wall, 2-3 transformer housings as cover' / 'one dedicated hiding spot near the panel as a fallback') and §4 ('an explicit switch-locked gate blocking the ladder upward'). The transformer housings and breaker panel had no coverage on the original v1 sheet and are load-bearing gameplay geometry (DL-18 M4: no safe Watcher crossing without mid-zone cover), so this card generated no geometry until DL-5's human direction-approval gate cleared. signal_tower_props_concept_sheet_v3.png (T-0257) is that coverage: PR #307 (commit 9757b16) propagated T-0257's board approval verdict (approved_by/approved_at, card moved to done via PR #291) into ASSET_PROVENANCE.md, whose row for the v3 sheet now reads 'APPROVED 2026-08-30'. transformer_housing_a_v1, transformer_housing_b_v1, and breaker_panel_v1 are generated this run via the committed cutout path (tools/comfy-client/src/comfy_client/cutout.py, sdxl_cutout_lora_v1.json), reusing the v3 sheet's own reviewed 'TRANSFORMER HOUSING A/B' and 'BREAKER PANEL' sub-panel prompts/negative_prompts verbatim (assets/src/concept/_gen_power_substation_props.py), style LoRA soviet_brutalism_style_v1 @ 0.70 only -- no prop LoRA, per the 2026-08-30 human re-gate comment on this card. transformer_housing_a_v1's first attempt (seed 24501) matted to only 9.4% opaque -- a fragmented, mostly-transparent failure, not a usable prop -- and was re-rolled through several seeds (24511/24521/24531/24541/24551/24571 all rejected on visual review: fragmented, weapon-like drift, or disconnected pieces) before seed 24561 produced a clean solid rectangular tank (87.5% opaque). The hiding-spot slot reuses the already-committed, already-provenanced locker_v1 (T-0201/T-0221) as-is -- not regenerated.",
+  "slots": [
+    {
+      "slot": "Transformer housings (x2-3)",
+      "class": "cover",
+      "props": ["transformer_housing_a_v1", "transformer_housing_b_v1"],
+      "status": "committed",
+      "reused": false,
+      "sprites": [
+        "assets/final/props/signal_tower/transformer_housing_a_v1.png",
+        "assets/final/props/signal_tower/transformer_housing_b_v1.png"
+      ],
+      "provenances": [
+        "assets/final/props/signal_tower/transformer_housing_a_v1.provenance.json",
+        "assets/final/props/signal_tower/transformer_housing_b_v1.provenance.json"
+      ],
+      "note": "Two housings committed (within the room's own 2-3 range per 14 §10). Both generated against the approved v3 sheet's own TRANSFORMER HOUSING A / TRANSFORMER HOUSING B sub-panel prompts."
+    },
+    {
+      "slot": "Breaker panel (switch-locked gate object)",
+      "class": "gate",
+      "prop": "breaker_panel_v1",
+      "status": "committed",
+      "reused": false,
+      "sprite": "assets/final/props/signal_tower/breaker_panel_v1.png",
+      "provenance": "assets/final/props/signal_tower/breaker_panel_v1.provenance.json",
+      "note": "A switch-locked interactive gate object (14 §4), not a cover prop and not a hiding spot -- a player cannot take cover behind or hide inside a thin wall-mounted plate. Excluded from the P-3 cover/hiding 16px separation gate for that reason (the gate constrains cover-vs-hiding legibility only)."
+    },
+    {
+      "slot": "Dedicated hiding spot near the panel",
+      "class": "hiding",
+      "prop": "locker_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/locker_v1.png",
+      "provenance": "assets/final/props/signal_tower/locker_v1.provenance.json"
+    }
+  ],
+  "gate_16px_separation": {
+    "requirement": ">= 15.0 luma16 gap between any cover/hiding pair co-located in this room (P-3)",
+    "authoritative_test": "assets/src/concept/tests/test_power_substation_room_manifest.py::test_gate_measurements_clear_floor",
+    "min_required_gap_luma16": 15.0,
+    "applicable": true,
+    "cover_hide_pairs_in_room": [
+      {
+        "cover_prop": "transformer_housing_a_v1",
+        "hiding_prop": "locker_v1",
+        "cover_luma16": 150.38,
+        "hiding_luma16": 82.01,
+        "gap": 68.37
+      },
+      {
+        "cover_prop": "transformer_housing_b_v1",
+        "hiding_prop": "locker_v1",
+        "cover_luma16": 105.43,
+        "hiding_luma16": 82.01,
+        "gap": 23.42
+      }
+    ],
+    "how_measured": "16px-longest-side Lanczos downscale + BT.601 mean luma over opaque pixels -- the same rule as test_signal_tower_prop_pack.py's _downscale_to_game_16px/_mean_luma, re-derived directly from the committed sprites by test_power_substation_room_manifest.py::test_gate_measurements_match_real_sprites. locker_v1's luma16=82.01 matches the figure already recorded in locker_v1.provenance.json and Ground Relay/Storage Cache's manifests (82.0) to within rounding.",
+    "why_this_is_the_hardest_case": "Unlike Ground Relay/Storage Cache (one cover prop, one hiding prop, reused sprites already proven), Power Substation places TWO cover-class props alongside the room's hiding prop, and the Watcher's sweep makes the cover-vs-hiding distinction load-bearing, not incidental. Both pairs clear the floor with comfortable margin (23.4 and 68.4), but transformer_housing_b_v1's 23.4-luma gap is the tightest margin of any pair recorded across this room's manifests to date -- worth flagging for any future re-tune of either sprite."
+  },
+  "breaker_panel_not_in_gate": "breaker_panel_v1 (prop_class=gate) is intentionally excluded from cover_hide_pairs_in_room above -- see the slot note.",
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. locker_v1 is referenced, not regenerated -- byte-identical to the file T-0221/T-0223 shipped. No existing prop file was touched.",
+  "regenerated_props": []
+}
