@@ -151,3 +151,75 @@ unchanged from the prior run: still the single already-promoted openverse
 image, still missing its exact `sourceUrl`/`assetId` for the reason recorded
 in its provenance JSON (Openverse search — the only way to recover them — is
 itself down).
+
+## 2026-09-02 (fourth session) — same signature, now ruled asset/extension-independent
+
+Fresh session, run per the VALIDATION-run-3 verdict (2026-09-02T11:13:51Z),
+which raised a specific, actionable hypothesis worth testing rather than
+just re-trying blind: `tools/board/src/lib/referenceTransport.js:41` sends
+a hardcoded `User-Agent: assembled-reference-sourcing/1.0` with no contact
+info, and Wikimedia's User-Agent policy rejects exactly that shape of
+generic UA on `upload.wikimedia.org` — which would explain why
+`search wikimedia` (against `commons.wikimedia.org`'s API) always succeeds
+while every `fetch wikimedia` (against `upload.wikimedia.org`) 429s.
+
+`search wikimedia` still works and surfaced good candidates immediately —
+"Muybridge Animal Locomotion walking man plate" returned 20 hits including
+`Plate 559 (Boston Public Library).jpg`, `Plate 470 (Boston Public
+Library).jpg`, and several Wellcome Collection collotypes, all clearly
+side-on multi-frame gait studies.
+
+This session's `fetch` attempts widen the evidence beyond the three
+plates already logged above, specifically to test whether the 429 is
+per-asset or host-wide:
+
+```
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal locomotion. Plate 559 (Boston Public Library).jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal locomotion. Plate 470 (Boston Public Library).jpg"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal Locomotion I, Plate 27 - Nude Man Walking and Carrying a 75 lb stone on head, hands raised 01.gif"
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+```
+
+Three different assets, two different file extensions (`.jpg`, `.gif`),
+all 429 identically — this rules out a broken/renamed individual file and
+is consistent with a host-level rejection of every `upload.wikimedia.org`
+byte-fetch this session makes, which fits the User-Agent hypothesis better
+than per-asset flakiness would.
+
+Openverse `search` also still 504s, including a retry of the *exact* kept
+image's title (`"Silhouette walking man png illustration"`) in an attempt
+to recover its `assetId`/`sourceUrl` a different way — no luck, same 504.
+
+```
+$ node tools/board/scripts/referenceFetch.js search openverse "walking silhouette man" 15
+referenceFetch: rejected -- search request to openverse failed with status 504
+$ node tools/board/scripts/referenceFetch.js search openverse "Silhouette walking man png illustration" 10
+referenceFetch: rejected -- search request to openverse failed with status 504
+```
+
+**This is now the fourth independent session (T-0281, and three VALIDATION
+runs of T-0273) to reproduce the identical pair of failures across more
+than a day of wall-clock time**, and this session adds the first evidence
+that the Wikimedia side is asset/extension-independent rather than
+per-file. Combined with `referenceTransport.js:41`'s bare, contact-less
+User-Agent, the most likely fix is in `tools/board/src/lib/
+referenceTransport.js` (T-0276's surface, out of this card's `assets/**`
+path scope and out of this agent's grant to edit) — not something a further
+retry of this card can route around. Recommending a follow-up card against
+T-0276 to give the fetch transport a compliant, contact-bearing User-Agent
+string per
+[Wikimedia's UA policy](https://meta.wikimedia.org/wiki/User-Agent_policy),
+and separately confirming whether Openverse's search backend is actually
+down or similarly rejected.
+
+No new image was fetched. Nothing was mirrored, synthesized, or
+substituted. The committed set remains the single already-promoted
+openverse image; its `sourceUrl`/`assetId` remain unrecoverable until
+Openverse `search` responds. This card cannot clear criteria 2/3/6/7/10 by
+further retrying the same blocked transport — it needs either the
+transport fix above, upstream recovery, or a human decision to amend those
+criteria to accept a single-image seed set.

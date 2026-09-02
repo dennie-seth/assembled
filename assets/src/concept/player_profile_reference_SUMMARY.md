@@ -93,9 +93,27 @@ for over a day is less likely than this sandbox's own egress not reaching
 agent's tooling (`referenceFetch.js` only reports the HTTP status it
 receives) cannot distinguish from the outside.
 
+## Re-verified fresh 2026-09-02 (fourth session) — root cause narrowed, still blocked
+
+A fourth live session re-ran both `search wikimedia` (still works) and
+`fetch wikimedia`/`search openverse` (still 429 / 504 respectively),
+including fetching three *new* Wikimedia assets across two file extensions
+to test whether the 429 was per-asset — it isn't; every asset and every
+extension fails identically. That, plus VALIDATION run 3's finding that
+`referenceTransport.js:41` sends a bare, contact-less User-Agent (which
+Wikimedia's UA policy is known to reject on `upload.wikimedia.org`), points
+at a specific, fixable bug in T-0276's transport code rather than a
+continuing external outage. See the attempt log's "fourth session" section
+for the full evidence and commands.
+
+That fix is outside this card's `assets/**` path scope and this agent's
+grant — it belongs to a follow-up card against T-0276. No new image was
+fetched or recovered this session; the committed set is still the single
+image below.
+
 ## Recommendation for @DennieSeth's approval decision
 
-Four options, not a recommendation to pick one over the other:
+Five options, not a recommendation to pick one over the other:
 
 1. **Approve this single-image set as a seed**, with T-0274 (or a follow-up
    sourcing pass once Wikimedia/Openverse recover) expected to supplement it
@@ -107,11 +125,15 @@ Four options, not a recommendation to pick one over the other:
    because they don't exist or aren't licensed cleanly.
 3. **Reject and request a different sourcing strategy** if a single image is
    not an acceptable seed at any coverage level.
-4. **Check whether this is actually a sandbox egress restriction** rather
-   than a genuine multi-day outage on both Wikimedia and Openverse's
-   infrastructure — if so, no amount of further agent retries against
-   `referenceFetch.js` will succeed until that's addressed, regardless of
-   which of options 1–3 is also chosen.
+4. **File a follow-up card against T-0276** to give
+   `referenceTransport.js`'s fetch path a compliant, contact-bearing
+   User-Agent (see the attempt log's fourth-session section) — the most
+   likely actual fix, based on this session's asset/extension-independent
+   429 evidence.
+5. **Check whether this is actually a sandbox egress restriction** rather
+   than a genuine outage or UA-policy rejection — if so, no amount of
+   further agent retries against `referenceFetch.js` will succeed until
+   that's addressed, regardless of which of options 1–4 is also chosen.
 
 This card parks for approval either way per `requires_approval: true` — no
 approval record is written by this card regardless of which of the above
