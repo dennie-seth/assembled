@@ -97,10 +97,11 @@ body {
   min-height: 4rem;
   /* Bounded so this actually becomes a scroll container (T-0288 VALIDATION FAIL: without a
      capped height, scrollHeight === clientHeight always and drag auto-scroll has nowhere to
-     scroll no matter what the pointer does). 20rem accounts for the terminal panel's reserved
-     space (--terminal-height plus the page's own padding-bottom gap) and this column's own
-     header/select/padding above the list. */
-  max-height: calc(100vh - 20rem);
+     scroll no matter what the pointer does). 60vh leaves room below for the column's own
+     header/select and comfortably clears the terminal panel on any reasonable viewport height,
+     without a `calc()` expression that a lightweight CSSOM (this project's happy-dom test
+     environment included) may not resolve. */
+  max-height: 60vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
