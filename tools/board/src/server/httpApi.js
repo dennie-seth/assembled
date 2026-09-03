@@ -27,6 +27,7 @@ import {
   PARKED_STATUS,
   REQUIRES_APPROVAL_FIELD
 } from "../lib/approvalGate.js";
+import { approvalProvenanceStaleNotice } from "../lib/approvalProvenanceNotice.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_APPROVAL_PATH_RE = /^\/api\/tasks\/([^/]+)\/approval$/;
@@ -436,6 +437,23 @@ async function applyApprovalGateToPatch({ store, id, body, actor }) {
 }
 
 /**
+ * The live counterpart to `checkApprovalProvenanceDrift.js`'s CI check (T-0286, docs/decision-log.md
+ * DL-27), called right after either approval write path (AP-3's drag-to-Done, AP-4's "APPROVED"
+ * comment) records a fresh approval on `task`. Reads the real `ASSET_PROVENANCE.md` in `repoRoot`
+ * -- the one thing CI's fresh-checkout runner can never do for a card that lives only in this
+ * board's own db -- and, if its prose still contradicts the approval that was just recorded,
+ * returns a ready-to-append informational comment. Returns `null` when there's nothing to flag.
+ * Never touches `ASSET_PROVENANCE.md`, never blocks or alters the approval itself: a failure here
+ * is swallowed by the caller exactly like every other best-effort side effect on this path
+ * (see `commitTaskFile`'s call sites above).
+ */
+async function approvalProvenanceNoticeComment({ repoRoot, task }) {
+  const notice = await approvalProvenanceStaleNotice({ repoRoot, task });
+  if (!notice) return null;
+  return { author: "assembled-board", text: notice, timestamp: new Date().toISOString() };
+}
+
+/**
  * Handles ordinary card edits (drag between board columns, editing title/priority/agent/etc.
  * via the UI) -- the one route every routine field/status change goes through, including the
  * Review -> Done flip. Commits the updated card file the same way create/comments/attachments
@@ -475,6 +493,19 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
   } catch (err) {
     const status = /not found/i.test(err.message) ? 404 : 400;
     throw new HttpError(status, err.message);
+  }
+
+  if ("approved_by" in body && repoRoot) {
+    try {
+      const notice = await approvalProvenanceNoticeComment({ repoRoot, task: updated });
+      if (notice) {
+        updated = await store.update(id, { comments: [...(updated.comments ?? []), notice] });
+      }
+    } catch (err) {
+      // Same posture as the commit try/catch below: a check against a *human-readable* prose
+      // file must never fail the approval it's reporting on.
+      console.warn(`Board: failed to check ASSET_PROVENANCE.md staleness for ${id}:`, err.message);
+    }
   }
 
   if (taskStoreKind !== "db" && repoRoot && tasksDir && autoCommitCardsOnCreateFromEnv()) {
@@ -649,6 +680,16 @@ async function handleAddComment(
       text: approvalRecordedComment({ actor: author, approvedAt: approval.approved_at }),
       timestamp: approval.approved_at
     });
+
+    if (repoRoot) {
+      try {
+        const notice = await approvalProvenanceNoticeComment({ repoRoot, task: { ...task, ...approval } });
+        if (notice) comments.push(notice);
+      } catch (err) {
+        // Same posture as handlePatchTask's matching check: never fail the approval itself.
+        console.warn(`Board: failed to check ASSET_PROVENANCE.md staleness for ${id}:`, err.message);
+      }
+    }
   }
 
   let updated;
