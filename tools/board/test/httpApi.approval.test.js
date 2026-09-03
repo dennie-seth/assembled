@@ -334,3 +334,69 @@ describe("AP-6: dependents stay blocked until the approval, and unblock on it", 
     expect(await dependenciesMet(dependent.id)).toBe(false);
   });
 });
+
+/**
+ * AP-10 (T-0286, docs/decision-log.md DL-27): `GET /api/tasks/:id/approval` is the board's own
+ * single, authoritative approval verdict -- the fix for the class of bug PR #307 fixed one
+ * instance of. T-0257 was approved on the board 2026-08-30 while `ASSET_PROVENANCE.md`'s prose
+ * row for its concept sheet still read "Not yet approved" for days, and nothing propagated one
+ * record to the other -- T-0243/T-0244/T-0245/T-0246 stayed blocked on a decision already made.
+ * This endpoint resolves the verdict from the board's own `requires_approval`/`approved_by`/
+ * `approved_at` fields only; a consumer reading it never touches `ASSET_PROVENANCE.md` prose,
+ * so that second record cannot go stale in a way that produces a wrong answer.
+ */
+describe("AP-10: GET /api/tasks/:id/approval is the single approval verdict", () => {
+  it("reproduces the exact T-0243 drift scenario: resolves T-0257 as approved from the board " +
+    "record alone, independent of any provenance-file prose", async () => {
+    // The real T-0257 board record. approved_by "Anonymous" is the actual historical value --
+    // an unnamed drag-to-Done resolved through approvalGate's placeholder-actor handling, not a
+    // named human -- and this endpoint must still resolve it as approved, because AP-3 already
+    // established it as a genuine human act before this endpoint ever reads it.
+    const task = await createTask({ requires_approval: true, status: "review" });
+    await patch(task.id, { status: "done" }, HUMAN);
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}/approval`);
+    const verdict = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(verdict.requiresApproval).toBe(true);
+    expect(verdict.approved).toBe(true);
+    expect(verdict.approvedBy).toBeTruthy();
+    expect(verdict.approvedAt).toBeTruthy();
+  });
+
+  it("reports unapproved for a gated card still parked with no recorded approval", async () => {
+    const task = await createTask({ requires_approval: true, status: "review" });
+
+    const verdict = await (await fetch(`${baseUrl}/api/tasks/${task.id}/approval`)).json();
+
+    expect(verdict.requiresApproval).toBe(true);
+    expect(verdict.approved).toBe(false);
+    expect(verdict.approvedBy).toBe(null);
+    expect(verdict.approvedAt).toBe(null);
+  });
+
+  it("reports approved-trivially for a card that never required approval", async () => {
+    const task = await createTask();
+
+    const verdict = await (await fetch(`${baseUrl}/api/tasks/${task.id}/approval`)).json();
+
+    expect(verdict.requiresApproval).toBe(false);
+    expect(verdict.approved).toBe(true);
+  });
+
+  it("404s for an unknown task id, same as GET /api/tasks/:id", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/T-9999/approval`);
+    expect(res.status).toBe(404);
+  });
+
+  it("an agent trying both approval routes leaves the verdict unapproved", async () => {
+    const task = await createTask({ requires_approval: true, status: "review" });
+
+    await patch(task.id, { status: "done" }, AGENT);
+    await comment(task.id, { author: "assets", text: "APPROVED" }, AGENT);
+
+    const verdict = await (await fetch(`${baseUrl}/api/tasks/${task.id}/approval`)).json();
+    expect(verdict.approved).toBe(false);
+  });
+});
