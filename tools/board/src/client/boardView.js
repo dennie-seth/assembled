@@ -14,10 +14,14 @@ export const BATCH_SIZE = 20;
 let _batchObserver = null;
 
 // One controller shared across every column: only the column currently under the pointer
-// during a drag ever has anything to scroll. `_draggedCard` is the element from the most
-// recent `dragstart`, used to reach its live `getBoundingClientRect()` for the tall-card case.
+// during a drag ever has anything to scroll. `_dragCardOffset` is `{grabOffsetY, height}`
+// captured on the most recent `dragstart` -- NOT a reference to the dragged element itself.
+// The source element never moves during an HTML5 drag (the drag image is a detached snapshot
+// with no queryable rect), so its own `getBoundingClientRect()` would report a stale position;
+// the offset lets dragAutoScroll.js derive the card's *visible* leading edge from the live
+// pointer position instead (see computeAutoScroll's doc comment).
 const _autoScroll = createAutoScrollController();
-let _draggedCard = null;
+let _dragCardOffset = null;
 
 // Registered once at module load, not per-render: `dragend` fires on the source card whenever
 // a drag operation concludes -- dropped, cancelled, or released outside the window -- so this
@@ -26,7 +30,7 @@ let _draggedCard = null;
 if (typeof document !== "undefined") {
   document.addEventListener("dragend", () => {
     _autoScroll.detach();
-    _draggedCard = null;
+    _dragCardOffset = null;
   });
 }
 
@@ -129,7 +133,8 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, depen
 
   card.addEventListener("dragstart", (event) => {
     event.dataTransfer.setData("text/plain", task.id);
-    _draggedCard = card;
+    const rect = card.getBoundingClientRect();
+    _dragCardOffset = { grabOffsetY: event.clientY - rect.top, height: rect.height };
   });
   card.addEventListener("click", () => onCardClick(task.id));
 
@@ -232,11 +237,12 @@ function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus,
     // scrollBy() work happens on the next animation frame (see dragAutoScroll.js), not here --
     // dragover fires far too often to do that work per-event without jitter.
     _autoScroll.attach(list);
-    _autoScroll.update(event.clientY, _draggedCard);
+    _autoScroll.update(event.clientY, _dragCardOffset);
   });
   list.addEventListener("drop", (event) => {
     event.preventDefault();
     _autoScroll.detach();
+    _dragCardOffset = null;
     const taskId = event.dataTransfer.getData("text/plain");
     if (taskId) {
       callbacks.onDrop(taskId, status);

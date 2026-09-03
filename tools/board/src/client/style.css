@@ -95,6 +95,13 @@ body {
 
 .column-cards {
   min-height: 4rem;
+  /* Bounded so this actually becomes a scroll container (T-0288 VALIDATION FAIL: without a
+     capped height, scrollHeight === clientHeight always and drag auto-scroll has nowhere to
+     scroll no matter what the pointer does). 20rem accounts for the terminal panel's reserved
+     space (--terminal-height plus the page's own padding-bottom gap) and this column's own
+     header/select/padding above the list. */
+  max-height: calc(100vh - 20rem);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;

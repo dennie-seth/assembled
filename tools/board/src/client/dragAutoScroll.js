@@ -34,20 +34,26 @@ function speedForDepth(depth, band) {
 
 /**
  * Given a scroll container's rect, the pointer's viewport Y, and (optionally) the dragged
- * card's own rect, decides whether the container should auto-scroll this frame.
+ * card's offset, decides whether the container should auto-scroll this frame.
  *
- * Trigger source: pointer proximity to the edge OR the dragged card's own leading edge,
- * whichever is closer to that edge. A tall card's grab-point is often mid-card, so the pointer
- * alone can sit far from the edge while the card's leading edge already overlaps it -- using
- * `min(pointerY, cardRect.top)` / `max(pointerY, cardRect.bottom)` catches that case without
- * changing behavior for a normal-sized card (where the pointer is already the closer point).
+ * Trigger source: the dragged card's own leading edge, derived from the pointer position and
+ * the grab offset captured at `dragstart` -- NOT `draggedElement.getBoundingClientRect()`.
+ * During a native HTML5 drag the source element never moves (it stays in normal flow) and the
+ * drag image is a detached snapshot with no queryable rect, so reading the source element's own
+ * rect each frame reports where the card *was* at drag start, not where it's being dragged. The
+ * browser keeps the drag image's offset from the cursor fixed at the grab point, so
+ * `pointerY - grabOffsetY` (top) / `+ height` (bottom) tracks the visible card precisely and
+ * collapses to the pointer position alone for a card exactly at the cursor. This directly fixes
+ * a VALIDATION FAIL: the old stale-rect version could pick the wrong direction entirely and
+ * stall/oscillate around the source card's original position for a tall card (see
+ * dragAutoScroll.test.js's regression test for the exact counterexample).
  *
  * @returns {{direction: 'up'|'down'|null, speed: number}} speed is 0 when direction is null.
  */
-export function computeAutoScroll({ containerRect, pointerY, cardRect = null, scrollTop, scrollHeight, clientHeight }) {
+export function computeAutoScroll({ containerRect, pointerY, cardOffset = null, scrollTop, scrollHeight, clientHeight }) {
   const band = hotZoneSize(containerRect.height);
-  const leadingTop = cardRect ? Math.min(pointerY, cardRect.top) : pointerY;
-  const leadingBottom = cardRect ? Math.max(pointerY, cardRect.bottom) : pointerY;
+  const leadingTop = cardOffset ? pointerY - cardOffset.grabOffsetY : pointerY;
+  const leadingBottom = cardOffset ? leadingTop + cardOffset.height : pointerY;
 
   const topDepth = band - (leadingTop - containerRect.top);
   const bottomDepth = band - (containerRect.bottom - leadingBottom);
@@ -82,7 +88,7 @@ export function createAutoScrollController({
 } = {}) {
   let container = null;
   let pointerY = null;
-  let draggedElement = null;
+  let cardOffset = null;
   let frameId = null;
 
   function tick() {
@@ -91,11 +97,10 @@ export function createAutoScrollController({
 
     if (pointerY !== null) {
       const containerRect = container.getBoundingClientRect();
-      const cardRect = draggedElement ? draggedElement.getBoundingClientRect() : null;
       const result = computeAutoScroll({
         containerRect,
         pointerY,
-        cardRect,
+        cardOffset,
         scrollTop: container.scrollTop,
         scrollHeight: container.scrollHeight,
         clientHeight: container.clientHeight
@@ -118,16 +123,19 @@ export function createAutoScrollController({
         frameId = requestFrame(tick);
       }
     },
-    /** Latest pointer Y (viewport coords) and the dragged element, read by the next tick. */
-    update(nextPointerY, nextDraggedElement = null) {
+    /**
+     * Latest pointer Y (viewport coords) and the dragged card's offset (`{grabOffsetY, height}`,
+     * captured at `dragstart` -- see boardView.js), read by the next tick.
+     */
+    update(nextPointerY, nextCardOffset = null) {
       pointerY = nextPointerY;
-      draggedElement = nextDraggedElement;
+      cardOffset = nextCardOffset;
     },
     /** Stop scrolling and cancel any pending frame. Safe to call when not attached. */
     detach() {
       container = null;
       pointerY = null;
-      draggedElement = null;
+      cardOffset = null;
       if (frameId !== null) {
         cancelFrame(frameId);
         frameId = null;

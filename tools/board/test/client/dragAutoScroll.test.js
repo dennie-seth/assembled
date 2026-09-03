@@ -114,13 +114,14 @@ describe("computeAutoScroll", () => {
     expect(result.direction).toBeNull();
   });
 
-  it("uses the dragged card's leading top edge, not just the pointer, for a tall card", () => {
+  it("uses the dragged card's derived leading top edge, not just the pointer, for a tall card", () => {
     // Grab-point is mid-card (pointer sits well outside the top band) but the card's own
-    // top edge already overlaps it -- this is the tall-card failure mode the card describes.
+    // top edge -- derived from pointerY minus the grab offset captured at dragstart -- already
+    // overlaps it. This is the tall-card failure mode the card describes.
     const result = computeAutoScroll({
       containerRect: containerRect(),
       pointerY: 200,
-      cardRect: { top: 2, bottom: 390 },
+      cardOffset: { grabOffsetY: 198, height: 388 }, // top = 200 - 198 = 2
       scrollTop: 100,
       scrollHeight: 1000,
       clientHeight: 400
@@ -128,11 +129,11 @@ describe("computeAutoScroll", () => {
     expect(result.direction).toBe("up");
   });
 
-  it("uses the dragged card's leading bottom edge for a tall card approaching the bottom", () => {
+  it("uses the dragged card's derived leading bottom edge for a tall card approaching the bottom", () => {
     const result = computeAutoScroll({
       containerRect: containerRect(),
       pointerY: 200,
-      cardRect: { top: 10, bottom: 398 },
+      cardOffset: { grabOffsetY: 190, height: 388 }, // top = 10, bottom = 10 + 388 = 398
       scrollTop: 100,
       scrollHeight: 1000,
       clientHeight: 400
@@ -146,12 +147,44 @@ describe("computeAutoScroll", () => {
     const result = computeAutoScroll({
       containerRect: containerRect(),
       pointerY: 200,
-      cardRect: { top: 20, bottom: 399 },
+      cardOffset: { grabOffsetY: 180, height: 399 }, // top = 20, bottom = 20 + 399 = 419
       scrollTop: 100,
       scrollHeight: 1000,
       clientHeight: 400
     });
     expect(result.direction).toBe("down");
+  });
+
+  it("derives the leading edge from pointer position each call, so it follows the pointer as it moves (not a stale static rect)", () => {
+    // VALIDATION FAIL (run 1): the old implementation read draggedElement.getBoundingClientRect()
+    // -- the source card's rect, which never moves during an HTML5 drag (the drag image is a
+    // detached snapshot with no queryable rect; the source element stays in normal flow). This
+    // replays the reviewer's exact counterexample: containerRect {top:0,bottom:400,height:400}
+    // (band=64), pointerY=395 (deep in the bottom band), with a card offset that keeps the
+    // derived card rect following the pointer (grabOffsetY: 95, height: 100, so top = 300,
+    // bottom = 400). With the old stale-rect bug (card frozen at {top:0,bottom:100}), this
+    // scenario incorrectly won "up". The pointer-derived edge must win "down" instead.
+    const result = computeAutoScroll({
+      containerRect: containerRect(),
+      pointerY: 395,
+      cardOffset: { grabOffsetY: 95, height: 100 },
+      scrollTop: 400,
+      scrollHeight: 1000,
+      clientHeight: 400
+    });
+    expect(result.direction).toBe("down");
+  });
+
+  it("falls back to pointer-only when no cardOffset is given (drag started on a non-card element, or offset unavailable)", () => {
+    const result = computeAutoScroll({
+      containerRect: containerRect(),
+      pointerY: 200,
+      cardOffset: null,
+      scrollTop: 100,
+      scrollHeight: 1000,
+      clientHeight: 400
+    });
+    expect(result.direction).toBeNull();
   });
 
   it("ramps speed up the deeper the pointer sits inside the band", () => {
