@@ -7,9 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "concurrently -k -n server,client \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "node --watch src/server/index.js",
-    "dev:client": "vite",
+    "dev": "exec concurrently -k -n server,client \"exec npm run dev:server\" \"exec npm run dev:client\"",
+    "dev:server": "exec node --watch src/server/index.js",
+    "dev:client": "exec vite",
     "test": "vitest run",
     "build": "vite build",
     "lint": "eslint .",
