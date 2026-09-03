@@ -1,0 +1,51 @@
+{
+  "room": "signal_tower.antenna_shaft",
+  "room_definition_ref": "docs/design/14-vertical-slice.md §2, §10",
+  "card": "T-0246",
+  "handoff_ref": "HANDOFF §23-j-f",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v3.png",
+  "generated_new_props": true,
+  "status": "committed",
+  "note": "Antenna Shaft's two prop slots per this card's own slot table, mirroring 14 §10's row for this room ('Narrow vertical shaft, winding ladder path. The Still Air on a fixed lap, no LOS -- avoidance is pure timing, not routing. At least one hiding alcove partway up -- the room's only reliable safety valve.'). The shaft-wall duct dressing slot was already resolved by this card's own table to the already-committed low_duct_v1 (T-0201/T-0221) -- no ambiguity to work out, unlike Equipment Floor's server_rack question. The hiding alcove slot is new geometry: 14 §10 calls it the room's only reliable safety valve against The Still Air, which runs a fixed patrol lap with NO LOS check, so cover-class props (sight-cone block only) do nothing here, and a free-standing locker is not an alcove set into a shaft wall (this card's own concept-coverage note). signal_tower_props_concept_sheet_v3.png (T-0257) is the DL-5 coverage: its ASSET_PROVENANCE.md row reads 'APPROVED 2026-08-30' (PR #307), and its own 'HIDING ALCOVE -- HIDING SPOT' sub-panel (recipe panels[3], distinct from the sibling 'CRAWLSPACE OPENING' sub-panel T-0245 already used for Equipment Floor's crawlspace_v1) is exactly this slot's approved geometry. hiding_alcove_v1 is generated via the committed cutout path (tools/comfy-client/src/comfy_client/cutout.py, sdxl_cutout_lora_v1.json), style LoRA soviet_brutalism_style_v1 @ 0.70 only -- no prop LoRA, per the 2026-08-30 human re-gate comment on this card. The prompt/negative_prompt is the approved sheet's own HIDING ALCOVE sub-panel text verbatim (only cutout target dimensions/seed differ). First attempt, the sheet's own sub-panel seed (23121), produced a clean raw 768x768 generation (a flat concrete wall with a dark standing recess, visually confirmed, no isometry) but the border-seeded background cutout grew through the soft blur between the recess interior and the grey wall border at the small 20x40 target size and matted away most of the subject (14.6% opaque, a thin fragmented bracket outline, not a usable prop) -- the same class of matting failure seen on other sub-panels at small cutout sizes. Re-seeded at the same prompt/negative text (DL-5 coverage unchanged): seeds 23131/23141/23151 all produced clean, coherent, non-fragmented flat-elevation recesses (62-66% opaque) on visual review (10x nearest-neighbour upscale). seed=23131 was selected -- cleanest silhouette and the widest 16px luma gap against low_duct_v1 (114.1 vs 74.9 and 96.8 for the other two candidates). This is the committed result: a clean flat front-elevation rectangular recess, near-black interior with a lit rim, no visible top or side face, no isometry, no perspective, no foreshortening -- per @DennieSeth's 2026-09-02 art direction ('object should face the camera, no isometry or perspective'), confirmed by visual inspection of the committed sprite, not assumed from the prompt text.",
+  "slots": [
+    {
+      "slot": "Shaft-wall duct dressing",
+      "class": "cover",
+      "prop": "low_duct_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/low_duct_v1.png",
+      "provenance": "assets/final/props/signal_tower/low_duct_v1.provenance.json",
+      "note": "Already resolved by this card's own slot table -- committed cover prop, referenced as-is, not regenerated."
+    },
+    {
+      "slot": "Hiding alcove (partway up)",
+      "class": "hiding",
+      "prop": "hiding_alcove_v1",
+      "status": "committed",
+      "reused": false,
+      "sprite": "assets/final/props/signal_tower/hiding_alcove_v1.png",
+      "provenance": "assets/final/props/signal_tower/hiding_alcove_v1.provenance.json",
+      "note": "The room's only reliable safety valve against The Still Air (14 §10) -- a wall-set recess, not free-standing furniture, blocking the sensor path a fixed no-LOS patrol lap would otherwise always catch. New geometry, covered by the approved v3 sheet's own HIDING ALCOVE sub-panel."
+    }
+  ],
+  "gate_16px_separation": {
+    "requirement": ">= 15.0 luma16 gap between any cover/hiding pair co-located in this room (P-3)",
+    "authoritative_test": "assets/src/concept/tests/test_antenna_shaft_room_manifest.py::test_gate_measurements_clear_floor",
+    "min_required_gap_luma16": 15.0,
+    "applicable": true,
+    "cover_hide_pairs_in_room": [
+      {
+        "cover_prop": "low_duct_v1",
+        "hiding_prop": "hiding_alcove_v1",
+        "cover_luma16": 169.39,
+        "hiding_luma16": 55.33,
+        "gap": 114.06
+      }
+    ],
+    "how_measured": "16px-longest-side Lanczos downscale + BT.601 mean luma over opaque pixels -- the same rule as test_signal_tower_prop_pack.py's _downscale_to_game_16px/_mean_luma, re-derived directly from the committed sprites by test_antenna_shaft_room_manifest.py::test_gate_measurements_match_real_sprites. low_duct_v1's number is freshly measured from the byte-unchanged, already-committed sprite file; hiding_alcove_v1's number is this card's own new measurement.",
+    "why_the_margin_is_wide": "low_duct_v1's top face is deliberately lit (ramp12, per its own provenance prompt) -- a bright, mid-value-to-light cover prop -- while hiding_alcove_v1 was generated near-black by design, matching the approved sheet's own 'near-black and dark concrete-grey' description for this sub-panel. No value-tuning iteration was needed the way T-0244's transformer_housing_b_v1 needed one."
+  },
+  "non_regression": "T-0221's and T-0223's existing five props, T-0244's/T-0245's props, and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. low_duct_v1 is referenced, not regenerated -- byte-identical to the file T-0221/T-0223 shipped. No existing prop file was touched.",
+  "regenerated_props": []
+}
