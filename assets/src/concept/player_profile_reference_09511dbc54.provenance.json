@@ -1,0 +1,17 @@
+{
+  "card": "T-0273",
+  "consumerCard": "T-0274",
+  "sourcedVia": "T-0276 referenceFetch.js (fetched fresh by T-0273 after PR #312's transport fix)",
+  "sourceId": "openverse",
+  "assetId": "53acd3ce-07dc-4291-87a1-376b6f770f00",
+  "title": "Silhouette walking man illustration",
+  "sourceUrl": "https://api.openverse.org/v1/images/53acd3ce-07dc-4291-87a1-376b6f770f00/thumb/",
+  "license": "cc0",
+  "licenseNormalized": "cc0",
+  "retrievedAt": "2026-09-03T17:06:46.074Z",
+  "promotedAt": "2026-09-03",
+  "mime": "image/jpeg",
+  "sha256": "09511dbc54f887dabda50b806d8de7ec48a04cc55730767448f6a8c0821b63d5",
+  "byteLength": 15273,
+  "verdict": "KEPT -- clean flat vector-style silhouette, true 90-degree side-on stance mid-stride (distinct leg/arm phase from the other two silhouette illustrations kept), unambiguous profile."
+}

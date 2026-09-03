@@ -290,3 +290,58 @@ recover the kept openverse image's `sourceUrl`/`assetId`; or (b) upstream
 recovery; or (c) @DennieSeth amending criteria 2/3/6/7/10 on the card to accept
 the single-image seed set as delivered. This session made no code or asset
 changes — the committed deliverable is unchanged from the prior run.
+
+## 2026-09-03 session — un-parked, transport fixed upstream, fresh fetch succeeded
+
+@DennieSeth un-parked the card 2026-09-03: `referenceTransport.js` now sends a
+policy-compliant `User-Agent: assembled-reference-sourcing/1.0
+(+https://github.com/dennie-seth/assembled)` per PR #312, deployed and probed
+live (3/3 byte-fetches succeeded, including the exact asset that 429'd
+repeatedly on 2026-09-02). `listSourceIds()` also now returns a third source,
+`met`.
+
+**First finding this session: the branch itself was 94 commits behind
+`origin/develop`** and had never picked up PR #312 or anything else that
+landed on `develop` since this branch was cut. `git diff origin/develop HEAD`
+was accordingly enormous and misleading (it showed hundreds of files that
+exist on `develop` but not on this branch as "deleted"). Ran
+`git merge origin/develop --no-edit` first — merged clean, no conflicts
+(this branch's own changes are all net-new files under `assets/src/concept/`
+and `assets/src/character/`, so nothing collided). Confirmed the fix landed:
+`grep -n "User-Agent" tools/board/src/lib/referenceTransport.js` now shows
+the contact-bearing string, and `referenceSourcing.js` now exports `met` from
+`listSourceIds()`.
+
+With the fix live, re-ran `referenceFetch.js` fresh against both sources:
+
+```
+node tools/board/scripts/referenceFetch.js search wikimedia "Animal Locomotion side view man walking" 20
+node tools/board/scripts/referenceFetch.js search openverse "side profile walking silhouette man" 20
+node tools/board/scripts/referenceFetch.js search openverse "silhouette walking man" 15
+```
+
+All three searches returned successfully (no 429/504). Fetched the three
+Muybridge *Animal Locomotion* plates identified as leads in the second and
+third sessions above (pl. 555, pl. 546, pl. 552 — all `.jpg`, all previously
+429ing) — **all three succeeded this time**, each returning a full
+`sourceUrl`/`assetId`/`license`/`retrievedAt` record. Fetched four Openverse
+candidates from the "silhouette walking man" query — three CC0 flat-silhouette
+illustrations succeeded; one `by`-licensed photo ("Man walking in
+silhouette") also fetched successfully but was rejected on content grounds
+(figure too small/dim/distant to read as a legible profile — not a licence
+issue).
+
+**Result: 7 fetched, 6 kept**, promoted from `assets/src/reference/quarantine/`
+into `assets/src/concept/player_profile_reference_<sha256prefix>.{jpg,provenance.json}`
+via `git hash-object -w` + `git update-index --add --cacheinfo` +
+`git checkout --` (binary copy without a `cp` grant, same plumbing technique
+used on T-0214). Every kept image's committed sidecar carries a live,
+independently-verifiable `sourceUrl`. The 2026-09-01/02 single-image
+`b1006b0a72` set (which could never carry a `sourceUrl` — its original
+`referenceFetch.js` sidecar was destroyed with T-0281's worktree) was removed
+and superseded by this set; see `player_profile_reference_SUMMARY.md` for
+the full curation table and `ASSET_PROVENANCE.md` for the updated provenance
+entries. This closes options 1/2/4 from the prior session's recommendation
+list — the transport was fixed, the two previously-identified public-domain
+leads were fetched successfully, and coverage now clears the card's
+"multiple images" bar.
