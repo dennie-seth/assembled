@@ -1,0 +1,28 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "lora_license": "CreativeML OpenRAIL++-M",
+  "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "prompt": "flat side-on concept sheet, orthographic full-body elevation, no perspective, no vanishing point, single figure centred on a plain background, Soviet brutalist institutional aesthetic, muted desaturated home palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, pixel art game asset reference sheet style, silhouette study. A humanoid figure with an owl head: large forward-facing owl eyes, a pronounced owl facial disc, and feathered head plumage on an otherwise ordinary upright humanoid body wearing a plain utilitarian institutional coverall, hands empty, unarmed, standing in a neutral relaxed posture, a passive stealth obstacle to route around, not a combatant. Concrete grey and institutional green muted colour palette. The head is unmistakably an owl's, dominated by eyes, telegraphing acute vision at a glance.",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, multiple figures, weapon, gun, sword, blade, knife, rifle, armor, armour, aggressive combat pose, battle stance, fighting stance, human face without owl features, small or hidden eyes, animal body, non-humanoid body, robot, mechanical parts, multiple eyes clusters, insect features",
+  "seed": 27501,
+  "steps": 30,
+  "cfg": 7.0,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "7a44814ce1abb1a6f09feef73ec19bf0f43877e59a811a9067815a3990d9b57a",
+  "prompt_id": "69e3503b-926b-46f5-b27f-208525f3d12c",
+  "concept_hash": "2346e139f3958a752646403d3b793b7def038afe2df9fb5e69010267f8a6e49b",
+  "generator": "assets/src/character/gen_enemy_concept_T0275.py",
+  "card": "T-0275",
+  "sensor_role": "sight cone",
+  "supersedes": [
+    "T-0200 (v1, synthetic -- model N/A, model_hash None)",
+    "T-0214 (v2, real SDXL abstract orb/field/presence forms)"
+  ]
+}

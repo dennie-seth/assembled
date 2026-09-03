@@ -122,3 +122,119 @@ and this branch has since merged `develop` to pick it up:
 blocks are un-skipped as of this change and pass against the live grant. The
 `assets` agent can now actually invoke `referenceFetch.js` — the capability is
 live, not just documented.
+
+## T-0283: diagnostic headers, and what they revealed live in this sandbox
+
+T-0273 blocked for five sessions on `fetch wikimedia ...` returning a bare
+`429` with no further information, while the identical call from a normal
+WSL shell on the same machine succeeded (see T-0273's own findings, quoted
+in this card). `referenceSourcing.js`'s rejection paths threw away every
+response header but the status code, so the 429 was undiagnosable from a
+run log. `referenceDiagnostics.js` now surfaces an allowlisted set of
+diagnostic headers (`Retry-After`, `X-RateLimit-*`, `Via`, `X-Cache`,
+`Server`, `CF-Ray`, `X-Served-By`, `X-Forwarded-For`) in the
+`ReferenceRejectedError` message on any non-2xx response — never a
+credential header (`Authorization`, `Cookie`, `Set-Cookie`), by
+construction of the allowlist.
+
+**This session (an `infra`-scoped session, whose `Bash(node:*)` grant
+covers `referenceFetch.js` directly) reproduced the failure live** and
+captured real diagnostic headers, not just unit-test fixtures:
+
+```
+$ node tools/board/scripts/referenceFetch.js search wikimedia "Muybridge Animal Locomotion" 5
+{"sourceId":"wikimedia","results":[...]}                          # succeeds, as always
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Muybridge race horse animated.gif" ...
+{"assetPath":...}                                                 # succeeded -- first fetch call of the session
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal Locomotion. ... MET DT6807.jpg" ...
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+  (diagnostic headers: server=Varnish, x-cache=cp3079 int)
+
+$ node tools/board/scripts/referenceFetch.js fetch wikimedia "File:Animal Locomotion. ... MET DP275235.jpg" ...
+referenceFetch: rejected -- asset fetch from wikimedia failed with status 429
+  (diagnostic headers: server=Varnish, x-cache=cp3079 int)          # identical headers, second attempt
+```
+
+What this narrows down:
+
+- **No `Retry-After` and no `X-RateLimit-*` header at all** — Wikimedia's
+  edge never tells the caller when or whether to retry. A caller cannot
+  pace itself off this response; it can only back off blindly.
+- **`x-cache: cp3079 int`** identifies a specific Wikimedia Varnish/ATS
+  edge-cache node (`cp3079`) and marks the response `int` ("internal" —
+  generated/blocked at the cache layer itself, never reaching origin).
+  Both 429s in this session, on two different asset URLs, came from the
+  *same* cache node with the *identical* header pair — this sandbox's
+  outbound requests are landing on (or being pinned through) one specific
+  edge PoP, and that PoP is the one throttling.
+- Combined with T-0273's own finding that an identical request from a
+  normal WSL shell on the same machine succeeds (200, ~140KB, ~0.4s), and
+  that no proxy env var differs between the two contexts: the most likely
+  explanation is a **path/PoP difference in how the agent sandbox's
+  outbound connections are routed** (e.g. a different egress IP, or a NAT
+  that pins this session to a specific, already-throttled edge node) —
+  **not** a blanket block on the User-Agent, the IP as a whole, or the
+  code/query itself. The first fetch of this session *did* succeed, which
+  also rules out an immediate/unconditional block.
+- This is not a fix — the actual remedy, if it is a routing/PoP issue, is
+  environmental and outside this repo's control, per the card's own scope
+  boundary. It is, however, now something a human can act on: e.g. compare
+  the sandbox's outbound IP/ASN against the normal shell's, or ask
+  whoever operates the sandbox network whether egress is pinned per-PoP.
+
+Every prior attempt log referencing this 429 (`T-0273`, and
+`assets/src/reference/ARM_REFERENCE_ATTEMPT_LOG_T0281.md`) recorded the
+bare status code only; this is the first run with headers attached.
+
+**Openverse, same session:** `search openverse "lighthouse"` and a
+follow-up `fetch openverse <assetId>` both reached the network
+successfully this time (no 504) — the fetch stopped at the licence gate
+(`by-nc-sa`, correctly rejected) rather than at transport. This confirms
+the card's own framing: Openverse's outage is upstream and intermittent,
+not a permanent 504, which is exactly why treating it as best-effort
+(see T-0284 below) rather than deleting or permanently disabling it is the
+right call — it recovers on its own, and a run should benefit when it
+does rather than needing a code change to re-enable it.
+
+## T-0284: a policy-compliant User-Agent, and a third source
+
+Both fixes below are a direct response to the finding above: `search`
+(a lighter endpoint) kept working through the whole T-0283 session while
+`fetch`'s byte requests to `upload.wikimedia.org` 429'd hard, and the
+outbound User-Agent this tool sent was a bare, contactless token —
+exactly the shape Wikimedia's own User-Agent policy documents as getting
+throttled aggressively.
+
+**Part 1 — the UA now carries a contact.** `referenceTransport.js`'s
+`REFERENCE_USER_AGENT` is now
+`assembled-reference-sourcing/1.0 (+https://github.com/dennie-seth/assembled)`
+— tool name, version, and a reachable contact, per policy. The public
+repo URL is the contact; no email or other address was fabricated for
+this, per the card's own instruction not to invent one.
+
+**Part 2 — a third, independent source.** `referenceSourcePolicy.js`
+adds `met` (the Metropolitan Museum of Art's Open Access API,
+`collectionapi.metmuseum.org` for search/metadata,
+`images.metmuseum.org` for bytes), `required: false`. It was chosen over
+the other candidates the card listed (Smithsonian, Rijksmuseum, Art
+Institute of Chicago) because it needs no API key, its rights model is a
+simple per-object boolean (`isPublicDomain`) rather than a
+licence-string parse, and its infrastructure shares nothing with either
+Wikimedia or Openverse — a genuine third leg, not a second front door to
+a host already on the allowlist. Its licence gate works the same way as
+the other two sources: `isPublicDomain !== true` (false, or the field
+missing) maps to *no* licence at all and is rejected by
+`referenceLicense.js` exactly like a missing Wikimedia/Openverse licence
+field — there is no "trusted museum, so unknown is fine" shortcut. It
+goes through the identical allowlist / redirect-cap / mime-sniff /
+quarantine-only / rate-limit gauntlet as the existing two sources; see
+`referenceSourcePolicy.test.js` and `referenceSourcing.test.js` for the
+per-defence tests. `referenceFetch.js`'s CLI needed no change at all — it
+already derives its source list from `listSourceIds()`.
+
+No live 429 reproduction was attempted for this card beyond what T-0283
+already captured above — the 429 window observed there was still active
+and hammering it further would only extend it (see the card's own edge
+cases). Both fixes are verified by mocked-transport unit tests only.

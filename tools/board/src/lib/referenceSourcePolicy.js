@@ -54,6 +54,9 @@ export const REFERENCE_SOURCES = Object.freeze({
     label: "Wikimedia Commons",
     apiHost: "commons.wikimedia.org",
     fetchHosts: Object.freeze(["upload.wikimedia.org", "commons.wikimedia.org"]),
+    // Required (T-0283): its Muybridge/Wellcome locomotion plates alone have met the multi-image
+    // bar in every T-0273 session -- a run does not need Openverse to succeed.
+    required: true,
     searchUrl: (query, limit = 10) =>
       `https://commons.wikimedia.org/w/api.php?action=query&list=search&srnamespace=6&format=json&srlimit=${encode(
         limit
@@ -69,9 +72,36 @@ export const REFERENCE_SOURCES = Object.freeze({
     apiHost: "api.openverse.org",
     // Deliberately just the thumbnail proxy host -- see module docstring above.
     fetchHosts: Object.freeze(["api.openverse.org"]),
+    // Best-effort, not required (T-0283): Openverse has been genuinely down (504) across every
+    // T-0273 session, which made "both sources must succeed" an unsatisfiable requirement. It
+    // stays on the allowlist -- it is down, not disallowed -- but its failure is recorded by a
+    // caller like searchAcrossSources() in referenceSourcing.js, never treated as fatal to the run.
+    required: false,
     searchUrl: (query, limit = 10) =>
       `https://api.openverse.org/v1/images/?q=${encode(query)}&page_size=${encode(limit)}`,
     assetMetadataUrl: (assetId) => `https://api.openverse.org/v1/images/${encode(assetId)}/`
+  }),
+  // Added T-0284, for source diversity: Wikimedia and Openverse being down/throttled at the same
+  // time left the pipeline single-host-dependent. The Met's Open Access API is unrelated
+  // infrastructure to both -- a genuinely independent third source, not a second front door to one
+  // of the same two hosts. Licence model: `isPublicDomain` is a real per-*object* flag the API
+  // returns (never a domain-wide assumption) -- `false`/absent normalizes to no licence at all and
+  // is rejected by referenceLicense.js exactly like a missing Wikimedia/Openverse licence field, no
+  // relaxed path. No API key required, no rate-limit headers documented, so it also side-steps
+  // whatever is throttling upload.wikimedia.org specifically.
+  met: Object.freeze({
+    id: "met",
+    label: "The Metropolitan Museum of Art (Open Access)",
+    apiHost: "collectionapi.metmuseum.org",
+    fetchHosts: Object.freeze(["images.metmuseum.org"]),
+    // Best-effort, not required: the point of adding it is resilience against Wikimedia/Openverse
+    // both being unavailable, not a second hard dependency a run cannot succeed without.
+    required: false,
+    // The Met's search endpoint has no limit/page-size parameter of its own -- it always returns
+    // every matching objectID; referenceSourcing.js's parseSearchResults slices to `limit` itself.
+    searchUrl: (query) => `https://collectionapi.metmuseum.org/public/collection/v1/search?hasImages=true&q=${encode(query)}`,
+    assetMetadataUrl: (assetId) =>
+      `https://collectionapi.metmuseum.org/public/collection/v1/objects/${encode(assetId)}`
   })
 });
 
@@ -82,6 +112,16 @@ export function listSourceIds() {
 /** Fail closed: an unknown id resolves to `null`, never a default source. */
 export function getSource(sourceId) {
   return REFERENCE_SOURCES[sourceId] ?? null;
+}
+
+/**
+ * Is `sourceId` required for a multi-source run to succeed, vs best-effort (T-0283)? Fails
+ * closed for an unknown id -- treating an unrecognised source as required never silently drops
+ * it from a run; `getSource`'s own allowlist check is what actually rejects it elsewhere.
+ */
+export function isSourceRequired(sourceId) {
+  const source = getSource(sourceId);
+  return source ? source.required !== false : true;
 }
 
 function deny(reason) {

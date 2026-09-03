@@ -1,0 +1,68 @@
+name: ci-approval-provenance-drift
+
+# T-0286 (docs/decision-log.md DL-27): the board is the single approval source of truth
+# (approvalGate.js's approvalVerdict), but ASSET_PROVENANCE.md keeps its own human-readable
+# approval note per asset, and nothing previously caught that note going stale. T-0257 was
+# approved on the board 2026-08-30 while its provenance row kept reading "Not yet approved" for
+# days, blocking T-0243/T-0244/T-0245/T-0246 on a decision already made -- a human eventually
+# noticed and PR #307 fixed the one row by hand. This job is the mechanical version of that
+# noticing: it cross-checks every provenance row that names a card against that card's real board
+# verdict (read straight from tasks/*.md, no live board or agent tool grant required) and fails
+# the PR if the two disagree, instead of letting the drift sit for days again.
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "ASSET_PROVENANCE.md"
+      - "tasks/**"
+      - "tools/board/src/lib/approvalGate.js"
+      - "tools/board/src/lib/approvalProvenanceDrift.js"
+      - "tools/board/src/lib/gitAddedLines.js"
+      - "tools/board/scripts/checkApprovalProvenanceDrift.js"
+      - ".github/workflows/ci-approval-provenance-drift.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "ASSET_PROVENANCE.md"
+      - "tasks/**"
+      - "tools/board/src/lib/approvalGate.js"
+      - "tools/board/src/lib/approvalProvenanceDrift.js"
+      - "tools/board/src/lib/gitAddedLines.js"
+      - "tools/board/scripts/checkApprovalProvenanceDrift.js"
+      - ".github/workflows/ci-approval-provenance-drift.yml"
+
+concurrency:
+  group: ci-approval-provenance-drift-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift-check:
+    name: ASSET_PROVENANCE.md vs board approval verdict
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 -- checkApprovalProvenanceDrift.js diffs against origin/develop to scope
+      # its loud unresolvable-card-reference check to lines the current PR actually adds (see
+      # gitAddedLines.js); the default shallow (fetch-depth: 1) checkout wouldn't have that ref
+      # at all, and the diff would silently fail closed to "can't scope, skip the loud check".
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tools/board/package-lock.json
+
+      - run: npm ci
+        working-directory: tools/board
+
+      # NOTE: this runs in fs mode (FsTaskStore over tasks/*.md), never db mode -- the board's
+      # sqlite db lives outside git by design (docs/design/cards-to-database.md) and is not
+      # reachable from this fresh checkout. Every card from T-0223 onward (including T-0257, the
+      # card this whole workflow exists because of) lives only in that db, so this job cannot
+      # resolve their real verdict -- it can only refuse to silently pass when it can't (the
+      # unverifiable-approval-claim drift kind). See docs/decision-log.md DL-27's addendum and
+      # docs/T-0286-claude-instruction-edit-blocked-attempt-log.md for the live board-side
+      # backstop (approvalProvenanceStaleNotice) that covers the gap this job structurally can't.
+      - run: node tools/board/scripts/checkApprovalProvenanceDrift.js "$GITHUB_WORKSPACE/ASSET_PROVENANCE.md" "origin/develop"

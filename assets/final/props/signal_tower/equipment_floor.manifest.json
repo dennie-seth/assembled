@@ -1,0 +1,64 @@
+{
+  "room": "signal_tower.equipment_floor",
+  "room_definition_ref": "docs/design/14-vertical-slice.md §2, §3, §10",
+  "card": "T-0245",
+  "handoff_ref": "HANDOFF §23-j-d",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v3.png",
+  "generated_new_props": true,
+  "status": "committed",
+  "note": "Equipment Floor's two prop slots per 14 §10 ('Cluttered, maze-like rack layout' / 'Clutter aids routing, not concealment (cover doesn't block sound); one dedicated hiding spot (crawlspace) for full protection') and §3 (The Sound: sound-radius sensor, no sight cone, no fixed patrol -- roams toward whatever noise it last heard). PROP CLASSIFICATION NOTE (card acceptance criterion -- 'Resolve this explicitly ... Record which, and why'): the card's own slot table listed server_rack_v1 as a candidate cover prop for the maze clutter, but server_rack_v1's provenance (T-0201/T-0221) and test_signal_tower_prop_pack.py both fix it as prop_class=hide (HIDE_PROPS), not cover. 14 §10's own language for this room specifies exactly ONE dedicated hiding spot -- the crawlspace -- so placing server_rack_v1 here as a second hiding prop would contradict the room's own design, and placing it as a cover prop would silently reclassify an already-approved prop (forbidden by this card's acceptance criteria). Resolution: the maze clutter slot uses only the two props that are actually approved as cover class -- relay_cabinet_v1 and crate_stack_v1, both reused as-is from T-0201/T-0221/T-0223 -- and server_rack_v1 is not placed in this room at all. This is the second option the card offered ('use the cover-class props for the maze and reserve the crawlspace as the room's only hiding spot'). The crawlspace hiding slot is new geometry: it does not exist on the v1 sheet (11 §2/14 §10 -- The Sound has no sight sensor, so a sight-only cover prop cannot substitute; the dedicated hiding spot must block all three sensors). signal_tower_props_concept_sheet_v3.png (T-0257) is the DL-5 coverage: its ASSET_PROVENANCE.md row reads 'APPROVED 2026-08-30' (PR #307), and its own 'CRAWLSPACE OPENING -- HIDING SPOT' sub-panel is exactly this slot's approved geometry. crawlspace_v1 is generated via the committed cutout path (tools/comfy-client/src/comfy_client/cutout.py, sdxl_cutout_lora_v1.json), style LoRA soviet_brutalism_style_v1 @ 0.70 only -- no prop LoRA, per the 2026-08-30 human re-gate comment on this card. The prompt started as the approved sheet's own CRAWLSPACE OPENING sub-panel text verbatim; two attempts against that wording (seeds 25011, 25021) drifted into furniture (a tan bench, then a grey filing cabinet), not a dark wall opening, so the framing was switched to the 'single isolated game prop' phrasing the v3 sheet's own generator note records as the fix for the same class of drift on its sibling HIDING ALCOVE panel (signal_tower_props_concept_sheet_v3.provenance.json _generator_note) -- the object identity (a low crawl-height hole cut into a wall) is unchanged, only the framing language. Two further seeds (25031, 25041) matted to disconnected fragments and were rejected on visual review; seed 25051 produced a clean, coherent near-black rectangular void with a lit bottom entry edge (40.9% opaque) -- visually confirmed via ASCII luma dump and 10x nearest-neighbour upscale to show a single flat front face, no isometry, no perspective, no foreshortening. This is the committed result. ART DIRECTION (2026-09-02, @DennieSeth: 'object should face the camera, no isometry or perspective'): the crawlspace's own object identity (a hole cut flush into a flat wall) has no depth to foreshorten in the first place, so no separate front-elevation correction was needed the way T-0244's transformer housings needed one -- confirmed by visual inspection of the committed sprite, not assumed from the prompt text.",
+  "slots": [
+    {
+      "slot": "Maze rack clutter",
+      "class": "cover",
+      "props": ["relay_cabinet_v1", "crate_stack_v1"],
+      "status": "committed",
+      "reused": true,
+      "sprites": [
+        "assets/final/props/signal_tower/relay_cabinet_v1.png",
+        "assets/final/props/signal_tower/crate_stack_v1.png"
+      ],
+      "provenances": [
+        "assets/final/props/signal_tower/relay_cabinet_v1.provenance.json",
+        "assets/final/props/signal_tower/crate_stack_v1.provenance.json"
+      ],
+      "note": "Cover-class props only (sight-cone block only per 14 §10 -- 'cover doesn't block sound', and The Sound has no sight sensor to block in the first place, so these props aid routing/visual clutter, not concealment). server_rack_v1 deliberately excluded -- see the top-level classification note."
+    },
+    {
+      "slot": "Crawlspace (dedicated hiding spot)",
+      "class": "hiding",
+      "prop": "crawlspace_v1",
+      "status": "committed",
+      "reused": false,
+      "sprite": "assets/final/props/signal_tower/crawlspace_v1.png",
+      "provenance": "assets/final/props/signal_tower/crawlspace_v1.provenance.json",
+      "note": "The room's one dedicated hiding spot (14 §10), blocking all three sensors per 11 §2. New geometry, covered by the approved v3 sheet's CRAWLSPACE OPENING sub-panel."
+    }
+  ],
+  "gate_16px_separation": {
+    "requirement": ">= 15.0 luma16 gap between any cover/hiding pair co-located in this room (P-3)",
+    "authoritative_test": "assets/src/concept/tests/test_equipment_floor_room_manifest.py::test_gate_measurements_clear_floor",
+    "min_required_gap_luma16": 15.0,
+    "applicable": true,
+    "cover_hide_pairs_in_room": [
+      {
+        "cover_prop": "relay_cabinet_v1",
+        "hiding_prop": "crawlspace_v1",
+        "cover_luma16": 110.74,
+        "hiding_luma16": 40.84,
+        "gap": 69.9
+      },
+      {
+        "cover_prop": "crate_stack_v1",
+        "hiding_prop": "crawlspace_v1",
+        "cover_luma16": 112.91,
+        "hiding_luma16": 40.84,
+        "gap": 72.07
+      }
+    ],
+    "how_measured": "16px-longest-side Lanczos downscale + BT.601 mean luma over opaque pixels -- the same rule as test_signal_tower_prop_pack.py's _downscale_to_game_16px/_mean_luma, re-derived directly from the committed sprites by test_equipment_floor_room_manifest.py::test_gate_measurements_match_real_sprites. relay_cabinet_v1's and crate_stack_v1's numbers here are freshly measured from the byte-unchanged, already-committed sprite files (matching the figures independently re-derived for this card); crawlspace_v1's number is this card's own new measurement.",
+    "why_both_pairs_clear_with_wide_margin": "crawlspace_v1 was deliberately generated dark (near-black void, 40.84 luma16) per the approved sheet's own 'near-black and dark concrete-grey' description for this sub-panel, well below either mid-value cover prop -- no value-tuning iteration was needed the way T-0244's transformer_housing_b_v1 needed one."
+  },
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. relay_cabinet_v1 and crate_stack_v1 are referenced, not regenerated -- byte-identical to the files T-0221/T-0223 shipped. No existing prop file was touched.",
+  "regenerated_props": []
+}

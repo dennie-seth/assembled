@@ -22,14 +22,29 @@
  *    and fetch and every redirect hop alike, when the caller supplies one.
  */
 
-import { getSource, checkSearchUrl, checkFetchUrl, checkRedirect, MAX_REDIRECTS } from "./referenceSourcePolicy.js";
+import {
+  getSource,
+  checkSearchUrl,
+  checkFetchUrl,
+  checkRedirect,
+  isSourceRequired,
+  listSourceIds,
+  MAX_REDIRECTS
+} from "./referenceSourcePolicy.js";
 import { evaluateLicense } from "./referenceLicense.js";
 import { sniffImageBytes, quarantineAsset, maxAssetBytesFromEnv, maxAssetsPerRunFromEnv, ReferenceRejectedError } from "./referenceQuarantine.js";
 import { defaultTransport } from "./referenceTransport.js";
+import { formatDiagnosticHeaders } from "./referenceDiagnostics.js";
+
+/** Appends `" (diagnostic headers: ...)"` to a non-2xx failure message when any are present. */
+function describeFailure(message, headers) {
+  const diagnostics = formatDiagnosticHeaders(headers);
+  return diagnostics ? `${message} (diagnostic headers: ${diagnostics})` : message;
+}
 
 function parseJsonBody(res, context) {
   if (res.status !== 200) {
-    throw new ReferenceRejectedError(`${context} failed with status ${res.status}`);
+    throw new ReferenceRejectedError(describeFailure(`${context} failed with status ${res.status}`, res.headers));
   }
   try {
     return JSON.parse(res.body.toString("utf8"));
@@ -38,8 +53,12 @@ function parseJsonBody(res, context) {
   }
 }
 
-/** Maps one source's raw search-response JSON to the wrapper's plain result shape. */
-function parseSearchResults(sourceId, json) {
+/**
+ * Maps one source's raw search-response JSON to the wrapper's plain result shape. `limit` is only
+ * used for `met`: unlike wikimedia's `srlimit`/openverse's `page_size`, the Met's own search
+ * endpoint has no result-count parameter and always returns every matching objectID.
+ */
+function parseSearchResults(sourceId, json, limit) {
   if (sourceId === "wikimedia") {
     const hits = Array.isArray(json?.query?.search) ? json.query.search : [];
     return hits.map((hit) => ({ sourceId, assetId: String(hit.title), title: String(hit.title) }));
@@ -47,6 +66,10 @@ function parseSearchResults(sourceId, json) {
   if (sourceId === "openverse") {
     const hits = Array.isArray(json?.results) ? json.results : [];
     return hits.map((hit) => ({ sourceId, assetId: String(hit.id), title: hit.title != null ? String(hit.title) : null }));
+  }
+  if (sourceId === "met") {
+    const hits = Array.isArray(json?.objectIDs) ? json.objectIDs : [];
+    return hits.slice(0, limit).map((objectId) => ({ sourceId, assetId: String(objectId), title: null }));
   }
   return [];
 }
@@ -68,6 +91,17 @@ function extractAssetMetadata(sourceId, json, assetId) {
   }
   if (sourceId === "openverse") {
     return { rawLicense: json?.license ?? null, url: json?.thumbnail ?? null, title: json?.title ?? assetId };
+  }
+  if (sourceId === "met") {
+    // The Met has no per-asset licence *string* -- `isPublicDomain` is the per-object rights
+    // signal its API actually publishes. `true` is mapped to a "Public Domain" label that
+    // referenceLicense.js's own normalizer already recognizes (the same "pdm" bucket as an
+    // explicit Public Domain Mark elsewhere); anything else (false, missing) becomes `null`, which
+    // evaluateLicense fails closed on exactly like a missing Wikimedia/Openverse licence field --
+    // never "accepted because the source is a trusted museum".
+    const rawLicense = json?.isPublicDomain === true ? "Public Domain" : null;
+    const url = typeof json?.primaryImage === "string" && json.primaryImage.length > 0 ? json.primaryImage : null;
+    return { rawLicense, url, title: json?.title ?? assetId };
   }
   return { rawLicense: null, url: null, title: assetId };
 }
@@ -99,7 +133,41 @@ export async function searchReferences({ sourceId, query, limit = 10, transport 
   await rateLimiter?.take();
   const res = await transport(url);
   const json = parseJsonBody(res, `search request to ${sourceId}`);
-  return { sourceId, results: parseSearchResults(sourceId, json) };
+  return { sourceId, results: parseSearchResults(sourceId, json, limit) };
+}
+
+/**
+ * Searches every given source for `query` and merges their results, treating a required
+ * source's failure as fatal (propagates) and a best-effort source's failure as recorded, not
+ * fatal (T-0283) -- see `referenceSourcePolicy.js`'s `required` flag, the single place this
+ * "must have" vs "nice to have" distinction is decided so every caller inherits it. Openverse
+ * being down is exactly the case this exists for: Wikimedia alone can meet the multi-image bar,
+ * so a caller building a reference set no longer needs to treat "both sources returned results"
+ * as a precondition for success.
+ *
+ * @param {object} args
+ * @param {string[]} [args.sourceIds] defaults to every allowlisted source
+ * @param {string} args.query
+ * @param {number} [args.limit]
+ * @param {(url: string) => Promise<{status:number, headers:object, body:Buffer}>} [args.transport]
+ * @param {{take: () => void}} [args.rateLimiter]
+ * @returns {Promise<{results: Array<{sourceId:string, assetId:string, title:string|null}>, failures: Array<{sourceId:string, reason:string}>}>}
+ */
+export async function searchAcrossSources({ sourceIds = listSourceIds(), query, limit = 10, transport = defaultTransport, rateLimiter }) {
+  const results = [];
+  const failures = [];
+  for (const sourceId of sourceIds) {
+    try {
+      const { results: sourceResults } = await searchReferences({ sourceId, query, limit, transport, rateLimiter });
+      results.push(...sourceResults);
+    } catch (err) {
+      if (isSourceRequired(sourceId)) {
+        throw err;
+      }
+      failures.push({ sourceId, reason: err.message });
+    }
+  }
+  return { results, failures };
 }
 
 /**
@@ -176,7 +244,9 @@ export async function fetchReference({
   }
 
   if (bytesRes.status !== 200) {
-    throw new ReferenceRejectedError(`asset fetch from ${sourceId} failed with status ${bytesRes.status}`);
+    throw new ReferenceRejectedError(
+      describeFailure(`asset fetch from ${sourceId} failed with status ${bytesRes.status}`, bytesRes.headers)
+    );
   }
 
   const mime = await sniffImageBytes(bytesRes.body);
