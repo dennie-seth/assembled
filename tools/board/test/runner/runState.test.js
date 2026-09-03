@@ -92,12 +92,57 @@ describe("isRunLive", () => {
     expect(live).toBe(true);
   });
 
-  it("is false when the recorded pid is dead, even with a fresh heartbeat", async () => {
+  it("is false when the recorded pid is dead and the run log is also stale -- genuinely dead, not just inconclusive", async () => {
+    const now = Date.now();
     const live = await isRunLive({
-      state: { pid: 4242, runLogPath: "/x", updatedAt: new Date().toISOString() },
-      now: Date.now(),
+      state: { pid: 4242, runLogPath: "/x", updatedAt: new Date(now - 200_000).toISOString() },
+      now,
       isPidAliveFn: () => false,
-      statFn: async () => ({ mtimeMs: Date.now() })
+      statFn: async () => ({ mtimeMs: now - 200_000 })
+    });
+    expect(live).toBe(false);
+  });
+
+  // T-0289: isPidAliveFn's own contract (see isPidAlive's docstring) treats any process.kill(2)
+  // failure other than EPERM as "dead" -- normally correct, but a false negative there (an
+  // unexpected errno, a transient fork/exec-handoff hiccup) must not be trusted as the sole
+  // signal a reap decision is built on. T-0276/T-0287 were both reaped with a recorded pid a
+  // human confirmed was alive at the time, and a run log that had just been written to -- the
+  // pid check saying "not alive" was wrong, and nothing corroborated it before reaping. A pid
+  // check that reports not-alive is now corroborated against the run log's mtime, exactly like
+  // the no-pid fallback below: a log actively being appended to is direct evidence of life the
+  // pid check's own false negative shouldn't override.
+  it("is true when the pid check reports not-alive but the run log was written to seconds ago (T-0287 shape: corroborating evidence overrides a false-negative pid check)", async () => {
+    const now = Date.now();
+    const live = await isRunLive({
+      state: { pid: 246322, runLogPath: "/x", updatedAt: new Date(now - 2 * 60 * 60_000).toISOString() },
+      now,
+      heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS,
+      isPidAliveFn: () => false,
+      statFn: async () => ({ mtimeMs: now - 1000 })
+    });
+    expect(live).toBe(true);
+  });
+
+  it("is false when the pid check reports not-alive and the run log has also gone stale -- no corroborating evidence, genuinely dead", async () => {
+    const now = Date.now();
+    const live = await isRunLive({
+      state: { pid: 4242, runLogPath: "/x", updatedAt: new Date(now - 200_000).toISOString() },
+      now,
+      heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS,
+      isPidAliveFn: () => false,
+      statFn: async () => ({ mtimeMs: now - 200_000 })
+    });
+    expect(live).toBe(false);
+  });
+
+  it("is false when the pid check reports not-alive and the run log can't be stat'd at all -- no corroborating evidence", async () => {
+    const live = await isRunLive({
+      state: { pid: 4242, runLogPath: "/does/not/exist", updatedAt: new Date().toISOString() },
+      isPidAliveFn: () => false,
+      statFn: async () => {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
     });
     expect(live).toBe(false);
   });

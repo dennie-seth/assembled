@@ -480,6 +480,132 @@ describe("liveness check (survives a process restart)", () => {
   });
 });
 
+// T-0289: T-0276 and T-0287 were both mis-reaped while their recorded pid was genuinely alive
+// and their run log had been written to seconds earlier -- twice, with the card oscillating
+// blocked -> validation -> blocked on every ~30s sweep for the rest of the run (see the card's
+// human comments). A single-sweep assertion isn't enough to catch a regression here: the bug
+// only shows up as a *repeated* false reap across consecutive sweeps once the run has been
+// alive longer than DEFAULT_HEARTBEAT_STALE_MS. `isPidAliveFn` reporting "not alive" here stands
+// in for a false negative from the real `isPidAlive` (an unexpected process.kill(2) errno) --
+// the run log being written to seconds ago is the corroborating evidence that should override it.
+describe("T-0287 regression: a live run with an inconclusive pid check is never reaped, across many sweeps", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "orphan-reaper-t0287-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  it("sweepOnce never reaps across 10 consecutive sweeps when the pid check is inconclusive but the log keeps growing", async () => {
+    const store = makeStore([makeTask({ id: "T-0287", status: "in-progress" })]);
+    const hub = makeHub();
+    const logPath = path.join(runsDir, "T-0287.jsonl");
+    await fs.writeFile(logPath, "line\n", "utf8");
+    await writeRunState({ runsDir, taskId: "T-0287", pid: 246322, runLogPath: logPath });
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    let clock = Date.now();
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds: new Set(),
+      enabled: true,
+      graceMs: 15_000,
+      runsDir,
+      logger,
+      isPidAliveFn: () => false,
+      now: () => clock
+    });
+
+    for (let i = 0; i < 10; i++) {
+      clock += 30_000;
+      // Simulate the run log still being actively appended to on every tick.
+      await fs.utimes(logPath, new Date(clock), new Date(clock));
+      const reaped = await reaper.sweepOnce();
+      expect(reaped).toEqual([]);
+    }
+
+    expect(store._byId.get("T-0287").status).toBe("in-progress");
+    expect(hub.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("reapOnStartup does not reap on a restart when the pid check is inconclusive but the log keeps growing (same rule as sweepOnce)", async () => {
+    const store = makeStore([makeTask({ id: "T-0276", status: "in-progress" })]);
+    const hub = makeHub();
+    const logPath = path.join(runsDir, "T-0276.jsonl");
+    await fs.writeFile(logPath, "line\n", "utf8");
+    await writeRunState({ runsDir, taskId: "T-0276", pid: 1730227, runLogPath: logPath });
+    const activeCardIds = new Set();
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds,
+      enabled: true,
+      runsDir,
+      isPidAliveFn: () => false
+    });
+
+    const reaped = await reaper.reapOnStartup();
+
+    expect(reaped).toEqual([]);
+    expect(store._byId.get("T-0276").status).toBe("in-progress");
+    expect(activeCardIds.has("T-0276")).toBe(true);
+  });
+
+  it("still reaps once the run log also goes stale, even with the same inconclusive pid check -- a genuinely dead run stays reapable", async () => {
+    const store = makeStore([makeTask({ id: "T-0243", status: "in-progress" })]);
+    const hub = makeHub();
+    const logPath = path.join(runsDir, "T-0243.jsonl");
+    const staleTime = new Date(Date.now() - 5 * 60_000);
+    await fs.writeFile(logPath, "line\n", "utf8");
+    await fs.utimes(logPath, staleTime, staleTime);
+    await writeRunState({ runsDir, taskId: "T-0243", pid: 999999, runLogPath: logPath });
+    let clock = Date.now();
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds: new Set(),
+      enabled: true,
+      graceMs: 15_000,
+      runsDir,
+      isPidAliveFn: () => false,
+      now: () => clock
+    });
+
+    await reaper.sweepOnce();
+    clock += 15_000;
+    const reaped = await reaper.sweepOnce();
+
+    expect(reaped).toEqual(["T-0243"]);
+    expect(store._byId.get("T-0243").status).toBe("blocked");
+  });
+
+  it("logs the reap decision's inputs (pid, pid-alive verdict, log age, heartbeat age) when it actually reaps a dead run", async () => {
+    const store = makeStore([makeTask({ id: "T-0999", status: "in-progress" })]);
+    const hub = makeHub();
+    await writeRunState({ runsDir, taskId: "T-0999", pid: 55555, runLogPath: path.join(runsDir, "T-0999.jsonl") });
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds: new Set(),
+      enabled: true,
+      runsDir,
+      logger,
+      isPidAliveFn: () => false
+    });
+
+    await reaper.reapOnStartup();
+
+    const loggedReapDecision = logger.log.mock.calls.some(
+      (call) => typeof call[0] === "string" && call[0].includes("T-0999") && call[0].includes("55555")
+    );
+    expect(loggedReapDecision).toBe(true);
+  });
+});
+
 describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () => {
   let runsDir;
 
