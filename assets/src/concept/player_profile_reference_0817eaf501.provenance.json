@@ -2,6 +2,8 @@
   "card": "T-0273",
   "consumerCard": "T-0274",
   "sourcedVia": "T-0276 referenceFetch.js (fetched fresh by T-0273 after PR #312's transport fix)",
+  "model_hash": "N/A — fetched open-licence reference photograph, not model-generated",
+  "generator": "tools/board/scripts/referenceFetch.js",
   "sourceId": "wikimedia",
   "assetId": "File:Animal Locomotion - side view of old man walking (pl. 555) LCCN2005697037.jpg",
   "title": "File:Animal Locomotion - side view of old man walking (pl. 555) LCCN2005697037.jpg",

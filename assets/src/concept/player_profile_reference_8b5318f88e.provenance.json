@@ -2,6 +2,8 @@
   "card": "T-0273",
   "consumerCard": "T-0274",
   "sourcedVia": "T-0276 referenceFetch.js (fetched fresh by T-0273 after PR #312's transport fix)",
+  "model_hash": "N/A — fetched open-licence reference photograph, not model-generated",
+  "generator": "tools/board/scripts/referenceFetch.js",
   "sourceId": "openverse",
   "assetId": "9d61a85f-3c0e-45ff-855c-fcaddb0f2851",
   "title": "Silhouette walking man illustration",
