@@ -2,10 +2,16 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 /**
- * Heartbeat freshness window used only when a runstate has no usable pid (e.g. written by
- * a future runner backend that doesn't expose one) -- the run's .runs/*.jsonl log path is
- * consulted instead, since every streamed agent event appends to that file. A file untouched
- * for longer than this is treated as abandoned.
+ * Heartbeat freshness window for the run log's mtime, used two ways (see isRunLive): as the sole
+ * check when a runstate has no usable pid (e.g. written by a future runner backend that doesn't
+ * expose one), and as corroboration when a recorded pid's own liveness check reports "not
+ * alive" -- in both cases the run's .runs/*.jsonl log path is consulted, since every streamed
+ * agent event appends to that file. A file untouched for longer than this is treated as
+ * abandoned. This is deliberately much smaller than DEFAULT_WEDGED_STALE_MS (45 min): a run
+ * genuinely writing no output for a minute is unremarkable (see isRunWedged's own docstring on
+ * long single tool calls), but it's exactly the corroborating signal this window needs -- a run
+ * whose *only* evidence of life is "we don't have a working pid check" should require the log to
+ * have moved recently, not merely at some point in the last 45 minutes.
  */
 export const DEFAULT_HEARTBEAT_STALE_MS = 60_000;
 
@@ -63,9 +69,19 @@ export function isPidAlive(pid) {
 }
 
 /**
- * The liveness verdict a reap decision is built on. A recorded pid is definitive in either
- * direction (alive or dead -- no reason to second-guess a hard OS-level answer). Only when no
- * pid was recorded at all does this fall back to the run log's mtime as a heartbeat proxy.
+ * The liveness verdict a reap decision is built on. A recorded pid reporting *alive* is
+ * definitive -- no reason to second-guess a hard OS-level answer. A pid reporting *not alive* is
+ * NOT treated as definitive on its own: `isPidAlive`'s own contract only recognizes EPERM as
+ * "alive under another user"; any other `process.kill(2)` failure (an unexpected errno, a
+ * transient fork/exec-handoff hiccup) reads as dead with no second opinion. T-0276 and T-0287
+ * were both reaped this way -- a human confirmed the recorded pid was alive and the run log had
+ * been written to seconds earlier at the moment of the reap, so the pid check itself was the
+ * false signal. A not-alive pid verdict is therefore corroborated against the run log's mtime
+ * before concluding "dead", the same heartbeat proxy already used as the sole check when no pid
+ * was recorded at all: a log still being appended to is direct evidence of life the pid check's
+ * own false negative shouldn't override. Only when the log is ALSO stale (or missing/unreadable)
+ * does a not-alive pid verdict stand -- that combination is what keeps a genuinely dead run
+ * reapable (see isRunWedged for the converse case: alive pid, stale log).
  */
 export async function isRunLive({
   state,
@@ -76,13 +92,17 @@ export async function isRunLive({
 }) {
   if (!state) return false;
 
-  if (typeof state.pid === "number") {
-    return isPidAliveFn(state.pid);
+  if (typeof state.pid === "number" && isPidAliveFn(state.pid)) {
+    return true;
   }
 
-  if (!state.runLogPath) return false;
+  return isRunLogFresh({ runLogPath: state.runLogPath, now, heartbeatStaleMs, statFn });
+}
+
+async function isRunLogFresh({ runLogPath, now, heartbeatStaleMs, statFn }) {
+  if (!runLogPath) return false;
   try {
-    const stat = await statFn(state.runLogPath);
+    const stat = await statFn(runLogPath);
     return now - stat.mtimeMs < heartbeatStaleMs;
   } catch {
     return false;

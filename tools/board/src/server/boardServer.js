@@ -152,9 +152,11 @@ export async function startBoardServer({
     }
   });
 
-  // A fresh process has zero active runs by definition, so any card still sitting at
-  // in-progress/validation here belongs to a run that died with the previous process --
-  // reap those before anything else touches the store.
+  // A fresh process has zero *tracked* active runs by definition, but a card sitting at
+  // in-progress/validation here may still have a genuinely live child process behind it (see
+  // orphanReaper.js's own docstring -- a detached `claude` child survives a board restart with
+  // the same pid). reapOnStartup applies the same pid/run-log liveness check sweepOnce does
+  // before resetting anything, and only reaps what it can't corroborate as still alive.
   await orphanReaper.reapOnStartup();
   orphanReaper.start();
   selfImprovementLoop.start();
