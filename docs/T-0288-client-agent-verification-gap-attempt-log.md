@@ -327,3 +327,26 @@ run 3's own conclusion, closing those two needs a human dragging a real card in 
 a session with `npm install` access adding a real-browser test, or a reworded criterion — not
 another implementer pass. `T-0288`'s `agent:` field should still be `infra`, not `client`, for the
 same reason cited in every prior update.
+
+## Update (run 5): re-inspected, nothing left to change
+
+VALIDATION FAIL (run 4) re-verified both of run 3's fixes (the `dragleave` guard and the idle-at-
+scroll-limit rAF loop) against this exact tree, re-confirmed every earlier defect from runs 1–3
+stays fixed, and concluded explicitly that the only remaining gaps are #7 and #12 — the same two
+this log already flagged as not implementer-fixable in the run 3 and run 4 sections above — stating
+outright that a further implementer pass "would change nothing" on the code side.
+
+This run re-checked that conclusion rather than taking it on faith: `git status --porcelain` is
+empty, `HEAD` (`703797a`) is unchanged from what run 4 reviewed, and the diff against `develop` is
+the same seven files. Nothing in this agent's tool grants changed either — still no `npx`/`node`/
+`npm install`, still no browser automation tool, still scoped to `Bash(git:*)` and the Godot-client
+commands per `.claude/agents/client.md`. There is no code-level action available to take, so none
+was taken; making a speculative edit here just to have a commit would be busywork, not a fix.
+
+Restating run 4's three closing options, since they still stand: (a) a human opens the deployed
+board, drags a tall card to both edges of a scrollable column, and confirms it scrolls both ways
+and stops at the limits; (b) a session with `npm install` access adds `playwright` to
+`tools/board/devDependencies` and a real-browser drag test; or (c) acceptance #7/#12 are reworded
+to a scope this environment can actually close. And still outstanding from every prior run: this
+card's `agent:` field should be `infra`, not `client` — the `client` grant has no `node`/`npm`/
+`npx`, which is the entire reason this gap exists.
