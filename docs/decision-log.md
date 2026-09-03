@@ -1556,6 +1556,25 @@ it is simply never the thing a verdict is computed from.
 - **Scope stays approval-record reconciliation.** This does not redesign
   `requires_approval`, the AP-3/AP-4 gestures, or any other asset-gate check.
 
+### Addendum: instruction wiring blocked, mechanical backstop shipped instead
+
+`approvalVerdict`/`GET /api/tasks/:id/approval` only closes the class of bug once a real consumer
+resolves approval from them instead of `ASSET_PROVENANCE.md` prose. The natural place to say that
+is `.claude/rules/assets.md` (loaded by the `assets` agent before deciding whether to generate
+against a gated reference) — but editing anything under `.claude/**` was refused in this session
+regardless of the `infra` agent's own documented scope; see
+`docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` for the exact refusals and the exact
+edit text a session with `.claude/**` write access should apply.
+
+In its place, `findApprovalDrift` (`tools/board/src/lib/approvalProvenanceDrift.js`) plus
+`.github/workflows/ci-approval-provenance-drift.yml` ship as an unconditional, code-only backstop:
+every PR touching `ASSET_PROVENANCE.md` or `tasks/**` is cross-checked, mechanically, against the
+board's real verdict for every card a provenance row names. It catches the T-0257/T-0243 drift
+shape on the next push. It does not, on its own, stop an agent from reading stale prose *before*
+that PR exists (the actual shape of the T-0243 incident) — that half of the fix is the deferred
+instruction edit above.
+
 **Touched docs (this entry):**
 - `docs/decision-log.md` — this entry (DL-27)
 - `docs/board-invariants.md` — new invariant AP-10
+- `docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` — the blocked-edit attempt log

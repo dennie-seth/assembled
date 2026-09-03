@@ -286,6 +286,24 @@ incident and the fix. `ASSET_PROVENANCE.md`'s note stays human-readable
 documentation for a reader with no board access; it is not consulted for the
 verdict, and no existing row is retroactively rewritten.
 
+**AP-10's mechanical backstop, and the instruction edit still owed.**
+`findApprovalDrift` (`tools/board/src/lib/approvalProvenanceDrift.js`) plus
+`ci-approval-provenance-drift.yml` cross-check every provenance row naming a
+card against that card's real `approvalVerdict` on every PR touching
+`ASSET_PROVENANCE.md` or `tasks/**` — a code-only, git-diff-level catch for
+exactly the T-0257/T-0243 drift shape, independent of any agent's own tool
+grants. What did **not** land in this pass: instructing the `assets` agent
+itself (`.claude/rules/assets.md`) to resolve approval from
+`GET /api/tasks/:id/approval` rather than from `ASSET_PROVENANCE.md`'s prose
+before it generates. Editing anything under `.claude/**` was refused at the
+session level while T-0286 was in progress; see
+`docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` for the exact
+refusals and the exact text to apply once a session with `.claude/**` write
+access is available. Until that lands, the CI sweep above is the only
+mechanical guard against this class of drift — it catches a stale row once a
+PR exists, but does not stop an agent from reading one before that PR exists,
+which is the shape the real T-0243 incident took.
+
 ---
 
 ## Summary
