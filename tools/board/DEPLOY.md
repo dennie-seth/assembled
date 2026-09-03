@@ -119,6 +119,52 @@ the Done path uses -- no separate pull/restart logic to keep in sync with PULL-1
   `restartCoordinator` -- it does not add a new restart path or a new way to touch the tree
   while the service is mid-merge.
 
+## Clean shutdown (T-0290)
+
+Every restart this poller (or `npm run deploy`, or a manual `systemctl --user restart`) triggers
+used to take the full length of systemd's `TimeoutStopSec` -- 90s by default -- because `npm run
+dev`'s process tree is several layers of `sh -c '<cmd>'` deep (`npm -> sh -c "concurrently ..." ->
+concurrently -> sh -c "npm run dev:server" -> npm -> sh -c "node --watch ..."`, and the same again
+for the client). A `sh -c '<cmd>'` layer that doesn't `exec` into `<cmd>` **forks and waits**
+instead of replacing itself, so it stays alive in the unit's cgroup as its own process, separate
+from the real work process it launched -- exactly the "three bare bash processes ignored [SIGTERM]
+entirely" the journal caught still sitting there when the `final-sigterm` timeout expired and
+systemd SIGKILLed them. Confirmed on this box with `/proc/<pid>/task/<pid>/children`: before the
+fix `npm run dev` has 5 such wrapper shells in its tree; after, none.
+
+**Fixed in this repo:** `dev`, `dev:server`, and `dev:client` in `package.json` now all prefix
+their command with `exec`, so every `sh -c` layer replaces itself with the program it runs instead
+of parenting it. This is verified by `test/devShutdown.test.js`, which walks the real process tree
+after `npm run dev` boots and asserts no `sh`/`bash`/`dash` PID remains anywhere in it.
+
+**Not fixed here -- needs a human edit to the live unit, which is outside this repo (see
+`~/.config/systemd/user/assembled-board.service` and its
+`assembled-board.service.d/override.conf` drop-in; **do not** touch `AUTO_LAUNCH_*` or
+`BOARD_TASK_STORE` in the drop-in while editing it):**
+
+- Change `ExecStart=/bin/bash -lc 'npm run dev'` to `ExecStart=/bin/bash -lc 'exec npm run dev'`.
+  Locally, `bash -lc '<single command>'` already self-optimizes into an `exec` (no separate `bash`
+  PID was observed surviving in testing here), so this specific host may already be fine without
+  it -- but it's a free, zero-risk hardening against whatever bash build/version is actually
+  running there, and it's what closes the loop with the `package.json` fix above end to end.
+- Confirm `KillMode` is left at its default (`control-group`) in the unit and the drop-in -- i.e.
+  neither sets `KillMode=process` or `KillMode=mixed`. `control-group` is what makes systemd signal
+  every process in the unit's cgroup on stop rather than only the tracked main PID; `process`/
+  `mixed` would only reach the top process, leaving the rest of the tree to a raw SIGKILL sweep on
+  timeout regardless of the `package.json` fix.
+- Leave `TimeoutStopSec` as is (or lower it as defense-in-depth only, never as the fix -- see the
+  card's acceptance criteria). The point of the change above is a clean stop that finishes in
+  seconds on its own, not a faster forced kill.
+- After editing: `systemctl --user daemon-reload && systemctl --user restart assembled-board`,
+  then `journalctl --user -u assembled-board -n 50` -- a clean stop reports success, not `Failed
+  with result 'timeout'`, and shows no `final-sigterm` timeout or `Killing process ... SIGKILL`
+  lines. Time the stop (e.g. `time systemctl --user stop assembled-board`) to confirm it's seconds,
+  not ~90s. This must be checked against the real unit -- the whole point is observed shutdown
+  behavior, not what the unit file says on paper.
+- This does not change `restartCoordinator`/PULL-3's idle-deferral behavior at all -- a restart
+  while a card run is active still waits for `notifyIdle()` before it ever calls `systemctl
+  restart`, same as before.
+
 ## Auto-launch poller (`src/runner/autoLaunchPoller.js`)
 
 Starts **at most one** `ready` card per tick, from inside the board process, when the board is
