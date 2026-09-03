@@ -26,17 +26,29 @@ const APPROVED_PHRASE = /\bAPPROVED\b/;
  * caught that until a human noticed and PR #307 fixed it by hand. This is the mechanical version
  * of that noticing, so it happens on the next CI run instead of after T-0243/44/45/46 sit blocked.
  *
- * A row this function cannot confidently classify (no id, no approval-shaped phrase, or an id
- * with no matching task) is silently skipped, never guessed at -- a missed drift is a false
- * negative, which is safe; a fabricated one would be a false FAIL blocking an unrelated PR.
+ * A row this function cannot confidently classify (no id, or no approval-shaped phrase) is
+ * silently skipped, never guessed at -- a missed drift is a false negative, which is safe; a
+ * fabricated one would be a false FAIL blocking an unrelated PR.
  *
- * @param {{ provenanceText: string, tasks: Array<object> }} args
+ * A row naming a card with **no matching task at all** (not "not gated" -- genuinely absent from
+ * `tasks`) is a different problem: the data source itself can't answer the question, most often
+ * because a card like T-0257 lives only in the board's db while `tasks` here was loaded from
+ * `FsTaskStore`'s `tasks/*.md` (which stops at T-0222; see `checkApprovalProvenanceDrift.js`).
+ * Silently skipping that case is exactly the false reassurance this function exists to prevent --
+ * "passed" must never mean "couldn't check." So it is reported as its own `newLines`-scoped
+ * drift kind. `newLines`, when given, is the set of lines the current diff actually *adds*
+ * (trimmed) -- unresolvable references are only ever loud for those, never for the ~200
+ * pre-existing rows a full-file scan would otherwise flag on every unrelated future PR, none of
+ * which this function has ever had the data to verify either way. Omitting `newLines` entirely
+ * (a caller with no diff context) keeps the original silent-skip behavior for this case.
+ *
+ * @param {{ provenanceText: string, tasks: Array<object>, newLines?: Set<string> }} args
  * @returns {{ ok: boolean, drifts: Array<{ taskId: string, kind: string, message: string }> }}
  */
-export function findApprovalDrift({ provenanceText, tasks = [] }) {
-  const verdictById = new Map();
+export function findApprovalDrift({ provenanceText, tasks = [], newLines = null }) {
+  const taskById = new Map();
   for (const t of tasks) {
-    if (t && typeof t.id === "string") verdictById.set(t.id, approvalVerdict(t));
+    if (t && typeof t.id === "string") taskById.set(t.id, t);
   }
 
   const drifts = [];
@@ -51,8 +63,23 @@ export function findApprovalDrift({ provenanceText, tasks = [] }) {
     if (!isStaleClaim && !isApprovedClaim) continue;
 
     for (const id of ids) {
-      const verdict = verdictById.get(id);
-      if (!verdict || !verdict.requiresApproval) continue;
+      const task = taskById.get(id);
+      if (!task) {
+        if (newLines && newLines.has(line.trim())) {
+          drifts.push({
+            taskId: id,
+            kind: "unverifiable-approval-claim",
+            message:
+              `ASSET_PROVENANCE.md's new row makes an approval claim about ${id}, but no task with ` +
+              `that id was found in the loaded task data -- this diff cannot be verified against the ` +
+              `board record (T-0286, docs/decision-log.md DL-27). If ${id} is a db-mode card, re-run ` +
+              `with BOARD_TASK_STORE=db against a reachable board.db; a missing data source is not a pass.`
+          });
+        }
+        continue;
+      }
+      const verdict = approvalVerdict(task);
+      if (!verdict.requiresApproval) continue;
 
       if (isStaleClaim && verdict.approved) {
         drifts.push({

@@ -6,9 +6,12 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { openDb } from "../src/lib/db/connection.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { findApprovalDrift } from "../src/lib/approvalProvenanceDrift.js";
+import { collectAddedLines } from "../src/lib/gitAddedLines.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const TASKS_DIR = path.join(REPO_ROOT, "tasks");
+// BOARD_TASKS_DIR: same override the live server (`src/server/index.js`) honors -- lets an
+// end-to-end test point this script at a fixture tasks/ directory instead of the real repo's.
+const TASKS_DIR = process.env.BOARD_TASKS_DIR || path.join(REPO_ROOT, "tasks");
 const DEFAULT_PROVENANCE_PATH = path.join(REPO_ROOT, "ASSET_PROVENANCE.md");
 
 /**
@@ -34,6 +37,10 @@ async function loadAllTasks() {
 
 async function main() {
   const provenancePath = process.argv[2] || DEFAULT_PROVENANCE_PATH;
+  const baseRef = process.argv[3] || "develop";
+  // BOARD_GIT_CWD: lets an end-to-end test point the git-diff scoping at a fixture repo instead
+  // of this real checkout -- mirrors BOARD_TASKS_DIR's override pattern above.
+  const gitCwd = process.env.BOARD_GIT_CWD || REPO_ROOT;
 
   let provenanceText;
   try {
@@ -47,7 +54,14 @@ async function main() {
   }
 
   const tasks = await loadAllTasks();
-  const report = findApprovalDrift({ provenanceText, tasks });
+  // Scopes the loud unresolvable-card-reference drift kind to lines this diff actually adds
+  // (see approvalProvenanceDrift.js's `newLines` docstring) -- null (can't compute the diff, e.g.
+  // baseRef doesn't exist) falls back to that check's original silent-skip behavior; the other
+  // two drift kinds are unaffected either way, since they only ever fire on a genuine board-vs-
+  // prose contradiction, not on missing data.
+  const relativeProvenancePath = path.relative(gitCwd, provenancePath);
+  const newLines = await collectAddedLines({ cwd: gitCwd, baseRef, file: relativeProvenancePath });
+  const report = findApprovalDrift({ provenanceText, tasks, newLines });
 
   if (report.ok) {
     console.log(
