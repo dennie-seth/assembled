@@ -399,4 +399,37 @@ describe("AP-10: GET /api/tasks/:id/approval is the single approval verdict", ()
     const verdict = await (await fetch(`${baseUrl}/api/tasks/${task.id}/approval`)).json();
     expect(verdict.approved).toBe(false);
   });
+
+  it(
+    "stages the real drift shape, not just the symbol's existence: a real ASSET_PROVENANCE.md-" +
+      "shaped fixture whose row still reads 'not yet approved' sits on disk next to a board " +
+      "record that IS approved -- the endpoint must side with the board, so this test would fail " +
+      "if a future change ever made this path fall back to parsing that file's prose",
+    async () => {
+      const task = await createTask({ requires_approval: true, status: "review" });
+      await patch(task.id, { status: "done" }, HUMAN);
+
+      // The exact shape that blocked T-0243: a provenance row for the card's own asset that has
+      // not been hand-propagated yet, committed right next to a board record that already is
+      // approved (docs/decision-log.md DL-27's own T-0257 example, reproduced structurally).
+      const provenancePath = path.join(tasksDir, "ASSET_PROVENANCE.md");
+      const staleRow =
+        `| \`assets/src/concept/example_v1.png\` (${task.id} — reference gate) | model + license + ` +
+        "prompt + seed | This card parks for human direction approval per §23-h's pattern -- " +
+        "not yet approved. | MIT | test asset | seed=1 |\n";
+      await fs.writeFile(provenancePath, `# Asset Provenance\n\n${staleRow}`, "utf8");
+
+      // Confirm the fixture is genuinely stale before trusting the assertion below -- otherwise
+      // a typo in the fixture text would make this pass for the wrong reason.
+      const provenanceText = await fs.readFile(provenancePath, "utf8");
+      expect(provenanceText.toLowerCase()).toContain("not yet approved");
+      expect(provenanceText).toContain(task.id);
+
+      const verdict = await (await fetch(`${baseUrl}/api/tasks/${task.id}/approval`)).json();
+
+      expect(verdict.approved).toBe(true);
+      expect(verdict.approvedBy).toBeTruthy();
+      expect(verdict.approvedAt).toBeTruthy();
+    }
+  );
 });
