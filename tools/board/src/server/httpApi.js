@@ -16,6 +16,7 @@ import {
   actorFromHeaders,
   approvalRecord,
   approvalRecordedComment,
+  approvalVerdict,
   isAgentActor,
   isApprovalMarker,
   needsApproval,
@@ -28,6 +29,7 @@ import {
 } from "../lib/approvalGate.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
+const TASK_APPROVAL_PATH_RE = /^\/api\/tasks\/([^/]+)\/approval$/;
 const TASK_RUN_PATH_RE = /^\/api\/tasks\/([^/]+)\/run$/;
 const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
 const TASK_COMMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/comments$/;
@@ -343,6 +345,20 @@ async function handleGetTask(store, id, res) {
     throw new HttpError(404, `Task ${id} not found`);
   }
   sendJson(res, 200, task);
+}
+
+/**
+ * The board's single, authoritative approval verdict for a card (T-0286, docs/decision-log.md
+ * DL-27, approvalGate.js's `approvalVerdict`). A consumer that needs "is this asset/card
+ * approved?" calls this instead of mirroring the board's approval into -- and then having to
+ * keep in sync with -- a second record such as `ASSET_PROVENANCE.md`'s prose.
+ */
+async function handleGetApproval(store, id, res) {
+  const task = await store.get(id);
+  if (!task) {
+    throw new HttpError(404, `Task ${id} not found`);
+  }
+  sendJson(res, 200, approvalVerdict(task));
 }
 
 /** Statuses a card never comes back from, and so never needs its preserved artifacts again. */
@@ -1038,6 +1054,7 @@ export function createRequestListener({
     try {
       const { pathname } = new URL(req.url, "http://localhost");
       const idMatch = TASK_ID_PATH_RE.exec(pathname);
+      const approvalMatch = TASK_APPROVAL_PATH_RE.exec(pathname);
       const runMatch = TASK_RUN_PATH_RE.exec(pathname);
       const cancelMatch = TASK_CANCEL_PATH_RE.exec(pathname);
       const commentsMatch = TASK_COMMENTS_PATH_RE.exec(pathname);
@@ -1071,6 +1088,9 @@ export function createRequestListener({
       }
       if (idMatch && req.method === "GET") {
         return await handleGetTask(store, idMatch[1], res);
+      }
+      if (approvalMatch && req.method === "GET") {
+        return await handleGetApproval(store, approvalMatch[1], res);
       }
       if (idMatch && req.method === "PATCH") {
         return await handlePatchTask(

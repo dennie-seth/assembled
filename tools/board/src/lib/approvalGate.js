@@ -280,3 +280,48 @@ export function parkedForApprovalComment(taskId) {
 export function approvalRecordedComment({ actor, approvedAt }) {
   return `APPROVAL RECORDED — approved by ${actor} at ${approvedAt}. Dependents are now unblocked.`;
 }
+
+/**
+ * The single, authoritative approval verdict for `task` (T-0286, docs/decision-log.md DL-27).
+ *
+ * Before this, a direction approval lived in two places -- this module's own
+ * `requires_approval`/`approved_by`/`approved_at`, and a hand-maintained prose line in
+ * `ASSET_PROVENANCE.md` -- and nothing kept them in sync. T-0257 was approved on the board
+ * 2026-08-30; `ASSET_PROVENANCE.md`'s row for its concept sheet still read "Not yet approved"
+ * days later, and T-0243/T-0244/T-0245/T-0246 stayed blocked on a decision that had already
+ * been made (PR #307 fixed that one row by hand). The board record was always the real
+ * verdict; the fix is to make it the *only* one anything resolves approval from.
+ *
+ * `approvalVerdict` is a pure read over `requiresApproval`/`isApproved` -- exactly the fields
+ * AP-3/AP-4 write, nothing else. It has no way to set `approved_by`/`approved_at`, so it can
+ * report an existing human stamp but can never mint one. Exposed over HTTP as
+ * `GET /api/tasks/:id/approval` so a consumer resolves approval from the board directly,
+ * instead of mirroring it into a second file that can then go stale.
+ */
+export function approvalVerdict(task) {
+  const gated = requiresApproval(task);
+  const approved = !gated || isApproved(task);
+  const approvedBy = approved && gated ? task.approved_by : null;
+  const approvedAt = approved && gated ? task.approved_at : null;
+
+  let reason;
+  if (!gated) {
+    reason = "card does not require a human direction approval";
+  } else if (approved) {
+    reason = `approved by ${approvedBy} at ${approvedAt} (recorded on the board)`;
+  } else {
+    reason =
+      "requires_approval is set but no human approval is recorded on the board " +
+      '(approved_by/approved_at empty) -- a human must approve via the board ' +
+      '(drag to Done, or comment "APPROVED")';
+  }
+
+  return {
+    taskId: task && task.id != null ? task.id : null,
+    requiresApproval: gated,
+    approved,
+    approvedBy,
+    approvedAt,
+    reason
+  };
+}
