@@ -1556,23 +1556,51 @@ it is simply never the thing a verdict is computed from.
 - **Scope stays approval-record reconciliation.** This does not redesign
   `requires_approval`, the AP-3/AP-4 gestures, or any other asset-gate check.
 
-### Addendum: instruction wiring blocked, mechanical backstop shipped instead
+### Addendum: instruction wiring blocked, two other backstops shipped instead
 
 `approvalVerdict`/`GET /api/tasks/:id/approval` only closes the class of bug once a real consumer
 resolves approval from them instead of `ASSET_PROVENANCE.md` prose. The natural place to say that
 is `.claude/rules/assets.md` (loaded by the `assets` agent before deciding whether to generate
-against a gated reference) — but editing anything under `.claude/**` was refused in this session
-regardless of the `infra` agent's own documented scope; see
+against a gated reference) — but editing anything under `.claude/**` was refused in this session,
+confirmed across four separate attempts on two different files in two different sessions (T-0286
+run-1's `.claude/rules/assets.md`/`.claude/agents/assets.md`, T-0286 run-2's re-confirmation on
+`.claude/rules/js.md`, an unrelated file, which ruled out a per-file cause), regardless of the
+`infra` agent's own documented scope. This reads as a session/harness-level guard on `.claude/**`
+itself, not a per-file or per-content check. See
 `docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` for the exact refusals and the exact
 edit text a session with `.claude/**` write access should apply.
 
-In its place, `findApprovalDrift` (`tools/board/src/lib/approvalProvenanceDrift.js`) plus
-`.github/workflows/ci-approval-provenance-drift.yml` ship as an unconditional, code-only backstop:
-every PR touching `ASSET_PROVENANCE.md` or `tasks/**` is cross-checked, mechanically, against the
-board's real verdict for every card a provenance row names. It catches the T-0257/T-0243 drift
-shape on the next push. It does not, on its own, stop an agent from reading stale prose *before*
-that PR exists (the actual shape of the T-0243 incident) — that half of the fix is the deferred
-instruction edit above.
+**Two backstops shipped instead, run-2, aimed at the two different environments a consumer could
+actually check this in:**
+
+1. **CI (`checkApprovalProvenanceDrift.js` / `ci-approval-provenance-drift.yml`).** Run-1 shipped
+   this against `FsTaskStore` reading `tasks/*.md`, which stops at T-0222 — every card in the real
+   incident (T-0243/44/45/46, T-0257) lives only in the board's own db
+   (`docs/design/cards-to-database.md`), which is deliberately kept outside git and is not
+   reachable from a fresh GitHub Actions checkout. Run-1's check silently printed "passed" for
+   exactly the cards it could not see — a missing data source rendering a reassuring pass, the
+   opposite of what a backstop is for. `findApprovalDrift` now reports a distinct
+   `unverifiable-approval-claim` drift kind for an approval-shaped provenance row naming a card
+   with no matching task at all, bounded (via the new `collectAddedLines` git-diff helper) to
+   rows the current PR's diff actually adds — never the ~200 pre-existing rows this repo's own
+   fs-mode task list has never been able to resolve, which would otherwise turn every future
+   unrelated PR permanently red. This makes the CI job loud instead of falsely green for the
+   T-0223+ gap, but does not close it: CI still cannot resolve a db-mode card's real verdict, only
+   refuse to pretend it can. Closing that gap for real would mean either exporting board approval
+   state into a git-committed, CI-reachable form, or making the workflow reachable to the live
+   db — both are a materially bigger change than approval-record reconciliation and are left as a
+   follow-up card if the team wants CI-side coverage for db-mode cards specifically.
+2. **The live board process itself (`approvalProvenanceStaleNotice`, wired into both
+   `handlePatchTask` and `handleAddComment` in `httpApi.js`).** This is the one place that never
+   has the CI gap: the board server holds the live, just-written approval record *and* a real git
+   checkout of `ASSET_PROVENANCE.md` in the same process, on the same machine, at the exact moment
+   a human's AP-3/AP-4 gesture stamps an approval. When the file's prose still contradicts what was
+   just recorded, the board posts an informational `assembled-board` comment on the same card,
+   live — the T-0257/T-0243 drift could have surfaced this way on 2026-08-30 itself, instead of
+   sitting unnoticed for days. Read-only against `ASSET_PROVENANCE.md` and never blocks the
+   approval; it does not, by itself, stop an agent from reading stale prose before generating (the
+   actual shape of the T-0243 incident) — that half of the fix is still the deferred instruction
+   edit above, which needs a human with `.claude/**` write access, not this session.
 
 **Touched docs (this entry):**
 - `docs/decision-log.md` — this entry (DL-27)

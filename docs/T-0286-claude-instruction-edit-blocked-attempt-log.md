@@ -91,3 +91,54 @@ touches `ASSET_PROVENANCE.md` into an automatic FAIL on a denied command, per `r
 (correct) fail-closed policy, rather than the drift check it was meant to be. The CI workflow is
 the safe way to enforce it unconditionally; routing it through the reviewer agent should wait until
 whoever has `.claude/**` write access can add the matching grant at the same time.
+
+## Run 2: re-confirmed the block is session/harness-wide, not per-file
+
+The prior VALIDATION verdict (run 2 of 5) pointed out, correctly, that the CI check above has its
+own gap: it reads `FsTaskStore` over `tasks/*.md`, which stops at T-0222, while every card in the
+real incident (T-0243/44/45/46, T-0257) lives only in the board's db (`docs/design/cards-to-
+database.md` — deliberately kept outside git). A fresh GitHub Actions checkout has no access to
+that db at all, so the check was silently printing "passed" for exactly the cards it could not
+resolve.
+
+Before writing more code, this run re-attempted the `.claude/**` edit directly, on two different
+files, to rule out "assets.md and agents/assets.md specifically are blocked" as opposed to "the
+whole tree is blocked regardless of content or agent scope":
+
+```
+Edit(.claude/rules/assets.md)  -> "Claude requested permissions to edit
+  .../.claude/rules/assets.md which is a sensitive file."
+Edit(.claude/rules/js.md)      -> same refusal, same wording, on a file with
+  no connection to assets, approval, or anything sensitive about its content
+```
+
+Both refused, identically, before any write occurred. `js.md` is a plain conventions file this
+same `infra` agent edits routinely and is nowhere near this card's actual subject matter — there
+is no plausible per-file or per-content reason to block it. This confirms the harness applies a
+blanket guard to `.claude/**` in this session, independent of which file or which agent's own
+documented scope claims write access to it. Retrying the specific instruction edit a third time
+would not be a different experiment; it has been ruled out.
+
+**What shipped instead, this run, is two further backstops** (see `docs/decision-log.md` DL-27's
+addendum for the full reasoning):
+
+1. `findApprovalDrift` gained a distinct `unverifiable-approval-claim` drift kind for a provenance
+   row naming a card the loaded task data has no record of at all, bounded by a new
+   `collectAddedLines` git-diff helper to rows the current PR's diff actually adds — so the CI
+   check is now loud, not falsely green, about the exact data-source gap the prior verdict found.
+   This does not close that gap (CI still cannot resolve a db-mode card's real verdict), only
+   refuses to pretend it can; actually closing it needs either a git-committed export of board
+   approval state or a CI-reachable db, both bigger than approval-record reconciliation and left
+   as a follow-up if the team wants CI-side coverage of db-mode cards specifically.
+2. `approvalProvenanceStaleNotice`, wired into both of `httpApi.js`'s approval write paths
+   (`handlePatchTask`'s drag-to-Done, `handleAddComment`'s "APPROVED" comment). This is the one
+   place that never has the CI gap at all: the board server already holds the live, just-recorded
+   approval and a real git checkout of `ASSET_PROVENANCE.md` in the same process, so it can check
+   for exactly this drift live, at the moment a human approves, and post an informational board
+   comment if the file's prose still disagrees — no CI, no git diff, no data-source gap.
+
+Neither of these is the instruction-level fix. Both are real, working, unconditional code — they
+just can't be the thing that stops the `assets` agent from reading stale `ASSET_PROVENANCE.md`
+prose *before* generating, which is the actual shape the T-0243 incident took. That specific fix
+still needs a human (or a session with `.claude/**` write access) to apply the edit under "The edit
+a human... should apply" above.

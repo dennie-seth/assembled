@@ -17,6 +17,7 @@ on:
       - "tasks/**"
       - "tools/board/src/lib/approvalGate.js"
       - "tools/board/src/lib/approvalProvenanceDrift.js"
+      - "tools/board/src/lib/gitAddedLines.js"
       - "tools/board/scripts/checkApprovalProvenanceDrift.js"
       - ".github/workflows/ci-approval-provenance-drift.yml"
   push:
@@ -26,6 +27,7 @@ on:
       - "tasks/**"
       - "tools/board/src/lib/approvalGate.js"
       - "tools/board/src/lib/approvalProvenanceDrift.js"
+      - "tools/board/src/lib/gitAddedLines.js"
       - "tools/board/scripts/checkApprovalProvenanceDrift.js"
       - ".github/workflows/ci-approval-provenance-drift.yml"
 
@@ -38,7 +40,13 @@ jobs:
     name: ASSET_PROVENANCE.md vs board approval verdict
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 -- checkApprovalProvenanceDrift.js diffs against origin/develop to scope
+      # its loud unresolvable-card-reference check to lines the current PR actually adds (see
+      # gitAddedLines.js); the default shallow (fetch-depth: 1) checkout wouldn't have that ref
+      # at all, and the diff would silently fail closed to "can't scope, skip the loud check".
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -49,4 +57,12 @@ jobs:
       - run: npm ci
         working-directory: tools/board
 
-      - run: node tools/board/scripts/checkApprovalProvenanceDrift.js
+      # NOTE: this runs in fs mode (FsTaskStore over tasks/*.md), never db mode -- the board's
+      # sqlite db lives outside git by design (docs/design/cards-to-database.md) and is not
+      # reachable from this fresh checkout. Every card from T-0223 onward (including T-0257, the
+      # card this whole workflow exists because of) lives only in that db, so this job cannot
+      # resolve their real verdict -- it can only refuse to silently pass when it can't (the
+      # unverifiable-approval-claim drift kind). See docs/decision-log.md DL-27's addendum and
+      # docs/T-0286-claude-instruction-edit-blocked-attempt-log.md for the live board-side
+      # backstop (approvalProvenanceStaleNotice) that covers the gap this job structurally can't.
+      - run: node tools/board/scripts/checkApprovalProvenanceDrift.js "$GITHUB_WORKSPACE/ASSET_PROVENANCE.md" "origin/develop"
