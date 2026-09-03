@@ -194,6 +194,47 @@ successfully this time (no 504) — the fetch stopped at the licence gate
 (`by-nc-sa`, correctly rejected) rather than at transport. This confirms
 the card's own framing: Openverse's outage is upstream and intermittent,
 not a permanent 504, which is exactly why treating it as best-effort
-(Part 2 below) rather than deleting or permanently disabling it is the
+(see T-0284 below) rather than deleting or permanently disabling it is the
 right call — it recovers on its own, and a run should benefit when it
 does rather than needing a code change to re-enable it.
+
+## T-0284: a policy-compliant User-Agent, and a third source
+
+Both fixes below are a direct response to the finding above: `search`
+(a lighter endpoint) kept working through the whole T-0283 session while
+`fetch`'s byte requests to `upload.wikimedia.org` 429'd hard, and the
+outbound User-Agent this tool sent was a bare, contactless token —
+exactly the shape Wikimedia's own User-Agent policy documents as getting
+throttled aggressively.
+
+**Part 1 — the UA now carries a contact.** `referenceTransport.js`'s
+`REFERENCE_USER_AGENT` is now
+`assembled-reference-sourcing/1.0 (+https://github.com/dennie-seth/assembled)`
+— tool name, version, and a reachable contact, per policy. The public
+repo URL is the contact; no email or other address was fabricated for
+this, per the card's own instruction not to invent one.
+
+**Part 2 — a third, independent source.** `referenceSourcePolicy.js`
+adds `met` (the Metropolitan Museum of Art's Open Access API,
+`collectionapi.metmuseum.org` for search/metadata,
+`images.metmuseum.org` for bytes), `required: false`. It was chosen over
+the other candidates the card listed (Smithsonian, Rijksmuseum, Art
+Institute of Chicago) because it needs no API key, its rights model is a
+simple per-object boolean (`isPublicDomain`) rather than a
+licence-string parse, and its infrastructure shares nothing with either
+Wikimedia or Openverse — a genuine third leg, not a second front door to
+a host already on the allowlist. Its licence gate works the same way as
+the other two sources: `isPublicDomain !== true` (false, or the field
+missing) maps to *no* licence at all and is rejected by
+`referenceLicense.js` exactly like a missing Wikimedia/Openverse licence
+field — there is no "trusted museum, so unknown is fine" shortcut. It
+goes through the identical allowlist / redirect-cap / mime-sniff /
+quarantine-only / rate-limit gauntlet as the existing two sources; see
+`referenceSourcePolicy.test.js` and `referenceSourcing.test.js` for the
+per-defence tests. `referenceFetch.js`'s CLI needed no change at all — it
+already derives its source list from `listSourceIds()`.
+
+No live 429 reproduction was attempted for this card beyond what T-0283
+already captured above — the 429 window observed there was still active
+and hammering it further would only extend it (see the card's own edge
+cases). Both fixes are verified by mocked-transport unit tests only.
