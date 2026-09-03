@@ -125,9 +125,10 @@ describe("live approval-time ASSET_PROVENANCE.md staleness notice", () => {
       const onDisk = await fs.readFile(path.join(repoRoot, "ASSET_PROVENANCE.md"), "utf8");
       expect(onDisk).toMatch(/\bAPPROVED\b/);
       expect(onDisk).not.toMatch(/not yet approved/i);
-      expect(onDisk).toContain(task.approved_by);
-      // never invents an approval it doesn't already have -- the only stamp on disk is the one
-      // the human's drag-to-Done gesture just recorded on the task itself.
+      // carries only the stamp the drag-to-Done gesture itself just recorded on the task -- never
+      // invents one.
+      expect(updated.approved_by).toBeTruthy();
+      expect(onDisk).toContain(updated.approved_by);
       expect(onDisk).toContain(task.id);
       const notice = updated.comments.find((c) => c.author === "assembled-board");
       expect(notice).toBeDefined();

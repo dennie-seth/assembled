@@ -28,6 +28,7 @@ import {
   REQUIRES_APPROVAL_FIELD
 } from "../lib/approvalGate.js";
 import { approvalProvenanceStaleNotice } from "../lib/approvalProvenanceNotice.js";
+import { refreshApprovalProvenanceFile } from "../lib/approvalProvenanceSync.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_APPROVAL_PATH_RE = /^\/api\/tasks\/([^/]+)\/approval$/;
@@ -441,15 +442,48 @@ async function applyApprovalGateToPatch({ store, id, body, actor }) {
  * DL-27), called right after either approval write path (AP-3's drag-to-Done, AP-4's "APPROVED"
  * comment) records a fresh approval on `task`. Reads the real `ASSET_PROVENANCE.md` in `repoRoot`
  * -- the one thing CI's fresh-checkout runner can never do for a card that lives only in this
- * board's own db -- and, if its prose still contradicts the approval that was just recorded,
- * returns a ready-to-append informational comment. Returns `null` when there's nothing to flag.
- * Never touches `ASSET_PROVENANCE.md`, never blocks or alters the approval itself: a failure here
- * is swallowed by the caller exactly like every other best-effort side effect on this path
- * (see `commitTaskFile`'s call sites above).
+ * board's own db -- and, if its prose still contradicts the approval that was just recorded, both
+ * (a) auto-syncs the specific stale row via `refreshApprovalProvenanceFile` -- forwarding only
+ * `task.approved_by`/`task.approved_at`, which can only already exist because a human AP-3/AP-4
+ * gesture put them there, so this can never mint an approval -- and commits the result, and
+ * (b) returns a ready-to-append informational comment describing what happened. This is the
+ * DL-27 addendum: `approvalVerdict`/`GET /api/tasks/:id/approval` make the board record
+ * resolvable by anything with board access, but the `assets` package's own pytest gates read
+ * `ASSET_PROVENANCE.md`'s prose directly and offline (`"APPROVED" in row`), and redirecting them
+ * is outside this agent's own path scope (`assets/src/concept/tests/**`) -- so the file itself is
+ * kept truthful instead. Returns `null` when there's nothing to flag. Never blocks or alters the
+ * approval itself, and never rewrites a row that isn't the one flagged stale for this task -- a
+ * failure here is swallowed by the caller exactly like every other best-effort side effect on
+ * this path (see `commitTaskFile`'s call sites above).
  */
 async function approvalProvenanceNoticeComment({ repoRoot, task }) {
   const notice = await approvalProvenanceStaleNotice({ repoRoot, task });
   if (!notice) return null;
+
+  try {
+    const synced = await refreshApprovalProvenanceFile({ repoRoot, task });
+    if (synced) {
+      await commitPaths({
+        repoRoot,
+        filePaths: ["ASSET_PROVENANCE.md"],
+        message: `chore(assets): sync ASSET_PROVENANCE.md approval for ${task.id} (T-0286)`
+      });
+      return {
+        author: "assembled-board",
+        text:
+          `ASSET_PROVENANCE.md's row for ${task.id} still read unapproved -- auto-synced to carry ` +
+          `the board's recorded approval (approved_by=${task.approved_by} at ${task.approved_at}). ` +
+          `The board record is authoritative (T-0286, docs/decision-log.md DL-27); this keeps the ` +
+          `file truthful for offline readers, including consumers outside this agent's own path scope.`,
+        timestamp: new Date().toISOString()
+      };
+    }
+  } catch (err) {
+    // Same posture as the try/catch below: a check against a *human-readable* prose file must
+    // never fail the approval it's reporting on. Fall back to the read-only notice.
+    console.warn(`Board: failed to auto-sync ASSET_PROVENANCE.md for ${task.id}:`, err.message);
+  }
+
   return { author: "assembled-board", text: notice, timestamp: new Date().toISOString() };
 }
 
