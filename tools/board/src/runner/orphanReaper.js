@@ -57,11 +57,40 @@ async function commitReapedCard({ taskId, repoRoot, tasksDir, git, taskStoreKind
   }
 }
 
-async function reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, noteText = RECOVERY_NOTE_TEXT) {
+/**
+ * Formats a reap decision's inputs for the journal -- see gatherDiagnostics. Module-level rather
+ * than closed over inside createOrphanReaper, because `reapCard` is module-level and is now the
+ * single place a reap line is emitted. Pure: depends only on its argument.
+ */
+function describeRunStatus(diagnostics) {
+  if (!diagnostics) return "no runstate recorded";
+  const { pid, pidAlive, logAgeMs, heartbeatAgeMs } = diagnostics;
+  const fmt = (ms) => (ms === null ? "n/a" : `${Math.round(ms)}ms`);
+  return `pid=${pid ?? "n/a"} pidAlive=${pidAlive ?? "n/a"} logAge=${fmt(logAgeMs)} heartbeatAge=${fmt(heartbeatAgeMs)}`;
+}
+
+async function reapCard(
+  store,
+  hub,
+  task,
+  { repoRoot, tasksDir, git, taskStoreKind },
+  noteText = RECOVERY_NOTE_TEXT,
+  { logger = console, verdict = null, diagnostics = null } = {}
+) {
+  // Fix-plan item #2 (docs/reviews/2026-09-03-run-lifecycle-state-management.md): every reap
+  // emits exactly one canonical line, from the single place a reap can happen, so no future call
+  // site can add a silent path. Reaps were previously logged only at the call sites; on
+  // 2026-09-03 eight fired against live runs and the journal recorded none of them, which is why
+  // the defect went undiagnosed for a day and why T-0289 settled on the wrong root cause. A reap
+  // rewrites a human-visible card -- it is never allowed to be silent.
   const updated = await store.update(task.id, {
     status: "blocked",
     body: appendNote(task.body, "Recovered", noteText)
   });
+  logger.log(
+    `orphan-reaper: reaped card ${task.id} (was ${task.status}) -- verdict=${verdict ?? "n/a"} ` +
+      `[${describeRunStatus(diagnostics)}]`
+  );
   hub.broadcast({ type: "changed", id: task.id, task: updated });
   await commitReapedCard({ taskId: task.id, repoRoot, tasksDir, git, taskStoreKind });
   return updated;
@@ -136,6 +165,49 @@ export function createOrphanReaper({
   let timer = null;
 
   /**
+   * Fix-plan item #1 (docs/reviews/2026-09-03-run-lifecycle-state-management.md): the
+   * orchestrator's in-memory `activeCardIds` (shared by reference -- see boardServer.js) is the
+   * authority on whether a run is live. It is exact, where this module's pid/log-mtime inference
+   * is lossy and goes stale by design during the normal gap between phases. A card the
+   * orchestrator owns therefore has its status written by the orchestrator alone.
+   *
+   * "Owns" deliberately excludes cards THIS module readopted: those entered `activeCardIds` via
+   * `readopt()` below and have no other exit (runOrchestrator.js's own `activeCardIds.delete`
+   * lives inside a `runCard()` that does not exist for them), so the reaper must still be able to
+   * release and reap its own entries -- that is T-0289/#314's fix and is preserved here. The rule
+   * is "never touch an entry you did not add", not "never touch the Set".
+   */
+  function orchestratorOwns(taskId) {
+    return Boolean(activeCardIds && activeCardIds.has(taskId) && !readoptedCardIds.has(taskId));
+  }
+
+  /** Removes only an id this module readopted. Never evicts an orchestrator-owned run. */
+  function releaseReadoption(taskId) {
+    if (!readoptedCardIds.has(taskId)) return false;
+    readoptedCardIds.delete(taskId);
+    if (activeCardIds && typeof activeCardIds.delete === "function") activeCardIds.delete(taskId);
+    return true;
+  }
+
+  /**
+   * Last check before any status write. `checkRunStatus` awaits (a file read plus one or more
+   * stats), and the orphan-candidate path additionally spans a grace window measured across
+   * sweeps -- a run can legitimately start in either gap, via POST /run or the auto-launch
+   * poller. Re-reading the authority immediately before the write closes that race; without it a
+   * reap lands on top of a run that started microseconds earlier, producing exactly the
+   * live-run-marked-blocked symptom this fix exists to remove.
+   */
+  function suppressedByOwnership(taskId, verdict, diagnostics) {
+    if (!orchestratorOwns(taskId)) return false;
+    logger.log(
+      `orphan-reaper: card ${taskId} would have been reaped (verdict=${verdict}) but the ` +
+        `orchestrator still owns it -- suppressed, its own run will finish it ` +
+        `[${describeRunStatus(diagnostics)}]`
+    );
+    return true;
+  }
+
+  /**
    * Four-way liveness verdict for a card's recorded run, plus the raw inputs the verdict was
    * built on -- so a reap can log exactly why it fired (see `describeRunStatus` below) instead of
    * requiring a human to reconstruct it live, as happened for both T-0276 and T-0287. Verdicts:
@@ -207,14 +279,6 @@ export function createOrphanReaper({
     return { pid, pidAlive, logAgeMs, heartbeatAgeMs };
   }
 
-  /** Formats a reap decision's inputs for the journal -- see gatherDiagnostics. */
-  function describeRunStatus(diagnostics) {
-    if (!diagnostics) return "no runstate recorded";
-    const { pid, pidAlive, logAgeMs, heartbeatAgeMs } = diagnostics;
-    const fmt = (ms) => (ms === null ? "n/a" : `${Math.round(ms)}ms`);
-    return `pid=${pid ?? "n/a"} pidAlive=${pidAlive ?? "n/a"} logAge=${fmt(logAgeMs)} heartbeatAge=${fmt(heartbeatAgeMs)}`;
-  }
-
   /** Best-effort: a kill failure must never crash the sweep/startup pass itself. */
   async function killWedgedRun(taskId) {
     const state = await readRunStateFn({ runsDir, taskId });
@@ -260,8 +324,13 @@ export function createOrphanReaper({
         continue;
       }
       if (verdict === "wedged") {
+        if (suppressedByOwnership(task.id, verdict, diagnostics)) continue;
         await killWedgedRun(task.id);
-        await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, WEDGED_NOTE_TEXT);
+        await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, WEDGED_NOTE_TEXT, {
+          logger,
+          verdict,
+          diagnostics
+        });
         reaped.push(task.id);
         logger.log(
           `assembled-board: card ${task.id}'s recorded pid was alive but its run log was stale on startup -- ` +
@@ -269,7 +338,12 @@ export function createOrphanReaper({
         );
         continue;
       }
-      await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind });
+      if (suppressedByOwnership(task.id, verdict, diagnostics)) continue;
+      await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, RECOVERY_NOTE_TEXT, {
+        logger,
+        verdict,
+        diagnostics
+      });
       reaped.push(task.id);
       logger.log(
         `assembled-board: recovered orphaned card ${task.id} on startup (was ${task.status}) [${describeRunStatus(diagnostics)}]`
@@ -306,6 +380,12 @@ export function createOrphanReaper({
                 `treated as wedged, process group killed (its own run will observe the exit and finish handling it) ` +
                 `[${describeRunStatus(diagnostics)}]`
             );
+          } else if (verdict === "dead" && orchestratorOwns(task.id)) {
+            // Our inference says "dead" for a card the orchestrator owns -- that is this module
+            // being wrong (a since-exited pid from the previous phase alongside a quiet log), not
+            // a dead run. Suppress, and say so loudly: a silently suppressed reap is as invisible
+            // as a silently fired one, and both cost us a day.
+            suppressedByOwnership(task.id, verdict, diagnostics);
           } else if (verdict === "dead" && readoptedCardIds.has(task.id)) {
             // Backstop for a card that reached activeCardIds via readopt() (a confirmed-alive
             // pid at readopt time -- legitimate at the time) whose run has since genuinely ended
@@ -321,9 +401,12 @@ export function createOrphanReaper({
             // between runOrchestrator.js's per-phase writeRunState calls (e.g. mid PR-open,
             // which can legitimately run past DEFAULT_HEARTBEAT_STALE_MS) when the runstate on
             // disk can transiently hold a since-exited child's pid alongside a stale-looking log.
-            activeCardIds.delete(task.id);
-            readoptedCardIds.delete(task.id);
-            await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind });
+            releaseReadoption(task.id);
+            await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, RECOVERY_NOTE_TEXT, {
+              logger,
+              verdict,
+              diagnostics
+            });
             reaped.push(task.id);
             logger.log(
               `assembled-board: card ${task.id} was tracked as active (likely re-adopted after a confirmed-alive pid ` +
@@ -359,8 +442,13 @@ export function createOrphanReaper({
           continue;
         }
         if (runStatus === "wedged") {
+          if (suppressedByOwnership(task.id, runStatus, diagnostics)) continue;
           await killWedgedRun(task.id);
-          await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, WEDGED_NOTE_TEXT);
+          await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, WEDGED_NOTE_TEXT, {
+            logger,
+            verdict: runStatus,
+            diagnostics
+          });
           orphanSince.delete(task.id);
           reaped.push(task.id);
           logger.log(
@@ -369,7 +457,12 @@ export function createOrphanReaper({
           );
           continue;
         }
-        await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind });
+        if (suppressedByOwnership(task.id, runStatus, diagnostics)) continue;
+        await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, RECOVERY_NOTE_TEXT, {
+          logger,
+          verdict: runStatus,
+          diagnostics
+        });
         orphanSince.delete(task.id);
         reaped.push(task.id);
         logger.log(
