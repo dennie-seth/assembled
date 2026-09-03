@@ -165,6 +165,22 @@ after `npm run dev` boots and asserts no `sh`/`bash`/`dash` PID remains anywhere
   while a card run is active still waits for `notifyIdle()` before it ever calls `systemctl
   restart`, same as before.
 
+**Why no agent run ever performs the measurement above itself, confirmed again in the T-0290
+implementer/reviewer sessions:** it is not just that neither role is granted `systemctl`/
+`journalctl` (`systemctl --user status assembled-board` was attempted directly and came back
+"This command requires approval" with no grant to satisfy it) -- even with the grant it would be
+unsafe to use from inside a card run. `restartBoardService` in `src/runner/serviceRestart.js`
+spells out why: "The card runner (`claude -p`) is a child of this same unit, so a naive restart
+from inside a request handler would tear itself down along with any in-flight run." An implementer
+or reviewer session *is* exactly such a card run -- issuing `systemctl --user restart
+assembled-board` from inside one would SIGTERM its own ancestor unit mid-verification, which is
+the identical false-alarm shape this whole card exists to stop (T-0111's failure mode, and the
+"the board CRASHED" false alarm this card's own description opens with). The before/after stop
+duration and the SIGKILL/timeout-free journal excerpt the acceptance criteria ask for can only be
+gathered by a human, running the commands above from a shell that is *not* itself a descendant of
+`assembled-board.service`, after this branch lands. Recording that measurement on the card is the
+one remaining step; it is not something a future implementer or reviewer run should keep re-trying.
+
 ## Auto-launch poller (`src/runner/autoLaunchPoller.js`)
 
 Starts **at most one** `ready` card per tick, from inside the board process, when the board is
