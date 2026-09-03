@@ -1108,7 +1108,9 @@ export class RunOrchestrator {
       await this._linkDependsOn(taskId, remediation.id);
     } catch (err) {
       console.warn(`Board: escalation failed for ${taskId} (card remains blocked, no report/remediation created):`, err.message);
-      await this._logEscalation(taskId, runLog, `Escalation failed: ${err.message}`).catch(() => {});
+      await this._logEscalation(taskId, runLog, `Escalation failed: ${err.message}`).catch((logErr) => {
+        console.warn(`Board: also failed to record the escalation failure for ${taskId} to the run log:`, logErr.message);
+      });
     }
   }
 

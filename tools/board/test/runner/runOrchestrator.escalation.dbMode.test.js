@@ -121,6 +121,10 @@ describe("RunOrchestrator escalation in real db mode -- reproduces the tasks.age
         body: "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n",
         comments: []
       });
+      // The original card's id doesn't come from idAllocator (it's a fixed fixture id) --
+      // bump next_seq past it so the remediation card's real allocate() call can't collide with
+      // it, the same way importer.js seeds next_seq from the highest pre-existing id in real data.
+      dbStore.db.prepare("UPDATE id_allocator SET next_seq = 1").run();
 
       const runner = makeRunner();
       const orchestrator = new RunOrchestrator({
