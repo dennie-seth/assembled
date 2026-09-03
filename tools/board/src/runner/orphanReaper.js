@@ -7,6 +7,7 @@ import {
   isRunWedged,
   isPidAlive,
   killPidGroup,
+  freshestRunLogMtimeForTask,
   DEFAULT_HEARTBEAT_STALE_MS,
   DEFAULT_WEDGED_STALE_MS
 } from "./runState.js";
@@ -116,7 +117,9 @@ export function createOrphanReaper({
   isRunLiveFn = isRunLive,
   isRunWedgedFn = isRunWedged,
   killPidGroupFn = killPidGroup,
+  freshestRunLogMtimeForTaskFn = freshestRunLogMtimeForTask,
   statFn = fs.stat,
+  readdirFn = fs.readdir,
   repoRoot = null,
   tasksDir = null,
   git = gitOps,
@@ -126,22 +129,53 @@ export function createOrphanReaper({
   let timer = null;
 
   /**
-   * Three-way liveness verdict for a card's recorded run, plus the raw inputs the verdict was
+   * Four-way liveness verdict for a card's recorded run, plus the raw inputs the verdict was
    * built on -- so a reap can log exactly why it fired (see `describeRunStatus` below) instead of
    * requiring a human to reconstruct it live, as happened for both T-0276 and T-0287. Verdicts:
-   * "dead" (no runstate, or a recorded pid that's actually gone with no corroborating fresh run
-   * log -- see `isRunLive` -- reap immediately), "wedged" (recorded pid is alive, per
-   * `isRunLiveFn`, but its run log has gone stale well past `wedgedStaleMs` -- see
-   * `isRunWedged`'s own docstring for why this is a distinct condition from "dead"), or "alive"
-   * (genuinely still working). No runsDir configured (e.g. legacy test callers) preserves the
-   * pre-fix behavior: always "dead".
+   *
+   * - "alive": a recorded pid the OS confirms is running (`isPidAliveFn` returned true). The
+   *   strongest signal available -- safe to trust indefinitely (e.g. `readopt` into
+   *   `activeCardIds`).
+   * - "deferred": there's evidence of life (a fresh run log -- either corroborating a
+   *   pid the OS could NOT confirm, or standing in when the runstate itself is missing/
+   *   unreadable/malformed, see below) but nothing as strong as a confirmed-alive pid. Neither
+   *   reaped nor trusted forever -- stays a re-checkable candidate every sweep until it resolves
+   *   one way or the other (see the "T-0289 correctness regression" tests in
+   *   orphanReaper.test.js for why treating this the same as "alive" was itself a bug: a card
+   *   readopted on corroboration alone had no path back to being reaped if its run then actually
+   *   died, since nothing outside a genuine `runCard()` span ever calls `activeCardIds.delete`).
+   * - "wedged": recorded pid is confirmed alive, but its run log has gone stale well past
+   *   `wedgedStaleMs` -- see `isRunWedged`'s own docstring for why this is a distinct condition
+   *   from "dead" (only meaningful once a pid is actually confirmed; an unconfirmed pid falls
+   *   under "deferred"/"dead" instead, since there's no live process to call wedged).
+   * - "dead": no evidence of life at all -- reap immediately.
+   *
+   * No runsDir configured (e.g. legacy test callers) preserves the pre-fix behavior: always
+   * "dead".
    */
   async function checkRunStatus(taskId) {
     if (!runsDir) return { verdict: "dead", diagnostics: null };
     const state = await readRunStateFn({ runsDir, taskId });
+
+    if (!state) {
+      // Candidate #2 from the card: the runstate file was missing, unreadable, or malformed
+      // (readRunState returns null for all three -- see its own docstring), so there's no
+      // `runLogPath` to consult via isRunLive. Fall back to finding the task's run log directly
+      // by its deterministic `${taskId}-<timestamp>.jsonl` naming (see freshestRunLogMtimeForTask)
+      // -- a log still being written is corroborating evidence of life even when the runstate
+      // record of *why* can't be trusted.
+      const mtimeMs = await freshestRunLogMtimeForTaskFn({ runsDir, taskId, readdirFn, statFn });
+      const logAgeMs = mtimeMs === null ? null : now() - mtimeMs;
+      const diagnostics = { pid: null, pidAlive: null, logAgeMs, heartbeatAgeMs: null };
+      const corroborated = logAgeMs !== null && logAgeMs < heartbeatStaleMs;
+      return { verdict: corroborated ? "deferred" : "dead", diagnostics };
+    }
+
     const diagnostics = await gatherDiagnostics(state);
+    const pidConfirmedAlive = typeof state.pid === "number" && isPidAliveFn(state.pid);
     const live = await isRunLiveFn({ state, now: now(), heartbeatStaleMs, isPidAliveFn });
     if (!live) return { verdict: "dead", diagnostics };
+    if (!pidConfirmedAlive) return { verdict: "deferred", diagnostics };
     const wedged = await isRunWedgedFn({ state, now: now(), wedgedStaleMs });
     return { verdict: wedged ? "wedged" : "alive", diagnostics };
   }
@@ -160,6 +194,8 @@ export function createOrphanReaper({
         // no run log to age -- logAgeMs stays null
       }
     }
+    // Diagnostic-only, like `updatedAt` itself -- see writeRunState's docstring. Surfaced in the
+    // journal for a human to see, never consulted by the verdict above.
     const heartbeatAgeMs = state.updatedAt ? now() - Date.parse(state.updatedAt) : null;
     return { pid, pidAlive, logAgeMs, heartbeatAgeMs };
   }
@@ -200,6 +236,19 @@ export function createOrphanReaper({
       if (verdict === "alive") {
         readopt(task.id);
         logger.log(`assembled-board: card ${task.id} still has a live run (survived restart) -- re-adopted, not reaped`);
+        continue;
+      }
+      if (verdict === "deferred") {
+        // Weaker-than-confirmed-alive evidence of life (see checkRunStatus's docstring) -- not
+        // reaped, but also NOT readopted: readopt() has no way back once activeCardIds contains
+        // this taskId, so a card only ever readopted on corroboration would be stranded forever
+        // if its run then genuinely died. Leaving status/activeCardIds untouched lets sweepOnce's
+        // normal orphan-candidate grace window (task not in activeCardIds, status still
+        // in-progress/validation) pick it up and keep re-evaluating it on its own schedule.
+        logger.log(
+          `assembled-board: card ${task.id}'s recorded run state is inconclusive but its run log is still fresh -- ` +
+            `deferring reap, leaving status as-is for the next sweep to re-evaluate [${describeRunStatus(diagnostics)}]`
+        );
         continue;
       }
       if (verdict === "wedged") {
@@ -249,6 +298,23 @@ export function createOrphanReaper({
                 `treated as wedged, process group killed (its own run will observe the exit and finish handling it) ` +
                 `[${describeRunStatus(diagnostics)}]`
             );
+          } else if (verdict === "dead") {
+            // Backstop for a card that reached activeCardIds via readopt() (a confirmed-alive
+            // pid at readopt time -- legitimate at the time) whose run has since genuinely ended
+            // with no runCard() in this process ever tracking it to notice: a readopted card's
+            // activeCardIds membership has no other exit path (runOrchestrator.js's own
+            // activeCardIds.delete lives inside a runCard() that doesn't exist for it), so
+            // without this it would be stranded at in-progress/validation forever, pinning
+            // hasActiveRuns() true. Only fires on a genuine "dead" verdict (confirmed pid gone,
+            // no corroborating fresh log) -- never on "deferred", which is left alone here same
+            // as anywhere else.
+            activeCardIds.delete(task.id);
+            await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind });
+            reaped.push(task.id);
+            logger.log(
+              `assembled-board: card ${task.id} was tracked as active (likely re-adopted after a confirmed-alive pid ` +
+                `check that has since gone dead) but its run is now confirmed dead -- reaped [${describeRunStatus(diagnostics)}]`
+            );
           }
         }
         continue;
@@ -265,6 +331,17 @@ export function createOrphanReaper({
           readopt(task.id);
           stillCandidate.delete(task.id);
           logger.log(`assembled-board: card ${task.id} still has a live run (untracked by this process) -- re-adopted, not reaped`);
+          continue;
+        }
+        if (runStatus === "deferred") {
+          // Left as a candidate (orphanSince untouched, stillCandidate already holds it) so the
+          // very next sweep re-checks it -- if the log keeps moving it keeps deferring
+          // indefinitely (see the "T-0289 correctness regression" tests), and if it goes stale
+          // the verdict becomes "dead" and it reaps normally.
+          logger.log(
+            `assembled-board: card ${task.id}'s recorded run state is inconclusive but its run log is still fresh -- ` +
+              `deferring reap, will recheck next sweep [${describeRunStatus(diagnostics)}]`
+          );
           continue;
         }
         if (runStatus === "wedged") {
