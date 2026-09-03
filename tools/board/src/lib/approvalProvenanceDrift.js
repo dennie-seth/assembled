@@ -8,7 +8,7 @@ const TASK_ID_RE = /\bT-\d{4}\b/g;
  * `ASSET_PROVENANCE.md`'s free-text approval note has used historically (see the T-0239/T-0257
  * rows). Matched case-insensitively against a single line.
  */
-const STALE_PHRASES = [/not yet approved/i, /not approved/i, /pending (a )?direction approval/i];
+export const STALE_PHRASES = [/not yet approved/i, /not approved/i, /pending (a )?direction approval/i];
 
 /** The claim a row makes when it says the gate has already been cleared. */
 const APPROVED_PHRASE = /\bAPPROVED\b/;
