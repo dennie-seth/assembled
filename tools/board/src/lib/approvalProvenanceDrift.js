@@ -81,7 +81,18 @@ export function findApprovalDrift({ provenanceText, tasks = [], newLines = null 
       const verdict = approvalVerdict(task);
       if (!verdict.requiresApproval) continue;
 
-      if (isStaleClaim && verdict.approved) {
+      // A row that carries BOTH readings is narrating a transition, not making two claims --
+      // e.g. T-0243's shelving row records that the sheet's own row 'was updated from "Not yet
+      // approved" to "APPROVED 2026-08-30" by PR #307'. The quoted former wording is history, and
+      // reading it as a live claim produced a false `stale-unapproved-claim` against a card the
+      // board shows as genuinely approved (observed on PR #315). When both appear, the APPROVED
+      // reading is the row's current claim and the stale phrase is quotation: verify the approved
+      // claim, and let the branch below catch it if the board disagrees. This narrows a false
+      // positive only -- a row with just the stale phrase, or an approved claim the board does not
+      // substantiate, both still fail exactly as before.
+      const narratesTransition = isStaleClaim && isApprovedClaim;
+
+      if (isStaleClaim && !narratesTransition && verdict.approved) {
         drifts.push({
           taskId: id,
           kind: "stale-unapproved-claim",
