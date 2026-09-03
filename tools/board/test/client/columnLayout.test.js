@@ -61,8 +61,14 @@ describe("board column layout (T-0141 scaling fix)", () => {
 // scroll no matter how the pointer moves. This pins the container the drag auto-scroll targets
 // as an actual scrollable box, independent of the scroll math itself (covered separately in
 // dragAutoScroll.test.js).
+//
+// The FIRST fix bounded it with `max-height: 60vh`, which regressed the layout: every column
+// became 60% of the viewport whatever space was available, so cards never reached the bottom of
+// the window and nothing scaled on resize. The bound now comes from a full-height flex chain
+// (body -> #board -> .board -> .column -> .column-cards) instead, so these tests pin the chain
+// rather than a fixed cap -- the height is still definite, so it is still a real scroll container.
 describe("column-cards is a real scroll container (T-0288 drag auto-scroll)", () => {
-  it("is vertically scrollable with a bounded height, not an ever-growing box", () => {
+  it("is vertically scrollable and grows to fill its column rather than being capped", () => {
     const column = document.createElement("div");
     column.className = "column";
     const list = document.createElement("div");
@@ -72,7 +78,45 @@ describe("column-cards is a real scroll container (T-0288 drag auto-scroll)", ()
 
     const style = getComputedStyle(list);
     expect(style.overflowY).toBe("auto");
-    expect(style.maxHeight).not.toBe("none");
-    expect(style.maxHeight).not.toBe("");
+    // grows into the space the column gives it
+    expect(style.flexGrow).toBe("1");
+    // a DEFINITE (not `auto`) min-height is what lets a flex item shrink below its content
+    // and scroll; `auto` would resolve to the content height and overflow the column instead.
+    expect(style.minHeight).not.toBe("auto");
+    expect(style.minHeight).not.toBe("");
+  });
+
+  it("the column is a flex column with min-height 0 so the card list can scroll inside it", () => {
+    const column = document.createElement("div");
+    column.className = "column";
+    document.body.appendChild(column);
+
+    const style = getComputedStyle(column);
+    expect(style.display).toBe("flex");
+    expect(style.flexDirection).toBe("column");
+    // min-height: 0 on the ancestor is the critical bit -- without it the automatic minimum
+    // size is the content height and the list overflows instead of scrolling.
+    expect(["0", "0px"]).toContain(style.minHeight);
+  });
+
+  it("the board stretches its columns so they reach the bottom of the viewport", () => {
+    const board = document.createElement("div");
+    board.className = "board";
+    document.body.appendChild(board);
+
+    const style = getComputedStyle(board);
+    // `flex-start` (the pre-fix value) sized each column to its content, which is why cards
+    // stopped short of the bottom.
+    expect(style.alignItems).toBe("stretch");
+    expect(["0", "0px"]).toContain(style.minHeight);
+  });
+
+  it("the page root establishes a viewport-height flex chain", () => {
+    const style = getComputedStyle(document.body);
+    expect(style.display).toBe("flex");
+    expect(style.flexDirection).toBe("column");
+    // 100dvh with a 100vh fallback; happy-dom may report either, so just assert it is set
+    // to a viewport-relative value rather than left unset.
+    expect(style.minHeight).toMatch(/\d+(vh|dvh)/);
   });
 });
