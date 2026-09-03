@@ -136,6 +136,13 @@ fix `npm run dev` has 5 such wrapper shells in its tree; after, none.
 their command with `exec`, so every `sh -c` layer replaces itself with the program it runs instead
 of parenting it. This is verified by `test/devShutdown.test.js`, which walks the real process tree
 after `npm run dev` boots and asserts no `sh`/`bash`/`dash` PID remains anywhere in it.
+`test/devWatchReload.test.js` covers the remaining edge case named in the card -- that `node
+--watch`'s own reload keeps working once its `sh -c` layer is `exec`'d -- by reproducing the exact
+`sh -c 'exec node --watch <file>'` shape `dev:server` now runs, editing the watched file, and
+asserting the entry script re-runs. It does, because `exec` only changes what a shell layer *is*
+(the shell process becomes the program it launches instead of forking it); it has no effect on
+`node --watch`'s own internal file-watch/restart cycle, which is unrelated to how the `node`
+process was originally spawned.
 
 **Not fixed here -- needs a human edit to the live unit, which is outside this repo (see
 `~/.config/systemd/user/assembled-board.service` and its
