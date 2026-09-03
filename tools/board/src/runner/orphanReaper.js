@@ -126,6 +126,13 @@ export function createOrphanReaper({
   taskStoreKind = "fs"
 }) {
   const orphanSince = new Map();
+  // Cards added to activeCardIds by *this* module's own readopt() -- as opposed to a genuine
+  // runCard() span (runOrchestrator.js) tracking a card it spawned itself. The distinction matters
+  // for the sweepOnce "dead" backstop below (see its own comment): a readopted card has no other
+  // path back out of activeCardIds if its run later dies, so this module must be the one to notice.
+  // A runCard()-tracked card already has that path (runOrchestrator.js's own activeCardIds.delete)
+  // and must be left alone here even during a transient stale-runstate window between phases.
+  const readoptedCardIds = new Set();
   let timer = null;
 
   /**
@@ -221,6 +228,7 @@ export function createOrphanReaper({
 
   function readopt(taskId) {
     orphanSince.delete(taskId);
+    readoptedCardIds.add(taskId);
     if (activeCardIds && typeof activeCardIds.add === "function") {
       activeCardIds.add(taskId);
     }
@@ -298,7 +306,7 @@ export function createOrphanReaper({
                 `treated as wedged, process group killed (its own run will observe the exit and finish handling it) ` +
                 `[${describeRunStatus(diagnostics)}]`
             );
-          } else if (verdict === "dead") {
+          } else if (verdict === "dead" && readoptedCardIds.has(task.id)) {
             // Backstop for a card that reached activeCardIds via readopt() (a confirmed-alive
             // pid at readopt time -- legitimate at the time) whose run has since genuinely ended
             // with no runCard() in this process ever tracking it to notice: a readopted card's
@@ -307,8 +315,14 @@ export function createOrphanReaper({
             // without this it would be stranded at in-progress/validation forever, pinning
             // hasActiveRuns() true. Only fires on a genuine "dead" verdict (confirmed pid gone,
             // no corroborating fresh log) -- never on "deferred", which is left alone here same
-            // as anywhere else.
+            // as anywhere else. Gated on readoptedCardIds (VALIDATION FAIL #2's fix): a card
+            // added to activeCardIds by a genuine runCard() span already has its own exit path
+            // and must never have its status touched here, even during the normal quiet window
+            // between runOrchestrator.js's per-phase writeRunState calls (e.g. mid PR-open,
+            // which can legitimately run past DEFAULT_HEARTBEAT_STALE_MS) when the runstate on
+            // disk can transiently hold a since-exited child's pid alongside a stale-looking log.
             activeCardIds.delete(task.id);
+            readoptedCardIds.delete(task.id);
             await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind });
             reaped.push(task.id);
             logger.log(
