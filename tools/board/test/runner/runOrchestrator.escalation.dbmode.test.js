@@ -92,7 +92,10 @@ function makeRunner() {
 }
 
 async function nthChild(runner, n) {
-  await vi.waitFor(() => expect(runner.start).toHaveBeenCalledTimes(n));
+  // Generous timeout on purpose: unlike the sibling escalation suite this drives a REAL
+  // SQLite store, so each cycle does actual file I/O. Under the full 137-file run that can
+  // exceed vi.waitFor's 1s default and flake, even though it passes comfortably in isolation.
+  await vi.waitFor(() => expect(runner.start).toHaveBeenCalledTimes(n), { timeout: 15000 });
   return runner.spawnedChildren[n - 1];
 }
 

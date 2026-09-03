@@ -65,7 +65,8 @@ describe("runMigrations", () => {
     expect(ids).toEqual([
       "0001_init.sql",
       "0002_add_generic_agent.sql",
-      "0003_add_approval_gate.sql"
+      "0003_add_approval_gate.sql",
+      "0004_add_dispatch_agent.sql"
     ]);
   });
 });

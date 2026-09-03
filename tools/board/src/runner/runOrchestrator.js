@@ -1107,8 +1107,25 @@ export class RunOrchestrator {
 
       await this._linkDependsOn(taskId, remediation.id);
     } catch (err) {
-      console.warn(`Board: escalation failed for ${taskId} (card remains blocked, no report/remediation created):`, err.message);
-      await this._logEscalation(taskId, runLog, `Escalation failed: ${err.message}`).catch(() => {});
+      // Escalation is additive -- the card is already `blocked` by the time this runs -- so a
+      // failure here must not throw and take the run down with it. But it must never be silent:
+      // T-0301 was exactly this failure firing 11x in a day (the tasks.agent CHECK rejected the
+      // 'dispatch' sentinel, so no remediation card could ever be written) while the only
+      // outward sign was this warn line, and the nested `.catch(() => {})` below discarded even
+      // the record of it. Log both the primary failure AND any failure to record it.
+      console.error(
+        `Board: escalation failed for ${taskId} (card remains blocked, no report/remediation created):`,
+        err
+      );
+      try {
+        await this._logEscalation(taskId, runLog, `Escalation failed: ${err.message}`);
+      } catch (logErr) {
+        console.error(
+          `Board: escalation failure could not be recorded on the run log for ${taskId} -- ` +
+            `the original escalation error above is the one that matters:`,
+          logErr
+        );
+      }
     }
   }
 
