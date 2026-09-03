@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { RunOrchestrator, MAX_AUTO_RETRY_ATTEMPTS } from "../../src/runner/runOrchestrator.js";
 import { DbTaskStore } from "../../src/lib/db/dbTaskStore.js";
@@ -65,18 +65,12 @@ function makeRunner() {
 }
 
 async function nthChild(runner, n) {
-  await vi_waitFor(() => runner.spawnedChildren.length >= n);
+  // A generous timeout: under the full suite's parallel load (~135 files spawning workers
+  // concurrently) a 1s default can starve before the microtask/event-loop turn that pushes the
+  // next child runs, even though nothing is actually stuck -- see the sibling
+  // runOrchestrator.escalation.test.js's identical nthChild for the pattern this mirrors.
+  await vi.waitFor(() => expect(runner.spawnedChildren.length).toBeGreaterThanOrEqual(n), { timeout: 15000 });
   return runner.spawnedChildren[n - 1];
-}
-
-// Local, dependency-free polling wait (vi.waitFor pulled in only where needed elsewhere) --
-// avoids importing vi just for this and keeps the file's mocks plain async functions.
-async function vi_waitFor(predicate) {
-  const deadline = Date.now() + 5000;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error("timed out waiting for condition");
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
 }
 
 function makeRunLog() {
