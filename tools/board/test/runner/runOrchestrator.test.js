@@ -1396,6 +1396,33 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
     expect(finalTask.pr).toBe("https://github.com/example/repo/pull/55");
   });
 
+  it("(c2) when the card's recorded PR is stale/closed (findExistingPr correctly reports it absent), opens a fresh PR and overwrites the dead pr field -- T-0287", async () => {
+    const store = makeStore([baseTask({ pr: "https://github.com/example/repo/pull/271" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      // A closed PR is not live for this branch -- githubOps.findExistingPr's liveness check
+      // (state === OPEN, headRefName matches) resolves this to null, same as no PR at all.
+      findExistingPr: vi.fn(async () => null),
+      createPr: vi.fn(async () => "https://github.com/example/repo/pull/312")
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.createPr).toHaveBeenCalledTimes(1);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/312");
+    expect(finalTask.pr).not.toBe("https://github.com/example/repo/pull/271");
+  });
+
   it("(d) a FAIL verdict never opens a PR, even after the auto-retry loop exhausts its attempts and blocks the card", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
