@@ -1079,6 +1079,43 @@ describe("T-0289 correctness regression: an inconclusive pid check must stay re-
     expect(store._byId.get("T-0062").status).toBe("blocked");
     expect(activeCardIds.has("T-0062")).toBe(false);
   });
+
+  // Second VALIDATION FAIL: the activeCardIds cleanup backstop above (test T-0062) fired on
+  // *any* "dead" verdict for a card in activeCardIds, not only one this module itself readopted.
+  // A card added to activeCardIds by a genuine runCard() span (runOrchestrator.js) already has
+  // its own exit path and must be left alone by this backstop -- even during the normal quiet
+  // window between per-phase writeRunState calls, where the on-disk runstate can transiently
+  // hold a since-exited child's pid (e.g. mid PR-open, which can legitimately run past
+  // DEFAULT_HEARTBEAT_STALE_MS -- see T-0287) alongside a log that hasn't been touched in a
+  // while either. Reaping here would be the exact false-reap-of-a-live-run failure mode this
+  // whole card exists to fix, just reached through the backstop instead of the main sweep path.
+  it("does not touch a card's status via the backstop when it was added to activeCardIds directly (not via readopt), even with a dead pid and a stale log", async () => {
+    const store = makeStore([makeTask({ id: "T-0063", status: "in-progress" })]);
+    const hub = makeHub();
+    const logPath = path.join(runsDir, "T-0063.jsonl");
+    await fs.writeFile(logPath, "line\n", "utf8");
+    await writeRunState({ runsDir, taskId: "T-0063", pid: 454545, runLogPath: logPath });
+    const staleTime = new Date(Date.now() - 5 * 60_000);
+    await fs.utimes(logPath, staleTime, staleTime);
+    // Simulates runOrchestrator.js's own runCard() adding the card -- never went through this
+    // module's readopt(), so it must not be in readoptedCardIds.
+    const activeCardIds = new Set(["T-0063"]);
+    const reaper = createOrphanReaper({
+      store,
+      hub,
+      activeCardIds,
+      enabled: true,
+      graceMs: 15_000,
+      runsDir,
+      isPidAliveFn: () => false
+    });
+
+    const reaped = await reaper.sweepOnce();
+
+    expect(reaped).toEqual([]);
+    expect(store._byId.get("T-0063").status).toBe("in-progress");
+    expect(activeCardIds.has("T-0063")).toBe(true);
+  });
 });
 
 // T-0289 VALIDATION FAIL #3: candidate #2 from the card's own list ("the runstate being
