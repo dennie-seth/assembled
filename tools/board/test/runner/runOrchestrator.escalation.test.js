@@ -372,6 +372,49 @@ describe("RunOrchestrator escalation -- degrades gracefully on failure", () => {
     expect(finalTask.attempts).toBe(MAX_AUTO_RETRY_ATTEMPTS);
     expect(finalTask.body).toMatch(/auto-retry limit reached/i);
   });
+
+  it("logs to the console when even the escalation-failure write itself fails, instead of swallowing it silently -- the actual reason this went unnoticed for weeks", async () => {
+    const store = makeStoreWithoutList([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    // Spy on BOTH levels: the assertion below is about these failures being console-VISIBLE
+    // (as this test's own comment says), not about which level carries them. The escalation
+    // path logs at error level so the full Error object -- and therefore the stack -- survives;
+    // a bare `err.message` at warn level is what made T-0301 so slow to place.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const throwingRunLog = {
+      events: [],
+      async append(event) {
+        if (event.type === "escalation") throw new Error("disk full");
+        this.events.push(event);
+      },
+      close: vi.fn(async () => {})
+    };
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      createRunLogFn: vi.fn(async () => throwingRunLog)
+    });
+
+    try {
+      const runPromise = orchestrator.runCard("T-0001");
+      await exhaustToBlocked(runner);
+      await runPromise;
+
+      // Two separate failures must both be console-visible: the original escalation failure
+      // (store.list missing) and the follow-up failure to even record it (runLog.append throwing).
+      const messages = [...warnSpy.mock.calls, ...errorSpy.mock.calls].map((args) =>
+        args.map((a) => (a instanceof Error ? `${a.message} ${a.stack ?? ""}` : String(a))).join(" ")
+      );
+      expect(messages.some((m) => m.includes("T-0001") && m.includes("escalation failed"))).toBe(true);
+      expect(messages.some((m) => m.includes("T-0001") && m.includes("disk full"))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe("RunOrchestrator.runCard -- pick-up loop skips agent: dispatch cards", () => {
