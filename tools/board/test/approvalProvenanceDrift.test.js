@@ -110,4 +110,41 @@ describe("findApprovalDrift", () => {
 
     expect(() => findApprovalDrift({ provenanceText, tasks: [frozen] })).not.toThrow();
   });
+
+  describe("unresolvable card references (the T-0223+ db-mode gap CI hits)", () => {
+    // T-0286 run-2 review: a card the loaded task list has never heard of (e.g. because CI ran
+    // FsTaskStore against tasks/*.md, which stops at T-0222, while the real card lives only in
+    // the db) was previously indistinguishable from "not gated" and silently skipped --
+    // `checkApprovalProvenanceDrift.js` would print "passed" even though it never actually
+    // checked the row. That is the exact false-reassurance the review flagged: a missing data
+    // source must never render as a pass. `newLines` bounds the loud version of this to rows the
+    // current diff actually introduces -- ASSET_PROVENANCE.md already carries ~200 historical
+    // rows this repo's own fs-mode task list can't resolve, and none of that pre-existing text
+    // was ever verified either way, so treating it all as newly-suspect on every unrelated PR
+    // would make the gate permanently red instead of useful.
+    const line = "| some/path.png (T-9999 -- not yet approved) | MIT | ... | seed=1 |";
+
+    it("flags an approval-shaped claim about an unresolvable card when that line is newly added", () => {
+      const report = findApprovalDrift({ provenanceText: line, tasks: [], newLines: new Set([line.trim()]) });
+
+      expect(report.ok).toBe(false);
+      expect(report.drifts).toHaveLength(1);
+      expect(report.drifts[0]).toMatchObject({ taskId: "T-9999", kind: "unverifiable-approval-claim" });
+      expect(report.drifts[0].message).toContain("T-9999");
+    });
+
+    it("does not flag an unresolvable reference outside the diff's added lines", () => {
+      const report = findApprovalDrift({ provenanceText: line, tasks: [], newLines: new Set() });
+
+      expect(report.ok).toBe(true);
+      expect(report.drifts).toEqual([]);
+    });
+
+    it("silently skips an unresolvable reference when no diff scope is supplied at all (legacy whole-file callers)", () => {
+      const report = findApprovalDrift({ provenanceText: line, tasks: [] });
+
+      expect(report.ok).toBe(true);
+      expect(report.drifts).toEqual([]);
+    });
+  });
 });
