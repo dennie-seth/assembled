@@ -377,7 +377,12 @@ describe("RunOrchestrator escalation -- degrades gracefully on failure", () => {
     const store = makeStoreWithoutList([baseTask()]);
     const git = makeGit();
     const runner = makeRunner();
+    // Spy on BOTH levels: the assertion below is about these failures being console-VISIBLE
+    // (as this test's own comment says), not about which level carries them. The escalation
+    // path logs at error level so the full Error object -- and therefore the stack -- survives;
+    // a bare `err.message` at warn level is what made T-0301 so slow to place.
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const throwingRunLog = {
       events: [],
       async append(event) {
@@ -400,11 +405,14 @@ describe("RunOrchestrator escalation -- degrades gracefully on failure", () => {
 
       // Two separate failures must both be console-visible: the original escalation failure
       // (store.list missing) and the follow-up failure to even record it (runLog.append throwing).
-      const messages = warnSpy.mock.calls.map((args) => args.join(" "));
+      const messages = [...warnSpy.mock.calls, ...errorSpy.mock.calls].map((args) =>
+        args.map((a) => (a instanceof Error ? `${a.message} ${a.stack ?? ""}` : String(a))).join(" ")
+      );
       expect(messages.some((m) => m.includes("T-0001") && m.includes("escalation failed"))).toBe(true);
       expect(messages.some((m) => m.includes("T-0001") && m.includes("disk full"))).toBe(true);
     } finally {
       warnSpy.mockRestore();
+      errorSpy.mockRestore();
     }
   });
 });
