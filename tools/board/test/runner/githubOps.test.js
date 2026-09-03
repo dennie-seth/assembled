@@ -25,8 +25,8 @@ if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
   exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  if [ -f "$STATE/existing-pr-url" ]; then
-    cat "$STATE/existing-pr-url" | xargs -I{} echo "{\\"url\\":\\"{}\\"}"
+  if [ -f "$STATE/pr-view-result.json" ]; then
+    cat "$STATE/pr-view-result.json"
     exit 0
   fi
   if [ -f "$STATE/pr-view-fail-message" ]; then
@@ -159,11 +159,43 @@ describe("findExistingPr", () => {
     expect(await findExistingPr({ worktreeDir: tmpDir, branch: "feature/T-0200" })).toBeNull();
   });
 
-  it("returns the PR url when one already exists for the branch", async () => {
-    await fs.writeFile(path.join(stateDir, "existing-pr-url"), "https://github.com/example/repo/pull/7");
+  it("returns the PR url when one already exists (open, matching head branch) for the branch", async () => {
+    await fs.writeFile(
+      path.join(stateDir, "pr-view-result.json"),
+      JSON.stringify({ url: "https://github.com/example/repo/pull/7", state: "OPEN", headRefName: "feature/T-0200" })
+    );
     expect(await findExistingPr({ worktreeDir: tmpDir, branch: "feature/T-0200" })).toBe(
       "https://github.com/example/repo/pull/7"
     );
+  });
+
+  // T-0287: `gh pr view <branch>` returns whatever PR is associated with the branch regardless
+  // of state -- a CLOSED PR from a card's earlier life (see PR #271 on T-0243) comes back with a
+  // real url just like an OPEN one. Reusing that url produces a dead link: the card reports
+  // success with a PR reference that has nothing to review. A closed/merged/mismatched-branch PR
+  // must be treated the same as "no PR exists" so the caller opens a fresh one.
+  it("treats a CLOSED PR for the branch as absent (returns null, not the dead link)", async () => {
+    await fs.writeFile(
+      path.join(stateDir, "pr-view-result.json"),
+      JSON.stringify({ url: "https://github.com/example/repo/pull/271", state: "CLOSED", headRefName: "feature/T-0243" })
+    );
+    expect(await findExistingPr({ worktreeDir: tmpDir, branch: "feature/T-0243" })).toBeNull();
+  });
+
+  it("treats a MERGED PR for the branch as absent (returns null)", async () => {
+    await fs.writeFile(
+      path.join(stateDir, "pr-view-result.json"),
+      JSON.stringify({ url: "https://github.com/example/repo/pull/271", state: "MERGED", headRefName: "feature/T-0243" })
+    );
+    expect(await findExistingPr({ worktreeDir: tmpDir, branch: "feature/T-0243" })).toBeNull();
+  });
+
+  it("treats an OPEN PR whose head branch does not match as absent (returns null)", async () => {
+    await fs.writeFile(
+      path.join(stateDir, "pr-view-result.json"),
+      JSON.stringify({ url: "https://github.com/example/repo/pull/9", state: "OPEN", headRefName: "some-other-branch" })
+    );
+    expect(await findExistingPr({ worktreeDir: tmpDir, branch: "feature/T-0243" })).toBeNull();
   });
 
   it("falls back to the REST listing when `gh pr view` (GraphQL) fails transiently", async () => {
