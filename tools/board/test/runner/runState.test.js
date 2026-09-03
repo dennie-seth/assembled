@@ -10,6 +10,8 @@ import {
   isRunLive,
   isRunWedged,
   killPidGroup,
+  freshestRunLogMtimeForTask,
+  hasRecentRunLogForTask,
   DEFAULT_HEARTBEAT_STALE_MS,
   DEFAULT_WEDGED_STALE_MS,
   DEFAULT_KILL_ESCALATION_MS
@@ -177,6 +179,115 @@ describe("isRunLive", () => {
       }
     });
     expect(live).toBe(false);
+  });
+});
+
+// T-0289 VALIDATION FAIL #4: `updatedAt` is written by writeRunState on every phase but no
+// liveness decision anywhere reads it -- isRunLive's own no-pid fallback checks the run log's
+// mtime (isRunLogFresh), never state.updatedAt. That's intentional (see writeRunState's own
+// docstring for why the log's mtime is the more trustworthy signal: it reflects real streamed
+// activity, not just "a phase started at some point"), but was previously undocumented and
+// untested, which is exactly what let it look like a "trap" -- a field that reads as a heartbeat
+// but is silently never consulted. These tests pin that it plays no role in the verdict.
+describe("updatedAt is diagnostic-only -- never consulted by a liveness decision (see writeRunState's docstring)", () => {
+  it("isRunLive's verdict for a confirmed-alive pid is unaffected by updatedAt, however stale", async () => {
+    const now = Date.now();
+    const freshUpdatedAt = await isRunLive({
+      state: { pid: 4242, runLogPath: "/x", updatedAt: new Date(now).toISOString() },
+      now,
+      isPidAliveFn: (pid) => pid === 4242
+    });
+    const staleUpdatedAt = await isRunLive({
+      state: { pid: 4242, runLogPath: "/x", updatedAt: new Date(now - 365 * 24 * 60 * 60_000).toISOString() },
+      now,
+      isPidAliveFn: (pid) => pid === 4242
+    });
+    expect(freshUpdatedAt).toBe(true);
+    expect(staleUpdatedAt).toBe(true);
+  });
+
+  it("isRunLive's no-pid fallback verdict is unaffected by updatedAt -- only the run log's own mtime matters", async () => {
+    const now = Date.now();
+    const base = { runLogPath: "/x" };
+    const withFreshUpdatedAt = await isRunLive({
+      state: { ...base, updatedAt: new Date(now).toISOString() },
+      now,
+      heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS,
+      statFn: async () => ({ mtimeMs: now - 200_000 })
+    });
+    const withStaleUpdatedAt = await isRunLive({
+      state: { ...base, updatedAt: new Date(now - 365 * 24 * 60 * 60_000).toISOString() },
+      now,
+      heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS,
+      statFn: async () => ({ mtimeMs: now - 200_000 })
+    });
+    // Both false: the run log's mtime (not updatedAt) is stale in both cases, regardless of how
+    // fresh or stale updatedAt itself claims to be.
+    expect(withFreshUpdatedAt).toBe(false);
+    expect(withStaleUpdatedAt).toBe(false);
+  });
+});
+
+describe("freshestRunLogMtimeForTask / hasRecentRunLogForTask", () => {
+  it("freshestRunLogMtimeForTask returns null when runsDir has no matching log", async () => {
+    const mtime = await freshestRunLogMtimeForTask({ runsDir: tmpDir, taskId: "T-9999" });
+    expect(mtime).toBeNull();
+  });
+
+  it("freshestRunLogMtimeForTask returns null (never throws) when runsDir itself doesn't exist", async () => {
+    const mtime = await freshestRunLogMtimeForTask({ runsDir: path.join(tmpDir, "nope"), taskId: "T-0001" });
+    expect(mtime).toBeNull();
+  });
+
+  it("freshestRunLogMtimeForTask matches by taskId prefix and ignores other tasks' logs", async () => {
+    await fs.writeFile(path.join(tmpDir, "T-0001-2026-01-01T00-00-00-000Z.jsonl"), "a\n", "utf8");
+    await fs.writeFile(path.join(tmpDir, "T-00010-2026-01-01T00-00-00-000Z.jsonl"), "b\n", "utf8");
+    const mtime = await freshestRunLogMtimeForTask({ runsDir: tmpDir, taskId: "T-0001" });
+    expect(typeof mtime).toBe("number");
+  });
+
+  it("freshestRunLogMtimeForTask picks the most recently modified of several matching logs (a run can span multiple phases)", async () => {
+    const older = path.join(tmpDir, "T-0001-2026-01-01T00-00-00-000Z.jsonl");
+    const newer = path.join(tmpDir, "T-0001-2026-01-02T00-00-00-000Z.jsonl");
+    await fs.writeFile(older, "a\n", "utf8");
+    await fs.writeFile(newer, "b\n", "utf8");
+    const oldTime = new Date(Date.now() - 100_000);
+    const newTime = new Date(Date.now() - 1_000);
+    await fs.utimes(older, oldTime, oldTime);
+    await fs.utimes(newer, newTime, newTime);
+
+    const mtime = await freshestRunLogMtimeForTask({ runsDir: tmpDir, taskId: "T-0001" });
+
+    expect(mtime).toBeCloseTo(newTime.getTime(), -2);
+  });
+
+  it("hasRecentRunLogForTask is true when the freshest matching log is within heartbeatStaleMs", async () => {
+    const logPath = path.join(tmpDir, "T-0002-2026-01-01T00-00-00-000Z.jsonl");
+    await fs.writeFile(logPath, "a\n", "utf8");
+    const now = Date.now();
+    const recentTime = new Date(now - 1000);
+    await fs.utimes(logPath, recentTime, recentTime);
+
+    const result = await hasRecentRunLogForTask({ runsDir: tmpDir, taskId: "T-0002", now, heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS });
+
+    expect(result).toBe(true);
+  });
+
+  it("hasRecentRunLogForTask is false when the freshest matching log is older than heartbeatStaleMs", async () => {
+    const logPath = path.join(tmpDir, "T-0003-2026-01-01T00-00-00-000Z.jsonl");
+    await fs.writeFile(logPath, "a\n", "utf8");
+    const now = Date.now();
+    const staleTime = new Date(now - 200_000);
+    await fs.utimes(logPath, staleTime, staleTime);
+
+    const result = await hasRecentRunLogForTask({ runsDir: tmpDir, taskId: "T-0003", now, heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS });
+
+    expect(result).toBe(false);
+  });
+
+  it("hasRecentRunLogForTask is false when nothing matches", async () => {
+    const result = await hasRecentRunLogForTask({ runsDir: tmpDir, taskId: "T-nope" });
+    expect(result).toBe(false);
   });
 });
 
