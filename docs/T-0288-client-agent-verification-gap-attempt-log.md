@@ -198,3 +198,66 @@ The "actually looking at the behaviour in a browser" criterion remains unmet fro
 environment; that still requires a human (or a session with a real browser) to open the board and
 drag a tall card. Independent of this run's outcome, the `agent: client` misassignment noted above
 still stands.
+
+## Update (run 3): VALIDATION FAIL (run 2) confirmed the code is correct; re-checked everything
+## that could plausibly still be implementer-fixable
+
+VALIDATION FAIL (run 2) is different in kind from run 1: it explicitly re-verified both defects
+run 1 found are fixed (the CSSOM test for `.column-cards` overflow/max-height, and the
+grab-offset-based leading edge replacing the frozen source-element rect), reported all twelve
+acceptance items except #7 and #12 as met, and then failed the card anyway on exactly those two,
+stating outright: *"THIS IS NOT AN IMPLEMENTER-FIXABLE FAIL... a run 3/4/5 handed back to an
+implementer would change nothing."* It offered three ways to actually close the card: (a) a human
+drags a tall card in the real board UI, (b) add `playwright`/`puppeteer` and a real-browser test,
+or (c) drop/relax criterion #7 on the card itself.
+
+Re-verified rather than assumed, before writing this:
+
+- **Bash denial is still in force, in this exact session.** `npx vitest run
+  test/client/dragAutoScroll.test.js`, both as a compound `cd tools/board && ...` and as a bare
+  single command from inside `tools/board/`, returned `"This command requires approval"` with no
+  prompt surfaced back to me — the identical failure mode run 2 documented. `node --version` and
+  `git log` both worked, confirming (again) that only project script execution is blocked, not the
+  `node`/`git` binaries themselves.
+- **Option (b) is not something this session can do safely.** `tools/board/package.json` has no
+  `playwright`/`puppeteer` devDependency and no `node_modules/playwright*` present. Adding the
+  package name to `package.json` without being able to run `npm install` (no `npm`/`npx install`
+  grant here either) would commit a dependency that was never actually fetched — a broken
+  reference, not real coverage, and exactly the "green tests that mock away the actual side
+  effect" failure mode `conduct.md` warns about, just one level removed (a test that couldn't even
+  run rather than one that ran against a mock). Declined.
+- **Investigated the run-2 "minor, non-blocking" dragleave gap** (no `dragleave` counterpart to
+  the `dragover` attach in `boardView.js`, so a pointer that leaves every column mid-drag keeps the
+  rAF loop scrolling the last-attached container off a stale `pointerY` until it hits its scroll
+  limit or `dragend` fires). A `dragleave` listener that calls `_autoScroll.update(null, null)`
+  when `event.relatedTarget` is no longer inside the list would fix it in a few lines. Did not ship
+  it this run: `_autoScroll` in `boardView.js` is a module-level singleton shared across every test
+  in `boardView.test.js`, that file has zero existing tests that dispatch `dragover` (only
+  `dragAutoScroll.test.js` exercises the controller, via an *injected* fake clock — see
+  `createAutoScrollController`'s `requestFrame`/`cancelFrame` params), and `happy-dom` ships an
+  explicit runaway-timer-loop safety limit (`ITimerLoopsLimit`/`IOptionalTimerLoopsLimit` in
+  `node_modules/happy-dom/src/window/`) specifically for self-rescheduling loops like this
+  controller's `tick()`. A new integration test would be the first thing in this suite to drive the
+  *real* `requestAnimationFrame` through `boardView.js`'s singleton, and I have no way to execute it
+  and confirm it doesn't trip that limit or leak a running loop into later tests in the same file.
+  Shipping a production fix plus a test I cannot run, into a shared singleton, on a project whose
+  own conduct rules call out a near-identical leaked-loop hang by name (T-0185, gdUnit4/Godot
+  side) as a real incident, is a worse trade than leaving a reviewer-confirmed non-blocking item
+  for a session that can actually run `npx vitest` against it.
+
+No production code changed this run. Per the reviewer's own explicit statement, none was going to
+change the verdict — the remaining gap is procedural (a human's eyes, or a browser-automation
+dependency this session cannot install), not a defect in the shipped implementation. What this run
+adds: independent re-confirmation that the Bash denial and missing-playwright blockers are still
+real (not stale claims from an earlier session), and a documented reason *why* the one code change
+that looked tempting was deliberately not attempted blind.
+
+**For the orchestrator/human:** the card cannot progress past this point via another implementer
+run. It needs one of: (a) someone opens the deployed board, drags a tall card to both edges of a
+scrollable column, and confirms it scrolls both ways and stops at the limits, then the card can
+PASS on the strength of the already-correct, twice-reviewed code; or (b) a session with `npm`
+install access adds `playwright` and a real-browser drag test; or (c) the card's own criterion #7
+gets reworded to accept the reviewer's code-level confirmation in place of literal human
+observation. Also still outstanding, unrelated to the verdict: `T-0288`'s `agent:` field should be
+`infra`, not `client` — this session's own grant (no `npm`/`npx`) is why no implementer run has
+ever been able to execute this subsystem's own test suite directly.
