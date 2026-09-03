@@ -239,6 +239,19 @@ function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus,
     _autoScroll.attach(list);
     _autoScroll.update(event.clientY, _dragCardOffset);
   });
+  list.addEventListener("dragleave", (event) => {
+    // VALIDATION FAIL (run 3): dragover attaches this column whenever the pointer is over it,
+    // but with no dragleave counterpart the controller stayed latched onto -- and kept
+    // scrolling -- the last column even after the pointer left every column entirely (onto the
+    // side panel, the console, the inter-column gap, or the board's own padding), scrolling
+    // against a stale pointerY until it hit its scroll limit or dragend fired. `relatedTarget`
+    // is null when the drag leaves the window, and it's outside `list` for any genuine leave;
+    // the browser also fires dragleave when the pointer moves onto a *child* card within this
+    // same list, which `list.contains(...)` correctly does not treat as a leave.
+    if (!event.relatedTarget || !list.contains(event.relatedTarget)) {
+      _autoScroll.detach();
+    }
+  });
   list.addEventListener("drop", (event) => {
     event.preventDefault();
     _autoScroll.detach();

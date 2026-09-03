@@ -91,27 +91,35 @@ export function createAutoScrollController({
   let cardOffset = null;
   let frameId = null;
 
+  function scheduleIfIdle() {
+    if (frameId === null) {
+      frameId = requestFrame(tick);
+    }
+  }
+
+  // VALIDATION FAIL (run 3): this used to end every tick with an unconditional
+  // `frameId = requestFrame(tick)`, so once the pointer left the band or the container hit a
+  // scroll limit the loop kept running getBoundingClientRect() + the full computation every
+  // frame for the rest of the drag, scrolling nothing -- the exact "no busy rAF loop spinning
+  // against scrollTop === 0 or scrollHeight - clientHeight" case the card calls out. Now a tick
+  // that finds nothing to scroll simply idles; `update()` is what wakes the loop back up the
+  // moment a newly-reported pointer position is worth checking.
   function tick() {
     frameId = null;
-    if (!container) return;
+    if (!container || pointerY === null) return;
 
-    if (pointerY !== null) {
-      const containerRect = container.getBoundingClientRect();
-      const result = computeAutoScroll({
-        containerRect,
-        pointerY,
-        cardOffset,
-        scrollTop: container.scrollTop,
-        scrollHeight: container.scrollHeight,
-        clientHeight: container.clientHeight
-      });
-      if (result.direction === "up") {
-        container.scrollBy(0, -result.speed);
-      } else if (result.direction === "down") {
-        container.scrollBy(0, result.speed);
-      }
-    }
+    const containerRect = container.getBoundingClientRect();
+    const result = computeAutoScroll({
+      containerRect,
+      pointerY,
+      cardOffset,
+      scrollTop: container.scrollTop,
+      scrollHeight: container.scrollHeight,
+      clientHeight: container.clientHeight
+    });
+    if (result.direction === null) return;
 
+    container.scrollBy(0, result.direction === "up" ? -result.speed : result.speed);
     frameId = requestFrame(tick);
   }
 
@@ -119,17 +127,18 @@ export function createAutoScrollController({
     /** Begin (or continue) auto-scrolling `nextContainer`. Idempotent while already attached. */
     attach(nextContainer) {
       container = nextContainer;
-      if (frameId === null) {
-        frameId = requestFrame(tick);
-      }
+      scheduleIfIdle();
     },
     /**
      * Latest pointer Y (viewport coords) and the dragged card's offset (`{grabOffsetY, height}`,
-     * captured at `dragstart` -- see boardView.js), read by the next tick.
+     * captured at `dragstart` -- see boardView.js), read by the next tick. Also restarts the
+     * loop if it had idled out (see `tick`'s doc comment) so a fresh pointer position is never
+     * left unchecked until some other event happens to reschedule it.
      */
     update(nextPointerY, nextCardOffset = null) {
       pointerY = nextPointerY;
       cardOffset = nextCardOffset;
+      scheduleIfIdle();
     },
     /** Stop scrolling and cancel any pending frame. Safe to call when not attached. */
     detach() {

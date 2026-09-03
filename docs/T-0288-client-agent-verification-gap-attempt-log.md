@@ -173,13 +173,18 @@ pattern across them narrows the diagnosis further than run 1's log did:
 4. A fourth agent, told explicitly not to delegate and to run the commands itself, got the same
    flat `"Permission to use Bash has been denied."` for both a compound and a bare `npx vitest run`.
 
-Taken together this confirms the denial is **session-wide**, not scoped to the `client` agent's
-own narrow allowlist as run 1's log concluded — it holds across every agent type and delegation
-path tried, matching this project's own prior finding (recorded elsewhere) that a Bash/tool denial
-in an implementer session is a session-level property, not something a different agent type can
-route around. Per conduct, I did not keep escalating past this point — a fourth denial from a
-role built specifically to hold this permission is confirmation, not something to route around
-by trying a fifth framing.
+Taken together this confirmed the denial held for every agent type and delegation path tried
+*within this run's own session* — but that is a narrower claim than "session-wide" as originally
+written here, and VALIDATION FAIL (run 3) showed the narrower claim was the correct one: the
+reviewer ran `npx vitest` and `npx eslint` successfully in *its own* session against this exact
+diff. So the denial is scoped to the implementer session (this card's `agent: client` grant has
+no `node`/`npm`/`npx` at all — see the top of this log), not to some property of the Bash tool or
+this repository that holds everywhere. Leaving the original, broader "session-wide ... across
+every agent type" claim uncorrected through two more runs (the `bf8ed1e` and `fd88378` commits)
+was itself a mistake this log should have caught sooner; corrected here in run 4. Per conduct, I
+did not keep re-litigating this after the fourth denial within *this* session — a fourth denial
+from a role built specifically to hold this permission is confirmation for this session, not
+something to route around by trying a fifth framing, and not evidence about any other session.
 
 Given that, I fell back to the strongest verification available without execution: a full manual
 trace of every test in `dragAutoScroll.test.js` (including the two new ones) against the final
@@ -261,3 +266,64 @@ gets reworded to accept the reviewer's code-level confirmation in place of liter
 observation. Also still outstanding, unrelated to the verdict: `T-0288`'s `agent:` field should be
 `infra`, not `client` — this session's own grant (no `npm`/`npx`) is why no implementer run has
 ever been able to execute this subsystem's own test suite directly.
+
+## Update (run 4): fixing the two items VALIDATION FAIL (run 3) found actually fixable
+
+VALIDATION FAIL (run 3) confirmed both of run 1's original defects are still fixed on re-inspection
+(the CSSOM scroll-container test, the grab-offset leading edge), reconfirmed items #7/#12 as
+genuinely not implementer-fixable in this environment (same reasoning as run 3's own log entry
+above), and — unlike run 2's verdict — found two further items that *are* concretely fixable
+without a browser: acceptance #3's "stops when the pointer leaves the zone" was not honoured for
+one path, and the card's own "no busy rAF loop spinning against `scrollTop === 0` or
+`scrollHeight - clientHeight`" edge case was violated outright. Both are fixed this run, each with
+a failing test committed first:
+
+1. **No `dragleave` counterpart to the `dragover` attach (`boardView.js`).** If the pointer left
+   every column mid-drag — onto the side panel, the console, the inter-column gap, or the board's
+   own padding — the shared `_autoScroll` controller stayed latched onto the last column and kept
+   scrolling it off a stale `pointerY` until it hit a scroll limit or `dragend` fired.
+
+   **Fix:** a `dragleave` listener on `list` that calls `_autoScroll.detach()` unless
+   `event.relatedTarget` is contained within `list` — so a leave to outside the column (or to
+   `null`, i.e. the drag left the window) stops it, while the browser's own spurious `dragleave`
+   fired when the pointer crosses onto a *child* card within the same list does not. Covered by
+   three new tests in `test/client/boardView.test.js` (genuine leave, `null` relatedTarget, and
+   the same-list non-leave case) that dispatch real `dragover`/`dragleave` events and assert via a
+   `window.cancelAnimationFrame` spy — chosen specifically so the assertion is synchronous and
+   never has to wait for the real animation frame to actually fire, avoiding the exact
+   leaked-real-rAF-into-happy-dom risk run 3's own log flagged as the reason this wasn't attempted
+   earlier. An `afterEach` in that `describe` block dispatches a `dragend` on `document` so no
+   real pending frame survives past its own test either way.
+
+2. **The rAF loop never stopped re-requesting itself.** `tick()` ended with an unconditional
+   `frameId = requestFrame(tick)` regardless of whether that tick found anything to scroll, so once
+   the pointer left the band or the container hit a scroll limit, the loop kept calling
+   `getBoundingClientRect()` and the full computation every frame for the rest of the drag — the
+   literal busy-loop edge case the card calls out by name.
+
+   **Fix:** `tick()` now returns without rescheduling when there's nothing to scroll (`!container`,
+   `pointerY === null`, or `computeAutoScroll` returns a `null` direction); `attach()`/`update()`
+   both go through a new `scheduleIfIdle()` that only requests a frame if the loop isn't already
+   running, so a fresh pointer position reported after the loop went idle restarts it immediately
+   rather than waiting on some other event. Covered by new tests in
+   `test/client/dragAutoScroll.test.js` using the existing injectable fake clock: idling on attach
+   with no pointer yet, idling at a scroll limit, resuming on the next in-band `update()`, and
+   continuing to reschedule itself on its own while still in-band and scrollable. One existing test
+   ("starts the animation-frame loop on attach and keeps it alive across ticks") asserted the old,
+   defective behavior directly — that the loop kept re-scheduling itself forever with no pointer
+   data at all — so it was rewritten rather than kept passing accidentally.
+
+Also corrected in this run: the "session-wide" Bash-denial claim in run 2's section above, which
+VALIDATION FAIL (run 3) pointed out was falsified by the reviewer's own session successfully
+running `npx vitest`/`npx eslint` against this exact diff. See the note inserted directly after
+that claim.
+
+**Still not implementer-fixable, unchanged from runs 2 and 3:** acceptance #7 (actually observing
+the drag in a browser) and #12 (confirming the hot zone is "comfortable to hit"). This session has
+no `npx`/`node` grant (reconfirmed: `npx vitest run ...` still returns
+`"This command requires approval"`) and `tools/board/package.json` still has no
+`playwright`/`puppeteer` dependency, so no test in this repo can drive a real layout/scroll. Per
+run 3's own conclusion, closing those two needs a human dragging a real card in the deployed board,
+a session with `npm install` access adding a real-browser test, or a reworded criterion — not
+another implementer pass. `T-0288`'s `agent:` field should still be `infra`, not `client`, for the
+same reason cited in every prior update.
