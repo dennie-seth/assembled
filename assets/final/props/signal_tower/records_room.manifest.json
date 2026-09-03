@@ -1,0 +1,48 @@
+{
+  "room": "signal_tower.records_room",
+  "room_definition_ref": "docs/design/14-vertical-slice.md §2, §10",
+  "card": "T-0243",
+  "handoff_ref": "HANDOFF §23-j-b",
+  "concept_sheet": "assets/src/concept/signal_tower_props_concept_sheet_v3.png",
+  "generated_new_props": true,
+  "status": "committed",
+  "generation_note": "T-0257's real sheet, assets/src/concept/signal_tower_props_concept_sheet_v3.png, depicts an 'ARCHIVE SHELVING -- COVER' panel covering this slot's geometry. PR #307 (commit 9757b16) propagated T-0257's existing board approval verdict (approved_by/approved_at, card moved to done via PR #291) into ASSET_PROVENANCE.md: the v3 sheet's row now reads 'APPROVED 2026-08-30' (was 'Not yet approved'). DL-5's human direction-approval gate is therefore cleared for this slot. archive_shelving_v1 is generated this run via the committed cutout path (tools/comfy-client/src/comfy_client/cutout.py, sdxl_cutout_lora_v1.json), reusing the v3 sheet's own reviewed 'ARCHIVE SHELVING -- COVER' panel prompt/negative_prompt verbatim (already shipped as part of the approved sheet), style LoRA soviet_brutalism_style_v1 @ 0.70 only -- no prop LoRA, per the 2026-08-30 human re-gate comment. The prior run's archive_shelving_v1 generated against the unapproved v2 sheet remains reverted; this is a fresh generation against the v3 sheet, not a restoration of that reverted artifact.",
+  "slots": [
+    {
+      "slot": "Archive shelving rows (primary dressing)",
+      "class": "cover",
+      "prop": "archive_shelving_v1",
+      "status": "committed",
+      "reused": false,
+      "sprite": "assets/final/props/signal_tower/archive_shelving_v1.png",
+      "provenance": "assets/final/props/signal_tower/archive_shelving_v1.provenance.json"
+    },
+    {
+      "slot": "Incidental crates",
+      "class": "cover",
+      "prop": "crate_stack_v1",
+      "status": "committed",
+      "reused": true,
+      "sprite": "assets/final/props/signal_tower/crate_stack_v1.png",
+      "provenance": "assets/final/props/signal_tower/crate_stack_v1.provenance.json"
+    }
+  ],
+  "gate_16px_separation": {
+    "requirement": ">= 15.0 luma16 gap between any cover/hiding pair co-located in this room (P-3)",
+    "authoritative_test": "assets/src/concept/tests/test_signal_tower_prop_pack.py::test_cover_vs_hiding_distinguishable_at_16px",
+    "min_required_gap_luma16": 15.0,
+    "applicable": false,
+    "cover_hide_pairs_in_room": [],
+    "why_not_applicable": "Both committed slots in this room (archive_shelving_v1, crate_stack_v1) are cover-class. With zero hiding-class props present in this room there are zero cover/hiding pairs to measure -- vacuously satisfied, not skipped, matching Broadcast Deck's (T-0242) precedent for a room with no hiding-class slot."
+  },
+  "non_regression": "T-0221's and T-0223's existing five props and the test_signal_tower_prop_pack.py gate suite are unmodified by this card. No existing prop file was touched. archive_shelving_v1 is a new file under assets/final/props/signal_tower/ that did not previously exist on develop.",
+  "art_direction_check": {
+    "requirement": "Every prop faces the camera in flat front elevation (orthographic) -- no isometric/perspective projection, per @DennieSeth's 2026-09-02 direction: 'object should face the camera, no isometry or perspective.'",
+    "why_this_check_exists": "archive_shelving_v1 was generated through the same generator/prompt family as the sibling per-room prop cards (e.g. T-0244), whose output came back isometric despite prompt text already claiming 'orthographic, no perspective, no vanishing point' -- the prompt's own framing language is not sufficient evidence, so the committed PNG must be looked at directly.",
+    "checked_props": ["archive_shelving_v1"],
+    "method": "visual inspection of the committed PNG",
+    "result": "pass",
+    "observations": "archive_shelving_v1.png (40x28): straight vertical support posts and horizontal shelf bands run parallel to the image edges with no convergence; no receding top or side faces are visible; the silhouette does not taper with apparent depth. No isometric, three-quarter, or perspective artifacts found -- flat front elevation confirmed.",
+    "crate_stack_v1_scope_note": "crate_stack_v1 is reused from the already-committed, already-approved T-0221/T-0223 prop set (see slots[].reused=true above) and is out of this re-verification's scope -- this card neither regenerates nor re-judges reused props, per its own reuse-before-generate rule and the amendment accepting reused props as-is."
+  }
+}
