@@ -134,8 +134,8 @@ Ordered by risk-reduction per unit of change. **Load-bearing warning: `hasActive
 | **5** | Transition validation at the store boundary (§2.3) | new card | **Medium** | Touches every writer. Needs its own PR. |
 | **6** | `POST /run` consults `hasActiveRuns()` | new card | **HIGH — load-bearing** | Currently the only protection. Change alone, with tests, deployed deliberately. |
 | **7** | `clearRunState` on abnormal termination | new card | Low | Kills the stale-record class. |
-| **8** | **Push the branch before a FAIL verdict is recorded** (§4.0a) | new card | **Medium** | Real data loss, twice today. Independent of the state model. |
-| **9** | **Acceptance criteria must be agent-satisfiable** (§4.0b) | new card | Low | Card-authoring guard, not runner code. Has blocked 4 cards. |
+| **8** | **Push the branch before a FAIL verdict is recorded** (§4.0a) | **T-0299** | **Medium** | Real data loss, twice today. Independent of the state model. |
+| **9** | **Acceptance criteria must be agent-satisfiable** (§4.0b) | **T-0300** | Low | Card-authoring guard, not runner code. Has blocked 4 cards. |
 
 **On T-0289/#314:** do not treat it as a working baseline. Its analysis (`runState.js:80-127`) eliminated candidates #2, #3 and #4 by sound reasoning and settled on #1, `isPidAlive` false negatives — which §0 disproves by direct measurement. The confirmed/deferred split it added is *harmless and mildly useful*, but it defends the wrong window. The mechanism that is actually firing is described accurately in its own comment at `orphanReaper.js:318-323` and was left only partially defended.
 
@@ -147,7 +147,7 @@ Ordered by risk-reduction per unit of change. **Load-bearing warning: `hasActive
 
 **4.0a UNPUSHED WORK IS LOST ON A FAIL VERDICT — real data loss, twice today.** When a run ends in FAIL, the card's branch is not pushed before the verdict is recorded, so committed-but-unpushed work is stranded in a worktree that the next re-run may replace. Established firsthand today across two cards: **T-0288 (1047 lines)** and **T-0290 (253 lines)**, both recovered only by manual intervention. The T-0288 figure is independently corroborated here — `git diff --stat origin/develop...origin/feature/T-0288` measured during this review reports exactly `7 files changed, 1047 insertions(+)`.
 
-This is **not** part of the state-model flaw in section 1 and must not be folded into T-0296; it is an independent defect in the FAIL path with a worse consequence (lost work, not a wrong label). It interacts with the worktree-artifact-preservation work (PR #277) and should be carded on its own. Note the ordering requirement: the push must happen **before** the verdict is recorded, so a FAIL can never be the event that orphans the work.
+This is **not** part of the state-model flaw in section 1 and must not be folded into T-0296; it is an independent defect in the FAIL path with a worse consequence (lost work, not a wrong label). It interacts with the worktree-artifact-preservation work (PR #277) and is carded separately as **T-0299**. Note the ordering requirement: the push must happen **before** the verdict is recorded, so a FAIL can never be the event that orphans the work.
 
 **4.0b THE UNSATISFIABLE-ACCEPTANCE-CRITERION CLASS — four cards blocked by it.** An acceptance criterion that demands evidence no agent in this repo can gather causes every retry to reproduce an identical failure signature, which the no-progress guard then correctly aborts. The guard is working; the cards are unsatisfiable. Confirmed on **T-0258**, **T-0259**, **T-0288** (criterion #7: real-browser observation, impossible because `tools/board` ships only `happy-dom`, which performs no layout) and **T-0290** (reviewer's closing line: *"fully covered by tests — the only gap left is evidence no agent can gather"*).
 
@@ -155,7 +155,7 @@ Two recurring shapes, both card-authoring defects rather than runner defects:
 1. **Capability-impossible** — requires a tool or observation the agent environment does not have (a real browser, a human's eyes).
 2. **PR-precondition** — requires an open PR with green CI, which the orchestrator only does *after* a PASS, so the criterion can never be true at verdict time.
 
-The durable fix is a card-authoring guard (a planner self-check, or a preflight that rejects known-impossible phrasings), plus retro-wording the affected cards. **T-0290's own AC still needs rewording the way T-0288's was** before it is re-run — otherwise it will exhaust five more attempts. Worth carding as a class, not fixing card-by-card.
+The durable fix is a card-authoring guard (a planner self-check, or a preflight that rejects known-impossible phrasings), plus retro-wording the affected cards. **T-0290's own AC still needs rewording the way T-0288's was** before it is re-run — otherwise it will exhaust five more attempts. Carded as a class in **T-0300**, rather than fixed card-by-card.
 
 **4.1 Reaps are completely silent — the highest-value finding after the root cause.** `reapCard` is followed by `logger.log(...)` at `orphanReaper.js:275/330/368/376`, `logger` defaults to `console` (`:110`), and the server's stdout **does** reach the journal (auto-pull/auto-launch lines appear normally). Yet: 8 reaps on T-0290 today, and `journalctl --user -u assembled-board --since today | grep -c "recovered orphaned card"` returns **0**. No `orphan sweep failed` line either. So either the sweep throws between the status write and the log, or the reaper's logging is misconfigured in a way I could not determine read-only. **Either way the operator gets no signal, which is why this survived all day and cost T-0289 an incorrect root cause.** Instrument before fixing anything else.
 
