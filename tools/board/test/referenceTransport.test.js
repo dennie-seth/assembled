@@ -71,4 +71,20 @@ describe("requestUrl -- the transport this repo's tools use for outbound referen
     const res = await requestUrl(`${baseUrl}/small`, { maxBytes: 1024 });
     expect(res.body.toString("utf8")).toBe("small");
   });
+
+  it("(T-0284) sends a policy-compliant User-Agent -- tool name, version, AND a contact URL, never a bare token", async () => {
+    let receivedUserAgent;
+    await startServer((req, res) => {
+      receivedUserAgent = req.headers["user-agent"];
+      res.writeHead(200);
+      res.end("ok");
+    });
+    await requestUrl(`${baseUrl}/thing`);
+    // Wikimedia's UA policy requires <client>/<version> (<contact>) -- a UA with no reachable
+    // contact is throttled aggressively, which is exactly what T-0284 investigated. Assert the
+    // shape so it cannot silently regress back to a bare, contactless token.
+    expect(receivedUserAgent).toMatch(/^assembled-reference-sourcing\/\d+(\.\d+)*\s+\(.+\)$/);
+    expect(receivedUserAgent).toMatch(/github\.com\/dennie-seth\/assembled/);
+    expect(receivedUserAgent).not.toBe("assembled-reference-sourcing/1.0");
+  });
 });

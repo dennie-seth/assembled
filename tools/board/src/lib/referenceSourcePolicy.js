@@ -80,6 +80,28 @@ export const REFERENCE_SOURCES = Object.freeze({
     searchUrl: (query, limit = 10) =>
       `https://api.openverse.org/v1/images/?q=${encode(query)}&page_size=${encode(limit)}`,
     assetMetadataUrl: (assetId) => `https://api.openverse.org/v1/images/${encode(assetId)}/`
+  }),
+  // Added T-0284, for source diversity: Wikimedia and Openverse being down/throttled at the same
+  // time left the pipeline single-host-dependent. The Met's Open Access API is unrelated
+  // infrastructure to both -- a genuinely independent third source, not a second front door to one
+  // of the same two hosts. Licence model: `isPublicDomain` is a real per-*object* flag the API
+  // returns (never a domain-wide assumption) -- `false`/absent normalizes to no licence at all and
+  // is rejected by referenceLicense.js exactly like a missing Wikimedia/Openverse licence field, no
+  // relaxed path. No API key required, no rate-limit headers documented, so it also side-steps
+  // whatever is throttling upload.wikimedia.org specifically.
+  met: Object.freeze({
+    id: "met",
+    label: "The Metropolitan Museum of Art (Open Access)",
+    apiHost: "collectionapi.metmuseum.org",
+    fetchHosts: Object.freeze(["images.metmuseum.org"]),
+    // Best-effort, not required: the point of adding it is resilience against Wikimedia/Openverse
+    // both being unavailable, not a second hard dependency a run cannot succeed without.
+    required: false,
+    // The Met's search endpoint has no limit/page-size parameter of its own -- it always returns
+    // every matching objectID; referenceSourcing.js's parseSearchResults slices to `limit` itself.
+    searchUrl: (query) => `https://collectionapi.metmuseum.org/public/collection/v1/search?hasImages=true&q=${encode(query)}`,
+    assetMetadataUrl: (assetId) =>
+      `https://collectionapi.metmuseum.org/public/collection/v1/objects/${encode(assetId)}`
   })
 });
 

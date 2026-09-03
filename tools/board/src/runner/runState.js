@@ -2,10 +2,16 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 /**
- * Heartbeat freshness window used only when a runstate has no usable pid (e.g. written by
- * a future runner backend that doesn't expose one) -- the run's .runs/*.jsonl log path is
- * consulted instead, since every streamed agent event appends to that file. A file untouched
- * for longer than this is treated as abandoned.
+ * Heartbeat freshness window for the run log's mtime, used two ways (see isRunLive): as the sole
+ * check when a runstate has no usable pid (e.g. written by a future runner backend that doesn't
+ * expose one), and as corroboration when a recorded pid's own liveness check reports "not
+ * alive" -- in both cases the run's .runs/*.jsonl log path is consulted, since every streamed
+ * agent event appends to that file. A file untouched for longer than this is treated as
+ * abandoned. This is deliberately much smaller than DEFAULT_WEDGED_STALE_MS (45 min): a run
+ * genuinely writing no output for a minute is unremarkable (see isRunWedged's own docstring on
+ * long single tool calls), but it's exactly the corroborating signal this window needs -- a run
+ * whose *only* evidence of life is "we don't have a working pid check" should require the log to
+ * have moved recently, not merely at some point in the last 45 minutes.
  */
 export const DEFAULT_HEARTBEAT_STALE_MS = 60_000;
 
@@ -18,6 +24,15 @@ export function runStatePath(runsDir, taskId) {
  * here, matching the existing removeWorktree/PR-open "best effort" convention in
  * runOrchestrator.js -- worst case, a restart during this exact run falls back to the
  * pre-fix behavior (reaped) instead of crashing the run itself.
+ *
+ * `updatedAt` is diagnostic-only (see gatherDiagnostics/describeRunStatus in orphanReaper.js) --
+ * it is deliberately never read by a liveness decision. `isRunLive`'s own no-pid fallback keys
+ * off the run log's own mtime (see `isRunLogFresh` below), not this field: the log's mtime
+ * reflects real streamed activity from the run, while `updatedAt` only ever means "a phase
+ * started at some point" and is written once per phase, not continuously. A field that looks
+ * like a heartbeat but is silently never consulted is exactly the trap T-0289 flagged; this note
+ * (and runState.test.js's "updatedAt is diagnostic-only" suite) is the fix for that -- not by
+ * wiring it into the decision, but by making its non-role explicit and tested.
  */
 export async function writeRunState({ runsDir, taskId, pid, runLogPath, now = () => new Date() }) {
   try {
@@ -63,9 +78,53 @@ export function isPidAlive(pid) {
 }
 
 /**
- * The liveness verdict a reap decision is built on. A recorded pid is definitive in either
- * direction (alive or dead -- no reason to second-guess a hard OS-level answer). Only when no
- * pid was recorded at all does this fall back to the run log's mtime as a heartbeat proxy.
+ * The liveness verdict a reap decision is built on. A recorded pid reporting *alive* is
+ * definitive -- no reason to second-guess a hard OS-level answer. A pid reporting *not alive* is
+ * NOT treated as definitive on its own: `isPidAlive`'s own contract only recognizes EPERM as
+ * "alive under another user"; any other `process.kill(2)` failure (an unexpected errno, a
+ * transient fork/exec-handoff hiccup) reads as dead with no second opinion.
+ *
+ * Root cause, T-0276/T-0287 (evidence, not a restated guess -- see the card's own candidate list
+ * for what this rules out): both incidents' card bodies recorded the runstate's *actual field
+ * values* at the moment of the false reap (a pid, and an `updatedAt` from launch) -- meaning the
+ * runstate file was demonstrably present and successfully parsed, not null/mid-write. That rules
+ * out "state was null/partial and the pid branch never ran" (the card's candidate #2) for these
+ * two incidents specifically -- see the `!state` guard below, which never reaches the pid check
+ * at all when it fires, so a null state can't produce a *pid*-branch false reap in the first
+ * place. It also rules out "a second, different reap path" (candidate #4): the card's own
+ * "OBSERVED LIVE 2026-09-03" human comment records, while watching a run live, that its card
+ * "oscillated: blocked -> the reaper reaps a live run, validation -> the orchestrator overwrites
+ * it at the next phase transition, blocked -> the reaper reaps it AGAIN on the next sweep",
+ * attributing that directly to `DEFAULT_SWEEP_INTERVAL_MS` (30s) combined with a heartbeat that's
+ * never refreshed past `DEFAULT_HEARTBEAT_STALE_MS` (60s). (Don't confuse this with the gaps
+ * between the card's separate "## Recovered" notes, e.g. ~5m14s apart -- those mark the start of
+ * unrelated later orchestrator runs re-attempting the card, not consecutive sweeps within one
+ * run, and are not the evidence being cited here.) `reapOnStartup` only runs once per process
+ * start, so a per-sweep-interval oscillation within a single live run can only come from
+ * `sweepOnce` re-running the identical liveness check on an interval, not from a restart-triggered
+ * path.
+ * "The sweep operating on a stale in-memory copy" (candidate #3) is also ruled out by inspection:
+ * `checkRunStatus` (orphanReaper.js) calls `readRunStateFn` fresh on every invocation, with no
+ * memoization anywhere in this module or its caller. That leaves candidate #1 -- `isPidAlive`
+ * returning a false negative -- as the only one of the card's four candidates not eliminated by
+ * either the incidents' own recorded evidence or by tracing the code's actual control flow; this
+ * environment (WSL2's syscall translation layer, see docs/env-inventory.md) is a plausible-but-
+ * unconfirmed source for an unexpected `process.kill(2)` errno, though the reap loop itself is
+ * covered by corroboration below regardless of which specific errno was involved.
+ *
+ * A not-alive pid verdict is therefore corroborated against the run log's mtime before
+ * concluding "dead", the same heartbeat proxy already used as the sole check when no pid was
+ * recorded at all: a log still being appended to is direct evidence of life the pid check's own
+ * false negative shouldn't override. Only when the log is ALSO stale (or missing/unreadable) does
+ * a not-alive pid verdict stand -- that combination is what keeps a genuinely dead run reapable
+ * (see isRunWedged for the converse case: alive pid, stale log).
+ *
+ * This function's own boolean contract is unchanged by T-0289's regression fix: it still answers
+ * "is there evidence of life" without distinguishing *how strong* that evidence is. The caller
+ * (orphanReaper.js's `checkRunStatus`) is what now splits a `true` result into "alive" (pid
+ * confirmed by the OS, safe to trust indefinitely -- e.g. readopt into `activeCardIds`) versus
+ * "deferred" (corroborated only by the log, weaker evidence that must stay re-checkable rather
+ * than being trusted forever) -- see its own docstring for why that distinction was necessary.
  */
 export async function isRunLive({
   state,
@@ -76,17 +135,53 @@ export async function isRunLive({
 }) {
   if (!state) return false;
 
-  if (typeof state.pid === "number") {
-    return isPidAliveFn(state.pid);
+  if (typeof state.pid === "number" && isPidAliveFn(state.pid)) {
+    return true;
   }
 
-  if (!state.runLogPath) return false;
+  return isRunLogFresh({ runLogPath: state.runLogPath, now, heartbeatStaleMs, statFn });
+}
+
+async function isRunLogFresh({ runLogPath, now, heartbeatStaleMs, statFn }) {
+  if (!runLogPath) return false;
   try {
-    const stat = await statFn(state.runLogPath);
+    const stat = await statFn(runLogPath);
     return now - stat.mtimeMs < heartbeatStaleMs;
   } catch {
     return false;
   }
+}
+
+/**
+ * Finds a task's most recently modified run log by taskId prefix, for the one case `isRunLive`
+ * can't help with: the runstate file itself is missing, unreadable, or malformed
+ * (`readRunState` returns null for all three -- see its own docstring), so there's no
+ * `runLogPath` on it to consult. `runLog.js` always names a task's log
+ * `${taskId}-<timestamp>.jsonl` -- the prefix is deterministic even though the timestamp suffix
+ * isn't, and a run can have several matching files across its lifetime (one per phase; see
+ * runOrchestrator.js's `_runPhase`), so the freshest one is used. Returns null (never throws)
+ * when `runsDir` can't be read or nothing matches.
+ */
+export async function freshestRunLogMtimeForTask({ runsDir, taskId, readdirFn = fs.readdir, statFn = fs.stat }) {
+  let entries;
+  try {
+    entries = await readdirFn(runsDir);
+  } catch {
+    return null;
+  }
+  const prefix = `${taskId}-`;
+  let freshestMtimeMs = null;
+  for (const name of entries) {
+    if (!name.endsWith(".jsonl") || !name.startsWith(prefix)) continue;
+    try {
+      const stat = await statFn(path.join(runsDir, name));
+      if (freshestMtimeMs === null || stat.mtimeMs > freshestMtimeMs) freshestMtimeMs = stat.mtimeMs;
+    } catch {
+      // Unreadable entry (deleted mid-scan, permissions) -- skip it, don't let one bad stat
+      // block the others.
+    }
+  }
+  return freshestMtimeMs;
 }
 
 /**
