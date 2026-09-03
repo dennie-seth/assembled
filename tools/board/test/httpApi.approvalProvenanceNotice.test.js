@@ -111,12 +111,37 @@ describe("live approval-time ASSET_PROVENANCE.md staleness notice", () => {
     expect(updated.comments).toHaveLength(0);
   });
 
-  it("never rewrites ASSET_PROVENANCE.md itself -- Option A's board record stays authoritative", async () => {
+  it(
+    "auto-syncs a stale ASSET_PROVENANCE.md row to carry the board's existing approval stamp " +
+      "(DL-27 addendum: the board record stays authoritative, but the file is kept truthful for " +
+      "offline consumers outside this agent's own path scope)",
+    async () => {
+      const task = await createTask({ requires_approval: true, status: "review" });
+      const original = `| sheet.png (${task.id} -- not yet approved) | MIT | ... |\n`;
+      await writeProvenance(original);
+
+      const updated = await (await patch(task.id, { status: "done" })).json();
+
+      const onDisk = await fs.readFile(path.join(repoRoot, "ASSET_PROVENANCE.md"), "utf8");
+      expect(onDisk).toMatch(/\bAPPROVED\b/);
+      expect(onDisk).not.toMatch(/not yet approved/i);
+      expect(onDisk).toContain(task.approved_by);
+      // never invents an approval it doesn't already have -- the only stamp on disk is the one
+      // the human's drag-to-Done gesture just recorded on the task itself.
+      expect(onDisk).toContain(task.id);
+      const notice = updated.comments.find((c) => c.author === "assembled-board");
+      expect(notice).toBeDefined();
+      expect(notice.text).toContain(task.id);
+    }
+  );
+
+  it("never syncs a row for a card that is gated but not yet approved -- refuses to mint one", async () => {
     const task = await createTask({ requires_approval: true, status: "review" });
     const original = `| sheet.png (${task.id} -- not yet approved) | MIT | ... |\n`;
     await writeProvenance(original);
 
-    await patch(task.id, { status: "done" });
+    // A non-approval PATCH (no approved_by in the body) must never touch the file.
+    await patch(task.id, { priority: "P2" });
 
     expect(await fs.readFile(path.join(repoRoot, "ASSET_PROVENANCE.md"), "utf8")).toBe(original);
   });
