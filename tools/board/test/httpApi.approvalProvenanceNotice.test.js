@@ -82,7 +82,7 @@ describe("live approval-time ASSET_PROVENANCE.md staleness notice", () => {
     expect(notice.text.toLowerCase()).toContain("board");
   });
 
-  it("posts the same notice for an APPROVED-comment approval", async () => {
+  it("syncs the same stale row for an APPROVED-comment approval (AP-4), not just drag-to-Done", async () => {
     const task = await createTask({ requires_approval: true, status: "review" });
     await writeProvenance(`| sheet.png (${task.id} -- not yet approved) | MIT | ... |\n`);
 
@@ -91,6 +91,9 @@ describe("live approval-time ASSET_PROVENANCE.md staleness notice", () => {
     const notice = updated.comments.find((c) => c.text.includes("ASSET_PROVENANCE.md"));
     expect(notice).toBeDefined();
     expect(notice.author).toBe("assembled-board");
+    const onDisk = await fs.readFile(path.join(repoRoot, "ASSET_PROVENANCE.md"), "utf8");
+    expect(onDisk).toMatch(/\bAPPROVED\b/);
+    expect(onDisk).not.toMatch(/not yet approved/i);
   });
 
   it("posts no notice when the provenance row already agrees with the board", async () => {
