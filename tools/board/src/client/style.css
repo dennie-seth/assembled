@@ -5,10 +5,30 @@
   --terminal-height-collapsed: 2.25rem;
 }
 
+/* Full-height flex chain (body -> #board -> .board -> .column -> .column-cards) so each
+   column fills the space between the toolbar and the fixed terminal panel and scrolls
+   INTERNALLY on overflow. `min-height` rather than `height` so a very short viewport still
+   scrolls the page instead of crushing the board to nothing. `padding-bottom: 18rem` keeps
+   clearing the fixed 16rem terminal panel; `box-sizing: border-box` makes that padding come
+   out of the viewport height instead of adding to it. */
 body {
   margin: 0;
   padding: 1rem;
   padding-bottom: 18rem;
+  box-sizing: border-box;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* boardView's render root: wraps the optional .board-error banner plus the .board column
+   row, so it must pass the height down rather than sizing to its content. */
+#board {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 
@@ -62,9 +82,13 @@ body {
 .board {
   display: flex;
   gap: 0.75rem;
-  align-items: flex-start;
+  /* stretch (not flex-start) so every column is as tall as the row, which is what lets a
+     column's card list reach the bottom of the viewport. */
+  align-items: stretch;
   overflow-x: auto;
   padding-bottom: 0.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* When the side-panel is open, shrink the board's own box (reflow) instead
@@ -86,6 +110,12 @@ body {
   background: color-mix(in srgb, currentColor 6%, transparent);
   border-radius: 0.5rem;
   padding: 0.5rem;
+  /* header/select stay their natural size; .column-cards takes the rest. min-height: 0 is
+     the critical bit -- without it this flex item's automatic minimum size is its content
+     height, so the card list would overflow the column instead of scrolling inside it. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .column-header {
@@ -94,14 +124,17 @@ body {
 }
 
 .column-cards {
+  /* Bounded by the flex chain above rather than by a fixed cap. The former `max-height: 60vh`
+     made every column 60% of the viewport whatever the available space, so cards never reached
+     the bottom of the window and the layout did not scale on resize. Growing to fill the
+     column instead keeps this a real scroll container -- the height is definite (inherited from
+     the viewport-height chain) so scrollHeight > clientHeight once the cards overflow, which is
+     what dragAutoScroll.js needs. No `calc()`, which a lightweight CSSOM (happy-dom, used by
+     this project's tests) may not resolve.
+     min-height stays a small DEFINITE floor, not `auto`: definite is what allows this item to
+     shrink below its content and scroll, and 4rem keeps an empty column a usable drop target. */
+  flex: 1 1 auto;
   min-height: 4rem;
-  /* Bounded so this actually becomes a scroll container (T-0288 VALIDATION FAIL: without a
-     capped height, scrollHeight === clientHeight always and drag auto-scroll has nowhere to
-     scroll no matter what the pointer does). 60vh leaves room below for the column's own
-     header/select and comfortably clears the terminal panel on any reasonable viewport height,
-     without a `calc()` expression that a lightweight CSSOM (this project's happy-dom test
-     environment included) may not resolve. */
-  max-height: 60vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
