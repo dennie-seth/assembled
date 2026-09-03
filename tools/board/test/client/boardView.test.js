@@ -101,6 +101,78 @@ describe("renderBoard", () => {
     expect(onDrop).not.toHaveBeenCalled();
   });
 
+  // VALIDATION FAIL (run 3, T-0288): dragover attaches the shared auto-scroll controller to
+  // the column under the pointer, but with no dragleave counterpart the controller stayed
+  // latched onto the last column and kept scrolling it -- against a stale pointerY -- if the
+  // pointer left every column mid-drag (onto the side panel, the console, the inter-column
+  // gap, or the board's own padding). These pin the fix: a genuine leave (relatedTarget is
+  // null, or outside the list entirely) detaches immediately; a leave that lands on a child
+  // card within the same list (a spurious dragleave the browser fires when the pointer crosses
+  // a child element's bounds) does not.
+  describe("drag auto-scroll dragleave handling", () => {
+    afterEach(() => {
+      // The controller and its dragend listener are module-level singletons shared across
+      // every test in this file -- make sure a stray attach never survives past its own test.
+      document.dispatchEvent(new Event("dragend"));
+    });
+
+    it("stops auto-scrolling a column once the pointer leaves it for somewhere outside every column", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [task({ id: "T-0040", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn() });
+      const list = root.querySelector('.column-cards[data-status="backlog"]');
+      const outside = document.createElement("div");
+
+      const dragover = new Event("dragover", { bubbles: true, cancelable: true });
+      dragover.clientY = 5;
+      list.dispatchEvent(dragover);
+
+      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+      const dragleave = new Event("dragleave", { bubbles: true, cancelable: true });
+      dragleave.relatedTarget = outside;
+      list.dispatchEvent(dragleave);
+
+      expect(cancelSpy).toHaveBeenCalled();
+      cancelSpy.mockRestore();
+    });
+
+    it("stops auto-scrolling a column when the drag leaves the browser window entirely (relatedTarget null)", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [task({ id: "T-0041", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn() });
+      const list = root.querySelector('.column-cards[data-status="backlog"]');
+
+      const dragover = new Event("dragover", { bubbles: true, cancelable: true });
+      dragover.clientY = 5;
+      list.dispatchEvent(dragover);
+
+      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+      const dragleave = new Event("dragleave", { bubbles: true, cancelable: true });
+      dragleave.relatedTarget = null;
+      list.dispatchEvent(dragleave);
+
+      expect(cancelSpy).toHaveBeenCalled();
+      cancelSpy.mockRestore();
+    });
+
+    it("does not stop auto-scrolling when dragleave fires for a move onto a child card within the same column", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [task({ id: "T-0042", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn() });
+      const list = root.querySelector('.column-cards[data-status="backlog"]');
+      const childCard = list.querySelector(".card");
+
+      const dragover = new Event("dragover", { bubbles: true, cancelable: true });
+      dragover.clientY = 5;
+      list.dispatchEvent(dragover);
+
+      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+      const dragleave = new Event("dragleave", { bubbles: true, cancelable: true });
+      dragleave.relatedTarget = childCard;
+      list.dispatchEvent(dragleave);
+
+      expect(cancelSpy).not.toHaveBeenCalled();
+      cancelSpy.mockRestore();
+    });
+  });
+
   it("shows a Run control on a ready card and invokes onRun without triggering onCardClick", () => {
     const root = document.createElement("div");
     const onRun = vi.fn();

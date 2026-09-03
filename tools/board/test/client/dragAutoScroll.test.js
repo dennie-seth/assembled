@@ -219,7 +219,25 @@ describe("computeAutoScroll", () => {
 });
 
 describe("createAutoScrollController", () => {
-  it("starts the animation-frame loop on attach and keeps it alive across ticks", () => {
+  it("schedules a frame on attach", () => {
+    const clock = fakeClock();
+    const controller = createAutoScrollController({
+      requestFrame: clock.requestFrame,
+      cancelFrame: clock.cancelFrame
+    });
+    const container = fakeContainer();
+
+    controller.attach(container);
+    expect(clock.pendingCount()).toBe(1);
+  });
+
+  // VALIDATION FAIL (run 3, T-0288): the old tick() unconditionally called
+  // `frameId = requestFrame(tick)` at the end of every tick, regardless of whether that tick
+  // found anything to scroll -- a busy rAF loop running `getBoundingClientRect()` and the full
+  // computation every frame for the rest of the drag once the container hit a scroll limit or
+  // the pointer sat in the dead zone, exactly the "no busy rAF loop spinning against
+  // scrollTop === 0 or scrollHeight - clientHeight" edge case the card calls out by name.
+  it("idles instead of re-requesting a frame once a tick finds nothing to scroll (no pointer yet)", () => {
     const clock = fakeClock();
     const controller = createAutoScrollController({
       requestFrame: clock.requestFrame,
@@ -231,7 +249,63 @@ describe("createAutoScrollController", () => {
     expect(clock.pendingCount()).toBe(1);
 
     clock.fire();
-    // the tick schedules its own next frame, so the loop keeps itself alive
+    // no update() was ever called -- there is nothing to check, so the loop must not keep
+    // re-scheduling itself forever.
+    expect(clock.pendingCount()).toBe(0);
+  });
+
+  it("idles instead of busy-looping once the container has reached its scroll limit", () => {
+    const clock = fakeClock();
+    const controller = createAutoScrollController({
+      requestFrame: clock.requestFrame,
+      cancelFrame: clock.cancelFrame
+    });
+    // Already at the top of its scroll range -- in-band pointer, but nowhere left to scroll.
+    const container = fakeContainer({ scrollTop: 0 });
+
+    controller.attach(container);
+    controller.update(10, null);
+    clock.fire();
+
+    expect(container.scrollBy).not.toHaveBeenCalled();
+    expect(clock.pendingCount()).toBe(0);
+  });
+
+  it("resumes the loop when update() reports a new position after the loop went idle", () => {
+    const clock = fakeClock();
+    const controller = createAutoScrollController({
+      requestFrame: clock.requestFrame,
+      cancelFrame: clock.cancelFrame
+    });
+    const container = fakeContainer({ scrollTop: 100 });
+
+    controller.attach(container);
+    controller.update(200, null); // dead zone -- no scroll
+    clock.fire();
+    expect(clock.pendingCount()).toBe(0);
+
+    controller.update(10, null); // now in the top band
+    expect(clock.pendingCount()).toBe(1);
+
+    clock.fire();
+    expect(container.scrollBy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the loop alive on its own while the pointer stays in-band and scrollable", () => {
+    const clock = fakeClock();
+    const controller = createAutoScrollController({
+      requestFrame: clock.requestFrame,
+      cancelFrame: clock.cancelFrame
+    });
+    const container = fakeContainer({ scrollTop: 100 });
+
+    controller.attach(container);
+    controller.update(10, null);
+    clock.fire();
+
+    expect(container.scrollBy).toHaveBeenCalledTimes(1);
+    // still scrollable and still in-band -- the tick reschedules itself without needing
+    // another update() call.
     expect(clock.pendingCount()).toBe(1);
   });
 
@@ -278,6 +352,7 @@ describe("createAutoScrollController", () => {
     clock.fire();
 
     expect(container.scrollBy).not.toHaveBeenCalled();
+    expect(clock.pendingCount()).toBe(0);
   });
 
   it("stops scrolling and cancels the pending frame on detach", () => {
