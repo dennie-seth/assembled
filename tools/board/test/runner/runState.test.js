@@ -11,7 +11,6 @@ import {
   isRunWedged,
   killPidGroup,
   freshestRunLogMtimeForTask,
-  hasRecentRunLogForTask,
   DEFAULT_HEARTBEAT_STALE_MS,
   DEFAULT_WEDGED_STALE_MS,
   DEFAULT_KILL_ESCALATION_MS
@@ -228,7 +227,7 @@ describe("updatedAt is diagnostic-only -- never consulted by a liveness decision
   });
 });
 
-describe("freshestRunLogMtimeForTask / hasRecentRunLogForTask", () => {
+describe("freshestRunLogMtimeForTask", () => {
   it("freshestRunLogMtimeForTask returns null when runsDir has no matching log", async () => {
     const mtime = await freshestRunLogMtimeForTask({ runsDir: tmpDir, taskId: "T-9999" });
     expect(mtime).toBeNull();
@@ -240,10 +239,21 @@ describe("freshestRunLogMtimeForTask / hasRecentRunLogForTask", () => {
   });
 
   it("freshestRunLogMtimeForTask matches by taskId prefix and ignores other tasks' logs", async () => {
-    await fs.writeFile(path.join(tmpDir, "T-0001-2026-01-01T00-00-00-000Z.jsonl"), "a\n", "utf8");
-    await fs.writeFile(path.join(tmpDir, "T-00010-2026-01-01T00-00-00-000Z.jsonl"), "b\n", "utf8");
+    const wantedPath = path.join(tmpDir, "T-0001-2026-01-01T00-00-00-000Z.jsonl");
+    const otherPath = path.join(tmpDir, "T-00010-2026-01-01T00-00-00-000Z.jsonl");
+    await fs.writeFile(wantedPath, "a\n", "utf8");
+    await fs.writeFile(otherPath, "b\n", "utf8");
+    // T-00010's log is written after and so has a strictly newer mtime -- if the prefix match
+    // were wrong (e.g. matching "T-0001" as a substring instead of a "T-0001-" prefix) this
+    // would pick T-00010's log instead and the assertion below would catch it.
+    const wantedTime = new Date(Date.now() - 100_000);
+    const otherTime = new Date();
+    await fs.utimes(wantedPath, wantedTime, wantedTime);
+    await fs.utimes(otherPath, otherTime, otherTime);
+
     const mtime = await freshestRunLogMtimeForTask({ runsDir: tmpDir, taskId: "T-0001" });
-    expect(typeof mtime).toBe("number");
+
+    expect(mtime).toBeCloseTo(wantedTime.getTime(), -2);
   });
 
   it("freshestRunLogMtimeForTask picks the most recently modified of several matching logs (a run can span multiple phases)", async () => {
@@ -259,35 +269,6 @@ describe("freshestRunLogMtimeForTask / hasRecentRunLogForTask", () => {
     const mtime = await freshestRunLogMtimeForTask({ runsDir: tmpDir, taskId: "T-0001" });
 
     expect(mtime).toBeCloseTo(newTime.getTime(), -2);
-  });
-
-  it("hasRecentRunLogForTask is true when the freshest matching log is within heartbeatStaleMs", async () => {
-    const logPath = path.join(tmpDir, "T-0002-2026-01-01T00-00-00-000Z.jsonl");
-    await fs.writeFile(logPath, "a\n", "utf8");
-    const now = Date.now();
-    const recentTime = new Date(now - 1000);
-    await fs.utimes(logPath, recentTime, recentTime);
-
-    const result = await hasRecentRunLogForTask({ runsDir: tmpDir, taskId: "T-0002", now, heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS });
-
-    expect(result).toBe(true);
-  });
-
-  it("hasRecentRunLogForTask is false when the freshest matching log is older than heartbeatStaleMs", async () => {
-    const logPath = path.join(tmpDir, "T-0003-2026-01-01T00-00-00-000Z.jsonl");
-    await fs.writeFile(logPath, "a\n", "utf8");
-    const now = Date.now();
-    const staleTime = new Date(now - 200_000);
-    await fs.utimes(logPath, staleTime, staleTime);
-
-    const result = await hasRecentRunLogForTask({ runsDir: tmpDir, taskId: "T-0003", now, heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS });
-
-    expect(result).toBe(false);
-  });
-
-  it("hasRecentRunLogForTask is false when nothing matches", async () => {
-    const result = await hasRecentRunLogForTask({ runsDir: tmpDir, taskId: "T-nope" });
-    expect(result).toBe(false);
   });
 });
 

@@ -91,11 +91,18 @@ export function isPidAlive(pid) {
  * out "state was null/partial and the pid branch never ran" (the card's candidate #2) for these
  * two incidents specifically -- see the `!state` guard below, which never reaches the pid check
  * at all when it fires, so a null state can't produce a *pid*-branch false reap in the first
- * place. It also rules out "a second, different reap path" (candidate #4): a human's live
- * observation (this card's own comments) shows the false reap *recurring on every ~30s sweep* for
- * a run's entire lifetime once it exceeds `DEFAULT_HEARTBEAT_STALE_MS` -- `reapOnStartup` only
- * runs once per process start, so a per-sweep-interval oscillation can only come from `sweepOnce`
- * re-running the identical liveness check on an interval, not from a restart-triggered path.
+ * place. It also rules out "a second, different reap path" (candidate #4): the card's own
+ * "OBSERVED LIVE 2026-09-03" human comment records, while watching a run live, that its card
+ * "oscillated: blocked -> the reaper reaps a live run, validation -> the orchestrator overwrites
+ * it at the next phase transition, blocked -> the reaper reaps it AGAIN on the next sweep",
+ * attributing that directly to `DEFAULT_SWEEP_INTERVAL_MS` (30s) combined with a heartbeat that's
+ * never refreshed past `DEFAULT_HEARTBEAT_STALE_MS` (60s). (Don't confuse this with the gaps
+ * between the card's separate "## Recovered" notes, e.g. ~5m14s apart -- those mark the start of
+ * unrelated later orchestrator runs re-attempting the card, not consecutive sweeps within one
+ * run, and are not the evidence being cited here.) `reapOnStartup` only runs once per process
+ * start, so a per-sweep-interval oscillation within a single live run can only come from
+ * `sweepOnce` re-running the identical liveness check on an interval, not from a restart-triggered
+ * path.
  * "The sweep operating on a stale in-memory copy" (candidate #3) is also ruled out by inspection:
  * `checkRunStatus` (orphanReaper.js) calls `readRunStateFn` fresh on every invocation, with no
  * memoization anywhere in this module or its caller. That leaves candidate #1 -- `isPidAlive`
@@ -175,25 +182,6 @@ export async function freshestRunLogMtimeForTask({ runsDir, taskId, readdirFn = 
     }
   }
   return freshestMtimeMs;
-}
-
-/**
- * Boolean wrapper around `freshestRunLogMtimeForTask` for the null-runstate corroboration case
- * (see its docstring). This is corroboration, not proof -- weaker than a confirmed-alive pid --
- * so a caller (orphanReaper.js's `checkRunStatus`) treats a `true` result here as a "deferred"
- * verdict, not "alive": re-checkable next sweep, never permanently trusted.
- */
-export async function hasRecentRunLogForTask({
-  runsDir,
-  taskId,
-  now = Date.now(),
-  heartbeatStaleMs = DEFAULT_HEARTBEAT_STALE_MS,
-  readdirFn = fs.readdir,
-  statFn = fs.stat
-}) {
-  const mtimeMs = await freshestRunLogMtimeForTask({ runsDir, taskId, readdirFn, statFn });
-  if (mtimeMs === null) return false;
-  return now - mtimeMs < heartbeatStaleMs;
 }
 
 /**
