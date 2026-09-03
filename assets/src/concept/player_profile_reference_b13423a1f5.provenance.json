@@ -1,0 +1,19 @@
+{
+  "card": "T-0273",
+  "consumerCard": "T-0274",
+  "sourcedVia": "T-0276 referenceFetch.js (fetched fresh by T-0273 after PR #312's transport fix)",
+  "model_hash": "N/A — fetched open-licence reference photograph, not model-generated",
+  "generator": "tools/board/scripts/referenceFetch.js",
+  "sourceId": "wikimedia",
+  "assetId": "File:Animal Locomotion - side and rear views of man walking (pl. 546) LCCN2005697038.jpg",
+  "title": "File:Animal Locomotion - side and rear views of man walking (pl. 546) LCCN2005697038.jpg",
+  "sourceUrl": "https://upload.wikimedia.org/wikipedia/commons/7/77/Animal_Locomotion_-_side_and_rear_views_of_man_walking_%28pl._546%29_LCCN2005697038.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+  "license": "Public domain",
+  "licenseNormalized": "pdm",
+  "retrievedAt": "2026-09-03T17:06:16.229Z",
+  "promotedAt": "2026-09-03",
+  "mime": "image/jpeg",
+  "sha256": "b13423a1f59e03116dfd93ac7842fc1dca75fafe5613500f32ac227edb567efe",
+  "byteLength": 157127,
+  "verdict": "KEPT -- Eadweard Muybridge, Animal Locomotion pl. 546 (1887). Top row is a 12-frame true side-on walk cycle (different subject/build than pl. 555); bottom row is a rear view and is not used as profile evidence, only the top row is. Widens gait/build variation in the set."
+}

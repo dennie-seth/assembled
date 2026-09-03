@@ -1,0 +1,19 @@
+{
+  "card": "T-0273",
+  "consumerCard": "T-0274",
+  "sourcedVia": "T-0276 referenceFetch.js (fetched fresh by T-0273 after PR #312's transport fix)",
+  "model_hash": "N/A — fetched open-licence reference photograph, not model-generated",
+  "generator": "tools/board/scripts/referenceFetch.js",
+  "sourceId": "wikimedia",
+  "assetId": "File:Animal Locomotion - side and rear views of man walking with cane (pl. 552) LCCN2005697040.jpg",
+  "title": "File:Animal Locomotion - side and rear views of man walking with cane (pl. 552) LCCN2005697040.jpg",
+  "sourceUrl": "https://upload.wikimedia.org/wikipedia/commons/3/35/Animal_Locomotion_-_side_and_rear_views_of_man_walking_with_cane_%28pl._552%29_LCCN2005697040.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+  "license": "Public domain",
+  "licenseNormalized": "pdm",
+  "retrievedAt": "2026-09-03T17:06:20.311Z",
+  "promotedAt": "2026-09-03",
+  "mime": "image/jpeg",
+  "sha256": "4ef2fcbe5b11b6fef2a7b75ef6ac2a93ef5a9c826d38ce45af220aadb6af9af6",
+  "byteLength": 179831,
+  "verdict": "KEPT -- Eadweard Muybridge, Animal Locomotion pl. 552 (1887). Top row is a 12-frame true side-on walk cycle of a man walking with a cane; unambiguous profile, adds a distinct gait/prop variation to the set."
+}
