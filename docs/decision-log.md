@@ -1476,3 +1476,170 @@ keeps unchanged for that class. Nothing here re-opens or re-grades either verdic
 
 **Touched docs (this entry):**
 - `docs/decision-log.md` — this entry (DL-26)
+
+---
+
+## DL-27 — Two approval records, one source of truth: the board wins (T-0286)
+
+**Date:** 2026-09-03
+**Raised by:** T-0286, following the T-0257/T-0243 drift incident
+**Resolved by:** T-0286 (`tools/board/src/lib/approvalGate.js`'s `approvalVerdict`,
+`GET /api/tasks/:id/approval` in `tools/board/src/server/httpApi.js`)
+
+### The problem
+
+A direction approval lived in two places: the board card's `requires_approval` /
+`approved_by` / `approved_at` (`docs/board-invariants.md` §10, AP-1..AP-9 --
+stamped only by a human AP-3/AP-4 gesture), and a prose approval line per asset
+in `ASSET_PROVENANCE.md`. Nothing propagated one to the other.
+
+T-0257 was approved on the board 2026-08-30 (`approved_by: "Anonymous"`,
+`approved_at: 2026-08-30T22:06:35.073Z`, PR #291). `ASSET_PROVENANCE.md`'s row
+for the concept sheet it gated kept reading "Not yet approved" for days.
+T-0243, and the T-0244/T-0245/T-0246 cards parked behind the same gate, stayed
+blocked on a decision that had already been made. Nobody was wrong by their
+own rules -- the human approved, the agent correctly refused to build against
+what its only source (the provenance file) called unapproved, and the reviewer
+correctly failed the card. **The system had two sources of truth and no
+reconciliation.** PR #307 fixed that one row by hand; it did not fix the class.
+
+### Options considered
+
+**Option A -- the board record is authoritative.** Any consumer resolves "is
+this approved?" by reading the card's `approved_by`/`approved_at` directly,
+never by parsing `ASSET_PROVENANCE.md` prose. The provenance file keeps its
+human-readable note, but the note stops being load-bearing.
+
+**Option B -- enforced propagation.** Keep both records, but make the
+approval stamp also write/refresh the `ASSET_PROVENANCE.md` row, plus a drift
+check that fails when a gated card is approved on the board while its
+provenance row still reads unapproved.
+
+### Decision: Option A
+
+`docs/board-invariants.md` §10 already states the project's taste on exactly
+this question, for the board's own `requires_approval` signal: *"Body
+detection was considered and rejected: which cards are gated has to be
+answerable without parsing English."* Option B deepens the very pattern that
+line rejects -- it would add a *second* place parsing English for a verdict,
+plus a writer to keep it superficially in sync and a sweep to catch the writer
+missing a case. Option A needs none of that: there is only one record, so
+there is nothing to keep in sync and nothing to drift.
+
+The cost the card names for Option A -- "the reviewer needs board access at
+validation time" -- is already paid: `GET /api/tasks/:id` already returns
+`requires_approval`/`approved_by`/`approved_at` for every task
+(`taskParser.js`), and the board already binds `127.0.0.1` for exactly this
+kind of local, scoped read. `approvalVerdict(task)` (pure, `approvalGate.js`)
+turns those three fields into one explicit verdict object rather than leaving
+every caller to re-derive `isApproved` logic for itself, and
+`GET /api/tasks/:id/approval` (`httpApi.js`) is the one HTTP surface that
+answers it. Both are read-only: `approvalVerdict` has no parameter or code
+path that writes `approved_by`/`approved_at`, so it can forward an existing
+human stamp but can never mint one -- the AP-3/AP-4 rule that only a human
+gesture records approval is untouched.
+
+`ASSET_PROVENANCE.md`'s prose stays exactly as written, including T-0257's
+already-propagated row from PR #307 -- this decision does not retro-edit any
+existing entry, and does not require the file to be touched at all going
+forward. It remains a human-readable note for a reader with no board access;
+it is simply never the thing a verdict is computed from.
+
+### What this does not change
+
+- **`approvalGate.js`'s AP-1..AP-9 are unchanged.** `approvalVerdict` is a new
+  pure function over the existing `requiresApproval`/`isApproved` predicates,
+  not a new way to grant or infer approval.
+- **No existing `ASSET_PROVENANCE.md` row is rewritten.** This is a
+  forward-looking resolution path, not a retro-edit of the record PR #307
+  already hand-fixed.
+- **Scope stays approval-record reconciliation.** This does not redesign
+  `requires_approval`, the AP-3/AP-4 gestures, or any other asset-gate check.
+
+### Addendum: instruction wiring blocked, two other backstops shipped instead
+
+`approvalVerdict`/`GET /api/tasks/:id/approval` only closes the class of bug once a real consumer
+resolves approval from them instead of `ASSET_PROVENANCE.md` prose. The natural place to say that
+is `.claude/rules/assets.md` (loaded by the `assets` agent before deciding whether to generate
+against a gated reference) — but editing anything under `.claude/**` was refused in this session,
+confirmed across four separate attempts on two different files in two different sessions (T-0286
+run-1's `.claude/rules/assets.md`/`.claude/agents/assets.md`, T-0286 run-2's re-confirmation on
+`.claude/rules/js.md`, an unrelated file, which ruled out a per-file cause), regardless of the
+`infra` agent's own documented scope. This reads as a session/harness-level guard on `.claude/**`
+itself, not a per-file or per-content check. See
+`docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` for the exact refusals and the exact
+edit text a session with `.claude/**` write access should apply.
+
+**Two backstops shipped instead, run-2, aimed at the two different environments a consumer could
+actually check this in:**
+
+1. **CI (`checkApprovalProvenanceDrift.js` / `ci-approval-provenance-drift.yml`).** Run-1 shipped
+   this against `FsTaskStore` reading `tasks/*.md`, which stops at T-0222 — every card in the real
+   incident (T-0243/44/45/46, T-0257) lives only in the board's own db
+   (`docs/design/cards-to-database.md`), which is deliberately kept outside git and is not
+   reachable from a fresh GitHub Actions checkout. Run-1's check silently printed "passed" for
+   exactly the cards it could not see — a missing data source rendering a reassuring pass, the
+   opposite of what a backstop is for. `findApprovalDrift` now reports a distinct
+   `unverifiable-approval-claim` drift kind for an approval-shaped provenance row naming a card
+   with no matching task at all, bounded (via the new `collectAddedLines` git-diff helper) to
+   rows the current PR's diff actually adds — never the ~200 pre-existing rows this repo's own
+   fs-mode task list has never been able to resolve, which would otherwise turn every future
+   unrelated PR permanently red. This makes the CI job loud instead of falsely green for the
+   T-0223+ gap, but does not close it: CI still cannot resolve a db-mode card's real verdict, only
+   refuse to pretend it can. Closing that gap for real would mean either exporting board approval
+   state into a git-committed, CI-reachable form, or making the workflow reachable to the live
+   db — both are a materially bigger change than approval-record reconciliation and are left as a
+   follow-up card if the team wants CI-side coverage for db-mode cards specifically.
+2. **The live board process itself (`approvalProvenanceStaleNotice`, wired into both
+   `handlePatchTask` and `handleAddComment` in `httpApi.js`).** This is the one place that never
+   has the CI gap: the board server holds the live, just-written approval record *and* a real git
+   checkout of `ASSET_PROVENANCE.md` in the same process, on the same machine, at the exact moment
+   a human's AP-3/AP-4 gesture stamps an approval. When the file's prose still contradicts what was
+   just recorded, the board posts an informational `assembled-board` comment on the same card,
+   live — the T-0257/T-0243 drift could have surfaced this way on 2026-08-30 itself, instead of
+   sitting unnoticed for days. Read-only against `ASSET_PROVENANCE.md` and never blocks the
+   approval; it does not, by itself, stop an agent from reading stale prose before generating (the
+   actual shape of the T-0243 incident) — that half of the fix is still the deferred instruction
+   edit above, which needs a human with `.claude/**` write access, not this session.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-27)
+- `docs/board-invariants.md` — new invariant AP-10
+- `docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` — the blocked-edit attempt log
+
+### Addendum (run 4): "not consulted for the verdict" was wrong -- a write-through was added
+
+The run-3 VALIDATION verdict found that the claim above -- "`ASSET_PROVENANCE.md`'s prose ... is
+not consulted for the verdict" -- was false when it was written. Three plain pytest gates,
+`test_t0257_concept_sheet_is_approved()` in
+`assets/src/concept/tests/test_{power_substation,equipment_floor,antenna_shaft}_room_manifest.py`,
+each do exactly the `"APPROVED" in row` substring check against `ASSET_PROVENANCE.md` that this
+decision assumed nothing did. These are mechanical build gates, not agent instructions -- they run
+regardless of what any `.claude/**` file says, and they are outside `infra`'s own path scope to
+edit (`assets/src/concept/tests/**` belongs to a different implementer agent). Pointing
+`approvalVerdict`/`GET /api/tasks/:id/approval` at the board record, as this entry describes, closed
+the class for any *future* consumer that can reach the board -- but did nothing for these three
+existing, offline ones, which is exactly the shape the real T-0243 incident took (an agent/gate
+reading stale prose, not a missing API).
+
+Since the actual gating code cannot be redirected from `infra`'s scope, the fix is the other half of
+what Option B originally proposed and this entry rejected outright: `syncApprovalProvenanceText`
+and `refreshApprovalProvenanceFile`
+(`tools/board/src/lib/approvalProvenanceSync.js`), wired into both of `httpApi.js`'s approval write
+paths (`handlePatchTask`'s drag-to-Done, `handleAddComment`'s "APPROVED" comment). The moment a
+human's AP-3/AP-4 gesture stamps an approval on a gated card, the board now also rewrites the one
+`ASSET_PROVENANCE.md` row `findApprovalDrift` flags as `stale-unapproved-claim` for that card,
+forwarding only the `approved_by`/`approved_at` that gesture just wrote -- there is no parameter or
+code path that could set either field itself, so this can never mint an approval, only propagate one
+that already happened. Every other row, and the rest of the matching row's own text, is left
+byte-for-byte untouched; an already-agreeing row, a row for an unrelated card, or a gated-but-not-yet-approved
+card's row are all left completely alone.
+
+This is a **deliberate, narrow hybrid**, not a reversal of Option A: `approvalVerdict`/
+`GET /api/tasks/:id/approval` remain the one authoritative *read* path for anything that can reach
+the board, exactly as decided above. The write-through exists only because the specific offline
+consumers this incident actually blocked on (the three pytest gates) have no board access and are
+outside this card's own agent scope to redirect -- syncing the file is the only way, short of a
+different agent editing `assets/src/concept/tests/**`, to make those particular existing gates stop
+reading stale prose. `docs/board-invariants.md` AP-10 is corrected in the same commit to stop
+asserting the file "is not consulted for the verdict."
