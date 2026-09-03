@@ -54,3 +54,25 @@ describe("board column layout (T-0141 scaling fix)", () => {
     expect(getComputedStyle(sidePanel).position).toBe("fixed");
   });
 });
+
+// T-0288 VALIDATION FAIL (run 1): `.column-cards` had no `overflow-y`/bounded height at all
+// (min-height/display/flex-direction/gap only), so in a real browser scrollHeight === clientHeight
+// and scrollTop is always 0 -- the auto-scroll math in dragAutoScroll.js can never find room to
+// scroll no matter how the pointer moves. This pins the container the drag auto-scroll targets
+// as an actual scrollable box, independent of the scroll math itself (covered separately in
+// dragAutoScroll.test.js).
+describe("column-cards is a real scroll container (T-0288 drag auto-scroll)", () => {
+  it("is vertically scrollable with a bounded height, not an ever-growing box", () => {
+    const column = document.createElement("div");
+    column.className = "column";
+    const list = document.createElement("div");
+    list.className = "column-cards";
+    column.appendChild(list);
+    document.body.appendChild(column);
+
+    const style = getComputedStyle(list);
+    expect(style.overflowY).toBe("auto");
+    expect(style.maxHeight).not.toBe("none");
+    expect(style.maxHeight).not.toBe("");
+  });
+});

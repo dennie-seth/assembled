@@ -95,6 +95,14 @@ body {
 
 .column-cards {
   min-height: 4rem;
+  /* Bounded so this actually becomes a scroll container (T-0288 VALIDATION FAIL: without a
+     capped height, scrollHeight === clientHeight always and drag auto-scroll has nowhere to
+     scroll no matter what the pointer does). 60vh leaves room below for the column's own
+     header/select and comfortably clears the terminal panel on any reasonable viewport height,
+     without a `calc()` expression that a lightweight CSSOM (this project's happy-dom test
+     environment included) may not resolve. */
+  max-height: 60vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
