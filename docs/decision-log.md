@@ -1606,3 +1606,40 @@ actually check this in:**
 - `docs/decision-log.md` — this entry (DL-27)
 - `docs/board-invariants.md` — new invariant AP-10
 - `docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` — the blocked-edit attempt log
+
+### Addendum (run 4): "not consulted for the verdict" was wrong -- a write-through was added
+
+The run-3 VALIDATION verdict found that the claim above -- "`ASSET_PROVENANCE.md`'s prose ... is
+not consulted for the verdict" -- was false when it was written. Three plain pytest gates,
+`test_t0257_concept_sheet_is_approved()` in
+`assets/src/concept/tests/test_{power_substation,equipment_floor,antenna_shaft}_room_manifest.py`,
+each do exactly the `"APPROVED" in row` substring check against `ASSET_PROVENANCE.md` that this
+decision assumed nothing did. These are mechanical build gates, not agent instructions -- they run
+regardless of what any `.claude/**` file says, and they are outside `infra`'s own path scope to
+edit (`assets/src/concept/tests/**` belongs to a different implementer agent). Pointing
+`approvalVerdict`/`GET /api/tasks/:id/approval` at the board record, as this entry describes, closed
+the class for any *future* consumer that can reach the board -- but did nothing for these three
+existing, offline ones, which is exactly the shape the real T-0243 incident took (an agent/gate
+reading stale prose, not a missing API).
+
+Since the actual gating code cannot be redirected from `infra`'s scope, the fix is the other half of
+what Option B originally proposed and this entry rejected outright: `syncApprovalProvenanceText`
+and `refreshApprovalProvenanceFile`
+(`tools/board/src/lib/approvalProvenanceSync.js`), wired into both of `httpApi.js`'s approval write
+paths (`handlePatchTask`'s drag-to-Done, `handleAddComment`'s "APPROVED" comment). The moment a
+human's AP-3/AP-4 gesture stamps an approval on a gated card, the board now also rewrites the one
+`ASSET_PROVENANCE.md` row `findApprovalDrift` flags as `stale-unapproved-claim` for that card,
+forwarding only the `approved_by`/`approved_at` that gesture just wrote -- there is no parameter or
+code path that could set either field itself, so this can never mint an approval, only propagate one
+that already happened. Every other row, and the rest of the matching row's own text, is left
+byte-for-byte untouched; an already-agreeing row, a row for an unrelated card, or a gated-but-not-yet-approved
+card's row are all left completely alone.
+
+This is a **deliberate, narrow hybrid**, not a reversal of Option A: `approvalVerdict`/
+`GET /api/tasks/:id/approval` remain the one authoritative *read* path for anything that can reach
+the board, exactly as decided above. The write-through exists only because the specific offline
+consumers this incident actually blocked on (the three pytest gates) have no board access and are
+outside this card's own agent scope to redirect -- syncing the file is the only way, short of a
+different agent editing `assets/src/concept/tests/**`, to make those particular existing gates stop
+reading stale prose. `docs/board-invariants.md` AP-10 is corrected in the same commit to stop
+asserting the file "is not consulted for the verdict."

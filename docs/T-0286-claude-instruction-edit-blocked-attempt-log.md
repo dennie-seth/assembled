@@ -142,3 +142,39 @@ just can't be the thing that stops the `assets` agent from reading stale `ASSET_
 prose *before* generating, which is the actual shape the T-0243 incident took. That specific fix
 still needs a human (or a session with `.claude/**` write access) to apply the edit under "The edit
 a human... should apply" above.
+
+## Run 3 review correction: this log's own premise was wrong about which consumer matters
+
+Run 3's VALIDATION verdict found a real, load-bearing consumer of `ASSET_PROVENANCE.md` prose that
+this log's "the two consumers that matter are agent *instructions*" line (above) missed entirely:
+`assets/src/concept/tests/test_power_substation_room_manifest.py`,
+`test_equipment_floor_room_manifest.py`, and `test_antenna_shaft_room_manifest.py` each define
+`test_t0257_concept_sheet_is_approved()`, a plain pytest assertion — not an agent instruction, not
+behind any `.claude/**` gate — that reads `ASSET_PROVENANCE.md`, finds T-0257's row, and asserts
+`"APPROVED" in row`. This is a **mechanical gate**, not a suggestion an agent could ignore or follow
+correctly regardless of what `.claude/rules/assets.md` says: it runs in every affected package's own
+test suite and fails the build outright if the row's prose doesn't say so. `docs/board-invariants.md`
+AP-10's claim that the provenance file "is not consulted for the verdict" was, at the time it was
+written, simply false — this correction supersedes it.
+
+**Why this run's fix does not need the blocked `.claude/**` edit at all.** The instruction edit
+above would tell the `assets` agent to *check the board instead of reading the file* — but it can't
+touch the pytest gates themselves (`assets/src/concept/tests/**` is outside `infra`'s own path
+scope: `tools/**`, `.github/**`, `.claude/**`, `docs/**`), so even a successful edit would leave
+those three tests gating on stale prose forever. The fix this run ships instead
+(`tools/board/src/lib/approvalProvenanceSync.js`'s `refreshApprovalProvenanceFile`, wired into both
+`httpApi.js` approval write paths) makes the file itself self-healing: the moment a human's
+drag-to-Done or "APPROVED" comment stamps an approval, the board rewrites the one row `findApprovalDrift`
+flags as stale to carry that same stamp, forwarding only `approved_by`/`approved_at` that already
+exist on the task — never minting one. Because the pytest gates only ever do a plain substring
+check against the file, this makes them pass correctly without a single line of `assets/**` or
+`.claude/**` changing. The `.claude/**` edit proposed above (redirecting the *agent's* own
+pre-generation check to the board) is still worth applying whenever a session with write access to
+that tree is available — it closes the "agent reads stale prose before generating" half of the
+incident that a file-level sync alone does not touch — but it is no longer the blocking dependency
+for this card's own acceptance criteria, since the mechanical pytest gate (the thing that actually
+enforced the T-0243 block) is now fixed by the write-through instead.
+
+`docs/decision-log.md` DL-27 and `docs/board-invariants.md` AP-10 are both corrected in the same
+commit as this addendum to stop asserting "the provenance file is not consulted for the verdict,"
+which this run's own investigation showed to be untrue.

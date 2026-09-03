@@ -269,7 +269,7 @@ that gains comment or PATCH rights.
 | AP-7 | A planner run may **add** `requires_approval` to a card — flagging a direction card is spec work — but may never write, alter or erase an approval record. Enforced twice: `checkPlannerDiffGuard` fails the run in fs mode, and `plannerFileView`'s `MUTABLE_FIELDS` allowlist (whose `diffPlannerFileView` runs that same guard) fails it in db mode. | The planner is the one agent that legitimately rewrites card frontmatter wholesale, so it is the one agent that could forge an approval as a side effect of ordinary work. Treated exactly like the existing "planner never touches status" rule. | ✅ Covered — `plannerDiffGuard.test.js` (forge, erase, and the legitimate add), `plannerFileView.test.js` (db-mode add applied, db-mode forge rejected). |
 | AP-8 | An approval-by-comment fires the same terminal-status side effects a drag to Done does — artifact-cache purge and the `origin/develop` deploy pull. | Two routes to `done` that do *different* amounts of follow-through is precisely the shape of divergence that produced PULL-1, where one mode silently stopped deploying. Both routes now go through one `applyTerminalStatusEffects`. | ✅ Covered — `httpApi.approval.test.js` ("triggers the same deploy pull…", and not for an ordinary comment). |
 | AP-9 | Cards already `done` before this gate existed are **not** retroactively re-parked. | A migration that reopened settled cards would rewrite history the board has already acted on, and would unblock/reblock downstream work with no human in the loop. The one card this actually matters for (T-0239's synthetic sheet) was already superseded by T-0257 through the normal card flow, which is the right mechanism: a new card carrying the gate, not a retro-edit of an old one. | ✅ By construction — the migration defaults every existing row to `requires_approval = 0`; no code path re-parks a `done` card. |
-| AP-10 | A card's approval verdict has exactly one authoritative reader path: `approvalVerdict(task)` in `approvalGate.js`, exposed as `GET /api/tasks/:id/approval`. It resolves `requires_approval`/`approved_by`/`approved_at` off the board record only, and never parses `ASSET_PROVENANCE.md` prose. It is a pure read with no path to set `approved_by`/`approved_at` — it can forward an existing human stamp, never mint one. | T-0257 was approved on the board 2026-08-30 while `ASSET_PROVENANCE.md`'s row for its concept sheet still read "Not yet approved" — a second, hand-maintained mirror of the same verdict that nothing kept in sync, blocking T-0243/T-0244/T-0245/T-0246 for days on a decision already made (PR #307 fixed that one row by hand; `docs/decision-log.md` DL-27 records the class fix and the Option A vs Option B trade). | ✅ Covered — `approvalGate.test.js` (`approvalVerdict`, incl. the T-0257/T-0243 drift scenario reproduced and resolved), `httpApi.approval.test.js` §AP-10 (end-to-end over the real endpoint, incl. the 404 and agent-cannot-approve cases). |
+| AP-10 | A card's approval verdict has exactly one authoritative *read* path: `approvalVerdict(task)` in `approvalGate.js`, exposed as `GET /api/tasks/:id/approval`. It resolves `requires_approval`/`approved_by`/`approved_at` off the board record only. It is a pure read with no path to set `approved_by`/`approved_at` — it can forward an existing human stamp, never mint one. `ASSET_PROVENANCE.md`'s prose is a second, existing consumer of that same verdict (the `assets` package's own pytest gates check it directly, offline, outside board reach) — it is kept truthful by a write-through (`approvalProvenanceSync.js`'s `refreshApprovalProvenanceFile`) that forwards the same already-recorded human stamp into the one row `findApprovalDrift` flags as stale, and never mints an approval either. | T-0257 was approved on the board 2026-08-30 while `ASSET_PROVENANCE.md`'s row for its concept sheet still read "Not yet approved" — a second, hand-maintained mirror of the same verdict that nothing kept in sync, blocking T-0243/T-0244/T-0245/T-0246 for days on a decision already made (PR #307 fixed that one row by hand; `docs/decision-log.md` DL-27 records the class fix, the Option A vs Option B trade, and the run-4 addendum explaining why a narrow write-through was added on top of Option A). | ✅ Covered — `approvalGate.test.js` (`approvalVerdict`, incl. the T-0257/T-0243 drift scenario reproduced and resolved), `httpApi.approval.test.js` §AP-10 (end-to-end over the real endpoint, incl. the 404 and agent-cannot-approve cases), `approvalProvenanceSync.test.js` + `httpApi.approvalProvenanceNotice.test.js` (write-through, incl. the exact stale-row scenario, both approval routes, and the never-mints-an-approval guard). |
 
 **The general pattern for direction cards.** Every future concept-art,
 style-direction or reference-producing card sets `requires_approval: true` at
@@ -283,8 +283,17 @@ state faithfully, but say nothing about *other* readers of a card's approval
 verdict. `ASSET_PROVENANCE.md` keeps a prose note per curated asset, and
 until AP-10 nothing kept it in sync with the board — see AP-10 above for the
 incident and the fix. `ASSET_PROVENANCE.md`'s note stays human-readable
-documentation for a reader with no board access; it is not consulted for the
-verdict, and no existing row is retroactively rewritten.
+documentation for a reader with no board access, but it **is** consulted for
+the verdict by at least one real, existing, mechanical gate: each of
+`assets/src/concept/tests/test_{power_substation,equipment_floor,antenna_shaft}_room_manifest.py`
+defines `test_t0257_concept_sheet_is_approved()`, a plain pytest assertion
+that does `"APPROVED" in row` against the file on disk. An earlier draft of
+this line claimed the opposite ("not consulted for the verdict"); that was
+wrong, and is corrected here (`docs/decision-log.md` DL-27's run-4 addendum
+has the full account). No existing row is retroactively rewritten by any of
+this — only a row `findApprovalDrift` flags as `stale-unapproved-claim` for a
+card the board has since approved is ever touched, and only the matched
+stale phrase within it.
 
 **AP-10's mechanical backstop, and the instruction edit still owed.**
 `findApprovalDrift` (`tools/board/src/lib/approvalProvenanceDrift.js`) plus
@@ -292,17 +301,22 @@ verdict, and no existing row is retroactively rewritten.
 card against that card's real `approvalVerdict` on every PR touching
 `ASSET_PROVENANCE.md` or `tasks/**` — a code-only, git-diff-level catch for
 exactly the T-0257/T-0243 drift shape, independent of any agent's own tool
-grants. What did **not** land in this pass: instructing the `assets` agent
-itself (`.claude/rules/assets.md`) to resolve approval from
+grants. The live board process goes one step further:
+`approvalProvenanceSync.js`'s `refreshApprovalProvenanceFile`, wired into
+both of `httpApi.js`'s approval write paths, rewrites the specific stale row
+the moment a human's AP-3/AP-4 gesture stamps an approval — forwarding only
+the `approved_by`/`approved_at` that gesture just wrote, never minting one —
+which is what makes the three pytest gates above self-heal without their own
+code changing. What did **not** land in this pass: instructing the `assets`
+agent itself (`.claude/rules/assets.md`) to resolve approval from
 `GET /api/tasks/:id/approval` rather than from `ASSET_PROVENANCE.md`'s prose
-before it generates. Editing anything under `.claude/**` was refused at the
-session level while T-0286 was in progress; see
+*before it generates* — the write-through above fixes the existing mechanical
+gates, but does not stop an agent from reading stale prose in the moment
+before an approval lands. Editing anything under `.claude/**` was refused at
+the session level while T-0286 was in progress; see
 `docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` for the exact
 refusals and the exact text to apply once a session with `.claude/**` write
-access is available. Until that lands, the CI sweep above is the only
-mechanical guard against this class of drift — it catches a stale row once a
-PR exists, but does not stop an agent from reading one before that PR exists,
-which is the shape the real T-0243 incident took.
+access is available.
 
 ---
 
