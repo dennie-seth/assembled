@@ -7,10 +7,28 @@ import {
   sortTasks,
   SORT_KEYS
 } from "./board.js";
+import { createAutoScrollController } from "./dragAutoScroll.js";
 
 export const BATCH_SIZE = 20;
 
 let _batchObserver = null;
+
+// One controller shared across every column: only the column currently under the pointer
+// during a drag ever has anything to scroll. `_draggedCard` is the element from the most
+// recent `dragstart`, used to reach its live `getBoundingClientRect()` for the tall-card case.
+const _autoScroll = createAutoScrollController();
+let _draggedCard = null;
+
+// Registered once at module load, not per-render: `dragend` fires on the source card whenever
+// a drag operation concludes -- dropped, cancelled, or released outside the window -- so this
+// is what stops a leaked auto-scroll loop for every one of those cases in one place, rather than
+// requiring a matching listener on every drop target.
+if (typeof document !== "undefined") {
+  document.addEventListener("dragend", () => {
+    _autoScroll.detach();
+    _draggedCard = null;
+  });
+}
 
 const STATUS_LABELS = {
   backlog: "Backlog",
@@ -111,6 +129,7 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, depen
 
   card.addEventListener("dragstart", (event) => {
     event.dataTransfer.setData("text/plain", task.id);
+    _draggedCard = card;
   });
   card.addEventListener("click", () => onCardClick(task.id));
 
@@ -209,9 +228,15 @@ function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus,
 
   list.addEventListener("dragover", (event) => {
     event.preventDefault();
+    // Cheap: just latches the latest pointer/card state. The actual getBoundingClientRect()/
+    // scrollBy() work happens on the next animation frame (see dragAutoScroll.js), not here --
+    // dragover fires far too often to do that work per-event without jitter.
+    _autoScroll.attach(list);
+    _autoScroll.update(event.clientY, _draggedCard);
   });
   list.addEventListener("drop", (event) => {
     event.preventDefault();
+    _autoScroll.detach();
     const taskId = event.dataTransfer.getData("text/plain");
     if (taskId) {
       callbacks.onDrop(taskId, status);
