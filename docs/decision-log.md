@@ -1476,3 +1476,86 @@ keeps unchanged for that class. Nothing here re-opens or re-grades either verdic
 
 **Touched docs (this entry):**
 - `docs/decision-log.md` — this entry (DL-26)
+
+---
+
+## DL-27 — Two approval records, one source of truth: the board wins (T-0286)
+
+**Date:** 2026-09-03
+**Raised by:** T-0286, following the T-0257/T-0243 drift incident
+**Resolved by:** T-0286 (`tools/board/src/lib/approvalGate.js`'s `approvalVerdict`,
+`GET /api/tasks/:id/approval` in `tools/board/src/server/httpApi.js`)
+
+### The problem
+
+A direction approval lived in two places: the board card's `requires_approval` /
+`approved_by` / `approved_at` (`docs/board-invariants.md` §10, AP-1..AP-9 --
+stamped only by a human AP-3/AP-4 gesture), and a prose approval line per asset
+in `ASSET_PROVENANCE.md`. Nothing propagated one to the other.
+
+T-0257 was approved on the board 2026-08-30 (`approved_by: "Anonymous"`,
+`approved_at: 2026-08-30T22:06:35.073Z`, PR #291). `ASSET_PROVENANCE.md`'s row
+for the concept sheet it gated kept reading "Not yet approved" for days.
+T-0243, and the T-0244/T-0245/T-0246 cards parked behind the same gate, stayed
+blocked on a decision that had already been made. Nobody was wrong by their
+own rules -- the human approved, the agent correctly refused to build against
+what its only source (the provenance file) called unapproved, and the reviewer
+correctly failed the card. **The system had two sources of truth and no
+reconciliation.** PR #307 fixed that one row by hand; it did not fix the class.
+
+### Options considered
+
+**Option A -- the board record is authoritative.** Any consumer resolves "is
+this approved?" by reading the card's `approved_by`/`approved_at` directly,
+never by parsing `ASSET_PROVENANCE.md` prose. The provenance file keeps its
+human-readable note, but the note stops being load-bearing.
+
+**Option B -- enforced propagation.** Keep both records, but make the
+approval stamp also write/refresh the `ASSET_PROVENANCE.md` row, plus a drift
+check that fails when a gated card is approved on the board while its
+provenance row still reads unapproved.
+
+### Decision: Option A
+
+`docs/board-invariants.md` §10 already states the project's taste on exactly
+this question, for the board's own `requires_approval` signal: *"Body
+detection was considered and rejected: which cards are gated has to be
+answerable without parsing English."* Option B deepens the very pattern that
+line rejects -- it would add a *second* place parsing English for a verdict,
+plus a writer to keep it superficially in sync and a sweep to catch the writer
+missing a case. Option A needs none of that: there is only one record, so
+there is nothing to keep in sync and nothing to drift.
+
+The cost the card names for Option A -- "the reviewer needs board access at
+validation time" -- is already paid: `GET /api/tasks/:id` already returns
+`requires_approval`/`approved_by`/`approved_at` for every task
+(`taskParser.js`), and the board already binds `127.0.0.1` for exactly this
+kind of local, scoped read. `approvalVerdict(task)` (pure, `approvalGate.js`)
+turns those three fields into one explicit verdict object rather than leaving
+every caller to re-derive `isApproved` logic for itself, and
+`GET /api/tasks/:id/approval` (`httpApi.js`) is the one HTTP surface that
+answers it. Both are read-only: `approvalVerdict` has no parameter or code
+path that writes `approved_by`/`approved_at`, so it can forward an existing
+human stamp but can never mint one -- the AP-3/AP-4 rule that only a human
+gesture records approval is untouched.
+
+`ASSET_PROVENANCE.md`'s prose stays exactly as written, including T-0257's
+already-propagated row from PR #307 -- this decision does not retro-edit any
+existing entry, and does not require the file to be touched at all going
+forward. It remains a human-readable note for a reader with no board access;
+it is simply never the thing a verdict is computed from.
+
+### What this does not change
+
+- **`approvalGate.js`'s AP-1..AP-9 are unchanged.** `approvalVerdict` is a new
+  pure function over the existing `requiresApproval`/`isApproved` predicates,
+  not a new way to grant or infer approval.
+- **No existing `ASSET_PROVENANCE.md` row is rewritten.** This is a
+  forward-looking resolution path, not a retro-edit of the record PR #307
+  already hand-fixed.
+- **Scope stays approval-record reconciliation.** This does not redesign
+  `requires_approval`, the AP-3/AP-4 gestures, or any other asset-gate check.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-27)
+- `docs/board-invariants.md` — new invariant AP-10

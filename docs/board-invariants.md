@@ -269,6 +269,7 @@ that gains comment or PATCH rights.
 | AP-7 | A planner run may **add** `requires_approval` to a card — flagging a direction card is spec work — but may never write, alter or erase an approval record. Enforced twice: `checkPlannerDiffGuard` fails the run in fs mode, and `plannerFileView`'s `MUTABLE_FIELDS` allowlist (whose `diffPlannerFileView` runs that same guard) fails it in db mode. | The planner is the one agent that legitimately rewrites card frontmatter wholesale, so it is the one agent that could forge an approval as a side effect of ordinary work. Treated exactly like the existing "planner never touches status" rule. | ✅ Covered — `plannerDiffGuard.test.js` (forge, erase, and the legitimate add), `plannerFileView.test.js` (db-mode add applied, db-mode forge rejected). |
 | AP-8 | An approval-by-comment fires the same terminal-status side effects a drag to Done does — artifact-cache purge and the `origin/develop` deploy pull. | Two routes to `done` that do *different* amounts of follow-through is precisely the shape of divergence that produced PULL-1, where one mode silently stopped deploying. Both routes now go through one `applyTerminalStatusEffects`. | ✅ Covered — `httpApi.approval.test.js` ("triggers the same deploy pull…", and not for an ordinary comment). |
 | AP-9 | Cards already `done` before this gate existed are **not** retroactively re-parked. | A migration that reopened settled cards would rewrite history the board has already acted on, and would unblock/reblock downstream work with no human in the loop. The one card this actually matters for (T-0239's synthetic sheet) was already superseded by T-0257 through the normal card flow, which is the right mechanism: a new card carrying the gate, not a retro-edit of an old one. | ✅ By construction — the migration defaults every existing row to `requires_approval = 0`; no code path re-parks a `done` card. |
+| AP-10 | A card's approval verdict has exactly one authoritative reader path: `approvalVerdict(task)` in `approvalGate.js`, exposed as `GET /api/tasks/:id/approval`. It resolves `requires_approval`/`approved_by`/`approved_at` off the board record only, and never parses `ASSET_PROVENANCE.md` prose. It is a pure read with no path to set `approved_by`/`approved_at` — it can forward an existing human stamp, never mint one. | T-0257 was approved on the board 2026-08-30 while `ASSET_PROVENANCE.md`'s row for its concept sheet still read "Not yet approved" — a second, hand-maintained mirror of the same verdict that nothing kept in sync, blocking T-0243/T-0244/T-0245/T-0246 for days on a decision already made (PR #307 fixed that one row by hand; `docs/decision-log.md` DL-27 records the class fix and the Option A vs Option B trade). | ✅ Covered — `approvalGate.test.js` (`approvalVerdict`, incl. the T-0257/T-0243 drift scenario reproduced and resolved), `httpApi.approval.test.js` §AP-10 (end-to-end over the real endpoint, incl. the 404 and agent-cannot-approve cases). |
 
 **The general pattern for direction cards.** Every future concept-art,
 style-direction or reference-producing card sets `requires_approval: true` at
@@ -276,6 +277,14 @@ authoring time. The card's Acceptance must describe *producing and parking* —
 never "get it approved", which is not a criterion an agent can satisfy and is
 what made T-0233 unsatisfiable across five attempts. T-0257 (the real Signal
 Tower prop concept sheet gating T-0243–T-0246) is the first card to carry it.
+
+**The second record (T-0286, DL-27).** AP-1..AP-9 above cover the board's own
+state faithfully, but say nothing about *other* readers of a card's approval
+verdict. `ASSET_PROVENANCE.md` keeps a prose note per curated asset, and
+until AP-10 nothing kept it in sync with the board — see AP-10 above for the
+incident and the fix. `ASSET_PROVENANCE.md`'s note stays human-readable
+documentation for a reader with no board access; it is not consulted for the
+verdict, and no existing row is retroactively rewritten.
 
 ---
 
