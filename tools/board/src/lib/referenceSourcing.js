@@ -53,8 +53,12 @@ function parseJsonBody(res, context) {
   }
 }
 
-/** Maps one source's raw search-response JSON to the wrapper's plain result shape. */
-function parseSearchResults(sourceId, json) {
+/**
+ * Maps one source's raw search-response JSON to the wrapper's plain result shape. `limit` is only
+ * used for `met`: unlike wikimedia's `srlimit`/openverse's `page_size`, the Met's own search
+ * endpoint has no result-count parameter and always returns every matching objectID.
+ */
+function parseSearchResults(sourceId, json, limit) {
   if (sourceId === "wikimedia") {
     const hits = Array.isArray(json?.query?.search) ? json.query.search : [];
     return hits.map((hit) => ({ sourceId, assetId: String(hit.title), title: String(hit.title) }));
@@ -62,6 +66,10 @@ function parseSearchResults(sourceId, json) {
   if (sourceId === "openverse") {
     const hits = Array.isArray(json?.results) ? json.results : [];
     return hits.map((hit) => ({ sourceId, assetId: String(hit.id), title: hit.title != null ? String(hit.title) : null }));
+  }
+  if (sourceId === "met") {
+    const hits = Array.isArray(json?.objectIDs) ? json.objectIDs : [];
+    return hits.slice(0, limit).map((objectId) => ({ sourceId, assetId: String(objectId), title: null }));
   }
   return [];
 }
@@ -83,6 +91,17 @@ function extractAssetMetadata(sourceId, json, assetId) {
   }
   if (sourceId === "openverse") {
     return { rawLicense: json?.license ?? null, url: json?.thumbnail ?? null, title: json?.title ?? assetId };
+  }
+  if (sourceId === "met") {
+    // The Met has no per-asset licence *string* -- `isPublicDomain` is the per-object rights
+    // signal its API actually publishes. `true` is mapped to a "Public Domain" label that
+    // referenceLicense.js's own normalizer already recognizes (the same "pdm" bucket as an
+    // explicit Public Domain Mark elsewhere); anything else (false, missing) becomes `null`, which
+    // evaluateLicense fails closed on exactly like a missing Wikimedia/Openverse licence field --
+    // never "accepted because the source is a trusted museum".
+    const rawLicense = json?.isPublicDomain === true ? "Public Domain" : null;
+    const url = typeof json?.primaryImage === "string" && json.primaryImage.length > 0 ? json.primaryImage : null;
+    return { rawLicense, url, title: json?.title ?? assetId };
   }
   return { rawLicense: null, url: null, title: assetId };
 }
@@ -114,7 +133,7 @@ export async function searchReferences({ sourceId, query, limit = 10, transport 
   await rateLimiter?.take();
   const res = await transport(url);
   const json = parseJsonBody(res, `search request to ${sourceId}`);
-  return { sourceId, results: parseSearchResults(sourceId, json) };
+  return { sourceId, results: parseSearchResults(sourceId, json, limit) };
 }
 
 /**

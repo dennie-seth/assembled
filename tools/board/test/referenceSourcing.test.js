@@ -162,7 +162,7 @@ describe("searchAcrossSources -- required sources are fatal, best-effort sources
       [WIKIMEDIA_SEARCH_URL]: json({ query: { search: [{ ns: 6, title: "File:Example.jpg", pageid: 1 }] } }),
       [OPENVERSE_SEARCH_URL]: { status: 504, headers: {}, body: Buffer.from("", "utf8") }
     });
-    const outcome = await searchAcrossSources({ query: "lighthouse", limit: 10, transport });
+    const outcome = await searchAcrossSources({ sourceIds: ["wikimedia", "openverse"], query: "lighthouse", limit: 10, transport });
     expect(outcome.results).toEqual([{ sourceId: "wikimedia", assetId: "File:Example.jpg", title: "File:Example.jpg" }]);
     expect(outcome.failures).toEqual([{ sourceId: "openverse", reason: expect.stringMatching(/status 504/) }]);
   });
@@ -182,7 +182,7 @@ describe("searchAcrossSources -- required sources are fatal, best-effort sources
       [WIKIMEDIA_SEARCH_URL]: json({ query: { search: [{ ns: 6, title: "File:Example.jpg", pageid: 1 }] } }),
       [OPENVERSE_SEARCH_URL]: json({ results: [{ id: "abc-123", title: "Example", license: "cc0" }] })
     });
-    const outcome = await searchAcrossSources({ query: "lighthouse", limit: 10, transport });
+    const outcome = await searchAcrossSources({ sourceIds: ["wikimedia", "openverse"], query: "lighthouse", limit: 10, transport });
     expect(outcome.results).toEqual([
       { sourceId: "wikimedia", assetId: "File:Example.jpg", title: "File:Example.jpg" },
       { sourceId: "openverse", assetId: "abc-123", title: "Example" }

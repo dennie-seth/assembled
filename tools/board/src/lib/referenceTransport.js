@@ -15,6 +15,15 @@ import https from "node:https";
 export class TransportSizeExceededError extends Error {}
 
 /**
+ * Wikimedia's User-Agent policy (and most other open-data APIs' as a matter of courtesy) requires
+ * a descriptive UA that names the tool AND gives a reachable contact -- a URL or an email -- so an
+ * operator throttling abusive traffic has somewhere to look or write. A contactless UA is exactly
+ * what T-0284 found gets throttled hardest. The repo URL is the natural, non-fabricated contact:
+ * anyone can open an issue there, and it names a project rather than a person.
+ */
+export const REFERENCE_USER_AGENT = "assembled-reference-sourcing/1.0 (+https://github.com/dennie-seth/assembled)";
+
+/**
  * @param {string} url
  * @param {object} [options]
  * @param {number} [options.maxBytes] abort once the response body would exceed this many bytes
@@ -38,7 +47,7 @@ export function requestUrl(url, { maxBytes = Infinity } = {}) {
 
     const req = client.request(
       url,
-      { method: "GET", headers: { "User-Agent": "assembled-reference-sourcing/1.0" } },
+      { method: "GET", headers: { "User-Agent": REFERENCE_USER_AGENT } },
       (res) => {
         const chunks = [];
         let total = 0;
