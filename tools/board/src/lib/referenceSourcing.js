@@ -258,7 +258,14 @@ export async function fetchReference({
     sourceUrl: currentUrl,
     license: rawLicense,
     licenseNormalized: licenseVerdict.normalized,
-    retrievedAt: new Date().toISOString()
+    retrievedAt: new Date().toISOString(),
+    // T-0297: the provenance_model_hash and generator_resolvable sweeps (HANDOFF §21 / §22-c)
+    // validate every committed *.provenance.json on the assumption an asset was model-generated.
+    // A fetched reference has neither -- no model produced it, and only this script *fetched* it
+    // (nothing rendered it). Stamped here so every future reference sidecar passes both sweeps on
+    // merit; see T-0273 / commit 465680c for the hand-fix this replaces.
+    model_hash: "N/A — fetched open-licence reference photograph, not model-generated",
+    generator: "tools/board/scripts/referenceFetch.js"
   };
 
   return quarantineAsset({ quarantineDir, buffer: bytesRes.body, mime, provenance, maxBytes, maxCount });
