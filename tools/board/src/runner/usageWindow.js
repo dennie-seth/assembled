@@ -208,6 +208,47 @@ export async function readNewestRateLimitInfo({
   return null;
 }
 
+
+/**
+ * Pulls the reset window out of a `rate_limit_info` payload.
+ *
+ * This is the closest thing to an AUTHORITATIVE usage source available to the poller. Verified
+ * against Claude Code 2.1.241 on 2026-09-04: the CLI exposes **no** `usage`, `limits`, `status`
+ * or `quota` subcommand (all fall through to generic help), and `claude auth status --json`
+ * returns only `{loggedIn, authMethod, apiProvider, email, orgId, orgName, subscriptionType}` --
+ * authentication, not utilization. The binary does talk to a usage endpoint internally, but
+ * publishes no command-line surface for it.
+ *
+ * What the runner already records, however, carries the reset instant directly:
+ *   {status, resetsAt, rateLimitType, overageStatus, overageResetsAt, isUsingOverage}
+ * `resetsAt` is unix SECONDS. So "when does the limit free up" is answerable today, from
+ * telemetry the board already has -- it simply was never surfaced past `utilizationFrom-
+ * RateLimitInfo`'s internal staleness check.
+ */
+function resetWindowFrom(info, now) {
+  const secs = (v) => (typeof v === "number" && Number.isFinite(v) ? v * 1000 : null);
+  const resetsAtMs = secs(info?.resetsAt);
+  const overageResetsAtMs = secs(info?.overageResetsAt);
+  const elapsed = resetsAtMs !== null && now >= resetsAtMs;
+  return {
+    rateLimitType: typeof info?.rateLimitType === "string" ? info.rateLimitType : null,
+    resetsAtMs,
+    resetsAtIso: resetsAtMs === null ? null : new Date(resetsAtMs).toISOString(),
+    msUntilReset: resetsAtMs === null ? null : Math.max(0, resetsAtMs - now),
+    resetElapsed: elapsed,
+    overageResetsAtMs
+  };
+}
+
+const NO_RESET_WINDOW = Object.freeze({
+  rateLimitType: null,
+  resetsAtMs: null,
+  resetsAtIso: null,
+  msUntilReset: null,
+  resetElapsed: false,
+  overageResetsAtMs: null
+});
+
 /**
  * The auto-launch poller's usage gate input: `{utilization, status, logPath, reason}`, where a
  * `null` utilization means "could not be determined" and `reason` is a human-readable line for
@@ -227,6 +268,7 @@ export async function readUsageSnapshot({ runsDir, now = Date.now(), ...ioOverri
       status: null,
       logPath: null,
       telemetryAbsent: false,
+      ...NO_RESET_WINDOW,
       reason: `rate-limit telemetry unreadable: ${err.message}`
     };
   }
@@ -241,6 +283,7 @@ export async function readUsageSnapshot({ runsDir, now = Date.now(), ...ioOverri
       status: null,
       logPath: null,
       telemetryAbsent: true,
+      ...NO_RESET_WINDOW,
       reason: `no rate-limit telemetry found in ${runsDir}/*.jsonl`
     };
   }
@@ -252,5 +295,12 @@ export async function readUsageSnapshot({ runsDir, now = Date.now(), ...ioOverri
       ? `unrecognized rate-limit status "${status}" in ${newest.logPath}`
       : `status=${status} utilization=${utilization} (${newest.logPath})`;
 
-  return { utilization, status, logPath: newest.logPath, telemetryAbsent: false, reason };
+  return {
+    utilization,
+    status,
+    logPath: newest.logPath,
+    telemetryAbsent: false,
+    ...resetWindowFrom(newest.info, now),
+    reason
+  };
 }

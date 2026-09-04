@@ -97,6 +97,21 @@ export function selectNextCard(tasks) {
   return eligible.sort((a, b) => priorityRank(a) - priorityRank(b) || numericId(a) - numericId(b))[0];
 }
 
+
+/** Renders the reset window for a skip line: when the limit frees up, and how long that is. */
+function describeReset(usage, nowMs) {
+  if (!usage || usage.resetsAtMs === null || usage.resetsAtMs === undefined) {
+    return "reset time unknown (telemetry carried no resetsAt)";
+  }
+  if (usage.resetElapsed) {
+    return `${usage.rateLimitType ?? "limit"} window already elapsed -- the next tick re-reads it as fresh`;
+  }
+  const ms = usage.msUntilReset ?? Math.max(0, usage.resetsAtMs - nowMs);
+  const mins = Math.round(ms / 60000);
+  const human = mins >= 60 ? `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, "0")}m` : `${mins}m`;
+  return `${usage.rateLimitType ?? "limit"} resets at ${usage.resetsAtIso} (in ${human})`;
+}
+
 /**
  * Starts at most one ready card per tick, on an interval, from inside the board process.
  *
@@ -178,7 +193,16 @@ export function createAutoLaunchPoller({
           `(${usage.reason})`
       );
     } else if (usage.utilization >= usageMax) {
-      return skip(`usage ${usage.utilization} >= max ${usageMax} (${usage.reason})`);
+      // Say WHEN it frees up, not just that it is blocked. The reset instant rides along on the
+      // same rate_limit_event the utilization came from (see usageWindow.js's resetWindowFrom --
+      // the CLI publishes no usage command, so this telemetry is the authoritative reset signal
+      // available). Resumption itself already works without scheduling: once `resetsAt` passes,
+      // utilizationFromRateLimitInfo reads the window as fresh, so the next ordinary tick
+      // proceeds. What was missing was any way to SEE that from the journal.
+      return skip(
+        `usage ${usage.utilization} >= max ${usageMax} (${usage.reason}); ` +
+          describeReset(usage, now())
+      );
     }
 
     // Gate 3: board idle. The orchestrator's own view first (cheap, and authoritative for runs
