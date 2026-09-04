@@ -39,6 +39,11 @@ describe("resolveVerifyRoutes", () => {
     expect(routes.map((r) => r.id).sort()).toEqual(["backlog-validate", "board-suite", "planner-diff-guard"]);
   });
 
+  it("T-0303: routes a .claude/agents/*.md-only diff to the board suite -- grant scoping (e.g. an ambiguous npm-run wildcard, T-0295) is only checked by tools/board's own test suite, so an agent-definition-only diff must trigger it too, not just a diff that happens to also touch tools/board/**", () => {
+    const routes = resolveVerifyRoutes([".claude/agents/client.md"]);
+    expect(routes.map((r) => r.id)).toEqual(["board-suite"]);
+  });
+
   it("routes a diff outside tasks/**, tools/board/**, a Python package root, and server/**/shared/** to neither -- other subsystems keep their own verify-skill routing", () => {
     const routes = resolveVerifyRoutes(["client/src/main.cpp"]);
     expect(routes).toEqual([]);
