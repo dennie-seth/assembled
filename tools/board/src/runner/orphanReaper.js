@@ -164,6 +164,11 @@ export function createOrphanReaper({
   hub,
   activeCardIds,
   enabled = orphanRecoveryEnabledFromEnv(),
+  // Cross-process ownership (boardOwnership.js). Defaults true so every existing caller and test
+  // is unaffected; boardServer.js passes the real answer. A non-owner reaper is inert -- it never
+  // sweeps and never reaps -- because a process that does not own the board cannot tell a live
+  // run from a dead one: it reads a different runs directory and an empty activeCardIds.
+  owned = true,
   graceMs = DEFAULT_GRACE_MS,
   intervalMs = DEFAULT_SWEEP_INTERVAL_MS,
   now = () => Date.now(),
@@ -194,6 +199,25 @@ export function createOrphanReaper({
   // and must be left alone here even during a transient stale-runstate window between phases.
   const readoptedCardIds = new Set();
   let timer = null;
+  let disabledOwnershipLogged = false;
+
+  /**
+   * A process that does not own this board must never reap: its `activeCardIds` is empty and its
+   * runs directory is not the live one, so every liveness signal it can read is meaningless --
+   * it would verdict healthy runs "dead". Said once per entry point rather than per sweep, so the
+   * refusal is visible without flooding the journal every 30s.
+   */
+  function reapingAllowed(where) {
+    if (owned) return true;
+    if (!disabledOwnershipLogged) {
+      disabledOwnershipLogged = true;
+      logger.log(
+        `orphan-reaper: DISABLED (${where}) -- this process does not own the board database. ` +
+          `Another live board process owns it; only the owner may reap. See boardOwnership.js.`
+      );
+    }
+    return false;
+  }
 
   /**
    * Fix-plan item #1 (docs/reviews/2026-09-03-run-lifecycle-state-management.md): the
@@ -330,7 +354,7 @@ export function createOrphanReaper({
   }
 
   async function reapOnStartup() {
-    if (!enabled) return [];
+    if (!enabled || !reapingAllowed("reapOnStartup")) return [];
     const tasks = await store.list();
     const reaped = [];
     for (const task of tasks) {
@@ -388,6 +412,7 @@ export function createOrphanReaper({
   }
 
   async function sweepOnce() {
+    if (!reapingAllowed("sweepOnce")) return [];
     if (!enabled) return [];
     const tasks = await store.list();
     const stillCandidate = new Set();
@@ -533,7 +558,7 @@ export function createOrphanReaper({
   }
 
   function start() {
-    if (!enabled || timer) return;
+    if (!enabled || !reapingAllowed("start") || timer) return;
     timer = setInterval(() => {
       sweepOnce().catch((err) => logger.error(`assembled-board: orphan sweep failed: ${err.message}`));
     }, intervalMs);

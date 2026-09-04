@@ -15,6 +15,7 @@ import { RunOrchestrator } from "../runner/runOrchestrator.js";
 import { ClaudeCliRunner } from "../runner/claudeCliRunner.js";
 import { createRestartCoordinator } from "../runner/serviceRestart.js";
 import { createOrphanReaper } from "../runner/orphanReaper.js";
+import { acquireBoardOwnership, boardOwnerLockPath } from "../runner/boardOwnership.js";
 import { createRunAwareTaskStore } from "../lib/runAwareTaskStore.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 import { createAutoPullPoller } from "../runner/autoPullPoller.js";
@@ -91,6 +92,17 @@ export async function startBoardServer({
     isRunLive: (taskId) => orchestrator.activeCardIds.has(taskId)
   });
 
+  // Cross-process reaping guard. `guardedStore` and the reaper's own ownership check both read
+  // THIS process's `activeCardIds`, so neither can see a second board instance bound to the same
+  // database -- which is precisely what reaped six live cards on 2026-09-04, when an agent's
+  // `npx vitest` inherited BOARD_TASK_STORE=db and every test that built a server ran
+  // reapOnStartup against the live DB. Only the lock holder gets the authority to declare
+  // someone else's run dead; everything else this server does is unaffected. See
+  // boardOwnership.js. In fs mode the tasks directory is already per-checkout, so the lock is
+  // keyed on it rather than on a database path.
+  const boardIdentityPath = taskStoreKind === "db" ? resolveDbPath() : path.join(tasksDir, ".board");
+  const ownership = await acquireBoardOwnership({ lockPath: boardOwnerLockPath(boardIdentityPath) });
+
   const orphanReaper = createOrphanReaper({
     store: guardedStore,
     hub,
@@ -98,7 +110,10 @@ export async function startBoardServer({
     runsDir: path.join(tasksDir, ".runs"),
     repoRoot: REPO_ROOT,
     tasksDir,
-    taskStoreKind
+    taskStoreKind,
+    // Ownership gates reaping only -- `enabled` already carries the ORPHAN_RECOVERY env switch,
+    // and a non-owner keeps every other server capability.
+    owned: ownership.owned
   });
   const selfImprovementLoop = createSelfImprovementLoop({
     store,
