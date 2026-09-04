@@ -244,6 +244,59 @@ describe("fetchReference -- licence-gated, allowlist-confined, quarantine-only",
     expect(files.some((f) => f.endsWith(".provenance.json"))).toBe(true);
   });
 
+  it("(T-0297) stamps model_hash + generator on a fetched wikimedia record, so committed sidecars pass the provenance/generator sweeps without a hand-fix", async () => {
+    const dir = await makeTmpDir();
+    const transport = fakeTransport({
+      [WIKIMEDIA_METADATA_URL]: json({
+        query: {
+          pages: {
+            123: {
+              title: "File:Example.jpg",
+              imageinfo: [
+                {
+                  url: "https://upload.wikimedia.org/wikipedia/commons/a/aa/Example.jpg",
+                  extmetadata: { LicenseShortName: { value: "CC0" } }
+                }
+              ]
+            }
+          }
+        }
+      }),
+      "https://upload.wikimedia.org/wikipedia/commons/a/aa/Example.jpg": {
+        status: 200,
+        headers: {},
+        body: TINY_PNG
+      }
+    });
+
+    const { record } = await fetchReference({ sourceId: "wikimedia", assetId: "File:Example.jpg", quarantineDir: dir, transport });
+
+    expect(record.model_hash).toBe("N/A — fetched open-licence reference photograph, not model-generated");
+    expect(record.generator).toBe("tools/board/scripts/referenceFetch.js");
+    // Existing sourcing fields are unaffected by the addition.
+    expect(record.license).toBe("CC0");
+    expect(record.licenseNormalized).toBe("cc0");
+    expect(record.sourceUrl).toBe("https://upload.wikimedia.org/wikipedia/commons/a/aa/Example.jpg");
+  });
+
+  it("(T-0297) stamps model_hash + generator on a fetched met record too -- not just wikimedia's branch", async () => {
+    const dir = await makeTmpDir();
+    const transport = fakeTransport({
+      [MET_METADATA_URL]: json({
+        objectID: 436535,
+        title: "Example Object",
+        isPublicDomain: true,
+        primaryImage: "https://images.metmuseum.org/CRDImages/aa/original/DT1234.jpg"
+      }),
+      "https://images.metmuseum.org/CRDImages/aa/original/DT1234.jpg": { status: 200, headers: {}, body: TINY_PNG }
+    });
+
+    const { record } = await fetchReference({ sourceId: "met", assetId: "436535", quarantineDir: dir, transport });
+
+    expect(record.model_hash).toBe("N/A — fetched open-licence reference photograph, not model-generated");
+    expect(record.generator).toBe("tools/board/scripts/referenceFetch.js");
+  });
+
   it("rejects an asset with a non-free licence (by-nc) and never downloads the bytes", async () => {
     const dir = await makeTmpDir();
     const transport = fakeTransport({
