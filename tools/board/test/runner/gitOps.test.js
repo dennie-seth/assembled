@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { rmTemp } from "../helpers/rmTemp.js";
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
@@ -1023,11 +1023,13 @@ describe("commitPaths — auto-push", () => {
     await fs.writeFile(path.join(repoRoot, "tasks", "T-0030.md"), "card body\n", "utf8");
 
     await commitPaths({ repoRoot, filePaths: ["tasks/T-0030.md"], message: "chore(board): add card T-0030" });
-    // schedulePush is fire-and-forget -- give its microtask chain a tick to actually run.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
-    expect(log).toContain("chore(board): add card T-0030");
+    // schedulePush is fire-and-forget -- a real `git push` subprocess, whose completion time
+    // varies with host load (T-0304 review: a full-suite run under load took longer than a
+    // fixed 50ms sleep here, flaking this assertion). Poll instead of sleeping a fixed amount.
+    await vi.waitFor(async () => {
+      const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
+      expect(log).toContain("chore(board): add card T-0030");
+    });
   });
 
   it("does not push when autoPush: false is passed", async () => {
