@@ -18,7 +18,9 @@ export default [
     }
   },
   {
-    files: ["src/client/**/*.js", "test/client/**/*.js", "test/browser/fixtures/**/*.js"],
+    // test/browser/**: Playwright specs run browser code inside page.evaluate() callbacks, so they
+    // legitimately reference document/window even though the file itself executes in node.
+    files: ["src/client/**/*.js", "test/client/**/*.js", "test/browser/**/*.js"],
     languageOptions: {
       globals: {
         ...globals.browser
