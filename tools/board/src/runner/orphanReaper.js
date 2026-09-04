@@ -20,7 +20,28 @@ const ORPHAN_RECOVERY_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
 export const ORPHANABLE_STATUSES = new Set(["in-progress", "validation"]);
 
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
-const DEFAULT_GRACE_MS = 15_000;
+/**
+ * How long a card must have been sitting at in-progress/validation, unclaimed by the
+ * orchestrator, before this module is willing to write its status.
+ *
+ * Raised from 15s to 90s on 2026-09-04 (T-0296). Against the 30s sweep interval, 15s bought a
+ * launching card exactly ONE sweep of protection -- and the clock starts when the REAPER first
+ * observes the card, not when its run began, so a card that reached in-progress just after a
+ * sweep could be reaped on the next one. That is what happened to T-0302, twice:
+ *
+ *   16:45:47.898  status -> in-progress
+ *   16:46:22.140  status + body -> blocked + "Recovered"      (34s later, one sweep)
+ *
+ * ...while the run was in fact healthy -- at 16:51 its pid was alive, its runstate heartbeat had
+ * been refreshed 2s earlier, and its log had grown to 662 KB. The card read `blocked` throughout.
+ *
+ * 90s spans three sweeps, which comfortably covers the window between `activeCardIds.add` and a
+ * run's liveness markers existing on disk (the first runstate heartbeat carries `pid: null` until
+ * a child is actually spawned, and no run log exists at all until the first phase starts). It
+ * costs nothing in the case this module exists for: a restart survivor has been abandoned for far
+ * longer than 90s by the time anyone looks.
+ */
+const DEFAULT_GRACE_MS = 90_000;
 
 const RECOVERY_NOTE_TEXT =
   "run did not complete (board restarted or process ended before a verdict); reset to blocked for re-run.";
@@ -438,7 +459,20 @@ export function createOrphanReaper({
         orphanSince.set(task.id, now());
       }
 
-      if (now() - orphanSince.get(task.id) >= graceMs) {
+      const waited = now() - orphanSince.get(task.id);
+      if (waited < graceMs) {
+        // #322 made every reap and every ownership suppression loud, but this branch -- "seen at
+        // in-progress, not yet old enough to judge" -- stayed silent, so a card being held (and
+        // then reaped a sweep later) left no trace at all. On 2026-09-04 that is why T-0302's
+        // false reap ran invisibly for hours: nothing in the journal mentioned the card between
+        // its launch and its blocked status. Every sweep decision now says something.
+        logger.log(
+          `orphan-reaper: card ${task.id} (${task.status}) is inside the launch grace window ` +
+            `(${waited}ms of ${graceMs}ms) -- left alone, will re-evaluate next sweep`
+        );
+      }
+
+      if (waited >= graceMs) {
         const { verdict: runStatus, diagnostics } = await checkRunStatus(task.id);
         if (runStatus === "alive") {
           readopt(task.id);
