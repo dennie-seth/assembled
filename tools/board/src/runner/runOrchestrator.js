@@ -407,9 +407,22 @@ export class RunOrchestrator {
     };
   }
 
-  /** Best-effort push so committed work outlives the worktree. Never throws, never re-blocks. */
+  /**
+   * Best-effort push so committed work outlives the worktree. Never throws, never re-blocks.
+   *
+   * Skips the push entirely when `branch` carries no commits ahead of `this.baseBranch` -- the
+   * same "no commits on branch" signal `_runAttempt` already uses via `diffNames` (T-0299 edge
+   * case: an empty branch on origin is noise, not a rescue). This covers both a run that crashed
+   * before its first commit and the explicit no-commits block, without having to distinguish
+   * them here.
+   */
   async _preserveBranch(taskId, worktreeDir, branch) {
     try {
+      const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch });
+      if (changedPaths.length === 0) {
+        console.log(`assembled-board: nothing to preserve for ${taskId} -- ${branch} has no commits ahead of ${this.baseBranch}`);
+        return;
+      }
       await this.git.push({ worktreeDir, branch });
       console.log(`assembled-board: preserved ${taskId} -- pushed ${branch} after a non-PASS outcome`);
     } catch (err) {
