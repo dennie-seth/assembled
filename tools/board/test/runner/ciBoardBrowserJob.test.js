@@ -56,4 +56,16 @@ describe("ci-board.yml wires the browser harness in as a separate, non-blocking 
   it("both jobs run inside tools/board via the shared defaults block", () => {
     expect(workflow.defaults.run["working-directory"]).toBe("tools/board");
   });
+
+  /**
+   * T-0295 VALIDATION FAIL (run 3), point (a): `push`/`pull_request` are both scoped to
+   * `[develop, main]`, so pushing a feature branch fires this workflow zero times -- there is no
+   * way to get a CI execution record before a PR targets develop, but this card's own workflow
+   * pushes the branch only *after* a PASS verdict. `workflow_dispatch` lets a run be triggered
+   * manually (by whoever holds `gh workflow run` -- outside this card's own agent grants) against
+   * an already-pushed branch, without requiring an open PR first.
+   */
+  it("can be triggered manually via workflow_dispatch, independent of push/pull_request", () => {
+    expect(workflow.on.workflow_dispatch).not.toBeUndefined();
+  });
 });
