@@ -11,6 +11,11 @@ on:
     paths:
       - "tools/board/**"
       - ".github/workflows/ci-board.yml"
+  # T-0295: push/pull_request above only fire for develop/main, so a feature branch pushed ahead
+  # of a PR gets no CI run at all -- and this card's own process pushes only after VALIDATION
+  # already returned PASS. workflow_dispatch lets a run be triggered manually, against any
+  # already-pushed ref, without requiring an open PR first. See docs/browser-tests.md.
+  workflow_dispatch:
 
 concurrency:
   group: ci-board-${{ github.workflow }}-${{ github.ref }}

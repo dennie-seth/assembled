@@ -52,7 +52,11 @@ npm run test:browser:install   # npx playwright install chromium (see "Browser b
   a slow or flaky browser test can never block a board PR: its steps are
   `npm ci`, `npx playwright install --with-deps chromium`, then
   `npm run test:browser`, on a plain `ubuntu-latest` runner (see "Browser
-  binaries" below for why that matters).
+  binaries" below for why that matters). The workflow also carries
+  `workflow_dispatch`, so a run can be triggered manually (`gh workflow run
+  ci-board.yml --ref <branch>`) against a pushed branch that has no open PR
+  yet — see "The remaining gap" below for why that still isn't enough to
+  get evidence before a PASS verdict on this card specifically.
 
 ## Browser binaries
 
@@ -186,12 +190,48 @@ kind of sandbox. `ci-board.yml`'s `browser-tests` job (see "Running it"
 above) is the actual proof mechanism: a plain `ubuntu-latest` GitHub
 Actions runner has (or can install via `--with-deps`) `libnspr4`/`libnss3`,
 so it is the first environment in this card's history where the suite runs
-past the launch probe. A reviewer holding `gh run view` / `gh pr checks`
-(the `reviewer` agent does) can confirm the real result — "2 passed" or a
-genuine assertion failure — from the Actions run itself once the branch is
-pushed, without ever launching a browser locally. That is the
-distinction this doc draws throughout: a spec that has run and been
-observed to pass, versus one that is merely correct by construction.
+past the launch probe. A reviewer holding `gh run view` (the `reviewer`
+agent does) can confirm the real result — "2 passed" or a genuine
+assertion failure — from the Actions run itself once the branch is pushed,
+without ever launching a browser locally. That is the distinction this
+doc draws throughout: a spec that has run and been observed to pass,
+versus one that is merely correct by construction.
+
+**`gh pr checks` alone is not sufficient to confirm this** — an earlier
+version of this doc claimed it was, which is wrong: `browser-tests` carries
+`continue-on-error: true` precisely so a flaky/slow browser test can never
+block a board PR (per this card's own edge-case note), and GitHub reports a
+job with `continue-on-error: true` as a passing/neutral check regardless of
+whether its steps actually succeeded. `gh pr checks` therefore cannot
+distinguish "2 passed" from a real assertion failure inside that job — only
+`gh run view --log` (or the job's step output in the Actions UI) can, by
+reading what `npm run test:browser` actually printed.
+
+### The remaining gap: no session can produce this evidence before a PASS verdict
+
+Closing criteria 3 and 10 as literally worded — "proven," not "correct by
+construction" — needs a `gh run view --log` of an actual `browser-tests`
+run. That requires the branch to already be pushed (`workflow_dispatch`,
+added above, needs an existing ref to target; `push`/`pull_request` are
+scoped to `develop`/`main` and this branch is neither). But this card's own
+non-negotiable workflow pushes the branch only *after* VALIDATION returns
+PASS — no implementer or reviewer agent session pushes it themselves. That
+makes "a CI run recorded before PASS" structurally unreachable from inside
+this pipeline as currently specified, independent of anything further an
+implementer session could write or test.
+
+This is not a code defect and no further harness change closes it. Closing
+it needs one of:
+
+- a human deciding criteria 3/10 accept "correct by construction, plus a
+  guaranteed non-blocking CI run recorded immediately post-merge" as proof
+  instead — the same kind of rescope T-0288's criterion 7 got, and
+  explicitly a card-authoring decision, not one an implementer or reviewer
+  session can make on its own; or
+- an orchestrator-level change that pushes the branch (without opening a PR
+  or requesting merge) specifically so evidence can be gathered pre-PASS —
+  out of scope for this card, which only owns `tools/board`, `.github`,
+  `.claude`, and `docs`, not the orchestrator's push/PASS ordering itself.
 
 ## Known gap: the `relatedTarget === null` case is out of reach
 
