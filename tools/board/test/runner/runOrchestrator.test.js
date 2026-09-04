@@ -143,6 +143,7 @@ function makeGit(overrides = {}) {
     mergeDevelop: vi.fn(async () => ({ conflicted: false, changed: false })),
     mergeStatus: vi.fn(async () => []),
     hasUncommittedChanges: vi.fn(async () => false),
+    abortMerge: vi.fn(async () => {}),
     ...overrides
   };
 }
@@ -1839,6 +1840,89 @@ describe("RunOrchestrator.runCard — finalize: merge origin/develop into the br
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.pr).toBe("https://github.com/example/repo/pull/9");
+    // T-0291: a crashed conflict-resolution phase must not leave the worktree mid-merge
+    // (MERGE_HEAD/conflict markers on disk) -- the merge is cleaned up rather than silently
+    // abandoned, on top of the failure already being recorded on the card above.
+    expect(git.abortMerge).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001" });
+  });
+
+  it("also aborts the mid-merge state when the conflict-resolution phase's spawn crashes outright (a synchronous throw, not just a non-zero exit) -- and still preserves the PASS verdict, PR link, and commit rather than losing them (T-0243)", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    let call = 0;
+    runner.start.mockImplementation(async () => {
+      call += 1;
+      if (call === 3) {
+        // T-0243's actual failure mode: a spawn-time exception (e.g. `spawn E2BIG`) thrown
+        // out of the runner's start() before any child process ever exists -- not a child
+        // that exits non-zero.
+        throw Object.assign(new Error("spawn claude E2BIG"), { code: "E2BIG" });
+      }
+      const child = fakeChildProcess();
+      runner.spawnedChildren.push(child);
+      return { runId: "run", child };
+    });
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+
+    // Must resolve, not reject -- runCard() itself must never throw over a post-PASS crash.
+    await expect(runPromise).resolves.toBeUndefined();
+
+    const finalTask = await store.get("T-0001");
+    // The verdict, PR link, commit and branch the reviewer already earned are preserved --
+    // not discarded just because the later develop-sync step crashed.
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/9");
+    expect(finalTask.commit).toBe("abc1234def5678abc1234def5678abc1234def5");
+    expect(finalTask.branch).toBe("feature/T-0001");
+    expect(finalTask.body).toContain("Validation: PASS");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/E2BIG|develop sync/i);
+    expect(git.abortMerge).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001" });
+  });
+
+  it("persists the PASS verdict, PR link, commit and branch on the card BEFORE attempting develop-sync, so a crash mid-sync can only ever downgrade an already-durable state", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    let call = 0;
+    let taskAtConflictPhaseStart = null;
+    runner.start.mockImplementation(async () => {
+      call += 1;
+      if (call === 3) {
+        taskAtConflictPhaseStart = await store.get("T-0001");
+      }
+      const child = fakeChildProcess();
+      runner.spawnedChildren.push(child);
+      return { runId: "run", child };
+    });
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(taskAtConflictPhaseStart).not.toBeNull();
+    expect(taskAtConflictPhaseStart.status).toBe("review");
+    expect(taskAtConflictPhaseStart.pr).toBe("https://github.com/example/repo/pull/9");
+    expect(taskAtConflictPhaseStart.commit).toBe("abc1234def5678abc1234def5678abc1234def5");
+    expect(taskAtConflictPhaseStart.body).toContain("Validation: PASS");
   });
 
   it("uses the card's own agent (not the reviewer) to resolve conflicts, loading its agent def and allowed tools", async () => {
