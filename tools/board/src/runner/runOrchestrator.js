@@ -402,9 +402,22 @@ export class RunOrchestrator {
     };
   }
 
-  /** Best-effort push so committed work outlives the worktree. Never throws, never re-blocks. */
+  /**
+   * Best-effort push so committed work outlives the worktree. Never throws, never re-blocks.
+   *
+   * Skips the push entirely when `branch` carries no commits ahead of `this.baseBranch` -- the
+   * same "no commits on branch" signal `_runAttempt` already uses via `diffNames` (T-0299 edge
+   * case: an empty branch on origin is noise, not a rescue). This covers both a run that crashed
+   * before its first commit and the explicit no-commits block, without having to distinguish
+   * them here.
+   */
   async _preserveBranch(taskId, worktreeDir, branch) {
     try {
+      const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch });
+      if (changedPaths.length === 0) {
+        console.log(`assembled-board: nothing to preserve for ${taskId} -- ${branch} has no commits ahead of ${this.baseBranch}`);
+        return;
+      }
       await this.git.push({ worktreeDir, branch });
       console.log(`assembled-board: preserved ${taskId} -- pushed ${branch} after a non-PASS outcome`);
     } catch (err) {
@@ -474,12 +487,18 @@ export class RunOrchestrator {
       }
     } finally {
       stopHeartbeat();
-      // Data-loss fix (docs/reviews/... section 4.0a): persist committed work on ANY terminal
-      // outcome, not only PASS. _handlePass pushes on its own; every other ending -- a FAIL that
-      // exhausts retries, a crash, a phase timeout -- previously left the commits only in a
-      // worktree a later re-run may reclaim. On 2026-09-03 that stranded 1047 lines on T-0288 and
-      // 253 on T-0290, both recovered by hand. Best-effort by design: preservation must never
-      // change a run's outcome.
+      // Data-loss fix (docs/reviews/... section 4.0a; T-0299): persist committed work on ANY
+      // terminal outcome, not only PASS. _handlePass pushes (and only it opens a PR -- see its
+      // own git.push call above _openPullRequest -- so pushing here never implies "ready for
+      // review"); every other ending -- a FAIL that exhausts retries, a crash, a phase timeout --
+      // previously left the commits only in a worktree a later re-run is free to reclaim. On
+      // 2026-09-03 that stranded 1047 lines on T-0288 and 253 on T-0290, both recovered by hand.
+      // This `await` completing before runCard() returns, combined with the activeCardIds
+      // re-entrancy guard at the top of runCard(), is what guarantees the push always lands
+      // before either reclamation call site a later run of the same card could hit:
+      // gitOps.addWorktree()'s reclaimOrDetectExisting (discards a branch with no commits beyond
+      // baseBranch) and gitOps.removeWorktree (force-deletes the whole worktree directory).
+      // Best-effort by design: preservation must never change a run's outcome.
       if (worktreeReady && !this._branchPushed.delete(taskId)) {
         await this._preserveBranch(taskId, worktreeDir, branch);
       }

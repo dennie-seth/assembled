@@ -515,6 +515,29 @@ describe("RunOrchestrator.runCard — auto-retry loop on reviewer FAIL (bounded)
     expect(finalTask.body).toContain(`issue round ${MAX_AUTO_RETRY_ATTEMPTS}`);
   });
 
+  it("T-0299: a run that ends FAIL/blocked still pushes its committed work to origin, without opening a PR -- the case that used to strand it in the worktree", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= MAX_AUTO_RETRY_ATTEMPTS; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    // The commits made across the FAILed attempts are still on origin -- not stranded in a
+    // worktree the next run (or a reclaim) is free to wipe.
+    expect(git.push).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001", branch: "feature/T-0001" });
+    // Pushing is decoupled from PR-opening: a FAIL/blocked run is not "ready for review".
+    expect(github.createPr).not.toHaveBeenCalled();
+    expect(finalTask.pr).toBeUndefined();
+  });
+
   it('includes the attempt count ("run N of 5") in every FAIL note', async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
