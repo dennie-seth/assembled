@@ -392,3 +392,76 @@ describe("genuinely-absent telemetry is distinguished from unreadable telemetry"
     expect(snap.telemetryAbsent).toBe(false);
   });
 });
+
+describe("reset-awareness: the poller must know WHEN the limit frees up", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-reset-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  async function writeOne(info) {
+    await fs.writeFile(
+      path.join(runsDir, "T-0001-a.jsonl"),
+      JSON.stringify(rateLimitEvent(info)) + "\n",
+      "utf8"
+    );
+  }
+
+  it("surfaces resetsAt as epoch ms, an ISO string, and the window type", async () => {
+    // The CLI has no `usage`/`limits`/`status` subcommand (verified on 2.1.241) -- but the
+    // rate_limit_event it already writes carries the reset instant. This is the authoritative
+    // reset signal that IS available.
+    await writeOne(liveAllowedInfo({ status: "rejected", rateLimitType: "five_hour" }));
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.resetsAtMs).toBe(FUTURE_RESETS_AT * 1000);
+    expect(snap.resetsAtIso).toBe(new Date(FUTURE_RESETS_AT * 1000).toISOString());
+    expect(snap.rateLimitType).toBe("five_hour");
+    expect(snap.msUntilReset).toBe(FUTURE_RESETS_AT * 1000 - NOW_MS);
+  });
+
+  it("reports the window as already elapsed rather than a negative wait", async () => {
+    await writeOne(liveAllowedInfo({ status: "rejected", resetsAt: PAST_RESETS_AT }));
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.resetElapsed).toBe(true);
+    expect(snap.msUntilReset).toBe(0);
+    // an elapsed window is a fresh one -- utilization must not still read as saturated
+    expect(snap.utilization).toBe(ALLOWED_UTILIZATION);
+  });
+
+  it("carries the overage window's reset too, when the payload has one", async () => {
+    await writeOne(
+      liveAllowedInfo({ status: "rejected", overageResetsAt: FUTURE_RESETS_AT + 600 })
+    );
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.overageResetsAtMs).toBe((FUTURE_RESETS_AT + 600) * 1000);
+  });
+
+  it("leaves the reset fields null when the payload has no resetsAt", async () => {
+    await writeOne({ status: "allowed_warning", rateLimitType: "five_hour" });
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.resetsAtMs).toBeNull();
+    expect(snap.msUntilReset).toBeNull();
+    expect(snap.resetsAtIso).toBeNull();
+  });
+
+  it("reset fields are null (not undefined) when telemetry is absent entirely", async () => {
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.telemetryAbsent).toBe(true);
+    expect(snap.resetsAtMs).toBeNull();
+    expect(snap.msUntilReset).toBeNull();
+  });
+});

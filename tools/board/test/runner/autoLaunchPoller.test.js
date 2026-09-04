@@ -526,3 +526,66 @@ describe("usage gate: genuinely-absent telemetry must not stall the poller forev
     expect(launchFn).not.toHaveBeenCalled();
   });
 });
+
+describe("usage gate surfaces WHEN the limit resets, not just that it is blocked", () => {
+  const RESETS_MS = 1_788_000_000_000 + 42 * 60 * 1000; // 42 minutes out
+
+  it("names the reset instant and the wait in the skip line", async () => {
+    // Dennie's ask: skipping should say when it can resume, not just that it is blocked.
+    const { poller, logger } = makePoller({
+      usage: {
+        utilization: 1,
+        status: "rejected",
+        logPath: "/runs/x.jsonl",
+        telemetryAbsent: false,
+        rateLimitType: "five_hour",
+        resetsAtMs: RESETS_MS,
+        resetsAtIso: new Date(RESETS_MS).toISOString(),
+        msUntilReset: 42 * 60 * 1000,
+        resetElapsed: false,
+        reason: "status=rejected utilization=1"
+      },
+      now: () => 1_788_000_000_000
+    });
+
+    expect(await poller.tick()).toBeNull();
+
+    const line = logLines(logger);
+    expect(line).toMatch(/resets/i);
+    expect(line).toContain(new Date(RESETS_MS).toISOString());
+    expect(line).toMatch(/42m|42 min/i);
+    expect(line).toMatch(/five_hour/);
+  });
+
+  it("still logs a usable skip line when the payload carries no reset instant", async () => {
+    const { poller, logger } = makePoller({
+      usage: {
+        utilization: 1, status: "rejected", logPath: "/runs/x.jsonl", telemetryAbsent: false,
+        rateLimitType: null, resetsAtMs: null, resetsAtIso: null, msUntilReset: null,
+        resetElapsed: false, reason: "status=rejected utilization=1"
+      }
+    });
+
+    expect(await poller.tick()).toBeNull();
+
+    const line = logLines(logger);
+    expect(line).toMatch(/usage 1 >= max/);
+    expect(line).toMatch(/reset time unknown/i);
+  });
+
+  it("does not claim a reset time when it is not blocked on usage", async () => {
+    const { poller, launchFn, logger } = makePoller({
+      usage: {
+        utilization: 0, status: "allowed", logPath: "/runs/x.jsonl", telemetryAbsent: false,
+        rateLimitType: "five_hour", resetsAtMs: RESETS_MS,
+        resetsAtIso: new Date(RESETS_MS).toISOString(), msUntilReset: 1, resetElapsed: false,
+        reason: "status=allowed utilization=0"
+      }
+    });
+
+    await poller.tick();
+
+    expect(launchFn).toHaveBeenCalledOnce();
+    expect(logLines(logger)).not.toMatch(/resets at/i);
+  });
+});
