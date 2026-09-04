@@ -2,13 +2,19 @@ import { describe, it, expect, vi } from "vitest";
 import { launchCardRun, CardLaunchError } from "../../src/runner/cardLaunch.js";
 
 /**
- * Fix-plan item #6 (docs/reviews/2026-09-03-run-lifecycle-state-management.md) -- LOAD-BEARING.
+ * Fix-plan item #6 (docs/reviews/2026-09-03-run-lifecycle-state-management.md), reworked.
  *
- * `hasActiveRuns()` is the board's only working double-launch protection: the auto-launch
- * poller's second condition ("no in-progress/validation card") is defeated whenever card status
- * drifts, and POST /api/tasks/:id/run never consulted it at all. Its per-card re-entrancy guard
- * is what refused Dennie's duplicate T-0273 click; nothing refused a launch of a *different*
- * card on top of a live run, which is how T-0284 landed on top of T-0243.
+ * The guard is deliberately SAME-CARD ONLY. An earlier revision of this PR refused any launch
+ * while any run was active, which would also have refused deliberate cross-card concurrency --
+ * and that demonstrably works: on 2026-09-03 T-0290 (infra) and T-0273 (assets) ran side by side
+ * for 11 minutes with separate pids, worktrees and runstate files, and both reached real
+ * verdicts. Running two different cards at once is a capability, not a bug.
+ *
+ * The genuine hole was narrower: `isRunning(id)` reads the phase-level `activeRuns` map, which
+ * empties between the reviewer's FAIL and the next implementer attempt (and between phases
+ * generally) while the card is still very much in flight. A re-launch landing in that window
+ * would start a second run of the SAME card. Consulting `activeCardIds` -- the span-level set
+ * `runCard` holds for its whole lifetime -- closes it without touching concurrency.
  */
 
 function makeOrchestrator({ tasks, activeCardIds = new Set(), running = new Set(), runCard } = {}) {
@@ -44,19 +50,8 @@ async function refusal(fn) {
   return null;
 }
 
-describe("#6 POST /run refuses a launch while another run is active", () => {
-  it("allows a legitimate single launch when the board is idle", async () => {
-    const runCard = vi.fn(async () => {});
-    const orchestrator = makeOrchestrator({ tasks: [task()], runCard });
-
-    const launched = await launchCardRun({ orchestrator, id: "T-0001", logger: silent });
-
-    expect(launched.id).toBe("T-0001");
-    expect(runCard).toHaveBeenCalledWith("T-0001");
-  });
-
-  it("refuses launching a DIFFERENT card while a run is active", async () => {
-    // T-0284 landing on top of a live T-0243 is exactly this.
+describe("#6 launching a DIFFERENT card while one runs is ALLOWED (concurrency preserved)", () => {
+  it("starts a second, different card while the first is mid-run", async () => {
     const runCard = vi.fn(async () => {});
     const orchestrator = makeOrchestrator({
       tasks: [task({ id: "T-0001" }), task({ id: "T-0002" })],
@@ -65,73 +60,117 @@ describe("#6 POST /run refuses a launch while another run is active", () => {
       runCard
     });
 
-    const err = await refusal(() => launchCardRun({ orchestrator, id: "T-0002", logger: silent }));
+    const launched = await launchCardRun({ orchestrator, id: "T-0002", logger: silent });
 
-    expect(err).toBeInstanceOf(CardLaunchError);
-    expect(err.statusCode).toBe(409);
-    expect(err.message).toMatch(/T-0001/);
-    expect(runCard).not.toHaveBeenCalled();
+    expect(launched.id).toBe("T-0002");
+    expect(runCard).toHaveBeenCalledWith("T-0002");
   });
 
-  it("refuses even when the phase-level map is momentarily empty (between-phases / retry gap)", async () => {
-    // The precise hole: activeRuns (isRunning) empties between the reviewer's FAIL and the next
-    // implementer attempt, while activeCardIds -- and therefore hasActiveRuns() -- stays true.
+  it("allows a different card even in the between-phases window of the running one", async () => {
     const runCard = vi.fn(async () => {});
     const orchestrator = makeOrchestrator({
       tasks: [task({ id: "T-0001" }), task({ id: "T-0002" })],
       activeCardIds: new Set(["T-0001"]),
-      running: new Set(), // nothing spawned right now
+      running: new Set(), // T-0001 is between phases -- still in flight, no child spawned
       runCard
     });
 
-    const err = await refusal(() => launchCardRun({ orchestrator, id: "T-0002", logger: silent }));
+    const launched = await launchCardRun({ orchestrator, id: "T-0002", logger: silent });
 
-    expect(err).toBeInstanceOf(CardLaunchError);
-    expect(err.statusCode).toBe(409);
-    expect(runCard).not.toHaveBeenCalled();
+    expect(launched.id).toBe("T-0002");
+    expect(runCard).toHaveBeenCalledWith("T-0002");
   });
 
-  it("keeps the specific same-card message rather than the board-wide one", async () => {
+  it("allows a third card while two are already running", async () => {
+    // The board is not a one-at-a-time queue; nothing here counts active runs.
+    const runCard = vi.fn(async () => {});
+    const orchestrator = makeOrchestrator({
+      tasks: [task({ id: "T-0001" }), task({ id: "T-0002" }), task({ id: "T-0003" })],
+      activeCardIds: new Set(["T-0001", "T-0002"]),
+      running: new Set(["T-0001", "T-0002"]),
+      runCard
+    });
+
+    const launched = await launchCardRun({ orchestrator, id: "T-0003", logger: silent });
+
+    expect(launched.id).toBe("T-0003");
+    expect(runCard).toHaveBeenCalledWith("T-0003");
+  });
+
+  it("still launches normally on a completely idle board", async () => {
+    const runCard = vi.fn(async () => {});
+    const orchestrator = makeOrchestrator({ tasks: [task()], runCard });
+
+    const launched = await launchCardRun({ orchestrator, id: "T-0001", logger: silent });
+
+    expect(launched.id).toBe("T-0001");
+    expect(runCard).toHaveBeenCalledWith("T-0001");
+  });
+});
+
+describe("#6 re-launching the SAME card is still refused", () => {
+  it("refuses a duplicate launch while its phase is running", async () => {
+    // The refusal Dennie hit on the duplicate T-0273 click.
+    const runCard = vi.fn(async () => {});
     const orchestrator = makeOrchestrator({
       tasks: [task({ id: "T-0001" })],
       activeCardIds: new Set(["T-0001"]),
-      running: new Set(["T-0001"])
+      running: new Set(["T-0001"]),
+      runCard
     });
 
     const err = await refusal(() => launchCardRun({ orchestrator, id: "T-0001", logger: silent }));
 
-    expect(err.message).toBe("Task T-0001 already has an active run");
+    expect(err).toBeInstanceOf(CardLaunchError);
     expect(err.statusCode).toBe(409);
+    expect(err.message).toBe("Task T-0001 already has an active run");
+    expect(runCard).not.toHaveBeenCalled();
   });
 
-  it("does not crash on an orchestrator that predates hasActiveRuns()", async () => {
+  it("refuses a duplicate launch in the between-phases window -- the gap this fix closes", async () => {
+    // isRunning() is false here: activeRuns empties between the reviewer's FAIL and the next
+    // implementer attempt. Before this change the launch went through and started a second run
+    // of a card already in flight.
+    const runCard = vi.fn(async () => {});
+    const orchestrator = makeOrchestrator({
+      tasks: [task({ id: "T-0001" })],
+      activeCardIds: new Set(["T-0001"]),
+      running: new Set(),
+      runCard
+    });
+
+    const err = await refusal(() => launchCardRun({ orchestrator, id: "T-0001", logger: silent }));
+
+    expect(err).toBeInstanceOf(CardLaunchError);
+    expect(err.statusCode).toBe(409);
+    expect(err.message).toBe("Task T-0001 already has an active run");
+    expect(runCard).not.toHaveBeenCalled();
+  });
+
+  it("allows the same card again once its run finishes", async () => {
+    const runCard = vi.fn(async () => {});
+    const activeCardIds = new Set(["T-0001"]);
+    const orchestrator = makeOrchestrator({ tasks: [task({ id: "T-0001" })], activeCardIds, runCard });
+
+    expect(await refusal(() => launchCardRun({ orchestrator, id: "T-0001", logger: silent }))).toBeInstanceOf(
+      CardLaunchError
+    );
+
+    activeCardIds.clear(); // the run ends
+    const launched = await launchCardRun({ orchestrator, id: "T-0001", logger: silent });
+
+    expect(launched.id).toBe("T-0001");
+    expect(runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("does not crash on an orchestrator with no activeCardIds (older callers, test doubles)", async () => {
     const runCard = vi.fn(async () => {});
     const orchestrator = makeOrchestrator({ tasks: [task()], runCard });
-    delete orchestrator.hasActiveRuns;
+    delete orchestrator.activeCardIds;
 
     const launched = await launchCardRun({ orchestrator, id: "T-0001", logger: silent });
 
     expect(launched.id).toBe("T-0001");
     expect(runCard).toHaveBeenCalled();
-  });
-
-  it("allows the next launch once the active run finishes", async () => {
-    const runCard = vi.fn(async () => {});
-    const activeCardIds = new Set(["T-0001"]);
-    const orchestrator = makeOrchestrator({
-      tasks: [task({ id: "T-0001" }), task({ id: "T-0002" })],
-      activeCardIds,
-      runCard
-    });
-
-    expect(await refusal(() => launchCardRun({ orchestrator, id: "T-0002", logger: silent }))).toBeInstanceOf(
-      CardLaunchError
-    );
-
-    activeCardIds.clear(); // the run ends
-    const launched = await launchCardRun({ orchestrator, id: "T-0002", logger: silent });
-
-    expect(launched.id).toBe("T-0002");
-    expect(runCard).toHaveBeenCalledWith("T-0002");
   });
 });
