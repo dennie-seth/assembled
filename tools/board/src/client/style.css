@@ -7,17 +7,24 @@
 
 /* Full-height flex chain (body -> #board -> .board -> .column -> .column-cards) so each
    column fills the space between the toolbar and the fixed terminal panel and scrolls
-   INTERNALLY on overflow. `min-height` rather than `height` so a very short viewport still
-   scrolls the page instead of crushing the board to nothing. `padding-bottom: 18rem` keeps
-   clearing the fixed 16rem terminal panel; `box-sizing: border-box` makes that padding come
-   out of the viewport height instead of adding to it. */
+   INTERNALLY on overflow. T-0295's real-browser harness caught that `min-height` here does
+   NOT bound the chain: a flex box with only `min-height` grows to fit its content (here, the
+   full card list) rather than clipping to the viewport, so `.column-cards` never actually
+   overflowed and drag auto-scroll had no room to scroll in any real browser -- happy-dom's
+   inert layout hid this completely (T-0288 shipped "reviewer-verified" against a stub rect).
+   `height` (not `min-height`) is what makes the viewport size definite so descendants with
+   `min-height: 0` can shrink below their content and scroll internally; `.column-cards`'s own
+   `min-height: 4rem` floor (below) is what keeps a short viewport usable instead of crushing
+   the board to nothing, so `body` no longer needs to do that job. `padding-bottom: 18rem`
+   keeps clearing the fixed 16rem terminal panel; `box-sizing: border-box` makes that padding
+   come out of the viewport height instead of adding to it. */
 body {
   margin: 0;
   padding: 1rem;
   padding-bottom: 18rem;
   box-sizing: border-box;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }

@@ -18,7 +18,7 @@ export default [
     }
   },
   {
-    files: ["src/client/**/*.js", "test/client/**/*.js"],
+    files: ["src/client/**/*.js", "test/client/**/*.js", "test/browser/fixtures/**/*.js"],
     languageOptions: {
       globals: {
         ...globals.browser

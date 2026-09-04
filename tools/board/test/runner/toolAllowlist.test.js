@@ -282,6 +282,33 @@ describe("resolveAllowedTools", () => {
       isToolAllowed("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:--version)", resolved)
     ).toBe(true);
   });
+
+  it("T-0295: an exact-match (no wildcard) grant for the browser harness script does not leak into its install script", () => {
+    // docs/browser-tests.md recommends this exact line for `assets`/`client` to run
+    // `npm run test:browser`. A wildcarded `Bash(npm run test:browser:*)` was considered and
+    // rejected: `isToolAllowed` strips only the trailing `*` and does a raw string-prefix
+    // compare (see below), so that pattern's stripped prefix is "npm run test:browser:" -- and
+    // because the npm script name itself is "test:browser" (colon, not space, before the next
+    // segment), the *literal* string "npm run test:browser:install" also starts with that same
+    // prefix. A wildcard grant meant to cover one script would silently also authorise a
+    // different script (`test:browser:install`, a ~390MB `playwright install chromium` download
+    // -- see "Browser binaries" above) that was never meant to be granted. No wildcard placement
+    // fixes this, because the ambiguity is a shared literal prefix between two distinct script
+    // names, not a missing argument/word boundary (contrast the `DATABASE_URL=*` case above,
+    // where a bare trailing `*` was the fix). An exact-match grant -- no trailing `*` at all --
+    // sidesteps it: `isToolAllowed` falls through to `requested.arg === allowed.arg`, a full
+    // string equality that only ever matches the literal, argument-less invocation this harness
+    // actually needs.
+    const grant = ["Bash(npm run test:browser)"];
+
+    expect(isToolAllowed("Bash(npm run test:browser)", grant)).toBe(true);
+    expect(isToolAllowed("Bash(npm run test:browser:install)", grant)).toBe(false);
+
+    // The wildcard form is demonstrably too broad -- kept here as a regression guard against
+    // ever "fixing" this by re-adding a trailing `:*`.
+    const wildcardGrant = ["Bash(npm run test:browser:*)"];
+    expect(isToolAllowed("Bash(npm run test:browser:install)", wildcardGrant)).toBe(true);
+  });
 });
 
 describe("isToolAllowed", () => {
