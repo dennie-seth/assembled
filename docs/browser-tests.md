@@ -121,6 +121,57 @@ So, concretely:
   turn this from "correct by construction" into "proven," the same
   distinction `conduct.md` draws for any other deliverable.
 
+### Independently reconfirmed in a follow-up session (still blocked)
+
+A later VALIDATION pass on this card correctly refused to accept the above
+as proof — a spec that has never run proves nothing — and named two
+concrete things to try before concluding the gap was un-closeable from
+inside an agent session: point Playwright at a different, already-
+launchable browser, or get the missing OS packages installed. Both were
+tried again, from a fresh session, before writing this section:
+
+- **`sudo apt-get install -y libnspr4 libnss3`** — denied outright
+  ("This command requires approval") with no interactive human available
+  to grant it. Same result as `playwright install-deps chromium` above;
+  this session has no path to root either.
+- **Pointing at the full `chrome-linux64` build instead of the default
+  headless-shell build** (`chromium.launch({ executablePath:
+  ".../chromium-1234/chrome-linux64/chrome" })`, already present in
+  `~/.cache/ms-playwright/` alongside the headless-shell build) — identical
+  failure, byte-for-byte the same `libnspr4.so` error. The full build
+  isn't statically linked against it either.
+- **WebKit, as an alternative engine** (`npx playwright install webkit`,
+  covered by `infra`'s existing `Bash(npm:*)` grant via `npm exec`) —
+  installs cleanly, but its own host-requirements check refuses to even
+  attempt a launch: it reports a much larger missing-library list
+  (`libgstfft`, `libflite*`, `libavif`, `libenchant`, `libsecret`,
+  `libx264`, and more — a GStreamer/media/font stack, not just
+  NSPR/NSS). Worse starting point than Chromium, not a way around it.
+  No Firefox build was installed in this session to try as a third engine,
+  but Firefox is itself built against NSPR/NSS, so there is no reason to
+  expect a different result.
+- **No system browser to point at instead**: no `google-chrome`/`chromium`
+  binary is on `PATH`, and the session's file-access sandbox refuses any
+  search rooted outside this worktree (`find / ...`, `find /mnt/c ...`,
+  `ls ~/.cache/...` from the Bash tool directly all report "blocked");
+  only a Node process running inside the worktree could read paths under
+  `~/.cache/ms-playwright/`, which is how the two Chromium builds above
+  were even found and probed.
+- **`npm run test:browser`'s skip-cleanly behavior was independently
+  re-verified** in this same follow-up session: `2 skipped`, no error, no
+  non-zero exit — reproduced from a cold session with no shared state from
+  the run that first wrote this doc, which is what makes it a real
+  reconfirmation rather than the same narrative repeated.
+
+Conclusion: the blocker is the sandbox's OS package set, confirmed
+independently twice now with different mitigations attempted each time,
+not a fixable defect in the harness or a corner an implementer session
+declined to try. Closing it needs either root access in the runner
+environment (to run `apt-get install libnspr4 libnss3` or
+`playwright install-deps chromium`) or a CI runner with those packages
+already present — neither of which any implementer or reviewer agent
+session, as currently provisioned, can reach.
+
 ## Known gap: the `relatedTarget === null` case is out of reach
 
 One acceptance criterion asks the harness to cover — or explicitly document
@@ -166,16 +217,48 @@ suite, and none was added for it in this card (nothing in
 
 `assets` and `client` hold no `node`/`npm`/`npx` grant at all
 (`.claude/agents/assets.md`, `.claude/agents/client.md`), so either would
-need one added before it could run this suite. The narrowest line that
-would do it, scoped to exactly this script rather than to `playwright`'s
-full CLI (which also includes `install`, `codegen`, and other subcommands
-this harness doesn't need and shouldn't grant):
+need one added before it could run this suite. The exact line, with **no**
+trailing `:*`:
 
 ```
-Bash(npm run test:browser:*)
+Bash(npm run test:browser)
 ```
+
+**This must be an exact-match grant, not a wildcarded one.** An earlier
+draft of this doc recommended `Bash(npm run test:browser:*)`, on the theory
+that it stays scoped to this one script rather than `playwright`'s full CLI
+(`install`, `codegen`, etc.). That is wrong: `isToolAllowed`
+(`tools/board/src/runner/toolAllowlist.js`) strips only the trailing `*`
+and does a raw string-prefix compare, so the wildcarded grant's effective
+prefix is `"npm run test:browser:"` — and because the npm script name
+*itself* is `test:browser` (a colon inside the name, not a space before the
+next segment), the literal string `"npm run test:browser:install"` also
+starts with that prefix. The wildcard silently also authorises
+`npm run test:browser:install`, the ~390MB `playwright install chromium`
+download (see "Browser binaries" above) this line was never meant to
+grant. No alternate wildcard placement fixes this — the ambiguity is a
+shared literal prefix between two distinct script names, not a missing
+argument/word boundary (contrast the `DATABASE_URL=*` precedent in
+`toolAllowlist.test.js`, where a bare trailing `*` *was* the fix for a
+different kind of glued-value case). Dropping the wildcard entirely is
+the fix: `npm run test:browser` never needs extra arguments, so an
+exact-match grant covers every legitimate invocation and nothing else.
+See the regression test `toolAllowlist.test.js` ("T-0295: an exact-match
+… grant … does not leak into its install script") for both the failure
+this rules out and confirmation the corrected line still permits the real
+invocation.
 
 Adding that line to `.claude/agents/assets.md` and/or `.claude/agents/client.md`
 is a deliberate, separate decision for whoever owns those agents' scope —
 not made by this card, per its own "do not widen any grant beyond what the
 harness needs" instruction.
+
+**Recorded on the T-0295 card itself:** this repo's live board instance
+stores this card in its database-backed task store, not as a
+`tasks/T-0295.md` file in this worktree (`git log -- tasks/T-0295.md` /
+`ls tasks/*0295*` both come up empty here) — `infra`'s toolset has no
+board-API write access to append to a card's body, and reaching for one
+that isn't granted to route around that is itself a conduct violation
+(`.claude/rules/conduct.md`). The exact grant line above is therefore
+recorded here, in this doc, verbatim and copy-pasteable, for whoever adds
+it to `.claude/agents/assets.md` / `client.md` to also paste onto the card.
