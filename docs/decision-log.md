@@ -1643,3 +1643,65 @@ outside this card's own agent scope to redirect -- syncing the file is the only 
 different agent editing `assets/src/concept/tests/**`, to make those particular existing gates stop
 reading stale prose. `docs/board-invariants.md` AP-10 is corrected in the same commit to stop
 asserting the file "is not consulted for the verdict."
+
+### Addendum (T-0292): the run-2 CI gap is closed -- a committed approval ledger, Option A of that card
+
+Run-2's addendum above left one gap open by name: `checkApprovalProvenanceDrift.js` could refuse to
+falsely pass a db-mode card's approval claim (`unverifiable-approval-claim`), but could not verify
+one, because GitHub Actions has no path to the board's `BOARD_TASK_STORE=db` sqlite file and
+`FsTaskStore`'s `tasks/*.md` stops at T-0222. That turned the gate into an unconditional blocker on
+every PR touching `ASSET_PROVENANCE.md` for a card at or above T-0223 -- observed concretely on
+PR #315 (T-0243), 8 of 9 checks green, the ninth red on three `unverifiable-approval-claim`
+failures (T-0243, T-0220, T-0257) that no PR author could fix, because nothing in the diff can make
+CI reach a local file. Run-2 named exactly this as the follow-up: "exporting board approval state
+into a git-committed, CI-reachable form."
+
+**Options considered (T-0292):**
+
+- **A -- committed card snapshot.** Export the four fields the gate needs
+  (`id`/`requires_approval`/`approved_by`/`approved_at`) to a small committed JSON the gate reads in
+  CI, regenerated on the board.
+- **B -- skip-with-warning when the board is unreachable.** Fail on real drift; warn, don't fail,
+  when the data source can't be reached at all.
+- **C -- run the check board-side instead of in CI**, where the db is reachable (pre-push hook,
+  sweep, or run-time gate), giving up the PR-blocking property entirely.
+
+**Decision: Option A**, `tools/board/approval-ledger.json` (`approvalLedger.js`,
+`scripts/exportApprovalLedger.js`), landed ahead of this card's own branch (PR #316,
+`fix/approval-drift-ledger`) and confirmed here as this card's answer. C is the most honest read of
+"verify against a data source you can actually reach," and was rejected anyway: this gate's entire
+value is being a PR-time blocker, the thing that stopped T-0243/44/45/46 from staying blocked for
+days the way T-0257 did -- moving it board-side trades that away for a check nobody is forced to
+look at before merging. B was rejected as run-2 anticipated it would be: "warn, don't fail, when
+unreachable" is indistinguishable from disabling the gate for every db-mode card, which is all of
+them going forward, since fs-mode task files stop at T-0222 permanently.
+
+A's own named cost -- "a second copy that can itself drift" -- is accepted, not ignored: the ledger
+is consulted **only** for ids the live store cannot resolve (`mergeTasksWithLedger` -- a live task
+always wins), so on the board itself a stale ledger is inert and can never mask real state; and its
+own freshness is checked (`ledgerAgeDays` against `BOARD_APPROVAL_LEDGER_STALE_DAYS`, default 14
+days) and warned on loudly in the CI log when exceeded, so the snapshot cannot quietly become the
+next thing that drifts the way `ASSET_PROVENANCE.md`'s prose itself once did. This is a snapshot,
+never a second authority: it is a read-only projection of the board's own record
+(`exportApprovalLedger.js` refuses to write when the source store returns zero cards, and mints
+nothing), and if neither the live store nor the ledger resolves an id, the gate still reports
+`unverifiable-approval-claim` and still fails closed -- "couldn't check" still never reads as
+"passed."
+
+**Verified, not assumed:** `checkApprovalProvenanceDrift.js` run against this repo's real
+`ASSET_PROVENANCE.md` in fs mode (no db, as CI sees it) passes clean, 237 tasks cross-checked, the
+ledger supplying every id fs mode alone cannot see. `test/approvalLedger.test.js`'s "#315
+regression" suite reproduces the exact PR #315 failure with no ledger present, then shows it
+resolves once the ledger supplies T-0243/T-0220/T-0257, and separately proves real drift (a card
+gated but not board-approved, claimed approved in prose) still fails even when resolved through the
+ledger. `test/checkApprovalProvenanceDrift.e2e.test.js` (T-0292) adds the missing end-to-end layer
+those unit tests did not cover -- the real CLI subprocess, `BOARD_APPROVAL_LEDGER` env wiring, and
+default-path resolution -- proving the same five properties (resolves, still-unresolvable-fails,
+drift-still-caught, missing-ledger-fails-closed, stale-ledger-warns-but-still-checks) against the
+actual script CI invokes, not just the pure functions underneath it.
+
+**Touched (T-0292):** `.github/workflows/ci-approval-provenance-drift.yml` (comments and path
+triggers corrected to describe the ledger fallback instead of the pre-ledger "cannot resolve real
+verdict" state; `tools/board/approval-ledger.json`/`approvalLedger.js`/`exportApprovalLedger.js`
+added as trigger paths), `tools/board/test/checkApprovalProvenanceDrift.e2e.test.js` (the new
+end-to-end ledger-fallback suite), this addendum.

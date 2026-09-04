@@ -45,7 +45,7 @@ function task({ id, requiresApproval = false, approvedBy = null, approvedAt = nu
 
 async function runScript({ cwd, provenancePath, baseRef, env = {} }) {
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout, stderr } = await execFileAsync(
       "node",
       [SCRIPT_PATH, provenancePath, baseRef],
       {
@@ -59,7 +59,7 @@ async function runScript({ cwd, provenancePath, baseRef, env = {} }) {
         }
       }
     );
-    return { code: 0, stdout };
+    return { code: 0, stdout, stderr };
   } catch (err) {
     return { code: err.code ?? 1, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
   }
@@ -147,5 +147,140 @@ describe("checkApprovalProvenanceDrift.js (end-to-end)", () => {
     expect(result.stdout + result.stderr).not.toContain("T-8888");
 
     await git(["revert", "--no-edit", "HEAD"], repoDir);
+  });
+});
+
+/**
+ * T-0292: the suite above proves the script still fails closed when a card is unresolvable, but
+ * every case in it runs with no `BOARD_APPROVAL_LEDGER` at all -- it never exercises the ledger
+ * fallback (`approvalLedger.js`) that `checkApprovalProvenanceDrift.js` actually wires in for CI.
+ * `approvalLedger.test.js` unit-tests `mergeTasksWithLedger`/`findApprovalDrift` directly with
+ * in-memory objects, which proves the merge logic works but says nothing about the real CLI
+ * script's env var wiring, default path resolution, or stdout/stderr framing -- the exact gap
+ * that would have hidden a wiring bug (e.g. an env var name typo) from every existing test. This
+ * drives the real script as a subprocess with `BOARD_APPROVAL_LEDGER` pointed at fixture ledger
+ * files, the same way it would be pointed at the real committed
+ * `tools/board/approval-ledger.json` in CI.
+ */
+describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fallback", () => {
+  let repoDir;
+  let tasksDir;
+  let provenancePath;
+  let baseRef;
+
+  beforeAll(async () => {
+    repoDir = await mkdtemp(path.join(tmpdir(), "board-drift-ledger-e2e-"));
+    tasksDir = path.join(repoDir, "tasks");
+    provenancePath = path.join(repoDir, "ASSET_PROVENANCE.md");
+    await mkdir(tasksDir, { recursive: true });
+
+    await git(["init", "-q"], repoDir);
+    await git(["config", "user.email", "test@example.com"], repoDir);
+    await git(["config", "user.name", "Test"], repoDir);
+
+    // No tasks/*.md at all -- reproduces CI's fs-mode reality where every db-mode card (T-0223+)
+    // is invisible to the live store, so every id in this suite can only resolve via the ledger.
+    await writeFile(provenancePath, "| base.png (no id here) | MIT | ... |\n");
+    await git(["add", "-A"], repoDir);
+    await git(["commit", "-q", "-m", "base"], repoDir);
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repoDir });
+    baseRef = stdout.trim();
+  });
+
+  afterAll(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  async function writeLedger(name, ledger) {
+    const p = path.join(repoDir, name);
+    await writeFile(p, JSON.stringify(ledger));
+    return p;
+  }
+
+  async function addProvenanceLine(line) {
+    const current = await execFileAsync("git", ["show", `HEAD:${path.basename(provenancePath)}`], { cwd: repoDir });
+    await writeFile(provenancePath, current.stdout + line + "\n");
+    await git(["add", "-A"], repoDir);
+    await git(["commit", "-q", "-m", `add row: ${line}`], repoDir);
+  }
+
+  async function resetToBase() {
+    await git(["reset", "-q", "--hard", baseRef], repoDir);
+  }
+
+  it("resolves a db-mode-only id via the ledger and passes -- the #315 fix, end-to-end", async () => {
+    const ledgerPath = await writeLedger("ledger-a.json", {
+      version: 1,
+      generated_at: "2026-09-03T00:00:00.000Z",
+      cards: [{ id: "T-9001", requires_approval: true, approved_by: "Anonymous", approved_at: "2026-09-01T00:00:00.000Z" }]
+    });
+    await addProvenanceLine("| new_asset.png (T-9001 -- APPROVED) | MIT | ... |");
+
+    const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("passed");
+    expect(result.stdout).toContain("ledger supplied");
+    await resetToBase();
+  });
+
+  it("still reports unverifiable-approval-claim when the ledger does not resolve the id either", async () => {
+    const ledgerPath = await writeLedger("ledger-b.json", {
+      version: 1,
+      generated_at: "2026-09-03T00:00:00.000Z",
+      cards: [{ id: "T-0001", requires_approval: false, approved_by: null, approved_at: null }]
+    });
+    await addProvenanceLine("| unknown.png (T-9002 -- APPROVED) | MIT | ... |");
+
+    const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
+
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toContain("T-9002");
+    expect(result.stdout + result.stderr).toContain("unverifiable-approval-claim");
+    await resetToBase();
+  });
+
+  it("still catches real drift resolved through the ledger -- the fallback does not defang the gate", async () => {
+    const ledgerPath = await writeLedger("ledger-c.json", {
+      version: 1,
+      generated_at: "2026-09-03T00:00:00.000Z",
+      cards: [{ id: "T-9003", requires_approval: true, approved_by: null, approved_at: null }]
+    });
+    await addProvenanceLine("| unapproved_but_claimed.png (T-9003 -- APPROVED) | MIT | ... |");
+
+    const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
+
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toContain("T-9003");
+    expect(result.stdout + result.stderr).toContain("unsubstantiated-approved-claim");
+    await resetToBase();
+  });
+
+  it("reports a missing ledger file distinctly, and still fails closed rather than passing", async () => {
+    const missingPath = path.join(repoDir, "does-not-exist.json");
+    await addProvenanceLine("| unknown.png (T-9004 -- APPROVED) | MIT | ... |");
+
+    const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: missingPath } });
+
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toContain("approval ledger not found");
+    expect(result.stdout + result.stderr).toContain("unverifiable-approval-claim");
+    await resetToBase();
+  });
+
+  it("warns loudly on a stale ledger but still performs a real check, not a skip", async () => {
+    const ledgerPath = await writeLedger("ledger-e.json", {
+      version: 1,
+      generated_at: "2020-01-01T00:00:00.000Z",
+      cards: [{ id: "T-9005", requires_approval: true, approved_by: "Anonymous", approved_at: "2020-01-01T00:00:00.000Z" }]
+    });
+    await addProvenanceLine("| stale_but_resolvable.png (T-9005 -- APPROVED) | MIT | ... |");
+
+    const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("passed");
+    expect(result.stdout + result.stderr).toMatch(/WARNING.*days old/);
+    await resetToBase();
   });
 });

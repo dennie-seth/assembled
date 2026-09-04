@@ -15,20 +15,26 @@ on:
     paths:
       - "ASSET_PROVENANCE.md"
       - "tasks/**"
+      - "tools/board/approval-ledger.json"
       - "tools/board/src/lib/approvalGate.js"
+      - "tools/board/src/lib/approvalLedger.js"
       - "tools/board/src/lib/approvalProvenanceDrift.js"
       - "tools/board/src/lib/gitAddedLines.js"
       - "tools/board/scripts/checkApprovalProvenanceDrift.js"
+      - "tools/board/scripts/exportApprovalLedger.js"
       - ".github/workflows/ci-approval-provenance-drift.yml"
   push:
     branches: [develop, main]
     paths:
       - "ASSET_PROVENANCE.md"
       - "tasks/**"
+      - "tools/board/approval-ledger.json"
       - "tools/board/src/lib/approvalGate.js"
+      - "tools/board/src/lib/approvalLedger.js"
       - "tools/board/src/lib/approvalProvenanceDrift.js"
       - "tools/board/src/lib/gitAddedLines.js"
       - "tools/board/scripts/checkApprovalProvenanceDrift.js"
+      - "tools/board/scripts/exportApprovalLedger.js"
       - ".github/workflows/ci-approval-provenance-drift.yml"
 
 concurrency:
@@ -57,12 +63,18 @@ jobs:
       - run: npm ci
         working-directory: tools/board
 
-      # NOTE: this runs in fs mode (FsTaskStore over tasks/*.md), never db mode -- the board's
-      # sqlite db lives outside git by design (docs/design/cards-to-database.md) and is not
-      # reachable from this fresh checkout. Every card from T-0223 onward (including T-0257, the
-      # card this whole workflow exists because of) lives only in that db, so this job cannot
-      # resolve their real verdict -- it can only refuse to silently pass when it can't (the
-      # unverifiable-approval-claim drift kind). See docs/decision-log.md DL-27's addendum and
-      # docs/T-0286-claude-instruction-edit-blocked-attempt-log.md for the live board-side
-      # backstop (approvalProvenanceStaleNotice) that covers the gap this job structurally can't.
+      # NOTE (T-0292): this runs in fs mode (FsTaskStore over tasks/*.md), never db mode -- the
+      # board's sqlite db lives outside git by design (docs/design/cards-to-database.md) and is
+      # not reachable from this fresh checkout. FsTaskStore alone stops at T-0222, so on its own
+      # it cannot resolve any later card's real verdict. checkApprovalProvenanceDrift.js closes
+      # that gap by falling back to the committed tools/board/approval-ledger.json (see
+      # approvalLedger.js) for exactly the ids the live fs store can't resolve -- the board stays
+      # authoritative (the ledger never overrides a live task), and CI performs a real check
+      # instead of failing closed on every provenance PR the way it did before T-0292 (observed on
+      # PR #315: 3 unverifiable-approval-claim failures for db-mode-only ids). If an id resolves
+      # via neither the live store nor the ledger, this job still fails closed and reports
+      # unverifiable-approval-claim -- "couldn't check" never reads as "passed" (docs/decision-log.md
+      # DL-27). See docs/decision-log.md DL-27's addendum and
+      # docs/T-0286-claude-instruction-edit-blocked-attempt-log.md for the live board-side backstop
+      # (approvalProvenanceStaleNotice) that also covers approval-time staleness.
       - run: node tools/board/scripts/checkApprovalProvenanceDrift.js "$GITHUB_WORKSPACE/ASSET_PROVENANCE.md" "origin/develop"
