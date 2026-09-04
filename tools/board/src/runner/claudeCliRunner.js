@@ -98,6 +98,12 @@ export class ClaudeCliRunner extends AgentRunner {
       throw new Error("ClaudeCliRunner requires a worktreeDir to isolate the run");
     }
 
+    // --allowedTools also grows with an agent's grants and stays in argv (T-0291 asked that
+    // this be accounted for, not necessarily moved): unlike the body, its size is bounded by
+    // the grant list a human writes into an agent's `.claude/agents/*.md`, which in practice
+    // stays well under a kilobyte -- nothing observed anywhere near MAX_ARG_STRLEN. The body
+    // is what's unbounded (it's a whole card, including run history and amendments), which is
+    // why it's the one moved off argv entirely below.
     const args = [
       "-p",
       "--output-format",
