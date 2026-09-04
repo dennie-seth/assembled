@@ -68,6 +68,10 @@ dist/
 coverage/
 npm-debug.log*
 
+# Playwright (tools/board's browser test harness, T-0295): local run artifacts, never source.
+tools/board/test-results/
+tools/board/playwright-report/
+
 # Python
 .venv/
 __pycache__/

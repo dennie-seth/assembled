@@ -11,6 +11,8 @@
     "dev:server": "exec node --watch src/server/index.js",
     "dev:client": "exec vite",
     "test": "vitest run",
+    "test:browser": "playwright test",
+    "test:browser:install": "playwright install chromium",
     "build": "vite build",
     "lint": "eslint .",
     "validate:backlog": "node scripts/validateBacklog.js",
@@ -34,6 +36,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
+    "@playwright/test": "^1.62.1",
     "concurrently": "^9.1.0",
     "eslint": "^9.9.0",
     "eslint-config-prettier": "^9.1.0",

@@ -1,0 +1,181 @@
+# Browser test harness (`tools/board`)
+
+**Card:** T-0295. **Closes the structural gap that blocked T-0288** (see
+`docs/T-0288-client-agent-verification-gap-attempt-log.md`): `tools/board`'s
+486 client tests all ran against `happy-dom`, which performs no layout at
+all — no viewport, no scroll geometry, `getBoundingClientRect()` is inert.
+Every scroll/drag test hand-fed a fake `getBoundingClientRect`/`scrollBy`.
+T-0288's drag auto-scroll shipped complete and reviewer-verified and still
+could not pass, because one criterion required watching it scroll in a real
+browser and no test in the repo could do that.
+
+## Which harness to reach for
+
+- **`npm test`** (Vitest + happy-dom) stays the fast default for everything
+  that doesn't need real layout: DOM structure, event wiring with injected
+  fakes, CSSOM assertions against `getComputedStyle` (happy-dom resolves
+  CSS properties fine — it just never lays anything out or scrolls).
+- **`npm run test:browser`** (Playwright + a real headless Chromium) is for
+  the small set of behaviours that genuinely need real layout, real scroll
+  geometry, or real pointer/drag input. Reach for it only when a happy-dom
+  test structurally cannot assert the thing you need — e.g. "does
+  `scrollTop` actually change," not "was `scrollBy` called with the right
+  arguments" (that part is already covered by
+  `test/client/dragAutoScroll.test.js`'s fake-clock/fake-container tests).
+
+**Write UI acceptance criteria against the harness that can prove them.** A
+criterion phrased as "observe it in a browser" is not verifiable by any
+agent session and stalls the card exactly like T-0288's did (five rounds,
+never implementer-fixable). Phrase it instead as "prove with
+`npm run test:browser`" (or name the specific happy-dom test) so there is a
+command a session can actually run to close it.
+
+## Running it
+
+```
+npm run test:browser           # runs the Playwright suite (test/browser/**/*.spec.js)
+npm run test:browser:install   # npx playwright install chromium (see "Browser binaries" below)
+```
+
+- **Separate from `npm test` on purpose.** `vitest.config`'s (`vite.config.js`'s `test.include`)
+  glob only matches `test/**/*.test.js`; Playwright specs are named
+  `test/browser/**/*.spec.js` and are excluded explicitly
+  (`test.exclude: ["test/browser/**", ...]`) as a second, redundant guard. A
+  browser-suite failure and a unit-test failure can never be mistaken for
+  each other — different script, different file extension, different
+  config file (`playwright.config.js` vs. `vite.config.js`'s `test` block).
+- **Not wired into CI (`ci-board.yml`) as of this card.** `lint-test-build`
+  runs `npm run lint`, `npm test`, `npm run build` only. Deliberately: this
+  suite needs a ~390MB browser download (see below) and, per this card's
+  own edge-case note, must never be allowed to block every board PR on a
+  slow or flaky browser test. If a future card wires it into CI, it should
+  be its own separate, non-blocking job/step — never folded into
+  `lint-test-build` — for the same reason.
+
+## Browser binaries
+
+`@playwright/test` does not download a browser on `npm install`; that's a
+separate, deliberate step:
+
+```
+npx playwright install chromium
+```
+
+Measured in this session: **~390MB** on disk (`~/.cache/ms-playwright/`,
+outside the repo and outside `node_modules` — nothing here is committed or
+gitignored *in-repo* because none of it is ever written under the repo
+tree). Chromium alone is ~184MB compressed / ~389MB unpacked; a small
+`ffmpeg` binary (~2MB) is fetched alongside it for Playwright's optional
+video capture, unused by this suite but not separately skippable.
+
+**The suite skips cleanly, with a clear message, when the browser isn't
+launchable** — `test/browser/support/globalSetup.js` runs an actual
+`chromium.launch()`/`close()` probe once, before any spec, and records the
+result via `process.env`; `dragAutoScroll.spec.js` reads it via
+`test.skip(!chromiumLaunchable(), chromiumLaunchSkipReason())`. This is
+deliberately a *launch* probe, not a file-existence check: see "What was
+actually verified" below for why the distinction mattered in practice.
+
+## What was actually verified in this session
+
+This environment could install the Chromium binary (`npx playwright
+install chromium` succeeded, network access to `cdn.playwright.dev`
+worked) but **could not launch it**: every launch attempt failed with
+
+```
+error while loading shared libraries: libnspr4.so: cannot open shared object file
+```
+
+`npx playwright install-deps chromium` (Playwright's own fix for exactly
+this) needs `sudo`, and this session has no root access
+(`sudo: a password is required`, non-interactively unrecoverable). This is
+an OS-package gap in this particular sandboxed session, not a defect in
+the harness code, and it is a different, deeper gap than "browsers not
+installed" — the file exists, launching it is what fails. The original
+version of this check (`fs.existsSync(chromium.executablePath())`) would
+have reported "installed" and then hard-failed both specs instead of
+skipping, which is exactly the failure mode the card's "skip with a clear
+message" requirement rules out. That is why the check is a real launch
+probe (`globalSetup.js`) instead.
+
+So, concretely:
+
+- **Verified, by direct execution in this session:** `npm run test:browser`
+  skips cleanly (`2 skipped`, exit 0) in an environment where Chromium
+  cannot launch — the harness's own core safety property. `npm test` and
+  `npm run lint` stay green with the new files present (see below). The
+  fixture's module graph resolves correctly under Vite: `GET
+  /test/browser/fixtures/drag-auto-scroll.html` and `GET
+  /src/client/boardView.js` (the production module the fixture renders
+  with, imported unmodified) both return `200` with the expected content
+  when the dev server the suite's own `webServer` config starts is queried
+  directly.
+- **Not verified by execution, anywhere in this session:** the two real
+  assertions in `dragAutoScroll.spec.js` (`scrollTop` actually decreases/
+  increases and clamps at each limit under a real pointer-driven drag).
+  Nothing in this sandbox can launch Chromium at all, so this is not a
+  claim that could be tested here. A session or machine with the missing
+  OS packages present (a plain `ubuntu-latest` GitHub Actions runner
+  normally has them; `npx playwright install-deps chromium` will add them
+  anywhere root is available) needs to run `npm run test:browser` once to
+  turn this from "correct by construction" into "proven," the same
+  distinction `conduct.md` draws for any other deliverable.
+
+## Known gap: the `relatedTarget === null` case is out of reach
+
+One acceptance criterion asks the harness to cover — or explicitly document
+as out of reach — the case where `DragEvent.relatedTarget` is `null` on
+`dragleave` (T-0288's guard in `boardView.js` detaches the auto-scroll
+controller when this happens; per MDN this specifically fires when a drag
+leaves the *browser window*, not just the current element). This is
+**documented as out of reach**, not attempted as a test:
+
+- Reliably forcing a real `dragleave` with `relatedTarget === null` means
+  getting Chromium's own drag session to register the pointer as having
+  left the window, not just an element inside the page. Playwright's
+  public API drives this through CDP mouse input (`page.mouse.move` to a
+  coordinate, however far outside the viewport), and there is no
+  documented, version-stable guarantee that CDP-simulated mouse input
+  outside the viewport bounds is treated as "left the window" by
+  Chromium's native HTML5 drag state machine the same way real OS-level
+  mouse input would be — this is exactly the class of native-drag
+  edge case `page.dragAndDrop()`'s own docs warn is not fully
+  synthesizable.
+- This session has no way to empirically check either answer: Chromium
+  cannot launch here at all (see above), so there was no way to try the
+  candidate approach and observe whether it fires with `relatedTarget`
+  `null`, a real element, or doesn't fire at all.
+
+Shipping a test for this that might pass for the wrong reason (e.g.
+asserting "scrolling stopped" when it stopped because the drag ended
+outright, not because the `dragleave`/`null`-`relatedTarget` branch ran) is
+worse than the gap itself — that's a green test that proves nothing, the
+same failure mode `conduct.md` calls out by name for mocked side effects.
+If a future session can launch a real browser and confirm the coordinate-
+outside-viewport approach actually fires `relatedTarget: null`, add the
+test then; until this is confirmed, please do not treat this specific path
+as covered.
+
+## Grant required to run this from an agent session
+
+`npx playwright test` is not currently granted to any implementer agent.
+`infra`'s existing `Bash(npm:*)` grant (`.claude/agents/infra.md`) already
+covers `npm run test:browser` — no new grant needed for `infra` to run this
+suite, and none was added for it in this card (nothing in
+`.claude/agents/*.md` changed).
+
+`assets` and `client` hold no `node`/`npm`/`npx` grant at all
+(`.claude/agents/assets.md`, `.claude/agents/client.md`), so either would
+need one added before it could run this suite. The narrowest line that
+would do it, scoped to exactly this script rather than to `playwright`'s
+full CLI (which also includes `install`, `codegen`, and other subcommands
+this harness doesn't need and shouldn't grant):
+
+```
+Bash(npm run test:browser:*)
+```
+
+Adding that line to `.claude/agents/assets.md` and/or `.claude/agents/client.md`
+is a deliberate, separate decision for whoever owns those agents' scope —
+not made by this card, per its own "do not widen any grant beyond what the
+harness needs" instruction.
