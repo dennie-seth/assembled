@@ -439,3 +439,90 @@ describe("createAutoLaunchPoller — start/stop", () => {
     poller.stop();
   });
 });
+
+describe("usage gate: genuinely-absent telemetry must not stall the poller forever", () => {
+  const ABSENT = {
+    utilization: null,
+    status: null,
+    logPath: null,
+    telemetryAbsent: true,
+    reason: "no rate-limit telemetry found in /runs/*.jsonl"
+  };
+  const UNREADABLE = {
+    utilization: null,
+    status: "who-knows",
+    logPath: "/runs/x.jsonl",
+    telemetryAbsent: false,
+    reason: 'unrecognized rate-limit status "who-knows"'
+  };
+
+  it("PROCEEDS with a warning when telemetry is genuinely absent", async () => {
+    // 2026-09-04: the usage gate sits AHEAD of the idle gate, and an undetermined reading skipped.
+    // With telemetry unfindable the poller skipped every 30 minutes indefinitely while ready cards
+    // sat idle -- absence of evidence read as evidence of saturation. The usage-max guard cannot
+    // function without data at all, so blocking forever on no data protects nothing, while the
+    // idle gate and the launch guard still prevent a double-launch.
+    const { poller, launchFn, logger } = makePoller({ usage: ABSENT });
+
+    const launched = await poller.tick();
+
+    expect(launchFn).toHaveBeenCalledOnce();
+    expect(launched).not.toBeNull();
+    const lines = [...logger.log.mock.calls, ...logger.warn.mock.calls].map((c) => c.join(" "));
+    expect(lines.some((l) => /telemetry/i.test(l) && /proceed/i.test(l))).toBe(true);
+  });
+
+  it("still SKIPS when telemetry exists but is unrecognized -- bad data still fails closed", async () => {
+    const { poller, launchFn } = makePoller({ usage: UNREADABLE });
+
+    expect(await poller.tick()).toBeNull();
+    expect(launchFn).not.toHaveBeenCalled();
+  });
+
+  it("still SKIPS when the telemetry read itself errored", async () => {
+    const { poller, launchFn } = makePoller({
+      usage: {
+        utilization: null, status: null, logPath: null,
+        telemetryAbsent: false, reason: "rate-limit telemetry unreadable: EIO"
+      }
+    });
+
+    expect(await poller.tick()).toBeNull();
+    expect(launchFn).not.toHaveBeenCalled();
+  });
+
+  it("absent telemetry does NOT bypass the idle gate", async () => {
+    const { poller, launchFn } = makePoller({ usage: ABSENT, active: true });
+
+    expect(await poller.tick()).toBeNull();
+    expect(launchFn).not.toHaveBeenCalled();
+  });
+
+  it("absent telemetry does NOT bypass the eligible-card gate", async () => {
+    const { poller, launchFn } = makePoller({ usage: ABSENT, tasks: [] });
+
+    expect(await poller.tick()).toBeNull();
+    expect(launchFn).not.toHaveBeenCalled();
+  });
+
+  it("a saturated reading still blocks, unchanged", async () => {
+    const { poller, launchFn } = makePoller({
+      usage: {
+        utilization: 1, status: "rejected", logPath: "/runs/x.jsonl",
+        telemetryAbsent: false, reason: "status=rejected utilization=1"
+      }
+    });
+
+    expect(await poller.tick()).toBeNull();
+    expect(launchFn).not.toHaveBeenCalled();
+  });
+
+  it("treats a missing telemetryAbsent field as NOT absent, so an old snapshot shape fails closed", async () => {
+    const { poller, launchFn } = makePoller({
+      usage: { utilization: null, status: null, logPath: null, reason: "legacy shape" }
+    });
+
+    expect(await poller.tick()).toBeNull();
+    expect(launchFn).not.toHaveBeenCalled();
+  });
+});
