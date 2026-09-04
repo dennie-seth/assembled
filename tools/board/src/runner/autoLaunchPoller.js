@@ -150,9 +150,34 @@ export function createAutoLaunchPoller({
       return skip(`usage could not be determined: ${err.message}`);
     }
     if (usage.utilization === null || usage.utilization === undefined) {
-      return skip(`usage could not be determined: ${usage.reason}`);
-    }
-    if (usage.utilization >= usageMax) {
+      // Genuinely ABSENT telemetry is not the same as a signal we failed to read, and the
+      // difference decides whether skipping protects anything.
+      //
+      // 2026-09-04: this gate sits ahead of the idle gate, so an undetermined reading short-
+      // circuited every tick. Telemetry had become unfindable (see usageWindow.js's head-read
+      // note), the poller logged "usage could not be determined" every 30 minutes indefinitely,
+      // and ready cards sat idle on a completely idle board. Absence of evidence was being read
+      // as evidence of saturation.
+      //
+      // When NO telemetry exists anywhere there is nothing to compare `usageMax` against -- the
+      // guard cannot function, so blocking on it protects nothing, and a fresh board (which has
+      // never run anything, and so has no telemetry by definition) would never start its first
+      // card. Proceed, loudly. The idle gate below and `launchCardRun`'s own guards still stand
+      // between this and a double-launch; only the usage ceiling is relaxed, and only when there
+      // is no data to enforce it with.
+      //
+      // Unreadable or unrecognized telemetry keeps failing closed: that IS a signal, just one we
+      // could not parse, and launching on a misread rate-limit state is the risk this gate exists
+      // for. A snapshot without the field at all is treated as not-absent, so an older
+      // `readUsage` shape degrades to the safe branch rather than the permissive one.
+      if (usage.telemetryAbsent !== true) {
+        return skip(`usage could not be determined: ${usage.reason}`);
+      }
+      logger.log(
+        `${LOG_PREFIX}: no rate-limit telemetry available -- proceeding without a usage ceiling ` +
+          `(${usage.reason})`
+      );
+    } else if (usage.utilization >= usageMax) {
       return skip(`usage ${usage.utilization} >= max ${usageMax} (${usage.reason})`);
     }
 

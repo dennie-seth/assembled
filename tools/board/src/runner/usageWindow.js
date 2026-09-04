@@ -37,8 +37,14 @@ const STATUS_UTILIZATION = new Map([
  */
 export const DEFAULT_TAIL_BYTES = 256 * 1024;
 
-/** Cap on how many run logs to fall through before giving up and reporting usage as undetermined. */
-export const DEFAULT_MAX_LOGS_SCANNED = 5;
+/**
+ * Cap on how many run logs to fall through before giving up and reporting usage as undetermined.
+ *
+ * Raised from 5 on 2026-09-04: empty logs used to consume a slot (see the size-0 filter in
+ * `readNewestRateLimitInfo`), so a couple of spawn-failure logs could push every log that DID
+ * carry telemetry out of range. Reads are bounded per log, so a higher cap costs little.
+ */
+export const DEFAULT_MAX_LOGS_SCANNED = 12;
 
 function numericUtilization(info) {
   const raw = info.utilization;
@@ -95,6 +101,38 @@ async function readTailLines(filePath, tailBytes, openFn) {
   }
 }
 
+/**
+ * Reads the FIRST `headBytes` of a file and returns its complete lines. The last line is dropped
+ * on a partial read -- it is almost certainly a truncated NDJSON record.
+ *
+ * Why a head read exists at all (2026-09-04): the CLI emits `rate_limit_event` roughly once per
+ * assistant turn, but in practice the first one lands within the first few KB of a run and later
+ * ones are sparse. On the live board every scanned log had its newest event BEFORE the 256 KB
+ * tail window -- T-0295 was 4,726,017 bytes with its last event at 4,376,864, missing the window
+ * by 87,009 bytes -- so the tail-only scan reported "no telemetry" across the board and the
+ * poller skipped at the usage gate every tick, indefinitely, while ready cards sat idle.
+ *
+ * A head read is the cheap complement: bounded exactly like the tail, and it reliably contains
+ * the run's first event. The event it finds is older than one in the tail, which is why the tail
+ * is still tried FIRST and this only runs when the tail has nothing. Staleness is already handled
+ * -- `utilizationFromRateLimitInfo` treats an elapsed `resetsAt` window as fresh.
+ */
+async function readHeadLines(filePath, headBytes, openFn) {
+  const handle = await openFn(filePath, "r");
+  try {
+    const { size } = await handle.stat();
+    if (size === 0) return [];
+    const length = Math.min(size, headBytes);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, 0);
+    const lines = buffer.toString("utf8").split("\n");
+    if (length < size) lines.pop();
+    return lines;
+  } finally {
+    await handle.close();
+  }
+}
+
 function lastRateLimitInfoIn(lines) {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i].trim();
@@ -143,6 +181,10 @@ export async function readNewestRateLimitInfo({
     const filePath = path.join(runsDir, name);
     try {
       const stat = await statFn(filePath);
+      // A zero-byte log is a run that died on spawn (T-0299 left one on 2026-09-04). It can never
+      // carry telemetry, so it must not consume one of the `maxLogsScanned` slots -- doing so
+      // pushed logs that DID have telemetry out of range.
+      if (stat.size === 0) continue;
       logs.push({ filePath, mtimeMs: stat.mtimeMs });
     } catch {
       // Rotated or deleted between readdir and stat -- nothing to read.
@@ -151,9 +193,13 @@ export async function readNewestRateLimitInfo({
   logs.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
   for (const log of logs.slice(0, maxLogsScanned)) {
+    // Tail first: it holds the NEWEST event when the log is short enough, which is the reading we
+    // actually want. Head second: on a long run the events are all far behind the tail window,
+    // and an older event from the same log beats no reading at all.
     let info = null;
     try {
       info = lastRateLimitInfoIn(await readTailLines(log.filePath, tailBytes, openFn));
+      if (!info) info = lastRateLimitInfoIn(await readHeadLines(log.filePath, tailBytes, openFn));
     } catch {
       continue;
     }
@@ -174,14 +220,27 @@ export async function readUsageSnapshot({ runsDir, now = Date.now(), ...ioOverri
   try {
     newest = await readNewestRateLimitInfo({ runsDir, ...ioOverrides });
   } catch (err) {
-    return { utilization: null, status: null, logPath: null, reason: `rate-limit telemetry unreadable: ${err.message}` };
-  }
-
-  if (!newest) {
+    // Bad data, not absent data: an I/O failure says nothing about rate-limit pressure, so this
+    // stays fail-closed (telemetryAbsent: false) and the poller keeps skipping.
     return {
       utilization: null,
       status: null,
       logPath: null,
+      telemetryAbsent: false,
+      reason: `rate-limit telemetry unreadable: ${err.message}`
+    };
+  }
+
+  if (!newest) {
+    // Genuinely ABSENT telemetry -- no log carries a rate_limit_event at all (a brand-new board,
+    // or every recent run died before its first assistant turn). Distinguished from unreadable or
+    // unrecognized telemetry so the poller can tell "no evidence of pressure" from "a signal I
+    // could not parse"; see the usage gate in autoLaunchPoller.js for what it does with this.
+    return {
+      utilization: null,
+      status: null,
+      logPath: null,
+      telemetryAbsent: true,
       reason: `no rate-limit telemetry found in ${runsDir}/*.jsonl`
     };
   }
@@ -193,5 +252,5 @@ export async function readUsageSnapshot({ runsDir, now = Date.now(), ...ioOverri
       ? `unrecognized rate-limit status "${status}" in ${newest.logPath}`
       : `status=${status} utilization=${utilization} (${newest.logPath})`;
 
-  return { utilization, status, logPath: newest.logPath, reason };
+  return { utilization, status, logPath: newest.logPath, telemetryAbsent: false, reason };
 }
