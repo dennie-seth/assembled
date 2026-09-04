@@ -1705,3 +1705,42 @@ triggers corrected to describe the ledger fallback instead of the pre-ledger "ca
 verdict" state; `tools/board/approval-ledger.json`/`approvalLedger.js`/`exportApprovalLedger.js`
 added as trigger paths), `tools/board/test/checkApprovalProvenanceDrift.e2e.test.js` (the new
 end-to-end ledger-fallback suite), this addendum.
+
+## DL-28 — Empty-merge drift fix: existing empty merges on live `develop` are left alone, not rewritten (T-0304)
+
+### The problem
+
+Both writers that sync the live board's checkout with `origin/develop` -- the auto-pull poller's
+`pullDevelop` and `deploy.sh`'s merge step -- created a merge commit unconditionally instead of
+fast-forwarding when nothing local needed preserving. `deploy.sh` passed `--no-ff` outright;
+`pullDevelop` used `git pull`, which is sensitive to ambient `merge.ff`/`pull.ff`/`pull.rebase`
+config and reproducibly manufactures a merge commit under a `merge.ff=false`-style config even on
+a pure fast-forward. Every idle tick and every no-op deploy added one, and since `develop`'s SHA
+never actually converged with `origin/develop`'s, the next tick saw the same "not in sync" state
+and did it again -- unbounded growth, confirmed live on 2026-09-04 (`git log
+origin/develop..HEAD` showing two such commits, `git diff origin/develop HEAD` empty).
+
+### Decision: fix the writers, leave existing history alone
+
+Both writers now attempt `git merge --ff-only` first and fall back to `--no-ff` only when local
+genuinely has commits origin doesn't (`gitOps.js`'s `mergeOriginRef`, shared by `pullDevelop`,
+`mergeNoFF`, and `deploy.sh` via the new `mergeOriginRef.js` CLI wrapper). This stops the drift
+from this point forward: once local and origin converge to the same SHA, `isBehindOrigin` reports
+false and neither writer runs a merge at all.
+
+The empty merge commits already on the live checkout's `develop` are **not** rewritten. Squashing
+or dropping them would require force-pushing a rewritten `develop` to `origin` -- explicitly ruled
+out by this card's scope ("do not rewrite published history on origin"), and `develop` is a shared
+branch other clones and CI may have already fetched, so a rewrite risks the exact kind of
+release-branch confusion (v0.4.0/v0.5.0/v0.6.0) this card cites as the reason the drift matters in
+the first place. The cosmetic cost of a few extra bubble commits in old history is strictly smaller
+than the cost of force-pushing `develop`. `git diff origin/develop HEAD` stays the fast, reliable
+way to confirm content parity regardless of how many historical merge bubbles sit underneath it.
+
+### Consequence: "ahead by only empty merges" stays possible, by design
+
+If local is ever ahead of origin *only* by phantom merge commits like today's live state, a
+fast-forward from local to origin is impossible by definition (local has commits origin lacks) --
+`isBehindOrigin` would report `false` in that exact state (nothing to pull), so neither writer's
+merge step would even run. Nothing about this fix un-does that specific historical shape; it only
+guarantees no *new* instance of it going forward.

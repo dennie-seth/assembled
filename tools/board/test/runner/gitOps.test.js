@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { rmTemp } from "../helpers/rmTemp.js";
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
@@ -17,6 +17,7 @@ import {
   isBehindOrigin,
   syncBaseBranch,
   mergeNoFF,
+  mergeOriginRef,
   fetch,
   mergeDevelop,
   mergeStatus,
@@ -455,7 +456,7 @@ describe("push", () => {
 });
 
 describe("pullDevelop", () => {
-  it("fast-forwards develop when origin has new commits", async () => {
+  it("fast-forwards develop when origin has new commits -- no merge commit when there's nothing local to preserve", async () => {
     // Push a new commit to origin's develop from a separate clone
     const cloneDir = path.join(tmpDir, "other-clone");
     await fs.mkdir(cloneDir, { recursive: true });
@@ -472,6 +473,33 @@ describe("pullDevelop", () => {
 
     const { stdout: log } = await git(["log", "--oneline", "develop"], repoRoot);
     expect(log).toContain("upstream: new commit");
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(1); // fast-forward, not a merge commit
+  });
+
+  // T-0304: this reproduces the live-board bug directly -- a `merge.ff=false`-style config
+  // (plausible on the deploy machine, distinct from this sandbox's default config) makes plain
+  // `git pull --no-rebase` manufacture a merge commit even when repoRoot is a pure ancestor of
+  // origin/develop with nothing local to preserve. The fix must not rely on ambient merge.ff/
+  // pull.ff config at all -- it has to check explicitly.
+  it("still fast-forwards with no merge commit under a merge.ff=false-style config", async () => {
+    await git(["config", "merge.ff", "false"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergeff-false");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream-mergeff.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream-mergeff.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: commit under merge.ff=false"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await pullDevelop({ repoRoot, branch: "develop" });
+
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(1); // still a fast-forward
   });
 
   it("resolves without error when develop is already up to date", async () => {
@@ -654,7 +682,12 @@ describe("isBehindOrigin", () => {
 });
 
 describe("mergeNoFF", () => {
-  it("fetches and merges origin/<branch> with --no-ff, producing a merge commit", async () => {
+  // T-0304: this was the deploy.sh-shaped bug reproduced directly against the shared gitOps
+  // function autoPush.js also relies on -- mergeNoFF used to pass --no-ff unconditionally, so
+  // even a trivially fast-forwardable pull (nothing local to preserve) manufactured an empty
+  // merge commit every time. It must fast-forward here instead, and only fall back to --no-ff
+  // when local genuinely has commits origin doesn't (covered below).
+  it("fast-forwards -- no merge commit -- when there's nothing local to preserve", async () => {
     const cloneDir = path.join(tmpDir, "other-clone-mergenoff");
     await fs.mkdir(cloneDir, { recursive: true });
     await git(["clone", originDir, cloneDir]);
@@ -671,11 +704,40 @@ describe("mergeNoFF", () => {
     const { stdout: log } = await git(["log", "--oneline", "develop"], repoRoot);
     expect(log).toContain("upstream: new commit");
     const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
-    expect(parents.trim().split(" ").length).toBe(2); // merge commit has two parents
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(1); // fast-forward, not a merge commit
   });
 
-  it("merges cleanly (no-op merge commit) when already up to date", async () => {
+  it("falls back to a real --no-ff merge commit when local genuinely has commits origin doesn't -- the case --no-ff exists for", async () => {
+    await fs.writeFile(path.join(repoRoot, "local-only.txt"), "local\n", "utf8");
+    await git(["add", "local-only.txt"], repoRoot);
+    await git(["commit", "-m", "local: unpushed runtime commit"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergenoff-diverged");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream-diverged.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream-diverged.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: new commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await mergeNoFF({ repoRoot, branch: "develop" });
+
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(2); // real merge commit -- both sides preserved
+    const localFile = await fs.readFile(path.join(repoRoot, "local-only.txt"), "utf8");
+    expect(localFile).toBe("local\n");
+    const upstreamFile = await fs.readFile(path.join(repoRoot, "upstream-diverged.txt"), "utf8");
+    expect(upstreamFile).toBe("from upstream\n");
+  });
+
+  it("is a true no-op -- no commit at all -- when already up to date", async () => {
+    const { stdout: beforeSha } = await git(["rev-parse", "develop"], repoRoot);
     await expect(mergeNoFF({ repoRoot, branch: "develop" })).resolves.not.toThrow();
+    const { stdout: afterSha } = await git(["rev-parse", "develop"], repoRoot);
+    expect(afterSha.trim()).toBe(beforeSha.trim());
   });
 
   it("aborts the merge and rethrows on conflict, leaving a clean working tree behind", async () => {
@@ -709,6 +771,59 @@ describe("mergeNoFF", () => {
 
   it("rejects with a descriptive error when the branch does not exist on origin", async () => {
     await expect(mergeNoFF({ repoRoot, branch: "nonexistent-branch" })).rejects.toThrow(/nonexistent-branch|git/i);
+  });
+});
+
+// T-0304: deploy.sh runs its own explicit `git fetch` step first (so it can give a distinct
+// "fetch failed" error message), then merges the already-fetched origin/<branch> ref via this
+// function -- the no-fetch counterpart to mergeNoFF, which bundles the fetch in for callers
+// (the auto-pull poller via pullDevelop, and autoPush.js's push-retry path) that don't fetch
+// separately. Same ff-then-no-ff-fallback behavior either way.
+describe("mergeOriginRef", () => {
+  it("fast-forwards an already-fetched origin/<branch> when there's nothing local to preserve", async () => {
+    const cloneDir = path.join(tmpDir, "other-clone-mergeoriginref-ff");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: new commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+    await git(["fetch", "origin", "develop"], repoRoot);
+
+    await mergeOriginRef({ repoRoot, branch: "develop" });
+
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(1);
+  });
+
+  it("falls back to --no-ff when local genuinely has commits origin doesn't, and aborts+rethrows on conflict", async () => {
+    await fs.writeFile(path.join(repoRoot, "conflict.txt"), "local version\n", "utf8");
+    await git(["add", "conflict.txt"], repoRoot);
+    await git(["commit", "-m", "local: conflicting change"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergeoriginref-conflict");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "conflict.txt"), "upstream version\n", "utf8");
+    await git(["add", "conflict.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: conflicting change"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+    await git(["fetch", "origin", "develop"], repoRoot);
+
+    await expect(mergeOriginRef({ repoRoot, branch: "develop" })).rejects.toThrow();
+
+    const { stdout: status } = await git(["status", "--porcelain"], repoRoot);
+    expect(status.trim()).toBe("");
+    const { stdout: mergeHead } = await git(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], repoRoot).catch(
+      (err) => ({ stdout: "", err })
+    );
+    expect(mergeHead.trim()).toBe("");
   });
 });
 
@@ -908,11 +1023,13 @@ describe("commitPaths — auto-push", () => {
     await fs.writeFile(path.join(repoRoot, "tasks", "T-0030.md"), "card body\n", "utf8");
 
     await commitPaths({ repoRoot, filePaths: ["tasks/T-0030.md"], message: "chore(board): add card T-0030" });
-    // schedulePush is fire-and-forget -- give its microtask chain a tick to actually run.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
-    expect(log).toContain("chore(board): add card T-0030");
+    // schedulePush is fire-and-forget -- a real `git push` subprocess, whose completion time
+    // varies with host load (T-0304 review: a full-suite run under load took longer than a
+    // fixed 50ms sleep here, flaking this assertion). Poll instead of sleeping a fixed amount.
+    await vi.waitFor(async () => {
+      const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
+      expect(log).toContain("chore(board): add card T-0030");
+    });
   });
 
   it("does not push when autoPush: false is passed", async () => {

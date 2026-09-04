@@ -24,8 +24,8 @@ function isNonFastForwardRejection(err) {
  * Pushes `branch` to origin. If origin has moved on since repoRoot's local `develop` last
  * synced -- exactly the steady-divergence problem this module exists to fix, since the board
  * commits runtime data (attachments, status writes) to `develop` and previously never pushed
- * it -- reconciles with one `git.mergeNoFF` (fetch + `merge --no-ff`, see gitOps.js) and
- * retries the push exactly once. Never force-pushes.
+ * it -- reconciles with one `git.mergeNoFF` (fetch + fast-forward-or-`--no-ff`, see gitOps.js)
+ * and retries the push exactly once. Never force-pushes.
  *
  * Never throws: every outcome, including total failure, comes back as a result object so the
  * caller can log it. The local commit is never at risk either way -- only whether it made it

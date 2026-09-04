@@ -28,12 +28,16 @@ Steps, in order:
    point of the script -- **the service is stopped before the working tree is touched**, so
    `node --watch` cannot observe or react to the merge at all. Every step after this point
    operates on a tree nothing is watching.
-3. **Fetch + merge**: `git fetch origin develop` then `git merge --no-ff --no-edit
-   origin/develop`. Deliberately `merge --no-ff`, not `pull --ff-only` -- `develop` carries
-   local runtime commits (see above), so a fast-forward is often not even possible, and this
-   script must never leave the tree mid-merge. On conflict, it runs `git merge --abort`
-   immediately (restoring the pre-merge tree, no conflict markers left on disk), restarts the
-   service on that last-known-good tree, and exits non-zero with instructions.
+3. **Fetch + merge**: `git fetch origin develop`, then `node scripts/mergeOriginRef.js`
+   (wrapping `gitOps.js`'s `mergeOriginRef`, the same decision logic `mergeNoFF` uses):
+   fast-forward when repoRoot has nothing local to preserve, falling back to `merge --no-ff
+   --no-edit origin/develop` only when it genuinely does (local runtime commits, see above).
+   Not a bare `pull --ff-only` -- a fast-forward is often not possible, and this script must
+   never leave the tree mid-merge. Before T-0304 this was an unconditional `--no-ff`, which
+   manufactured an empty merge commit on every no-op deploy. On conflict (only reachable via
+   the `--no-ff` fallback), it runs `git merge --abort` immediately (restoring the pre-merge
+   tree, no conflict markers left on disk), restarts the service on that last-known-good tree,
+   and exits non-zero with instructions.
 4. **`npm install`, conditionally**: only if `tools/board/package.json` actually changed
    between the pre- and post-merge commit (compared via `git diff --name-only`). Skipped
    entirely on a no-op merge -- keeps re-running the script idempotent and fast.
@@ -78,10 +82,10 @@ runtime commit now also pushes `develop` to origin.
   git's ref locks -- e.g. two attachment uploads seconds apart each queue their own push
   attempt, and the second one runs only once the first has settled.
 - **Non-fast-forward handling:** if origin has moved on, the plain push is rejected. The
-  module then reconciles with one `git fetch` + `merge --no-ff` (`gitOps.js`'s `mergeNoFF`)
-  and retries the push exactly once. Never uses `--force`/`--force-with-lease`.
-  It never has to shell out to the deploy script's merge logic -- `mergeNoFF` is the one
-  shared implementation both use.
+  module then reconciles with one `git fetch` + a fast-forward-or-`--no-ff` merge
+  (`gitOps.js`'s `mergeNoFF`, wrapping `mergeOriginRef`) and retries the push exactly once.
+  Never uses `--force`/`--force-with-lease`. It never has to shell out to the deploy script's
+  merge logic -- `mergeOriginRef` is the one shared decision implementation both use.
 - **Failure is non-fatal:** any other failure (unreachable origin, protected branch, a
   persistent conflict the retry couldn't clear) is logged as a warning and swallowed. The
   local commit always stands either way -- only whether it's reached origin yet is in
