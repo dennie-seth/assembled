@@ -96,7 +96,8 @@ function defaultListAgentNames(agentsDir) {
     .map((f) => f.slice(0, -3));
 }
 
-function extractBashPrefixes(allowedTools) {
+/** Exported for reuse by impossibleAcceptancePreflight.js's ungranted-operational-tool check. */
+export function extractBashPrefixes(allowedTools) {
   const prefixes = [];
   for (const t of allowedTools) {
     const m = /^Bash\((.+)\)$/.exec(t);

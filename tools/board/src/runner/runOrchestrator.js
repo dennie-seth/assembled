@@ -24,6 +24,7 @@ import { findExistingRemediationCard, draftRemediationCard } from "../lib/escala
 import { createCard as createCardDefault } from "./cardCreation.js";
 import { checkAcceptancePreflight } from "./acceptancePreflight.js";
 import { checkCapabilityPreflight } from "./capabilityPreflight.js";
+import { checkImpossibleAcceptancePreflight } from "./impossibleAcceptancePreflight.js";
 import { assertRunnerMayApply, needsApproval, parkedForApprovalComment } from "../lib/approvalGate.js";
 
 /**
@@ -573,6 +574,21 @@ export class RunOrchestrator {
         await this._blocked(taskId, capabilityPreflight.message);
         return;
       }
+
+      // Warn-only pre-flight (T-0300): flags likely-agent-impossible AC phrasings -- a human-only
+      // observation, an ungranted ops/browser-driver tool, PR/CI-green circularity, named-human
+      // approval circularity, or an external reference-source "all must succeed" requirement (see
+      // impossibleAcceptancePreflight.js). Deliberately never blocks, unlike the two preflights
+      // above: these are heuristics over freeform English, not a definite grant lookup, so a false
+      // positive here must never stop a legitimate card from running (T-0300's own explicit
+      // acceptance criterion). Surfaced as a card comment and a run-log event for a human to read.
+      const impossibleAcceptance = checkImpossibleAcceptancePreflight(preFlightTask, effectiveAgent, {
+        agentsDir: this.agentsDir,
+        resolveAllowedToolsFn: this.resolveAllowedToolsFn
+      });
+      if (impossibleAcceptance.warnings.length > 0) {
+        await this._logImpossibleAcceptanceWarning(taskId, runLog, impossibleAcceptance.warnings);
+      }
     }
 
     let currentReused = reused;
@@ -905,6 +921,25 @@ export class RunOrchestrator {
     const event = { type: "crosscheck", message };
     await runLog.append(event);
     this.hub.broadcast({ type: "run-event", id: taskId, phase: "crosscheck", event });
+  }
+
+  /**
+   * Surfaces impossibleAcceptancePreflight.js's warnings (T-0300) in both places a human would
+   * look: the run log (for whoever is watching the run live) and a card comment (for whoever
+   * reads it later, the same "assembled-board" author convention formatBlockerReportComment and
+   * parkedForApprovalComment already use). Never calls _blocked -- a false positive here must
+   * never stop a legitimate card from running.
+   */
+  async _logImpossibleAcceptanceWarning(taskId, runLog, warnings) {
+    const message =
+      `Unsatisfiable-AC preflight (T-0300) flagged ${warnings.length} acceptance ` +
+      `criterion/criteria as likely agent-impossible -- this is a warning, not a block; ` +
+      `the implementer still runs:\n` +
+      warnings.map((w) => `- ${w}`).join("\n");
+    const event = { type: "impossible-acceptance-warning", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "preflight-warning", event });
+    await this._appendComment(taskId, "assembled-board", message);
   }
 
   _crashReason(phase, result) {
