@@ -213,3 +213,255 @@ describe("readNewestRateLimitInfo / readUsageSnapshot", () => {
     expect(snapshot.reason).toMatch(/EIO/);
   });
 });
+
+describe("telemetry EARLY in a large log -- the 2026-09-04 poller stall", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-early-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  async function writeLog(name, events, mtimeMs) {
+    const filePath = path.join(runsDir, name);
+    await fs.writeFile(filePath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+    if (mtimeMs !== undefined) await fs.utimes(filePath, new Date(mtimeMs), new Date(mtimeMs));
+    return filePath;
+  }
+
+  const filler = () => ({ type: "assistant", message: { content: [{ text: "x".repeat(2000) }] } });
+
+  /** A real run's shape: rate_limit_event near the START, then megabytes of turns after it. */
+  async function logWithEarlyTelemetry(name, { status = "allowed", trailingEvents = 200, mtimeMs } = {}) {
+    const events = [rateLimitEvent(liveAllowedInfo({ status }))];
+    for (let i = 0; i < trailingEvents; i += 1) events.push(filler());
+    return writeLog(name, events, mtimeMs);
+  }
+
+  it("finds telemetry emitted BEFORE the tail window -- the exact stall on the live board", async () => {
+    // Observed 2026-09-04: T-0295's log was 4,726,017 bytes with its last rate_limit_event at
+    // byte 4,376,864 -- 87,009 bytes before the 256 KB tail window. All five scanned logs missed
+    // the same way, so the poller reported "no rate-limit telemetry found" and skipped at gate 2
+    // (usage, ahead of the idle gate) every 30 minutes while ready cards sat idle.
+    await logWithEarlyTelemetry("T-0001-big.jsonl", { status: "allowed_warning" });
+
+    const result = await readNewestRateLimitInfo({ runsDir, tailBytes: 8 * 1024 });
+
+    expect(result, "telemetry before the tail window was not found").not.toBeNull();
+    expect(result.info.status).toBe("allowed_warning");
+  });
+
+  it("still prefers the NEWEST event when the tail does contain one", async () => {
+    // head-fallback must not override a fresher reading that the cheap tail read already found
+    const events = [rateLimitEvent(liveAllowedInfo({ status: "allowed" }))];
+    for (let i = 0; i < 200; i += 1) events.push(filler());
+    events.push(rateLimitEvent(liveAllowedInfo({ status: "rejected" })));
+    await writeLog("T-0001-both.jsonl", events);
+
+    const result = await readNewestRateLimitInfo({ runsDir, tailBytes: 8 * 1024 });
+
+    expect(result.info.status).toBe("rejected");
+  });
+
+  it("a zero-byte log does not consume a scan slot", async () => {
+    // T-0299 died on spawn and left a 0-byte log. It burned one of only five slots with a
+    // guaranteed miss, pushing a log that DID have telemetry out of range.
+    await fs.writeFile(path.join(runsDir, "T-0099-dead.jsonl"), "", "utf8");
+    for (let i = 0; i < 4; i += 1) {
+      await writeLog(`T-010${i}-noise.jsonl`, [filler()], NOW_MS - (i + 1) * 1000);
+    }
+    await logWithEarlyTelemetry("T-0200-has-telemetry.jsonl", {
+      status: "allowed_warning",
+      mtimeMs: NOW_MS - 10_000
+    });
+
+    const result = await readNewestRateLimitInfo({ runsDir, tailBytes: 8 * 1024, maxLogsScanned: 5 });
+
+    expect(result, "the empty log consumed a scan slot").not.toBeNull();
+    expect(result.info.status).toBe("allowed_warning");
+  });
+
+  it("scans more than five logs before giving up", async () => {
+    for (let i = 0; i < 8; i += 1) {
+      await writeLog(`T-030${i}-noise.jsonl`, [filler()], NOW_MS - (i + 1) * 1000);
+    }
+    await logWithEarlyTelemetry("T-0400-old.jsonl", { mtimeMs: NOW_MS - 100_000 });
+
+    const result = await readNewestRateLimitInfo({ runsDir, tailBytes: 8 * 1024 });
+
+    expect(result).not.toBeNull();
+    expect(result.info.status).toBe("allowed");
+  });
+
+  it("does not read whole multi-megabyte logs -- both reads stay bounded", async () => {
+    // The tail cap exists because a live log reaches tens of MB and the poller re-reads every
+    // tick. The head fallback must be bounded the same way, not a full-file parse.
+    const reads = [];
+    const openFn = async (filePath, flags) => {
+      const handle = await fs.open(filePath, flags);
+      return {
+        stat: () => handle.stat(),
+        read: (buf, off, len, pos) => {
+          reads.push(len);
+          return handle.read(buf, off, len, pos);
+        },
+        close: () => handle.close()
+      };
+    };
+    await logWithEarlyTelemetry("T-0500-big.jsonl", { trailingEvents: 400 });
+
+    await readNewestRateLimitInfo({ runsDir, tailBytes: 8 * 1024, openFn });
+
+    expect(reads.length).toBeGreaterThan(0);
+    for (const len of reads) expect(len).toBeLessThanOrEqual(8 * 1024);
+  });
+});
+
+describe("genuinely-absent telemetry is distinguished from unreadable telemetry", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-absent-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  it("flags telemetryAbsent when no log carries any rate-limit event", async () => {
+    await fs.writeFile(
+      path.join(runsDir, "T-0001-a.jsonl"),
+      JSON.stringify({ type: "assistant", message: { content: [{ text: "hi" }] } }) + "\n",
+      "utf8"
+    );
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.utilization).toBeNull();
+    expect(snap.telemetryAbsent).toBe(true);
+  });
+
+  it("flags telemetryAbsent on a brand-new board with no runs directory at all", async () => {
+    const snap = await readUsageSnapshot({ runsDir: path.join(runsDir, "nope"), now: NOW_MS });
+
+    expect(snap.utilization).toBeNull();
+    expect(snap.telemetryAbsent).toBe(true);
+  });
+
+  it("does NOT flag telemetryAbsent when telemetry exists but its status is unrecognized", async () => {
+    // Bad data, not absent data -- a misread signal must still fail closed.
+    await fs.writeFile(
+      path.join(runsDir, "T-0001-a.jsonl"),
+      JSON.stringify(rateLimitEvent(liveAllowedInfo({ status: "who-knows" }))) + "\n",
+      "utf8"
+    );
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.utilization).toBeNull();
+    expect(snap.telemetryAbsent).toBe(false);
+  });
+
+  it("does NOT flag telemetryAbsent when the runs directory is unreadable", async () => {
+    const snap = await readUsageSnapshot({
+      runsDir,
+      now: NOW_MS,
+      readdirFn: async () => {
+        throw new Error("EIO: disk on fire");
+      }
+    });
+
+    expect(snap.utilization).toBeNull();
+    expect(snap.telemetryAbsent).toBe(false);
+    expect(snap.reason).toMatch(/unreadable/);
+  });
+
+  it("telemetryAbsent is false on a healthy reading", async () => {
+    await fs.writeFile(
+      path.join(runsDir, "T-0001-a.jsonl"),
+      JSON.stringify(rateLimitEvent(liveAllowedInfo())) + "\n",
+      "utf8"
+    );
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.utilization).toBe(ALLOWED_UTILIZATION);
+    expect(snap.telemetryAbsent).toBe(false);
+  });
+});
+
+describe("reset-awareness: the poller must know WHEN the limit frees up", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-reset-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  async function writeOne(info) {
+    await fs.writeFile(
+      path.join(runsDir, "T-0001-a.jsonl"),
+      JSON.stringify(rateLimitEvent(info)) + "\n",
+      "utf8"
+    );
+  }
+
+  it("surfaces resetsAt as epoch ms, an ISO string, and the window type", async () => {
+    // The CLI has no `usage`/`limits`/`status` subcommand (verified on 2.1.241) -- but the
+    // rate_limit_event it already writes carries the reset instant. This is the authoritative
+    // reset signal that IS available.
+    await writeOne(liveAllowedInfo({ status: "rejected", rateLimitType: "five_hour" }));
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.resetsAtMs).toBe(FUTURE_RESETS_AT * 1000);
+    expect(snap.resetsAtIso).toBe(new Date(FUTURE_RESETS_AT * 1000).toISOString());
+    expect(snap.rateLimitType).toBe("five_hour");
+    expect(snap.msUntilReset).toBe(FUTURE_RESETS_AT * 1000 - NOW_MS);
+  });
+
+  it("reports the window as already elapsed rather than a negative wait", async () => {
+    await writeOne(liveAllowedInfo({ status: "rejected", resetsAt: PAST_RESETS_AT }));
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.resetElapsed).toBe(true);
+    expect(snap.msUntilReset).toBe(0);
+    // an elapsed window is a fresh one -- utilization must not still read as saturated
+    expect(snap.utilization).toBe(ALLOWED_UTILIZATION);
+  });
+
+  it("carries the overage window's reset too, when the payload has one", async () => {
+    await writeOne(
+      liveAllowedInfo({ status: "rejected", overageResetsAt: FUTURE_RESETS_AT + 600 })
+    );
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.overageResetsAtMs).toBe((FUTURE_RESETS_AT + 600) * 1000);
+  });
+
+  it("leaves the reset fields null when the payload has no resetsAt", async () => {
+    await writeOne({ status: "allowed_warning", rateLimitType: "five_hour" });
+
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.resetsAtMs).toBeNull();
+    expect(snap.msUntilReset).toBeNull();
+    expect(snap.resetsAtIso).toBeNull();
+  });
+
+  it("reset fields are null (not undefined) when telemetry is absent entirely", async () => {
+    const snap = await readUsageSnapshot({ runsDir, now: NOW_MS });
+
+    expect(snap.telemetryAbsent).toBe(true);
+    expect(snap.resetsAtMs).toBeNull();
+    expect(snap.msUntilReset).toBeNull();
+  });
+});
