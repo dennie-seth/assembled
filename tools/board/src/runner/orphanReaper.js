@@ -6,6 +6,7 @@ import {
   isRunLive,
   isRunWedged,
   isPidAlive,
+  clearRunState,
   killPidGroup,
   freshestRunLogMtimeForTask,
   DEFAULT_HEARTBEAT_STALE_MS,
@@ -75,7 +76,7 @@ async function reapCard(
   task,
   { repoRoot, tasksDir, git, taskStoreKind },
   noteText = RECOVERY_NOTE_TEXT,
-  { logger = console, verdict = null, diagnostics = null } = {}
+  { logger = console, verdict = null, diagnostics = null, runsDir = null, clearRunStateFn = null } = {}
 ) {
   // Fix-plan item #2 (docs/reviews/2026-09-03-run-lifecycle-state-management.md): every reap
   // emits exactly one canonical line, from the single place a reap can happen, so no future call
@@ -91,6 +92,14 @@ async function reapCard(
     `orphan-reaper: reaped card ${task.id} (was ${task.status}) -- verdict=${verdict ?? "n/a"} ` +
       `[${describeRunStatus(diagnostics)}]`
   );
+  // Fix-plan item #7 (docs/reviews/2026-09-03-run-lifecycle-state-management.md): a reap is a
+  // verdict that this run is over, so the record describing it must not survive. Left in place it
+  // becomes a stale dead-pid runstate that every later liveness check has to reason about -- the
+  // leftover-runstate class, e.g. the T-0243 record that outlived its run by hours.
+  // runOrchestrator.js clears its own on the way out of runCard(); this covers the runs that
+  // ended without a runCard() left to do it (crash, kill, board restart), which are precisely the
+  // runs the reaper exists for. Best-effort: clearRunState never throws.
+  if (clearRunStateFn) await clearRunStateFn({ runsDir, taskId: task.id });
   hub.broadcast({ type: "changed", id: task.id, task: updated });
   await commitReapedCard({ taskId: task.id, repoRoot, tasksDir, git, taskStoreKind });
   return updated;
@@ -146,6 +155,7 @@ export function createOrphanReaper({
   isRunLiveFn = isRunLive,
   isRunWedgedFn = isRunWedged,
   killPidGroupFn = killPidGroup,
+  clearRunStateFn = clearRunState,
   freshestRunLogMtimeForTaskFn = freshestRunLogMtimeForTask,
   statFn = fs.stat,
   readdirFn = fs.readdir,
@@ -329,7 +339,9 @@ export function createOrphanReaper({
         await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, WEDGED_NOTE_TEXT, {
           logger,
           verdict,
-          diagnostics
+          diagnostics,
+          runsDir,
+          clearRunStateFn
         });
         reaped.push(task.id);
         logger.log(
@@ -342,7 +354,9 @@ export function createOrphanReaper({
       await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, RECOVERY_NOTE_TEXT, {
         logger,
         verdict,
-        diagnostics
+        diagnostics,
+        runsDir,
+        clearRunStateFn
       });
       reaped.push(task.id);
       logger.log(
@@ -405,7 +419,9 @@ export function createOrphanReaper({
             await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, RECOVERY_NOTE_TEXT, {
               logger,
               verdict,
-              diagnostics
+              diagnostics,
+              runsDir,
+              clearRunStateFn
             });
             reaped.push(task.id);
             logger.log(
@@ -447,7 +463,9 @@ export function createOrphanReaper({
           await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, WEDGED_NOTE_TEXT, {
             logger,
             verdict: runStatus,
-            diagnostics
+            diagnostics,
+            runsDir,
+            clearRunStateFn
           });
           orphanSince.delete(task.id);
           reaped.push(task.id);
@@ -461,7 +479,9 @@ export function createOrphanReaper({
         await reapCard(store, hub, task, { repoRoot, tasksDir, git, taskStoreKind }, RECOVERY_NOTE_TEXT, {
           logger,
           verdict: runStatus,
-          diagnostics
+          diagnostics,
+          runsDir,
+          clearRunStateFn
         });
         orphanSince.delete(task.id);
         reaped.push(task.id);

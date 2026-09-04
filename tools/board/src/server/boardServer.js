@@ -15,6 +15,7 @@ import { RunOrchestrator } from "../runner/runOrchestrator.js";
 import { ClaudeCliRunner } from "../runner/claudeCliRunner.js";
 import { createRestartCoordinator } from "../runner/serviceRestart.js";
 import { createOrphanReaper } from "../runner/orphanReaper.js";
+import { createRunAwareTaskStore } from "../lib/runAwareTaskStore.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 import { createAutoPullPoller } from "../runner/autoPullPoller.js";
 import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
@@ -79,8 +80,19 @@ export async function startBoardServer({
     idAllocator,
     onIdle: () => restartCoordinator.notifyIdle()
   });
-  const orphanReaper = createOrphanReaper({
+  // Store-boundary transition validation -- review item #5 (§2.3). Ownership is a CAPABILITY:
+  // the orchestrator above keeps the raw `store` and so may write any status for the runs it
+  // owns; every other consumer below gets this guarded view, which refuses a `blocked` write to
+  // a card the orchestrator is actively tracking. Liveness is read at write time from the same
+  // `activeCardIds` set the reaper already shares by reference, so it stays authoritative as
+  // runs start and finish. This needs no change to runOrchestrator.js.
+  const guardedStore = createRunAwareTaskStore({
     store,
+    isRunLive: (taskId) => orchestrator.activeCardIds.has(taskId)
+  });
+
+  const orphanReaper = createOrphanReaper({
+    store: guardedStore,
     hub,
     activeCardIds: orchestrator.activeCardIds,
     runsDir: path.join(tasksDir, ".runs"),

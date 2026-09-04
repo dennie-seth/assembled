@@ -165,7 +165,7 @@ describe("sweepOnce", () => {
   it("does not reap an orphaned card before the grace window elapses", async () => {
     const store = makeStore([makeTask({ id: "T-0011", status: "in-progress" })]);
     const hub = makeHub();
-    let clock = 1000;
+    let clock = Date.now();
     const reaper = createOrphanReaper({
       store,
       hub,
@@ -187,7 +187,7 @@ describe("sweepOnce", () => {
   it("reaps an orphaned card once the grace window elapses", async () => {
     const store = makeStore([makeTask({ id: "T-0012", status: "in-progress" })]);
     const hub = makeHub();
-    let clock = 1000;
+    let clock = Date.now();
     const reaper = createOrphanReaper({
       store,
       hub,
@@ -209,7 +209,7 @@ describe("sweepOnce", () => {
     const store = makeStore([makeTask({ id: "T-0013", status: "in-progress" })]);
     const hub = makeHub();
     const activeCardIds = new Set();
-    let clock = 1000;
+    let clock = Date.now();
     const reaper = createOrphanReaper({
       store,
       hub,
@@ -343,7 +343,7 @@ describe("liveness check (survives a process restart)", () => {
       const store = makeStore([makeTask({ id: "T-0030", status: "in-progress" })]);
       const hub = makeHub();
       const activeCardIds = new Set();
-      await writeRunState({ runsDir, taskId: "T-0030", pid: 9999, runLogPath: path.join(runsDir, "T-0030.jsonl") });
+      await writeRunState({ runsDir, taskId: "T-0030", pid: 9999, runLogPath: path.join(runsDir, "T-0030.jsonl"), now: () => new Date(Date.now() - 30 * 60_000) });
       const reaper = createOrphanReaper({
         store,
         hub,
@@ -364,7 +364,7 @@ describe("liveness check (survives a process restart)", () => {
     it("reaps a card whose recorded pid is dead", async () => {
       const store = makeStore([makeTask({ id: "T-0031", status: "in-progress" })]);
       const hub = makeHub();
-      await writeRunState({ runsDir, taskId: "T-0031", pid: 9998, runLogPath: path.join(runsDir, "T-0031.jsonl") });
+      await writeRunState({ runsDir, taskId: "T-0031", pid: 9998, runLogPath: path.join(runsDir, "T-0031.jsonl"), now: () => new Date(Date.now() - 30 * 60_000) });
       const reaper = createOrphanReaper({
         store,
         hub,
@@ -397,7 +397,7 @@ describe("liveness check (survives a process restart)", () => {
       const logPath = path.join(runsDir, "T-0033.jsonl");
       await fs.writeFile(logPath, "{}\n", "utf8");
       await fs.utimes(logPath, new Date(Date.now() - 5 * 60_000), new Date(Date.now() - 5 * 60_000));
-      await writeRunState({ runsDir, taskId: "T-0033", pid: undefined, runLogPath: logPath });
+      await writeRunState({ runsDir, taskId: "T-0033", pid: undefined, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
       const reaper = createOrphanReaper({ store, hub, activeCardIds: new Set(), enabled: true, runsDir });
 
       const reaped = await reaper.reapOnStartup();
@@ -411,8 +411,8 @@ describe("liveness check (survives a process restart)", () => {
       const store = makeStore([makeTask({ id: "T-0034", status: "in-progress" })]);
       const hub = makeHub();
       const activeCardIds = new Set();
-      await writeRunState({ runsDir, taskId: "T-0034", pid: 7777, runLogPath: path.join(runsDir, "T-0034.jsonl") });
-      let clock = 1000;
+      await writeRunState({ runsDir, taskId: "T-0034", pid: 7777, runLogPath: path.join(runsDir, "T-0034.jsonl"), now: () => new Date(Date.now() - 30 * 60_000) });
+      let clock = Date.now();
       const reaper = createOrphanReaper({
         store,
         hub,
@@ -436,8 +436,8 @@ describe("liveness check (survives a process restart)", () => {
     it("reaps once grace elapses when the recorded pid is dead", async () => {
       const store = makeStore([makeTask({ id: "T-0035", status: "in-progress" })]);
       const hub = makeHub();
-      await writeRunState({ runsDir, taskId: "T-0035", pid: 7778, runLogPath: path.join(runsDir, "T-0035.jsonl") });
-      let clock = 1000;
+      await writeRunState({ runsDir, taskId: "T-0035", pid: 7778, runLogPath: path.join(runsDir, "T-0035.jsonl"), now: () => new Date(Date.now() - 30 * 60_000) });
+      let clock = Date.now();
       const reaper = createOrphanReaper({
         store,
         hub,
@@ -460,7 +460,7 @@ describe("liveness check (survives a process restart)", () => {
     it("does not crash when there is no runstate file for the candidate card", async () => {
       const store = makeStore([makeTask({ id: "T-0036", status: "in-progress" })]);
       const hub = makeHub();
-      let clock = 1000;
+      let clock = Date.now();
       const reaper = createOrphanReaper({
         store,
         hub,
@@ -504,7 +504,7 @@ describe("T-0287 regression: a live run with an inconclusive pid check is never 
     const hub = makeHub();
     const logPath = path.join(runsDir, "T-0287.jsonl");
     await fs.writeFile(logPath, "line\n", "utf8");
-    await writeRunState({ runsDir, taskId: "T-0287", pid: 246322, runLogPath: logPath });
+    await writeRunState({ runsDir, taskId: "T-0287", pid: 246322, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
     let clock = Date.now();
     const reaper = createOrphanReaper({
@@ -536,7 +536,7 @@ describe("T-0287 regression: a live run with an inconclusive pid check is never 
     const hub = makeHub();
     const logPath = path.join(runsDir, "T-0276.jsonl");
     await fs.writeFile(logPath, "line\n", "utf8");
-    await writeRunState({ runsDir, taskId: "T-0276", pid: 1730227, runLogPath: logPath });
+    await writeRunState({ runsDir, taskId: "T-0276", pid: 1730227, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
     const activeCardIds = new Set();
     const reaper = createOrphanReaper({
       store,
@@ -570,7 +570,7 @@ describe("T-0287 regression: a live run with an inconclusive pid check is never 
     const staleTime = new Date(Date.now() - 5 * 60_000);
     await fs.writeFile(logPath, "line\n", "utf8");
     await fs.utimes(logPath, staleTime, staleTime);
-    await writeRunState({ runsDir, taskId: "T-0243", pid: 999999, runLogPath: logPath });
+    await writeRunState({ runsDir, taskId: "T-0243", pid: 999999, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
     let clock = Date.now();
     const reaper = createOrphanReaper({
       store,
@@ -594,7 +594,7 @@ describe("T-0287 regression: a live run with an inconclusive pid check is never 
   it("logs the reap decision's inputs (pid, pid-alive verdict, log age, heartbeat age) when it actually reaps a dead run", async () => {
     const store = makeStore([makeTask({ id: "T-0999", status: "in-progress" })]);
     const hub = makeHub();
-    await writeRunState({ runsDir, taskId: "T-0999", pid: 55555, runLogPath: path.join(runsDir, "T-0999.jsonl") });
+    await writeRunState({ runsDir, taskId: "T-0999", pid: 55555, runLogPath: path.join(runsDir, "T-0999.jsonl"), now: () => new Date(Date.now() - 30 * 60_000) });
     const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
     const reaper = createOrphanReaper({
       store,
@@ -639,7 +639,7 @@ describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () =
       const store = makeStore([makeTask({ id: "T-0050", status: "in-progress" })]);
       const hub = makeHub();
       const logPath = await writeStaleLog("T-0050", 60 * 60_000);
-      await writeRunState({ runsDir, taskId: "T-0050", pid: 12345, runLogPath: logPath });
+      await writeRunState({ runsDir, taskId: "T-0050", pid: 12345, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
       const killPidGroupFn = vi.fn(async () => {});
       const reaper = createOrphanReaper({
         store,
@@ -664,7 +664,7 @@ describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () =
       const store = makeStore([makeTask({ id: "T-0051", status: "in-progress" })]);
       const hub = makeHub();
       const logPath = await writeStaleLog("T-0051", 1000);
-      await writeRunState({ runsDir, taskId: "T-0051", pid: 12346, runLogPath: logPath });
+      await writeRunState({ runsDir, taskId: "T-0051", pid: 12346, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
       const killPidGroupFn = vi.fn(async () => {});
       const activeCardIds = new Set();
       const reaper = createOrphanReaper({
@@ -692,7 +692,7 @@ describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () =
       const store = makeStore([makeTask({ id: "T-0052", status: "validation" })]);
       const hub = makeHub();
       const logPath = await writeStaleLog("T-0052", 60 * 60_000);
-      await writeRunState({ runsDir, taskId: "T-0052", pid: 12347, runLogPath: logPath });
+      await writeRunState({ runsDir, taskId: "T-0052", pid: 12347, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
       const killPidGroupFn = vi.fn(async () => {});
       // Starts from a real epoch timestamp (not a small fake-clock offset like other tests
       // here use) since isRunWedged compares this `now()` against the log file's *real*
@@ -728,7 +728,7 @@ describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () =
         const store = makeStore([makeTask({ id: "T-0053", status: "validation" })]);
         const hub = makeHub();
         const logPath = await writeStaleLog("T-0053", 60 * 60_000);
-        await writeRunState({ runsDir, taskId: "T-0053", pid: 12348, runLogPath: logPath });
+        await writeRunState({ runsDir, taskId: "T-0053", pid: 12348, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
         const killPidGroupFn = vi.fn(async () => {});
         const activeCardIds = new Set(["T-0053"]);
         const reaper = createOrphanReaper({
@@ -756,7 +756,7 @@ describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () =
       const store = makeStore([makeTask({ id: "T-0054", status: "validation" })]);
       const hub = makeHub();
       const logPath = await writeStaleLog("T-0054", 1000);
-      await writeRunState({ runsDir, taskId: "T-0054", pid: 12349, runLogPath: logPath });
+      await writeRunState({ runsDir, taskId: "T-0054", pid: 12349, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
       const killPidGroupFn = vi.fn(async () => {});
       const activeCardIds = new Set(["T-0054"]);
       const reaper = createOrphanReaper({
@@ -779,9 +779,9 @@ describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () =
     it("does not attempt to kill anything when the card is not in activeCardIds and its pid is simply dead (existing dead-pid path, unaffected)", async () => {
       const store = makeStore([makeTask({ id: "T-0055", status: "in-progress" })]);
       const hub = makeHub();
-      await writeRunState({ runsDir, taskId: "T-0055", pid: 12350, runLogPath: path.join(runsDir, "T-0055.jsonl") });
+      await writeRunState({ runsDir, taskId: "T-0055", pid: 12350, runLogPath: path.join(runsDir, "T-0055.jsonl"), now: () => new Date(Date.now() - 30 * 60_000) });
       const killPidGroupFn = vi.fn(async () => {});
-      let clock = 1000;
+      let clock = Date.now();
       const reaper = createOrphanReaper({
         store,
         hub,
@@ -842,7 +842,7 @@ describe("reapCard commits its status write to repoRoot", () => {
     const store = makeStore([makeTask({ id: "T-0041", status: "in-progress" })]);
     const hub = makeHub();
     const git = makeGit();
-    let clock = 1000;
+    let clock = Date.now();
     const reaper = createOrphanReaper({
       store,
       hub,
@@ -971,7 +971,7 @@ describe("T-0289 correctness regression: an inconclusive pid check must stay re-
     const hub = makeHub();
     const logPath = path.join(runsDir, "T-0060.jsonl");
     await fs.writeFile(logPath, "line\n", "utf8");
-    await writeRunState({ runsDir, taskId: "T-0060", pid: 424242, runLogPath: logPath });
+    await writeRunState({ runsDir, taskId: "T-0060", pid: 424242, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
     const activeCardIds = new Set();
     let clock = Date.now();
     const reaper = createOrphanReaper({
@@ -1010,7 +1010,7 @@ describe("T-0289 correctness regression: an inconclusive pid check must stay re-
     const hub = makeHub();
     const logPath = path.join(runsDir, "T-0061.jsonl");
     await fs.writeFile(logPath, "line\n", "utf8");
-    await writeRunState({ runsDir, taskId: "T-0061", pid: 434343, runLogPath: logPath });
+    await writeRunState({ runsDir, taskId: "T-0061", pid: 434343, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
     const activeCardIds = new Set();
     let clock = Date.now();
     const reaper = createOrphanReaper({
@@ -1047,7 +1047,7 @@ describe("T-0289 correctness regression: an inconclusive pid check must stay re-
     const hub = makeHub();
     const logPath = path.join(runsDir, "T-0062.jsonl");
     await fs.writeFile(logPath, "line\n", "utf8");
-    await writeRunState({ runsDir, taskId: "T-0062", pid: 444444, runLogPath: logPath });
+    await writeRunState({ runsDir, taskId: "T-0062", pid: 444444, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
     const activeCardIds = new Set();
     let pidAlive = true;
     let clock = Date.now();
@@ -1094,7 +1094,7 @@ describe("T-0289 correctness regression: an inconclusive pid check must stay re-
     const hub = makeHub();
     const logPath = path.join(runsDir, "T-0063.jsonl");
     await fs.writeFile(logPath, "line\n", "utf8");
-    await writeRunState({ runsDir, taskId: "T-0063", pid: 454545, runLogPath: logPath });
+    await writeRunState({ runsDir, taskId: "T-0063", pid: 454545, runLogPath: logPath, now: () => new Date(Date.now() - 30 * 60_000) });
     const staleTime = new Date(Date.now() - 5 * 60_000);
     await fs.utimes(logPath, staleTime, staleTime);
     // Simulates runOrchestrator.js's own runCard() adding the card -- never went through this
