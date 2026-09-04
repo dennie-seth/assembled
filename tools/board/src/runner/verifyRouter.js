@@ -1,5 +1,13 @@
 const TASKS_PREFIX = "tasks/";
 const BOARD_PREFIX = "tools/board/";
+/**
+ * T-0303: a `.claude/agents/*.md` grant edit is only checked by code living under
+ * `tools/board/` (npmGrantAmbiguity.js et al.), so a diff that touches an agent definition but
+ * nothing else under `tools/board/**` must still trigger the board suite -- otherwise a card
+ * that only edits an agent's `tools:` line (exactly the T-0295 shape: a grant added without
+ * touching any other board file) gets no automated check on it at all.
+ */
+const AGENTS_PREFIX = ".claude/agents/";
 
 /**
  * Wall-clock bound (in seconds, for the `timeout` coreutil) on a single headless Godot test
@@ -145,8 +153,11 @@ function detectPythonPackageRoots(changedPaths) {
  * (tasks/**) runs the backlog validator AND the planner diff guard (catches
  * a card's `status` changing or a card file being deleted -- the two
  * invariants `.claude/agents/planner.md` promises but a reviewer reading
- * prose can miss); a board diff (tools/board/**) runs the board's own
- * test/lint suite; a diff touching a Python package (see
+ * prose can miss); a board diff (tools/board/**), OR a diff touching any
+ * `.claude/agents/*.md` agent definition (grant scoping is checked by code
+ * living under tools/board/, so an agent-file-only diff must run it too --
+ * T-0303), runs the board's own test/lint suite; a diff touching a Python
+ * package (see
  * `PYTHON_PACKAGE_ROOTS`) runs a per-package `python-verify` step --
  * refresh the package's `.venv`, `pip install -e ".[dev]"`, then `pytest`
  * and `ruff check .` from that package's directory -- so the reviewer
@@ -180,7 +191,9 @@ function detectPythonPackageRoots(changedPaths) {
  */
 export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" } = {}) {
   const touchesTasks = changedPaths.some((p) => p.startsWith(TASKS_PREFIX));
-  const touchesBoard = changedPaths.some((p) => p.startsWith(BOARD_PREFIX));
+  const touchesBoard = changedPaths.some(
+    (p) => p.startsWith(BOARD_PREFIX) || p.startsWith(AGENTS_PREFIX)
+  );
   const pythonRoots = detectPythonPackageRoots(changedPaths);
   const godotTests = detectChangedGodotTests(changedPaths);
 
