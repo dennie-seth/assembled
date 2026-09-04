@@ -12,15 +12,21 @@ set -euo pipefail
 #      working tree is touched, every time, no exceptions -- see the "stop" step below.
 #   2. The board commits its own runtime data (attachments, card status writes) straight to
 #      `develop` locally and never used to push it, so `develop` steadily diverged from
-#      origin and a plain `git pull --ff-only` broke on every deploy. Fix: `fetch` + `merge
-#      --no-ff` instead of `pull --ff-only` (this script), and the board now auto-pushes its
-#      own runtime commits (see src/runner/autoPush.js) so the divergence mostly shouldn't
-#      happen in the first place -- this script's merge step is the backstop for whatever
-#      still slips through (a stretch where auto-push was disabled, origin briefly
-#      unreachable, etc).
+#      origin and a plain `git pull --ff-only` broke on every deploy. Fix: `fetch` + a merge
+#      that fast-forwards when there's nothing local to preserve and falls back to `--no-ff`
+#      only for genuine divergence (see scripts/mergeOriginRef.js / src/runner/gitOps.js's
+#      `mergeOriginRef`), instead of `pull --ff-only` (this script) or an unconditional
+#      `--no-ff` (T-0304 -- the unconditional version manufactured an empty merge commit on
+#      every no-op deploy, and since develop's SHA never actually caught up to origin's, the
+#      next deploy saw the same "not up to date" state and did it again, forever). The board
+#      now also auto-pushes its own runtime commits (see src/runner/autoPush.js) so the
+#      divergence mostly shouldn't happen in the first place -- this script's merge step is
+#      the backstop for whatever still slips through (a stretch where auto-push was disabled,
+#      origin briefly unreachable, etc).
 #
 # Idempotent: re-running this with nothing new to pull, or right after a successful deploy,
-# is a normal no-op path (merge is a no-op, npm install is skipped, health check passes).
+# is a normal no-op path (merge is a true no-op -- no commit -- npm install is skipped, health
+# check passes).
 # Safe to abort: every failure branch below either restarts the service on the last known-
 # good tree, or explains exactly why it didn't and what to do next -- never silently leaves
 # the board down with no explanation.
@@ -71,11 +77,9 @@ if ! git -C "$REPO_ROOT" fetch origin "$BRANCH"; then
   restart_on_failure_and_die "fetch of origin/$BRANCH failed (network/auth?). Working tree is untouched."
 fi
 
-log "merging origin/$BRANCH with --no-ff (develop carries the board's own local runtime commits, so this is deliberately never a bare fast-forward)..."
-if ! git -C "$REPO_ROOT" merge --no-ff --no-edit "origin/$BRANCH"; then
-  log "merge conflicted -- aborting the merge so no conflict markers are left on disk"
-  git -C "$REPO_ROOT" merge --abort || log "WARNING: 'git merge --abort' itself failed; inspect $REPO_ROOT's git status by hand"
-  restart_on_failure_and_die "merge of origin/$BRANCH conflicted. Resolve manually (or find out why local/origin diverged that badly), then re-run. Tree was rolled back to its pre-merge state."
+log "merging origin/$BRANCH (fast-forwarding when there's nothing local to preserve; falling back to --no-ff only for genuine divergence -- develop carries the board's own local runtime commits, so a bare ff-only is deliberately not used unconditionally)..."
+if ! node "$BOARD_DIR/scripts/mergeOriginRef.js" "$REPO_ROOT" "$BRANCH"; then
+  restart_on_failure_and_die "merge of origin/$BRANCH conflicted (working tree already rolled back to its pre-merge state -- mergeOriginRef.js aborts on conflict before exiting). Resolve manually (or find out why local/origin diverged that badly), then re-run."
 fi
 
 AFTER_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
