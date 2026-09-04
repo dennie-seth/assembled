@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * T-0290: a routine `systemctl --user restart assembled-board` was hanging ~90s (systemd's
@@ -23,6 +25,17 @@ import { fileURLToPath } from "node:url";
  * `exec`-ing every shell layer collapses each wrapper into the program it runs (same PID, new
  * command), so after boot there is no `sh`/`bash`/`dash` PID left anywhere in the tree -- which
  * is exactly what this test asserts.
+ *
+ * This has to spawn the real `npm run dev` (the process-tree shape is a property of the actual
+ * shell/npm/concurrently chain, nothing fakeable in-process) from the real `boardDir`, but the
+ * board server it boots must never see this repo's own `tasks/` (T-0302): `BOARD_TASKS_DIR`
+ * points it at a throwaway, empty temp directory instead. With zero cards to find,
+ * `orphanReaper.reapOnStartup()` -- which the server runs synchronously before it starts
+ * listening -- has nothing to reap and never calls git at all. Before this fix it ran against
+ * this repo's real `tasks/*.md` (its `repoRoot`/`tasksDir` default straight to the checkout when
+ * unset), so if any real card happened to be stuck at in-progress/validation with no live process
+ * behind it, this 4-second spawn window silently committed a "Recovered" note and staged the file
+ * -- the actual source of the stray `tasks/*.md` pollution T-0302 was filed to fix.
  */
 
 const boardDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -62,6 +75,7 @@ async function collectDescendants(pid, depth = 0, maxDepth = 10) {
 }
 
 let child;
+let tasksDir;
 
 afterEach(async () => {
   if (child) {
@@ -72,6 +86,8 @@ afterEach(async () => {
     }
   }
   child = undefined;
+  await rmTemp(tasksDir);
+  tasksDir = undefined;
 });
 
 describe.skipIf(process.platform !== "linux")("npm run dev process tree", () => {
@@ -79,9 +95,10 @@ describe.skipIf(process.platform !== "linux")("npm run dev process tree", () => 
     "leaves no un-exec'd sh/bash/dash wrapper between npm and the server/client processes",
     async () => {
       const port = 20000 + Math.floor(Math.random() * 20000);
+      tasksDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-devshutdown-tasks-"));
       child = spawn("npm", ["run", "dev"], {
         cwd: boardDir,
-        env: { ...process.env, BOARD_PORT: String(port) },
+        env: { ...process.env, BOARD_PORT: String(port), BOARD_TASKS_DIR: tasksDir },
         detached: true,
         stdio: "ignore"
       });

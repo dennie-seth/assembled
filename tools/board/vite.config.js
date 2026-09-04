@@ -23,6 +23,9 @@ export default defineConfig({
     // the fast happy-dom/node default, `npm run test:browser` is the real-layout suite.
     include: ["test/**/*.test.js"],
     exclude: ["test/browser/**", "node_modules/**"],
-    testTimeout: 10000
+    testTimeout: 10000,
+    // Fails the whole run if any test leaves the real repo's working tree dirtier than it found
+    // it -- see test/globalSetup/workingTreeGuard.js (T-0302).
+    globalSetup: ["test/globalSetup/workingTreeGuard.js"]
   }
 });
