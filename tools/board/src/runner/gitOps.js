@@ -377,31 +377,20 @@ export async function readTreeState({ worktreeDir }) {
  * Pulls the latest commits for `branch` (default "develop") into repoRoot from origin. Reports
  * whether HEAD moved, so callers know whether there's new code to pick up.
  *
- * `--no-rebase --no-edit` are explicit rather than relying on ambient git config: card-on-create
- * commits (see `commitTaskFile`) can leave repoRoot's local branch with commits origin doesn't
- * have yet, and a `pull.ff=only` or `pull.rebase=true` global default would otherwise turn a
- * perfectly normal divergence into a failed/rewritten pull. A plain three-way merge is what we
- * want here: it's predictable and, since card files are new/unique paths, essentially
- * conflict-free in practice -- but not guaranteed conflict-free (two runs touching the same
- * card, or a card reworked on both sides, are real cases), so on failure this runs `merge
- * --abort` before rethrowing, the same as `mergeNoFF` below: a caller that only logs the
- * error (as the Done-triggered call in httpApi.js does) must never be left with repoRoot mid-
- * merge -- conflict markers on disk block every subsequent commit and pull until someone
- * resolves it by hand.
+ * Delegates entirely to `mergeNoFF` (see below) plus before/after SHA tracking: fast-forwards
+ * when repoRoot has nothing local to preserve, falling back to a real merge only for genuine
+ * divergence -- card-on-create commits (see `commitTaskFile`) can leave repoRoot's local branch
+ * with commits origin doesn't have yet, which is exactly that divergent case. Explicit `git
+ * merge` calls, never `git pull`, so an ambient `pull.ff=only`/`pull.rebase=true`/`merge.ff=false`
+ * global config on the machine this runs on can't turn a perfectly normal fast-forward into a
+ * failed pull or a manufactured merge commit (T-0304 -- this is what was happening live).
  */
 export async function pullDevelop({ repoRoot, branch = "develop" }) {
   const { stdout: beforeOut } = await git(["rev-parse", "HEAD"], repoRoot);
   const before = beforeOut.trim();
-  try {
-    await git(["pull", "--no-rebase", "--no-edit", "origin", branch], repoRoot);
-  } catch (err) {
-    await git(["merge", "--abort"], repoRoot).catch(() => {
-      // Best-effort cleanup -- if there was nothing to abort (e.g. the pull failed before a
-      // merge ever started, such as the branch-doesn't-exist case), that's fine; the original
-      // error below is what matters to the caller.
-    });
-    throw err;
-  }
+
+  await mergeNoFF({ repoRoot, branch });
+
   const { stdout: afterOut } = await git(["rev-parse", "HEAD"], repoRoot);
   const after = afterOut.trim();
   return { advanced: before !== after, before, after };
@@ -425,26 +414,55 @@ export async function isBehindOrigin({ repoRoot, branch = "develop" }) {
 }
 
 /**
- * Fetches `branch` from origin and merges `origin/<branch>` into repoRoot's checkout with
- * `--no-ff` -- always a real merge commit, even on the (common, for a repo whose local
- * `develop` never diverges from origin) case where a plain fast-forward would apply. Used
- * both by the deploy script's pre-restart sync step and by the auto-push retry path
- * (`autoPush.js`) to reconcile before retrying a rejected push.
+ * Fetches `branch` from origin and merges `origin/<branch>` into repoRoot's checkout, preferring
+ * a fast-forward and falling back to `--no-ff` only when repoRoot genuinely has commits
+ * origin/<branch> doesn't (see `mergeOriginRef` below for the merge decision itself). Used both
+ * by the deploy script's pre-restart sync step (via the `mergeOriginRef` CLI wrapper, since
+ * deploy.sh fetches separately for its own distinct error message) and by the auto-push retry
+ * path (`autoPush.js`) to reconcile before retrying a rejected push.
  *
- * On conflict, runs `merge --abort` before rethrowing -- the caller gets a clean, mergeable
- * working tree back either way, never one left mid-merge with conflict markers on disk. That
- * property is what lets the deploy script "abort loudly" instead of leaving a broken tree for
- * `node --watch` (or the next deploy attempt) to trip over.
+ * Until T-0304 this unconditionally passed `--no-ff`, manufacturing a real merge commit even on
+ * the common case (a repo whose local `develop` hasn't diverged from origin) where a plain
+ * fast-forward would apply -- every idle auto-pull and every no-op deploy added one, and since
+ * develop never actually caught up to origin's SHA the next tick saw the same "behind" state and
+ * did it again, forever. `--no-ff` is still exactly right when local truly has unique commits to
+ * preserve (the board's own runtime commits -- attachments, card-status writes); that path is
+ * unchanged.
  */
 export async function mergeNoFF({ repoRoot, branch = "develop" }) {
   await git(["fetch", "origin", branch], repoRoot);
+  await mergeOriginRef({ repoRoot, branch });
+}
+
+/**
+ * Merges an already-fetched `origin/<branch>` into repoRoot's checkout: fast-forward when
+ * possible, falling back to a `--no-ff` merge commit only when repoRoot genuinely has commits
+ * origin/<branch> doesn't. Explicit `git merge --ff-only` rather than checking `git rev-list
+ * --count` first and branching in JS -- letting git itself decide is one fewer place for the
+ * "is this actually a fast-forward" logic to drift out of sync with git's own definition of one.
+ *
+ * On conflict (only reachable via the --no-ff fallback -- a pure fast-forward can't conflict),
+ * runs `merge --abort` before rethrowing -- the caller gets a clean, mergeable working tree back
+ * either way, never one left mid-merge with conflict markers on disk. That property is what lets
+ * the deploy script "abort loudly" instead of leaving a broken tree for `node --watch` (or the
+ * next deploy attempt) to trip over.
+ */
+export async function mergeOriginRef({ repoRoot, branch = "develop" }) {
+  try {
+    await git(["merge", "--ff-only", `origin/${branch}`], repoRoot);
+    return;
+  } catch {
+    // Not fast-forwardable -- repoRoot has commits origin/<branch> doesn't (a runtime commit
+    // not yet auto-pushed, or genuine divergence). Fall through to a real merge below.
+  }
+
   try {
     await git(["merge", "--no-ff", "--no-edit", `origin/${branch}`], repoRoot);
   } catch (err) {
     await git(["merge", "--abort"], repoRoot).catch(() => {
-      // Best-effort cleanup -- if there was nothing to abort (e.g. the fetch/ref-resolution
-      // itself failed before a merge ever started), that's fine; the original error below is
-      // what matters to the caller.
+      // Best-effort cleanup -- if there was nothing to abort (e.g. the ref-resolution itself
+      // failed before a merge ever started), that's fine; the original error below is what
+      // matters to the caller.
     });
     throw err;
   }
