@@ -25,14 +25,20 @@ export function runStatePath(runsDir, taskId) {
  * runOrchestrator.js -- worst case, a restart during this exact run falls back to the
  * pre-fix behavior (reaped) instead of crashing the run itself.
  *
- * `updatedAt` is diagnostic-only (see gatherDiagnostics/describeRunStatus in orphanReaper.js) --
- * it is deliberately never read by a liveness decision. `isRunLive`'s own no-pid fallback keys
- * off the run log's own mtime (see `isRunLogFresh` below), not this field: the log's mtime
- * reflects real streamed activity from the run, while `updatedAt` only ever means "a phase
- * started at some point" and is written once per phase, not continuously. A field that looks
- * like a heartbeat but is silently never consulted is exactly the trap T-0289 flagged; this note
- * (and runState.test.js's "updatedAt is diagnostic-only" suite) is the fix for that -- not by
- * wiring it into the decision, but by making its non-role explicit and tested.
+ * `updatedAt` IS a real heartbeat as of fix-plan item #3
+ * (docs/reviews/2026-09-03-run-lifecycle-state-management.md) and IS read by `isRunLive`.
+ *
+ * It used to mean only "a phase started at some point": written once per phase and deliberately
+ * never consulted, because a field refreshed that rarely cannot distinguish a live run from a
+ * dead one. That left the run log's mtime as the only fallback evidence, and a run is legitimately
+ * silent between phases -- implementer child exits, then verifyRouter / git sync / PR-open, then
+ * the reviewer spawns -- so a healthy run looked dead for the whole gap. That is the window the
+ * review identifies as the actual cause of the false reaps.
+ *
+ * `RunOrchestrator` now refreshes this field on a timer for the entire `runCard` span, independent
+ * of phase boundaries, so freshness here means "the process that owns this run was alive moments
+ * ago". Reading it is therefore sound, and the old trap -- a field that looks like a heartbeat but
+ * is never consulted -- is resolved by making it genuinely both.
  */
 export async function writeRunState({ runsDir, taskId, pid, runLogPath, now = () => new Date() }) {
   try {
@@ -139,7 +145,25 @@ export async function isRunLive({
     return true;
   }
 
+  // Fix-plan item #3: a heartbeat refreshed for the whole runCard span (see writeRunState's
+  // docstring) is direct evidence that the owning process was alive moments ago. Checked before
+  // the log-mtime fallback because it stays fresh across the inter-phase gap, where the log
+  // legitimately goes quiet -- that gap is where healthy runs were being judged dead. A STALE
+  // heartbeat proves nothing on its own, so it never turns a dead run live: the log check below
+  // still runs, and a genuinely abandoned runstate still reaps.
+  if (isHeartbeatFresh({ updatedAt: state.updatedAt, now, heartbeatStaleMs })) {
+    return true;
+  }
+
   return isRunLogFresh({ runLogPath: state.runLogPath, now, heartbeatStaleMs, statFn });
+}
+
+/** True when `updatedAt` parses and is younger than the staleness window. Never throws. */
+function isHeartbeatFresh({ updatedAt, now, heartbeatStaleMs }) {
+  if (!updatedAt) return false;
+  const written = Date.parse(updatedAt);
+  if (Number.isNaN(written)) return false;
+  return now - written < heartbeatStaleMs;
 }
 
 async function isRunLogFresh({ runLogPath, now, heartbeatStaleMs, statFn }) {

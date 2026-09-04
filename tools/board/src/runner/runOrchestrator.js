@@ -42,6 +42,15 @@ import {
 export const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
 /**
+ * How often the owning run refreshes its liveness marker, for the whole runCard span and
+ * independent of phase boundaries (fix-plan item #3,
+ * docs/reviews/2026-09-03-run-lifecycle-state-management.md). Comfortably under runState.js's
+ * DEFAULT_HEARTBEAT_STALE_MS (60s) so several beats are missed before anything judges the run
+ * dead -- one slow write must never make a healthy run look abandoned.
+ */
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
+
+/**
  * Wall-clock cap on a single run phase (implementer, reviewer, planner, or merge-conflict
  * resolution -- anything routed through `_runPhase`). Root-cause fix for T-0185: two
  * `godot --headless test_signal_tower.gd` subprocesses that never called `get_tree().quit()`
@@ -251,6 +260,7 @@ export class RunOrchestrator {
     crossCheckVerdictFn = crossCheckVerdict,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
+    heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
     clearRunStateFn = clearRunState,
     createCardFn = createCardDefault,
     now = () => new Date(),
@@ -288,6 +298,11 @@ export class RunOrchestrator {
     this.crossCheckVerdictFn = crossCheckVerdictFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
+    this.heartbeatIntervalMs = heartbeatIntervalMs;
+    /** taskId -> {pid, runLogPath} most recently recorded, so the heartbeat can rewrite them. */
+    this._lastRunMarker = new Map();
+    /** taskIds whose branch a successful PASS already pushed, so the finally block does not re-push. */
+    this._branchPushed = new Set();
     this.clearRunStateFn = clearRunStateFn;
     this.createCardFn = createCardFn;
     this.now = now;
@@ -361,6 +376,47 @@ export class RunOrchestrator {
     return updated;
   }
 
+  /**
+   * Fix-plan item #3. Refreshes the run's liveness marker every `heartbeatIntervalMs` for the
+   * whole runCard span -- crucially including the gaps BETWEEN phases, where no child process
+   * exists and nothing appends to the run log, and where a healthy run therefore used to look
+   * dead to anything reading the filesystem. Returns a stop function; the timer is unref'd so it
+   * can never hold the process open, and every write is best-effort for the same reason
+   * writeRunState itself is: liveness bookkeeping must never fail a run.
+   */
+  _startHeartbeat(taskId) {
+    if (!this.heartbeatIntervalMs || this.heartbeatIntervalMs <= 0) return () => {};
+    const beat = () => {
+      const marker = this._lastRunMarker.get(taskId) ?? { pid: null, runLogPath: null };
+      Promise.resolve(
+        this.writeRunStateFn({
+          runsDir: this.runsDir,
+          taskId,
+          pid: marker.pid,
+          runLogPath: marker.runLogPath,
+          now: this.now
+        })
+      ).catch(() => {});
+    };
+    beat();
+    const timer = setInterval(beat, this.heartbeatIntervalMs);
+    if (typeof timer.unref === "function") timer.unref();
+    return () => {
+      clearInterval(timer);
+      this._lastRunMarker.delete(taskId);
+    };
+  }
+
+  /** Best-effort push so committed work outlives the worktree. Never throws, never re-blocks. */
+  async _preserveBranch(taskId, worktreeDir, branch) {
+    try {
+      await this.git.push({ worktreeDir, branch });
+      console.log(`assembled-board: preserved ${taskId} -- pushed ${branch} after a non-PASS outcome`);
+    } catch (err) {
+      console.warn(`assembled-board: could not preserve ${taskId} by pushing ${branch}: ${err.message}`);
+    }
+  }
+
   async runCard(taskId) {
     const task = await this.store.get(taskId);
     if (!task) {
@@ -389,23 +445,31 @@ export class RunOrchestrator {
     const worktreeDir = path.join(this.worktreesDir, taskId);
 
     this.activeCardIds.add(taskId);
+    let worktreeReady = false;
+    const stopHeartbeat = this._startHeartbeat(taskId);
     try {
       // Human/API-initiated run: always grants a fresh auto-retry allowance, even if the
       // card was previously blocked for exhausting all MAX_AUTO_RETRY_ATTEMPTS auto-retries.
       await this._updateAndBroadcast(taskId, { attempts: 0 });
 
+      // Fix-plan item #4: the status write comes BEFORE worktree setup. It used to sit after
+      // addWorktree + linkBoardNodeModules, so a run that was already tracked in activeCardIds
+      // still displayed as `ready` for the whole of a cold worktree creation -- and `ready` is
+      // exactly what the auto-launch poller selects, which is what defeated its second idle
+      // condition. The card must never be launchable-looking once this run owns it.
+      await this._updateAndBroadcast(taskId, { status: "in-progress" });
+
       let reused = false;
       try {
         const result = await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
         reused = Boolean(result && result.reused);
+        worktreeReady = true;
       } catch (err) {
         await this._blocked(taskId, `worktree creation failed: ${err.message}`);
         return;
       }
 
       await this.git.linkBoardNodeModules({ worktreeDir, repoRoot: this.repoRoot });
-
-      await this._updateAndBroadcast(taskId, { status: "in-progress" });
 
       const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
       try {
@@ -414,6 +478,16 @@ export class RunOrchestrator {
         await runLog.close();
       }
     } finally {
+      stopHeartbeat();
+      // Data-loss fix (docs/reviews/... section 4.0a): persist committed work on ANY terminal
+      // outcome, not only PASS. _handlePass pushes on its own; every other ending -- a FAIL that
+      // exhausts retries, a crash, a phase timeout -- previously left the commits only in a
+      // worktree a later re-run may reclaim. On 2026-09-03 that stranded 1047 lines on T-0288 and
+      // 253 on T-0290, both recovered by hand. Best-effort by design: preservation must never
+      // change a run's outcome.
+      if (worktreeReady && !this._branchPushed.delete(taskId)) {
+        await this._preserveBranch(taskId, worktreeDir, branch);
+      }
       this.activeCardIds.delete(taskId);
       // Best-effort: the orphan reaper only ever trusts a *present* runstate file, so once
       // there's no more span of runCard() left to protect, clearing it (rather than leaving a
@@ -835,6 +909,7 @@ export class RunOrchestrator {
     // `claude` child (see claudeCliRunner.js) survived a board restart with the same pid --
     // overwritten on every phase since the implementer and reviewer are separate child
     // processes within one runCard() span.
+    this._lastRunMarker.set(taskId, { pid: run.child.pid, runLogPath: runLog.path });
     await this.writeRunStateFn({ runsDir: this.runsDir, taskId, pid: run.child.pid, runLogPath: runLog.path, now: this.now });
 
     const events = [];
@@ -1158,6 +1233,9 @@ export class RunOrchestrator {
       // (e.g. the implementer amended a commit while fixing an issue) -- force-with-lease it.
       const pushOptions = reused ? { worktreeDir, branch, force: true } : { worktreeDir, branch };
       await this.git.push(pushOptions);
+      // Tells runCard's finally that the work is already on origin, so the terminal-outcome
+      // preservation push below does not repeat it.
+      this._branchPushed.add(taskId);
       commit = await this.git.getHeadCommit({ worktreeDir });
     } catch (err) {
       await this._blocked(taskId, `push to review failed: ${err.message}`);

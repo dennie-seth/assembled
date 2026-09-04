@@ -139,7 +139,7 @@ describe("isRunLive", () => {
 
   it("is false when the pid check reports not-alive and the run log can't be stat'd at all -- no corroborating evidence", async () => {
     const live = await isRunLive({
-      state: { pid: 4242, runLogPath: "/does/not/exist", updatedAt: new Date().toISOString() },
+      state: { pid: 4242, runLogPath: "/does/not/exist", updatedAt: new Date(0).toISOString() },
       isPidAliveFn: () => false,
       statFn: async () => {
         throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
@@ -172,7 +172,7 @@ describe("isRunLive", () => {
 
   it("is false when no pid and the run log can't be stat'd", async () => {
     const live = await isRunLive({
-      state: { runLogPath: "/does/not/exist", updatedAt: new Date().toISOString() },
+      state: { runLogPath: "/does/not/exist", updatedAt: new Date(0).toISOString() },
       statFn: async () => {
         throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       }
@@ -181,51 +181,72 @@ describe("isRunLive", () => {
   });
 });
 
-// T-0289 VALIDATION FAIL #4: `updatedAt` is written by writeRunState on every phase but no
-// liveness decision anywhere reads it -- isRunLive's own no-pid fallback checks the run log's
-// mtime (isRunLogFresh), never state.updatedAt. That's intentional (see writeRunState's own
-// docstring for why the log's mtime is the more trustworthy signal: it reflects real streamed
-// activity, not just "a phase started at some point"), but was previously undocumented and
-// untested, which is exactly what let it look like a "trap" -- a field that reads as a heartbeat
-// but is silently never consulted. These tests pin that it plays no role in the verdict.
-describe("updatedAt is diagnostic-only -- never consulted by a liveness decision (see writeRunState's docstring)", () => {
-  it("isRunLive's verdict for a confirmed-alive pid is unaffected by updatedAt, however stale", async () => {
+// Fix-plan item #3 (docs/reviews/2026-09-03-run-lifecycle-state-management.md) changed this
+// contract deliberately. `updatedAt` used to be written once per phase and never read, because a
+// field refreshed that rarely cannot tell a live run from a dead one -- T-0289 VALIDATION FAIL #4
+// pinned that non-role rather than fixing it. RunOrchestrator now refreshes it on a timer for the
+// whole runCard span, including the gaps between phases where no child process exists and the run
+// log is legitimately silent, so it is real evidence and isRunLive reads it. These tests replace
+// the former "diagnostic-only" suite and pin the new contract from both sides.
+describe("updatedAt is a real heartbeat and IS consulted by isRunLive (fix-plan item #3)", () => {
+  it("a confirmed-alive pid stays live regardless of heartbeat age -- the OS answer still wins", async () => {
     const now = Date.now();
-    const freshUpdatedAt = await isRunLive({
-      state: { pid: 4242, runLogPath: "/x", updatedAt: new Date(now).toISOString() },
-      now,
-      isPidAliveFn: (pid) => pid === 4242
-    });
-    const staleUpdatedAt = await isRunLive({
+    const alive = await isRunLive({
       state: { pid: 4242, runLogPath: "/x", updatedAt: new Date(now - 365 * 24 * 60 * 60_000).toISOString() },
       now,
-      isPidAliveFn: (pid) => pid === 4242
+      isPidAliveFn: () => true,
+      statFn: async () => ({ mtimeMs: now - 10 * 60_000 })
     });
-    expect(freshUpdatedAt).toBe(true);
-    expect(staleUpdatedAt).toBe(true);
+    expect(alive).toBe(true);
   });
 
-  it("isRunLive's no-pid fallback verdict is unaffected by updatedAt -- only the run log's own mtime matters", async () => {
+  it("a FRESH heartbeat is evidence of life when the pid is gone and the run log is quiet", async () => {
+    // Exactly the inter-phase gap: implementer exited, reviewer not spawned, nothing appended to
+    // the run log. This is the case that used to read as dead and produce the false reaps.
     const now = Date.now();
-    const base = { runLogPath: "/x" };
-    const withFreshUpdatedAt = await isRunLive({
-      state: { ...base, updatedAt: new Date(now).toISOString() },
+    const live = await isRunLive({
+      state: { pid: 4242, runLogPath: "/x", updatedAt: new Date(now - 5_000).toISOString() },
       now,
-      heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS,
-      statFn: async () => ({ mtimeMs: now - 200_000 })
+      isPidAliveFn: () => false,
+      statFn: async () => ({ mtimeMs: now - 10 * 60_000 })
     });
-    const withStaleUpdatedAt = await isRunLive({
-      state: { ...base, updatedAt: new Date(now - 365 * 24 * 60 * 60_000).toISOString() },
+    expect(live).toBe(true);
+  });
+
+  it("a STALE heartbeat is not evidence of anything -- a genuinely dead run stays reapable", async () => {
+    const now = Date.now();
+    const live = await isRunLive({
+      state: { pid: 4242, runLogPath: "/x", updatedAt: new Date(now - 30 * 60_000).toISOString() },
       now,
-      heartbeatStaleMs: DEFAULT_HEARTBEAT_STALE_MS,
-      statFn: async () => ({ mtimeMs: now - 200_000 })
+      isPidAliveFn: () => false,
+      statFn: async () => ({ mtimeMs: now - 30 * 60_000 })
     });
-    // Both false: the run log's mtime (not updatedAt) is stale in both cases, regardless of how
-    // fresh or stale updatedAt itself claims to be.
-    expect(withFreshUpdatedAt).toBe(false);
-    expect(withStaleUpdatedAt).toBe(false);
+    expect(live).toBe(false);
+  });
+
+  it("an unparseable heartbeat counts as no heartbeat, never as fresh", async () => {
+    const now = Date.now();
+    const live = await isRunLive({
+      state: { pid: 4242, runLogPath: "/x", updatedAt: "not-a-date" },
+      now,
+      isPidAliveFn: () => false,
+      statFn: async () => ({ mtimeMs: now - 30 * 60_000 })
+    });
+    expect(live).toBe(false);
+  });
+
+  it("a fresh run log still stands on its own when there is no usable heartbeat", async () => {
+    const now = Date.now();
+    const live = await isRunLive({
+      state: { runLogPath: "/x", updatedAt: undefined },
+      now,
+      isPidAliveFn: () => false,
+      statFn: async () => ({ mtimeMs: now - 1_000 })
+    });
+    expect(live).toBe(true);
   });
 });
+
 
 describe("freshestRunLogMtimeForTask", () => {
   it("freshestRunLogMtimeForTask returns null when runsDir has no matching log", async () => {

@@ -2696,13 +2696,15 @@ describe("RunOrchestrator — persists run liveness state for the orphan reaper"
 
     await runPromise;
 
-    expect(writeRunStateFn).toHaveBeenCalledTimes(2);
-    expect(writeRunStateFn).toHaveBeenNthCalledWith(
-      1,
+    // The heartbeat (fix-plan item #3) also writes run state on a timer, so the meaningful
+    // assertion is on the per-phase writes -- the ones carrying a spawned child's pid -- not on
+    // the total call count.
+    const phaseWrites = writeRunStateFn.mock.calls.filter(([args]) => typeof args.pid === "number");
+    expect(phaseWrites).toHaveLength(2);
+    expect(phaseWrites[0][0]).toEqual(
       expect.objectContaining({ runsDir: "/repo/tasks/.runs", taskId: "T-0001", pid: 4242 })
     );
-    expect(writeRunStateFn).toHaveBeenNthCalledWith(
-      2,
+    expect(phaseWrites[1][0]).toEqual(
       expect.objectContaining({ runsDir: "/repo/tasks/.runs", taskId: "T-0001", pid: 4242 })
     );
     expect(clearRunStateFn).toHaveBeenCalledTimes(1);
@@ -2723,7 +2725,8 @@ describe("RunOrchestrator — persists run liveness state for the orphan reaper"
     implChild.emit("exit", 1, null);
     await runPromise;
 
-    expect(writeRunStateFn).toHaveBeenCalledTimes(1);
+    // As above: only the pid-carrying writes are per-phase; the rest are heartbeat beats.
+    expect(writeRunStateFn.mock.calls.filter(([args]) => typeof args.pid === "number")).toHaveLength(1);
     expect(clearRunStateFn).toHaveBeenCalledTimes(1);
     expect((await store.get("T-0001")).status).toBe("blocked");
   });
