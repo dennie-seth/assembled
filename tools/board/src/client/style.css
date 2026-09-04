@@ -3,6 +3,14 @@
   font-family: system-ui, sans-serif;
   --terminal-height: 16rem;
   --terminal-height-collapsed: 2.25rem;
+  /* How much bottom space `body` reserves for the FIXED terminal panel: the panel's own height
+     plus ~2rem of breathing room. Two values because the panel has two heights -- see the
+     `body:has(#terminal-panel.collapsed)` rule below. Written as literals rather than
+     `calc(var(--terminal-height) + 2rem)` deliberately: a lightweight CSSOM (happy-dom, this
+     project's default test environment) may not resolve `calc()`, and these values are read by
+     tests. */
+  --terminal-reserve: 18rem;
+  --terminal-reserve-collapsed: 4.25rem;
 }
 
 /* Full-height flex chain (body -> #board -> .board -> .column -> .column-cards) so each
@@ -21,12 +29,32 @@
 body {
   margin: 0;
   padding: 1rem;
-  padding-bottom: 18rem;
+  padding-bottom: var(--terminal-reserve);
+  /* Matches #terminal-panel's own height transition so the board grows/shrinks with the panel
+     instead of snapping. */
+  transition: padding-bottom 0.15s ease;
   box-sizing: border-box;
   height: 100vh;
   height: 100dvh;
   display: flex;
   flex-direction: column;
+}
+
+/* The reserved bottom space must track the panel's ACTUAL height, not a fixed 18rem.
+   Measured in Chromium at an 800px viewport before this rule existed:
+
+     terminal EXPANDED   panel 257px   dead space below the columns:  39px   (fine)
+     terminal COLLAPSED  panel  37px   dead space below the columns: 259px   (the bug)
+
+   `body` reserved 288px either way, so collapsing the panel to 2.25rem left ~250px of unused
+   space under the columns -- "columns no longer extend to the bottom". The #318 flex chain was
+   never broken; only the reserve stopped matching reality.
+
+   `:has()` on body is already this stylesheet's idiom for reacting to a fixed overlay's state
+   (see the side-panel rule below). Redefining the custom property rather than the padding keeps
+   the single source of truth in `:root`. */
+body:has(#terminal-panel.collapsed) {
+  --terminal-reserve: var(--terminal-reserve-collapsed);
 }
 
 /* boardView's render root: wraps the optional .board-error banner plus the .board column
