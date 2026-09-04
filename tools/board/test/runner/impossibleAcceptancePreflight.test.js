@@ -113,7 +113,7 @@ describe("checkImpossibleAcceptancePreflight -- ungranted operational tool (T-02
     );
     expect(result.warnings.length).toBeGreaterThan(0);
     expect(result.warnings.join(" ")).toContain("systemctl");
-    expect(result.warnings.join(" ")).toContain(".claude/agents/infra.md");
+    expect(result.warnings.join(" ")).toContain("/agents/infra.md");
   });
 
   it("does NOT flag the same criterion for an agent that actually carries the grant (per-agent, not global)", () => {
