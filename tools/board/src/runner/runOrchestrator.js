@@ -24,12 +24,7 @@ import { findExistingRemediationCard, draftRemediationCard } from "../lib/escala
 import { createCard as createCardDefault } from "./cardCreation.js";
 import { checkAcceptancePreflight } from "./acceptancePreflight.js";
 import { checkCapabilityPreflight } from "./capabilityPreflight.js";
-import {
-  assertRunnerMayApply,
-  needsApproval,
-  parkedForApprovalComment,
-  PARKED_STATUS
-} from "../lib/approvalGate.js";
+import { assertRunnerMayApply, needsApproval, parkedForApprovalComment } from "../lib/approvalGate.js";
 
 /**
  * Hard cap on total implementer/reviewer runs a card can consume across its bounded
@@ -905,12 +900,16 @@ export class RunOrchestrator {
     const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model });
     const entry = { phase, run, worktreeDir, cancelled: false };
     this.activeRuns.set(taskId, entry);
+    // run.child is null when start() itself failed to spawn (e.g. a synchronous E2BIG -- see
+    // ClaudeCliRunner.start()); run.spawnError carries the reason in that case, and the exitPromise
+    // check below resolves from it immediately without ever touching `child`.
+    const pid = run.child ? run.child.pid : null;
     // Persisted so the orphan reaper can tell a genuinely-dead run from one whose detached
     // `claude` child (see claudeCliRunner.js) survived a board restart with the same pid --
     // overwritten on every phase since the implementer and reviewer are separate child
     // processes within one runCard() span.
-    this._lastRunMarker.set(taskId, { pid: run.child.pid, runLogPath: runLog.path });
-    await this.writeRunStateFn({ runsDir: this.runsDir, taskId, pid: run.child.pid, runLogPath: runLog.path, now: this.now });
+    this._lastRunMarker.set(taskId, { pid, runLogPath: runLog.path });
+    await this.writeRunStateFn({ runsDir: this.runsDir, taskId, pid, runLogPath: runLog.path, now: this.now });
 
     const events = [];
     let appendChain = Promise.resolve();
@@ -948,7 +947,7 @@ export class RunOrchestrator {
       armInactivityTimer();
       parser.push(chunk);
     };
-    if (child.stdout && typeof child.stdout.on === "function") {
+    if (child && child.stdout && typeof child.stdout.on === "function") {
       child.stdout.on("data", onStdoutData);
     }
 
@@ -985,7 +984,7 @@ export class RunOrchestrator {
       // Stop streaming further output into an event log for a phase that's already being
       // treated as over -- the kill below may take a moment (TERM-then-KILL escalation, see
       // ClaudeCliRunner.kill) and the child can keep writing to stdout in the meantime.
-      if (child.stdout && typeof child.stdout.off === "function") {
+      if (child && child.stdout && typeof child.stdout.off === "function") {
         child.stdout.off("data", onStdoutData);
       }
       this.runner.kill(run);
@@ -1244,13 +1243,45 @@ export class RunOrchestrator {
 
     const prUrl = await this._openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog, commit });
 
+    // Persist the PASS verdict, PR link, commit and branch NOW -- before the develop-sync step
+    // below, which spawns yet another agent process and can fail for reasons that have nothing
+    // to do with whether review itself succeeded. T-0243: a spawn crash inside that step
+    // previously propagated uncaught all the way out of runCard(), discarding an
+    // already-pushed, already-reviewed PASS and a freshly-opened PR with nothing on the card to
+    // show for it -- a human had to read a stack trace out of the journal to learn any of this
+    // had happened. Everything the reviewer actually verified is durable on the card before any
+    // further risk is taken; the develop-sync step below can only ever downgrade this, never
+    // erase it.
+    const preSync = await this.store.get(taskId);
+    const passBody = appendNote(preSync.body, "Validation: PASS", verdict.notes);
+    // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
+    // not carrying over how many attempts a previous round of FAILs consumed.
+    const passPatch = { status: "review", branch, commit, body: passBody, attempts: 0 };
+    if (prUrl) {
+      passPatch.pr = prUrl;
+      passPatch.body = appendNote(passBody, "PR", prUrl);
+    }
+    await this._updateAndBroadcast(taskId, passPatch);
+
     // Every card/flow that ends up with an open PR must keep that branch in sync with
     // origin/develop before it's left for a human -- see _syncBranchWithDevelop's docstring.
     // Scoped to prUrl truthy (a PR actually exists, whether freshly opened or reused) since a
     // card with no PR (gh unavailable, autoOpenPr disabled) has nothing to keep in sync yet.
-    const syncOutcome = prUrl
-      ? await this._syncBranchWithDevelop({ taskId, task, effectiveAgent, worktreeDir, branch, runLog })
-      : { ok: true };
+    //
+    // Wrapped here too, on top of _syncBranchWithDevelop's own internal handling of expected
+    // failure modes: this catches whatever THAT can't anticipate -- most notably a spawn-time
+    // exception thrown straight out of the merge-conflict-resolution phase's runner.start()
+    // call (T-0243's actual failure) -- so it can only ever downgrade the PASS state just
+    // persisted above, never discard it by escaping this method uncaught.
+    let syncOutcome;
+    try {
+      syncOutcome = prUrl
+        ? await this._syncBranchWithDevelop({ taskId, task, effectiveAgent, worktreeDir, branch, runLog })
+        : { ok: true };
+    } catch (err) {
+      await this._abortMergeBestEffort(worktreeDir);
+      syncOutcome = { ok: false, reason: `develop-sync crashed unexpectedly: ${err.message}` };
+    }
 
     if (syncOutcome.skip) {
       // A cancel fired mid conflict-resolution phase -- cancelRun() already finalized the
@@ -1264,31 +1295,23 @@ export class RunOrchestrator {
       // best-effort cleanup -- the branch is already pushed, review can proceed regardless
     }
 
-    const current = await this.store.get(taskId);
-    let body = appendNote(current.body, "Validation: PASS", verdict.notes);
-    // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
-    // not carrying over how many attempts a previous round of FAILs consumed.
-    const patch = { status: "review", branch, commit, body, attempts: 0 };
-    if (prUrl) {
-      patch.pr = prUrl;
-      patch.body = appendNote(body, "PR", prUrl);
-    }
-
     if (!syncOutcome.ok) {
       // The PR exists but the branch could not be brought in sync with develop -- surface it
       // explicitly rather than silently settling the card into review with a stale/conflicted
       // branch (see docs/design and the "many cards bounce back stale" motivation for this step).
-      patch.status = "blocked";
-      patch.body = appendNote(patch.body, "Blocked", `develop sync: ${syncOutcome.reason}`);
+      const beforeBlock = await this.store.get(taskId);
+      await this._updateAndBroadcast(taskId, {
+        status: "blocked",
+        body: appendNote(beforeBlock.body, "Blocked", `develop sync: ${syncOutcome.reason}`)
+      });
       await this._appendComment(
         taskId,
         "assembled-board",
         `Merge-develop enforcement could not complete automatically for ${branch}: ${syncOutcome.reason} ` +
           `The PR (${prUrl ?? "n/a"}) is still open but its branch has unresolved conflicts against origin/${this.baseBranch} -- manual resolution required before this card can proceed to review.`
       );
+      return;
     }
-
-    await this._updateAndBroadcast(taskId, patch);
 
     // Human direction-approval gate (approvalGate.js, docs/board-invariants.md AP-1/AP-3): a
     // card flagged `requires_approval` has now produced its artifact and passed review, but
@@ -1297,11 +1320,29 @@ export class RunOrchestrator {
     // than waiting on a PR merge, and any record of the verdict when it comes. The comment is
     // that signal, and it names both exits so a human never has to go looking for the ritual.
     //
-    // Deliberately posted after the status write, and only when the card actually settled into
-    // the parked status: a card that ended up `blocked` by the develop-sync failure above has a
-    // different, more urgent thing to say, and is not parked on anything.
-    if (patch.status === PARKED_STATUS && needsApproval(current)) {
+    // Only reached once the card has actually settled into `review` (develop-sync succeeded,
+    // or never applied) -- a card that ended up `blocked` above has a different, more urgent
+    // thing to say, and is not parked on anything.
+    if (needsApproval(preSync)) {
       await this._appendComment(taskId, "assembled-board", parkedForApprovalComment(taskId));
+    }
+  }
+
+  /**
+   * Best-effort `git merge --abort` for a worktree a crashed/timed-out merge-conflict-resolution
+   * phase may have left mid-merge (T-0291: `_syncBranchWithDevelop`'s own crash/timeout branches,
+   * and `_handlePass`'s outer catch for a failure that escapes it entirely). Swallows its own
+   * failure -- there may be nothing to abort (the crash happened before `mergeDevelop` ever ran),
+   * and either way the failure is already being recorded on the card by the caller; this is
+   * purely additional cleanup, never the only thing standing between a human and a silent
+   * conflict.
+   */
+  async _abortMergeBestEffort(worktreeDir) {
+    if (typeof this.git.abortMerge !== "function") return;
+    try {
+      await this.git.abortMerge({ worktreeDir });
+    } catch {
+      // Nothing to abort, or git itself unreachable -- best-effort, see docstring.
     }
   }
 
@@ -1386,9 +1427,16 @@ export class RunOrchestrator {
       return { ok: true, skip: true };
     }
     if (result.timedOut) {
+      // The phase never got a chance to finish resolving -- clean the mid-merge state
+      // (MERGE_HEAD/conflict markers) back up rather than leaving it on disk indefinitely
+      // (T-0291/T-0243). Best-effort: the failure is recorded on the card either way below.
+      await this._abortMergeBestEffort(worktreeDir);
       return { ok: false, reason: `${effectiveAgent} agent's ${this._timeoutReason("merge-conflict resolution", result.timeoutKind, effectiveAgent)}` };
     }
     if (result.exitCode !== 0) {
+      // Same reasoning as the timeout branch above -- a crashed (or never-spawned, e.g.
+      // spawn E2BIG) resolution phase leaves nothing behind that's safe to keep mid-merge.
+      await this._abortMergeBestEffort(worktreeDir);
       return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
     }
 

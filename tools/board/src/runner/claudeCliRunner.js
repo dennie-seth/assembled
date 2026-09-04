@@ -110,33 +110,50 @@ export class ClaudeCliRunner extends AgentRunner {
     if (resolvedModel) {
       args.push("--model", resolvedModel);
     }
-    args.push(prompt);
-
+    // The prompt is deliberately never an argv element (T-0291): a card body embeds the
+    // whole task, and Linux caps a single argv string at MAX_ARG_STRLEN (~128 KiB) --
+    // T-0243's ~54 KB body, once wrapped in the agent/rules preamble, crossed it and
+    // crashed the run with `spawn E2BIG` *after* the reviewer had already PASSed. `claude -p`
+    // with no positional prompt reads it from stdin instead (its own streamed-input path,
+    // `--input-format text` by default) -- see start(), which writes it there. That removes
+    // the ceiling entirely rather than raising it, unlike routing it through an env var
+    // (env has its own, larger but still finite limit).
     return {
       command: this.command,
       args,
       cwd: worktreeDir,
-      env: this.buildEnv()
+      env: this.buildEnv(),
+      prompt
     };
   }
 
   async start({ task, prompt, allowedTools, worktreeDir, model }) {
     const invocation = this.buildInvocation({ task, prompt, allowedTools, worktreeDir, model });
-    const child = this.spawnFn(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      env: invocation.env,
-      // Detached so kill() can target the whole process group (-pid), not just this
-      // one process -- a headless `claude -p` run may spawn its own Bash-tool
-      // children, and a plain child.kill() would leave those orphaned on cancel.
-      detached: true,
-      // stdin MUST NOT be left as an open, unwritten pipe: the prompt is already
-      // passed as an argv element, but the real CLI still probes stdin at
-      // startup, and Node's default 'pipe' stdio leaves that fd open with
-      // nothing ever written or closed -- the child blocks reading it forever.
-      // 'ignore' gives it immediate EOF (verified against the real CLI), which
-      // it treats the same as "no stdin input, use the prompt argument".
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+    let child;
+    try {
+      child = this.spawnFn(invocation.command, invocation.args, {
+        cwd: invocation.cwd,
+        env: invocation.env,
+        // Detached so kill() can target the whole process group (-pid), not just this
+        // one process -- a headless `claude -p` run may spawn its own Bash-tool
+        // children, and a plain child.kill() would leave those orphaned on cancel.
+        detached: true,
+        // stdin now carries the prompt itself (see buildInvocation's docstring) -- 'pipe'
+        // so start() has somewhere to write it, always followed by an explicit end() below
+        // so the CLI's own stdin read never blocks waiting for more than was sent.
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+    } catch (err) {
+      // A handful of spawn failures -- E2BIG chief among them (confirmed: on this platform
+      // Node's child_process.spawn throws it synchronously, not as an async 'error' event) --
+      // surface directly out of the spawnFn() call instead of via the child's 'error' event
+      // the try below already handles. Left uncaught, this unwinds straight out of
+      // runOrchestrator's _runPhase -> _syncBranchWithDevelop -> _handlePass, discarding an
+      // already-successful PASS and PR that had nothing to do with this failure (T-0243).
+      // Returning the same {runId, child: null, invocation, spawnError} shape the async path
+      // produces means every caller already knows how to handle this without a new code path.
+      return { runId: task.id, child: null, invocation, spawnError: err };
+    }
     const run = { runId: task.id, child, invocation, spawnError: null };
     // Attached synchronously, in the same tick as spawnFn() above -- Node delivers a spawn
     // failure (e.g. ENOENT when `command` isn't resolvable on the child's PATH) as an async
@@ -149,6 +166,15 @@ export class ClaudeCliRunner extends AgentRunner {
     child.on("error", (err) => {
       run.spawnError = err;
     });
+    if (child.stdin) {
+      // Same reasoning as the child's own 'error' listener above: an unlistened 'error' on
+      // this stream (e.g. EPIPE if the child dies before it finishes reading) would otherwise
+      // throw uncaught. Nothing further to do with it -- the child's own exit/error handling
+      // already covers what happened to the process as a whole.
+      child.stdin.on("error", () => {});
+      child.stdin.write(invocation.prompt);
+      child.stdin.end();
+    }
     return run;
   }
 

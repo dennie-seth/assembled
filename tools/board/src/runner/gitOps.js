@@ -506,6 +506,21 @@ export async function mergeStatus({ worktreeDir }) {
     .filter(Boolean);
 }
 
+/**
+ * Cleans up a worktree `mergeDevelop` deliberately left mid-merge (conflict markers on disk,
+ * `MERGE_HEAD` present) for an agent to resolve, in the specific case where that resolution
+ * phase never finished -- crashed, timed out, or the process spawning it failed outright
+ * (runOrchestrator.js's `_syncBranchWithDevelop`, T-0291). Without this, T-0243 left exactly
+ * that state on disk indefinitely: an unresolved `UU ASSET_PROVENANCE.md`, invisible until a
+ * human happened to look.
+ *
+ * Rejects (does not swallow) when there is nothing to abort -- callers treat this as
+ * best-effort cleanup, same posture as `mergeNoFF`'s own abort-on-failure branch.
+ */
+export async function abortMerge({ worktreeDir }) {
+  await git(["merge", "--abort"], worktreeDir);
+}
+
 /** Identity for commits the board tool makes on an agent's behalf rather than authored by the agent (see `commitAll`'s `author` param and `commitTaskFile`). */
 export const BOARD_COMMIT_AUTHOR = { name: "assembled-board", email: "board@localhost" };
 const AUTO_COMMIT_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
