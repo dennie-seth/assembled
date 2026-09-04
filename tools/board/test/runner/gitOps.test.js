@@ -20,6 +20,7 @@ import {
   fetch,
   mergeDevelop,
   mergeStatus,
+  abortMerge,
   commitTaskFile,
   commitPaths,
   autoCommitCardsOnCreateFromEnv,
@@ -856,6 +857,48 @@ describe("mergeStatus", () => {
     await git(["add", "conflict.txt"], worktreeDir);
 
     await expect(mergeStatus({ worktreeDir })).resolves.toEqual([]);
+  });
+});
+
+describe("abortMerge", () => {
+  it("cleans a worktree left mid-merge (T-0291: a crashed conflict-resolution phase must not leave MERGE_HEAD/conflict markers on disk indefinitely)", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0207");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0207", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "conflict.txt"), "branch version\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: branch change" });
+
+    const cloneDir = path.join(tmpDir, "other-clone-abortmerge-conflict");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "conflict.txt"), "upstream version\n", "utf8");
+    await git(["add", "conflict.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: conflicting change"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await fetch({ worktreeDir });
+    const result = await mergeDevelop({ worktreeDir, baseBranch: "develop" });
+    expect(result.conflicted).toBe(true);
+    await expect(mergeStatus({ worktreeDir })).resolves.toEqual(["conflict.txt"]);
+
+    await expect(abortMerge({ worktreeDir })).resolves.not.toThrow();
+
+    await expect(mergeStatus({ worktreeDir })).resolves.toEqual([]);
+    const { stdout: mergeHead } = await git(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], worktreeDir).catch(
+      (err) => ({ stdout: "", err })
+    );
+    expect(mergeHead.trim()).toBe("");
+    const { stdout: status } = await git(["status", "--porcelain"], worktreeDir);
+    expect(status.trim()).toBe("");
+  });
+
+  it("rejects when there is nothing to abort (no active merge) -- a caller must treat this as best-effort, not assume success", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0208");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0208", baseBranch: "develop" });
+
+    await expect(abortMerge({ worktreeDir })).rejects.toThrow(/git/i);
   });
 });
 

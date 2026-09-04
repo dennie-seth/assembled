@@ -8,7 +8,7 @@ import { DEFAULT_KILL_ESCALATION_MS } from "../../src/runner/runState.js";
 const TASK = { id: "T-0099", agent: "infra" };
 
 function fakeChild() {
-  return { stdout: {}, stderr: {}, kill: vi.fn(), on: vi.fn() };
+  return { stdout: {}, stderr: {}, stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() }, kill: vi.fn(), on: vi.fn() };
 }
 
 function isAlive(pid) {
@@ -26,7 +26,7 @@ describe("ClaudeCliRunner argv construction", () => {
     expect(runner).toBeInstanceOf(AgentRunner);
   });
 
-  it("constructs the exact argv for a task run", () => {
+  it("constructs the exact argv for a task run -- the prompt is never one of its elements (T-0291: argv has a MAX_ARG_STRLEN ceiling; the prompt travels over stdin instead, see start())", () => {
     const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
     const invocation = runner.buildInvocation({
       task: TASK,
@@ -42,10 +42,10 @@ describe("ClaudeCliRunner argv construction", () => {
       "stream-json",
       "--verbose",
       "--allowedTools",
-      "Read Write Bash(git:*)",
-      "do the thing"
+      "Read Write Bash(git:*)"
     ]);
     expect(invocation.cwd).toBe("/repo/worktrees/T-0099");
+    expect(invocation.prompt).toBe("do the thing");
   });
 
   it("includes --model when a model is configured, omits it otherwise", () => {
@@ -183,7 +183,7 @@ describe("ClaudeCliRunner argv construction", () => {
     );
   });
 
-  it("passes the prompt as the trailing argv element", () => {
+  it("carries the prompt on the invocation for start() to deliver over stdin, not as an argv element", () => {
     const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
     const invocation = runner.buildInvocation({
       task: TASK,
@@ -191,7 +191,23 @@ describe("ClaudeCliRunner argv construction", () => {
       allowedTools: ["Read"],
       worktreeDir: "/wt"
     });
-    expect(invocation.args[invocation.args.length - 1]).toBe("the exact prompt text");
+    expect(invocation.prompt).toBe("the exact prompt text");
+    expect(invocation.args).not.toContain("the exact prompt text");
+  });
+
+  it("never puts the prompt in argv regardless of size -- a 256 KB card body (T-0243: well past the OS's per-argument MAX_ARG_STRLEN ceiling, ~128 KiB on Linux) must not make argv grow at all", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    const hugePrompt = "x".repeat(256 * 1024);
+    const invocation = runner.buildInvocation({
+      task: TASK,
+      prompt: hugePrompt,
+      allowedTools: ["Read"],
+      worktreeDir: "/wt"
+    });
+    expect(invocation.args.every((arg) => arg !== hugePrompt)).toBe(true);
+    const totalArgvBytes = invocation.args.reduce((sum, arg) => sum + Buffer.byteLength(arg), 0);
+    expect(totalArgvBytes).toBeLessThan(1024);
+    expect(invocation.prompt).toBe(hugePrompt);
   });
 
   it("rejects a missing or empty prompt", () => {
@@ -326,7 +342,8 @@ describe("ClaudeCliRunner.start / kill", () => {
     expect(spawnFn).toHaveBeenCalledTimes(1);
     const [command, args, options] = spawnFn.mock.calls[0];
     expect(command).toBe("claude");
-    expect(args[args.length - 1]).toBe("do the thing");
+    expect(args).not.toContain("do the thing");
+    expect(child.stdin.write).toHaveBeenCalledWith("do the thing");
     expect(options.cwd).toBe("/wt");
     expect(options.env.PATH).toBe("/usr/bin");
     expect(run.child).toBe(child);
@@ -366,15 +383,39 @@ describe("ClaudeCliRunner.start / kill", () => {
     expect(options.detached).toBe(true);
   });
 
-  it("start() never leaves stdin as an open, unwritten pipe -- the real CLI blocks forever reading it otherwise", async () => {
+  it("start() delivers the prompt over stdin (not argv) and closes it -- a real CLI's own stdin probe never blocks waiting for more input than was written", async () => {
     const child = fakeChild();
     const spawnFn = vi.fn(() => child);
     const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
 
-    await runner.start({ task: TASK, prompt: "x", allowedTools: ["Read"], worktreeDir: "/wt" });
+    await runner.start({ task: TASK, prompt: "the prompt text", allowedTools: ["Read"], worktreeDir: "/wt" });
 
     const [, , options] = spawnFn.mock.calls[0];
-    expect(options.stdio[0]).toBe("ignore");
+    expect(options.stdio[0]).toBe("pipe");
+    expect(child.stdin.write).toHaveBeenCalledWith("the prompt text");
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    // end() must come after write() -- ending first would truncate the prompt.
+    const writeOrder = child.stdin.write.mock.invocationCallOrder[0];
+    const endOrder = child.stdin.end.mock.invocationCallOrder[0];
+    expect(writeOrder).toBeLessThan(endOrder);
+  });
+
+  it("start() never leaves a spawn failure (e.g. E2BIG) as an uncaught synchronous throw -- it comes back as a normal run handle with spawnError set, the same shape the async ENOENT path already produces", async () => {
+    const err = Object.assign(new Error("spawn claude E2BIG"), { code: "E2BIG" });
+    const spawnFn = vi.fn(() => {
+      throw err;
+    });
+    const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
+
+    let run;
+    await expect(
+      (async () => {
+        run = await runner.start({ task: TASK, prompt: "x".repeat(300 * 1024), allowedTools: ["Read"], worktreeDir: "/wt" });
+      })()
+    ).resolves.not.toThrow();
+
+    expect(run.spawnError).toBe(err);
+    expect(run.runId).toBe(TASK.id);
   });
 
   it("start() attaches its own 'error' listener synchronously, so a spawn failure (e.g. ENOENT) never becomes an unlistened 'error' event that crashes the process", async () => {
@@ -415,6 +456,50 @@ describe("ClaudeCliRunner.start / kill", () => {
     child.emit("error", err);
 
     expect(run.spawnError).toBe(err);
+  });
+});
+
+describe("ClaudeCliRunner.start -- large prompt over stdin (T-0291: spawn E2BIG)", () => {
+  it("spawns successfully with a 256 KB prompt -- well past the OS's ~128 KiB per-argument MAX_ARG_STRLEN ceiling that crashed T-0243 -- because the prompt travels over stdin, not argv", async () => {
+    // A real, unmocked child process (not the `claude` CLI itself, which would require real
+    // auth/network -- `cat` stands in as "a process that reads all of stdin and echoes it back",
+    // proving the plumbing end to end: spawn doesn't throw, and the full prompt arrives intact).
+    // Before this fix, embedding a prompt this size as an argv element reproduces T-0243's
+    // `spawn E2BIG` reliably (see the synchronous-throw characterization in the "start() never
+    // leaves a spawn failure ... as an uncaught synchronous throw" test above).
+    const hugePrompt = "x".repeat(256 * 1024);
+    const runner = new ClaudeCliRunner({ hostEnv: {} });
+    // Swap in "cat" with no extra argv -- this test is about start()'s stdin plumbing surviving
+    // a huge prompt, not about the real `claude` CLI's own flag parsing (which "cat" doesn't
+    // share, and would choke on flags like -p/--allowedTools if we left them in argv).
+    runner.buildInvocation = () => ({ command: "cat", args: [], cwd: process.cwd(), env: {}, prompt: hugePrompt });
+
+    const run = await runner.start({
+      task: TASK,
+      prompt: hugePrompt,
+      allowedTools: ["Read"],
+      worktreeDir: process.cwd()
+    });
+
+    expect(run.spawnError).toBeNull();
+
+    const output = await new Promise((resolve, reject) => {
+      let out = "";
+      const timer = setTimeout(() => reject(new Error("cat did not echo the full prompt back within 5s")), 5000);
+      run.child.stdout.on("data", (chunk) => {
+        out += chunk.toString();
+      });
+      run.child.once("exit", () => {
+        clearTimeout(timer);
+        resolve(out);
+      });
+      run.child.once("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+
+    expect(output).toBe(hugePrompt);
   });
 });
 
@@ -526,14 +611,18 @@ describe("ClaudeCliRunner.kill process-group behavior (no orphans)", () => {
 });
 
 describe("stdin-hang hardening (T-0117): the outer spawn's stdio config is what the board controls", () => {
-  it("a real child spawned with the board's stdio config (stdin ignored) gets immediate EOF -- a bare `cat` with no input does not hang", async () => {
-    // Mirrors ClaudeCliRunner.start()'s actual stdio: ["ignore", "pipe", "pipe"] exactly. This is
-    // a real, unmocked child process -- proof that stdin: "ignore" (-> /dev/null) is sufficient to
-    // stop a bare `cat`/`grep`/`read` with no input from hanging, at the layer the board actually
-    // spawns: the outer `claude -p` process itself. It does NOT prove anything about commands the
-    // `claude` CLI spawns internally for its own Bash tool -- see runOrchestrator.js's
-    // DEFAULT_INACTIVITY_TIMEOUT_MS docstring for why that's a separate, non-board-controlled
-    // problem the inactivity watchdog exists to catch instead.
+  it("a real child spawned with stdin ignored gets immediate EOF -- a bare `cat` with no input does not hang", async () => {
+    // T-0291 moved ClaudeCliRunner.start()'s own stdio to ["pipe", "pipe", "pipe"] so the
+    // prompt itself can travel over stdin instead of argv (see the "delivers the prompt over
+    // stdin" test above) -- that pipe is always explicitly written to and end()-ed, so it can
+    // never be the *unwritten, unclosed* pipe this test is about. This test instead documents
+    // the general fact that motivated 'ignore' in the first place and still matters wherever
+    // stdin has nothing to write to it: a real, unmocked child process proving a bare
+    // `cat`/`grep`/`read` with no input doesn't hang forever on an ignored ("ignore" -> /dev/null)
+    // stdin. It does NOT prove anything about commands the `claude` CLI spawns internally for its
+    // own Bash tool -- see runOrchestrator.js's DEFAULT_INACTIVITY_TIMEOUT_MS docstring for why
+    // that's a separate, non-board-controlled problem the inactivity watchdog exists to catch
+    // instead.
     const child = nodeSpawn("bash", ["-c", "cat; echo DONE"], {
       stdio: ["ignore", "pipe", "pipe"]
     });
