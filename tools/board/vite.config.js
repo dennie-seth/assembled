@@ -24,6 +24,10 @@ export default defineConfig({
     include: ["test/**/*.test.js"],
     exclude: ["test/browser/**", "node_modules/**"],
     testTimeout: 10000,
+    // Clears BOARD_TASK_STORE/BOARD_DB_PATH inherited from the board service before any test
+    // module loads, so the suite can never bind to the LIVE board database -- see the file's own
+    // comment for the 2026-09-04 incident that made this necessary.
+    setupFiles: ["test/setup/envIsolation.js"],
     // Fails the whole run if any test leaves the real repo's working tree dirtier than it found
     // it -- see test/globalSetup/workingTreeGuard.js (T-0302).
     globalSetup: ["test/globalSetup/workingTreeGuard.js"]
