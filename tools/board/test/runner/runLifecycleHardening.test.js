@@ -248,6 +248,26 @@ describe("unpushed-on-FAIL: committed work is never stranded in a worktree", () 
 
     expect(git.push).not.toHaveBeenCalled();
   });
+
+  it("does not push when the branch carries no commits ahead of develop -- the empty-diff case (T-0288's 'no commits on branch' block)", async () => {
+    const store = makeStore([baseTask()]);
+    const runner = makeRunner();
+    const git = makeGit({ diffNames: vi.fn(async () => []) });
+    await runUntilCrash(makeOrchestrator({ store, git, runner }), runner);
+
+    expect(store.tasks.get("T-0001").status).toBe("blocked");
+    expect(git.push).not.toHaveBeenCalled();
+  });
+
+  it("a diffNames failure during the preservation check degrades to a log line, same as a push failure", async () => {
+    const store = makeStore([baseTask()]);
+    const runner = makeRunner();
+    const git = makeGit({ diffNames: vi.fn(async () => { throw new Error("git diff boom"); }) });
+    await runUntilCrash(makeOrchestrator({ store, git, runner }), runner);
+
+    expect(store.tasks.get("T-0001").status).toBe("blocked");
+    expect(store.tasks.get("T-0001").body).toMatch(/## Blocked/);
+  });
 });
 
 describe("#7 a reap clears the runstate it just invalidated", () => {
