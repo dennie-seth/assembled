@@ -14,7 +14,8 @@ function fixtureTask(index) {
     status: "backlog",
     priority: "P2",
     agent: "infra",
-    phase: 7
+    phase: 7,
+    depends_on: []
   };
 }
 

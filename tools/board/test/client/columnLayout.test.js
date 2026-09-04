@@ -115,8 +115,12 @@ describe("column-cards is a real scroll container (T-0288 drag auto-scroll)", ()
     const style = getComputedStyle(document.body);
     expect(style.display).toBe("flex");
     expect(style.flexDirection).toBe("column");
-    // 100dvh with a 100vh fallback; happy-dom may report either, so just assert it is set
-    // to a viewport-relative value rather than left unset.
-    expect(style.minHeight).toMatch(/\d+(vh|dvh)/);
+    // T-0295: must be `height`, not `min-height` -- `min-height` lets the box grow to fit
+    // content instead of clipping to the viewport, which is exactly the bug a real-browser
+    // test caught (see style.css's body rule comment). happy-dom resolves 100dvh/100vh to a
+    // definite px value (its default viewport height) rather than keeping the unit string, so
+    // just assert it is a definite length -- not "auto", which is what a `min-height`-only box
+    // reports.
+    expect(style.height).toMatch(/^\d+px$/);
   });
 });
