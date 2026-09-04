@@ -44,13 +44,15 @@ npm run test:browser:install   # npx playwright install chromium (see "Browser b
   browser-suite failure and a unit-test failure can never be mistaken for
   each other — different script, different file extension, different
   config file (`playwright.config.js` vs. `vite.config.js`'s `test` block).
-- **Not wired into CI (`ci-board.yml`) as of this card.** `lint-test-build`
-  runs `npm run lint`, `npm test`, `npm run build` only. Deliberately: this
-  suite needs a ~390MB browser download (see below) and, per this card's
-  own edge-case note, must never be allowed to block every board PR on a
-  slow or flaky browser test. If a future card wires it into CI, it should
-  be its own separate, non-blocking job/step — never folded into
-  `lint-test-build` — for the same reason.
+- **Wired into CI (`ci-board.yml`) as its own separate, non-blocking job**,
+  `browser-tests`. `lint-test-build` is untouched — still just
+  `npm run lint`, `npm test`, `npm run build` — and has no `needs` edge to
+  or from `browser-tests`, so the two run independently. `browser-tests`
+  carries `continue-on-error: true`, so per this card's own edge-case note
+  a slow or flaky browser test can never block a board PR: its steps are
+  `npm ci`, `npx playwright install --with-deps chromium`, then
+  `npm run test:browser`, on a plain `ubuntu-latest` runner (see "Browser
+  binaries" below for why that matters).
 
 ## Browser binaries
 
@@ -164,13 +166,32 @@ tried again, from a fresh session, before writing this section:
   reconfirmation rather than the same narrative repeated.
 
 Conclusion: the blocker is the sandbox's OS package set, confirmed
-independently twice now with different mitigations attempted each time,
-not a fixable defect in the harness or a corner an implementer session
-declined to try. Closing it needs either root access in the runner
-environment (to run `apt-get install libnspr4 libnss3` or
-`playwright install-deps chromium`) or a CI runner with those packages
-already present — neither of which any implementer or reviewer agent
-session, as currently provisioned, can reach.
+independently three times now (including a third round that also tried
+`apt-get download` of the two missing packages without `sudo`, denied
+outright as requiring approval no non-interactive session can grant) with
+different mitigations attempted each time, not a fixable defect in the
+harness or a corner an implementer session declined to try. Closing it
+needs either root access in the runner environment (to run
+`apt-get install libnspr4 libnss3` or `playwright install-deps chromium`)
+or a CI runner with those packages already present — neither of which any
+implementer or reviewer agent session, as currently provisioned, can
+reach.
+
+### Where the two real assertions actually get proven: CI, not this session
+
+No implementer or reviewer agent session can execute
+`dragAutoScroll.spec.js`'s two real assertions locally, for the reasons
+above — that isn't going to change by trying a fourth time in the same
+kind of sandbox. `ci-board.yml`'s `browser-tests` job (see "Running it"
+above) is the actual proof mechanism: a plain `ubuntu-latest` GitHub
+Actions runner has (or can install via `--with-deps`) `libnspr4`/`libnss3`,
+so it is the first environment in this card's history where the suite runs
+past the launch probe. A reviewer holding `gh run view` / `gh pr checks`
+(the `reviewer` agent does) can confirm the real result — "2 passed" or a
+genuine assertion failure — from the Actions run itself once the branch is
+pushed, without ever launching a browser locally. That is the
+distinction this doc draws throughout: a spec that has run and been
+observed to pass, versus one that is merely correct by construction.
 
 ## Known gap: the `relatedTarget === null` case is out of reach
 

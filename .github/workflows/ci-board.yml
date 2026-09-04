@@ -40,3 +40,30 @@ jobs:
       - run: npm test
 
       - run: npm run build
+
+  # T-0295: separate from lint-test-build on purpose, per this card's own edge-case note -- a
+  # slow or flaky browser test must never block every board PR. `continue-on-error: true` means
+  # this job's outcome never fails the workflow run or gates a required check, and there is no
+  # `needs` edge in either direction, so it neither waits on lint-test-build nor holds it up.
+  # `ubuntu-latest` ships (or can install via `--with-deps`) the OS packages -- libnspr4, libnss3
+  # -- that the sandboxed dev/agent session this harness was built in could not install (no root;
+  # see docs/browser-tests.md), so this is the first place `dragAutoScroll.spec.js`'s two real
+  # assertions actually execute.
+  browser-tests:
+    name: browser harness (Playwright, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tools/board/package-lock.json
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run test:browser
