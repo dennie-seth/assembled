@@ -8,6 +8,7 @@ import { loadAgentDef, loadRules } from "./configLoader.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { createRunLog } from "./runLog.js";
 import { writeRunState, clearRunState } from "./runState.js";
+import { probeLivenessMtime, DEFAULT_LIVENESS_PROBE_INTERVAL_MS } from "./filesystemLiveness.js";
 import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
@@ -20,7 +21,13 @@ import {
 import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
 import { computeFailureSignature } from "./failureSignature.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
-import { findExistingRemediationCard, draftRemediationCard } from "../lib/escalationRemediation.js";
+import {
+  findOpenRemediationCard,
+  findRemediationCardsFor,
+  findMostRecentClosedRemediationCard,
+  isClosedRemediationStatus,
+  draftRemediationCard
+} from "../lib/escalationRemediation.js";
 import { createCard as createCardDefault } from "./cardCreation.js";
 import { checkAcceptancePreflight } from "./acceptancePreflight.js";
 import { checkCapabilityPreflight } from "./capabilityPreflight.js";
@@ -160,13 +167,79 @@ function phaseTimeoutOverrideFromEnv() {
  */
 export const DEFAULT_INACTIVITY_TIMEOUT_MS = 8 * 60 * 1000;
 
+/**
+ * Per-agent inactivity budgets (T-0309), a structural copy of PHASE_TIMEOUT_MS_BY_AGENT --
+ * see resolveInactivityTimeoutMs for the shared override -> byAgent -> fallback precedence.
+ *
+ * `assets` (20 min) -- DEFAULT_INACTIVITY_TIMEOUT_MS's own docstring justifies 8 minutes
+ * against this repo's `cmake --build` / `pip install -e ".[dev]"` quiet stretches; it never
+ * considered GPU training. T-0229 (see PHASE_TIMEOUT_MS_BY_AGENT's docstring) measured a
+ * ~7-minute SDXL checkpoint load (6.94 GB at ~32 MB/s over the WSL 9p /mnt/f mount) before
+ * training -- or generation -- even starts, and noted the checkpoint read rate varies run to
+ * run. That is close enough to the unmodified 8-minute default that a slower-than-usual load
+ * alone could trip the watchdog on a run that was never stuck, purely from disk I/O variance
+ * unrelated to any hang. Once training is underway the ~98s/step cadence (T-0229) keeps the
+ * default well fed regardless -- it's specifically the monolithic, no-progress-signal load
+ * phase this widens for.
+ *
+ * 20 minutes leaves ~13 minutes of headroom above the measured ~7-minute load -- real slack
+ * for read-rate variance, not a token bump -- while staying an order of magnitude under
+ * PHASE_TIMEOUT_MS_BY_AGENT.assets (240 min), so a genuinely wedged assets run is still
+ * caught in well under a third of its phase budget.
+ *
+ * This is a cost ceiling, same spirit as PHASE_TIMEOUT_MS_BY_AGENT -- not the hang defence.
+ * The mtime-liveness card is what actually tells a working run apart from a wedged one (see
+ * probeLivenessMtime / the filesystem-liveness reprieve in _runPhase, which already re-arms
+ * this same deadline on observed disk progress); this only sizes the residual silent-stdout
+ * budget per agent class once that evidence is available. Nothing stops a future per-agent
+ * entry here from exceeding that same agent's PHASE_TIMEOUT_MS_BY_AGENT entry -- the two
+ * budgets are independent axes (one bounds silence, the other bounds wall-clock), so that
+ * would be an unusual configuration, not an invalid one.
+ *
+ * Note this keys on the agent the PHASE runs as, not the card's agent, exactly like
+ * PHASE_TIMEOUT_MS_BY_AGENT: an assets card's reviewer phase runs as `reviewer` and keeps
+ * the default.
+ */
+export const INACTIVITY_TIMEOUT_MS_BY_AGENT = Object.freeze({
+  assets: 20 * 60 * 1000
+});
+
 const INACTIVITY_TIMEOUT_ENV_VAR = "INACTIVITY_TIMEOUT_MS";
 
-/** INACTIVITY_TIMEOUT_MS env var: overrides DEFAULT_INACTIVITY_TIMEOUT_MS when set to a positive number. */
-function inactivityTimeoutMsFromEnv() {
+/**
+ * Inactivity budget for *agent*, in precedence order -- identical shape to
+ * resolvePhaseTimeoutMs:
+ *   1. `override` -- the process-wide INACTIVITY_TIMEOUT_MS escape hatch (or an injected
+ *      value in tests). Applies to every agent, deliberately: it exists to override.
+ *   2. `byAgent` -- the per-agent budget above.
+ *   3. `fallback` -- DEFAULT_INACTIVITY_TIMEOUT_MS.
+ *
+ * A non-positive or unparseable override is ignored rather than trusted, so a typo in the
+ * env var cannot silently disable the watchdog.
+ */
+export function resolveInactivityTimeoutMs(
+  agent,
+  { override = null, byAgent = INACTIVITY_TIMEOUT_MS_BY_AGENT, fallback = DEFAULT_INACTIVITY_TIMEOUT_MS } = {}
+) {
+  const parsedOverride = Number(override);
+  if (override !== null && override !== undefined && Number.isFinite(parsedOverride) && parsedOverride > 0) {
+    return parsedOverride;
+  }
+  // Own-property check only: an agent literally named "constructor" or "toString" must
+  // not pick up a function off Object.prototype and be compared as a number.
+  const perAgent =
+    typeof agent === "string" && byAgent && Object.prototype.hasOwnProperty.call(byAgent, agent)
+      ? Number(byAgent[agent])
+      : NaN;
+  if (Number.isFinite(perAgent) && perAgent > 0) return perAgent;
+  return fallback;
+}
+
+/** INACTIVITY_TIMEOUT_MS env var: a global override across every agent, or null when unset/invalid. */
+function inactivityTimeoutOverrideFromEnv() {
   const raw = process.env[INACTIVITY_TIMEOUT_ENV_VAR];
   const parsed = Number(raw);
-  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INACTIVITY_TIMEOUT_MS;
+  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 /**
@@ -235,7 +308,10 @@ export class RunOrchestrator {
     autoCaptureUncommitted = autoCaptureUncommittedFromEnv(),
     phaseTimeoutMs = phaseTimeoutOverrideFromEnv(),
     phaseTimeoutsByAgent = PHASE_TIMEOUT_MS_BY_AGENT,
-    inactivityTimeoutMs = inactivityTimeoutMsFromEnv(),
+    inactivityTimeoutMs = inactivityTimeoutOverrideFromEnv(),
+    inactivityTimeoutsByAgent = INACTIVITY_TIMEOUT_MS_BY_AGENT,
+    livenessProbeIntervalMs = DEFAULT_LIVENESS_PROBE_INTERVAL_MS,
+    probeLivenessMtimeFn = probeLivenessMtime,
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
@@ -273,7 +349,11 @@ export class RunOrchestrator {
     // Global escape hatch (PHASE_TIMEOUT_MS, or injected). null = defer to the per-agent map.
     this.phaseTimeoutOverrideMs = phaseTimeoutMs ?? null;
     this.phaseTimeoutsByAgent = phaseTimeoutsByAgent;
-    this.inactivityTimeoutMs = inactivityTimeoutMs;
+    // Same shape (INACTIVITY_TIMEOUT_MS, or injected). null = defer to the per-agent map.
+    this.inactivityTimeoutMs = inactivityTimeoutMs ?? null;
+    this.inactivityTimeoutsByAgent = inactivityTimeoutsByAgent;
+    this.livenessProbeIntervalMs = livenessProbeIntervalMs;
+    this.probeLivenessMtimeFn = probeLivenessMtimeFn;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
@@ -696,7 +776,11 @@ export class RunOrchestrator {
     }
     if (implementerResult.timedOut) {
       if (implementerResult.timeoutKind === "inactivity") {
-        return { stop: false, verdict: this._inactivityVerdict("implementer"), events: implementerResult.events };
+        return {
+          stop: false,
+          verdict: this._inactivityVerdict("implementer", effectiveAgent),
+          events: implementerResult.events
+        };
       }
       await this._blocked(taskId, this._timeoutReason("implementer", "phase", effectiveAgent));
       return { stop: true };
@@ -750,7 +834,7 @@ export class RunOrchestrator {
       if (reviewerResult.timeoutKind === "inactivity") {
         return {
           stop: false,
-          verdict: this._inactivityVerdict("reviewer"),
+          verdict: this._inactivityVerdict("reviewer", "reviewer"),
           events: [...implementerResult.events, ...reviewerResult.events]
         };
       }
@@ -911,6 +995,40 @@ export class RunOrchestrator {
   }
 
   /**
+   * Logs a filesystem-liveness reprieve (T-0308): the inactivity deadline was just re-armed
+   * because `observed.path` grew since the last check, even though stdout may have been silent
+   * the whole time. Names the path and its age so an incident is readable from the journal alone
+   * -- exactly the T-0274 gap this card exists to close.
+   */
+  async _logLivenessReprieve(taskId, runLog, phase, observed) {
+    const ageMs = Math.max(0, this.now().getTime() - observed.mtimeMs);
+    const message =
+      `${phase} inactivity deadline re-armed: ${observed.path} grew ${Math.round(ageMs / 1000)}s ago -- ` +
+      `filesystem progress, not stdout, is what kept this run alive (T-0308).`;
+    const event = { type: "liveness-reprieve", phase, message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase, event });
+  }
+
+  /**
+   * Logs what the filesystem-liveness probe last observed at the moment an inactivity kill
+   * fires, so a human reading the run log afterward never has to guess whether this was a
+   * genuine stdin-hang (no evidence anywhere) or a run that simply stopped producing filesystem
+   * progress one budget ago (see `_logLivenessReprieve`'s docstring for the re-arm side).
+   */
+  async _logLivenessAtKill(taskId, runLog, phase, lastObserved) {
+    const message = lastObserved
+      ? `${phase} inactivity kill: last filesystem progress was ${lastObserved.path}, ` +
+        `${Math.round(Math.max(0, this.now().getTime() - lastObserved.mtimeMs) / 1000)}s before the kill -- ` +
+        `older than the inactivity budget, treated as wedged.`
+      : `${phase} inactivity kill: no filesystem progress was ever observed on the watched set ` +
+        `(worktree/run log missing or never written) -- stdout was the only possible evidence and it went silent.`;
+    const event = { type: "liveness-kill", phase, message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase, event });
+  }
+
+  /**
    * Logs a harness-side verdict downgrade (crossCheckVerdictFn caught a self-reported PASS that
    * the reviewer's own required commands don't back up). The downgraded verdict's `notes` --
    * which already explain the mismatch -- flow into the card body through the normal FAIL path
@@ -992,7 +1110,7 @@ export class RunOrchestrator {
       if (inactivityTimer) clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
         resolveInactivity({ exitCode: null, signal: null, spawnError: null, timedOut: true, timeoutKind: "inactivity" });
-      }, this.inactivityTimeoutMs);
+      }, this._inactivityTimeoutMsFor(agent));
       if (typeof inactivityTimer.unref === "function") inactivityTimer.unref();
     };
     armInactivityTimer();
@@ -1004,6 +1122,59 @@ export class RunOrchestrator {
     if (child && child.stdout && typeof child.stdout.on === "function") {
       child.stdout.on("data", onStdoutData);
     }
+
+    // Filesystem-progress companion to the stdout-only watchdog above (T-0308): a subagent-owned
+    // tool call doesn't forward the CLI's `tool_progress` heartbeat up the parent stream, so a
+    // long subagent job (e.g. LoRA training, checkpointing every ~95s) can leave stdout silent
+    // for its entire span while still visibly alive on disk -- this is what killed T-0274's
+    // attempt 2. Polls the explicit, bounded watched set (filesystemLiveness.js: the worktree
+    // root, each artifact output subdir one level deep, and this phase's own run log -- never a
+    // recursive walk of the whole checkout) on a fixed cadence and, on observed mtime growth,
+    // re-arms the SAME deadline armInactivityTimer() already manages. This only ever extends the
+    // deadline, never kills on its own -- a run that stops producing filesystem progress is still
+    // caught by the unmodified deadline timer above, one full inactivityTimeoutMs after the last
+    // real progress (stdout or mtime), so the hang defence for a genuine stdin-hang (no stdout,
+    // no filesystem writes) is unweakened.
+    //
+    // Deliberately fire-and-forget, never awaited in this function's own control flow: the probe
+    // is real (async) filesystem I/O, and gating the exit/timeout race on it here would delay
+    // every single phase of every run by at least one I/O round-trip for no benefit. `lastLiveness`
+    // starts `null` (no evidence yet, same sentinel `probeLivenessMtimeFn` itself returns for "no
+    // evidence"). A tick that observes nothing (the watched output dir doesn't exist yet, e.g.)
+    // leaves `lastLiveness` exactly as it was -- it must NOT be latched to null, or every later
+    // tick's `!lastLiveness` check would treat that as "no baseline yet" forever and filesystem
+    // liveness would be permanently disabled for the rest of the phase the first time a probe
+    // came up empty (T-0308 review: the "output dir does not exist yet when the phase starts"
+    // edge case). The first REAL (non-null) observation only establishes a baseline (nothing to
+    // compare growth against yet, so no re-arm) -- otherwise the worktree's pre-existing mtime
+    // from setup would look like "growth" the instant the phase starts.
+    let lastLiveness = null;
+    const livenessProbeTimer = setInterval(() => {
+      Promise.resolve(this.probeLivenessMtimeFn({ worktreeDir, runLogPath: runLog.path }))
+        .then(async (observed) => {
+          if (!observed) return;
+          if (!lastLiveness) {
+            lastLiveness = observed;
+            return;
+          }
+          if (observed.mtimeMs <= lastLiveness.mtimeMs) return;
+          armInactivityTimer();
+          await this._logLivenessReprieve(taskId, runLog, phase, observed);
+          // T-0308 review round 2: runLogPath is itself part of the watched set, and the
+          // reprieve log line just written above bumps its mtime to ~now. Baselining on the
+          // pre-write `observed` here would make that self-inflicted bump look like fresh
+          // external growth on the very next tick -- re-arm, append, repeat -- a loop with zero
+          // real filesystem progress that never lets the inactivity deadline expire again.
+          // Re-probe AFTER the write and baseline off THAT instead, so the watchdog's own log
+          // entry is folded into the baseline rather than mistaken for new evidence.
+          const after = await Promise.resolve(
+            this.probeLivenessMtimeFn({ worktreeDir, runLogPath: runLog.path })
+          ).catch(() => null);
+          lastLiveness = after ?? observed;
+        })
+        .catch(() => {});
+    }, this.livenessProbeIntervalMs);
+    if (typeof livenessProbeTimer.unref === "function") livenessProbeTimer.unref();
 
     // Root-cause fix for T-0185: a hung grandchild (e.g. a headless Godot test that never calls
     // `get_tree().quit()`) previously kept this `await` pending forever, since the parent
@@ -1033,6 +1204,7 @@ export class RunOrchestrator {
     const result = await Promise.race([exitPromise, timeoutPromise, inactivityPromise]);
     clearTimeout(timeoutTimer);
     clearTimeout(inactivityTimer);
+    clearInterval(livenessProbeTimer);
 
     if (result.timedOut) {
       // Stop streaming further output into an event log for a phase that's already being
@@ -1040,6 +1212,9 @@ export class RunOrchestrator {
       // ClaudeCliRunner.kill) and the child can keep writing to stdout in the meantime.
       if (child && child.stdout && typeof child.stdout.off === "function") {
         child.stdout.off("data", onStdoutData);
+      }
+      if (result.timeoutKind === "inactivity") {
+        await this._logLivenessAtKill(taskId, runLog, phase, lastLiveness);
       }
       this.runner.kill(run);
     }
@@ -1059,11 +1234,20 @@ export class RunOrchestrator {
     });
   }
 
+  /** Inactivity budget for the agent this phase runs as -- see resolveInactivityTimeoutMs for precedence. */
+  _inactivityTimeoutMsFor(agent) {
+    return resolveInactivityTimeoutMs(agent, {
+      override: this.inactivityTimeoutMs,
+      byAgent: this.inactivityTimeoutsByAgent
+    });
+  }
+
   /** Human-readable reason for a phase terminated by the phase timeout or the inactivity watchdog. */
   _timeoutReason(phase, kind = "phase", agent = null) {
     if (kind === "inactivity") {
-      const minutes = Math.round(this.inactivityTimeoutMs / 60_000);
-      return `${phase} run went silent for ${minutes} minute${minutes === 1 ? "" : "s"} with no new output and was terminated -- likely a stdin-hang or other hung child process (e.g. a bare grep/read/cat with no input redirect)`;
+      const minutes = Math.round(this._inactivityTimeoutMsFor(agent) / 60_000);
+      const forAgent = agent ? ` for the ${agent} agent` : "";
+      return `${phase} run went silent for ${minutes} minute${minutes === 1 ? "" : "s"}${forAgent} with no new output and was terminated -- likely a stdin-hang or other hung child process (e.g. a bare grep/read/cat with no input redirect). If this agent's legitimate work needs longer quiet stretches, raise its entry in INACTIVITY_TIMEOUT_MS_BY_AGENT.`;
     }
     // Deliberately does NOT claim a hang. The phase watchdog fires on elapsed wall-clock
     // alone and cannot tell a slow-but-progressing run from a stuck one -- T-0228 was
@@ -1086,8 +1270,8 @@ export class RunOrchestrator {
    * is exactly the kind of flaky, non-reproducible failure that's likely to clear on a plain
    * retry, unlike a deterministic reviewer FAIL repeating the same finding.
    */
-  _inactivityVerdict(phase) {
-    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity"), phase, synthetic: true };
+  _inactivityVerdict(phase, agent = null) {
+    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity", agent), phase, synthetic: true };
   }
 
   async cancelRun(taskId) {
@@ -1179,13 +1363,19 @@ export class RunOrchestrator {
    * Otherwise, deterministically builds a structured blocker report from the reviewer FAIL
    * verdicts the card actually accumulated across its exhausted attempts (blockerReport.js -- no
    * extra `claude` invocation; see that module's docstring for why), appends it to the card as a
-   * comment, then hands off to remediation-card creation: de-dupes against an already-open
-   * remediation card for this same blocked card (escalationRemediation.js), creates a new one in
-   * `ready` status owned by the non-executable `agent: "dispatch"` sentinel when none exists yet
-   * (reusing cardCreation.js's `createCard`, the same direct-to-store path flow-stats
-   * self-improvement uses -- not a live planner agent run, since that would require its own
-   * worktree/branch/PR and could never land a `ready` card on the live board immediately), and
-   * wires the original card's `depends_on` to the remediation card either way (idempotent).
+   * comment, then hands off to remediation-card creation: de-dupes against an already-OPEN
+   * remediation card for this same blocked card (escalationRemediation.js's
+   * `findOpenRemediationCard` -- status, not mere existence, is the dedupe key; see T-0310). A
+   * `done` or especially `retired` remediation card is never re-linked -- retiring it was the
+   * explicit human call that it wasn't the way forward, and reviving it as a live gate would
+   * invert that. When the only matches are closed, a fresh remediation card is created in `ready`
+   * status owned by the non-executable `agent: "dispatch"` sentinel, carrying the *current*
+   * blocker report and naming the most recent closed card it supersedes (reusing cardCreation.js's
+   * `createCard`, the same direct-to-store path flow-stats self-improvement uses -- not a live
+   * planner agent run, since that would require its own worktree/branch/PR and could never land a
+   * `ready` card on the live board immediately). Either way the original card's `depends_on` is
+   * wired to the winning remediation card, with any stale closed-card entry replaced rather than
+   * left alongside it (idempotent).
    *
    * Best-effort end to end: any failure here (a missing store.list in a lightweight caller, a
    * create failure) is caught and logged, never rethrown -- the card is already correctly
@@ -1208,9 +1398,26 @@ export class RunOrchestrator {
       await this._appendComment(taskId, "assembled-board", formatBlockerReportComment(report));
 
       const tasks = await this.store.list();
-      let remediation = findExistingRemediationCard(tasks, taskId);
-      if (!remediation) {
-        const fields = draftRemediationCard({ task, report, attemptCount: attemptRecords.length, now: this.now });
+      const priorRemediationCards = findRemediationCardsFor(tasks, taskId);
+      const openRemediation = findOpenRemediationCard(tasks, taskId);
+      let remediation;
+
+      if (openRemediation) {
+        remediation = openRemediation;
+        await this._logEscalation(
+          taskId,
+          runLog,
+          `Escalation: remediation card ${remediation.id} for ${taskId} is still open (status: ${remediation.status}) -- re-linking it, no new card created.`
+        );
+      } else {
+        const priorClosed = findMostRecentClosedRemediationCard(tasks, taskId);
+        const fields = draftRemediationCard({
+          task,
+          report,
+          attemptCount: attemptRecords.length,
+          now: this.now,
+          supersedes: priorClosed ? { id: priorClosed.id, status: priorClosed.status } : null
+        });
         remediation = await this.createCardFn({
           store: this.store,
           idAllocator: this.idAllocator,
@@ -1223,17 +1430,13 @@ export class RunOrchestrator {
         await this._logEscalation(
           taskId,
           runLog,
-          `Escalation: created remediation card ${remediation.id} (agent: dispatch) and linked it as a dependency.`
-        );
-      } else {
-        await this._logEscalation(
-          taskId,
-          runLog,
-          `Escalation: remediation card ${remediation.id} already exists for ${taskId} -- skipping creation, ensuring the dependency link.`
+          priorClosed
+            ? `Escalation: prior remediation card ${priorClosed.id} for ${taskId} is ${priorClosed.status} (closed) -- superseded it with new remediation card ${remediation.id} (agent: dispatch) and linked it as the dependency.`
+            : `Escalation: created remediation card ${remediation.id} (agent: dispatch) and linked it as a dependency.`
         );
       }
 
-      await this._linkDependsOn(taskId, remediation.id);
+      await this._linkDependsOn(taskId, remediation.id, priorRemediationCards);
     } catch (err) {
       // Escalation is additive -- the card is already `blocked` by the time this runs -- so a
       // failure here must not throw and take the run down with it. But it must never be quiet
@@ -1262,11 +1465,23 @@ export class RunOrchestrator {
     return this._updateAndBroadcast(taskId, { comments });
   }
 
-  async _linkDependsOn(taskId, dependencyId) {
+  /**
+   * Wires `taskId`'s `depends_on` to `dependencyId`. `staleRemediationCandidates` (any other
+   * remediation cards previously filed against this same `taskId`) is used to drop entries that
+   * point at one of THOSE cards once it's closed -- a card superseding a retired/done remediation
+   * card must replace the stale dependency, never leave the parent depending on it alongside the
+   * new one (T-0310).
+   */
+  async _linkDependsOn(taskId, dependencyId, staleRemediationCandidates = []) {
     const current = await this.store.get(taskId);
     const existing = current.depends_on ?? [];
-    if (existing.includes(dependencyId)) return current;
-    return this._updateAndBroadcast(taskId, { depends_on: [...existing, dependencyId] });
+    const staleClosedIds = new Set(
+      staleRemediationCandidates.filter((card) => card.id !== dependencyId && isClosedRemediationStatus(card.status)).map((card) => card.id)
+    );
+    const next = existing.filter((id) => !staleClosedIds.has(id));
+    if (!next.includes(dependencyId)) next.push(dependencyId);
+    if (next.length === existing.length && next.every((id, i) => id === existing[i])) return current;
+    return this._updateAndBroadcast(taskId, { depends_on: next });
   }
 
   async _logEscalation(taskId, runLog, message) {
