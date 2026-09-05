@@ -279,21 +279,32 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
     await resetToBase();
   });
 
-  it("still catches real drift resolved through the ledger -- the fallback does not defang the gate", async () => {
-    const ledgerPath = await writeLedger("ledger-c.json", {
-      version: 1,
-      generated_at: freshTimestamp(),
-      cards: [{ id: "T-9003", requires_approval: true, approved_by: null, approved_at: null }]
-    });
-    await addProvenanceLine("| unapproved_but_claimed.png (T-9003 -- APPROVED) | MIT | ... |");
+  it(
+    "still catches real drift resolved through the ledger -- the fallback does not defang the gate, and " +
+      "the FAILED refusal names the ledger's path, generated_at, and age even when it is fresh, not stale " +
+      "(T-0313 run-1 review: the ordinary drift-refusal path printed none of that, forcing a reader to " +
+      "re-derive a snapshot's age from a bare timestamp by hand)",
+    async () => {
+      const generatedAt = freshTimestamp();
+      const ledgerPath = await writeLedger("ledger-c.json", {
+        version: 1,
+        generated_at: generatedAt,
+        cards: [{ id: "T-9003", requires_approval: true, approved_by: null, approved_at: null }]
+      });
+      await addProvenanceLine("| unapproved_but_claimed.png (T-9003 -- APPROVED) | MIT | ... |");
 
-    const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
+      const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
 
-    expect(result.code).toBe(1);
-    expect(result.stdout + result.stderr).toContain("T-9003");
-    expect(result.stdout + result.stderr).toContain("unsubstantiated-approved-claim");
-    await resetToBase();
-  });
+      expect(result.code).toBe(1);
+      const output = result.stdout + result.stderr;
+      expect(output).toContain("T-9003");
+      expect(output).toContain("unsubstantiated-approved-claim");
+      expect(output).toContain(ledgerPath);
+      expect(output).toContain(generatedAt);
+      expect(output).toMatch(/\d+(\.\d+)?h old/);
+      await resetToBase();
+    }
+  );
 
   it("reports a missing ledger file distinctly, and still fails closed rather than passing", async () => {
     const missingPath = path.join(repoDir, "does-not-exist.json");

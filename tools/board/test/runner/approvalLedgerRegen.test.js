@@ -93,6 +93,29 @@ describe("regenerateApprovalLedgerIfChanged", () => {
     expect(writeFileFn).toHaveBeenCalledTimes(1);
   });
 
+  it(
+    "refuses to overwrite the committed ledger when the live store returns no tasks -- a transient " +
+      "empty list (T-0313 run-1 review) must never silently wipe out real approval history on a card's branch",
+    async () => {
+      const existing = ledgerFile([
+        { id: "T-0273", requires_approval: true, approved_by: "DennieSeth", approved_at: "2026-09-03T17:52:21.435Z" }
+      ]);
+      const readLedgerFn = vi.fn(async () => existing);
+      const writeFileFn = vi.fn(async () => {});
+
+      const result = await regenerateApprovalLedgerIfChanged({
+        worktreeDir: "/repo/worktrees/T-9999",
+        tasks: [],
+        now: () => NOW,
+        readLedgerFn,
+        writeFileFn
+      });
+
+      expect(result.changed).toBe(false);
+      expect(writeFileFn).not.toHaveBeenCalled();
+    }
+  );
+
   it("propagates a write failure instead of swallowing it -- the caller decides how to handle it", async () => {
     const readLedgerFn = vi.fn(async () => null);
     const writeFileFn = vi.fn(async () => {
