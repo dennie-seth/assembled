@@ -21,7 +21,13 @@ import {
 import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
 import { computeFailureSignature } from "./failureSignature.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
-import { findExistingRemediationCard, draftRemediationCard } from "../lib/escalationRemediation.js";
+import {
+  findOpenRemediationCard,
+  findRemediationCardsFor,
+  findMostRecentClosedRemediationCard,
+  isClosedRemediationStatus,
+  draftRemediationCard
+} from "../lib/escalationRemediation.js";
 import { createCard as createCardDefault } from "./cardCreation.js";
 import { checkAcceptancePreflight } from "./acceptancePreflight.js";
 import { checkCapabilityPreflight } from "./capabilityPreflight.js";
@@ -1275,13 +1281,19 @@ export class RunOrchestrator {
    * Otherwise, deterministically builds a structured blocker report from the reviewer FAIL
    * verdicts the card actually accumulated across its exhausted attempts (blockerReport.js -- no
    * extra `claude` invocation; see that module's docstring for why), appends it to the card as a
-   * comment, then hands off to remediation-card creation: de-dupes against an already-open
-   * remediation card for this same blocked card (escalationRemediation.js), creates a new one in
-   * `ready` status owned by the non-executable `agent: "dispatch"` sentinel when none exists yet
-   * (reusing cardCreation.js's `createCard`, the same direct-to-store path flow-stats
-   * self-improvement uses -- not a live planner agent run, since that would require its own
-   * worktree/branch/PR and could never land a `ready` card on the live board immediately), and
-   * wires the original card's `depends_on` to the remediation card either way (idempotent).
+   * comment, then hands off to remediation-card creation: de-dupes against an already-OPEN
+   * remediation card for this same blocked card (escalationRemediation.js's
+   * `findOpenRemediationCard` -- status, not mere existence, is the dedupe key; see T-0310). A
+   * `done` or especially `retired` remediation card is never re-linked -- retiring it was the
+   * explicit human call that it wasn't the way forward, and reviving it as a live gate would
+   * invert that. When the only matches are closed, a fresh remediation card is created in `ready`
+   * status owned by the non-executable `agent: "dispatch"` sentinel, carrying the *current*
+   * blocker report and naming the most recent closed card it supersedes (reusing cardCreation.js's
+   * `createCard`, the same direct-to-store path flow-stats self-improvement uses -- not a live
+   * planner agent run, since that would require its own worktree/branch/PR and could never land a
+   * `ready` card on the live board immediately). Either way the original card's `depends_on` is
+   * wired to the winning remediation card, with any stale closed-card entry replaced rather than
+   * left alongside it (idempotent).
    *
    * Best-effort end to end: any failure here (a missing store.list in a lightweight caller, a
    * create failure) is caught and logged, never rethrown -- the card is already correctly
@@ -1304,9 +1316,26 @@ export class RunOrchestrator {
       await this._appendComment(taskId, "assembled-board", formatBlockerReportComment(report));
 
       const tasks = await this.store.list();
-      let remediation = findExistingRemediationCard(tasks, taskId);
-      if (!remediation) {
-        const fields = draftRemediationCard({ task, report, attemptCount: attemptRecords.length, now: this.now });
+      const priorRemediationCards = findRemediationCardsFor(tasks, taskId);
+      const openRemediation = findOpenRemediationCard(tasks, taskId);
+      let remediation;
+
+      if (openRemediation) {
+        remediation = openRemediation;
+        await this._logEscalation(
+          taskId,
+          runLog,
+          `Escalation: remediation card ${remediation.id} for ${taskId} is still open (status: ${remediation.status}) -- re-linking it, no new card created.`
+        );
+      } else {
+        const priorClosed = findMostRecentClosedRemediationCard(tasks, taskId);
+        const fields = draftRemediationCard({
+          task,
+          report,
+          attemptCount: attemptRecords.length,
+          now: this.now,
+          supersedes: priorClosed ? { id: priorClosed.id, status: priorClosed.status } : null
+        });
         remediation = await this.createCardFn({
           store: this.store,
           idAllocator: this.idAllocator,
@@ -1319,17 +1348,13 @@ export class RunOrchestrator {
         await this._logEscalation(
           taskId,
           runLog,
-          `Escalation: created remediation card ${remediation.id} (agent: dispatch) and linked it as a dependency.`
-        );
-      } else {
-        await this._logEscalation(
-          taskId,
-          runLog,
-          `Escalation: remediation card ${remediation.id} already exists for ${taskId} -- skipping creation, ensuring the dependency link.`
+          priorClosed
+            ? `Escalation: prior remediation card ${priorClosed.id} for ${taskId} is ${priorClosed.status} (closed) -- superseded it with new remediation card ${remediation.id} (agent: dispatch) and linked it as the dependency.`
+            : `Escalation: created remediation card ${remediation.id} (agent: dispatch) and linked it as a dependency.`
         );
       }
 
-      await this._linkDependsOn(taskId, remediation.id);
+      await this._linkDependsOn(taskId, remediation.id, priorRemediationCards);
     } catch (err) {
       // Escalation is additive -- the card is already `blocked` by the time this runs -- so a
       // failure here must not throw and take the run down with it. But it must never be quiet
@@ -1358,11 +1383,23 @@ export class RunOrchestrator {
     return this._updateAndBroadcast(taskId, { comments });
   }
 
-  async _linkDependsOn(taskId, dependencyId) {
+  /**
+   * Wires `taskId`'s `depends_on` to `dependencyId`. `staleRemediationCandidates` (any other
+   * remediation cards previously filed against this same `taskId`) is used to drop entries that
+   * point at one of THOSE cards once it's closed -- a card superseding a retired/done remediation
+   * card must replace the stale dependency, never leave the parent depending on it alongside the
+   * new one (T-0310).
+   */
+  async _linkDependsOn(taskId, dependencyId, staleRemediationCandidates = []) {
     const current = await this.store.get(taskId);
     const existing = current.depends_on ?? [];
-    if (existing.includes(dependencyId)) return current;
-    return this._updateAndBroadcast(taskId, { depends_on: [...existing, dependencyId] });
+    const staleClosedIds = new Set(
+      staleRemediationCandidates.filter((card) => card.id !== dependencyId && isClosedRemediationStatus(card.status)).map((card) => card.id)
+    );
+    const next = existing.filter((id) => !staleClosedIds.has(id));
+    if (!next.includes(dependencyId)) next.push(dependencyId);
+    if (next.length === existing.length && next.every((id, i) => id === existing[i])) return current;
+    return this._updateAndBroadcast(taskId, { depends_on: next });
   }
 
   async _logEscalation(taskId, runLog, message) {
