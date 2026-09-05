@@ -1,0 +1,31 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA training (kohya sd-scripts sdxl_train_network.py, rank=8, alpha=4)",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "weights_hash": "e7e3c985efecb7c76c98577bc672f92cb044751e2ed76e1e6b556cad2b5d5ec0",
+  "weights_license": "CreativeML OpenRAIL++-M",
+  "base_checkpoint": "sd_xl_base_1.0.safetensors",
+  "network_rank": 8,
+  "network_alpha": 4,
+  "learning_rate": 0.0001,
+  "optimizer": "AdamW8bit",
+  "num_epochs": 12,
+  "dataset_ref_count": 6,
+  "steps": 72,
+  "concept_hash": null,
+  "concept_card": "T-0273",
+  "trigger_token": "sbrutalistprofilepose",
+  "training_config": "assets/src/character/training_config_player_identity_profile_v1.toml",
+  "curation_manifest": "assets/src/character/identity_curation_manifest_profile_T0274.json",
+  "generator": "assets/src/lora/src/lora_train/train.py",
+  "card": "T-0274",
+  "spec": "per-pose, per-character/monster LoRA decision (@DennieSeth, Pipeline chat, 2026-08-31); T-0272 finding that player_identity_v2 (front-facing only) cannot place a profile pose",
+  "notes": "Separate, additive artifact -- player_identity_v2 (T-0248) is untouched and unregressed. Trained on T-0273's committed, approved profile reference set (6 letterboxed-to-square references, anonymous pose/form only, not costume material) -- meant to be stacked with player_identity_v2 at generation time via two distinct trigger tokens.",
+  "gpu_seconds": 1217.0,
+  "smoke_check": {
+    "result": "front_facing",
+    "evidence": "assets/src/character/smoke_check_profile_T0274/",
+    "generator": "assets/src/character/smoke_check_profile_lora_T0274.py",
+    "summary": "player_identity_profile_v1 stacked (weight 0.5) under the unchanged front-facing §24-e stack (gen_hybrid_source_idle_T0252 graph, gen_arm_a_idle_T0228 front-topology ControlNet skeleton) still rendered a front-on figure, not a side profile. The LoRA alone does not override the front-facing pose conditioning; corroborates T-0272's finding that a profile-topology pose rig is also required, not just a profile-trained identity LoRA."
+  }
+}

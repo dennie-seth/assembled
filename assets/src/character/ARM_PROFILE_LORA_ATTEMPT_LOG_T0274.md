@@ -91,3 +91,51 @@ session's Bash permission grant (matched on the literal command prefix
 could not obtain non-interactively. Dropping the unneeded prefix restored a
 match. Worth fixing the header comment separately so a future session
 doesn't hit the same denial.
+
+## Interim interruption within this same day (2026-09-05, ~20:03Z), before the run recorded below
+
+One invocation of the exact command above (`--no-resume`, backgrounded) was
+launched and reached only epoch 2/step 8 of the 72-step target
+(`player_identity_profile_v1-step00000008-state/train_state.json`:
+`current_epoch: 2, current_step: 8`) before stopping. This was **not**
+T-0308's watchdog, and **not** an OOM/crash — checkpoints were landing every
+~37s and only ~3 minutes had elapsed, well inside any inactivity budget.
+The cause was procedural: the implementer session that launched it ended
+(returned control) without waiting for the backgrounded child to finish, so
+the child was killed when the session did. No weights were lost — the
+epoch-2 state is downstream of the prior epoch-7 checkpoint this run
+resumed from, per the `--resume` non-accumulation finding above, though
+since `--no-resume` was passed here it started the schedule fresh rather
+than continuing that count.
+
+## Outcome (2026-09-05, ~20:07–20:28Z): completed
+
+A further invocation of the exact command above was launched in the
+background and, this time, **actively waited on to completion** (polled via
+the harness's own background-task blocking primitive rather than returning
+control early) — the fix for the interim interruption immediately above.
+Training ran cleanly through all 12/12 epochs (72/72 steps,
+20:07:38–20:27:55Z, ≈1217s wall-clock including checkpoint/model load),
+producing a valid 109MB SDXL LoRA (2958 tensors) at
+`assets/final/lora/player_identity_profile_v1.safetensors`
+(sha256 `e7e3c985efecb7c76c98577bc672f92cb044751e2ed76e1e6b556cad2b5d5ec0`),
+and `lora_train.train`'s own post-train step auto-deployed it to
+`F:\ComfyUI\models\loras\player_identity_profile_v1.safetensors` (confirmed
+loadable via a follow-up `object_info/LoraLoader` query). Provenance sidecar
+written (`player_identity_profile_v1.provenance.json`), `ASSET_PROVENANCE.md`
+updated, and `player_identity_v2` confirmed untouched
+(`git diff develop...HEAD -- assets/final/lora/player_identity_v2*` empty).
+
+**Smoke check result: `front_facing`.** `smoke_check_profile_lora_T0274.py`
+was run against the live ComfyUI host with the new LoRA loaded (weight 0.5)
+under the unchanged front-facing §24-e stack. The sampled frame shows a
+front-on humanoid silhouette, not a side profile — quality is visibly
+degraded relative to v2's own bake-off arm, plausible given this LoRA's far
+smaller/more heterogeneous 6-image reference set versus v2's 29-image
+single-costume corpus. No side-facing silhouette appeared. This is exactly
+the finding the card's acceptance criteria anticipated as a valid outcome:
+the profile LoRA alone, stacked under front-facing pose conditioning, does
+not place a profile — corroborating [T-0272](../../../tasks/T-0272.md)'s
+finding that a profile-topology pose rig (T-0272's own scope, currently
+blocked on this card) is also required, not just a profile-trained identity
+LoRA. Evidence: `assets/src/character/smoke_check_profile_T0274/`.
