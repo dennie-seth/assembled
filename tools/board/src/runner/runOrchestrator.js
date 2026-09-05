@@ -167,13 +167,79 @@ function phaseTimeoutOverrideFromEnv() {
  */
 export const DEFAULT_INACTIVITY_TIMEOUT_MS = 8 * 60 * 1000;
 
+/**
+ * Per-agent inactivity budgets (T-0309), a structural copy of PHASE_TIMEOUT_MS_BY_AGENT --
+ * see resolveInactivityTimeoutMs for the shared override -> byAgent -> fallback precedence.
+ *
+ * `assets` (20 min) -- DEFAULT_INACTIVITY_TIMEOUT_MS's own docstring justifies 8 minutes
+ * against this repo's `cmake --build` / `pip install -e ".[dev]"` quiet stretches; it never
+ * considered GPU training. T-0229 (see PHASE_TIMEOUT_MS_BY_AGENT's docstring) measured a
+ * ~7-minute SDXL checkpoint load (6.94 GB at ~32 MB/s over the WSL 9p /mnt/f mount) before
+ * training -- or generation -- even starts, and noted the checkpoint read rate varies run to
+ * run. That is close enough to the unmodified 8-minute default that a slower-than-usual load
+ * alone could trip the watchdog on a run that was never stuck, purely from disk I/O variance
+ * unrelated to any hang. Once training is underway the ~98s/step cadence (T-0229) keeps the
+ * default well fed regardless -- it's specifically the monolithic, no-progress-signal load
+ * phase this widens for.
+ *
+ * 20 minutes leaves ~13 minutes of headroom above the measured ~7-minute load -- real slack
+ * for read-rate variance, not a token bump -- while staying an order of magnitude under
+ * PHASE_TIMEOUT_MS_BY_AGENT.assets (240 min), so a genuinely wedged assets run is still
+ * caught in well under a third of its phase budget.
+ *
+ * This is a cost ceiling, same spirit as PHASE_TIMEOUT_MS_BY_AGENT -- not the hang defence.
+ * The mtime-liveness card is what actually tells a working run apart from a wedged one (see
+ * probeLivenessMtime / the filesystem-liveness reprieve in _runPhase, which already re-arms
+ * this same deadline on observed disk progress); this only sizes the residual silent-stdout
+ * budget per agent class once that evidence is available. Nothing stops a future per-agent
+ * entry here from exceeding that same agent's PHASE_TIMEOUT_MS_BY_AGENT entry -- the two
+ * budgets are independent axes (one bounds silence, the other bounds wall-clock), so that
+ * would be an unusual configuration, not an invalid one.
+ *
+ * Note this keys on the agent the PHASE runs as, not the card's agent, exactly like
+ * PHASE_TIMEOUT_MS_BY_AGENT: an assets card's reviewer phase runs as `reviewer` and keeps
+ * the default.
+ */
+export const INACTIVITY_TIMEOUT_MS_BY_AGENT = Object.freeze({
+  assets: 20 * 60 * 1000
+});
+
 const INACTIVITY_TIMEOUT_ENV_VAR = "INACTIVITY_TIMEOUT_MS";
 
-/** INACTIVITY_TIMEOUT_MS env var: overrides DEFAULT_INACTIVITY_TIMEOUT_MS when set to a positive number. */
-function inactivityTimeoutMsFromEnv() {
+/**
+ * Inactivity budget for *agent*, in precedence order -- identical shape to
+ * resolvePhaseTimeoutMs:
+ *   1. `override` -- the process-wide INACTIVITY_TIMEOUT_MS escape hatch (or an injected
+ *      value in tests). Applies to every agent, deliberately: it exists to override.
+ *   2. `byAgent` -- the per-agent budget above.
+ *   3. `fallback` -- DEFAULT_INACTIVITY_TIMEOUT_MS.
+ *
+ * A non-positive or unparseable override is ignored rather than trusted, so a typo in the
+ * env var cannot silently disable the watchdog.
+ */
+export function resolveInactivityTimeoutMs(
+  agent,
+  { override = null, byAgent = INACTIVITY_TIMEOUT_MS_BY_AGENT, fallback = DEFAULT_INACTIVITY_TIMEOUT_MS } = {}
+) {
+  const parsedOverride = Number(override);
+  if (override !== null && override !== undefined && Number.isFinite(parsedOverride) && parsedOverride > 0) {
+    return parsedOverride;
+  }
+  // Own-property check only: an agent literally named "constructor" or "toString" must
+  // not pick up a function off Object.prototype and be compared as a number.
+  const perAgent =
+    typeof agent === "string" && byAgent && Object.prototype.hasOwnProperty.call(byAgent, agent)
+      ? Number(byAgent[agent])
+      : NaN;
+  if (Number.isFinite(perAgent) && perAgent > 0) return perAgent;
+  return fallback;
+}
+
+/** INACTIVITY_TIMEOUT_MS env var: a global override across every agent, or null when unset/invalid. */
+function inactivityTimeoutOverrideFromEnv() {
   const raw = process.env[INACTIVITY_TIMEOUT_ENV_VAR];
   const parsed = Number(raw);
-  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INACTIVITY_TIMEOUT_MS;
+  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 /**
@@ -242,7 +308,8 @@ export class RunOrchestrator {
     autoCaptureUncommitted = autoCaptureUncommittedFromEnv(),
     phaseTimeoutMs = phaseTimeoutOverrideFromEnv(),
     phaseTimeoutsByAgent = PHASE_TIMEOUT_MS_BY_AGENT,
-    inactivityTimeoutMs = inactivityTimeoutMsFromEnv(),
+    inactivityTimeoutMs = inactivityTimeoutOverrideFromEnv(),
+    inactivityTimeoutsByAgent = INACTIVITY_TIMEOUT_MS_BY_AGENT,
     livenessProbeIntervalMs = DEFAULT_LIVENESS_PROBE_INTERVAL_MS,
     probeLivenessMtimeFn = probeLivenessMtime,
     repoRoot,
@@ -282,7 +349,9 @@ export class RunOrchestrator {
     // Global escape hatch (PHASE_TIMEOUT_MS, or injected). null = defer to the per-agent map.
     this.phaseTimeoutOverrideMs = phaseTimeoutMs ?? null;
     this.phaseTimeoutsByAgent = phaseTimeoutsByAgent;
-    this.inactivityTimeoutMs = inactivityTimeoutMs;
+    // Same shape (INACTIVITY_TIMEOUT_MS, or injected). null = defer to the per-agent map.
+    this.inactivityTimeoutMs = inactivityTimeoutMs ?? null;
+    this.inactivityTimeoutsByAgent = inactivityTimeoutsByAgent;
     this.livenessProbeIntervalMs = livenessProbeIntervalMs;
     this.probeLivenessMtimeFn = probeLivenessMtimeFn;
     this.repoRoot = repoRoot;
@@ -707,7 +776,11 @@ export class RunOrchestrator {
     }
     if (implementerResult.timedOut) {
       if (implementerResult.timeoutKind === "inactivity") {
-        return { stop: false, verdict: this._inactivityVerdict("implementer"), events: implementerResult.events };
+        return {
+          stop: false,
+          verdict: this._inactivityVerdict("implementer", effectiveAgent),
+          events: implementerResult.events
+        };
       }
       await this._blocked(taskId, this._timeoutReason("implementer", "phase", effectiveAgent));
       return { stop: true };
@@ -761,7 +834,7 @@ export class RunOrchestrator {
       if (reviewerResult.timeoutKind === "inactivity") {
         return {
           stop: false,
-          verdict: this._inactivityVerdict("reviewer"),
+          verdict: this._inactivityVerdict("reviewer", "reviewer"),
           events: [...implementerResult.events, ...reviewerResult.events]
         };
       }
@@ -1037,7 +1110,7 @@ export class RunOrchestrator {
       if (inactivityTimer) clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
         resolveInactivity({ exitCode: null, signal: null, spawnError: null, timedOut: true, timeoutKind: "inactivity" });
-      }, this.inactivityTimeoutMs);
+      }, this._inactivityTimeoutMsFor(agent));
       if (typeof inactivityTimer.unref === "function") inactivityTimer.unref();
     };
     armInactivityTimer();
@@ -1161,11 +1234,20 @@ export class RunOrchestrator {
     });
   }
 
+  /** Inactivity budget for the agent this phase runs as -- see resolveInactivityTimeoutMs for precedence. */
+  _inactivityTimeoutMsFor(agent) {
+    return resolveInactivityTimeoutMs(agent, {
+      override: this.inactivityTimeoutMs,
+      byAgent: this.inactivityTimeoutsByAgent
+    });
+  }
+
   /** Human-readable reason for a phase terminated by the phase timeout or the inactivity watchdog. */
   _timeoutReason(phase, kind = "phase", agent = null) {
     if (kind === "inactivity") {
-      const minutes = Math.round(this.inactivityTimeoutMs / 60_000);
-      return `${phase} run went silent for ${minutes} minute${minutes === 1 ? "" : "s"} with no new output and was terminated -- likely a stdin-hang or other hung child process (e.g. a bare grep/read/cat with no input redirect)`;
+      const minutes = Math.round(this._inactivityTimeoutMsFor(agent) / 60_000);
+      const forAgent = agent ? ` for the ${agent} agent` : "";
+      return `${phase} run went silent for ${minutes} minute${minutes === 1 ? "" : "s"}${forAgent} with no new output and was terminated -- likely a stdin-hang or other hung child process (e.g. a bare grep/read/cat with no input redirect). If this agent's legitimate work needs longer quiet stretches, raise its entry in INACTIVITY_TIMEOUT_MS_BY_AGENT.`;
     }
     // Deliberately does NOT claim a hang. The phase watchdog fires on elapsed wall-clock
     // alone and cannot tell a slow-but-progressing run from a stuck one -- T-0228 was
@@ -1188,8 +1270,8 @@ export class RunOrchestrator {
    * is exactly the kind of flaky, non-reproducible failure that's likely to clear on a plain
    * retry, unlike a deterministic reviewer FAIL repeating the same finding.
    */
-  _inactivityVerdict(phase) {
-    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity"), phase, synthetic: true };
+  _inactivityVerdict(phase, agent = null) {
+    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity", agent), phase, synthetic: true };
   }
 
   async cancelRun(taskId) {
