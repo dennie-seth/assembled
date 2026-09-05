@@ -250,15 +250,15 @@ Two real, code-confirmed gaps came out of this:
    about real progress even though the underlying optimizer/scheduler
    state is fine.
 
-Filing the actual follow-up card is out of scope for the `assets` agent —
-backlog authoring (ID allocation, schema, `validateBacklog.js`) is the
-`planner` agent's job (`.claude/rules/planner.md`), and this worktree's
-`tasks/` directory only contains a stub subset of the real backlog, so
-hand-rolling a `tasks/T-NNNN.md` here risks an invalid or colliding id
-this agent has no tooling to check. Recommended follow-up, for the planner
-to file: instrument (or add a smoke test around) `epoch_to_start`'s
-derivation in the `lora_train` wrapper — e.g. have
-`lora_train.train` log `num_update_steps_per_epoch` and the loaded
-`current_step`/`current_epoch` on every `--resume`, so a future resume's
-true cumulative position is verifiable from the run log instead of
-re-derived from source after the fact.
+Follow-up filed: [T-0312](T-0312)
+(`tasks/T-0312.md`) — instrument `lora_train.train` to log
+`num_update_steps_per_epoch` (or the dataset length it derives from) and
+the loaded `current_step`/`current_epoch` on every `--resume`, so a future
+resume's true cumulative position is verifiable from the run log instead
+of re-derived from source after the fact. This worktree's local `tasks/`
+directory is a stub subset of the real backlog (121 files, topping out at
+`T-0222`, well short of this card's own `T-0311`), so `T-0312`'s id was
+chosen as "one past this card" rather than derived from that stub's own
+next-id count — the card body flags this explicitly and asks the planner
+to confirm the id is actually free on its next pass. Nothing depends on
+`T-0312` yet, so a renumber there is low-cost if it does collide.
