@@ -240,4 +240,54 @@ constraint any large binary deliverable on this board would hit.
 | `assets/src/concept/player_profile_reference_09511dbc54.jpg` (T-0273, fetched fresh via [T-0276](tasks/T-0276.md)'s `referenceFetch.js`) | N/A — sourced via `referenceFetch.js search/fetch openverse` | CC0 ("Silhouette walking man illustration", openverse) | N/A — clean flat side-on silhouette, distinct leg phase | N/A (sourced, no seed; retrieved 2026-09-03T17:06:46.074Z) |
 | `assets/src/concept/player_profile_reference_8b5318f88e.jpg` (T-0273, fetched fresh via [T-0276](tasks/T-0276.md)'s `referenceFetch.js`) | N/A — sourced via `referenceFetch.js search/fetch openverse` | CC0 ("Silhouette walking man illustration", openverse) | N/A — clean flat side-on silhouette, distinct leg phase | N/A (sourced, no seed; retrieved 2026-09-03T17:06:48.214Z) |
 
-7 candidates fetched (3 wikimedia, 4 openverse), 6 kept — the rejected candidate (`by`-licensed "Man walking in silhouette", openverse) was excluded on content grounds (too small/distant/dim to read as a legible profile), not a licence rejection. Each kept image's sidecar (`assets/src/concept/player_profile_reference_<sha256prefix>.provenance.json`) carries a live, independently-verifiable `sourceUrl` + `assetId` + `license` + `retrievedAt` — the field the 2026-09-02 single-image set could not establish. Full curation writeup: `assets/src/concept/player_profile_reference_SUMMARY.md`; prior-session attempt log (now-resolved Wikimedia 429 / Openverse 504 outage, traced to a `referenceTransport.js` User-Agent bug and fixed upstream in PR #312): `assets/src/character/ARM_PROFILE_REFERENCE_ATTEMPT_LOG_T0273.md`. **Parked for @DennieSeth's approval per `requires_approval: true`.**
+7 candidates fetched (3 wikimedia, 4 openverse), 6 kept — the rejected candidate (`by`-licensed "Man walking in silhouette", openverse) was excluded on content grounds (too small/distant/dim to read as a legible profile), not a licence rejection. Each kept image's sidecar (`assets/src/concept/player_profile_reference_<sha256prefix>.provenance.json`) carries a live, independently-verifiable `sourceUrl` + `assetId` + `license` + `retrievedAt` — the field the 2026-09-02 single-image set could not establish. Full curation writeup: `assets/src/concept/player_profile_reference_SUMMARY.md`; prior-session attempt log (now-resolved Wikimedia 429 / Openverse 504 outage, traced to a `referenceTransport.js` User-Agent bug and fixed upstream in PR #312): `assets/src/character/ARM_PROFILE_REFERENCE_ATTEMPT_LOG_T0273.md`. **APPROVED by @DennieSeth at 2026-09-03T17:52:21.435Z** (T-0273 moved to `done`) — the card's own `requires_approval: true` gate has cleared, unblocking T-0274 below.
+
+**Trained and deployed (2026-09-05):** `assets/final/lora/player_identity_profile_v1.safetensors`
+(T-0274, per the locked per-pose, per-character/monster LoRA decision — @DennieSeth, Pipeline
+chat, 2026-08-31 — and T-0272's finding that `player_identity_v2`, trained only on
+front-facing material, cannot place a profile pose in 4 attempts). Same committed WSL-native
+kohya sd-scripts stack, same recipe as v2 held constant (rank=8, alpha=4, target modules
+`to_q`/`to_k`/`to_v`/`to_out.0`, `1.0e-4` learning rate, `AdamW8bit`, resolution 1024, `fp16`)
+— only the training set and trigger token changed (`sbrutalistprofilepose`, distinct from
+v2's `sbrutalistplayer`), isolating that one variable
+(`assets/src/character/training_config_player_identity_profile_v1.toml`). Trained on
+[T-0273](tasks/T-0273.md)'s committed, human-approved profile reference set (6
+letterboxed-to-square images — anonymous pose/form reference only, never player-costume
+material — see `assets/src/character/identity_curation_manifest_profile_T0274.json`). 12/12
+epochs, 72/72 steps, single foreground/blocking invocation
+(`--no-resume`, ≈1217 GPU-seconds / ≈20m19s wall-clock including checkpoint load — the prior
+same-session's diagnosis that cross-invocation `--resume` does not accumulate sd-scripts'
+epoch/step counters, see `assets/src/character/ARM_PROFILE_LORA_ATTEMPT_LOG_T0274.md`, is why
+this run was driven start-to-finish in one process rather than chained resumes), producing a
+valid 109MB SDXL LoRA (2958 tensors), verified by loading it, weights sha256
+`e7e3c985efecb7c76c98577bc672f92cb044751e2ed76e1e6b556cad2b5d5ec0`. Auto-deployed to
+`F:\ComfyUI\models\loras\player_identity_profile_v1.safetensors` by `lora_train.train`'s own
+post-train validate+copy step (confirmed present via `object_info/LoraLoader` immediately
+after). Separate, additive artifact — `player_identity_v2.safetensors` and its provenance
+sidecar are untouched and unregressed (`git diff develop...HEAD -- assets/final/lora/player_identity_v2*`
+empty). Full sidecar: `player_identity_profile_v1.provenance.json`. Intermediate per-epoch/
+per-step checkpoints and `-state/` resume directories from this and prior interrupted sessions
+are gitignored scratch, never committed — only the final `player_identity_profile_v1.safetensors`
+is the deliverable, same convention as v1/v2.
+
+**Smoke check (2026-09-05):** `assets/src/character/smoke_check_profile_lora_T0274.py` ran the
+unchanged §24-e hybrid stack (`gen_hybrid_source_idle_T0252.build_graph`: style LoRA + identity
+LoRA (chained) + IP-Adapter (T-0209 concept) + OpenPose ControlNet) with exactly one variable
+swapped — `player_identity_profile_v1` (weight 0.5) in place of `player_identity_v2` — and the
+pose skeleton deliberately left as the existing **front-facing** topology
+(`gen_arm_a_idle_T0228._POSE_KEYPOINTS_NORM`, unchanged; authoring a profile-topology rig is
+[T-0272](tasks/T-0272.md)'s own scope, not this card's). Same recipe as T-0272's 4 attempts and
+T-0248's winning arm (DL-25): seed 31416, ControlNet strength/end 1.3/1.0, style weight 0.7,
+identity weight 0.5. **Result: `front_facing`** — the sampled frame (`prompt_id`
+`8e3fefd9-8c2f-479c-8bb9-6437becda3df`, 48.2 GPU-seconds) shows a front-on humanoid silhouette
+(head/shoulder region tapering to two separated leg forms), not a side profile; output quality
+is visibly degraded relative to v2's own bake-off arm (fragmented colour blocking), plausible
+given the far smaller/more heterogeneous 6-image reference set at rank 8/alpha 4 versus v2's
+29-image single-costume corpus, and identity weight 0.5 fighting rather than reinforcing the
+still-front-facing ControlNet+IP-Adapter conditioning. **This is the finding the card's own
+acceptance criteria anticipated**: the profile LoRA alone, stacked under front-facing pose
+conditioning, is not sufficient to place a profile — corroborating T-0272's finding that a
+profile-topology pose rig (T-0272's own scope, currently blocked on this card) is also
+required, not just a profile-trained identity LoRA. Evidence (frame + full generation
+provenance): `assets/src/character/smoke_check_profile_T0274/`. Full attempt trace across this
+and prior interrupted training sessions: `assets/src/character/ARM_PROFILE_LORA_ATTEMPT_LOG_T0274.md`.

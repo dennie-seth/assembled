@@ -96,6 +96,16 @@ assets/src/lora/.train-scratch/
 # artifactPreservation.js) — they never need to be in git to be resumable.
 assets/final/lora/*-state/
 
+# Per-epoch/per-step LoRA weight *snapshots* sd-scripts writes alongside the
+# state dirs above (`<output_name>-NNNNNN.safetensors`, `<output_name>-stepNNNNNNNN.safetensors`):
+# intermediate artifacts of an in-progress, resumable-across-sessions training
+# run (assets/src/lora/src/lora_train/train.py rule (b)), not a curated final —
+# only the unsuffixed `<output_name>.safetensors` written on completion is a
+# deliverable. Committing these was a mistake corrected in T-0274 (they are
+# reproducible from a resumed run, same as the state dirs).
+assets/final/lora/*-[0-9][0-9][0-9][0-9][0-9][0-9].safetensors
+assets/final/lora/*-step[0-9]*.safetensors
+
 # Board tool runtime state (not source)
 tasks/.id-allocator.json
 
