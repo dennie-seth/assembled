@@ -8,6 +8,7 @@ import { loadAgentDef, loadRules } from "./configLoader.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { createRunLog } from "./runLog.js";
 import { writeRunState, clearRunState } from "./runState.js";
+import { probeLivenessMtime, DEFAULT_LIVENESS_PROBE_INTERVAL_MS } from "./filesystemLiveness.js";
 import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
@@ -236,6 +237,8 @@ export class RunOrchestrator {
     phaseTimeoutMs = phaseTimeoutOverrideFromEnv(),
     phaseTimeoutsByAgent = PHASE_TIMEOUT_MS_BY_AGENT,
     inactivityTimeoutMs = inactivityTimeoutMsFromEnv(),
+    livenessProbeIntervalMs = DEFAULT_LIVENESS_PROBE_INTERVAL_MS,
+    probeLivenessMtimeFn = probeLivenessMtime,
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
@@ -274,6 +277,8 @@ export class RunOrchestrator {
     this.phaseTimeoutOverrideMs = phaseTimeoutMs ?? null;
     this.phaseTimeoutsByAgent = phaseTimeoutsByAgent;
     this.inactivityTimeoutMs = inactivityTimeoutMs;
+    this.livenessProbeIntervalMs = livenessProbeIntervalMs;
+    this.probeLivenessMtimeFn = probeLivenessMtimeFn;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
@@ -911,6 +916,40 @@ export class RunOrchestrator {
   }
 
   /**
+   * Logs a filesystem-liveness reprieve (T-0308): the inactivity deadline was just re-armed
+   * because `observed.path` grew since the last check, even though stdout may have been silent
+   * the whole time. Names the path and its age so an incident is readable from the journal alone
+   * -- exactly the T-0274 gap this card exists to close.
+   */
+  async _logLivenessReprieve(taskId, runLog, phase, observed) {
+    const ageMs = Math.max(0, this.now().getTime() - observed.mtimeMs);
+    const message =
+      `${phase} inactivity deadline re-armed: ${observed.path} grew ${Math.round(ageMs / 1000)}s ago -- ` +
+      `filesystem progress, not stdout, is what kept this run alive (T-0308).`;
+    const event = { type: "liveness-reprieve", phase, message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase, event });
+  }
+
+  /**
+   * Logs what the filesystem-liveness probe last observed at the moment an inactivity kill
+   * fires, so a human reading the run log afterward never has to guess whether this was a
+   * genuine stdin-hang (no evidence anywhere) or a run that simply stopped producing filesystem
+   * progress one budget ago (see `_logLivenessReprieve`'s docstring for the re-arm side).
+   */
+  async _logLivenessAtKill(taskId, runLog, phase, lastObserved) {
+    const message = lastObserved
+      ? `${phase} inactivity kill: last filesystem progress was ${lastObserved.path}, ` +
+        `${Math.round(Math.max(0, this.now().getTime() - lastObserved.mtimeMs) / 1000)}s before the kill -- ` +
+        `older than the inactivity budget, treated as wedged.`
+      : `${phase} inactivity kill: no filesystem progress was ever observed on the watched set ` +
+        `(worktree/run log missing or never written) -- stdout was the only possible evidence and it went silent.`;
+    const event = { type: "liveness-kill", phase, message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase, event });
+  }
+
+  /**
    * Logs a harness-side verdict downgrade (crossCheckVerdictFn caught a self-reported PASS that
    * the reviewer's own required commands don't back up). The downgraded verdict's `notes` --
    * which already explain the mismatch -- flow into the card body through the normal FAIL path
@@ -1005,6 +1044,41 @@ export class RunOrchestrator {
       child.stdout.on("data", onStdoutData);
     }
 
+    // Filesystem-progress companion to the stdout-only watchdog above (T-0308): a subagent-owned
+    // tool call doesn't forward the CLI's `tool_progress` heartbeat up the parent stream, so a
+    // long subagent job (e.g. LoRA training, checkpointing every ~95s) can leave stdout silent
+    // for its entire span while still visibly alive on disk -- this is what killed T-0274's
+    // attempt 2. Polls the explicit, bounded watched set (filesystemLiveness.js: the worktree
+    // root + this phase's own run log -- never a recursive walk of the whole checkout) on a
+    // fixed cadence and, on observed mtime growth, re-arms the SAME deadline armInactivityTimer()
+    // already manages. This only ever extends the deadline, never kills on its own -- a run that
+    // stops producing filesystem progress is still caught by the unmodified deadline timer above,
+    // one full inactivityTimeoutMs after the last real progress (stdout or mtime), so the hang
+    // defence for a genuine stdin-hang (no stdout, no filesystem writes) is unweakened.
+    //
+    // Deliberately fire-and-forget, never awaited in this function's own control flow: the probe
+    // is real (async) filesystem I/O, and gating the exit/timeout race on it here would delay
+    // every single phase of every run by at least one I/O round-trip for no benefit. `lastLiveness`
+    // starts `undefined` (never probed yet); the first observation only establishes a baseline
+    // (nothing to compare growth against, so no re-arm) -- otherwise the worktree's pre-existing
+    // mtime from setup would look like "growth" the instant the phase starts.
+    let lastLiveness;
+    const livenessProbeTimer = setInterval(() => {
+      Promise.resolve(this.probeLivenessMtimeFn({ worktreeDir, runLogPath: runLog.path }))
+        .then((observed) => {
+          if (lastLiveness === undefined) {
+            lastLiveness = observed;
+            return;
+          }
+          if (!observed || !lastLiveness || observed.mtimeMs <= lastLiveness.mtimeMs) return;
+          lastLiveness = observed;
+          armInactivityTimer();
+          return this._logLivenessReprieve(taskId, runLog, phase, observed);
+        })
+        .catch(() => {});
+    }, this.livenessProbeIntervalMs);
+    if (typeof livenessProbeTimer.unref === "function") livenessProbeTimer.unref();
+
     // Root-cause fix for T-0185: a hung grandchild (e.g. a headless Godot test that never calls
     // `get_tree().quit()`) previously kept this `await` pending forever, since the parent
     // `claude` child stays alive right along with it -- see DEFAULT_PHASE_TIMEOUT_MS's docstring.
@@ -1033,6 +1107,7 @@ export class RunOrchestrator {
     const result = await Promise.race([exitPromise, timeoutPromise, inactivityPromise]);
     clearTimeout(timeoutTimer);
     clearTimeout(inactivityTimer);
+    clearInterval(livenessProbeTimer);
 
     if (result.timedOut) {
       // Stop streaming further output into an event log for a phase that's already being
@@ -1040,6 +1115,9 @@ export class RunOrchestrator {
       // ClaudeCliRunner.kill) and the child can keep writing to stdout in the meantime.
       if (child && child.stdout && typeof child.stdout.off === "function") {
         child.stdout.off("data", onStdoutData);
+      }
+      if (result.timeoutKind === "inactivity") {
+        await this._logLivenessAtKill(taskId, runLog, phase, lastLiveness);
       }
       this.runner.kill(run);
     }
