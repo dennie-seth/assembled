@@ -55,6 +55,11 @@ async function runScript({ cwd, provenancePath, baseRef, env = {} }) {
           BOARD_TASK_STORE: "fs",
           BOARD_TASKS_DIR: path.join(cwd, "tasks"),
           BOARD_GIT_CWD: cwd,
+          // Default to a ledger path that can never resolve, so a test that doesn't care about
+          // the ledger fallback never accidentally reads THIS repo's real, committed
+          // tools/board/approval-ledger.json (whose real age/content is a moving target this
+          // suite must never depend on -- see T-0313). Tests exercising the fallback override it.
+          BOARD_APPROVAL_LEDGER: path.join(cwd, "__no_ledger_by_default__.json"),
           ...env
         }
       }
@@ -148,6 +153,31 @@ describe("checkApprovalProvenanceDrift.js (end-to-end)", () => {
 
     await git(["revert", "--no-edit", "HEAD"], repoDir);
   });
+
+  it(
+    "T-0313: a stale ledger never fails the gate when the live store already resolved every id -- " +
+      "not load-bearing, so staleness alone is not an error",
+    async () => {
+      const ledgerPath = path.join(repoDir, "ancient-but-irrelevant-ledger.json");
+      await writeFile(
+        ledgerPath,
+        JSON.stringify({
+          version: 1,
+          generated_at: "2020-01-01T00:00:00.000Z",
+          // T-0001 is already resolvable via tasksDir's own T-0001.md -- mergeTasksWithLedger's
+          // `seen` guard means this ledger entry is never actually used, however old it is.
+          cards: [{ id: "T-0001", requires_approval: true, approved_by: null, approved_at: null }]
+        })
+      );
+
+      const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("passed");
+      // Confirms the ledger was genuinely not load-bearing, not just silently ignored.
+      expect(result.stdout + result.stderr).not.toContain("ledger supplied");
+    }
+  );
 });
 
 /**
@@ -208,10 +238,19 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
     await git(["reset", "-q", "--hard", baseRef], repoDir);
   }
 
+  // T-0313: these three tests are about the ledger-*resolution* mechanism (#315), not staleness --
+  // a fixed, ever-receding hardcoded date would eventually cross the new hours-scale freshness
+  // threshold and start failing for a reason unrelated to what each test actually checks. Freshly
+  // stamped `now()` keeps them independent of the staleness gate, which has its own dedicated
+  // tests below.
+  function freshTimestamp() {
+    return new Date().toISOString();
+  }
+
   it("resolves a db-mode-only id via the ledger and passes -- the #315 fix, end-to-end", async () => {
     const ledgerPath = await writeLedger("ledger-a.json", {
       version: 1,
-      generated_at: "2026-09-03T00:00:00.000Z",
+      generated_at: freshTimestamp(),
       cards: [{ id: "T-9001", requires_approval: true, approved_by: "Anonymous", approved_at: "2026-09-01T00:00:00.000Z" }]
     });
     await addProvenanceLine("| new_asset.png (T-9001 -- APPROVED) | MIT | ... |");
@@ -227,7 +266,7 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
   it("still reports unverifiable-approval-claim when the ledger does not resolve the id either", async () => {
     const ledgerPath = await writeLedger("ledger-b.json", {
       version: 1,
-      generated_at: "2026-09-03T00:00:00.000Z",
+      generated_at: freshTimestamp(),
       cards: [{ id: "T-0001", requires_approval: false, approved_by: null, approved_at: null }]
     });
     await addProvenanceLine("| unknown.png (T-9002 -- APPROVED) | MIT | ... |");
@@ -240,21 +279,32 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
     await resetToBase();
   });
 
-  it("still catches real drift resolved through the ledger -- the fallback does not defang the gate", async () => {
-    const ledgerPath = await writeLedger("ledger-c.json", {
-      version: 1,
-      generated_at: "2026-09-03T00:00:00.000Z",
-      cards: [{ id: "T-9003", requires_approval: true, approved_by: null, approved_at: null }]
-    });
-    await addProvenanceLine("| unapproved_but_claimed.png (T-9003 -- APPROVED) | MIT | ... |");
+  it(
+    "still catches real drift resolved through the ledger -- the fallback does not defang the gate, and " +
+      "the FAILED refusal names the ledger's path, generated_at, and age even when it is fresh, not stale " +
+      "(T-0313 run-1 review: the ordinary drift-refusal path printed none of that, forcing a reader to " +
+      "re-derive a snapshot's age from a bare timestamp by hand)",
+    async () => {
+      const generatedAt = freshTimestamp();
+      const ledgerPath = await writeLedger("ledger-c.json", {
+        version: 1,
+        generated_at: generatedAt,
+        cards: [{ id: "T-9003", requires_approval: true, approved_by: null, approved_at: null }]
+      });
+      await addProvenanceLine("| unapproved_but_claimed.png (T-9003 -- APPROVED) | MIT | ... |");
 
-    const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
+      const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
 
-    expect(result.code).toBe(1);
-    expect(result.stdout + result.stderr).toContain("T-9003");
-    expect(result.stdout + result.stderr).toContain("unsubstantiated-approved-claim");
-    await resetToBase();
-  });
+      expect(result.code).toBe(1);
+      const output = result.stdout + result.stderr;
+      expect(output).toContain("T-9003");
+      expect(output).toContain("unsubstantiated-approved-claim");
+      expect(output).toContain(ledgerPath);
+      expect(output).toContain(generatedAt);
+      expect(output).toMatch(/\d+(\.\d+)?h old/);
+      await resetToBase();
+    }
+  );
 
   it("reports a missing ledger file distinctly, and still fails closed rather than passing", async () => {
     const missingPath = path.join(repoDir, "does-not-exist.json");
@@ -268,19 +318,44 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
     await resetToBase();
   });
 
-  it("warns loudly on a stale ledger but still performs a real check, not a skip", async () => {
-    const ledgerPath = await writeLedger("ledger-e.json", {
+  it(
+    "FAILS on a stale ledger that is load-bearing -- the exact T-0273 shape (a snapshot recording " +
+      "unapproved while a real approval landed hours later) that cost five T-0274 runs, T-0306, and " +
+      "develop red since #345",
+    async () => {
+      const ledgerPath = await writeLedger("ledger-e.json", {
+        version: 1,
+        generated_at: "2020-01-01T00:00:00.000Z",
+        cards: [{ id: "T-9005", requires_approval: true, approved_by: "Anonymous", approved_at: "2020-01-01T00:00:00.000Z" }]
+      });
+      await addProvenanceLine("| stale_but_resolvable.png (T-9005 -- APPROVED) | MIT | ... |");
+
+      const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
+
+      expect(result.code).toBe(1);
+      const output = result.stdout + result.stderr;
+      expect(output).toContain(ledgerPath);
+      expect(output).toContain("2020-01-01T00:00:00.000Z");
+      expect(output).toMatch(/stale/i);
+      expect(output).toMatch(/load-bearing/i);
+      await resetToBase();
+    }
+  );
+
+  it("still PASSES on a stale, empty ledger -- staleness alone is not an error when nothing was supplied", async () => {
+    // An ancient ledger with zero cards can never fill a gap the live store couldn't resolve on
+    // its own -- filledFromLedger is always 0 here, so staleness alone must not fail the gate.
+    const ledgerPath = await writeLedger("ledger-f.json", {
       version: 1,
       generated_at: "2020-01-01T00:00:00.000Z",
-      cards: [{ id: "T-9005", requires_approval: true, approved_by: "Anonymous", approved_at: "2020-01-01T00:00:00.000Z" }]
+      cards: []
     });
-    await addProvenanceLine("| stale_but_resolvable.png (T-9005 -- APPROVED) | MIT | ... |");
+    await addProvenanceLine("| unrelated.png (no id here, nothing to resolve) | MIT | ... |");
 
     const result = await runScript({ cwd: repoDir, provenancePath, baseRef, env: { BOARD_APPROVAL_LEDGER: ledgerPath } });
 
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("passed");
-    expect(result.stdout + result.stderr).toMatch(/WARNING.*days old/);
     await resetToBase();
   });
 });
