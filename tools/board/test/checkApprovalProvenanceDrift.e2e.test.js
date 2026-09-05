@@ -238,10 +238,19 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
     await git(["reset", "-q", "--hard", baseRef], repoDir);
   }
 
+  // T-0313: these three tests are about the ledger-*resolution* mechanism (#315), not staleness --
+  // a fixed, ever-receding hardcoded date would eventually cross the new hours-scale freshness
+  // threshold and start failing for a reason unrelated to what each test actually checks. Freshly
+  // stamped `now()` keeps them independent of the staleness gate, which has its own dedicated
+  // tests below.
+  function freshTimestamp() {
+    return new Date().toISOString();
+  }
+
   it("resolves a db-mode-only id via the ledger and passes -- the #315 fix, end-to-end", async () => {
     const ledgerPath = await writeLedger("ledger-a.json", {
       version: 1,
-      generated_at: "2026-09-03T00:00:00.000Z",
+      generated_at: freshTimestamp(),
       cards: [{ id: "T-9001", requires_approval: true, approved_by: "Anonymous", approved_at: "2026-09-01T00:00:00.000Z" }]
     });
     await addProvenanceLine("| new_asset.png (T-9001 -- APPROVED) | MIT | ... |");
@@ -257,7 +266,7 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
   it("still reports unverifiable-approval-claim when the ledger does not resolve the id either", async () => {
     const ledgerPath = await writeLedger("ledger-b.json", {
       version: 1,
-      generated_at: "2026-09-03T00:00:00.000Z",
+      generated_at: freshTimestamp(),
       cards: [{ id: "T-0001", requires_approval: false, approved_by: null, approved_at: null }]
     });
     await addProvenanceLine("| unknown.png (T-9002 -- APPROVED) | MIT | ... |");
@@ -273,7 +282,7 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
   it("still catches real drift resolved through the ledger -- the fallback does not defang the gate", async () => {
     const ledgerPath = await writeLedger("ledger-c.json", {
       version: 1,
-      generated_at: "2026-09-03T00:00:00.000Z",
+      generated_at: freshTimestamp(),
       cards: [{ id: "T-9003", requires_approval: true, approved_by: null, approved_at: null }]
     });
     await addProvenanceLine("| unapproved_but_claimed.png (T-9003 -- APPROVED) | MIT | ... |");
