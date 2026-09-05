@@ -7,6 +7,7 @@ import {
   MAX_AUTO_RETRY_ATTEMPTS,
   DEFAULT_PHASE_TIMEOUT_MS,
   DEFAULT_INACTIVITY_TIMEOUT_MS,
+  INACTIVITY_TIMEOUT_MS_BY_AGENT,
   PR_OPEN_GRAPHQL_MAX_ATTEMPTS,
   PR_OPEN_REST_MAX_ATTEMPTS,
   PR_OPEN_BACKOFF_BASE_MS
@@ -3137,5 +3138,224 @@ describe("RunOrchestrator timeout messages distinguish overrun from hang", () =>
     const body = (await store.get("T-0001")).body;
     expect(body).toMatch(/no new output|went silent/i);
     expect(body).toMatch(/hang|hung/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-agent inactivity budgets (T-0309), a structural copy of the per-agent
+// phase budgets above. Keyed on the phase's running agent, same as phase
+// budgets -- an assets card's reviewer phase verifies output, it does not
+// generate it, and keeps the default.
+// ---------------------------------------------------------------------------
+
+describe("RunOrchestrator per-agent inactivity budgets", () => {
+  const ASSETS_INACTIVITY_MS = INACTIVITY_TIMEOUT_MS_BY_AGENT.assets;
+
+  it("holds an assets implementer phase to the assets inactivity budget rather than the shorter default", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // Well past the 8-minute default, still inside the assets inactivity budget: alive.
+    await vi.advanceTimersByTimeAsync(DEFAULT_INACTIVITY_TIMEOUT_MS + 60 * 1000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    // Now cross the assets budget itself.
+    await vi.advanceTimersByTimeAsync(ASSETS_INACTIVITY_MS);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    // Retryable (not a hard block): drive the retry through to a clean PASS.
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("still holds a non-assets implementer phase to the default inactivity budget", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "server" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // The assets budget must not leak onto another agent.
+    await vi.advanceTimersByTimeAsync(DEFAULT_INACTIVITY_TIMEOUT_MS);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("holds the reviewer phase of an assets card to the default inactivity budget, not the assets one", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    runner.spawnedChildren[0].emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+
+    // The reviewer runs as the `reviewer` agent, so it gets the default
+    // inactivity budget -- it verifies output, it does not generate it.
+    await vi.advanceTimersByTimeAsync(DEFAULT_INACTIVITY_TIMEOUT_MS);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: reviewChild }));
+
+    const secondImplChild = runner.spawnedChildren[2];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const secondReviewChild = runner.spawnedChildren[3];
+    secondReviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    secondReviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("lets an explicit inactivityTimeoutMs override win even for an assets card", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("accepts an injected per-agent map via the constructor, so future tuning is one line", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "audio" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutsByAgent: { audio: 5000 },
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("the inactivity kill message reports the resolved budget and the agent it applied to", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(ASSETS_INACTIVITY_MS);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(new RegExp(`${Math.round(ASSETS_INACTIVITY_MS / 60_000)} minutes?`));
+    expect(finalTask.body).toMatch(/assets agent/i);
   });
 });
