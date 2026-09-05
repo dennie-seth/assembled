@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { RunOrchestrator, MAX_AUTO_RETRY_ATTEMPTS } from "../../src/runner/runOrchestrator.js";
 import { probeLivenessMtime, DEFAULT_LIVENESS_PROBE_INTERVAL_MS } from "../../src/runner/filesystemLiveness.js";
 
@@ -304,6 +307,84 @@ describe("RunOrchestrator — filesystem-progress liveness (T-0308: subagent-own
     await runPromise;
     expect((await store.get("T-0001")).status).toBe("review");
   });
+
+  it("real fs + real run log: a single genuine reprieve does not become a self-sustaining loop -- the phase is still killed one budget after the last REAL filesystem progress (T-0308 review round 2 regression)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+
+    const worktreeDir = await fs.mkdtemp(path.join(os.tmpdir(), "assembled-t0308-worktree-"));
+    const runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "assembled-t0308-runs-"));
+    try {
+      const outputDir = path.join(worktreeDir, "assets", "out");
+      await fs.mkdir(outputDir, { recursive: true });
+
+      const runLogPath = path.join(runsDir, "T-0001-real.jsonl");
+      const runLog = {
+        path: runLogPath,
+        append: async (event) => fs.appendFile(runLogPath, `${JSON.stringify(event)}\n`),
+        close: async () => {}
+      };
+
+      const orchestrator = makeOrchestrator({
+        store,
+        git,
+        runner,
+        inactivityTimeoutMs: 150,
+        livenessProbeIntervalMs: 30,
+        probeLivenessMtimeFn: probeLivenessMtime,
+        writeRunStateFn: vi.fn(async () => {}),
+        clearRunStateFn: vi.fn(async () => {})
+      });
+
+      const phasePromise = orchestrator._runPhase({
+        taskId: "T-0001",
+        task: baseTask(),
+        phase: "implementer",
+        agent: "infra",
+        prompt: "do it",
+        allowedTools: ["Read"],
+        worktreeDir,
+        model: "sonnet",
+        runLog
+      });
+
+      // Let the probe establish its baseline from the (empty) output dir before any real growth.
+      await new Promise((resolve) => setTimeout(resolve, 45));
+
+      // Exactly one genuine checkpoint write -- the only real filesystem progress this phase
+      // will ever see. Everything after this is silence, on stdout AND on disk.
+      await fs.writeFile(path.join(outputDir, "checkpoint-1.bin"), "progress");
+
+      // Comfortably more than one inactivity budget past the write with zero further real
+      // progress. If the reprieve's own runLog.append re-triggered itself (the bug this test
+      // guards against), the deadline would keep re-arming forever and this would time out
+      // waiting on `phasePromise` below instead of resolving.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      const result = await phasePromise;
+      expect(result.timedOut).toBe(true);
+      expect(result.timeoutKind).toBe("inactivity");
+      expect(runner.kill).toHaveBeenCalled();
+
+      const logContents = await fs.readFile(runLogPath, "utf8");
+      const events = logContents
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const reprieveEvents = events.filter((e) => e.type === "liveness-reprieve");
+      const killEvents = events.filter((e) => e.type === "liveness-kill");
+      expect(reprieveEvents.length).toBeGreaterThanOrEqual(1);
+      // The whole point of the regression: one genuine reprieve, not an unbounded chain the
+      // watchdog's own log-write kept feeding itself for the ~400ms of real silence above.
+      expect(reprieveEvents.length).toBeLessThan(4);
+      expect(killEvents).toHaveLength(1);
+    } finally {
+      await fs.rm(worktreeDir, { recursive: true, force: true });
+      await fs.rm(runsDir, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   it("establishes a baseline from the first REAL observation even when earlier probe ticks saw nothing -- an output dir that doesn't exist yet at phase start must not permanently disable filesystem liveness", async () => {
     vi.useFakeTimers();

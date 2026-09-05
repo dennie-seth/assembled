@@ -1049,12 +1049,13 @@ export class RunOrchestrator {
     // long subagent job (e.g. LoRA training, checkpointing every ~95s) can leave stdout silent
     // for its entire span while still visibly alive on disk -- this is what killed T-0274's
     // attempt 2. Polls the explicit, bounded watched set (filesystemLiveness.js: the worktree
-    // root + this phase's own run log -- never a recursive walk of the whole checkout) on a
-    // fixed cadence and, on observed mtime growth, re-arms the SAME deadline armInactivityTimer()
-    // already manages. This only ever extends the deadline, never kills on its own -- a run that
-    // stops producing filesystem progress is still caught by the unmodified deadline timer above,
-    // one full inactivityTimeoutMs after the last real progress (stdout or mtime), so the hang
-    // defence for a genuine stdin-hang (no stdout, no filesystem writes) is unweakened.
+    // root, each artifact output subdir one level deep, and this phase's own run log -- never a
+    // recursive walk of the whole checkout) on a fixed cadence and, on observed mtime growth,
+    // re-arms the SAME deadline armInactivityTimer() already manages. This only ever extends the
+    // deadline, never kills on its own -- a run that stops producing filesystem progress is still
+    // caught by the unmodified deadline timer above, one full inactivityTimeoutMs after the last
+    // real progress (stdout or mtime), so the hang defence for a genuine stdin-hang (no stdout,
+    // no filesystem writes) is unweakened.
     //
     // Deliberately fire-and-forget, never awaited in this function's own control flow: the probe
     // is real (async) filesystem I/O, and gating the exit/timeout race on it here would delay
@@ -1071,16 +1072,26 @@ export class RunOrchestrator {
     let lastLiveness = null;
     const livenessProbeTimer = setInterval(() => {
       Promise.resolve(this.probeLivenessMtimeFn({ worktreeDir, runLogPath: runLog.path }))
-        .then((observed) => {
+        .then(async (observed) => {
           if (!observed) return;
           if (!lastLiveness) {
             lastLiveness = observed;
             return;
           }
           if (observed.mtimeMs <= lastLiveness.mtimeMs) return;
-          lastLiveness = observed;
           armInactivityTimer();
-          return this._logLivenessReprieve(taskId, runLog, phase, observed);
+          await this._logLivenessReprieve(taskId, runLog, phase, observed);
+          // T-0308 review round 2: runLogPath is itself part of the watched set, and the
+          // reprieve log line just written above bumps its mtime to ~now. Baselining on the
+          // pre-write `observed` here would make that self-inflicted bump look like fresh
+          // external growth on the very next tick -- re-arm, append, repeat -- a loop with zero
+          // real filesystem progress that never lets the inactivity deadline expire again.
+          // Re-probe AFTER the write and baseline off THAT instead, so the watchdog's own log
+          // entry is folded into the baseline rather than mistaken for new evidence.
+          const after = await Promise.resolve(
+            this.probeLivenessMtimeFn({ worktreeDir, runLogPath: runLog.path })
+          ).catch(() => null);
+          lastLiveness = after ?? observed;
         })
         .catch(() => {});
     }, this.livenessProbeIntervalMs);
