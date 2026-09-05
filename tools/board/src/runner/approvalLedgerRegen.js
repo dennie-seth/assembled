@@ -49,6 +49,12 @@ export async function regenerateApprovalLedgerIfChanged({
   writeFileFn = fs.writeFile
 }) {
   const ledgerPath = path.join(worktreeDir, ledgerRelativePath);
+  // A transient `store.list()` returning [] (db hiccup, race with a fs-mode scan) must never
+  // overwrite a real, populated ledger with an empty one on this card's branch -- mirrors
+  // exportApprovalLedger.js's own refusal to write an empty ledger.
+  if (!tasks || tasks.length === 0) {
+    return { changed: false, path: ledgerPath, skipped: true };
+  }
   const existing = await readLedgerFn(ledgerPath);
   const next = buildApprovalLedger(tasks, now ? { now } : {});
 

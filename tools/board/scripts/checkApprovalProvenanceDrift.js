@@ -66,11 +66,14 @@ function describeLedgerSource(ledgerPath, ledger, ageHours) {
  * reports `unverifiable-approval-claim` and the gate still fails. "Couldn't check" never
  * becomes "passed" (T-0286, DL-27).
  *
- * @returns {Promise<{tasks: Array<object>, staleAndLoadBearing: boolean}>} `staleAndLoadBearing`
- *   is true only when the ledger both exceeded `LEDGER_STALE_HOURS` AND actually filled in at
- *   least one id the live store could not resolve on its own (T-0313) -- "a stale ledger nobody
- *   read is not an error; a stale ledger deciding a gate is." The caller fails the whole run on
- *   this, independent of whatever `findApprovalDrift` itself finds.
+ * @returns {Promise<{tasks: Array<object>, staleAndLoadBearing: boolean, loadBearing: boolean,
+ *   sourceDescription: string|null}>} `staleAndLoadBearing` is true only when the ledger both
+ *   exceeded `LEDGER_STALE_HOURS` AND actually filled in at least one id the live store could not
+ *   resolve on its own (T-0313) -- "a stale ledger nobody read is not an error; a stale ledger
+ *   deciding a gate is." The caller fails the whole run on this, independent of whatever
+ *   `findApprovalDrift` itself finds. `loadBearing`/`sourceDescription` let the caller name the
+ *   ledger's path/generated_at/age alongside an ordinary drift refusal too (T-0313 run-1 review:
+ *   that path printed neither, even when the ledger supplied the very id in question).
  */
 async function loadAllTasks() {
   const live = await loadLiveTasks();
@@ -79,14 +82,14 @@ async function loadAllTasks() {
     ledger = await readApprovalLedger(LEDGER_PATH);
   } catch (err) {
     console.error(`approval ledger at ${LEDGER_PATH} is unreadable: ${err.message}`);
-    return { tasks: live, staleAndLoadBearing: false };
+    return { tasks: live, staleAndLoadBearing: false, loadBearing: false, sourceDescription: null };
   }
   if (!ledger) {
     console.error(
       `approval ledger not found at ${LEDGER_PATH} -- ids the live task store cannot resolve ` +
         `will report as unverifiable. Regenerate with: node tools/board/scripts/exportApprovalLedger.js`
     );
-    return { tasks: live, staleAndLoadBearing: false };
+    return { tasks: live, staleAndLoadBearing: false, loadBearing: false, sourceDescription: null };
   }
 
   // A `generated_at` in the future (clock skew) must never read as "extra fresh" -- that would
@@ -96,35 +99,35 @@ async function loadAllTasks() {
   const ageDays = rawAgeDays < 0 ? Infinity : rawAgeDays;
   const ageHours = ageDays * 24;
   const stale = ageHours > LEDGER_STALE_HOURS;
+  const sourceDescription = describeLedgerSource(LEDGER_PATH, ledger, ageHours);
 
   const { tasks, filledFromLedger } = mergeTasksWithLedger(live, ledger);
   const loadBearing = filledFromLedger > 0;
   if (loadBearing) {
     console.log(
-      `approval ledger supplied ${filledFromLedger} card(s) the live task store could not resolve ` +
-        `(generated ${ledger.generated_at}).`
+      `approval ledger supplied ${filledFromLedger} card(s) the live task store could not resolve -- ${sourceDescription}.`
     );
   }
 
   if (stale && loadBearing) {
     console.error(
-      `FAILING: approval ledger is stale AND load-bearing -- ${describeLedgerSource(LEDGER_PATH, ledger, ageHours)} ` +
+      `FAILING: approval ledger is stale AND load-bearing -- ${sourceDescription} ` +
         `supplied ${filledFromLedger} card(s) the live task store could not resolve on its own, but is older ` +
         `than the ${LEDGER_STALE_HOURS}h freshness threshold (BOARD_APPROVAL_LEDGER_STALE_HOURS). A stale ` +
         `snapshot deciding a gate is the exact T-0273 incident (five T-0274 runs, T-0306's dead escalation, ` +
         `develop red since #345) -- regenerate it on the board with: node tools/board/scripts/exportApprovalLedger.js`
     );
-    return { tasks, staleAndLoadBearing: true };
+    return { tasks, staleAndLoadBearing: true, loadBearing, sourceDescription };
   }
 
   if (stale) {
     console.error(
-      `WARNING: approval ledger is stale -- ${describeLedgerSource(LEDGER_PATH, ledger, ageHours)} -- but supplied ` +
+      `WARNING: approval ledger is stale -- ${sourceDescription} -- but supplied ` +
         `nothing the live task store could not already resolve on its own; not load-bearing, not failing.`
     );
   }
 
-  return { tasks, staleAndLoadBearing: false };
+  return { tasks, staleAndLoadBearing: false, loadBearing, sourceDescription };
 }
 
 async function main() {
@@ -145,7 +148,7 @@ async function main() {
     throw err;
   }
 
-  const { tasks, staleAndLoadBearing } = await loadAllTasks();
+  const { tasks, staleAndLoadBearing, loadBearing, sourceDescription } = await loadAllTasks();
   if (staleAndLoadBearing) {
     // Message already printed inside loadAllTasks (source path, generated_at, age). A stale
     // snapshot that was actually load-bearing means the merged task list can't be trusted, so
@@ -170,6 +173,14 @@ async function main() {
   }
 
   console.error(`Approval provenance drift FAILED against ${provenancePath}: ${report.drifts.length} issue(s).\n`);
+  // T-0313 run-1 review: a load-bearing ledger's path/generated_at/age were only ever printed on
+  // the two staleness branches above -- the ordinary refusal below (the exact
+  // `unsubstantiated-approved-claim`/`unverifiable-approval-claim` shape that cost three separate
+  // incidents) said nothing about the snapshot deciding it, forcing a reader to re-derive its age
+  // from a bare timestamp by hand every time.
+  if (loadBearing && sourceDescription) {
+    console.error(`  approval ledger used: ${sourceDescription}\n`);
+  }
   for (const drift of report.drifts) {
     console.error(`  ${drift.taskId} (${drift.kind}): ${drift.message}`);
   }

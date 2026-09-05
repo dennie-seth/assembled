@@ -1617,6 +1617,11 @@ export class RunOrchestrator {
       const result = await regenerateApprovalLedgerIfChanged({ worktreeDir, tasks });
       if (result.changed) {
         console.log(`Board: regenerated approval ledger for ${taskId} (${result.path})`);
+      } else if (result.skipped) {
+        console.error(
+          `Board: approval ledger regeneration skipped for ${taskId} -- live store returned no tasks; ` +
+            `leaving the committed ledger untouched.`
+        );
       }
     } catch (err) {
       console.error(`Board: approval ledger regeneration failed for ${taskId}, pushing without it: ${err.message}`);
