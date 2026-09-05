@@ -354,6 +354,151 @@ describe("RunOrchestrator escalation -- dedupe and idempotent dependency wiring"
 
     expect((await store.get("T-0001")).depends_on).toEqual(["T-0050"]);
   });
+
+  it("still re-links (no duplicate) when the existing remediation card is open but already in-progress", async () => {
+    const existing = {
+      id: "T-0050",
+      title: "Unblock T-0001",
+      status: "in-progress",
+      priority: "P2",
+      phase: 0,
+      agent: "dispatch",
+      depends_on: [],
+      created: "2026-08-01",
+      comments: [],
+      body: "<!-- escalation-remediation-for: T-0001 -->\n\nAlready escalated once."
+    };
+    const store = makeStore([baseTask(), existing]);
+    const runner = makeRunner();
+    const idAllocator = makeIdAllocator();
+    const orchestrator = makeOrchestrator({ store, git: makeGit(), runner, idAllocator });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner);
+    await runPromise;
+
+    expect(idAllocator.allocate).not.toHaveBeenCalled();
+    expect(await store.list()).toHaveLength(2);
+    expect((await store.get("T-0001")).depends_on).toEqual(["T-0050"]);
+  });
+});
+
+describe("RunOrchestrator escalation -- dedupe re-checks the existing remediation card's status (T-0310)", () => {
+  function retiredRemediation(overrides = {}) {
+    return {
+      id: "T-0050",
+      title: "Unblock T-0001",
+      status: "retired",
+      priority: "P2",
+      phase: 0,
+      agent: "dispatch",
+      depends_on: [],
+      created: "2026-08-01",
+      comments: [],
+      body: "<!-- escalation-remediation-for: T-0001 -->\n\nRetired: premise was void.",
+      ...overrides
+    };
+  }
+
+  for (const closedStatus of ["retired", "done"]) {
+    it(`creates a fresh remediation card and re-links to it, instead of a ${closedStatus} one, carrying the CURRENT blocker report`, async () => {
+      const existing = retiredRemediation({ status: closedStatus });
+      const store = makeStore([baseTask({ depends_on: [existing.id] }), existing]);
+      const runner = makeRunner();
+      const idAllocator = makeIdAllocator(51);
+      const runLogs = [];
+      const orchestrator = makeOrchestrator({ store, git: makeGit(), runner, idAllocator, runLogs });
+
+      const runPromise = orchestrator.runCard("T-0001");
+      await exhaustToBlocked(runner, {
+        notesOverrideForAttempt: (n) =>
+          n === MAX_AUTO_RETRY_ATTEMPTS ? `issue round ${n} -- fresh blocker: ECONNREFUSED talking to the reference service.` : undefined
+      });
+      await runPromise;
+
+      expect(idAllocator.allocate).toHaveBeenCalledTimes(1);
+
+      const original = await store.get("T-0001");
+      const allTasks = await store.list();
+      const fresh = allTasks.find((t) => t.id !== "T-0001" && t.id !== existing.id);
+
+      expect(fresh).toBeTruthy();
+      expect(fresh.status).toBe("ready");
+      expect(fresh.agent).toBe("dispatch");
+      expect(fresh.body).toContain("<!-- escalation-remediation-for: T-0001 -->");
+      // The new card must carry the CURRENT report, not the closed card's old context.
+      expect(fresh.body).toContain("ECONNREFUSED talking to the reference service");
+      expect(fresh.body).not.toContain("premise was void");
+
+      // The parent is never left depending on the closed card -- the stale entry is replaced,
+      // not accumulated alongside the new one.
+      expect(original.depends_on).toEqual([fresh.id]);
+      expect(original.depends_on).not.toContain(existing.id);
+
+      const messages = runLogs[0].events.filter((e) => e.type === "escalation").map((e) => e.message);
+      expect(messages.some((m) => m.includes(existing.id) && new RegExp(closedStatus, "i").test(m))).toBe(true);
+    });
+  }
+
+  it("re-links to the existing card without creating a duplicate when it is still open", async () => {
+    const existing = retiredRemediation({ status: "ready" });
+    const store = makeStore([baseTask(), existing]);
+    const runner = makeRunner();
+    const idAllocator = makeIdAllocator(51);
+    const runLogs = [];
+    const orchestrator = makeOrchestrator({ store, git: makeGit(), runner, idAllocator, runLogs });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner);
+    await runPromise;
+
+    expect(idAllocator.allocate).not.toHaveBeenCalled();
+    expect(await store.list()).toHaveLength(2);
+    expect((await store.get("T-0001")).depends_on).toEqual([existing.id]);
+
+    const messages = runLogs[0].events.filter((e) => e.type === "escalation").map((e) => e.message);
+    expect(messages.some((m) => m.includes(existing.id) && /open/i.test(m))).toBe(true);
+  });
+
+  it("picks the most recently created closed remediation card across a long history, not the first one found", async () => {
+    const oldest = retiredRemediation({ id: "T-0040", status: "retired", body: "<!-- escalation-remediation-for: T-0001 -->\n\noldest" });
+    const newest = retiredRemediation({ id: "T-0090", status: "done", body: "<!-- escalation-remediation-for: T-0001 -->\n\nnewest" });
+    const store = makeStore([baseTask(), oldest, newest]);
+    const runner = makeRunner();
+    const idAllocator = makeIdAllocator(91);
+    const runLogs = [];
+    const orchestrator = makeOrchestrator({ store, git: makeGit(), runner, idAllocator, runLogs });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner);
+    await runPromise;
+
+    const allTasks = await store.list();
+    const fresh = allTasks.find((t) => !["T-0001", oldest.id, newest.id].includes(t.id));
+    expect(fresh).toBeTruthy();
+
+    const messages = runLogs[0].events.filter((e) => e.type === "escalation").map((e) => e.message);
+    expect(messages.some((m) => m.includes(newest.id))).toBe(true);
+    expect(messages.some((m) => m.includes(oldest.id))).toBe(false);
+  });
+
+  it("creates a normal fresh remediation card when the prior remediation card was deleted outright (lookup returns nothing)", async () => {
+    const store = makeStore([baseTask({ depends_on: ["T-0050"] })]);
+    const runner = makeRunner();
+    const idAllocator = makeIdAllocator(51);
+    const orchestrator = makeOrchestrator({ store, git: makeGit(), runner, idAllocator });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner);
+    await runPromise;
+
+    expect(idAllocator.allocate).toHaveBeenCalledTimes(1);
+    const original = await store.get("T-0001");
+    const allTasks = await store.list();
+    const fresh = allTasks.find((t) => t.id !== "T-0001");
+    expect(fresh).toBeTruthy();
+    expect(original.depends_on).toContain(fresh.id);
+  });
 });
 
 describe("RunOrchestrator escalation -- degrades gracefully on failure", () => {
