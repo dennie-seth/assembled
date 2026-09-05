@@ -305,6 +305,50 @@ describe("RunOrchestrator — filesystem-progress liveness (T-0308: subagent-own
     expect((await store.get("T-0001")).status).toBe("review");
   });
 
+  it("establishes a baseline from the first REAL observation even when earlier probe ticks saw nothing -- an output dir that doesn't exist yet at phase start must not permanently disable filesystem liveness", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    let tick = 0;
+    let mtimeMs = 0;
+    const probeLivenessMtimeFn = vi.fn(async () => {
+      tick += 1;
+      // First two ticks: the watched output dir doesn't exist yet -- no evidence at all.
+      if (tick <= 2) return null;
+      // From tick 3 onward the agent has created it and keeps writing to it.
+      mtimeMs += 1;
+      return { path: "/repo/worktrees/T-0001/assets/out", mtimeMs };
+    });
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      livenessProbeIntervalMs: 100,
+      probeLivenessMtimeFn,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.start).toHaveBeenCalledTimes(1);
+
+    // Well past the 1000ms inactivity budget on stdout alone -- must not be killed, since the
+    // probe has been reporting real growth (after its two initial empty ticks) the whole time.
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.kill).not.toHaveBeenCalled();
+    expect(runner.start).toHaveBeenCalledTimes(1);
+
+    await driveToPass(runner, 0);
+    await runPromise;
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
   it("does not crash the phase when the mtime probe itself rejects on every call -- degrades to the stdout-only behavior", async () => {
     vi.useFakeTimers();
     const store = makeStore([baseTask()]);

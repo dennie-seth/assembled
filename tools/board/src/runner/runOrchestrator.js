@@ -1059,18 +1059,25 @@ export class RunOrchestrator {
     // Deliberately fire-and-forget, never awaited in this function's own control flow: the probe
     // is real (async) filesystem I/O, and gating the exit/timeout race on it here would delay
     // every single phase of every run by at least one I/O round-trip for no benefit. `lastLiveness`
-    // starts `undefined` (never probed yet); the first observation only establishes a baseline
-    // (nothing to compare growth against, so no re-arm) -- otherwise the worktree's pre-existing
-    // mtime from setup would look like "growth" the instant the phase starts.
-    let lastLiveness;
+    // starts `null` (no evidence yet, same sentinel `probeLivenessMtimeFn` itself returns for "no
+    // evidence"). A tick that observes nothing (the watched output dir doesn't exist yet, e.g.)
+    // leaves `lastLiveness` exactly as it was -- it must NOT be latched to null, or every later
+    // tick's `!lastLiveness` check would treat that as "no baseline yet" forever and filesystem
+    // liveness would be permanently disabled for the rest of the phase the first time a probe
+    // came up empty (T-0308 review: the "output dir does not exist yet when the phase starts"
+    // edge case). The first REAL (non-null) observation only establishes a baseline (nothing to
+    // compare growth against yet, so no re-arm) -- otherwise the worktree's pre-existing mtime
+    // from setup would look like "growth" the instant the phase starts.
+    let lastLiveness = null;
     const livenessProbeTimer = setInterval(() => {
       Promise.resolve(this.probeLivenessMtimeFn({ worktreeDir, runLogPath: runLog.path }))
         .then((observed) => {
-          if (lastLiveness === undefined) {
+          if (!observed) return;
+          if (!lastLiveness) {
             lastLiveness = observed;
             return;
           }
-          if (!observed || !lastLiveness || observed.mtimeMs <= lastLiveness.mtimeMs) return;
+          if (observed.mtimeMs <= lastLiveness.mtimeMs) return;
           lastLiveness = observed;
           armInactivityTimer();
           return this._logLivenessReprieve(taskId, runLog, phase, observed);
