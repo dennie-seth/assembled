@@ -240,6 +240,17 @@ def test_check_attempt_cap_allows_the_round_4_defect_fix_budget() -> None:
         gen.check_attempt_cap(29)
 
 
+def test_check_attempt_cap_allows_a_fresh_round_5_budget() -> None:
+    """Round 5 ("vivid green on the profile") gets its own fresh 8-attempt
+    DL-21 budget on top of rounds 1-4's spent 1..24 plus the round-4
+    defect-fix continuation's 25..28 -- attempts 29..36, not a re-run of
+    anything already spent."""
+    gen.check_attempt_cap(29)
+    gen.check_attempt_cap(36)  # must not raise
+    with pytest.raises(SystemExit):
+        gen.check_attempt_cap(37)
+
+
 def test_prepare_secondary_reference_inverts_when_requested(tmp_path) -> None:
     """The default, unchanged behaviour for T-0273's dark-silhouette-on-light
     references (round 3 Test D)."""
