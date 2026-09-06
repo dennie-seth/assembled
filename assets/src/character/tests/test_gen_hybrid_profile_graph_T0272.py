@@ -268,6 +268,19 @@ def test_negative_prompt_gains_anti_olive_terms_when_green_emphasized() -> None:
     assert "olive" not in plain
 
 
+def test_negative_prompt_gains_anti_outline_terms_when_green_emphasized() -> None:
+    """Attempts 24 and 28-34 all show a distinct 'glow collapse' failure mode
+    whenever colour signal increases: a hard black outline plus a neon rim
+    light, rather than clean flat-shaded pixel art -- and this same heavy
+    outline is what bridges to the plain background under the cutout's
+    Oklab-tolerance flood, fragmenting attempt 28's silhouette. Naming it in
+    the negative prompt is the cheapest lever to try before any cutout
+    changes."""
+    emphasized = gen.build_negative_prompt(emphasize_green=True)
+    assert "black outline" in emphasized
+    assert "rim light" in emphasized or "glow" in emphasized
+
+
 def test_build_graph_threads_green_emphasis_into_both_prompt_nodes() -> None:
     graph = _graph(emphasize_green=True)
     assert "(vivid saturated institutional green costume colour:1.4)" in (
