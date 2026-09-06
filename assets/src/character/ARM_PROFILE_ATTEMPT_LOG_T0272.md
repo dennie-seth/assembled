@@ -423,3 +423,138 @@ the other. In order of expected leverage, cheapest first:
    resulting silhouette actually fills a game-ready sprite footprint or
    needs a tighter framing/crop pass.
 
+| 25 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 69.4 | PASS | no | round-4 defect-fix Test: secondary reference is the newly derived same-style side-profile crop (player_profile_style_reference_T0272.png), not inverted (already correct tone), replicating attempt 24's weights otherwise |
+| 26 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.75 | 48.1 | PASS | no | round-4 defect-fix Test 2: same style-reference secondary as attempt 25 but weight 0.3 (down from 0.45) and primary IP-Adapter 0.75 (up from 0.6) to push more costume colour through |
+| 27 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 63.1 | PASS | no | round-4 defect-fix Test 3: push secondary (pose/style-ref) weight up to 0.6 (matching primary) to see if a stronger profile pull still keeps some costume colour |
+| 28 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 72.1 | PASS | no | round-4 defect-fix Test 4 (final, cap 28): style-reference secondary at a much lighter weight (0.15, down from 0.3/0.45/0.6) -- testing whether a light touch keeps colour while still nudging the pose, or whether the reference's own competing grey/tan costume design (not just its art style) is what fights the green at any weight that actually moves the pose |
+
+## Round 4, continued (attempts 25-28): the reviewer's two FAIL defects, fixed and tested
+
+The round-4 VALIDATION verdict accepted attempts 17-24's data and the
+cutout/colour-trade-off finding, but scoped a FAIL on two defects: (1) the
+generalized cutout (`extract_foreground_mask`) reduced the foreground to a
+single connected component, which regression-tested against the
+already-promoted `player_idle_sheet_hybrid_T0252.png` silently dropped up to
+161 of 455 real foreground px per cell, since that sheet's own cells are 3-4
+components each; and (2) the round's own "costume-bearing side-profile
+reference" requirement was never actually tried or declined with reasons --
+specifically its cheapest listed option, "crop a profile-ish view from the
+concept sheet or T-0252's idle sheet."
+
+### Defect 1: the cutout now keeps every hint-overlapping component, not just the best one
+
+Fixed in `char_gen/cutout.py`'s `extract_foreground_mask`: instead of scoring
+every candidate component's overlap with the keypoints hint and keeping only
+the single highest-scoring one, it now keeps *every* component that overlaps
+the hint at all (the largest-only fallback, for when nothing overlaps the
+hint, is unchanged). Verified directly, not just by unit test: re-running the
+new selection against all 9 cells of the committed
+`player_idle_sheet_hybrid_T0252.png` (a whole-cell hint, the realistic case
+for an already-centred, already-cutout figure) now recovers 100% of each
+cell's raw foreground -- 474/456/474/455/474/456/474/455/474 px, matching the
+border-flood's own raw foreground count exactly, versus the old selection's
+460/433/460/294/460/433/460/294/460 (a 35% loss on the worst cells). Two new
+tests cover this: a synthetic two-part-figure case
+(`test_multi_part_figure_survives_whole_when_every_part_overlaps_hint`) and
+the real regression anchor itself
+(`test_promoted_front_sheet_cells_survive_the_new_selection_whole`,
+`tests/test_cutout_T0272.py`). The gate's own "single connected blob"
+assertion is relaxed to a bounded component count (<=6, measured against
+that same anchor's 3-4) rather than an exact one, since the anchor sheet
+itself never satisfied "exactly one."
+
+### Defect 2: the cheapest reference option was tried, found not literally achievable, and a same-style alternative was derived and tested instead
+
+Direct visual inspection (the Read tool, cropped panel-by-panel, not
+assumed): `player_character_concept_sheet_v1.png`'s green-coat panels are
+*all* pure front views -- the two jacket-only close-up rows (front + back
+pairs) and all three full-body panels in the character row are front-facing,
+none profile or even three-quarter. `player_idle_sheet_hybrid_T0252.png` is
+this card's own front-facing idle/walk cycle -- also entirely front-facing by
+construction. **Neither named source has a profile-ish green panel to crop.**
+This is now recorded here rather than only in a code comment.
+
+The concept sheet *does* contain one genuine, unambiguous side-profile panel
+(row 3, column 5, pixel box `(819, 256, 1024, 512)`) -- rendered in the
+sheet's grey/tan tactical-variant costume tier, not the green cloth-coat
+tier, but in the exact same linework/render style as every other panel on
+the sheet, and already facing right, matching `pose_rig_profile_T0272.FACING`.
+`derive_profile_style_reference_T0272.py` crops it tightly to its own figure,
+forces every non-figure pixel (background and the panel's own text-label
+artifact) to solid black via the same border-flood + largest-component logic
+`char_gen.cutout` already uses, and commits the result as
+`assets/src/concept/player_profile_style_reference_T0272.png` with a
+provenance sidecar recording the source panel box, the source concept
+sheet's own sha256, and an explicit "NOT a costume match" note -- this is a
+same-render-style pose/framing reference, exactly like T-0273's anonymous
+photographs in that respect, just drawn by the same process as the identity
+sheet rather than photographed.
+
+Because this reference already has the correct black-background tone (unlike
+T-0273's dark-on-light photographs), `gen_hybrid_profile_T0272.py`'s
+unconditional secondary-reference invert would have wrongly flipped it back
+to near-white -- `prepare_secondary_reference(..., needs_invert=False)` (new,
+covered by `tests/test_gen_hybrid_profile_graph_T0272.py`) makes that choice
+explicit instead of assuming every secondary source needs T-0273's own fix.
+`check_attempt_cap` was extended to 25..28: a small, explicitly-scoped
+continuation of this same round to test the derived reference, not a fresh
+8-attempt budget.
+
+### Attempts 25-28: the trade-off persists, and gets one sharper turn -- the reference's own competing costume, not just its render style, is part of the problem
+
+All four attempts replicate attempt 24's baseline (seed 31416, style LoRA
+0.7, identity LoRA 0.5, pose LoRA 0.6, ControlNet 1.0/1.0) and vary only the
+front (primary) IP-Adapter weight and the new secondary reference's weight:
+
+- **Attempt 25** (primary 0.6, secondary 0.45, matching attempt 24 exactly
+  except the reference itself): the single most confidently side-facing
+  result this card has produced -- a clean leaning silhouette, hood turned,
+  single visible arm and leg, no front-facing symmetry at all -- but almost
+  no colour (a faint multicolour rim-light glow, not costume colour) and a
+  very small surviving silhouette (101 fg px, ~4% of the cell; the promoted
+  48px cell is a barely-legible fragment). Mechanical gate: PASS
+  (`background_fraction=0.956`).
+- **Attempt 26** (primary raised to 0.75, secondary lowered to 0.3): the
+  most colour of the four (a legible dark-green shoulder/waist band, cream
+  torso, 564 fg px) -- but the figure is unambiguously front-facing again,
+  both arms out to the sides and both legs visible, the exact failure mode
+  raising primary weight has produced in every round since round 3. Gate:
+  PASS.
+- **Attempt 27** (primary 0.6, secondary raised to 0.6, matching primary):
+  still front-facing (symmetric legs, centred hood), olive/grey-green colour
+  rather than vivid green -- the tactical-variant reference's own costume
+  colour, not the coat's. 407 fg px, gate PASS.
+- **Attempt 28** (primary 0.6, secondary dropped to a light 0.15 -- the
+  control for "is it the render style or the competing costume design that
+  fights the green"): at 384px this is the most promising-looking frame of
+  the four, a genuine olive-green coat silhouette with a plausible side lean
+  -- but it fragments into scattered disconnected debris at the 48x48
+  cutout/quantize step (345 fg px scored by the mechanical gate, but visually
+  unrecognisable as a figure, not merely "small"). Gate PASS on the numeric
+  floor alone; **correctly not promotable on the human visual call the card
+  itself requires.**
+
+**What this adds to round 4's own finding, beyond confirming it again:**
+swapping the secondary reference for one drawn in the pipeline's own render
+style did not break the colour/pose trade-off, and attempts 26-27 show it can
+make the front-facing failure mode *more* likely to win, not less -- because
+the new reference carries its own complete, different costume design (the
+grey/tan tactical tier), which competes with the green coat for "what colour
+is this" exactly as much as it helps with "what pose is this." A reference
+that carried pose information with *no* competing costume content at all
+(T-0273's anonymous silhouettes) was, if anything, a cleaner secondary signal
+than this round's own same-style derivation turned out to be. This rules out
+"the secondary reference just needs to match the model's render style" as a
+fix in its own right, and leaves round 4's original conclusion -- **no
+reference available to this card carries both genuine side-profile pose and
+the institutional green costume at once, and no combination of two
+separately-sourced references (regardless of art style) has produced one
+across 20 attempts spanning rounds 3-4 (9-28)** -- not just unrefuted, but
+sharpened: the fix has to be a single reference/identity that natively
+encodes both traits together, not a better choice of *which* second image to
+stack. Nothing is promoted this round either, consistent with
+`.claude/rules/assets.md`'s "never ship a faked or unconvincing asset."
+Follow-up #1 (a profile-specific costume identity LoRA) and #2 (a genuine
+side-profile costume concept sheet) from round 4's own list stand unchanged
+and are now the only two paths left untried.
+
