@@ -46,9 +46,13 @@ _CHARACTER_DIR = Path(__file__).resolve().parents[1]
 if str(_CHARACTER_DIR) not in sys.path:
     sys.path.insert(0, str(_CHARACTER_DIR))
 
-from char_gen.cutout import BACKGROUND_MASK_MARGIN_FRAC, CUTOUT_OKLAB_TOLERANCE, cutout_foreground_mask  # noqa: E402
-
 import pose_rig_walk_T0259  # noqa: E402
+
+from char_gen.cutout import (  # noqa: E402
+    BACKGROUND_MASK_MARGIN_FRAC,
+    CUTOUT_OKLAB_TOLERANCE,
+    cutout_foreground_mask,
+)
 
 SIZE = 384
 FRAME_COUNT = pose_rig_walk_T0259.FRAME_COUNT

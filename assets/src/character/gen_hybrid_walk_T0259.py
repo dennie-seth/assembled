@@ -759,13 +759,24 @@ def run_attempt(
     raw_cells: dict[tuple[int, int], Image.Image] = {}
     fg_masks: dict[tuple[int, int], object] = {}
 
+    # The cutout hint is the whole cycle's own keypoint envelope, NOT this
+    # frame's own keypoints -- see walk_cycle_hint_keypoints' docstring.
+    # CROSS_EXTENT_NORM narrows a single passing frame's own keypoint bbox
+    # well below the gait's real silhouette width, and
+    # extract_foreground_mask gives no partial credit: a real, merely-
+    # partially-overlapping figure component is dropped outright the
+    # moment any other (even tiny) component in the frame clears the 50%
+    # majority bar on its own. Frame 0/1/etc still get their OWN keypoints
+    # for the ControlNet skeleton and the provenance record below --only
+    # the cutout call uses the wider, cycle-level hint.
+    cutout_hint_points = pose_rig_walk_T0259.walk_cycle_hint_keypoints(FRAME_COUNT)
+
     for i, cell in enumerate(FRAME_CELLS):
         keypoints_path = out_dir / f"frame_{i}_keypoints.json"
         skeleton_path = out_dir / f"frame_{i}_pose_skeleton_384.png"
         main_path = out_dir / f"frame_{i}_main_384.png"
         cell_raw_path = out_dir / f"frame_{i}_cell_48_raw.png"
         meta = json.loads((out_dir / f"frame_{i}_meta.json").read_text())
-        points = pose_rig_walk_T0259.walk_keypoints_for_frame(i, FRAME_COUNT)
 
         prompt_ids.append(meta["comfyui_prompt_id"])
         gpu_seconds += meta["generation_seconds"]
@@ -774,7 +785,7 @@ def run_attempt(
         main_img = Image.open(main_path).convert("RGB")
         fg_masks[cell] = downscale_mask(
             cutout_foreground_mask(
-                main_img, points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
+                main_img, cutout_hint_points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
             ),
             FINAL_CELL_PX,
         )
