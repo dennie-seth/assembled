@@ -1,15 +1,16 @@
-# T-0272 round 4 evidence
+# T-0272 evidence
 
 Round 3's decisive frames (attempts 13-15) were gitignored scratch under
 `assets/out/` and were reaped when the card parked, so the best images that
 investigation produced no longer exist anywhere reviewable. This directory
-commits a small, representative set from round 4's regeneration instead, so
-the evidence behind `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s round-4 findings
+commits a small, representative set from each subsequent generation round
+instead, so the evidence behind `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s findings
 survives worktree cleanup and is visible in the PR diff itself. None of
-these are a promoted deliverable -- no attempt this round satisfied
+these are a promoted deliverable -- no attempt across any round has satisfied
 "genuinely side-facing AND costume-colour legible AND passing the mechanical
 gate simultaneously," so `assets/final/character/` carries no T-0272 file.
-See the attempt log's own "Round 4" section for the full analysis.
+See the attempt log's own "Round 4" and "Round 5" sections for the full
+analysis.
 
 - **`pose_skeleton_384.png`** -- the profile-topology ControlNet input
   (`pose_rig_profile_T0272.py`), unchanged since round 1: legs collapsed to
@@ -64,19 +65,46 @@ See the attempt log's own "Round 4" section for the full analysis.
   debris at the 48x48 cutout/quantize step; the mechanical gate passes on the
   raw pixel count (345 fg px) but the visual call the card requires is a
   clear fail.
+- **`attempt_33_vivid_green_wrong_facing.png`** -- round 5 Lever 2, a fresh
+  seed (84512, untried before this round) on attempt 21's clean recipe. The
+  first attempt across all 36 to produce genuinely vivid, saturated
+  institutional green (a bright green torso/chest region, unlike every prior
+  attempt's muted olive or absent colour) -- but the figure reads as
+  bilaterally symmetric with two visible legs carrying a geometric,
+  circuit-board-like dot pattern, not the coat's actual silhouette or a
+  profile stance. Colour and correct facing still do not co-occur here.
+- **`attempt_35_outline_negation_worse.png`** -- round 5 Lever 2, attempt
+  24's recipe plus a green-emphasis prompt whose negative also names "heavy
+  black outline, thick black border, neon rim light, glowing outline,
+  vignette" -- an attempt to suppress the hard-outlined/rim-glow rendering
+  collapse seen whenever colour signal increases. It made the collapse more
+  pronounced instead: a flat, hard-black-outlined abstraction with a
+  multicolour (red/blue/yellow) glowing rim, the largest and least legible
+  frame of the round (432 fg px of colour blocks, not a coat).
+- **`attempt_36_lower_controlnet_cleanest_colour_lean.png`** -- round 5
+  Lever 2, final attempt of the round: attempt 21's clean-recipe secondary
+  with the same outline-negating emphasis prompt as attempt 35, but
+  ControlNet strength lowered to 0.85 (never tried below 1.0 in 35 prior
+  attempts). The clearest single-lean silhouette with the least rim-glow of
+  any colour-bearing round-5 attempt, but the surviving costume colour is
+  still a small yellow-green patch (78 fg px total), not a coat-wide vivid
+  green.
 
 Every image here is a raw 384x384 `main_384.png` (pre-cutout, pre-descent,
 pre-quantization) -- none has been cropped, retouched, or otherwise altered
 beyond the file copy itself. Full parameters (seed, every LoRA/ControlNet/
 IP-Adapter weight, `comfyui_prompt_id`, `gpu_seconds`) for each attempt are
 recorded in `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s round-4 table rows
-(attempts 19, 21, 24, 25, 28) and provenance JSON (not committed here -- the
-gitignored `assets/out/hybrid_profile/attempt_<N>/provenance_candidate.json`
-per attempt).
+(attempts 19, 21, 24, 25, 28) and round-5 table rows (attempts 33, 35, 36)
+and provenance JSON (not committed here -- the gitignored
+`assets/out/hybrid_profile/attempt_<N>/provenance_candidate.json` per
+attempt).
 
-`.gitignore` check (round-4 addendum): `git check-ignore -v` against every
-path added to this directory, including the two frames above, returns
-nothing -- none of them are caught by `**/assets/out/` or any other rule, so
-no `.gitignore` change was needed to commit this evidence. The images were
-missing from this directory only because they were never copied out of
-gitignored `assets/out/` scratch, not because git refused to track them.
+`.gitignore` check (round-4 addendum, re-run for round 5): `git check-ignore
+-v` against every path added to this directory across both rounds -- the
+round-4 frames and the three round-5 frames above -- returns nothing for
+each; none are caught by `**/assets/out/` or any other rule, so no
+`.gitignore` change was needed to commit this evidence either round. The
+images were missing from this directory only because they were never copied
+out of gitignored `assets/out/` scratch, not because git refused to track
+them.

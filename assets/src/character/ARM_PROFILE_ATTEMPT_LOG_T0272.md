@@ -588,8 +588,10 @@ something this card can decide or work around on its own.
 
 | 29 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 3.1 | PASS | no | round 5 Lever 2: bootstrap from attempt 24's own output (background not off-white, no invert) + green-emphasis prompt lever (attention-weighted costume phrase + explicit anti-olive/khaki negatives), holding attempt 24's other weights, to test whether pushing colour harder breaks the muted-olive plateau |
 | 30 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 60.1 | PASS | no | round 5 Lever 2: replicate attempt 21's exact recipe (T-0273 photo secondary, inverted, weight 0.4 -- the cleanest side-facing silhouette this card has produced) but add green-emphasis, to test whether the prompt lever alone can recover costume colour on a recipe already proven to hold the profile pose, without a competing bootstrap chain |
-| 31 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | PASS | no | round 5 Lever 2 isolation: primary front concept sheet only (no secondary reference at all), green-emphasis on, otherwise matching attempts 21/24's weights -- tests whether the prompt lever alone can recover vivid green in a clean render, decoupled from any secondary-reference cutout/style side effects seen in attempts 29-30 |
-| 32 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.65 | 54.1 | PASS | no | round 5 Lever 2: interpolate primary IP-Adapter weight to 0.65 (between attempt 24's 0.6, which kept the profile with a small olive patch, and attempt 26's 0.75, which broke fully front-facing), same attempt-20-bootstrap secondary as attempt 24, no green-emphasis (30/31 showed the emphasis phrase pushes toward a flat neon-outlined style, not more saturated colour) -- looking for a wider olive/green coat area without losing the pose |
+| 31 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | PASS | no | round 5 Lever 2 isolation, as configured: primary front concept sheet only (no secondary reference node in the graph at all), green-emphasis on, otherwise matching attempts 21/24's weights -- intended to test whether the prompt lever alone can recover vivid green in a clean render, decoupled from any secondary-reference cutout/style side effects seen in attempt 30. It did not achieve that isolation: `main_384.png` is pixel-identical to attempt 30's despite the two graphs differing structurally (30 routes `KSampler`'s model input through a second `IPAdapterAdvanced` node on the T-0273 photo secondary at weight 0.4; 31 has no such node at all). See the footnote directly below this table for the full comparison -- the honest reading is that this run reproduced attempt 30's exact sample rather than providing an independent isolation. |
+| 32 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.65 | 54.1 | PASS | no | round 5 Lever 2: interpolate primary IP-Adapter weight to 0.65 (between attempt 24's 0.6, which kept the profile with a small olive patch, and attempt 26's 0.75, which broke fully front-facing), same attempt-20-bootstrap secondary as attempt 24, no green-emphasis (attempt 30 showed the emphasis phrase pushes toward a flat neon-outlined style, not more saturated colour; attempt 31 is not an independent second confirmation of this, since it reproduced attempt 30's output pixel-for-pixel -- see the footnote below) -- looking for a wider olive/green coat area without losing the pose |
+
+**Footnote -- attempts 30 and 31 are pixel-identical, not two independent data points.** Verified directly with `PIL`/`numpy`: `main_384.png` for attempt 30 and attempt 31 differ by 0 across every RGBA channel at every pixel, despite the two being genuinely separate ComfyUI jobs (`comfyui_prompt_id` `1b6393dc-...` vs `09a0983a-...`, `gpu_seconds` 60.1 vs 54.1, so this is not a duplicate submission or a cache-hit re-run). Decoding each PNG's embedded ComfyUI workflow graph shows *why*: attempt 30's graph has 20 nodes and two `IPAdapterAdvanced` nodes, with `KSampler`'s `model` input sourced from the second one (the T-0273 photo secondary reference at weight 0.4, per row 30's Notes); attempt 31's graph has 18 nodes and one `IPAdapterAdvanced` node, with `KSampler`'s `model` input sourced directly from the primary IP-Adapter node -- no secondary node exists in the graph at all. So in this specific configuration (seed 31416, primary IP-Adapter 0.7, T-0273 photo secondary at 0.4, green-emphasis prompt on), routing the sample through the secondary IP-Adapter node changed nothing detectable in the output. **This does not generalise to "the secondary IP-Adapter is inert"**: attempts 25/27/28 differ from each other only in that same secondary weight (0.45/0.6/0.15 respectively) and their images differ by 32-82 mean-abs over RGB, so the secondary reference clearly does influence output elsewhere in this card's history. The 30/31 identity is a specific, unexplained anomaly at this seed/weight combination, not evidence the lever is dead in general -- see the follow-up list below.
 | 33 | 84512 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 69.1 | PASS | no | round 5 Lever 2 seed control: attempt 21's exact recipe (T-0273 photo secondary, inverted, weight 0.4, primary 0.6, no green-emphasis) but a fresh seed (84512, untried) instead of 31416, to check whether the abstract-glow/rainbow collapse seen in attempts 29-32 whenever colour signal is pushed is specific to seed 31416 or structural to this stack |
 | 34 | 31416 | 1.0/1.0 | 0.4 | 0.5 | 0.6 | 0.6 | 54.1 | PASS | no | round 5 Lever 2, new untested axis: every attempt across all 4 rounds fixed style_lora_weight at 0.7. The hard black outline + neon rim-glow seen whenever colour signal increases (attempts 24/28-33) is a soviet_brutalism_style_v1 trait at that weight, and is also the likely cause of attempt 28's cutout fragmentation (the outline's near-black tone bridges to the border-background via Oklab-tolerance flood). Testing whether a much lighter style weight (0.4) keeps the profile pose/colour lever from attempt 21's recipe while producing a flatter render the existing cutout can segment cleanly |
 | 35 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 69.1 | PASS | no | round 5 Lever 2, refined: attempt 24's exact recipe (attempt-20 bootstrap secondary, no invert) plus the updated green-emphasis negative, which now also negatives the heavy-black-outline/neon-rim-light look diagnosed as the shared cause of both the colour-emphasis style collapse (29-30, 32-34) and attempt 28's cutout fragmentation |
@@ -641,7 +643,9 @@ quantitative check rather than only a visual one.
 Attempts 29-36 tested six axes no prior round had tried: reusing a prior
 attempt's own output as the secondary bootstrap reference (29), replicating
 attempt 21's clean recipe with an attention-weighted colour phrase (30),
-isolating that phrase with no secondary reference at all (31), interpolating
+attempting to isolate that phrase with no secondary reference at all (31,
+though as the footnote under the table details, it reproduced attempt 30's
+output pixel-for-pixel rather than achieving a clean isolation), interpolating
 primary IP-Adapter weight to 0.65 between the known 0.6/0.75 endpoints (32),
 a fresh seed on attempt 21's recipe (33), a much lighter style-LoRA weight
 (34), an emphasis prompt that also negatives the heavy-outline/rim-glow look
@@ -782,4 +786,18 @@ newly supports:
    this card's own "do not retrain any LoRA" instruction.
 3. **A genuine side-profile costume concept sheet** (round 3/4's follow-up
    #2) -- still the most direct fix for Lever 1's own gap, unchanged.
+4. **Why did the secondary IP-Adapter node have zero measurable effect at
+   weight 0.4 on the inverted T-0273 photo, at seed 31416, primary weight
+   0.7?** (See the footnote under the round-5 table.) Attempts 30 and 31 are
+   pixel-identical despite attempt 30 routing the sample through a second
+   `IPAdapterAdvanced` node that attempt 31's graph omits entirely -- yet
+   attempts 25/27/28 show the same node's weight *does* move the output
+   elsewhere in this card's history. A cheap, zero-new-generation-budget
+   first step: diff those two attempts' embedded graphs node-by-node beyond
+   just the `IPAdapterAdvanced`/`KSampler` wiring already checked, to see
+   whether ComfyUI's own caching silently short-circuited the second
+   `IPAdapterAdvanced` node's contribution (e.g. an unconnected downstream
+   input, or a weight/strength field that evaluates to a no-op at this
+   particular seed) rather than the node genuinely sampling and being
+   overridden.
 
