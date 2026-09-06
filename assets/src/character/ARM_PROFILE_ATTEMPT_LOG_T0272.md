@@ -426,7 +426,6 @@ the other. In order of expected leverage, cheapest first:
 | 25 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 69.4 | PASS | no | round-4 defect-fix Test: secondary reference is the newly derived same-style side-profile crop (player_profile_style_reference_T0272.png), not inverted (already correct tone), replicating attempt 24's weights otherwise |
 | 26 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.75 | 48.1 | PASS | no | round-4 defect-fix Test 2: same style-reference secondary as attempt 25 but weight 0.3 (down from 0.45) and primary IP-Adapter 0.75 (up from 0.6) to push more costume colour through |
 | 27 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 63.1 | PASS | no | round-4 defect-fix Test 3: push secondary (pose/style-ref) weight up to 0.6 (matching primary) to see if a stronger profile pull still keeps some costume colour |
-| 28 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 72.1 | PASS | no | round-4 defect-fix Test 4 (final, cap 28): style-reference secondary at a much lighter weight (0.15, down from 0.3/0.45/0.6) -- testing whether a light touch keeps colour while still nudging the pose, or whether the reference's own competing grey/tan costume design (not just its art style) is what fights the green at any weight that actually moves the pose |
 
 ## Round 4, continued (attempts 25-28): the reviewer's two FAIL defects, fixed and tested
 
@@ -801,3 +800,464 @@ newly supports:
    particular seed) rather than the node genuinely sampling and being
    overridden.
 
+## T-0315 diagnostic: attempts 30/31's pixel-identity resolved -- genuine no-op, NOT a caching artifact
+
+Follow-up #4 above is now closed, at zero new GPU spend, using two sources
+that cost nothing to query: (1) `build_graph()` itself is a pure function of
+its arguments, so both attempts' submitted graphs can be reconstructed
+exactly from the recipe each row's Notes already records, and (2) ComfyUI's
+own `/history` endpoint on the dev-box host still held both jobs
+(`1b6393dc-2343-4f3e-ba3c-fa1c4d9615c7` for attempt 30,
+`09a0983a-8b4b-42cb-884b-7a6892c7a9fc` for attempt 31 -- the full IDs the
+existing footnote only truncated), so the graphs actually submitted, and
+ComfyUI's own per-node cache/execution log for each job, were read directly
+rather than re-derived. No image was regenerated.
+
+**Full node-by-node diff, not just IPAdapterAdvanced/KSampler wiring.**
+Comparing every node ComfyUI actually ran (`history[prompt_id]["prompt"][2]`)
+for the two jobs: attempt 30 has 20 nodes, attempt 31 has 18; the only nodes
+present in one and not the other are `27` (secondary `LoadImage`) and `28`
+(secondary `IPAdapterAdvanced`), both present only in attempt 30. Every
+other shared node -- both `CLIPTextEncode` nodes (confirming the
+green-emphasis prompt text is byte-identical between the two, not just
+"probably the same"), `ControlNetApplyAdvanced`, all three `LoraLoader`
+nodes, `CheckpointLoaderSimple`, `EmptyLatentImage`, `VAEDecode`, both
+`SaveImage` nodes, and the descent `ImageScale` node -- is byte-for-byte
+identical. The **only** wiring difference anywhere in the graph is
+`KSampler`'s (`21`) `model` input: `["28", 0]` in attempt 30, `["19", 0]`
+(the primary IP-Adapter output, skipping the secondary chain) in attempt 31.
+This confirms and extends the existing footnote's own partial check (which
+only compared the IPAdapterAdvanced/KSampler wiring) to every node in both
+graphs.
+
+**Independently re-verified the pixel-identity claim itself**, not just
+trusted it: fetched both jobs' `main_384.png` directly from ComfyUI's `/view`
+endpoint (`hybrid_profile_T0272_main_384_00031_.png` /
+`..._00032_.png`, still present in ComfyUI's own output history) and diffed
+them with the same PIL/numpy method the original footnote used --
+`max abs diff = 0` across all four RGBA channels, confirming pixel-identity
+independently rather than re-stating the merged commit's own claim.
+
+**The decisive new evidence: ComfyUI's own execution log, not just the
+graph shape.** Both jobs' `history[prompt_id]["status"]["messages"]` include
+an `execution_cached` event listing exactly which node IDs were served from
+cache rather than actually executed. For **both** attempt 30 and attempt 31,
+the cached node list is identical:
+`['1', '10', '11', '12', '26', '13', '14', '15', '16', '17', '18', '19',
+'20']` -- the checkpoint, pose skeleton image, style/identity/pose LoRA
+loaders, both prompt encodes, the ControlNet loader/apply pair, the primary
+concept image and its IP-Adapter loader/apply. **Nodes `27` and `28`
+(attempt 30's secondary reference chain) are absent from that cached list --
+they were genuinely executed, not served from cache.** `21` (`KSampler`) is
+absent from both jobs' cached lists too, confirming both attempts genuinely
+resampled rather than reusing a prior sampler output (consistent with both
+jobs' real `gpu_seconds`, 60.1 and 54.1 -- nothing like attempt 29's 3.1s
+cache-hit outlier).
+
+**Conclusion: this is a genuine no-op, not a caching short-circuit.** The
+second `IPAdapterAdvanced` node in attempt 30 really ran, on its own real
+input image, at its own real weight (0.4), and produced a real patched-model
+object that `KSampler` really resampled from scratch -- and the result was
+still bit-for-bit identical to sampling with no secondary patch at all. That
+rules out the caching explanation this follow-up was raised to check: **no
+prior "the secondary reference had no effect" conclusion in this log needs
+to be marked unsound because of a caching bug**, because there was no
+caching bug here. What it does newly establish is narrower and still
+important: at seed 31416, with `combine_embeds="concat"` and this specific
+secondary weight (0.4) on this specific image, a second, genuinely-executed
+`IPAdapterAdvanced` node chained onto the model can be a real no-op --
+consistent with, not contradicting, the existing footnote's own caveat that
+this "does not generalise to 'the secondary IP-Adapter is inert'" (attempts
+25/27/28 differ from each other by 32-82 mean-abs specifically because they
+vary that same weight against each other). The mechanism inside the
+`IPAdapterAdvanced` custom node that makes one particular weight/seed/
+`combine_embeds` combination sample to an identical result is outside this
+repo's own code (the node itself lives on the ComfyUI host, not in
+`assets/src/`) and is not investigated further here -- this diagnostic's
+scope was "caching bug or genuine no-op," and the ComfyUI execution log
+settles that question directly.
+
+## T-0315 step 3: attempt 28 regenerated and re-cut with the fixed absolute-distance cutout -- still not promotable, for a different, newly-isolated reason
+
+Per this card's own instructions, attempt 28's logged recipe (seed 31416,
+ControlNet 1.0/1.0, style LoRA 0.7, identity LoRA 0.5, pose LoRA 0.6,
+primary IP-Adapter 0.6, style-reference secondary at 0.15, no invert) was
+re-submitted once, deterministically, as a single generation -- not a
+sweep. **The regenerated frame is not usable as attempt 28's candidate**:
+diffed pixel-for-pixel against the committed evidence copy
+(`attempt_28_secondary_reference_colour_lean.png`, the same file
+`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s round-4 section describes), the two
+differ completely (max abs diff 255 across the frame) despite every logged
+parameter matching exactly -- same seed, same weights, same secondary
+reference file (hash-verified identical), same prompt/negative text. The
+regenerated image reads as a flat white-torso silhouette with a single
+horizontal olive band and a split light-grey/lavender background, with none
+of "an olive coat body with a hood and a visible strap" the log's own
+description names. Per this card's own instruction ("if the regenerated
+frame differs materially from the log's description... say so and stop
+rather than promoting something else"), **that regenerated frame is
+discarded, not promoted, and not used for anything below** -- this
+environment's ComfyUI/GPU stack is evidently not bit-exact reproducible
+across separate submissions even with an identical seed and graph (most
+likely non-deterministic reduction order in cuDNN/cuBLAS kernels, or a
+different attention/memory code path chosen under this session's tighter
+VRAM headroom -- 1.5GB free at `/system_stats` time -- than whatever the
+original attempt 28 run had available); this is itself worth recording for
+any future card that assumes "same seed" alone guarantees a reproducible
+regeneration on this dev box.
+
+**Because attempt 28's own raw frame is already committed as verified
+evidence** (`docs/assets/evidence/T-0272/attempt_28_secondary_reference_colour_lean.png`,
+copied byte-for-byte and sha256-checked in the commit that added it -- see
+that directory's own README), the fixed cutout was instead tested directly
+against that authentic frame, which is strictly more faithful to "attempt
+28's own candidate" than a fresh, non-reproducible roll would have been.
+
+**Result: the fixed cutout is a genuine, correct improvement at the mask
+level, and still cannot rescue this specific frame at 48px.** Before/after
+masks, all newly committed to `docs/assets/evidence/T-0272/`:
+
+- `attempt_28_cutout_mask_before_fix_384.png` -- the OLD tolerance-chained
+  flood's foreground (green), re-derived exactly as round 5 itself
+  described: a mostly-solid 24,300px fill, but one that round 5's own
+  analysis already showed comes apart into several background-separated
+  islands once the outline's near-black tone bridges through it.
+- `attempt_28_cutout_mask_after_fix_384.png` -- the NEW absolute-distance
+  cutout's foreground (green): a clean, coherent, correctly-traced outline
+  of the same hooded-coat-with-strap silhouette the log describes, 5,184px.
+  This is the fix working exactly as intended at the mask level -- a
+  legible, single silhouette trace, not a solid-but-secretly-fragmented
+  blob.
+- `attempt_28_cutout_result_after_fix_48_zoomed.png` -- the same frame,
+  masked with the fixed cutout, quantized to the home palette, and
+  descended to 48x48 (shown zoomed 10x, nearest-neighbour, for legibility).
+  **This is not legible as a coat, a hood, or a figure at all** -- scattered
+  1-6px specks and slivers, the mechanical gate barely passing on raw count
+  alone (54 foreground px against the 50px floor, `background_fraction`
+  0.977) while failing the human visual call the card itself requires.
+
+**Why the fix does not close this specific gap, diagnosed rather than just
+observed:** attempt 28's own 384px render is heavily soft/blurred, not
+crisp pixel art (`docs/design/13-asset-pipeline.md`'s own target style,
+which this raw SDXL sample precedes -- the "clean readable pixel outline"
+only exists after quantization) -- the actual anti-aliased transition
+between coat and background spans many pixels of gradually-blended colour,
+not a thin one-or-two-pixel seam. `border_flood_background_mask`'s fix
+(absolute distance to sampled *true* border colours) correctly refuses to
+let a long chain of small hops walk background all the way into the coat's
+solid fill any more -- confirmed above, the 384px mask is now a clean
+outline trace, exactly the intended effect. But the *shape* that trace
+encloses is, in this specific frame, already thin (a leaning silhouette a
+few pixels wide through much of its torso/limb extent at 384px) even before
+any cutout is applied. `downscale_mask`'s own area-box-filter +
+50%-per-cell threshold (unchanged by this card, not touched per its own
+"do not regress `char_gen`'s content-aware cutout" scope for anything
+beyond `border_flood_background_mask`'s classification rule) discards any
+8x8 source block that is not majority-covered -- and a silhouette only a
+few px wide relative to an 8px block fails that threshold throughout most
+of its own extent, regardless of how correct the 384px mask boundary is.
+This is a **different, newly-isolated blocker** from round 5's own
+diagnosis (which named the mask's outline-bridging leak specifically): the
+mask defect this card set out to fix is confirmed fixed, and a second,
+independent problem -- this frame's silhouette being too thin at native
+resolution to survive standard 8x descent -- is what actually stands
+between attempt 28 and a usable 48px cell. Widening the descent threshold
+or changing `downscale_mask`'s own algorithm is out of this card's scope
+(a change to `char_gen`'s shared descent path deserves the same
+regression-test rigour as `border_flood_background_mask` got here, against
+every consumer that also relies on `downscale_mask`, not a quick tweak
+folded into this same commit).
+
+**Conclusion, per this card's own explicit permission:** the fixed cutout
+cannot rescue attempt 28 -- not for the reason originally diagnosed
+(that defect is fixed, evidenced above), but for a different, newly-named
+one (silhouette too thin for standard descent, independent of mask
+correctness). `assets/final/character/` still correctly carries no T-0272
+file; no substitute frame is promoted in its place. The natural next step
+for a follow-up card is the `downscale_mask` threshold/algorithm itself
+(e.g. weighting by fractional coverage per cell rather than a hard 50% cut,
+or a higher source:target descent ratio for silhouettes this thin) --
+scoped as its own change for the same reason the mask fix was scoped
+separately from the component-selection layer above it.
+
+## T-0315 round 2: the step-3 conclusion above is unsound -- the real root cause, the fix, and the promotion
+
+Reviewer VALIDATION on round 1 (recorded on the card, not duplicated in full
+here) found the "T-0315 step 3" conclusion immediately above **factually
+wrong on its own evidence**, and traced why: `border_flood_background_mask`'s
+round-1 fix (`cutout.py:130`, `np.unique(oklab[border], axis=0)`) used
+*every distinct colour actually present on the frame's own border* as an
+independent classification anchor -- 511 distinct Oklab colours on this
+exact raw, un-quantized render, because the figure's own black outline
+genuinely touches the frame edge in several places (this frame's border
+spans the full Oklab lightness range, 0.0 to 1.0, plus a mid-tone
+grey-purple background tone -- not a single flat colour). Deduplicating
+exact repeats does not bound how *close together* the remaining 511
+anchors sit: consecutive anchors averaged little more than one tolerance
+apart, so their matching balls (radius `CUTOUT_OKLAB_TOLERANCE` each) still
+overlapped, reproducing the exact hop-to-hop bridging defect this card
+exists to close -- just relocated from spatial adjacency (the pre-T-0315
+defect) to the border's own sample list (round 1's regression). The
+regression suite's own 11 baseline fixtures could not see this: every one
+is an already-palette-quantized sheet whose border carries exactly ONE
+distinct colour (measured directly), so round 1's fix was trivially
+equivalent to a correct one on all of them and only diverges on
+un-quantized renders -- exactly the case this card's own target frame is.
+
+**The step-3 "silhouette too thin for `downscale_mask`'s descent" claim is
+therefore false, not merely superseded.** Re-running the *unchanged*
+`downscale_mask` against the **pre-T-0315** mask (the original
+tolerance-chained flood, kept in git history) on this same frame yields
+**351px at 48x48** -- the descent step was never the blocker. Round 1's own
+mask (5,184px foreground, `attempt_28_cutout_mask_after_fix_384.png`) is
+also not "a clean, coherent, correctly-traced outline" as originally
+written -- it is fragmented and hole-riddled (compare it directly against
+`attempt_28_cutout_mask_before_fix_384.png`'s solid silhouette in
+`docs/assets/evidence/T-0272/`). Both claims in the step-3 section above are
+retracted; the section is left in place, uncorrected in its own text, so
+the record shows the actual mistake rather than erasing it. See
+`docs/assets/evidence/T-0272/README.md`'s own "T-0315 round 2" caption for
+the corrected before/after.
+
+**The fix:** `border_flood_background_mask` now reduces the border's
+distinct colours to a small set of *representatives*, each at least
+`BORDER_COLOR_MIN_SEPARATION` (2.5x `CUTOUT_OKLAB_TOLERANCE`) from every
+other -- greedy, most-frequent-colour-first, so the survivors are the true
+dominant border tones, not whichever rare anti-aliasing colour happened to
+sort first. 2x tolerance is the strict minimum that guarantees two
+representatives' matching balls cannot overlap (centres more than 2x the
+ball radius apart); 2.5x adds headroom for the same reason the tolerance
+itself carries headroom, and was confirmed empirically stable against this
+exact frame (2.5x and 3x resolve to the same handful of genuinely distinct
+colour regions and produce materially the same mask; exactly 2x still
+leaves visible fragmentation the plateau does not). A new regression
+fixture (`test_raw_unquantized_render_does_not_regress_below_pre_fix`,
+`tests/test_cutout_absolute_background_distance_T0315.py`) runs this exact
+frame through the real consumer pipeline (`extract_foreground_mask` with
+`pose_rig_profile_T0272`'s own keypoints, then `downscale_mask`) and asserts
+the result never drops below the pre-T-0315 baseline (351px) -- the gap
+round 1's baseline suite structurally could not see, now closed. A second
+fix, also reviewer-requested: when a frame's border colours span more than
+`CUTOUT_OKLAB_TOLERANCE` (this frame: 33x), `border_flood_background_mask`
+now raises a `UserWarning` -- a loud, observable signal that the border
+isn't a single clean colour and the result should be checked visually,
+rather than a silent guess in either direction (the card's own "fail loudly
+rather than silently mis-cutting" edge case; the round-1 gradient edge-case
+test only asserted the mis-cut region stayed foreground, which is not
+loud -- `test_narrow_vignette_and_flat_background_do_not_warn` and the
+updated wide-vignette test now assert the warning fires exactly when the
+frame is actually ambiguous, not on every call).
+
+**Result: attempt 28 is now legible at 48px and is promoted.** Through the
+real production pipeline (`extract_foreground_mask` -> `downscale_mask` ->
+`quantize_to_palette` -> `apply_cutout_masks` -> orphan cleanup, exactly
+`gen_hybrid_profile_T0272.build_indexed_cell`), this frame now measures
+36,392px foreground at 384px (a solid, legible hooded-coat-with-strap
+silhouette -- `docs/assets/evidence/T-0272/attempt_28_cutout_mask_round2_384.png`)
+and 529px at 48x48 after quantization/cleanup, 4 connected components,
+mechanical gate PASS (`background_fraction` 0.770). Visually legible at 40px
+as a hooded olive-drab coat with a visible strap, matching attempt 28's own
+logged description ("an olive coat body with a hood and a visible strap")
+closely enough to promote. The 384px source is attempt 28's own frame --
+the already-committed, sha256-verified evidence copy, re-cut with the fixed
+mask -- since a fresh same-seed regeneration (step 3 above) did not
+reproduce it bit-exactly and was correctly discarded rather than promoted.
+Promoted: `assets/final/character/player_profile_keyframe_hybrid_T0272.png`
++ `.provenance.json`.
+
+**Attempt 28 summary (seed 31416, ControlNet 1.0/1.0, style LoRA 0.7,
+identity LoRA 0.5, pose LoRA 0.6, primary IP-Adapter 0.6, style-reference
+secondary 0.15, 72.1 GPU-s): re-cut with the fixed absolute-background-
+distance cutout (round 2: minimum-separated border-colour clustering,
+correcting round 1's "every distinct border colour" regression on this
+exact un-quantized frame); frame recovered from the committed, hash-
+verified evidence copy since original scratch was reaped and a same-seed
+regeneration did not reproduce bit-exactly (see T-0315 step 3 above).
+Mechanical gate PASS at every round (2, 3, 4). Promoted round 2, replaced
+round 3, un-promoted round 4 -- see that section below for why: the mask is
+now genuinely correct, but the frame's own colour content does not read as
+the logged "coat-wide olive colour" at 40px, a defect no cutout-mask fix can
+close.**
+
+## T-0315 round 3: round 2's own reviewer FAIL, closed -- greedy set-cover by border pixel mass
+
+Reviewer VALIDATION on round 2 found the promotion immediately above **not
+"a true RGBA cutout, character only"** as Step 3 requires: the promoted
+529px file's second-largest component (129px, 24.4% of the foreground, bbox
+x29-34/y2-45 at 48px) is a background-coloured region incorrectly retained
+as foreground. Root cause, precisely diagnosed: `BORDER_COLOR_MIN_SEPARATION`
+(round 2's fix) chose representatives by a minimum *separation* (>= 2.5x
+tolerance apart), which guarantees the accepted set is spread out but never
+guarantees every rejected colour ends up within classification range of one
+of them. Measured on this exact frame: 222 of 511 sampled border colours
+(259 of 1,532 actual border pixels) sat strictly between 1x and 2.5x
+tolerance from every accepted representative -- excluded from candidacy by
+the separation floor, but too far to classify as background under any
+survivor. Those pixels never seeded the flood, so the region of true
+background connected only through them was retained as foreground.
+
+**The fix:** `_representative_border_colors` now chooses representatives by
+GREEDY SET COVER over border pixel MASS: repeatedly take the most-frequent
+still-uncovered colour, mark every colour (and the border pixels it
+accounts for) within tolerance of it as covered, and continue until
+`BORDER_COLOR_COVERAGE_TARGET` of the frame's own border pixels are covered
+(95%, a new named constant, not literal 100%) or a representative cap is
+hit (64, warning loudly if reached).
+
+**Why not literal 100% coverage.** This was tried first, against this exact
+frame, and measured to be actively worse than round 2's own bug: the
+frame's figure legitimately touches the frame border along most of one edge
+(the coat's own black outline and its neon rim-glow run the full right
+edge; the coat's hem touches the bottom edge directly), with a wide, gradual
+anti-aliased blend, not a thin seam (border spread 33x tolerance). Chasing
+every last, most-blended border sample into coverage requires
+representatives packed closely enough across that whole span that some end
+up within tolerance of genuine, non-border figure colours elsewhere in the
+frame -- specifically the coat's own pale hood/shoulder fill, which sits
+close in Oklab space to the pale end of that same blend. Measured result:
+48px foreground collapsed from round 2's 529px to 117px, *below* even the
+pre-T-0315 351px baseline, with the hood visibly swept into background
+(`docs/assets/evidence/T-0272/README.md`'s own round-3 section has the
+full before/after). A strong pixel-mass MAJORITY (95%) closes round 2's
+actual regression instead: the frame's dominant true-background tone is
+always covered within the first handful of representatives (coverage
+proceeds most-frequent-colour-first), without chasing the rarest,
+most-blended samples that caused the sweep.
+
+**On round 2's own "component 2 is background" finding, more precisely.**
+Direct pixel inspection of the corresponding region in the raw frame
+(`docs/assets/evidence/T-0272/README.md`'s round-3 section has the crop)
+shows it is not flat background at all: it is the coat's own back-edge trim
+-- a black outline stroke with the render's own neon rim-glow (already
+named in round 5's own "Lever 3" analysis as a `soviet_brutalism_style_v1`
+trait at this weight), a white accent shape, and a row of small blue
+rivet-like dots -- correctly a separate connected component from the main
+torso (the same "a real figure often splits into several parts" property
+`extract_foreground_mask`'s own module docstring already documents), not a
+spurious background sweep. What round 2's reviewer measured as "8,982px
+background" at 384px was almost entirely the TRUE grey-purple background to
+the right of this trim (x272-357 of their cited x223-357 range), which
+round 2's own bug also failed to correctly seed from the border in that
+specific region -- both things were true at once: a real coverage gap
+existed (closed by this round's fix, verified by
+`test_border_coverage_meets_its_own_target_on_the_real_diagnostic_frame`
+and `test_no_surviving_raw_component_is_background_coloured`), and the
+specific component that survives in both round 2's and round 3's final
+529px/452px files is genuine character trim, not the bug itself.
+
+**Result: attempt 28 remains promoted, through the round-3 fix.** Through
+the real production pipeline, this frame now measures 31,108px foreground
+at 384px (`docs/assets/evidence/T-0272/attempt_28_cutout_mask_round3_384.png`)
+and 452px at 48x48 after quantization/cleanup, 6 connected components,
+mechanical gate PASS (`background_fraction` 0.804). Every component above a
+5px noise floor was checked directly against the raw frame's own dominant
+border colour and confirmed meaningfully distant from it (not background-
+coloured) -- the property round 2's own regression suite could not
+distinguish ("more foreground survived" is satisfied equally by genuine
+recovered detail and by a spurious background blob; this round adds a test
+that checks colour, not just count). Legible at 40px as a leaning, hooded,
+olive-drab coat with a visible strap, matching attempt 28's own logged
+description closely enough to promote.
+
+## T-0315 round 4: round 3's own reviewer FAIL, closed -- majority-overlap component selection, and a second, independent, unfixable-here blocker
+
+Reviewer VALIDATION on round 3 re-traced its own "component 2/3 are the
+coat's own back-edge trim" claim (the paragraph immediately above) against
+the actual pixel content and found it backwards: those components are 62.6%
+and 61.4% flat grey-blue background, with essentially no black outline and
+no white accent (0.1-0.9% each) -- the opposite of round 3's own
+characterisation. Round 3's fix (greedy set-cover, closing round 2's
+separation-floor gap) was real, but it was solving a problem one layer
+below the actual defect.
+
+**Root cause, finally isolated correctly.** `border_flood_background_mask`
+was never the bug in rounds 2 or 3 -- it was already correctly classifying
+these background panels as non-background (they are their own disjoint
+components, never merged with the true border-connected background flood).
+The bug is one layer up, in `extract_foreground_mask`'s component-selection
+rule: `overlapping_labels = [lbl for lbl, ov in overlaps.items() if ov > 0]`
+kept a component if it overlapped the keypoints hint AT ALL, however small
+that overlap. Measured directly on this frame: a genuinely disjoint
+8,427px-at-384px background-panel component survived in full because a mere
+698px of it (8.3%) happened to fall inside the hint's own bbox+margin. That
+one component alone accounts for the bulk of both round 2's 129px and round
+3's 207px retained-background defects -- both rounds were re-tuning
+`border_flood_background_mask`'s colour classification (separation floor,
+then coverage target) to chase a bug that was never in that function.
+
+**The fix:** `extract_foreground_mask` now requires a component's own area
+to be at least `MIN_HINT_OVERLAP_FRACTION` (50%) inside the hint before
+keeping it on overlap grounds, falling back to the old "any overlap"
+behaviour only when nothing clears that bar, and to the largest component
+when nothing overlaps at all. A real limb/head split from the torso by an
+outline seam (T-0272 round 4's own regression, `test_multi_part_figure_
+survives_whole_when_every_part_overlaps_hint`) sits with the overwhelming
+majority of its own area inside the hint and is unaffected; a large decoy
+mostly outside the hint, grazing it by a sliver, is now dropped
+(`test_component_barely_grazing_the_hint_is_excluded`, RED-verified against
+round 3's code before the fix).
+
+**Result, mask now correct.** Through the real production pipeline, this
+frame now measures 17,144px foreground at 384px
+(`docs/assets/evidence/T-0272/attempt_28_cutout_mask_round4_after_384.png`)
+and 248px at 48x48 after quantization/cleanup, 3 connected components, 98.8%
+in the single largest one (245px) -- verified both by the component-overlap
+maths above and by direct visual inspection: no floating background bar
+beside the figure, unlike rounds 2 and 3's own promotions. Mechanical gate
+PASS (`background_fraction` 0.892). This is *fewer* raw pixels than round
+3's 452px -- deliberately: round 3's extra 204px were exactly the retained
+background this round removes, not recovered character detail. The old
+regression test asserting "48px foreground must not drop below 351px"
+(flagged as a non-discriminating monotone bound since round 1, never fixed)
+is replaced with a majority-largest-component-share assertion that this
+figure was chasing all along.
+
+**Second, independent finding: attempt 28 still cannot be promoted.** With
+the mask now genuinely correct, the promoted candidate's own colour content
+is measurable on its own terms for the first time. Of its 248 foreground
+pixels, only 24 (10%) quantize to the home palette's own "green family"
+slots (2, 3, 5, 7, 9, 11); the other 224 (90%) quantize to the neutral ramp
+(`docs/assets/evidence/T-0272/attempt_28_palette_index_histogram_round4.png`).
+This is not a quantization-nearest-neighbour artifact of a good green
+render landing badly -- sampled directly on the un-quantized raw frame, the
+coat's own main body fill sits closer in Oklab space to the palette's
+neutral ramp than to any green-family swatch. Composited over a dark
+backdrop for a fair read (transparency against plain white washes out
+perceived saturation), the fixed cutout reads as a grey-taupe silhouette
+with a few dark-olive flecks near the collar -- independently corroborating
+round 3's own reviewer finding on this exact point ("the figure reads as a
+grey slab with a few dark-olive flecks... not the 'coat-wide olive colour'
+this card exists to ship"), which this round's mask fix does not and cannot
+move, because it is not a mask defect. `border_flood_background_mask` and
+`extract_foreground_mask` classify *which* pixels are character; they have
+no way to change what colour those pixels already are.
+
+**Decision: not promoted.** `player_profile_keyframe_hybrid_T0272.png` and
+its provenance sidecar (added round 2, replaced round 3) are removed from
+`assets/final/character/` rather than promoted a third time on a colour
+basis that a second independent check (this round's own palette-index
+measurement, corroborating round 3's reviewer) says will not read as the
+logged "coat-wide olive colour." This returns the file to the state it was
+in before T-0315 began -- absent, exactly as T-0272's own original 8
+attempts left it -- per this card's own instruction: "If the fixed cutout
+still cannot rescue attempt 28, say so with the before/after masks as
+evidence and stop." The cutout fix itself (both the round-1-3 absolute-
+distance rework and this round's majority-overlap selection) is real,
+tested against every listed consumer, and kept.
+
+**T-0315 round 5: round 4's own reviewer FAIL, closed.** Round 4's un-promote
+commit (`cc3436f`) deleted the PNG and its sidecar but never touched
+`ASSET_PROVENANCE.md`'s own row for this asset -- that row (added round 2,
+rewritten round 3) still stated the file was "**Promoted here (T-0315),
+after fixing that cutout defect**" and cited round 3's superseded 452px/
+6-component mechanical result as current, for a path that no longer exists
+in the tree (`git ls-files` confirms). Both claims were false at HEAD and
+directly contradicted this file's own decision above. The row is deleted
+outright rather than rewritten into a "not promoted" record: this file
+documents promoted assets, `develop`'s own copy of `ASSET_PROVENANCE.md`
+never had a row for this path (it was added entirely within this branch),
+and the not-promoted decision -- with its full before/after evidence -- is
+already recorded here and in `docs/assets/evidence/T-0272/README.md`, so a
+second copy of that narrative in the provenance file would only be another
+place for it to drift out of sync. No other change this round; the mask fix
+and round-4 colour finding both stand.

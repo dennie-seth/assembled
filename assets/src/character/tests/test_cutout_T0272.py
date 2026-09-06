@@ -183,6 +183,44 @@ def test_multi_part_figure_survives_whole_when_every_part_overlaps_hint() -> Non
     )
 
 
+def test_component_barely_grazing_the_hint_is_excluded() -> None:
+    """T-0315 round 4: a large, disjoint, non-background-coloured blob whose
+    bounding box sits mostly OUTSIDE the keypoints hint, overlapping it only
+    by a thin sliver at the seam, was being kept in full under the old
+    "any overlap, however small, counts" rule -- measured directly against
+    T-0272's own attempt-28 evidence frame: a disjoint background panel
+    (8,427 of 384x384px raw foreground pixels) survived round 3's cutout
+    fix in full because only 698px of it (8.3%) happened to fall inside the
+    hint's own bbox+margin, and that was enough to qualify it as "the
+    figure" under `> 0`. It quantized down to a 24%-of-foreground grey bar
+    floating beside the real character in the promoted 48px sprite -- round
+    3's own reviewer FAIL. The fix is not "overlap must be total" (that
+    would reintroduce T-0272 round 4's own regression, where a real
+    limb/head split from the torso by an outline seam must survive even
+    though it is its own component) -- it is "overlap must be the MAJORITY
+    of the component's own area": a real body part sitting mostly inside its
+    own hint survives; a large decoy sitting mostly outside it, grazing the
+    hint by a sliver, does not."""
+    figure_rect = (20, 20, 30, 44)
+    decoy_rect = (33, 4, 60, 60)  # big, disjoint, interior (never touches the border)
+    decoy_rgb = (200, 40, 210)  # far from both background and figure colour
+    arr = _solid(BACKGROUND_RGB)
+    arr[figure_rect[1] : figure_rect[3], figure_rect[0] : figure_rect[2]] = FIGURE_RGB
+    arr[decoy_rect[1] : decoy_rect[3], decoy_rect[0] : decoy_rect[2]] = decoy_rgb
+    img = Image.fromarray(arr, mode="RGB")
+    # covers figure_rect fully; only grazes decoy_rect's own left edge
+    hint = _hint_from_px_box(18, 18, 34, 46)
+
+    mask = extract_foreground_mask(img, CUTOUT_OKLAB_TOLERANCE, hint, BACKGROUND_MASK_MARGIN_FRAC)
+
+    expected = np.zeros((SIZE, SIZE), dtype=bool)
+    expected[figure_rect[1] : figure_rect[3], figure_rect[0] : figure_rect[2]] = True
+    assert np.array_equal(mask, expected), (
+        "a large disjoint blob whose bbox sits mostly outside the hint, grazing it only by a "
+        "thin sliver, must not survive just because SOME overlap is nonzero"
+    )
+
+
 def test_promoted_front_sheet_cells_survive_the_new_selection_whole() -> None:
     """Regression anchor demanded by the T-0272 round-4 reviewer verdict: a
     keypoints-hint call must keep producing equivalent (here, IMPROVED --
