@@ -17,11 +17,19 @@ produced legible silhouettes that the old hard bbox clip zeroed entirely
 
 This module keeps the border-connected flood as the (genuinely content-based)
 background detector, and replaces the hard bbox intersection with connected-
-component selection over the resulting foreground: the component that best
-overlaps a keypoints HINT region is kept; if none overlaps at all -- exactly
-the case a shifted pose produces -- the single largest foreground component
-is kept instead of reporting "no figure." `keypoints_norm` therefore never
-clips a pixel outside its own bbox; it only disambiguates which blob is "the
+component selection over the resulting foreground: EVERY component that
+overlaps a keypoints HINT region is kept -- not just the single best-
+overlapping one -- because a real figure routinely splits into several
+components (a limb or head separated from the torso by a background-coloured
+outline seam). Round 4's first cut kept only the single best-overlap
+component and was caught regressing the already-promoted
+`player_idle_sheet_hybrid_T0252.png`: every one of that sheet's 9 cells is
+3-4 components, and single-best selection silently dropped up to 161 of
+455px on some cells (see `test_promoted_front_sheet_cells_survive_the_new_selection_whole`).
+If nothing overlaps the hint at all -- the case a shifted pose produces
+(T-0272 round 3's Test D) -- the single largest foreground component is kept
+instead of reporting "no figure." `keypoints_norm` therefore never clips a
+pixel outside its own bbox; it only disambiguates which blob(s) are "the
 figure" when the flood leaves more than one candidate. Nothing here assumes
 an upright human, a front view, two legs, or any fixed aspect ratio -- only
 pixel content and (optionally) a keypoints hint drive the selection, so the
@@ -174,11 +182,14 @@ def extract_foreground_mask(
 ) -> np.ndarray:
     """Boolean HxW array, True = character. Background is the border-
     connected tolerant Oklab flood; the foreground is its complement, reduced
-    to a single connected component -- the one that best overlaps
-    `keypoints_norm`'s own bbox+margin, or (when nothing overlaps it, or when
-    no hint is given at all) the single largest foreground component.
-    `keypoints_norm` is a HINT, never a hard frame: it can never cause a
-    pixel belonging to the selected component to be dropped."""
+    to every connected component that overlaps `keypoints_norm`'s own
+    bbox+margin (a real figure often splits into several -- a limb or head
+    separated from the torso by a background-coloured outline seam, and
+    ALL of them must survive, not just the largest), or (when nothing
+    overlaps the hint, or when no hint is given at all) the single largest
+    foreground component. `keypoints_norm` is a HINT, never a hard frame: it
+    can never cause a pixel belonging to an overlapping component to be
+    dropped."""
     size = img.size[0]
     background = border_flood_background_mask(img, tolerance)
     foreground = ~background
@@ -188,22 +199,23 @@ def extract_foreground_mask(
     if count == 1:
         return labels == 1
 
-    areas = {lbl: int((labels == lbl).sum()) for lbl in range(1, count + 1)}
-    largest_label = max(areas, key=areas.get)
-
     if keypoints_norm is None:
+        areas = {lbl: int((labels == lbl).sum()) for lbl in range(1, count + 1)}
+        largest_label = max(areas, key=areas.get)
         return labels == largest_label
 
     hint = _keypoints_hint_mask(keypoints_norm, bbox_margin_frac, size)
     overlaps = {lbl: int(((labels == lbl) & hint).sum()) for lbl in range(1, count + 1)}
-    best_label = max(overlaps, key=overlaps.get)
-    if overlaps[best_label] == 0:
+    overlapping_labels = [lbl for lbl, ov in overlaps.items() if ov > 0]
+    if not overlapping_labels:
         # The rendered figure sits entirely outside the hint region (a
         # stacked profile reference pulling the pose off-rig, T-0272 round
         # 3's attempts 13-15) -- fall back to the largest foreground blob
         # rather than reporting "no figure."
+        areas = {lbl: int((labels == lbl).sum()) for lbl in range(1, count + 1)}
+        largest_label = max(areas, key=areas.get)
         return labels == largest_label
-    return labels == best_label
+    return np.isin(labels, overlapping_labels)
 
 
 def cutout_foreground_mask(
@@ -253,8 +265,8 @@ CUTOUT_METHOD_DESCRIPTION = (
     "seeded from every border pixel and grown through 4-connected neighbours within the "
     "tolerance of the pixel it grows from -- removes background clutter connected to the frame "
     "edge regardless of how many distinct palette indices it later quantizes to. The resulting "
-    "foreground is reduced to its single connected component that best overlaps a keypoints "
-    "hint region (falling back to the single largest component when nothing overlaps the hint, "
+    "foreground is reduced to every connected component that overlaps a keypoints hint region "
+    "(falling back to the single largest component when nothing overlaps the hint, "
     "or when no hint is given) -- a content-aware selection (T-0272 round 4) that supersedes "
     "the original hard 'outside this frame's own keypoint bbox is background' clip, which could "
     "zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. "

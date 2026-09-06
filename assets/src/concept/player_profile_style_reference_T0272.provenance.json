@@ -1,0 +1,18 @@
+{
+  "card": "T-0272",
+  "round": 4,
+  "generator": "assets/src/character/derive_profile_style_reference_T0272.py",
+  "source_file": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "source_card": "T-0209",
+  "source_sha256": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "source_panel_box": [
+    819,
+    256,
+    1024,
+    512
+  ],
+  "extraction_method": "border-connected tolerant Oklab flood (char_gen.cutout.border_flood_background_mask, tolerance=0.03) to detect the panel's own background, largest-connected-component selection to isolate the figure from the panel's own text-label artifact, every non-figure pixel forced to solid black, cropped to the figure's own bbox + 6px margin (clamped to the source panel's extent).",
+  "model_hash": "N/A -- deterministic crop/cleanup of an already-generated, already-provenanced source (see player_character_concept_sheet_v1.provenance.json for the original generation's model_hash); no new model inference performed by this script",
+  "license": "inherits the source concept sheet's own licence -- no new generation",
+  "note": "NOT a costume match: this panel is the sheet's grey/tan tactical-variant costume tier, not the green cloth-coat tier -- direct visual inspection of the full sheet (see ARM_PROFILE_ATTEMPT_LOG_T0272.md) found every green-coat panel on it is a pure front view, so no profile-angle green reference exists anywhere on this sheet to crop. What this panel does carry is a genuine, unambiguous side profile in the same render style as the rest of the sheet (unlike T-0273's anonymous real-photograph references), already facing right to match pose_rig_profile_T0272.FACING -- a same-style pose/framing reference, tested as an alternative secondary IP-Adapter input to T-0273's photographic set."
+}

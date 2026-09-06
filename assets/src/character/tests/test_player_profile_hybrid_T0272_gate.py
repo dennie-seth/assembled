@@ -65,6 +65,16 @@ BACKGROUND_INDEX = 0
 MIN_BACKGROUND_FRACTION = 0.65
 MIN_FOREGROUND_PIXELS = 50
 
+# Round 4 generalized char_gen.cutout to keep every connected component that
+# overlaps the keypoints hint, not reduce to a single blob (a real figure
+# routinely splits into several parts -- a limb or head separated from the
+# torso by a background-coloured outline seam). Measured directly against
+# the already-promoted player_idle_sheet_hybrid_T0252.png, every one of its
+# 9 cells is 3 or 4 components; this ceiling keeps a generous buffer above
+# that measured reality while still catching genuine clutter (which would
+# blow the count up far higher than a real multi-part figure ever does).
+MAX_FOREGROUND_COMPONENTS = 6
+
 # Animation-only fields that must NEVER appear on a static keyframe's
 # provenance -- see this module's own docstring ("read before editing").
 FORBIDDEN_ANIMATION_FIELDS = (
@@ -245,20 +255,24 @@ def test_silhouette_not_erased() -> None:
     )
 
 
-def test_foreground_forms_a_single_connected_blob() -> None:
+def test_foreground_component_count_is_bounded() -> None:
     """No disconnected background clutter may survive alongside the
-    character. Round 4 generalized the cutout (`char_gen.cutout`) away from
-    a hard keypoint-bbox clip -- a legitimately shifted figure (a stacked
-    profile reference pulling the pose off its own rig) is no longer
-    required to sit inside the profile rig's own keypoint bbox, so this gate
-    no longer asserts a position; it asserts the shape invariant
-    `extract_foreground_mask` actually guarantees instead: every surviving
-    foreground pixel belongs to the ONE connected blob the cutout selected,
-    wherever in the frame it landed."""
+    character. Round 4 generalized the cutout (`char_gen.cutout`) to keep
+    EVERY connected component that overlaps the keypoints hint, not reduce
+    to a single blob -- the single-best-component selection it replaced was
+    caught silently dropping real figure pixels on 6 of T-0252's 9 already-
+    promoted cells (up to 161 of 455px on the worst one), because a real
+    figure routinely splits into several parts (a limb or head separated
+    from the torso by a background-coloured outline seam). This gate can no
+    longer require exactly one component; it keeps the intent of the
+    original check -- residual clutter would blow the component count up far
+    beyond what a real multi-part figure ever produces -- as a generous
+    upper bound measured against that same anchor sheet (3-4 components per
+    cell) instead of an exact count."""
     arr = np.array(Image.open(KEYFRAME_PATH))
     fg = arr != BACKGROUND_INDEX
     _, count = label_foreground_components(fg)
-    assert count <= 1, (
-        f"keyframe: foreground splits into {count} disconnected components -- residual "
-        "background clutter survived cutout alongside the character"
+    assert count <= MAX_FOREGROUND_COMPONENTS, (
+        f"keyframe: foreground splits into {count} disconnected components (ceiling "
+        f"{MAX_FOREGROUND_COMPONENTS}) -- residual background clutter likely survived cutout"
     )
