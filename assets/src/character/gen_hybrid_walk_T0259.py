@@ -937,6 +937,7 @@ def run_attempt(
         "beats_030_cap": beats_030_cap,
         "beats_arm_c_benchmark": arm_c_fields["beats_arm_c_benchmark"],
         "arm_c_benchmark": arm_c_fields["arm_c_benchmark"],
+        "motion_class": arm_c_fields["motion_class"],
         "layout": {
             "sheet_px": [SHEET_W, SHEET_H],
             "cell_px": FINAL_CELL_PX,

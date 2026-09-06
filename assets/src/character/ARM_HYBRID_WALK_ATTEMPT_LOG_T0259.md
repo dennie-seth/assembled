@@ -39,9 +39,11 @@ identity keyframe generated first, rather than reskinning the front view." Per t
 acceptance criteria, this is reported as a finding rather than forced or faked (no squash/shear/
 mirror of the front view was attempted) -- the profile view is out of scope for T-0259 and should
 be its own card if wanted, seeded by this finding.
+| 5 | 27182 | 0.3283-0.4732 | FAIL | no | 819.9 | no | T-0259 improvement pass: frame-0 contact pose fix + wider stride/knee/arm amplitudes + leg cross, front-facing (profile probed and reported as its own finding) |
 | 6 | 27182 | 0.2119-0.3752 | FAIL | no | 801.8 | no | T-0259 improvement pass, calibrated: STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.05, frame-0 contact fix, front-facing |
 | 7 | 27182 | 0.1607-0.3398 | FAIL | no | 807.9 | no | T-0259 calibration: same amplitudes as attempt 6 (STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.05), denoise lowered 0.45->0.30 to test whether tighter anchor conformity reduces the independent-chain noise floor observed in attempts 5-6 |
 | 8 | 27182 | 0.1086-0.3020 | FAIL | no | 799.1 | no | T-0259 final DL-21 calibration: STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.02, denoise 0.45->0.24, targeting the 3 remaining recoil->passing pairs that failed at denoise 0.30 |
+| 5 (reuse, 2026-09-07) | 27182 | 0.1089-0.9510 | FAIL | no | 219.3 | no | Not a new numbered attempt -- reused attempt slot 5's scratch directory (per DL-21's own precedent, a slot is a directory, not a permanent identity) to re-test the CROSS=0.14 restoration at attempt-8's denoise (0.24) after freeing VRAM. Distinguished from the row above labelled plain "5" (2026-08-31's full attempt-5 amplitude test, 0.30/0.18/0.20/0.14 STRIDE/KNEE/ARM/CROSS) by this later date, since both used the same slot. Diagnosed the cutout foreground-selection defect (see the 2026-09-07 section below) -- not a calibration result. |
 
 ## 2026-08-31 improvement pass -- DL-21 budget exhausted, one pair short (summary)
 
@@ -57,6 +59,7 @@ last one this card can run without a human/board decision to grant more budget.
 | Attempt | STRIDE / KNEE / ARM / CROSS | Denoise | Frame-delta range | Pairs over 0.30 |
 |---|---|---|---|---|
 | 4 (pre-existing) | 0.145 / 0.085 / 0.09 / (none) | 0.45 | 0.034-0.253 | 0/8 (motion barely visible) |
+| 5 | 0.30 / 0.18 / 0.20 / 0.14 | 0.45 | 0.328-0.473 | 8/8 |
 | 6 | 0.22 / 0.13 / 0.15 / 0.05 | 0.45 | 0.212-0.375 | 6/8 |
 | 7 | 0.22 / 0.13 / 0.15 / 0.05 | 0.30 | 0.161-0.340 | 3/8 |
 | 8 | 0.22 / 0.13 / 0.15 / 0.02 | 0.24 | **0.109-0.302** | **1/8** |
@@ -323,4 +326,44 @@ finding, before any further DL-21 attempt is spent on this card's own amplitude/
 calibration** -- further tuning of STRIDE/KNEE/ARM/CROSS or denoise cannot fix a cutout-stage
 defect, and this session's data (identical STRIDE/KNEE/ARM, only CROSS/denoise differing from a
 historically-closest-to-passing baseline) is strong enough evidence to stop calibrating blind.
-| 5 | 27182 | 0.1089-0.9510 | FAIL | no | 219.3 | no |  |
+
+## 2026-09-07 (continued) -- two reviewer-flagged fixes, no new generation
+
+Per the last verdict, two concrete defects in this branch's own code and docs were fixed this
+session -- neither requires or justifies spending a DL-21 attempt, and no new ComfyUI generation
+was run (the diagnosed blocker is still `cutout.py`, unchanged, per the section above).
+
+**1. `motion_class` was computed but dropped before reaching the provenance sidecar.**
+`run_attempt` already calls `apply_arm_c_benchmark_fields({}, ratios, motion_class=MOTION_CLASS)`
+and uses the returned dict correctly to pick `MAX_FRAME_DELTA_RATIO` internally, but the final
+`provenance` dict literal cherry-picked only `frame_delta_range`/`beats_arm_c_benchmark`/
+`arm_c_benchmark` out of it and never copied `motion_class` across. `asset_gate.character` reads
+`motion_class` from the *sidecar*, not from this script's in-memory constant, to decide which cap
+(idle 0.30 vs. locomotion 0.50) a promoted sheet is graded against -- so a sheet promoted by the
+previously-committed code would have silently fallen back to the stricter idle cap for a lost
+field, not a genuine absence of classification. Fixed with a RED test first
+(`test_provenance_records_motion_class_for_chr1_cap_selection` in
+`tests/test_gen_hybrid_walk_chunking_T0266.py`, using the existing no-GPU fake-ComfyUI harness to
+run `run_attempt` end-to-end and assert `result["motion_class"] == "locomotion"`) then a one-line
+GREEN (`"motion_class": arm_c_fields["motion_class"]` added to the provenance dict). Deliberately
+NOT renaming the `beats_030_cap` field the same review flagged as misleadingly named now that it's
+bound to a 0.50 value for this motion class -- that field name is shared verbatim across
+`gen_pose_authority_idle_T0249.py`, `gen_hybrid_idle_T0252.py`, and `gen_chained_idle_T0250.py`
+(all still idle-only, correctly at 0.30) plus several already-committed provenance sidecars and
+their gate tests; renaming it is a cross-cutting standardization touching four other cards'
+generators and shipped artifacts, out of this card's scope (walk pose rig + GIF export), not a
+one-line fix. The gate test's existing `if motion_class is not None` tolerance
+(`test_motion_class_when_recorded_is_locomotion_not_something_else`) was left as-is rather than
+made mandatory, since it correctly exempts the currently-shipped sheet (attempt 4, committed
+before T-0271 existed and legitimately has no `motion_class` at all) -- tightening it now would
+fail against today's real shipped artifact, not fix anything, until a new sheet actually promotes
+with the field present.
+
+**2. The previous session's own attempt-log edit (93dc1f5) deleted real history instead of
+recording a new entry.** It reused attempt slot 5's directory for a 2026-09-07 re-test and, in
+writing that result up, removed the original 2026-08-31 attempt-5 row (0.3283-0.4732, the full
+attempt-5 amplitude test) from both this log's tables and appended the new result as a bare table
+row after a prose paragraph with no table above it -- invisible to any Markdown renderer, and a
+loss of the original data point. Restored both deleted rows verbatim, and re-added the new result
+as its own explicitly-dated row (`5 (reuse, 2026-09-07)`) in the correct table, distinguished from
+the original `5` by date and an explanatory note that both share the same reused scratch slot.

@@ -135,3 +135,19 @@ def test_full_run_in_one_chunk_when_max_frames_covers_all(out_dir: Path) -> None
     result = _run(max_frames=walk.FRAME_COUNT)
     assert result is not None
     assert len(result["frame_generation"]) == walk.FRAME_COUNT
+
+
+def test_provenance_records_motion_class_for_chr1_cap_selection(out_dir: Path) -> None:
+    """T-0271/DL-26: this sheet is a walk cycle -- locomotion, not idle --
+    and `asset_gate.character.check_character_frame_delta_cap` reads
+    `motion_class` from the *sidecar itself*, not from this script's
+    in-memory `MOTION_CLASS` constant, to pick which frame-delta cap a
+    promoted sheet is graded against. `run_attempt` already computes
+    `arm_c_fields["motion_class"]` via `apply_arm_c_benchmark_fields` to get
+    `MAX_FRAME_DELTA_RATIO` right internally, but was dropping it before it
+    ever reached the returned/written provenance dict -- so a future
+    promoted sheet would silently fall back to the stricter idle cap (0.30)
+    for a lost field, not because it was genuinely unclassified."""
+    result = _run(max_frames=walk.FRAME_COUNT)
+    assert result is not None
+    assert result["motion_class"] == walk.MOTION_CLASS == "locomotion"
