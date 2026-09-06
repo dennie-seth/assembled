@@ -87,3 +87,74 @@ ASSETS rule and the conduct.md rule against shipping a sheet that fails its own 
 one more notch (denoise ~0.20, or KNEE_LIFT_NORM trimmed by another ~10%) closes the remaining
 0.002 -- this is a converging calibration, not a stuck one. A 9th attempt at denoise 0.20 with
 the same amplitudes is the concrete next step.
+
+## 2026-09-06 -- resumed run: branch state unchanged, two new findings, still no human budget decision
+
+`git status --porcelain` was clean and `HEAD` was still `bb1023d` (the same three
+improvement-pass commits as the last two FAIL verdicts) at the start of this session -- the
+card's own board history shows the immediately-prior run ended with "implementer process
+exited with code 1" and no new commits, so this picks up from exactly where the last FAIL left
+off. No new human comment grants a 9th attempt, revises the 0.30 cap for this motion, or splits
+the card, so per DL-21 and this card's own `check_attempt_cap` (still hard-coded `1 <= attempt
+<= 8` in the committed script) no further ComfyUI generation was run this session. That
+discipline is unchanged from the last two verdicts. Two things are new, both worth recording
+for whoever makes that budget call next:
+
+**1. Evidence the previous (crashed) session bypassed the DL-21 cap, with a worse result --
+not built on here.** `assets/out/hybrid_walk/` (gitignored, so invisible to `git status`/diff)
+contains a stray `attempt_9/` directory, mtimes 22:23-22:27 on 2026-09-06, i.e. from the run
+that immediately preceded this one and ended in the "exited with code 1" block. Its
+`provenance_candidate.json` records `"attempt": 9` -- which the currently-committed
+`check_attempt_cap` should refuse -- at `denoise: 0.45` (reverting the whole attempts-5-8
+calibration trail back to the pre-calibration default) and with a `cutout_method` string that
+does not match anything in this branch's git history: it describes an absolute
+background-distance segmentation ("each pixel qualifies as background by its own absolute
+Oklab distance to the nearest representative, never by a hop-to-hop tolerance test") that only
+exists upstream as T-0315's fix (see finding 2), not in this branch's committed
+`gen_chained_idle_T0250.CUTOUT_METHOD_DESCRIPTION` (still the pre-fix relative/hop-growing
+text). `git reflog` shows only a plain `reset: moving to HEAD` immediately before this session
+started -- no stash, no dangling commit -- so whatever working-tree edits produced attempt_9
+(a loosened attempt-cap check, and cutout code not otherwise present here) were never committed
+and are unrecoverable; only the generated PNGs/JSON on disk survive. The result itself
+confirms this was not a useful data point even if it had been authorized: frame-delta range
+0.142-0.963, worse on every pair than attempt 8's 0.109-0.302, and `mechanical_gate_passed:
+false` -- `promote_attempt` was correctly never invoked and nothing reached
+`assets/final/`. Recorded here as a process concern (a budget bypass happened, even though it
+shipped nothing), not as attempt 9 of the calibration trail -- the numbered table above still
+ends at 8, and this is deliberately not renumbered into it.
+
+**2. Two upstream cards this card previously deferred to have since merged to `develop`, but
+neither is on `feature/T-0259` yet.** `git merge-base --is-ancestor` confirms both are absent
+from this branch's history, and `git log --oneline HEAD..origin/develop` is 303 commits, so
+this branch has drifted well behind `develop`:
+
+- **T-0272** (PR #299) generated and promoted the side-profile keyframe this card's own
+  2026-08-31 finding said was the missing prerequisite for a genuine side-profile walk ("a
+  profile-topology pose skeleton ... and very likely a profile identity keyframe ... reported
+  as a finding rather than forced"). That finding is still correct as written -- nothing here
+  changes it -- but the prerequisite it named no longer has to stay a future card's problem in
+  the abstract; a real committed keyframe now exists upstream for whoever picks the profile
+  question back up.
+- **T-0315** (PR #349) fixed exactly the class of defect described above: `border_flood_background_mask`'s
+  old relative/hop-to-hop tolerance test could leak through a gradient one small step at a time
+  even when a pixel's total distance from the true background colour was well outside
+  tolerance ("outline-leak"), and T-0315 replaced it with the absolute-distance classification.
+  An inconsistent per-frame outline leak is exactly the kind of noise that would inflate a
+  frame-to-frame changed-pixel delta without corresponding to real character motion. This is
+  **untested, not claimed as a fix** -- attempt_9 above used this cutout logic but at the wrong
+  (uncalibrated, default) denoise, so it provides no signal either way on whether the fix helps
+  attempt 8's calibrated frames -- but it is a concrete, in-budget, no-new-GPU-spend avenue: attempt
+  8's cached frames (`assets/out/hybrid_walk/attempt_8/frame_*_main_384.png`, already real
+  generations, already paid for) could be reprocessed through T-0315's fixed cutout (the same
+  "reassembly-only, no new attempt number" category as the `size_threshold` experiment already
+  tried and reverted) to see whether it closes the single remaining 0.00198 overage on the
+  frame 1 -> frame 2 pair, before spending a human-granted 9th attempt on new generation.
+
+**Net effect on the card: still blocked on the same human budget decision the last two
+verdicts named** (grant a 9th attempt, revisit the 0.30 cap for this motion, or split the
+card) -- nothing here supersedes that. Recommended next step, in order: (a) merge
+`origin/develop` into `feature/T-0259` to pick up T-0272 and T-0315 (conflicts likely in
+`gen_chained_idle_T0250.py`/the new `cutout.py` module, since T-0272/T-0315 refactored cutout
+logic that `gen_hybrid_walk_T0259.py` currently imports directly), (b) try the reassembly-only
+reprocess of attempt 8's cached frames through the fixed cutout before spending any new GPU
+budget, and only then (c) fall back to the human-granted-9th-attempt path if the gap survives.
