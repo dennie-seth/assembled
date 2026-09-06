@@ -174,6 +174,47 @@ def test_invert_reference_for_conditioning_flips_rgb_channels(tmp_path) -> None:
     assert out.getpixel((0, 0)) == (245, 235, 225)
 
 
+def test_append_attempt_log_row_matches_the_committed_header_column_count(
+    tmp_path, monkeypatch
+) -> None:
+    """Discovered while writing up round 3: the committed attempt log's own
+    header (`ARM_PROFILE_ATTEMPT_LOG_T0272.md`) has 11 columns including
+    "Pose LoRA weight", but the row this function wrote for every round-3
+    attempt (9-16) only ever had 10 cells -- pose_lora_weight was missing
+    from the row entirely, silently shifting every later column (IP-Adapter
+    weight, GPU seconds, gate, promoted) one slot left of its own header."""
+    log_path = tmp_path / "ARM_PROFILE_ATTEMPT_LOG_T0272.md"
+    monkeypatch.setattr(gen, "ATTEMPT_LOG_PATH", log_path)
+    provenance = {
+        "attempt": 99,
+        "seed": 1,
+        "controlnet_strength": 1.0,
+        "controlnet_end_percent": 1.0,
+        "style_lora_weight": 0.7,
+        "identity_lora_weight": 0.5,
+        "pose_lora_weight": 0.6,
+        "ip_adapter_weight": 0.6,
+        "gpu_seconds": 10.0,
+        "mechanical_gate_passed": True,
+    }
+    gen.append_attempt_log(provenance, notes="x")
+    header_line = next(
+        line for line in log_path.read_text().splitlines() if line.startswith("| Attempt")
+    )
+    row_line = next(
+        line
+        for line in log_path.read_text().splitlines()
+        if line.startswith("|") and line.split("|")[1].strip() == "99"
+    )
+    header_cols = [c.strip() for c in header_line.strip("|").split("|")]
+    row_cols = [c.strip() for c in row_line.strip("|").split("|")]
+    assert len(row_cols) == len(header_cols), (
+        f"row has {len(row_cols)} cells, header has {len(header_cols)}: {row_cols!r}"
+    )
+    pose_lora_col = header_cols.index("Pose LoRA weight")
+    assert row_cols[pose_lora_col] == "0.6"
+
+
 def test_check_attempt_cap_allows_a_fresh_round_3_budget() -> None:
     """Round 3 gets its own fresh 8-attempt DL-21 budget on top of rounds
     1-2's spent 1..8 -- attempts 9..16, not a re-run of 1..8."""
