@@ -367,3 +367,63 @@ def test_keypoints_to_coco_list_is_sorted_by_joint() -> None:
     points = pose_rig_walk_T0259.walk_keypoints_for_frame(1, n)
     coco = pose_rig_walk_T0259.keypoints_to_coco_list(points)
     assert [entry["joint"] for entry in coco] == list(range(18))
+
+
+# ---------------------------------------------------------------------------
+# Cutout hint region -- a per-frame keypoint bbox is too narrow for a gait
+# cycle's own passing/cross frames (see walk_cycle_hint_keypoints docstring).
+# ---------------------------------------------------------------------------
+
+
+def _bbox(points: dict) -> tuple[float, float, float, float]:
+    xs = [x for x, _ in points.values()]
+    ys = [y for _, y in points.values()]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def test_walk_cycle_hint_keypoints_bbox_covers_every_frame() -> None:
+    """The union hint's own bbox must contain every individual frame's
+    bbox -- it exists specifically because a single passing frame's own
+    keypoints (legs pulled together by CROSS_EXTENT_NORM) draw a narrower
+    box than the gait cycle's actual envelope."""
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    union_x0, union_x1, union_y0, union_y1 = _bbox(
+        pose_rig_walk_T0259.walk_cycle_hint_keypoints(n)
+    )
+    for i in range(n):
+        fx0, fx1, fy0, fy1 = _bbox(pose_rig_walk_T0259.walk_keypoints_for_frame(i, n))
+        assert union_x0 <= fx0 and fx1 <= union_x1, f"frame {i} x-extent escapes the union bbox"
+        assert union_y0 <= fy0 and fy1 <= union_y1, f"frame {i} y-extent escapes the union bbox"
+
+
+def test_walk_cycle_hint_keypoints_is_strictly_wider_than_a_cross_frame() -> None:
+    """A passing/cross frame's own bbox is measurably narrower in x than the
+    full cycle's envelope -- the exact gap `extract_foreground_mask`'s
+    per-frame hint was silently dropping most of the rendered figure into
+    on cross frames (T-0259, empirically measured against every real
+    generated attempt: the single largest foreground component's overlap
+    with a per-frame hint sat at 8-46% on cross frames vs >90% once the
+    hint is widened to the cycle's own union bbox)."""
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    union_x0, union_x1, _, _ = _bbox(pose_rig_walk_T0259.walk_cycle_hint_keypoints(n))
+    union_width = union_x1 - union_x0
+    narrowest_frame_width = min(
+        _bbox(pose_rig_walk_T0259.walk_keypoints_for_frame(i, n))[1]
+        - _bbox(pose_rig_walk_T0259.walk_keypoints_for_frame(i, n))[0]
+        for i in range(n)
+    )
+    assert narrowest_frame_width < union_width
+
+
+def test_walk_cycle_hint_keypoints_is_deterministic() -> None:
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    a = pose_rig_walk_T0259.walk_cycle_hint_keypoints(n)
+    b = pose_rig_walk_T0259.walk_cycle_hint_keypoints(n)
+    assert a == b
+
+
+def test_walk_cycle_hint_keypoints_covers_every_frame_point_count() -> None:
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    hint = pose_rig_walk_T0259.walk_cycle_hint_keypoints(n)
+    joints_per_frame = len(pose_rig_walk_T0259.walk_keypoints_for_frame(0, n))
+    assert len(hint) == joints_per_frame * n
