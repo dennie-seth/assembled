@@ -11,6 +11,7 @@ import { writeRunState, clearRunState } from "./runState.js";
 import { probeLivenessMtime, DEFAULT_LIVENESS_PROBE_INTERVAL_MS } from "./filesystemLiveness.js";
 import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
+import { regenerateApprovalLedgerIfChanged } from "./approvalLedgerRegen.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
 import {
   materializePlannerFileView,
@@ -1491,6 +1492,8 @@ export class RunOrchestrator {
   }
 
   async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false, effectiveAgent = task.agent ?? "generic") {
+    await this._regenerateApprovalLedger(taskId, worktreeDir);
+
     let commit;
     try {
       await this.git.commitAll({
@@ -1594,6 +1597,34 @@ export class RunOrchestrator {
     // thing to say, and is not parked on anything.
     if (needsApproval(preSync)) {
       await this._appendComment(taskId, "assembled-board", parkedForApprovalComment(taskId));
+    }
+  }
+
+  /**
+   * Refreshes the committed approval ledger from the live store before this card's branch is
+   * pushed (T-0313) -- see approvalLedgerRegen.js for the write-skip and merge-conflict rules.
+   * `_handlePass` calls this before `commitAll`, so a changed ledger simply rides along in the
+   * same commit; nothing here pushes or commits on its own.
+   *
+   * A failure here (a locked db, a full disk, a malformed existing ledger) must never cost an
+   * otherwise-good PASS: logged loudly and swallowed, same fail-safe posture as
+   * `_abortMergeBestEffort`. The freshness gate in checkApprovalProvenanceDrift.js is what
+   * actually catches a ledger that silently stops getting refreshed.
+   */
+  async _regenerateApprovalLedger(taskId, worktreeDir) {
+    try {
+      const tasks = await this.store.list();
+      const result = await regenerateApprovalLedgerIfChanged({ worktreeDir, tasks });
+      if (result.changed) {
+        console.log(`Board: regenerated approval ledger for ${taskId} (${result.path})`);
+      } else if (result.skipped) {
+        console.error(
+          `Board: approval ledger regeneration skipped for ${taskId} -- live store returned no tasks; ` +
+            `leaving the committed ledger untouched.`
+        );
+      }
+    } catch (err) {
+      console.error(`Board: approval ledger regeneration failed for ${taskId}, pushing without it: ${err.message}`);
     }
   }
 
