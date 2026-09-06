@@ -168,15 +168,27 @@ POSE_LORA_TRIGGER_TOKEN = "sbrutalistprofilepose"
 # and forbids desaturation, since T-0259's attempt 8 found low denoise can wash
 # the costume colour out even when the pose reads correctly. Carries both
 # LoRAs' trigger tokens -- costume (TRIGGER_TOKEN) and pose (POSE_LORA_TRIGGER_TOKEN).
-PROFILE_PROMPT = (
-    f"{TRIGGER_TOKEN}, {POSE_LORA_TRIGGER_TOKEN}, pixel art side-profile base pose, "
-    f"single standing figure seen from the side, facing {FACING}, flat side-on "
-    "orthographic view, exactly one figure matching the pose skeleton exactly, "
-    "institutional green coat, hooded, white gloves, same uniform and same equipment "
-    "loadout, upright standing posture, solid flat black background, value-separated "
-    "pixel art silhouette, clean readable pixel outline, vivid saturated green costume "
-    "colour, no perspective, no vanishing point, no text, no UI"
-)
+
+
+def build_positive_prompt(include_pose_trigger_token: bool = True) -> str:
+    """Round 3, Test A's isolation: round 2 could not separate the pose
+    LoRA's own learned weights from the fact that its trigger token was
+    always injected into the prompt whenever the LoRA was stacked at all,
+    independent of weight (`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s own
+    follow-up #1). `include_pose_trigger_token=False` controls for that."""
+    pose_token = f"{POSE_LORA_TRIGGER_TOKEN}, " if include_pose_trigger_token else ""
+    return (
+        f"{TRIGGER_TOKEN}, {pose_token}pixel art side-profile base pose, "
+        f"single standing figure seen from the side, facing {FACING}, flat side-on "
+        "orthographic view, exactly one figure matching the pose skeleton exactly, "
+        "institutional green coat, hooded, white gloves, same uniform and same equipment "
+        "loadout, upright standing posture, solid flat black background, value-separated "
+        "pixel art silhouette, clean readable pixel outline, vivid saturated green costume "
+        "colour, no perspective, no vanishing point, no text, no UI"
+    )
+
+
+PROFILE_PROMPT = build_positive_prompt(include_pose_trigger_token=True)
 PROFILE_NEGATIVE = (
     IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric front-facing pose, "
     "three-quarter view, back view, both shoulders equally visible, washed out colour, "
@@ -202,6 +214,8 @@ MAIN_SAVE_NODE_ID = "23"
 DESCENT_NODE_ID = "24"
 CELL_SAVE_NODE_ID = "25"
 POSE_LORA_NODE_ID = "26"
+SECONDARY_CONCEPT_IMAGE_NODE_ID = "27"
+SECONDARY_IPADAPTER_NODE_ID = "28"
 
 
 def build_graph(
@@ -217,12 +231,26 @@ def build_graph(
     *,
     identity_lora_name: str = IDENTITY_LORA_NAME,
     pose_lora_name: str = POSE_LORA_NAME,
+    include_pose_trigger_token: bool = True,
+    enable_ipadapter: bool = True,
+    secondary_concept_filename: str | None = None,
+    secondary_ipadapter_weight: float = 0.6,
 ) -> dict:
     """The full §24-e stack, extended with T-0274's pose LoRA chained on the
     end: LoraLoader(style) -> LoraLoader(identity, costume) ->
     LoraLoader(pose, chained) -> IPAdapterAdvanced(concept) -> KSampler, with
     ControlNet (this card's profile-topology skeleton) conditioning the
     positive/negative prompt pair. One 384x384 generation, batch size 1.
+
+    Round 3 isolation knobs (`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s own
+    follow-ups): `include_pose_trigger_token=False` (Test A) strips the pose
+    LoRA's trigger token from the encoded prompt independent of its weight;
+    `enable_ipadapter=False` (Test B) removes IP-Adapter and its concept-image
+    input from the graph entirely (not merely a zero weight) and wires the
+    sampler's model straight off the end of the LoRA chain;
+    `secondary_concept_filename` (Test D) chains a second IPAdapterAdvanced
+    node after the first, conditioning on a genuine side-profile reference in
+    addition to the front concept sheet -- untested before this card.
     """
     g: dict = {}
     g[CHECKPOINT_NODE_ID] = {
@@ -265,7 +293,10 @@ def build_graph(
     }
     g[POSITIVE_PROMPT_NODE_ID] = {
         "class_type": "CLIPTextEncode",
-        "inputs": {"text": PROFILE_PROMPT, "clip": [POSE_LORA_NODE_ID, 1]},
+        "inputs": {
+            "text": build_positive_prompt(include_pose_trigger_token),
+            "clip": [POSE_LORA_NODE_ID, 1],
+        },
     }
     g[NEGATIVE_PROMPT_NODE_ID] = {
         "class_type": "CLIPTextEncode",
@@ -287,28 +318,54 @@ def build_graph(
             "end_percent": controlnet_end,
         },
     }
-    g[CONCEPT_IMAGE_NODE_ID] = {
-        "class_type": "LoadImage",
-        "inputs": {"image": concept_filename},
-    }
-    g[IPADAPTER_LOADER_NODE_ID] = {
-        "class_type": "IPAdapterUnifiedLoader",
-        "inputs": {"model": [POSE_LORA_NODE_ID, 0], "preset": IPADAPTER_PRESET},
-    }
-    g[IPADAPTER_NODE_ID] = {
-        "class_type": "IPAdapterAdvanced",
-        "inputs": {
-            "model": [IPADAPTER_LOADER_NODE_ID, 0],
-            "ipadapter": [IPADAPTER_LOADER_NODE_ID, 1],
-            "image": [CONCEPT_IMAGE_NODE_ID, 0],
-            "weight": ipadapter_weight,
-            "weight_type": "linear",
-            "combine_embeds": "concat",
-            "start_at": 0.0,
-            "end_at": 1.0,
-            "embeds_scaling": "V only",
-        },
-    }
+
+    model_source = [POSE_LORA_NODE_ID, 0]
+    if enable_ipadapter:
+        g[CONCEPT_IMAGE_NODE_ID] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": concept_filename},
+        }
+        g[IPADAPTER_LOADER_NODE_ID] = {
+            "class_type": "IPAdapterUnifiedLoader",
+            "inputs": {"model": model_source, "preset": IPADAPTER_PRESET},
+        }
+        g[IPADAPTER_NODE_ID] = {
+            "class_type": "IPAdapterAdvanced",
+            "inputs": {
+                "model": [IPADAPTER_LOADER_NODE_ID, 0],
+                "ipadapter": [IPADAPTER_LOADER_NODE_ID, 1],
+                "image": [CONCEPT_IMAGE_NODE_ID, 0],
+                "weight": ipadapter_weight,
+                "weight_type": "linear",
+                "combine_embeds": "concat",
+                "start_at": 0.0,
+                "end_at": 1.0,
+                "embeds_scaling": "V only",
+            },
+        }
+        model_source = [IPADAPTER_NODE_ID, 0]
+
+        if secondary_concept_filename is not None:
+            g[SECONDARY_CONCEPT_IMAGE_NODE_ID] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": secondary_concept_filename},
+            }
+            g[SECONDARY_IPADAPTER_NODE_ID] = {
+                "class_type": "IPAdapterAdvanced",
+                "inputs": {
+                    "model": model_source,
+                    "ipadapter": [IPADAPTER_LOADER_NODE_ID, 1],
+                    "image": [SECONDARY_CONCEPT_IMAGE_NODE_ID, 0],
+                    "weight": secondary_ipadapter_weight,
+                    "weight_type": "linear",
+                    "combine_embeds": "concat",
+                    "start_at": 0.0,
+                    "end_at": 1.0,
+                    "embeds_scaling": "V only",
+                },
+            }
+            model_source = [SECONDARY_IPADAPTER_NODE_ID, 0]
+
     g[LATENT_NODE_ID] = {
         "class_type": "EmptyLatentImage",
         "inputs": {"width": GEN_PX, "height": GEN_PX, "batch_size": 1},
@@ -316,7 +373,7 @@ def build_graph(
     g[SAMPLER_NODE_ID] = {
         "class_type": "KSampler",
         "inputs": {
-            "model": [IPADAPTER_NODE_ID, 0],
+            "model": model_source,
             "positive": [CONTROLNET_NODE_ID, 0],
             "negative": [CONTROLNET_NODE_ID, 1],
             "latent_image": [LATENT_NODE_ID, 0],
@@ -359,8 +416,15 @@ def build_graph(
 
 
 def check_attempt_cap(attempt: int) -> None:
-    if not (1 <= attempt <= 8):
-        raise SystemExit("attempt cap is 8 per round (DL-21) -- refusing to run a 9th attempt")
+    """DL-21's cap is 8 attempts per round. Round 1 (attempts 1-4) and round 2
+    (attempts 5-8) spent the first budget; round 3 (isolation + promote, see
+    the card's own "ROUND 3" section) gets a second, fresh 8-attempt budget,
+    attempts 9-16 -- not a re-run of 1-8."""
+    if not (1 <= attempt <= 16):
+        raise SystemExit(
+            "attempt cap is 8 per round (DL-21); round 3 adds a second 8-attempt budget on "
+            "top of round 1-2's spent 1..8 (attempts 9..16) -- refusing to run a 17th attempt"
+        )
 
 
 ATTEMPT_LOG_PATH = REPO_ROOT / "assets" / "src" / "character" / "ARM_PROFILE_ATTEMPT_LOG_T0272.md"
@@ -507,6 +571,11 @@ def run_attempt(
     style_lora_weight: float,
     identity_lora_weight: float,
     pose_lora_weight: float,
+    *,
+    include_pose_trigger_token: bool = True,
+    enable_ipadapter: bool = True,
+    secondary_concept_path: Path | None = None,
+    secondary_ipadapter_weight: float = 0.6,
 ) -> dict:
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
@@ -550,9 +619,20 @@ def run_attempt(
     identity_reference_path = out_dir / "identity_reference_crop.png"
     crop_identity_reference(CONCEPT_SHEET_PATH, identity_reference_path)
 
+    secondary_hash = None
+    secondary_filename = None
+    if secondary_concept_path is not None:
+        if not secondary_concept_path.exists():
+            raise RuntimeError(
+                f"secondary IP-Adapter reference not found: {secondary_concept_path}"
+            )
+        secondary_hash = sha256_of(secondary_concept_path)
+
     t0 = time.monotonic()
     skeleton_filename = upload_image(skeleton_path)
     concept_filename = upload_image(identity_reference_path)
+    if secondary_concept_path is not None:
+        secondary_filename = upload_image(secondary_concept_path)
     graph = build_graph(
         seed=seed,
         concept_filename=concept_filename,
@@ -563,6 +643,10 @@ def run_attempt(
         style_lora_weight=style_lora_weight,
         identity_lora_weight=identity_lora_weight,
         pose_lora_weight=pose_lora_weight,
+        include_pose_trigger_token=include_pose_trigger_token,
+        enable_ipadapter=enable_ipadapter,
+        secondary_concept_filename=secondary_filename,
+        secondary_ipadapter_weight=secondary_ipadapter_weight,
     )
     prompt_id = submit_prompt(graph)
     info = wait_for_completion(prompt_id, timeout_s=300)
@@ -617,13 +701,15 @@ def run_attempt(
         "pose_lora_license": "CreativeML OpenRAIL++-M",
         "pose_lora_provenance": str(POSE_LORA_PROVENANCE_PATH.relative_to(REPO_ROOT)),
         "pose_lora_trigger_token": POSE_LORA_TRIGGER_TOKEN,
-        "ip_adapter": IPADAPTER_NAME,
-        "ip_adapter_weight": ipadapter_weight,
+        "pose_lora_trigger_token_in_prompt": include_pose_trigger_token,
+        "ipadapter_enabled": enable_ipadapter,
+        "ip_adapter": IPADAPTER_NAME if enable_ipadapter else None,
+        "ip_adapter_weight": ipadapter_weight if enable_ipadapter else None,
         "ip_adapter_reference_crop_box": list(IDENTITY_REFERENCE_CROP_BOX),
         "controlnet": CONTROLNET_NAME,
         "controlnet_strength": controlnet_strength,
         "controlnet_end_percent": controlnet_end,
-        "prompt": PROFILE_PROMPT,
+        "prompt": build_positive_prompt(include_pose_trigger_token),
         "negative_prompt": PROFILE_NEGATIVE,
         "pose_source": (
             "script (assets/src/character/pose_rig_profile_T0272.py) -- a newly authored "
@@ -669,13 +755,26 @@ def run_attempt(
         "layout": {"cell_px": FINAL_CELL_PX},
         "palette_source": "assets/final/palette/home_palette.json",
     }
+    if secondary_concept_path is not None:
+        provenance["secondary_ip_adapter_reference"] = {
+            "path": str(secondary_concept_path.relative_to(REPO_ROOT)),
+            "hash": secondary_hash,
+            "weight": secondary_ipadapter_weight,
+            "note": (
+                "T-0273's approved side-profile reference set, stacked via a second "
+                "IPAdapterAdvanced node chained after the front concept sheet's -- explicitly "
+                "NOT a costume match (anonymous gait/silhouette reference); round 3 Test D"
+            ),
+        }
     (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
     return provenance
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--attempt", type=int, help="attempt number, 1..8 (DL-21 cap)")
+    parser.add_argument(
+        "--attempt", type=int, help="attempt number, 1..16 (DL-21 cap, round 1-2 spent 1..8)"
+    )
     parser.add_argument("--seed", type=int)
     parser.add_argument("--controlnet-strength", type=float, default=1.0)
     parser.add_argument("--controlnet-end", type=float, default=1.0)
@@ -684,6 +783,28 @@ def main() -> None:
     parser.add_argument("--identity-lora-weight", type=float, default=0.50)
     parser.add_argument("--pose-lora-weight", type=float, default=0.60)
     parser.add_argument("--notes", type=str, default="")
+    parser.add_argument(
+        "--no-pose-trigger-token",
+        action="store_false",
+        dest="include_pose_trigger_token",
+        default=True,
+        help="round 3 Test A: strip the pose LoRA's trigger token from the prompt, "
+        "independent of --pose-lora-weight",
+    )
+    parser.add_argument(
+        "--disable-ipadapter",
+        action="store_true",
+        default=False,
+        help="round 3 Test B: remove IP-Adapter and its concept image from the graph entirely",
+    )
+    parser.add_argument(
+        "--secondary-concept",
+        type=str,
+        default=None,
+        help="round 3 Test D: path to a genuine side-profile reference image, stacked via a "
+        "second IPAdapterAdvanced node chained after the front concept sheet's",
+    )
+    parser.add_argument("--secondary-ipadapter-weight", type=float, default=0.6)
     parser.add_argument(
         "--promote-attempt",
         type=int,
@@ -712,6 +833,7 @@ def main() -> None:
 
     check_attempt_cap(args.attempt)
 
+    secondary_concept_path = Path(args.secondary_concept) if args.secondary_concept else None
     provenance = run_attempt(
         attempt=args.attempt,
         seed=args.seed,
@@ -721,6 +843,10 @@ def main() -> None:
         style_lora_weight=args.style_lora_weight,
         identity_lora_weight=args.identity_lora_weight,
         pose_lora_weight=args.pose_lora_weight,
+        include_pose_trigger_token=args.include_pose_trigger_token,
+        enable_ipadapter=not args.disable_ipadapter,
+        secondary_concept_path=secondary_concept_path,
+        secondary_ipadapter_weight=args.secondary_ipadapter_weight,
     )
     provenance["promoted"] = False
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_profile" / f"attempt_{args.attempt}"
