@@ -86,20 +86,62 @@ def _oklab_grid(rgb_uint8: np.ndarray) -> np.ndarray:
 
 
 def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarray:
-    """Boolean HxW array, True = background. Multi-source BFS seeded from
-    every border pixel, growing through 4-connected neighbours whose Oklab
-    distance to the pixel it grows *from* (not the original seed) is within
-    `tolerance` -- a tolerance-chained ("magic wand, contiguous") flood, so a
-    gradual gradient connected to the edge is swept even where no single
-    pixel is close to the border's own colour."""
+    """Boolean HxW array, True = background. T-0315: every pixel's own
+    qualifying test is its absolute Oklab distance to a small set of sampled
+    *true* border colours (every distinct colour actually present on the
+    frame's own edge) -- never a hop-to-hop tolerance test against whatever
+    neighbour it happened to grow from. Background is still exactly the
+    border-connected region of qualifying pixels (a real figure that is
+    merely the same shade as the background *somewhere else in the frame*,
+    without itself touching the edge through a connected qualifying path,
+    must not be swept -- verified against every promoted sheet this module
+    already serves, not just asserted).
+
+    The previous implementation (kept in git history, not here) was a
+    tolerance-chained ("magic wand, contiguous") BFS: a pixel qualified as
+    background if it was within `tolerance` of the *neighbour it grew from*.
+    That let a long chain of small hops -- a heavy anti-aliased outline
+    stroke -- walk from the true background, through the outline, into a
+    figure's interior, even when the *direct* distance from background to
+    interior was many times `tolerance` (T-0272 round 5's own diagnosis of
+    attempt 28's lost coat colour: `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
+    "Lever 3" section). Testing every pixel against the border's own sampled
+    colours directly, instead of against its immediate predecessor, closes
+    that path: a chain of small hops can no longer accumulate into a large
+    total displacement the way repeated hop-to-hop comparison allowed, since
+    every step of the walk must independently stay close to a *real*
+    border colour, not merely close to the previous step.
+
+    A smoothly-varying background (a vignette/gradient) is still handled
+    without any special-casing: sampling from *every* border pixel, not just
+    one seed colour, means a gradient's full value range is already in the
+    sample set whenever that range is reached at the frame's own edge (the
+    common case -- a vignette darkens toward the corners, which are on the
+    border)."""
     arr = np.array(img.convert("RGB"), dtype=np.uint8)
     h, w = arr.shape[:2]
     oklab = _oklab_grid(arr)
+
+    border = np.zeros((h, w), dtype=bool)
+    border[0, :] = True
+    border[h - 1, :] = True
+    border[:, 0] = True
+    border[:, w - 1] = True
+    border_colors = np.unique(oklab[border], axis=0)
+
+    tol2 = tolerance * tolerance
+    min_dist2 = np.full((h, w), np.inf, dtype=np.float64)
+    for color in border_colors:
+        diff = oklab - color
+        dist2 = diff[..., 0] ** 2 + diff[..., 1] ** 2 + diff[..., 2] ** 2
+        np.minimum(min_dist2, dist2, out=min_dist2)
+    qualifies = min_dist2 <= tol2
+
     visited = np.zeros((h, w), dtype=bool)
     queue: deque[tuple[int, int]] = deque()
 
     def seed(y: int, x: int) -> None:
-        if not visited[y, x]:
+        if qualifies[y, x] and not visited[y, x]:
             visited[y, x] = True
             queue.append((y, x))
 
@@ -110,17 +152,13 @@ def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarr
         seed(y, 0)
         seed(y, w - 1)
 
-    tol2 = tolerance * tolerance
     while queue:
         y, x = queue.popleft()
-        cur = oklab[y, x]
         for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             ny, nx = y + dy, x + dx
-            if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx]:
-                diff = oklab[ny, nx] - cur
-                if diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2] <= tol2:
-                    visited[ny, nx] = True
-                    queue.append((ny, nx))
+            if 0 <= ny < h and 0 <= nx < w and qualifies[ny, nx] and not visited[ny, nx]:
+                visited[ny, nx] = True
+                queue.append((ny, nx))
     return visited
 
 

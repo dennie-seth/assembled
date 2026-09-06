@@ -139,33 +139,37 @@ def test_outline_leak_survives_component_selection_too() -> None:
     assert np.array_equal(mask[core_mask], np.ones(int(core_mask.sum()), dtype=bool))
 
 
-def test_background_only_gradient_is_still_all_background() -> None:
-    """Edge case: a background that is not uniform (a smooth vignette/
-    gradient) must still be classified as background in full -- sampling
-    from every border pixel (not just one seed colour) means the gradient's
-    whole value range is already present in the sample set, since the
-    gradient reaches its extremes at the frame's own edges."""
+def test_subtle_vignette_background_is_still_all_background() -> None:
+    """Edge case: a background that is not perfectly uniform (a subtle
+    vignette, corners a little darker than the centre -- the realistic case
+    for this pipeline's own "solid flat black background" renders, which are
+    never perfectly flat) must still be classified as background in full.
+    Sampling from every border pixel (not just one seed colour) means the
+    gradient's own value range is already in the sample set whenever that
+    range is small enough that a pixel anywhere in the gradient sits within
+    absolute tolerance of *some* border sample -- true here since the total
+    swing (corner to centre) is well under `CUTOUT_OKLAB_TOLERANCE`."""
     size = 64
     yy, xx = np.mgrid[0:size, 0:size]
-    # a radial vignette: bright centre fading to a darker edge, entirely
-    # within a single smooth gradient -- no separate figure at all
     dist = np.sqrt((yy - size / 2) ** 2 + (xx - size / 2) ** 2)
-    value = np.clip(60 - dist * 0.6, 4, 60).astype(np.uint8)
+    # corners (~45px from centre) at 34, centre at 40 -- a swing verified
+    # offline (Oklab distance ~0.025) to sit just under the 0.03 tolerance
+    value = np.clip(40 - dist * 0.13, 34, 40).astype(np.uint8)
     arr = np.stack([value, value, value], axis=-1)
     img = Image.fromarray(arr, mode="RGB")
 
     background = border_flood_background_mask(img, CUTOUT_OKLAB_TOLERANCE)
-    assert background.all(), "a frame that is entirely one smooth gradient has no figure at all"
+    assert background.all(), "a frame that is entirely one subtle gradient has no figure at all"
 
 
-def test_gradient_background_does_not_hide_a_real_figure() -> None:
-    """Companion to the gradient test above: a figure whose colour is far
-    from every sampled border colour must still be recovered even when the
-    background itself is a gradient, not a flat fill."""
+def test_subtle_vignette_background_does_not_hide_a_real_figure() -> None:
+    """Companion to the subtle-vignette test above: a figure whose colour is
+    far from every sampled border colour must still be recovered even when
+    the background itself is a gentle gradient, not a flat fill."""
     size = 64
     yy, xx = np.mgrid[0:size, 0:size]
     dist = np.sqrt((yy - size / 2) ** 2 + (xx - size / 2) ** 2)
-    value = np.clip(60 - dist * 0.6, 4, 60).astype(np.uint8)
+    value = np.clip(40 - dist * 0.13, 34, 40).astype(np.uint8)
     arr = np.stack([value, value, value], axis=-1)
     figure_rect = (24, 24, 40, 40)
     arr[figure_rect[1] : figure_rect[3], figure_rect[0] : figure_rect[2]] = (0, 200, 90)
@@ -176,6 +180,39 @@ def test_gradient_background_does_not_hide_a_real_figure() -> None:
     expected = np.zeros((size, size), dtype=bool)
     expected[figure_rect[1] : figure_rect[3], figure_rect[0] : figure_rect[2]] = True
     assert np.array_equal(foreground, expected)
+
+
+def test_wide_range_vignette_fails_loud_rather_than_mis_cutting() -> None:
+    """Edge case, the other named alternative: a background whose gradient
+    range is too wide to sit within absolute tolerance of anything actually
+    sampled at the border cannot be told apart from "a chain of small hops
+    into a real figure" by colour alone -- that ambiguity is exactly what
+    the old hop-chained algorithm resolved wrong (the outline-leak this card
+    fixes). Rather than silently guessing and mis-cutting a real figure the
+    way the old algorithm did, the region of a too-wide gradient that is too
+    far from anything actually sampled at the border is left classified as
+    foreground -- loud, in the sense that it survives as a real, visible
+    blob a consumer's own component-count/foreground-floor mechanical gate
+    or a human visual check can catch, rather than a silent bad cutout that
+    quietly erases real figure pixels the way the pre-fix algorithm did."""
+    size = 64
+    yy, xx = np.mgrid[0:size, 0:size]
+    dist = np.sqrt((yy - size / 2) ** 2 + (xx - size / 2) ** 2)
+    value = np.clip(60 - dist * 0.6, 4, 60).astype(np.uint8)
+    arr = np.stack([value, value, value], axis=-1)
+    img = Image.fromarray(arr, mode="RGB")
+
+    background = border_flood_background_mask(img, CUTOUT_OKLAB_TOLERANCE)
+    assert not background.all(), (
+        "a gradient wide enough that its centre sits far outside absolute tolerance of every "
+        "border sample must not be silently swept into background -- that would be exactly "
+        "the outline-leak failure mode this card fixes, just via a gradient instead of an "
+        "outline stroke"
+    )
+    assert not background[size // 2, size // 2], (
+        "the gradient's own centre (its furthest point from every border sample) must survive "
+        "as foreground, not be silently absorbed as background"
+    )
 
 
 # ── Baseline regression: every real consumer fixture, measured before the
