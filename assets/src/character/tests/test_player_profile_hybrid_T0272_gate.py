@@ -125,6 +125,18 @@ def test_keyframe_full_stack_recorded(provenance: dict) -> None:
     assert provenance.get("controlnet"), "controlnet missing"
 
 
+def test_pose_lora_stack_recorded(provenance: dict) -> None:
+    """T-0274's `player_identity_profile_v1` pose LoRA is stacked in, chained
+    after the costume identity LoRA -- checkable in provenance, not merely
+    asserted in prose (see `pose_rig_profile_T0272.py`'s own module docstring
+    and this card's finding log for why a rig-only or LoRA-only attempt is
+    not enough)."""
+    assert provenance.get("pose_lora_name") == "player_identity_profile_v1.safetensors"
+    assert provenance.get("pose_lora_hash"), "pose_lora_hash missing"
+    assert provenance.get("pose_lora_weight") is not None
+    assert provenance.get("pose_lora_trigger_token") == "sbrutalistprofilepose"
+
+
 def test_generator_field_is_bare_repo_path(provenance: dict) -> None:
     """P-7 (T-0219/T-0222): generator must be a bare resolvable repo-relative
     path, no free-text annotation suffix."""
