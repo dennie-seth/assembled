@@ -10,10 +10,10 @@ Attempts 1-4 (below) ran against `player_identity_v2` only, before `player_ident
 | 2 | 31416 | 1.5/1.0 | 0.7 | 0.5 | n/a (pre-T-0274) | 0.35 | 117.2 | PASS | no | stronger ControlNet, weaker IP-Adapter to test whether pose structure can dominate the front-facing bias. Visual verdict: identity collapses entirely -- an abstract grid of blue/yellow/white colour blocks, no recognisable human silhouette at all. Weakening IP-Adapter did not free up the pose; it just destroyed appearance coherence. |
 | 3 | 27182 | 1.0/1.0 | 0.7 | 0.5 | n/a (pre-T-0274) | 0.6 | 144.2 | PASS | no | default weights, different seed -- isolate whether attempt 1's front-facing/pale result was seed-specific. Visual verdict: wrong-subject failure (T-0218's own named failure mode) -- reads as an architectural panel/doorway with glowing readouts, not a person, profile or otherwise. |
 | 4 | 31416 | 1.0/1.0 | 0.7 | 0.2 | n/a (pre-T-0274) | 0.6 | 111.2 | PASS | no | diagnostic: sharply lowered identity LoRA weight (0.5->0.2), default controlnet/ipadapter -- testing whether the front-trained identity LoRA itself is what collapses on this profile skeleton. Visual verdict: nearly identical to attempt 1 (same seed) -- still front-facing, symmetric, boxy. Confirms the identity LoRA's weight is not the deciding factor at this seed; whatever drives the front-facing reading survives a 60% cut to identity conditioning. |
-| 5 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | PASS | no | round 2, post-T-0274: `player_identity_profile_v1` chained after `player_identity_v2`, both trigger tokens in the prompt, same seed as attempt 1 for direct comparison. Visual verdict: "wrong subject" failure -- reads as a monitor/screen framing a white-and-green bottle-like object, no human silhouette at all, not even a wrong-facing one. Qualitatively worse than attempt 1's own boxy-but-human result at the identical seed. |
-| 6 | 27182 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 33.1 | PASS | no | same stack as attempt 5, alternate seed (matches attempt 3's alt-seed choice) to test whether attempt 5's wrong-subject failure was seed-specific. Visual verdict: also wrong-subject -- a control-panel/machine face with coloured LED-like readouts, no person. Same failure class as attempt 3 at this seed, now reproduced with the pose LoRA stacked in too. |
-| 7 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.3 | 0.6 | 45.1 | PASS | no | same seed as attempts 1/5, pose LoRA weight halved (0.6->0.3) to test whether a lighter touch avoids the wrong-subject collapse. Visual verdict: near-identical to attempt 5 -- same monitor/bottle wrong-subject shape. Halving the pose LoRA's weight did not change the qualitative outcome. |
-| 8 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.05 | 0.6 | 42.1 | PASS | no | final attempt, DL-21 cap: same seed as 1/5/7, pose LoRA weight reduced to near-zero (0.05), intended to isolate whether attempts 5/7's wrong-subject failure is weight-driven or structural. Visual verdict (re-checked this pass, `main_384.png`): NOT near-identical to attempts 5/7 -- it lacks their black rectangular monitor-like frame and instead shows the same green-square head, black/white patterned upper body, olive band, white torso and teal-green legs as attempt 1, i.e. it moved back toward attempt 1's boxy-but-human silhouette rather than staying in the wrong-subject class. Note: the prompt is not a clean isolation from attempt 1 -- `PROFILE_PROMPT` (`gen_hybrid_profile_T0272.py:171-178`) always carries the `sbrutalistprofilepose` token regardless of `pose_lora_weight`, so attempt 8's prompt differs from attempt 1's even though its LoRA weight is near-zero. See Finding below. |
+| 5 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | PASS | no | round 2, post-T-0274: `player_identity_profile_v1` chained after `player_identity_v2`, both trigger tokens in the prompt, same seed as attempt 1 for direct comparison. Visual verdict: the same boxy, front-facing, wrong-facing silhouette as attempt 1 -- green-square head, black/white patterned upper body, olive band, white torso, teal-green legs, inside the same dark rectangular surround. Not a "wrong subject" collapse; stacking the pose LoRA at weight 0.6 did not move the result off round 1's own failure mode. |
+| 6 | 27182 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 33.1 | PASS | no | same stack as attempt 5, alternate seed (matches attempt 3's alt-seed choice) to test whether attempt 5's result was seed-specific. Visual verdict: genuinely different -- a control-panel/machine face with coloured LED-like readouts, no person. Same failure class as attempt 3 at this seed (a real "wrong subject" failure, unlike 5/7/8), now reproduced with the pose LoRA stacked in too. |
+| 7 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.3 | 0.6 | 45.1 | PASS | no | same seed as attempts 1/5, pose LoRA weight halved (0.6->0.3) to test whether a lighter touch changes the outcome. Visual verdict: near-identical to attempts 1 and 5 -- same boxy, front-facing silhouette (green-square head, patterned upper body, olive band, white torso, teal legs) inside the same dark surround. Halving the pose LoRA's weight did not change the qualitative outcome. |
+| 8 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.05 | 0.6 | 42.1 | PASS | no | final attempt, DL-21 cap: same seed as 1/5/7, pose LoRA weight reduced to near-zero (0.05), intended to isolate whether attempts 5/7's outcome is weight-driven or structural. Visual verdict (re-checked this pass, `main_384.png`): in the same cluster as attempts 1, 5, and 7 -- same green-square head, black/white patterned upper body, olive band, white torso and teal-green legs, inside the same dark surround. At seed 31416 the stacked pose LoRA produced the same boxy, front-facing silhouette across weights 0.6, 0.3, and 0.05 alike. Note: the prompt is not a clean isolation from attempt 1 -- `PROFILE_PROMPT` (`gen_hybrid_profile_T0272.py:171-178`) always carries the `sbrutalistprofilepose` token regardless of `pose_lora_weight`, so attempt 8's prompt differs from attempt 1's even though its LoRA weight is near-zero. See Finding below. |
 
 ## Finding: not achieved in 8 attempts (DL-21 cap reached) -- reported per @DennieSeth's standing rule, not forced
 
@@ -58,45 +58,42 @@ tokens present in the prompt, per the pose LoRA's own training-config notes:
 "meant to be stacked ... via two distinct trigger tokens"), on this card's own
 profile-topology rig.
 
-The result is mixed, not uniformly worse as an earlier draft of this log
-claimed. **Attempts 5, 6, and 7** (pose LoRA weight 0.6/0.6/0.3) collapsed
-into a "wrong subject" failure (T-0218's failure class) -- a monitor/bottle
-shape at seed 31416 (5, 7), a control panel with LED readouts at seed 27182
-(6, matching attempt 3's failure at that same seed) -- with none of the three
-reading as a human silhouette. **Attempt 8** (pose LoRA weight dropped to
-0.05) is the exception, re-checked directly against attempt 1 this pass: it
-shows attempt 1's own green-square head, patterned upper body, olive band,
-white torso and teal legs, with no trace of attempts 5/7's monitor-frame
-composition. So it is not true that "zero of the four stacked attempts
-produced even a human silhouette" -- attempt 8 did, and it is the same
-boxy-but-human, wrong-facing silhouette round 1 already reported for
-attempts 1 and 4.
+The result is a tighter cluster than two earlier drafts of this log claimed,
+not four different outcomes. **Attempts 1, 5, 7, and 8** (pose LoRA absent,
+0.6, 0.3, and 0.05 respectively, all at seed 31416) all show the same boxy,
+front-facing, wrong-facing silhouette -- a green-square head, black/white
+patterned upper body, olive shoulder band, white torso block, and teal-green
+legs, framed inside the same dark rectangular surround. Stacking the pose
+LoRA at any of the three weights tried did not move the result out of round
+1's own front-facing failure mode; it reproduced it. **Attempt 6** (pose LoRA
+weight 0.6, seed 27182) is a genuine "wrong subject" failure (T-0218's
+failure class) -- a control-panel/machine face with coloured LED-like
+readouts, no person -- matching round 1's own attempt 3 at the same seed. So
+the seed, not the pose LoRA weight, is what separates the boxy-figure cluster
+(1, 5, 7, 8) from the wrong-subject failures (3, 6); pose LoRA weight made no
+visible difference at either seed tried.
 
 **Attempt 8 is not a clean isolation of "LoRA weight" from "graph shape,"
-though, and an earlier draft's "rules out ... points instead at something
-structural" conclusion overreached what this card's data supports.**
-`PROFILE_PROMPT` (`gen_hybrid_profile_T0272.py:171-178`) unconditionally
-injects `POSE_LORA_TRIGGER_TOKEN` ("sbrutalistprofilepose") into the prompt
-text whenever the pose LoRA is stacked at all, independent of
-`pose_lora_weight` -- confirmed by diffing the `prompt` field of
-`attempt_1/provenance_candidate.json` (no pose token; round 1, before
-T-0274's LoRA existed) against `attempt_8/provenance_candidate.json` (carries
-`sbrutalistprofilepose,` as a second leading token). At `strength_clip=0.05`
-that token's learned LoRA delta should be small, but the token itself still
-re-encodes through the base CLIP text encoder regardless of LoRA weight, and
-that is itself an untested, mundane alternative explanation for why attempt 8
-drifted back toward attempt 1's silhouette rather than staying in the
-wrong-subject class with attempts 5/7. Two explanations are consistent with
-what was actually observed, and neither is established by this card's data:
-(a) the wrong-subject collapse in attempts 5-7 is genuinely driven by the pose
-LoRA's own learned weights at 0.6/0.3, and dropping the weight to 0.05
-substantially undoes it (a weight-driven story); or (b) the extra chained
-`LoraLoader` node's graph shape is what matters, independent of its prompt
-token or learned weights (the structural story an earlier draft asserted
-without this control). This card did not run the one control that would
-separate them -- the same near-zero pose LoRA weight with
-`sbrutalistprofilepose` removed from the prompt entirely -- so that is left as
-the first item for a follow-up card, not concluded here.
+and that is worth recording even though 1/5/7/8 are now recognised as one
+cluster rather than four different outcomes.** `PROFILE_PROMPT`
+(`gen_hybrid_profile_T0272.py:171-178`) unconditionally injects
+`POSE_LORA_TRIGGER_TOKEN` ("sbrutalistprofilepose") into the prompt text
+whenever the pose LoRA is stacked at all, independent of `pose_lora_weight`
+-- confirmed by diffing the `prompt` field of `attempt_1/provenance_candidate.json`
+(no pose token; round 1, before T-0274's LoRA existed) against
+`attempt_8/provenance_candidate.json` (carries `sbrutalistprofilepose,` as a
+second leading token). Since attempts 5, 7, and 8 all land in the same
+cluster as attempt 1 regardless of this token or the pose LoRA's weight (0.6,
+0.3, 0.05), the confound does not change this round's headline finding -- at
+seed 31416 the stacked pose LoRA changed essentially nothing across the three
+weights tried, whether or not the trigger token was present. What it does
+affect is any conclusion about *why*: this card's data supports only "pose
+LoRA weight, across 0.05-0.6, did not move the result off the front-facing
+failure mode at this seed" -- it does not support any claim about the LoRA's
+learned weights specifically, since the prompt token was never controlled for
+independently of the weight. That control -- the same near-zero weight with
+`sbrutalistprofilepose` removed from the prompt entirely -- is left for a
+follow-up card, not concluded here.
 
 No attempt is promoted. Per `.claude/rules/assets.md` and the card's own
 acceptance criteria ("do not ship a bad or faked profile... a well-evidenced
@@ -109,14 +106,15 @@ promotable result.
 **What this suggests for a follow-up card** (not undertaken here -- out of
 this card's scope):
 
-1. **Control for the prompt-token confound before concluding anything about
-   graph shape.** Run one attempt at seed 31416, pose LoRA weight 0.05 (as in
-   attempt 8), but with `sbrutalistprofilepose` stripped from the prompt
-   entirely -- isolating whether attempt 8's drift back toward attempt 1's
-   silhouette came from the near-zero LoRA weight or from the token's own
-   CLIP re-encoding. Only once that is resolved is it worth asking whether
-   merging the pose LoRA's weights into a single LoRA file offline (instead of
-   chaining a second `LoraLoader` node at generation time) changes anything.
+1. **Control for the prompt-token confound before drawing any conclusion about
+   the pose LoRA's learned weights.** Run one attempt at seed 31416, pose LoRA
+   weight 0.05 (as in attempt 8), but with `sbrutalistprofilepose` stripped
+   from the prompt entirely -- isolating whether attempts 5/7/8 landing in the
+   same cluster as attempt 1 comes from the prompt token's own CLIP
+   re-encoding or is independent of it. Only once that is resolved is it worth
+   asking whether merging the pose LoRA's weights into a single LoRA file
+   offline (instead of chaining a second `LoraLoader` node at generation time)
+   changes anything.
 2. `player_identity_profile_v1` was trained on anonymous silhouette/gait
    photographs (T-0273's set), not the game's own concept art -- a domain gap
    from IP-Adapter's T-0209 concept-sheet conditioning that this card has not
