@@ -21,6 +21,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _CHARACTER_DIR = Path(__file__).resolve().parents[1]
 if str(_CHARACTER_DIR) not in sys.path:
     sys.path.insert(0, str(_CHARACTER_DIR))
@@ -82,3 +84,82 @@ def test_pose_lora_name_is_the_t0274_trained_artifact() -> None:
 
 def test_pose_lora_trigger_token_matches_its_training_config() -> None:
     assert gen.POSE_LORA_TRIGGER_TOKEN == "sbrutalistprofilepose"
+
+
+# ---------------------------------------------------------------------------
+# Round 3 (T-0272) -- the three isolations ARM_PROFILE_ATTEMPT_LOG_T0272.md's
+# own round-2 finding recommends: Test A (prompt-token confound), Test B
+# (IP-Adapter's front-facing image conditioning), Test D (a genuine
+# side-profile IP-Adapter reference, stacked with the front concept sheet).
+#
+# RED state: build_graph does not yet accept include_pose_trigger_token /
+# enable_ipadapter / secondary_concept_filename -> TypeError, every test in
+# this section ERRORs.
+# ---------------------------------------------------------------------------
+
+
+def test_pose_trigger_token_can_be_omitted_from_the_encoded_prompt() -> None:
+    """Test A's isolation: round 2 could not tell the pose LoRA's own learned
+    weights apart from the fact that PROFILE_PROMPT always injects
+    POSE_LORA_TRIGGER_TOKEN whenever the pose LoRA is stacked at all. This
+    must be independently controllable."""
+    graph = _graph(include_pose_trigger_token=False)
+    positive_text = graph[gen.POSITIVE_PROMPT_NODE_ID]["inputs"]["text"]
+    assert gen.POSE_LORA_TRIGGER_TOKEN not in positive_text
+    assert gen.TRIGGER_TOKEN in positive_text  # costume token always present
+
+
+def test_pose_trigger_token_present_by_default() -> None:
+    graph = _graph()
+    assert gen.POSE_LORA_TRIGGER_TOKEN in graph[gen.POSITIVE_PROMPT_NODE_ID]["inputs"]["text"]
+
+
+def test_ipadapter_can_be_disabled_entirely() -> None:
+    """Test B's isolation: IP-Adapter conditions on a front-facing concept-
+    sheet crop on every attempt so far. Disabling it must remove the node
+    from the graph (not merely zero its weight) and reroute the sampler's
+    model input to the end of the LoRA chain directly."""
+    graph = _graph(enable_ipadapter=False)
+    assert gen.IPADAPTER_LOADER_NODE_ID not in graph
+    assert gen.IPADAPTER_NODE_ID not in graph
+    assert gen.CONCEPT_IMAGE_NODE_ID not in graph
+    assert graph[gen.SAMPLER_NODE_ID]["inputs"]["model"] == [gen.POSE_LORA_NODE_ID, 0]
+
+
+def test_ipadapter_enabled_by_default() -> None:
+    graph = _graph()
+    assert gen.IPADAPTER_LOADER_NODE_ID in graph
+    assert graph[gen.SAMPLER_NODE_ID]["inputs"]["model"] == [gen.IPADAPTER_NODE_ID, 0]
+
+
+def test_secondary_reference_image_chains_a_second_ipadapter_node() -> None:
+    """Test D's isolation: stack a genuine side-profile reference alongside
+    the front concept sheet, via a second IPAdapterAdvanced node chained
+    after the first -- untested before this card (gen_hybrid_profile_T0272.py's
+    own module comment)."""
+    graph = _graph(secondary_concept_filename="profile_ref.png", secondary_ipadapter_weight=0.5)
+    secondary = graph[gen.SECONDARY_IPADAPTER_NODE_ID]
+    assert secondary["class_type"] == "IPAdapterAdvanced"
+    assert secondary["inputs"]["model"] == [gen.IPADAPTER_NODE_ID, 0]
+    assert secondary["inputs"]["image"] == [gen.SECONDARY_CONCEPT_IMAGE_NODE_ID, 0]
+    assert secondary["inputs"]["weight"] == 0.5
+    assert graph[gen.SECONDARY_CONCEPT_IMAGE_NODE_ID] == {
+        "class_type": "LoadImage",
+        "inputs": {"image": "profile_ref.png"},
+    }
+    assert graph[gen.SAMPLER_NODE_ID]["inputs"]["model"] == [gen.SECONDARY_IPADAPTER_NODE_ID, 0]
+
+
+def test_no_secondary_reference_by_default() -> None:
+    graph = _graph()
+    assert gen.SECONDARY_IPADAPTER_NODE_ID not in graph
+    assert gen.SECONDARY_CONCEPT_IMAGE_NODE_ID not in graph
+
+
+def test_check_attempt_cap_allows_a_fresh_round_3_budget() -> None:
+    """Round 3 gets its own fresh 8-attempt DL-21 budget on top of rounds
+    1-2's spent 1..8 -- attempts 9..16, not a re-run of 1..8."""
+    gen.check_attempt_cap(9)
+    gen.check_attempt_cap(16)  # must not raise
+    with pytest.raises(SystemExit):
+        gen.check_attempt_cap(17)
