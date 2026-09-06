@@ -175,21 +175,33 @@ POSE_LORA_TRIGGER_TOKEN = "sbrutalistprofilepose"
 # LoRAs' trigger tokens -- costume (TRIGGER_TOKEN) and pose (POSE_LORA_TRIGGER_TOKEN).
 
 
-def build_positive_prompt(include_pose_trigger_token: bool = True) -> str:
+def build_positive_prompt(
+    include_pose_trigger_token: bool = True, emphasize_green: bool = False
+) -> str:
     """Round 3, Test A's isolation: round 2 could not separate the pose
     LoRA's own learned weights from the fact that its trigger token was
     always injected into the prompt whenever the LoRA was stacked at all,
     independent of weight (`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s own
-    follow-up #1). `include_pose_trigger_token=False` controls for that."""
+    follow-up #1). `include_pose_trigger_token=False` controls for that.
+
+    Round 5 Lever 2 (`emphasize_green`): attempts 24-28 all converged on a
+    muted olive/khaki costume rather than the vivid institutional green
+    `player_idle_sheet_hybrid_T0252.png` itself carries -- a ComfyUI
+    attention-weighted repeat of the costume-colour phrase, on top of the
+    plain unweighted phrase every prior attempt used, is the cheapest lever
+    to try before reaching for a post-hoc palette snap (Lever 3)."""
     pose_token = f"{POSE_LORA_TRIGGER_TOKEN}, " if include_pose_trigger_token else ""
+    green_emphasis = (
+        "(vivid saturated institutional green costume colour:1.4), " if emphasize_green else ""
+    )
     return (
         f"{TRIGGER_TOKEN}, {pose_token}pixel art side-profile base pose, "
         f"single standing figure seen from the side, facing {FACING}, flat side-on "
         "orthographic view, exactly one figure matching the pose skeleton exactly, "
-        "institutional green coat, hooded, white gloves, same uniform and same equipment "
-        "loadout, upright standing posture, solid flat black background, value-separated "
-        "pixel art silhouette, clean readable pixel outline, vivid saturated green costume "
-        "colour, no perspective, no vanishing point, no text, no UI"
+        f"{green_emphasis}institutional green coat, hooded, white gloves, same uniform and "
+        "same equipment loadout, upright standing posture, solid flat black background, "
+        "value-separated pixel art silhouette, clean readable pixel outline, vivid saturated "
+        "green costume colour, no perspective, no vanishing point, no text, no UI"
     )
 
 
@@ -234,6 +246,17 @@ PROFILE_NEGATIVE = (
     "pale colour, desaturated, faded costume, grayscale"
 )
 
+
+def build_negative_prompt(emphasize_green: bool = False) -> str:
+    """Round 5 Lever 2 companion to `build_positive_prompt`'s `emphasize_green`:
+    the plain `PROFILE_NEGATIVE` already names generic desaturation, but
+    attempts 24-28's failure mode was a specific, nameable colour drift (a
+    muted olive/khaki coat, not grayscale) -- naming it directly gives the
+    sampler something concrete to steer away from."""
+    if not emphasize_green:
+        return PROFILE_NEGATIVE
+    return PROFILE_NEGATIVE + ", olive coat, khaki coat, brownish coat, muted green, grey-green"
+
 # ── Graph node ids -- named, not raw string literals re-derived per call ────
 CHECKPOINT_NODE_ID = "1"
 POSE_IMAGE_NODE_ID = "10"
@@ -274,6 +297,7 @@ def build_graph(
     enable_ipadapter: bool = True,
     secondary_concept_filename: str | None = None,
     secondary_ipadapter_weight: float = 0.6,
+    emphasize_green: bool = False,
 ) -> dict:
     """The full §24-e stack, extended with T-0274's pose LoRA chained on the
     end: LoraLoader(style) -> LoraLoader(identity, costume) ->
@@ -333,13 +357,13 @@ def build_graph(
     g[POSITIVE_PROMPT_NODE_ID] = {
         "class_type": "CLIPTextEncode",
         "inputs": {
-            "text": build_positive_prompt(include_pose_trigger_token),
+            "text": build_positive_prompt(include_pose_trigger_token, emphasize_green),
             "clip": [POSE_LORA_NODE_ID, 1],
         },
     }
     g[NEGATIVE_PROMPT_NODE_ID] = {
         "class_type": "CLIPTextEncode",
-        "inputs": {"text": PROFILE_NEGATIVE, "clip": [POSE_LORA_NODE_ID, 1]},
+        "inputs": {"text": build_negative_prompt(emphasize_green), "clip": [POSE_LORA_NODE_ID, 1]},
     }
     g[CONTROLNET_LOADER_NODE_ID] = {
         "class_type": "ControlNetLoader",
@@ -620,6 +644,7 @@ def run_attempt(
     secondary_concept_path: Path | None = None,
     secondary_ipadapter_weight: float = 0.6,
     secondary_needs_invert: bool = True,
+    emphasize_green: bool = False,
 ) -> dict:
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
@@ -695,6 +720,7 @@ def run_attempt(
         enable_ipadapter=enable_ipadapter,
         secondary_concept_filename=secondary_filename,
         secondary_ipadapter_weight=secondary_ipadapter_weight,
+        emphasize_green=emphasize_green,
     )
     prompt_id = submit_prompt(graph)
     info = wait_for_completion(prompt_id, timeout_s=300)
@@ -757,8 +783,9 @@ def run_attempt(
         "controlnet": CONTROLNET_NAME,
         "controlnet_strength": controlnet_strength,
         "controlnet_end_percent": controlnet_end,
-        "prompt": build_positive_prompt(include_pose_trigger_token),
-        "negative_prompt": PROFILE_NEGATIVE,
+        "prompt": build_positive_prompt(include_pose_trigger_token, emphasize_green),
+        "negative_prompt": build_negative_prompt(emphasize_green),
+        "green_emphasis": emphasize_green,
         "pose_source": (
             "script (assets/src/character/pose_rig_profile_T0272.py) -- a newly authored "
             "profile-topology 18-keypoint COCO skeleton (legs collapsed to a single fore-aft "
@@ -892,6 +919,14 @@ def main() -> None:
         "invert_reference_for_conditioning rather than flipping it a second time",
     )
     parser.add_argument(
+        "--green-emphasis",
+        action="store_true",
+        default=False,
+        help="round 5 Lever 2: attention-weight the costume-colour phrase and add explicit "
+        "anti-olive/khaki negative terms, to counter the muted-colour drift attempts 24-28 "
+        "converged on",
+    )
+    parser.add_argument(
         "--promote-attempt",
         type=int,
         help="promote an existing attempt's keyframe to assets/final/character/ and exit",
@@ -936,6 +971,7 @@ def main() -> None:
         secondary_concept_path=secondary_concept_path,
         secondary_ipadapter_weight=args.secondary_ipadapter_weight,
         secondary_needs_invert=args.secondary_needs_invert,
+        emphasize_green=args.green_emphasis,
     )
     provenance["promoted"] = False
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_profile" / f"attempt_{args.attempt}"
