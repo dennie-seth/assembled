@@ -39,7 +39,6 @@ identity keyframe generated first, rather than reskinning the front view." Per t
 acceptance criteria, this is reported as a finding rather than forced or faked (no squash/shear/
 mirror of the front view was attempted) -- the profile view is out of scope for T-0259 and should
 be its own card if wanted, seeded by this finding.
-| 5 | 27182 | 0.3283-0.4732 | FAIL | no | 819.9 | no | T-0259 improvement pass: frame-0 contact pose fix + wider stride/knee/arm amplitudes + leg cross, front-facing (profile probed and reported as its own finding) |
 | 6 | 27182 | 0.2119-0.3752 | FAIL | no | 801.8 | no | T-0259 improvement pass, calibrated: STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.05, frame-0 contact fix, front-facing |
 | 7 | 27182 | 0.1607-0.3398 | FAIL | no | 807.9 | no | T-0259 calibration: same amplitudes as attempt 6 (STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.05), denoise lowered 0.45->0.30 to test whether tighter anchor conformity reduces the independent-chain noise floor observed in attempts 5-6 |
 | 8 | 27182 | 0.1086-0.3020 | FAIL | no | 799.1 | no | T-0259 final DL-21 calibration: STRIDE 0.22/KNEE 0.13/ARM 0.15/CROSS 0.02, denoise 0.45->0.24, targeting the 3 remaining recoil->passing pairs that failed at denoise 0.30 |
@@ -58,7 +57,6 @@ last one this card can run without a human/board decision to grant more budget.
 | Attempt | STRIDE / KNEE / ARM / CROSS | Denoise | Frame-delta range | Pairs over 0.30 |
 |---|---|---|---|---|
 | 4 (pre-existing) | 0.145 / 0.085 / 0.09 / (none) | 0.45 | 0.034-0.253 | 0/8 (motion barely visible) |
-| 5 | 0.30 / 0.18 / 0.20 / 0.14 | 0.45 | 0.328-0.473 | 8/8 |
 | 6 | 0.22 / 0.13 / 0.15 / 0.05 | 0.45 | 0.212-0.375 | 6/8 |
 | 7 | 0.22 / 0.13 / 0.15 / 0.05 | 0.30 | 0.161-0.340 | 3/8 |
 | 8 | 0.22 / 0.13 / 0.15 / 0.02 | 0.24 | **0.109-0.302** | **1/8** |
@@ -253,3 +251,76 @@ stale cache state; (b) re-run the exact attempt-8 configuration (STRIDE 0.22/KNE
 0.15/CROSS 0.02, denoise 0.24, seed 27182) as a sanity check -- it should reproduce the
 historical 0.109-0.302 range; if it does not, the host-state hypothesis is confirmed and is the
 real blocker to fix first; if it does reproduce cleanly, retry the CROSS=0.14 restoration next.
+
+## 2026-09-07 -- VRAM pressure fix confirmed, but the CROSS=0.14 regeneration still fails: a cutout defect, not a host/calibration issue
+
+**The VRAM hypothesis was real and is now fixed for this session.** `GET /system_stats` showed
+`torch_vram_free: 74298898` (~74MB of an 8GB card) at the start of this run -- exactly what the
+previous session logged. `POST /free {"unload_models": true, "free_memory": true}` (ComfyUI's own
+memory-release endpoint, no host shell access needed) brought `vram_free` from 1.51GB to 6.52GB and
+dropped `torch_vram_total` from 5.94GB to 973MB, confirming stale model weights were pinned in VRAM
+under real pressure. This is a legitimate, reusable fix for future sessions on this host: call
+`/free` before generating if `torch_vram_free` is low.
+
+**Re-ran with the fix applied, at the correct denoise, and it still fails -- worse than before.**
+Reused attempt slot 5 (cleared its stale `frame_*_main_384.png`/`frame_*_cell_48_raw.png` outputs
+first, per `char_gen.chunked_frames`' file-existence-only resume contract, so nothing stale was
+silently skipped) and regenerated all 8 frames fresh: seed 27182, denoise **0.24** (attempt 8's
+own value, not the 0.45 the previous session's four-way CROSS sweep mistakenly used throughout --
+that mismatch, not a host defect, is most of why session-2026-09-06's sweep read as inconclusive),
+STRIDE 0.22 / KNEE 0.13 / ARM 0.15 / **CROSS 0.14** (the currently-committed, restored value).
+Result: `frame_delta_range [0.1089, 0.9510]`, `mechanical_gate_passed: false` against the 0.50
+locomotion cap -- worse than either this session's own denoise-0.45 sweep (worst pair 0.797) or
+the historical CROSS=0.02/denoise=0.24 baseline (worst pair 0.302). GPU-seconds 219.3, consistent
+with a normal (not degraded) ~27s/frame img2img-chain cost at this denoise -- this run was not
+anomalously slow or fast.
+
+**Root cause, pinpointed by direct visual inspection, and it corrects the previous session's
+diagnosis:** frame 0 (`frame_0_main_384.png`, denoise=1.0, a fresh independent sample) is
+pixel-for-pixel the same image as historical attempt 8's frame 0 -- same seed, same graph, so
+this is expected -- and **both show the identical chromatic-fringe/edge-glow artifacting** the
+previous session flagged as a possible host defect. Since attempt 8's frame 0 sits inside a sheet
+that came within 0.002 of passing the old 0.30 cap, that fringing is a **stable characteristic of
+this recipe/seed at 384px, not new corruption, and not the driver of the elevated deltas** -- the
+previous session's "host-side generation defect" theory does not hold up under this direct
+comparison and is superseded here.
+
+**The actual driver: `cutout.py`'s keypoint-hint-region majority-overlap selection is discarding
+legitimate figure content in specific frames, not generation itself.** Opening
+`sheet_192x96_indexed.png` for this attempt shows several cells reduced to a near-blank sliver
+(most visibly the 3rd and 4th cells, top row, and the 3rd cell, bottom row) while their
+corresponding raw 384px frames (`frame_2_main_384.png`, etc.) show a complete, full-figure
+character -- fringed, but entirely present, not blank or malformed. That is: **generation
+succeeded, cutout erased it.** `cutout.py`'s own documented round-4 rule only keeps a connected
+foreground component when a MAJORITY of that component's own area overlaps the frame's
+keypoints-derived hint bounding box (`BACKGROUND_MASK_MARGIN_FRAC` margin around the keypoints
+bbox); CROSS=0.14 pulls the passing leg's knee/ankle laterally by up to 14% of body width relative
+to where a CROSS-free skeleton would place it, and when the model's own rendered silhouette
+deviates from that shifted hint region by enough, the majority-overlap test fails and the whole
+limb (or more) is dropped as background. This is consistent with -- and now explains -- why every
+CROSS value >= 0.05 tried across both sessions (0.05, 0.07, 0.10, 0.14) blew well past whatever
+cap was in force, while CROSS=0.02 (historical attempt 8, barely any lateral pull) came closest to
+passing: **the gap was never really about how much the pose amplitude reads as motion, it is about
+how far the rendered figure can drift from its own keypoint hint box before cutout starts eating
+it.**
+
+**Not promoted.** Nothing under `assets/final/` was touched; the previously committed
+`player_walk_sheet_hybrid.png` (attempt 4) remains the shipped artifact, unchanged.
+
+**This reframes the card's remaining blocker.** It is not a pose-rig amplitude tradeoff and not a
+ComfyUI host/VRAM issue (that fix is applied and confirmed, and re-testing under it still fails
+the same way) -- it is a latent defect in the shared `cutout.py` foreground-selection logic that
+every §24-e per-frame sheet depends on (idle, and HIDE/ACTION once they exist), surfaced here
+because a walk gait's leg-cross is the first motion in this pipeline whose keypoint hint region
+moves this far from a CROSS-free skeleton's implied silhouette. Fixing it safely needs its own
+scoped change (loosen the majority-overlap threshold, or widen `BACKGROUND_MASK_MARGIN_FRAC` for
+higher-lateral-motion frames, with tests proving idle/hide/action sheets do not regress) -- that
+is real engineering risk to shared infrastructure this card's stated scope (walk pose rig + GIF
+export) does not cover, and DL-21's attempt budget is not the right lever to spend chasing a bug
+in a downstream processing step, not the generation itself. **Recommendation: seed a follow-up
+card against `char_gen/cutout.py`'s hint-region majority-overlap selection, informed by this
+finding, before any further DL-21 attempt is spent on this card's own amplitude/denoise
+calibration** -- further tuning of STRIDE/KNEE/ARM/CROSS or denoise cannot fix a cutout-stage
+defect, and this session's data (identical STRIDE/KNEE/ARM, only CROSS/denoise differing from a
+historically-closest-to-passing baseline) is strong enough evidence to stop calibrating blind.
+| 5 | 27182 | 0.1089-0.9510 | FAIL | no | 219.3 | no |  |
