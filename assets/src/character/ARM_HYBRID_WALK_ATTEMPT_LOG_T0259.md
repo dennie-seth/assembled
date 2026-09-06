@@ -158,3 +158,98 @@ card) -- nothing here supersedes that. Recommended next step, in order: (a) merg
 logic that `gen_hybrid_walk_T0259.py` currently imports directly), (b) try the reassembly-only
 reprocess of attempt 8's cached frames through the fixed cutout before spending any new GPU
 budget, and only then (c) fall back to the human-granted-9th-attempt path if the gap survives.
+
+## 2026-09-06 (continued) -- merge landed, CROSS restored, but real regeneration reveals a NEW blocker unrelated to amplitude calibration
+
+**Merge completed.** `develop` merged into `feature/T-0259` (conflict in
+`tests/test_player_walk_hybrid_T0259_gate.py`, resolved by keeping both the GIF tests and
+T-0271's `test_frame_delta_cap_gate_passes_at_locomotion_cap`). This branch now has T-0271
+(locomotion cap 0.50), T-0272, and T-0315.
+
+**Correction to the previous verdict's claim that T-0272's profile keyframe "is also promoted
+upstream."** It is not, at current `develop` HEAD. `git log --oneline --all -- 'assets/final/character/*profile*'`
+shows the keyframe WAS promoted at one point during T-0315 (`8abfa53`/`8fe0622`, "re-promotes
+T-0272 attempt 28") but was then **un-promoted within the same PR** (`cc3436f`, "un-promote
+attempt 28, mask fixed but colour illegible") after a second, independent measurement confirmed
+round-3's reviewer finding: only 10% of the figure's pixels quantize to the palette's green
+family, the rest to the neutral ramp -- "the coat's own main body fill sits closer in Oklab
+space to the palette's neutral ramp than to any green-family swatch," not a mask defect T-0315's
+own fix could address. `b95b483` then deleted the now-stale `ASSET_PROVENANCE.md` row. Confirmed
+directly: `assets/final/character/` contains no file matching `*profile*` at all, only
+`assets/final/lora/player_identity_profile_v1.safetensors` (the trained LoRA, T-0274) and
+`assets/src/concept/player_profile_*` (reference images, not a keyframe). **The 2026-08-31
+finding stands unmodified: a genuine side-profile walk still has no colour-legible identity
+anchor to build on.** Attempting profile generation this session against a non-existent keyframe
+would be exactly the "reskin the front view" shortcut that finding already ruled out, so it was
+not attempted -- this is a correction of record, not new scope for this card.
+
+**CROSS_EXTENT_NORM restored to 0.14, but NOT alongside STRIDE/KNEE/ARM.** A real ComfyUI
+regeneration (seed 27182, STRIDE 0.30/KNEE 0.18/ARM 0.20/CROSS 0.14 -- attempt 5's literal
+values) was run to test the card's instruction to restore the full attempt-5 amplitude set now
+that the locomotion cap (0.50) has room for it. Direct visual inspection of the rendered
+skeleton showed why this is wrong to do literally: with hip separation ~0.108 in this rig's
+normalised space, a 0.30 stride swings each ankle so far past the midline that the knees fully
+swap left/right order **at the contact pose itself** (not the intentional CROSS-driven passing
+cross, which is correctly zero at contact) -- `frame_0_pose_skeleton_384.png` for this attempt
+shows both legs crossing in an X near the hip before re-diverging to the feet, an anatomically
+broken pose no real stride produces. ControlNet rendered that impossible skeleton as a visibly
+corrupted figure (see the chromatic-fringe finding below, which compounds this). This card's own
+edge case -- "gait legibility beats delta" -- rules out shipping this regardless of headroom
+under the new cap. **STRIDE/KNEE/ARM are kept at the already-real-generation-tested attempt-6
+values (0.22/0.13/0.15); only `CROSS_EXTENT_NORM` is restored, to 0.14** -- the specific term
+this card names as wrongly cut, and the only one of the four that is exactly zero at every
+contact pose by construction (`test_cross_term_is_zero_at_contact`), so restoring it cannot
+reintroduce the contact-pose breakage the full attempt-5 revert does.
+
+**NEW BLOCKER, unrelated to any amplitude choice: real regeneration is currently producing
+visibly corrupted frames and elevated frame-deltas regardless of CROSS.** Four full real
+ComfyUI generations were run this session at STRIDE 0.22/KNEE 0.13/ARM 0.15 (the values now
+committed) varying only CROSS -- 0.14, 0.10, 0.07, and 0.02 (0.02 exactly reproducing attempt
+8's historical amplitude set):
+
+| CROSS | Frame-delta range | Gate (0.50 cap) | Notes |
+|---|---|---|---|
+| 0.14 | 0.230-0.796 | FAIL | |
+| 0.10 | 0.246-0.788 | FAIL | |
+| 0.07 | 0.235-0.793 | FAIL | |
+| 0.02 | 0.236-0.797 | FAIL | exactly attempt 8's amplitudes, which historically measured 0.109-0.302 (PASS territory even under the old 0.30 cap) |
+
+All four land in the same ~0.23-0.80 band regardless of CROSS -- **conclusive evidence the
+elevated deltas are not caused by the CROSS calibration**, since 0.02 (a historically-passing
+configuration, unchanged from attempt 8) fails just as badly as 0.14. Direct visual inspection
+of the raw 384px frames (`frame_0_main_384.png`, `frame_2_main_384.png`, etc., across all four
+runs) shows a consistent defect not present in any previously-committed sheet
+(`player_idle_sheet_hybrid_T0252.png`, the current `player_walk_sheet_hybrid.png`): heavy
+chromatic-fringe/channel-misalignment artifacting (a red/cyan double-exposure look) across the
+whole figure, present even in frame 0 (denoise=1.0, a fresh independent sample with no img2img
+chaining involved, ruling out the chaining/background-hold path as the cause). The area-descended
+48x48 raw cells look acceptable in isolation (the high-frequency fringe noise is smoothed out by
+the descent), but the post-cutout/quantized sheet shows wildly inconsistent per-frame foreground
+retention -- some cells nearly blank, others fully rendered -- which is what actually drives the
+measured silhouette deltas this high; the character's true pose barely differs frame to frame at
+these amplitudes (per attempt 6's own historical 0.212-0.375 result), but how much of it survives
+cutout apparently does. `ComfyUI`'s `/system_stats` showed `torch_vram_free: ~74MB` of an 8GB
+card throughout this session, consistent with (though not proven to be the cause of) generation
+degradation under memory pressure. The CROSS=0.02 run also completed anomalously fast (27s/frame
+vs. ~100-105s/frame for every other run this session and in this log's history), suggesting
+ComfyUI's own execution cache may have returned a stale/reused result for that run rather than a
+fully fresh one -- frame 0's skeleton is byte-identical across all four of this session's runs
+(CROSS only affects non-zero-lift frames, never the contact pose), so a partial cache hit for at
+least frame 0 across these four runs is plausible and would not be a code defect in this branch.
+
+**Not promoted, any of the four.** None passes the mechanical gate, and per the NO SYNTHETIC
+ASSETS rule and the standing conduct.md precedent against shipping a sheet that fails its own
+gate, nothing from this session was written to `assets/final/character/`. The previously
+committed `player_walk_sheet_hybrid.png` (attempt 4, still PASS at 0.034-0.253 under either cap)
+remains the shipped artifact, unchanged.
+
+**Recommendation for the next attempt:** this is very likely a ComfyUI host/GPU-state issue
+independent of this branch's code, not a pose-rig or cutout-fix regression to keep calibrating
+against blindly -- further amplitude tuning without addressing it will keep reproducing this
+same ~0.23-0.80 band regardless of CROSS. Before spending more DL-21 budget: (a) confirm ComfyUI
+is not under unusual memory pressure (`/system_stats`, expect `torch_vram_free` well above the
+~74MB observed here) and consider restarting the ComfyUI process to clear any fragmentation or
+stale cache state; (b) re-run the exact attempt-8 configuration (STRIDE 0.22/KNEE 0.13/ARM
+0.15/CROSS 0.02, denoise 0.24, seed 27182) as a sanity check -- it should reproduce the
+historical 0.109-0.302 range; if it does not, the host-state hypothesis is confirmed and is the
+real blocker to fix first; if it does reproduce cleanly, retry the CROSS=0.14 restoration next.
