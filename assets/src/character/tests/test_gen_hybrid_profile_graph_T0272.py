@@ -156,6 +156,24 @@ def test_no_secondary_reference_by_default() -> None:
     assert gen.SECONDARY_CONCEPT_IMAGE_NODE_ID not in graph
 
 
+def test_invert_reference_for_conditioning_flips_rgb_channels(tmp_path) -> None:
+    """Test D's own follow-up: the T-0273 reference's off-white background
+    bled into the generation and defeated cutout (round-3 attempt 12: only
+    76 fg px survived). A pure RGB invert of the committed source, not a new
+    reference, fixes the tone mismatch."""
+    from PIL import Image
+
+    src = tmp_path / "src.png"
+    Image.new("RGB", (4, 4), color=(10, 20, 30)).save(src)
+    dest = tmp_path / "dest.png"
+
+    gen.invert_reference_for_conditioning(src, dest)
+
+    out = Image.open(dest).convert("RGB")
+    assert out.size == (4, 4)
+    assert out.getpixel((0, 0)) == (245, 235, 225)
+
+
 def test_check_attempt_cap_allows_a_fresh_round_3_budget() -> None:
     """Round 3 gets its own fresh 8-attempt DL-21 budget on top of rounds
     1-2's spent 1..8 -- attempts 9..16, not a re-run of 1..8."""
