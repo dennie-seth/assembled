@@ -464,8 +464,8 @@ ATTEMPT_LOG_HEADER = (
     "non-erased silhouette. Whether the result genuinely reads as side-facing with intact "
     "identity is a human visual call, recorded in Notes, not a mechanical one.\n\n"
     "| Attempt | Seed | ControlNet strength/end | Style LoRA weight | Identity LoRA weight | "
-    "IP-Adapter weight | GPU seconds | Mechanical gate | Promoted | Notes |\n"
-    "|---|---|---|---|---|---|---|---|---|---|\n"
+    "Pose LoRA weight | IP-Adapter weight | GPU seconds | Mechanical gate | Promoted | Notes |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|\n"
 )
 
 
@@ -476,6 +476,7 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
         f"| {provenance['attempt']} | {provenance['seed']} "
         f"| {provenance['controlnet_strength']}/{provenance['controlnet_end_percent']} "
         f"| {provenance['style_lora_weight']} | {provenance['identity_lora_weight']} "
+        f"| {provenance.get('pose_lora_weight')} "
         f"| {provenance['ip_adapter_weight']} "
         f"| {provenance['gpu_seconds']} "
         f"| {'PASS' if provenance['mechanical_gate_passed'] else 'FAIL'} "
