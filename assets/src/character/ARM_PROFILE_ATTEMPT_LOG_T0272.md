@@ -287,3 +287,139 @@ of expected leverage, cheapest first:
 | 14 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 51.1 | FAIL | no | Test D v3: secondary reference weight lowered 0.5->0.3 to reduce how far the pose shifts from the skeleton. Visual verdict: still a clear, legible side profile (head, coat with a visible olive-green patch, forward arm) on a clean black background -- the best combination of facing + colour this round. Mechanical gate: 43 fg px, just under the 50px floor -- most of the figure's extent still falls outside the keypoint bbox+margin. |
 | 15 | 31416 | 1.3/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | FAIL | no | Test D v4: secondary weight 0.3->0.4, controlnet strength 1.0->1.3 to pull the pose back toward the skeleton. Visual verdict: same reading as attempt 14 -- clear side profile, green torso patch, clean black background, plus an unexplained bright blob at bottom-right outside the main silhouette. Mechanical gate: 45 fg px, still under the 50px floor. |
 | 16 | 31416 | 1.8/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 51.1 | PASS | no | Test D v5 (final attempt, DL-21 cap): controlnet strength pushed further to 1.8 to force spatial alignment. Mechanical gate technically PASSED (94 fg px, background 0.96) -- but the visual result is no longer a legible human silhouette at all: an abstract bird/blob shape with a beak-like spike and wing-like white lobes. Pushing ControlNet strength enough to fix the bbox-alignment problem broke subject coherence instead. NOT promotable despite the passing mechanical gate -- 'genuinely side-facing with intact identity' is a human visual call this attempt fails. |
+| 17 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 75.1 | FAIL | no | round 4: attempt 14 recipe rerun against the new content-aware cutout (char_gen.extract_foreground_mask) |
+| 18 | 31416 | 1.2/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 57.1 | FAIL | no | round 4 attempt: controlnet 1.0->1.2 to pull the pose slightly further from the frame edge |
+| 19 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.7 | 54.1 | PASS | no | round 4 attempt: controlnet back to 1.0, front ipadapter 0.6->0.7 for costume fidelity, secondary weight 0.3->0.25 |
+| 20 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 69.1 | PASS | no | round 4 attempt: replicate round-3 attempt 13's recipe (secondary weight 0.5, the clearest side profile of round 3) against the new content-aware cutout |
+| 21 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 66.1 | PASS | no | round 4 attempt: secondary weight 0.4 (between attempts 14/13), CN 1.0, against new cutout |
+| 22 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.65 | 51.1 | FAIL | no | round 4 attempt: primary ipadapter 0.6->0.65 for costume colour, secondary 0.4 unchanged, CN 1.0 |
+| 23 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.65 | 66.1 | PASS | no | round 4 bootstrap: secondary reference is attempt 21's own clean side-profile silhouette (pre-inverted so the pipeline's auto-invert restores its tone), not the T-0273 photo -- testing whether this project's own art-style pose reference preserves costume colour better than an anonymous gait photo |
+| 24 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 63.1 | PASS | no | round 4 bootstrap v2 (final attempt, DL-21 cap): secondary reference is attempt 20's own side-profile output (the one with a genuine olive-green torso band), pre-inverted so the pipeline's auto-invert restores its tone -- testing whether bootstrapping from a colour-bearing in-pipeline frame beats the anonymous T-0273 photo |
+
+## Round 4 (attempts 17-24): the cutout fix is confirmed working -- a sharper, different blocker is isolated: costume colour trades off against pose fidelity
+
+A fresh 8-attempt DL-21 budget was spent generalizing the cutout
+(`char_gen.cutout.extract_foreground_mask`, T-0272 round 4's own code change
+-- see `assets/src/character/src/char_gen/cutout.py` and its 6 unit tests,
+`tests/test_cutout_T0272.py`) and then regenerating around round 3's best
+recipe to test it against real ComfyUI output, not just synthetic fixtures.
+All 8 attempts (17-24) are spent; **no attempt is promoted**, but this round
+resolves round 3's own open question about the cutout and isolates a new,
+sharper one about colour.
+
+### The cutout fix is confirmed, with real generation evidence, not just unit tests
+
+Round 3's own diagnosis was that the old `cutout_foreground_mask`'s hard
+"outside this frame's own keypoint bbox is background" clip zeroed or
+shrank attempts 13-15 below the 50px floor even though they visually read as
+legible side profiles. This round's attempts 20, 21, 23, and 24 all **pass
+the mechanical gate** (65, 200, 223, and 69 foreground px respectively) while
+their own figures sit substantially outside the profile rig's keypoint
+bbox+margin -- exactly the case the old algorithm could not recover. Attempt
+21 in particular (200 fg px, `background_fraction=0.913`) is visually the
+cleanest, most legible side-profile silhouette this entire card has produced
+across 21 attempts: a leaning head/hood shape and torso, unambiguously
+side-facing, with no front-facing symmetry at all. The generalized cutout
+is doing exactly what it was built to do.
+
+One attempt (17, an exact rerun of round 3's attempt 14 recipe) landed
+outside that pattern: `background_fraction=1.0`, 0 fg px survived, because
+this generation's own figure physically touched the frame's border (the
+lower leg ran off the bottom edge, a light patch touched the top-right
+corner), so `border_flood_background_mask` -- unchanged by this round,
+tolerance-chained by design -- correctly treated it as border-connected and
+flooded the whole frame as background. This is not a defect in the new
+selection logic (component selection never runs on pixels the flood has
+already claimed); it is a pre-existing property of the border-flood detector
+that this round did not touch and was not asked to. Attempt 18 (ControlNet
+strength raised 1.0->1.2 to pull attempt 17's drifted pose back inward)
+partially recovered (35 fg px, still under floor) but also partially
+reverted toward the boxy front-ish silhouette rounds 1-2 already named.
+
+### A cleaner isolation than round 3 had: colour and pose fidelity trade off directly against each other in this stack
+
+Round 3 could not get a stacked profile reference to preserve costume colour
+at all (every Test D attempt read black/white/olive at best). This round
+swept the weight space specifically looking for a point where both hold at
+once, and found a consistent, monotonic trade instead of a lucky middle:
+
+- **High front-sheet IP-Adapter weight -> costume colour returns, profile is
+  lost.** Attempt 19 (front IP-Adapter weight 0.6->0.7, secondary weight
+  0.3->0.25) passed the mechanical gate with 383 fg px and, uniquely this
+  round, shows genuinely legible institutional-green costume colour (a clear
+  green band, white torso, black coat outline). But the figure is bilaterally
+  symmetric and front-facing -- the identical failure class rounds 1-2 named,
+  now reproduced with the pose LoRA and profile skeleton both active. Raising
+  the front reference's weight re-asserts the same front-facing bias round 3
+  isolated to IP-Adapter's image-level conditioning (Test B/C), even with a
+  second, profile-conditioning reference stacked in.
+- **Moderate front weight + moderate-to-high secondary weight -> profile
+  returns, costume colour is lost or reduced to olive/khaki.** Attempts 20
+  (secondary 0.5, replicating round 3's attempt 13), 21 (secondary 0.4), and
+  23/24 (bootstrap variants, below) all read as genuine side profiles. Only
+  20, 23, and 24 carry any colour at all, and it is a muted olive/khaki band
+  (quantized palette indices spanning RGB (76,85,58) to (100,98,88) in
+  attempt 24's own indexed cell -- confirmed by direct pixel inspection, not
+  estimated), never the vivid saturated green the acceptance criterion
+  requires. Attempt 21, the single cleanest silhouette of the round, carries
+  **no colour at all** -- pure black/white/grey.
+- **Attempt 22** (front weight 0.65, secondary 0.4) landed in neither
+  regime cleanly: 17 fg px (FAIL), a boxy silhouette with disconnected green
+  patches, background not clean enough for the flood to isolate a coherent
+  blob. Treated as a data point inside the trade-off, not a third regime.
+
+### The bootstrap idea (this card's own "generate a costume reference through the stack itself") is tested and found insufficient alone
+
+Per this round's own instructions, attempts 23 and 24 tested conditioning
+IP-Adapter's secondary input on this pipeline's *own* prior output instead of
+the anonymous T-0273 photograph -- pre-inverting attempt 21's (23) and
+attempt 20's (24) own `main_384.png` so `invert_reference_for_conditioning`'s
+unconditional invert restores the original tone before it reaches
+IP-Adapter. Both bootstrap attempts pass the mechanical gate (223 and 69 fg
+px) and both are genuine side profiles, matching the shape family attempts
+20/21 already established. Attempt 24 (bootstrapped from attempt 20, which
+itself carried the most colour of any pre-bootstrap attempt) shows the most
+colour recovery of the two bootstraps -- a visible olive-green rectangular
+chest patch plus a faint green hem -- but still olive/muted, not vivid
+saturated green, and still a small fraction of the 48x48 cell (69px, ~3%).
+**Bootstrapping from the pipeline's own output does not manufacture colour
+that was never present at sufficient strength in its source**: since colour
+in this stack comes overwhelmingly from the front concept-sheet IP-Adapter
+weight, and that same weight is what pulls the pose back toward front-facing
+(see above), bootstrapping the *pose* reference alone cannot break the
+trade-off it inherits from wherever its own colour came from.
+
+### What this round establishes, and what a follow-up should try first
+
+No result from this round satisfies "genuinely side-facing AND identity
+(costume colour) legible AND passing the mechanical gate simultaneously," so
+nothing is promoted -- consistent with `.claude/rules/assets.md` and this
+card's own acceptance criteria. This is a different, more decisive outcome
+than round 3's: round 3 could not get a profile-shifted pose to survive
+cutout at all; this round proves the cutout is no longer the constraint
+(four passing, genuinely side-facing attempts) and narrows the remaining gap
+to a single, well-evidenced cause -- **no reference available to this card
+carries both genuine side-profile pose AND the institutional green costume
+at once**, so any single IP-Adapter weight setting buys one at the cost of
+the other. In order of expected leverage, cheapest first:
+
+1. **A profile-specific costume identity LoRA**, trained on in-costume,
+   in-profile material (round 3's follow-up #2, now further substantiated:
+   neither the anonymous T-0273 photograph nor a bootstrapped in-pipeline
+   frame carries enough colour signal for IP-Adapter to preserve at a weight
+   that also preserves the profile pose). This is a training-data problem,
+   not a graph-shape or cutout problem -- out of scope for this card per
+   @DennieSeth's own standing direction ("LoRA must be trained per-pose, per
+   character/monster"), and the natural next card.
+2. **A genuine side-profile concept sheet** (a flat, side-on elevation of
+   the actual costumed character, per `docs/design/13-asset-pipeline.md`
+   §6.8-§6.11's concept-sheet conventions), sourced or produced the way
+   T-0209's front sheet was, to feed IP-Adapter directly instead of via a
+   photograph or a bootstrap -- would remove the domain gap at its root
+   rather than compensating for it with LoRA training.
+3. Even where the mechanical gate passes, the surviving foreground is a
+   small fraction of the 48x48 cell (65-223px, roughly 3-10% of the frame) --
+   worth checking, once a colour-preserving reference exists, whether the
+   resulting silhouette actually fills a game-ready sprite footprint or
+   needs a tighter framing/crop pass.
+
