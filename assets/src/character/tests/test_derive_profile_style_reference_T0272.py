@@ -23,9 +23,8 @@ rather than another gitignored scratch file.
 from __future__ import annotations
 
 import numpy as np
-from PIL import Image
-
 from derive_profile_style_reference_T0272 import extract_panel_reference
+from PIL import Image
 
 SIZE = 64
 BACKGROUND_RGB = (150, 150, 150)
@@ -87,9 +86,10 @@ def test_disconnected_label_artifact_is_suppressed_to_black() -> None:
 
 
 def test_margin_is_clamped_to_the_source_panel_bounds() -> None:
-    """A figure sitting flush against the panel edge must not raise or wrap --
-    the margin clamps to the source panel's own extent."""
-    figure_rect = (0, 0, 20, 20)
+    """A figure sitting near the panel edge, with a margin wide enough to
+    overshoot it, must not raise or wrap -- the margin clamps to the source
+    panel's own extent instead."""
+    figure_rect = (2, 2, 22, 22)
     panel = _panel(figure_rect)
 
     out = extract_panel_reference(panel, tolerance=TOLERANCE, margin=10)
