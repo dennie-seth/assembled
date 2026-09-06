@@ -147,17 +147,35 @@ GEN_PX = FINAL_CELL_PX * 8  # 384 -- same x8 descent ratio as every §24-e per-f
 
 FACING = pose_rig_profile_T0272.FACING
 
+# T-0274's pose-only identity LoRA -- trained on anonymous side-on gait
+# reference (T-0273's approved set), explicitly NOT a costume match ("this
+# trigger token is distinct from player_identity_v2's sbrutalistplayer and is
+# meant to be stacked with it at generation time", its own provenance/
+# training-config notes). T-0274's own smoke check only ever swapped this in
+# for player_identity_v2 (isolation, against the unchanged FRONT rig) -- this
+# card stacks it, chained after the costume identity LoRA, on the
+# profile-topology rig, which neither T-0272's first 4 attempts nor T-0274's
+# smoke check ever tried together.
+POSE_LORA_NAME = "player_identity_profile_v1.safetensors"
+POSE_LORA_PATH = REPO_ROOT / "assets" / "final" / "lora" / POSE_LORA_NAME
+POSE_LORA_PROVENANCE_PATH = (
+    REPO_ROOT / "assets" / "final" / "lora" / "player_identity_profile_v1.provenance.json"
+)
+POSE_LORA_TRIGGER_TOKEN = "sbrutalistprofilepose"
+
 # Single-figure, side-profile prompt. Names the canonical costume explicitly
 # ("institutional green coat, hooded, white gloves" -- CANONICAL_COSTUME_SELECTION_T0248.md)
 # and forbids desaturation, since T-0259's attempt 8 found low denoise can wash
-# the costume colour out even when the pose reads correctly.
+# the costume colour out even when the pose reads correctly. Carries both
+# LoRAs' trigger tokens -- costume (TRIGGER_TOKEN) and pose (POSE_LORA_TRIGGER_TOKEN).
 PROFILE_PROMPT = (
-    f"{TRIGGER_TOKEN}, pixel art side-profile base pose, single standing figure seen "
-    f"from the side, facing {FACING}, flat side-on orthographic view, exactly one figure "
-    "matching the pose skeleton exactly, institutional green coat, hooded, white gloves, "
-    "same uniform and same equipment loadout, upright standing posture, solid flat black "
-    "background, value-separated pixel art silhouette, clean readable pixel outline, "
-    "vivid saturated green costume colour, no perspective, no vanishing point, no text, no UI"
+    f"{TRIGGER_TOKEN}, {POSE_LORA_TRIGGER_TOKEN}, pixel art side-profile base pose, "
+    f"single standing figure seen from the side, facing {FACING}, flat side-on "
+    "orthographic view, exactly one figure matching the pose skeleton exactly, "
+    "institutional green coat, hooded, white gloves, same uniform and same equipment "
+    "loadout, upright standing posture, solid flat black background, value-separated "
+    "pixel art silhouette, clean readable pixel outline, vivid saturated green costume "
+    "colour, no perspective, no vanishing point, no text, no UI"
 )
 PROFILE_NEGATIVE = (
     IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric front-facing pose, "
@@ -183,6 +201,7 @@ VAE_DECODE_NODE_ID = "22"
 MAIN_SAVE_NODE_ID = "23"
 DESCENT_NODE_ID = "24"
 CELL_SAVE_NODE_ID = "25"
+POSE_LORA_NODE_ID = "26"
 
 
 def build_graph(
@@ -194,13 +213,15 @@ def build_graph(
     ipadapter_weight: float,
     style_lora_weight: float,
     identity_lora_weight: float,
+    pose_lora_weight: float,
     *,
     identity_lora_name: str = IDENTITY_LORA_NAME,
+    pose_lora_name: str = POSE_LORA_NAME,
 ) -> dict:
-    """The full §24-e stack in one graph, wired identically to
-    `gen_hybrid_source_idle_T0252.build_graph`: LoraLoader(style) ->
-    LoraLoader(identity, chained) -> IPAdapterAdvanced(concept) -> KSampler,
-    with ControlNet (this card's profile-topology skeleton) conditioning the
+    """The full §24-e stack, extended with T-0274's pose LoRA chained on the
+    end: LoraLoader(style) -> LoraLoader(identity, costume) ->
+    LoraLoader(pose, chained) -> IPAdapterAdvanced(concept) -> KSampler, with
+    ControlNet (this card's profile-topology skeleton) conditioning the
     positive/negative prompt pair. One 384x384 generation, batch size 1.
     """
     g: dict = {}
@@ -232,13 +253,23 @@ def build_graph(
             "strength_clip": identity_lora_weight,
         },
     }
+    g[POSE_LORA_NODE_ID] = {
+        "class_type": "LoraLoader",
+        "inputs": {
+            "model": [IDENTITY_LORA_NODE_ID, 0],
+            "clip": [IDENTITY_LORA_NODE_ID, 1],
+            "lora_name": pose_lora_name,
+            "strength_model": pose_lora_weight,
+            "strength_clip": pose_lora_weight,
+        },
+    }
     g[POSITIVE_PROMPT_NODE_ID] = {
         "class_type": "CLIPTextEncode",
-        "inputs": {"text": PROFILE_PROMPT, "clip": [IDENTITY_LORA_NODE_ID, 1]},
+        "inputs": {"text": PROFILE_PROMPT, "clip": [POSE_LORA_NODE_ID, 1]},
     }
     g[NEGATIVE_PROMPT_NODE_ID] = {
         "class_type": "CLIPTextEncode",
-        "inputs": {"text": PROFILE_NEGATIVE, "clip": [IDENTITY_LORA_NODE_ID, 1]},
+        "inputs": {"text": PROFILE_NEGATIVE, "clip": [POSE_LORA_NODE_ID, 1]},
     }
     g[CONTROLNET_LOADER_NODE_ID] = {
         "class_type": "ControlNetLoader",
@@ -262,7 +293,7 @@ def build_graph(
     }
     g[IPADAPTER_LOADER_NODE_ID] = {
         "class_type": "IPAdapterUnifiedLoader",
-        "inputs": {"model": [IDENTITY_LORA_NODE_ID, 0], "preset": IPADAPTER_PRESET},
+        "inputs": {"model": [POSE_LORA_NODE_ID, 0], "preset": IPADAPTER_PRESET},
     }
     g[IPADAPTER_NODE_ID] = {
         "class_type": "IPAdapterAdvanced",
@@ -475,6 +506,7 @@ def run_attempt(
     ipadapter_weight: float,
     style_lora_weight: float,
     identity_lora_weight: float,
+    pose_lora_weight: float,
 ) -> dict:
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
@@ -490,6 +522,10 @@ def run_attempt(
         raise RuntimeError(
             f"identity LoRA provenance sidecar not found: {IDENTITY_LORA_PROVENANCE_PATH}"
         )
+    if not POSE_LORA_PATH.exists():
+        raise RuntimeError(f"trained pose LoRA not found: {POSE_LORA_PATH} (T-0274)")
+    if not POSE_LORA_PROVENANCE_PATH.exists():
+        raise RuntimeError(f"pose LoRA provenance sidecar not found: {POSE_LORA_PROVENANCE_PATH}")
     if not IDLE_ANCHOR_PATH.exists():
         raise RuntimeError(
             f"identity anchor (T-0252 front idle keyframe) not found: {IDLE_ANCHOR_PATH}"
@@ -497,6 +533,7 @@ def run_attempt(
 
     style_lora_hash = sha256_of(LORA_PATH)
     identity_lora_hash = sha256_of(IDENTITY_LORA_PATH)
+    pose_lora_hash = sha256_of(POSE_LORA_PATH)
 
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_profile" / f"attempt_{attempt}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -525,6 +562,7 @@ def run_attempt(
         ipadapter_weight=ipadapter_weight,
         style_lora_weight=style_lora_weight,
         identity_lora_weight=identity_lora_weight,
+        pose_lora_weight=pose_lora_weight,
     )
     prompt_id = submit_prompt(graph)
     info = wait_for_completion(prompt_id, timeout_s=300)
@@ -556,7 +594,8 @@ def run_attempt(
 
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
-        f"+ LoRA {IDENTITY_LORA_NAME} (player identity, weight {identity_lora_weight}) "
+        f"+ LoRA {IDENTITY_LORA_NAME} (player identity/costume, weight {identity_lora_weight}) "
+        f"+ LoRA {POSE_LORA_NAME} (T-0274 profile pose, chained, weight {pose_lora_weight}) "
         f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME}"
     )
     provenance = {
@@ -572,6 +611,12 @@ def run_attempt(
         "identity_lora_weight": identity_lora_weight,
         "identity_lora_license": "CreativeML OpenRAIL++-M",
         "identity_lora_provenance": str(IDENTITY_LORA_PROVENANCE_PATH.relative_to(REPO_ROOT)),
+        "pose_lora_name": POSE_LORA_NAME,
+        "pose_lora_hash": pose_lora_hash,
+        "pose_lora_weight": pose_lora_weight,
+        "pose_lora_license": "CreativeML OpenRAIL++-M",
+        "pose_lora_provenance": str(POSE_LORA_PROVENANCE_PATH.relative_to(REPO_ROOT)),
+        "pose_lora_trigger_token": POSE_LORA_TRIGGER_TOKEN,
         "ip_adapter": IPADAPTER_NAME,
         "ip_adapter_weight": ipadapter_weight,
         "ip_adapter_reference_crop_box": list(IDENTITY_REFERENCE_CROP_BOX),
@@ -602,7 +647,9 @@ def run_attempt(
             "18-keypoint COCO skeleton -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders "
             "it -> ControlNetApplyAdvanced (xinsir OpenPose) "
             "+ LoraLoader(soviet_brutalism_style_v1) "
-            "-> LoraLoader(player_identity_v2, chained) -> IPAdapterAdvanced (PLUS, cropped T-0209 "
+            "-> LoraLoader(player_identity_v2, costume, chained) "
+            "-> LoraLoader(player_identity_profile_v1, T-0274 pose, chained) "
+            "-> IPAdapterAdvanced (PLUS, cropped T-0209 "
             "concept panel) -> KSampler -> area descent to 48x48 -> Oklab-nearest palette "
             "quantization (dithering off, §3.1) -> per-pixel background cutout against this "
             "pose's own keypoint bbox -> orphan cleanup -> true-RGBA sprite write. This is a "
@@ -635,6 +682,7 @@ def main() -> None:
     parser.add_argument("--ipadapter-weight", type=float, default=0.6)
     parser.add_argument("--style-lora-weight", type=float, default=0.70)
     parser.add_argument("--identity-lora-weight", type=float, default=0.50)
+    parser.add_argument("--pose-lora-weight", type=float, default=0.60)
     parser.add_argument("--notes", type=str, default="")
     parser.add_argument(
         "--promote-attempt",
@@ -672,6 +720,7 @@ def main() -> None:
         ipadapter_weight=args.ipadapter_weight,
         style_lora_weight=args.style_lora_weight,
         identity_lora_weight=args.identity_lora_weight,
+        pose_lora_weight=args.pose_lora_weight,
     )
     provenance["promoted"] = False
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_profile" / f"attempt_{args.attempt}"
