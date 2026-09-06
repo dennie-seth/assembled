@@ -67,10 +67,8 @@ import io
 import json
 import sys
 import time
-from collections import deque
 from pathlib import Path
 
-import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -104,7 +102,6 @@ from gen_arm_a_idle_T0228 import (  # noqa: E402
     LORA_LICENSE,
     LORA_NAME,
     LORA_PATH,
-    _srgb_to_oklab,
     cleanup_orphans,
     enforce_cell_margin,
     fetch_save_image,
@@ -115,6 +112,22 @@ from gen_arm_a_idle_T0228 import (  # noqa: E402
     wait_for_completion,
 )
 
+# T-0272 round 4: the cutout family (border-flood background detection +
+# content-aware foreground selection) now lives in the shared char_gen
+# package, importable directly rather than reached only by importing this
+# generator from another one -- which is how gen_hybrid_source_idle_T0252.py,
+# gen_hybrid_walk_T0259.py, and gen_hybrid_profile_T0272.py all reused it
+# before this round. Re-exported under the same names so those existing
+# `from gen_chained_idle_T0250 import (...)` call sites keep working
+# unchanged.
+from char_gen.cutout import (  # noqa: E402
+    BACKGROUND_MASK_MARGIN_FRAC,
+    CUTOUT_METHOD_DESCRIPTION,
+    CUTOUT_OKLAB_TOLERANCE,
+    apply_cutout_masks,
+    cutout_foreground_mask,
+    downscale_mask,
+)
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 IDENTITY_LORA_NAME = pose_authority.IDENTITY_LORA_NAME
@@ -209,7 +222,6 @@ def build_chained_graph(
     return g
 
 
-BACKGROUND_MASK_MARGIN_FRAC = 0.14  # fraction of the figure's own bbox extent, each side
 BACKGROUND_MASK_FEATHER_PX = 10  # soften the composite seam at the figure's silhouette edge
 
 
@@ -250,7 +262,7 @@ def apply_background_hold(
     return Image.composite(sampled.convert("RGB"), anchor.convert("RGB"), mask)
 
 
-# ── Background cutout (2026-08-30 second human review) ─────────────────────
+# ── Background cutout (2026-08-30 second human review; T-0272 round 4) ─────
 #
 # The frame-0-anchor + background-hold fix (above) bounded noise accumulation
 # but the human-reviewed sheet still carried a visible background: a dark
@@ -260,160 +272,16 @@ def apply_background_hold(
 # *generation* time via a full-canvas SolidMask -- correct for a prop LoRA'd
 # to fill its whole canvas, but a uniform full-canvas alpha cannot separate a
 # character from the visible background margin this sheet's cells still
-# have, so that mechanism does not apply here unmodified. This does the
-# equivalent job -- opaque character, background forced to
+# have, so that mechanism does not apply here unmodified. `char_gen.cutout`
+# (T-0272 round 4; originally defined here, moved into the shared package so
+# it is importable directly rather than only by importing this generator)
+# does the equivalent job -- opaque character, background forced to
 # `background_index` -- as a genuine per-pixel segmentation of the already
 # generated frame, applied per-frame BEFORE the frames are assembled into the
-# sheet (per the review's explicit direction), not to the assembled sheet:
-#
-#   1. `border_flood_background_mask` -- a border-connected, tolerance-chained
-#      region grow in Oklab space over that frame's own 384x384 sampled/held
-#      image: every border pixel seeds the background region, and a neighbour
-#      joins if it is within `CUTOUT_OKLAB_TOLERANCE` of the pixel it grows
-#      from (not a single fixed seed colour), so a gradual background
-#      gradient or artifact connected to the frame edge is swept regardless
-#      of how many distinct palette indices it later quantizes to -- a
-#      strict superset of the old corner-flood-on-exact-quantized-index
-#      approach (`force_cell_corner_background`, now superseded here).
-#   2. Unioned with "outside this frame's own keypoint bounding box +
-#      `BACKGROUND_MASK_MARGIN_FRAC` margin" (the same constant the
-#      background-hold mask already uses) -- catches clutter that is NOT
-#      border-connected (a floor-plane wedge, faint side ghosting) by
-#      position instead of colour, without risking the character (the margin
-#      is the same one already proven, by the background-hold compositing
-#      above, to contain the full figure across all 9 frames).
-#
-# Measured on the already-promoted attempt 8 frames before this shipped:
-# tolerance 0.03 recovers a foreground fraction stable across frames
-# (23.1-23.4% of the 384x384 frame) with no visible clipping of the figure's
-# silhouette; below ~0.02 residual background survives, above ~0.08 the
-# fraction becomes frame-inconsistent (0.070-0.131 across otherwise-identical
-# frames) -- a sign the flood is starting to eat into the character
-# unevenly.
-CUTOUT_OKLAB_TOLERANCE = 0.03
-
-
-def _oklab_grid(rgb_uint8: np.ndarray) -> np.ndarray:
-    h, w = rgb_uint8.shape[:2]
-    flat = _srgb_to_oklab(rgb_uint8.reshape(-1, 3).astype(np.float64))
-    return flat.reshape(h, w, 3)
-
-
-def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarray:
-    """Boolean HxW array, True = background. Multi-source BFS seeded from
-    every border pixel, growing through 4-connected neighbours whose Oklab
-    distance to the pixel it grows *from* (not the original seed) is within
-    `tolerance` -- a tolerance-chained ("magic wand, contiguous") flood, so a
-    gradual gradient connected to the edge is swept even where no single
-    pixel is close to the border's own colour."""
-    arr = np.array(img.convert("RGB"), dtype=np.uint8)
-    h, w = arr.shape[:2]
-    oklab = _oklab_grid(arr)
-    visited = np.zeros((h, w), dtype=bool)
-    queue: deque[tuple[int, int]] = deque()
-
-    def seed(y: int, x: int) -> None:
-        if not visited[y, x]:
-            visited[y, x] = True
-            queue.append((y, x))
-
-    for x in range(w):
-        seed(0, x)
-        seed(h - 1, x)
-    for y in range(h):
-        seed(y, 0)
-        seed(y, w - 1)
-
-    tol2 = tolerance * tolerance
-    while queue:
-        y, x = queue.popleft()
-        cur = oklab[y, x]
-        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            ny, nx = y + dy, x + dx
-            if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx]:
-                diff = oklab[ny, nx] - cur
-                if diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2] <= tol2:
-                    visited[ny, nx] = True
-                    queue.append((ny, nx))
-    return visited
-
-
-def cutout_foreground_mask(
-    img: Image.Image,
-    points_norm: dict[int, tuple[float, float]],
-    tolerance: float,
-    bbox_margin_frac: float,
-) -> np.ndarray:
-    """Boolean HxW array, True = character. Background is the union of the
-    border-connected tolerant flood and everything outside this frame's own
-    keypoint bounding box (+margin); the character is the complement -- see
-    the module-level comment above for why both are needed."""
-    size = img.size[0]
-    background = border_flood_background_mask(img, tolerance)
-
-    xs = [x for x, _ in points_norm.values()]
-    ys = [y for _, y in points_norm.values()]
-    x0n, x1n = min(xs), max(xs)
-    y0n, y1n = min(ys), max(ys)
-    wn, hn = x1n - x0n, y1n - y0n
-    x0n -= wn * bbox_margin_frac
-    x1n += wn * bbox_margin_frac
-    y0n -= hn * bbox_margin_frac
-    y1n += hn * bbox_margin_frac
-    x0, x1 = int(max(0.0, x0n) * size), int(min(1.0, x1n) * size)
-    y0, y1 = int(max(0.0, y0n) * size), int(min(1.0, y1n) * size)
-
-    outside_bbox = np.ones((size, size), dtype=bool)
-    outside_bbox[y0:y1, x0:x1] = False
-    return ~(background | outside_bbox)
-
-
-def downscale_mask(fg_mask: np.ndarray, target_size: int) -> np.ndarray:
-    """Area-downscale a boolean mask to `target_size`x`target_size` (matches
-    the BOX filter already used for the RGB image itself) and re-threshold
-    at 50% coverage."""
-    mask_img = Image.fromarray((fg_mask * 255).astype(np.uint8))
-    small = mask_img.resize((target_size, target_size), Image.Resampling.BOX)
-    return np.array(small) >= 128
-
-
-def apply_cutout_masks(
-    indexed: Image.Image,
-    fg_masks: dict[tuple[int, int], np.ndarray],
-    cell_size: int,
-    background_index: int,
-) -> Image.Image:
-    """Force every cell's non-character pixels (per that cell's own
-    downscaled cutout mask) to `background_index`. Supersedes
-    `force_cell_corner_background`: a per-frame content-aware segmentation
-    is a strict superset of a same-index corner flood fill."""
-    arr = np.array(indexed)
-    out = arr.copy()
-    for (r, c), mask in fg_masks.items():
-        y0, x0 = r * cell_size, c * cell_size
-        sub = out[y0 : y0 + cell_size, x0 : x0 + cell_size]
-        sub[~mask] = background_index
-    result = Image.fromarray(out, mode="P")
-    result.putpalette(indexed.getpalette())
-    return result
-
-
-CUTOUT_METHOD_DESCRIPTION = (
-    "Per-frame border-connected tolerant region-growing in Oklab space "
-    f"(tolerance={CUTOUT_OKLAB_TOLERANCE}) over that frame's own 384x384 sampled/held image, "
-    "seeded from every border pixel and grown through 4-connected neighbours within the "
-    "tolerance of the pixel it grows from -- removes background clutter connected to the frame "
-    "edge regardless of how many distinct palette indices it quantizes to. Unioned with "
-    "'outside this frame's own keypoint bounding box + margin' (background_hold_mask's own "
-    "BACKGROUND_MASK_MARGIN_FRAC) to remove disconnected clutter (a floor-plane wedge, faint "
-    "side ghosting) by position. Applied to each frame's own image and downscaled alongside it "
-    "BEFORE the frames are assembled into the sheet -- not to the assembled sheet. "
-    "Character-foreground pixels keep their quantized palette index; every other pixel is "
-    "forced to background_index=0. Supersedes force_cell_corner_background (a strict superset: "
-    "content-aware per-frame segmentation vs. same-index corner flood fill)."
-)
-
-
+# sheet (per the review's explicit direction), not to the assembled sheet.
+# See that module's own docstring for the border-flood + connected-component
+# selection method, and why a keypoints hint can no longer clip a real,
+# shifted figure the way the original hard bbox intersection could.
 def compute_sheet_gates(indexed: Image.Image) -> dict:
     """DL-21 criterion 2 (frame-consistency) + the 2026-08-30 human-review
     background-growth gate, factored out so both a fresh generation run and
