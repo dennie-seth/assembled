@@ -371,7 +371,18 @@ def test_keypoints_to_coco_list_is_sorted_by_joint() -> None:
 
 # ---------------------------------------------------------------------------
 # Cutout hint region -- a per-frame keypoint bbox is too narrow for a gait
-# cycle's own passing/cross frames (see walk_cycle_hint_keypoints docstring).
+# cycle's own passing/cross frames (see walk_cutout_hint_keypoints
+# docstring). A full 8-frame union was tried first and rejected: it widened
+# every frame's hint (not just the narrow cross frames), which let real
+# background clutter survive cutout on frames that never needed a wider
+# hint at all (measured: background_fraction across all 8 cells dropped to
+# 57.5-62.9%, below the sheet's own 65% cleanliness floor). Frame 0 is
+# itself a genuine two-leg-wide contact/stance pose (both ankles at their
+# full STRIDE extent simultaneously, in opposite directions) -- unioning
+# just THAT one frame with the current frame recovers the same foreground
+# on cross frames (measured: 90%+ of true foreground, matching the full
+# 8-frame union) while leaving frame 0 itself, and every other
+# already-wide-enough frame, essentially unchanged.
 # ---------------------------------------------------------------------------
 
 
@@ -381,49 +392,44 @@ def _bbox(points: dict) -> tuple[float, float, float, float]:
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def test_walk_cycle_hint_keypoints_bbox_covers_every_frame() -> None:
-    """The union hint's own bbox must contain every individual frame's
-    bbox -- it exists specifically because a single passing frame's own
-    keypoints (legs pulled together by CROSS_EXTENT_NORM) draw a narrower
-    box than the gait cycle's actual envelope."""
+def test_walk_cutout_hint_keypoints_bbox_covers_the_frame_itself() -> None:
+    """The per-frame hint must always contain that frame's own bbox."""
     n = pose_rig_walk_T0259.FRAME_COUNT
-    union_x0, union_x1, union_y0, union_y1 = _bbox(
-        pose_rig_walk_T0259.walk_cycle_hint_keypoints(n)
-    )
     for i in range(n):
+        hx0, hx1, hy0, hy1 = _bbox(pose_rig_walk_T0259.walk_cutout_hint_keypoints(i, n))
         fx0, fx1, fy0, fy1 = _bbox(pose_rig_walk_T0259.walk_keypoints_for_frame(i, n))
-        assert union_x0 <= fx0 and fx1 <= union_x1, f"frame {i} x-extent escapes the union bbox"
-        assert union_y0 <= fy0 and fy1 <= union_y1, f"frame {i} y-extent escapes the union bbox"
+        assert hx0 <= fx0 and fx1 <= hx1, f"frame {i} x-extent escapes its own hint bbox"
+        assert hy0 <= fy0 and fy1 <= hy1, f"frame {i} y-extent escapes its own hint bbox"
 
 
-def test_walk_cycle_hint_keypoints_is_strictly_wider_than_a_cross_frame() -> None:
-    """A passing/cross frame's own bbox is measurably narrower in x than the
-    full cycle's envelope -- the exact gap `extract_foreground_mask`'s
-    per-frame hint was silently dropping most of the rendered figure into
-    on cross frames (T-0259, empirically measured against every real
-    generated attempt: the single largest foreground component's overlap
-    with a per-frame hint sat at 8-46% on cross frames vs >90% once the
-    hint is widened to the cycle's own union bbox)."""
+def test_walk_cutout_hint_keypoints_is_strictly_wider_than_a_cross_frame() -> None:
+    """A passing/cross frame's own bbox is measurably narrower in x than
+    its hint (widened by frame 0's contact-pose stance width) -- the exact
+    gap `extract_foreground_mask`'s unwidened per-frame hint was silently
+    dropping most of the rendered figure into on cross frames (T-0259,
+    empirically measured against every real generated attempt: the single
+    largest foreground component's overlap with a per-frame hint sat at
+    8-46% on cross frames vs >90% once the hint is widened)."""
     n = pose_rig_walk_T0259.FRAME_COUNT
-    union_x0, union_x1, _, _ = _bbox(pose_rig_walk_T0259.walk_cycle_hint_keypoints(n))
-    union_width = union_x1 - union_x0
-    narrowest_frame_width = min(
-        _bbox(pose_rig_walk_T0259.walk_keypoints_for_frame(i, n))[1]
-        - _bbox(pose_rig_walk_T0259.walk_keypoints_for_frame(i, n))[0]
-        for i in range(n)
-    )
-    assert narrowest_frame_width < union_width
+    for i in range(n):
+        hx0, hx1, _, _ = _bbox(pose_rig_walk_T0259.walk_cutout_hint_keypoints(i, n))
+        fx0, fx1, _, _ = _bbox(pose_rig_walk_T0259.walk_keypoints_for_frame(i, n))
+        if fx1 - fx0 < 0.3:  # a narrow (cross/passing) frame
+            assert (hx1 - hx0) > (fx1 - fx0)
 
 
-def test_walk_cycle_hint_keypoints_is_deterministic() -> None:
+def test_walk_cutout_hint_keypoints_for_frame_zero_is_unchanged() -> None:
+    """Frame 0 IS the contact/stance pose this hint widens every other
+    frame with -- unioning it with itself must be a no-op, so frame 0's
+    own cutout behaviour (already correct before this fix) is untouched."""
     n = pose_rig_walk_T0259.FRAME_COUNT
-    a = pose_rig_walk_T0259.walk_cycle_hint_keypoints(n)
-    b = pose_rig_walk_T0259.walk_cycle_hint_keypoints(n)
+    assert pose_rig_walk_T0259.walk_cutout_hint_keypoints(0, n) == {
+        i: pt for i, pt in enumerate(pose_rig_walk_T0259.walk_keypoints_for_frame(0, n).values())
+    }
+
+
+def test_walk_cutout_hint_keypoints_is_deterministic() -> None:
+    n = pose_rig_walk_T0259.FRAME_COUNT
+    a = pose_rig_walk_T0259.walk_cutout_hint_keypoints(2, n)
+    b = pose_rig_walk_T0259.walk_cutout_hint_keypoints(2, n)
     assert a == b
-
-
-def test_walk_cycle_hint_keypoints_covers_every_frame_point_count() -> None:
-    n = pose_rig_walk_T0259.FRAME_COUNT
-    hint = pose_rig_walk_T0259.walk_cycle_hint_keypoints(n)
-    joints_per_frame = len(pose_rig_walk_T0259.walk_keypoints_for_frame(0, n))
-    assert len(hint) == joints_per_frame * n

@@ -17,11 +17,18 @@ correctly-generated figure was being discarded as background on exactly
 these three frames regardless of denoise or seed -- not a generation
 defect, a hint-region defect.
 
-`pose_rig_walk_T0259.walk_cycle_hint_keypoints` (this card) returns the
-union of every frame's own keypoints across the cycle, which recovered
-90-98% of the true foreground on every previously-affected frame in that
-same empirical sweep, with no `cutout.py` change at all -- the shared
-module's hint contract already accepts any `points_norm` dict.
+`pose_rig_walk_T0259.walk_cutout_hint_keypoints(frame_index, frame_count)`
+(this card) unions a frame's own keypoints with frame 0's -- the gait's own
+genuine two-leg-wide contact/stance pose -- which recovered 90%+ of the
+true foreground on every previously-affected frame in that same empirical
+sweep, with no `cutout.py` change at all: the shared module's hint contract
+already accepts any `points_norm` dict. A full 8-frame union was tried
+first and rejected: it also widened frames that never needed it, and
+measurably let real background clutter survive cutout on every frame
+(background_fraction dropped to 57.5-62.9% sheet-wide, below the sheet's
+own 65% cleanliness floor). Anchoring on frame 0 specifically -- rather
+than the full cycle -- recovers the same foreground on cross frames while
+leaving frame 0 (and every other already-wide-enough frame) unchanged.
 
 This test proves the mechanism directly against `char_gen.cutout`'s real
 functions, using a synthetic frame shaped like the real defect: a
@@ -104,30 +111,31 @@ def test_per_frame_hint_drops_the_real_silhouette_on_a_cross_frame() -> None:
 
 
 def test_union_hint_recovers_the_real_silhouette_on_a_cross_frame() -> None:
-    """The fix: scored against the whole cycle's union of keypoints, the
-    same rectangle in the same position survives essentially whole."""
+    """The fix: scored against frame 2's own keypoints widened by frame 0's
+    contact-pose stance, the same rectangle in the same position survives
+    essentially whole."""
     img = _synthetic_cross_frame()
-    union_points = pose_rig_walk_T0259.walk_cycle_hint_keypoints(FRAME_COUNT)
+    hint_points = pose_rig_walk_T0259.walk_cutout_hint_keypoints(CROSS_FRAME, FRAME_COUNT)
     mask = cutout_foreground_mask(
-        img, union_points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
+        img, hint_points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
     )
     rect_area = (int(0.36 * SIZE) - int(0.24 * SIZE)) * (int(0.90 * SIZE) - int(0.10 * SIZE))
     assert mask.sum() >= rect_area * 0.9
 
 
-def test_gen_hybrid_walk_uses_the_union_hint_not_the_per_frame_hint() -> None:
+def test_gen_hybrid_walk_uses_the_widened_hint_not_the_bare_per_frame_hint() -> None:
     """Wiring check: gen_hybrid_walk_T0259's per-frame cutout call must be
-    driven by pose_rig_walk_T0259.walk_cycle_hint_keypoints(), not by that
-    frame's own walk_keypoints_for_frame() -- the whole point of this fix
-    is that the frame's own keypoints are the WRONG hint source for cutout,
-    even though they are still the right source for the ControlNet skeleton
-    and the provenance record."""
+    driven by pose_rig_walk_T0259.walk_cutout_hint_keypoints(), not by that
+    frame's own bare walk_keypoints_for_frame() -- the whole point of this
+    fix is that a cross frame's own keypoints are too narrow a hint for
+    cutout, even though they are still the right source for the ControlNet
+    skeleton and the provenance record."""
     import inspect
 
     import gen_hybrid_walk_T0259 as walk
 
     src = inspect.getsource(walk)
-    assert "walk_cycle_hint_keypoints" in src, (
-        "gen_hybrid_walk_T0259 must call pose_rig_walk_T0259.walk_cycle_hint_keypoints() "
+    assert "walk_cutout_hint_keypoints" in src, (
+        "gen_hybrid_walk_T0259 must call pose_rig_walk_T0259.walk_cutout_hint_keypoints() "
         "for its cutout hint region"
     )
