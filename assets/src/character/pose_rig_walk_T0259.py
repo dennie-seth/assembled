@@ -114,21 +114,32 @@ _BODY_BOB_JOINTS: tuple[int, ...] = (0, 1, 2, 5, 14, 15, 16, 17)  # nose/neck/sh
 # this module's test suite (arm swing vs shoulder width; stride/cross vs hip
 # separation) so these aren't just bigger numbers, they read at game scale.
 #
-# T-0271/DL-26 RESTORATION: attempt 5 (real ComfyUI generation, seed 27182)
-# ran these exact values and measured frame deltas of 0.328-0.473 -- past
-# DL-21's 0.30 cap, which attempts 6-8 then chased down to 0.22/0.13/0.15/
-# 0.02 purely to fit under it. That cap was pre-registered against the
-# player IDLE sheet, not this walk gait -- T-0271 fixed the mismatch: a
-# locomotion sheet is now graded against MOTION_FRAME_DELTA_CAP (0.50,
-# `asset_gate.character.frame_delta_cap_for_motion_class`), which attempt
-# 5's own real measured range already clears with room to spare (0.473 <
-# 0.50). The amplitude-vs-cap tradeoff that motivated the cut no longer
-# exists, so the full attempt-5 values are restored -- motion readability
-# graded before the delta number, per this card's own instruction not to
-# repeat that trade.
-STRIDE_EXTENT_NORM = 0.30  # forward/back ankle swing from the standing hip line
-KNEE_LIFT_NORM = 0.18  # how far the passing leg's knee/ankle rise off the ground line
-ARM_SWING_EXTENT_NORM = 0.20  # opposite-phase arm swing (>=0.9x shoulder width, 0.166)
+# T-0271/DL-26 RESTORATION: this card flagged CROSS_EXTENT_NORM's cut from
+# 0.14 to 0.02 (attempts 6-8) as a mistake -- it happened purely to chase
+# DL-21's 0.30 cap, pre-registered against the player IDLE sheet, not this
+# walk gait. T-0271 fixed the mismatch: a locomotion sheet is now graded
+# against MOTION_FRAME_DELTA_CAP (0.50,
+# `asset_gate.character.frame_delta_cap_for_motion_class`), so
+# CROSS_EXTENT_NORM is restored to 0.14 here.
+#
+# STRIDE_EXTENT_NORM/KNEE_LIFT_NORM/ARM_SWING_EXTENT_NORM are deliberately
+# NOT reverted alongside it to attempt 5's literal 0.30/0.18/0.20: a real
+# ComfyUI re-generation this session (seed 27182, this card's own re-run)
+# showed by direct visual inspection of the rendered skeleton that a 0.30
+# stride, applied symmetrically outward from each leg's own hip (hip
+# separation ~0.108 in this normalised space), overshoots the midline far
+# enough that the knees fully swap left/right order AT the contact pose
+# itself -- not the intentional mid-swing passing cross CROSS_EXTENT_NORM
+# already provides -- and ControlNet rendered that impossible skeleton as a
+# visibly broken, garbled figure, not a legible wide stride. "Gait
+# legibility beats delta" (this card's own edge case) cuts against
+# reverting a value on record as producing a broken render, cap headroom
+# notwithstanding. STRIDE/KNEE/ARM stay at the already-real-generation-
+# tested, anatomically sane 0.22/0.13/0.15 (attempts 6-8) -- only
+# CROSS_EXTENT_NORM, the term this card specifically named, is restored.
+STRIDE_EXTENT_NORM = 0.22  # forward/back ankle swing from the standing hip line
+KNEE_LIFT_NORM = 0.13  # how far the passing leg's knee/ankle rise off the ground line
+ARM_SWING_EXTENT_NORM = 0.15  # opposite-phase arm swing (>=0.9x shoulder width, 0.166)
 CROSS_EXTENT_NORM = 0.14  # lateral pull toward the other leg's resting x while lifted --
 # large enough for the lifted ankle to reach the other leg's own resting x
 # outright, a real cross, not attempts 6-8's narrowing-only compromise.
