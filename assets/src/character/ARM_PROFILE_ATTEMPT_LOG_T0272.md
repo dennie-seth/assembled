@@ -878,3 +878,106 @@ repo's own code (the node itself lives on the ComfyUI host, not in
 scope was "caching bug or genuine no-op," and the ComfyUI execution log
 settles that question directly.
 
+## T-0315 step 3: attempt 28 regenerated and re-cut with the fixed absolute-distance cutout -- still not promotable, for a different, newly-isolated reason
+
+Per this card's own instructions, attempt 28's logged recipe (seed 31416,
+ControlNet 1.0/1.0, style LoRA 0.7, identity LoRA 0.5, pose LoRA 0.6,
+primary IP-Adapter 0.6, style-reference secondary at 0.15, no invert) was
+re-submitted once, deterministically, as a single generation -- not a
+sweep. **The regenerated frame is not usable as attempt 28's candidate**:
+diffed pixel-for-pixel against the committed evidence copy
+(`attempt_28_secondary_reference_colour_lean.png`, the same file
+`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s round-4 section describes), the two
+differ completely (max abs diff 255 across the frame) despite every logged
+parameter matching exactly -- same seed, same weights, same secondary
+reference file (hash-verified identical), same prompt/negative text. The
+regenerated image reads as a flat white-torso silhouette with a single
+horizontal olive band and a split light-grey/lavender background, with none
+of "an olive coat body with a hood and a visible strap" the log's own
+description names. Per this card's own instruction ("if the regenerated
+frame differs materially from the log's description... say so and stop
+rather than promoting something else"), **that regenerated frame is
+discarded, not promoted, and not used for anything below** -- this
+environment's ComfyUI/GPU stack is evidently not bit-exact reproducible
+across separate submissions even with an identical seed and graph (most
+likely non-deterministic reduction order in cuDNN/cuBLAS kernels, or a
+different attention/memory code path chosen under this session's tighter
+VRAM headroom -- 1.5GB free at `/system_stats` time -- than whatever the
+original attempt 28 run had available); this is itself worth recording for
+any future card that assumes "same seed" alone guarantees a reproducible
+regeneration on this dev box.
+
+**Because attempt 28's own raw frame is already committed as verified
+evidence** (`docs/assets/evidence/T-0272/attempt_28_secondary_reference_colour_lean.png`,
+copied byte-for-byte and sha256-checked in the commit that added it -- see
+that directory's own README), the fixed cutout was instead tested directly
+against that authentic frame, which is strictly more faithful to "attempt
+28's own candidate" than a fresh, non-reproducible roll would have been.
+
+**Result: the fixed cutout is a genuine, correct improvement at the mask
+level, and still cannot rescue this specific frame at 48px.** Before/after
+masks, all newly committed to `docs/assets/evidence/T-0272/`:
+
+- `attempt_28_cutout_mask_before_fix_384.png` -- the OLD tolerance-chained
+  flood's foreground (green), re-derived exactly as round 5 itself
+  described: a mostly-solid 24,300px fill, but one that round 5's own
+  analysis already showed comes apart into several background-separated
+  islands once the outline's near-black tone bridges through it.
+- `attempt_28_cutout_mask_after_fix_384.png` -- the NEW absolute-distance
+  cutout's foreground (green): a clean, coherent, correctly-traced outline
+  of the same hooded-coat-with-strap silhouette the log describes, 5,184px.
+  This is the fix working exactly as intended at the mask level -- a
+  legible, single silhouette trace, not a solid-but-secretly-fragmented
+  blob.
+- `attempt_28_cutout_result_after_fix_48_zoomed.png` -- the same frame,
+  masked with the fixed cutout, quantized to the home palette, and
+  descended to 48x48 (shown zoomed 10x, nearest-neighbour, for legibility).
+  **This is not legible as a coat, a hood, or a figure at all** -- scattered
+  1-6px specks and slivers, the mechanical gate barely passing on raw count
+  alone (54 foreground px against the 50px floor, `background_fraction`
+  0.977) while failing the human visual call the card itself requires.
+
+**Why the fix does not close this specific gap, diagnosed rather than just
+observed:** attempt 28's own 384px render is heavily soft/blurred, not
+crisp pixel art (`docs/design/13-asset-pipeline.md`'s own target style,
+which this raw SDXL sample precedes -- the "clean readable pixel outline"
+only exists after quantization) -- the actual anti-aliased transition
+between coat and background spans many pixels of gradually-blended colour,
+not a thin one-or-two-pixel seam. `border_flood_background_mask`'s fix
+(absolute distance to sampled *true* border colours) correctly refuses to
+let a long chain of small hops walk background all the way into the coat's
+solid fill any more -- confirmed above, the 384px mask is now a clean
+outline trace, exactly the intended effect. But the *shape* that trace
+encloses is, in this specific frame, already thin (a leaning silhouette a
+few pixels wide through much of its torso/limb extent at 384px) even before
+any cutout is applied. `downscale_mask`'s own area-box-filter +
+50%-per-cell threshold (unchanged by this card, not touched per its own
+"do not regress `char_gen`'s content-aware cutout" scope for anything
+beyond `border_flood_background_mask`'s classification rule) discards any
+8x8 source block that is not majority-covered -- and a silhouette only a
+few px wide relative to an 8px block fails that threshold throughout most
+of its own extent, regardless of how correct the 384px mask boundary is.
+This is a **different, newly-isolated blocker** from round 5's own
+diagnosis (which named the mask's outline-bridging leak specifically): the
+mask defect this card set out to fix is confirmed fixed, and a second,
+independent problem -- this frame's silhouette being too thin at native
+resolution to survive standard 8x descent -- is what actually stands
+between attempt 28 and a usable 48px cell. Widening the descent threshold
+or changing `downscale_mask`'s own algorithm is out of this card's scope
+(a change to `char_gen`'s shared descent path deserves the same
+regression-test rigour as `border_flood_background_mask` got here, against
+every consumer that also relies on `downscale_mask`, not a quick tweak
+folded into this same commit).
+
+**Conclusion, per this card's own explicit permission:** the fixed cutout
+cannot rescue attempt 28 -- not for the reason originally diagnosed
+(that defect is fixed, evidenced above), but for a different, newly-named
+one (silhouette too thin for standard descent, independent of mask
+correctness). `assets/final/character/` still correctly carries no T-0272
+file; no substitute frame is promoted in its place. The natural next step
+for a follow-up card is the `downscale_mask` threshold/algorithm itself
+(e.g. weighting by fractional coverage per cell rather than a hard 50% cut,
+or a higher source:target descent ratio for silhouettes this thin) --
+scoped as its own change for the same reason the mask fix was scoped
+separately from the component-selection layer above it.
+

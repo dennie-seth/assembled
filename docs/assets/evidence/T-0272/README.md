@@ -90,15 +90,43 @@ analysis.
   still a small yellow-green patch (78 fg px total), not a coat-wide vivid
   green.
 
-Every image here is a raw 384x384 `main_384.png` (pre-cutout, pre-descent,
-pre-quantization) -- none has been cropped, retouched, or otherwise altered
-beyond the file copy itself. Full parameters (seed, every LoRA/ControlNet/
-IP-Adapter weight, `comfyui_prompt_id`, `gpu_seconds`) for each attempt are
-recorded in `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s round-4 table rows
-(attempts 19, 21, 24, 25, 28) and round-5 table rows (attempts 33, 35, 36)
-and provenance JSON (not committed here -- the gitignored
+Every attempt-numbered image above is a raw 384x384 `main_384.png`
+(pre-cutout, pre-descent, pre-quantization) -- none has been cropped,
+retouched, or otherwise altered beyond the file copy itself. Full
+parameters (seed, every LoRA/ControlNet/IP-Adapter weight,
+`comfyui_prompt_id`, `gpu_seconds`) for each attempt are recorded in
+`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s round-4 table rows (attempts 19, 21,
+24, 25, 28) and round-5 table rows (attempts 33, 35, 36) and provenance
+JSON (not committed here -- the gitignored
 `assets/out/hybrid_profile/attempt_<N>/provenance_candidate.json` per
 attempt).
+
+**T-0315 cutout-fix before/after (see `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
+own "T-0315 step 3" section for the full write-up):**
+
+- **`attempt_28_cutout_mask_before_fix_384.png`** -- `border_flood_
+  background_mask`'s foreground (green), pre-fix, over
+  `attempt_28_secondary_reference_colour_lean.png` above: a mostly-solid
+  24,300px fill that nonetheless comes apart into several
+  background-separated islands once descended (round 5's own diagnosis).
+- **`attempt_28_cutout_mask_after_fix_384.png`** -- the same frame, T-0315's
+  absolute-background-distance fix: a clean, coherent, correctly-traced
+  5,184px outline of the hooded-coat-with-strap silhouette -- the mask
+  defect this card set out to fix, confirmed fixed.
+- **`attempt_28_cutout_result_after_fix_48_zoomed.png`** -- the same frame,
+  masked with the fixed cutout, quantized, and descended to 48x48 (shown
+  10x zoomed, nearest-neighbour). Not legible as a coat or a figure --
+  scattered specks and slivers, the mechanical gate barely passing on raw
+  count (54px) while failing the card's own human-visual-legibility
+  requirement. Diagnosed as a second, independent, newly-isolated blocker
+  (this frame's silhouette is too thin at 384px to survive
+  `downscale_mask`'s 8x/50%-threshold descent, regardless of mask
+  correctness) -- not a re-run of the original outline-bridging defect,
+  which the two mask images above show is genuinely fixed.
+
+No file is promoted to `assets/final/character/` from this card either --
+the fixed cutout is real and correctly scoped, but does not by itself
+close attempt 28's own gap.
 
 `.gitignore` check (round-4 addendum, re-run for round 5): `git check-ignore
 -v` against every path added to this directory across both rounds -- the
