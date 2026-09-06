@@ -71,7 +71,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "asset-gate" / "src"))
@@ -189,6 +189,22 @@ def build_positive_prompt(include_pose_trigger_token: bool = True) -> str:
 
 
 PROFILE_PROMPT = build_positive_prompt(include_pose_trigger_token=True)
+
+
+def invert_reference_for_conditioning(src_path: Path, dest_path: Path) -> None:
+    """Round 3 Test D: T-0273's approved side-profile references are a dark
+    silhouette on an off-white/cream studio background -- the opposite tone
+    of this card's own "solid flat black background" target. Fed to
+    IP-Adapter as-is, that off-white background bleeds into the generation's
+    own background (attempt 12: only 76 foreground pixels survived cutout,
+    because the light background threw off `cutout_foreground_mask`'s
+    border-connected region growing). A pure RGB channel invert (dark
+    silhouette -> light figure on a near-black field) aligns the reference's
+    tone with the desired output composition without altering the pose or
+    silhouette it encodes -- a deterministic transform of the committed
+    source, not a new reference."""
+    inverted = ImageOps.invert(Image.open(src_path).convert("RGB"))
+    inverted.save(dest_path)
 PROFILE_NEGATIVE = (
     IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric front-facing pose, "
     "three-quarter view, back view, both shoulders equally visible, washed out colour, "
@@ -627,12 +643,14 @@ def run_attempt(
                 f"secondary IP-Adapter reference not found: {secondary_concept_path}"
             )
         secondary_hash = sha256_of(secondary_concept_path)
+        secondary_inverted_path = out_dir / "secondary_reference_inverted.png"
+        invert_reference_for_conditioning(secondary_concept_path, secondary_inverted_path)
 
     t0 = time.monotonic()
     skeleton_filename = upload_image(skeleton_path)
     concept_filename = upload_image(identity_reference_path)
     if secondary_concept_path is not None:
-        secondary_filename = upload_image(secondary_concept_path)
+        secondary_filename = upload_image(secondary_inverted_path)
     graph = build_graph(
         seed=seed,
         concept_filename=concept_filename,
@@ -760,6 +778,13 @@ def run_attempt(
             "path": str(secondary_concept_path.relative_to(REPO_ROOT)),
             "hash": secondary_hash,
             "weight": secondary_ipadapter_weight,
+            "transform": (
+                "RGB channel invert (PIL.ImageOps.invert, invert_reference_for_conditioning) "
+                "applied to the committed source before conditioning -- the source is a dark "
+                "silhouette on an off-white background, the opposite tone of this card's "
+                "black-background target; uninverted, the light background bled into the "
+                "generation and defeated cutout (round-3 attempt 12: 76 fg px survived)"
+            ),
             "note": (
                 "T-0273's approved side-profile reference set, stacked via a second "
                 "IPAdapterAdvanced node chained after the front concept sheet's -- explicitly "
@@ -801,8 +826,10 @@ def main() -> None:
         "--secondary-concept",
         type=str,
         default=None,
-        help="round 3 Test D: path to a genuine side-profile reference image, stacked via a "
-        "second IPAdapterAdvanced node chained after the front concept sheet's",
+        help="round 3 Test D: path to a committed T-0273 side-profile reference "
+        "(assets/src/concept/player_profile_reference_*.jpg), colour-inverted automatically "
+        "before conditioning and stacked via a second IPAdapterAdvanced node chained after "
+        "the front concept sheet's",
     )
     parser.add_argument("--secondary-ipadapter-weight", type=float, default=0.6)
     parser.add_argument(
@@ -833,7 +860,9 @@ def main() -> None:
 
     check_attempt_cap(args.attempt)
 
-    secondary_concept_path = Path(args.secondary_concept) if args.secondary_concept else None
+    secondary_concept_path = (
+        Path(args.secondary_concept).resolve() if args.secondary_concept else None
+    )
     provenance = run_attempt(
         attempt=args.attempt,
         seed=args.seed,
