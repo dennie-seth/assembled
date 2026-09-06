@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   actorFromHeaders,
   approvalRecord,
+  approvalVerdict,
   ApprovalRequiredError,
   assertRunnerMayApply,
   isAgentActor,
@@ -44,6 +45,76 @@ describe("requiresApproval / isApproved / needsApproval", () => {
     expect(needsApproval(task())).toBe(true);
     expect(needsApproval(task({ approved_by: "DennieSeth" }))).toBe(false);
     expect(needsApproval(task({ requires_approval: false }))).toBe(false);
+  });
+});
+
+/**
+ * `approvalVerdict` (T-0286, docs/decision-log.md DL-27): the board record is the single,
+ * authoritative answer to "is this asset/card approved?" -- built only from the fields this
+ * module's own human gestures (AP-3/AP-4) ever write. Before this, `ASSET_PROVENANCE.md` kept
+ * a second, hand-maintained mirror of the same verdict in prose, and nothing propagated one to
+ * the other: T-0257 was approved on the board 2026-08-30 while its provenance row still read
+ * "Not yet approved" for days, blocking T-0243/T-0244/T-0245/T-0246 on a decision already made
+ * (PR #307 fixed that one row by hand). `approvalVerdict` is a pure read over `requiresApproval`
+ * / `isApproved` -- it cannot write `approved_by`/`approved_at`, so it can only ever forward an
+ * existing human stamp, never mint one.
+ */
+describe("approvalVerdict (T-0286, DL-27: single approval source of truth)", () => {
+  it("passes trivially when the card is not gated", () => {
+    const verdict = approvalVerdict(task({ requires_approval: false, approved_by: null }));
+    expect(verdict).toEqual({
+      taskId: "T-0257",
+      requiresApproval: false,
+      approved: true,
+      approvedBy: null,
+      approvedAt: null,
+      reason: "card does not require a human direction approval"
+    });
+  });
+
+  it("reports unapproved for a gated card with no recorded approval", () => {
+    const verdict = approvalVerdict(task());
+    expect(verdict.requiresApproval).toBe(true);
+    expect(verdict.approved).toBe(false);
+    expect(verdict.approvedBy).toBe(null);
+    expect(verdict.approvedAt).toBe(null);
+    expect(verdict.reason.toLowerCase()).toContain("no human approval");
+  });
+
+  it("reports approved for a gated card with a recorded human stamp", () => {
+    const verdict = approvalVerdict(
+      task({ approved_by: "@DennieSeth", approved_at: "2026-08-30T22:06:35.073Z" })
+    );
+    expect(verdict.approved).toBe(true);
+    expect(verdict.approvedBy).toBe("@DennieSeth");
+    expect(verdict.approvedAt).toBe("2026-08-30T22:06:35.073Z");
+    expect(verdict.reason).toContain("@DennieSeth");
+  });
+
+  it(
+    "reproduces the exact T-0243 drift scenario: the board record alone resolves T-0257 as " +
+      "approved, regardless of what ASSET_PROVENANCE.md's prose says -- because this function " +
+      "never reads that file at all",
+    () => {
+      // The real T-0257 board record (ASSET_PROVENANCE.md line ~110; PR #291).
+      const t0257 = task({
+        status: "done",
+        approved_by: "Anonymous",
+        approved_at: "2026-08-30T22:06:35.073Z"
+      });
+
+      const verdict = approvalVerdict(t0257);
+
+      expect(verdict.approved).toBe(true);
+      expect(verdict.approvedBy).toBe("Anonymous");
+      expect(verdict.approvedAt).toBe("2026-08-30T22:06:35.073Z");
+    }
+  );
+
+  it("never mints an approval -- an empty-string approved_by still fails, even when gated", () => {
+    const verdict = approvalVerdict(task({ approved_by: "" }));
+    expect(verdict.approved).toBe(false);
+    expect(verdict.approvedBy).toBe(null);
   });
 });
 

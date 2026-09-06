@@ -15,6 +15,8 @@ import { RunOrchestrator } from "../runner/runOrchestrator.js";
 import { ClaudeCliRunner } from "../runner/claudeCliRunner.js";
 import { createRestartCoordinator } from "../runner/serviceRestart.js";
 import { createOrphanReaper } from "../runner/orphanReaper.js";
+import { acquireBoardOwnership, boardOwnerLockPath } from "../runner/boardOwnership.js";
+import { createRunAwareTaskStore } from "../lib/runAwareTaskStore.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 import { createAutoPullPoller } from "../runner/autoPullPoller.js";
 import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
@@ -79,14 +81,39 @@ export async function startBoardServer({
     idAllocator,
     onIdle: () => restartCoordinator.notifyIdle()
   });
-  const orphanReaper = createOrphanReaper({
+  // Store-boundary transition validation -- review item #5 (§2.3). Ownership is a CAPABILITY:
+  // the orchestrator above keeps the raw `store` and so may write any status for the runs it
+  // owns; every other consumer below gets this guarded view, which refuses a `blocked` write to
+  // a card the orchestrator is actively tracking. Liveness is read at write time from the same
+  // `activeCardIds` set the reaper already shares by reference, so it stays authoritative as
+  // runs start and finish. This needs no change to runOrchestrator.js.
+  const guardedStore = createRunAwareTaskStore({
     store,
+    isRunLive: (taskId) => orchestrator.activeCardIds.has(taskId)
+  });
+
+  // Cross-process reaping guard. `guardedStore` and the reaper's own ownership check both read
+  // THIS process's `activeCardIds`, so neither can see a second board instance bound to the same
+  // database -- which is precisely what reaped six live cards on 2026-09-04, when an agent's
+  // `npx vitest` inherited BOARD_TASK_STORE=db and every test that built a server ran
+  // reapOnStartup against the live DB. Only the lock holder gets the authority to declare
+  // someone else's run dead; everything else this server does is unaffected. See
+  // boardOwnership.js. In fs mode the tasks directory is already per-checkout, so the lock is
+  // keyed on it rather than on a database path.
+  const boardIdentityPath = taskStoreKind === "db" ? resolveDbPath() : path.join(tasksDir, ".board");
+  const ownership = await acquireBoardOwnership({ lockPath: boardOwnerLockPath(boardIdentityPath) });
+
+  const orphanReaper = createOrphanReaper({
+    store: guardedStore,
     hub,
     activeCardIds: orchestrator.activeCardIds,
     runsDir: path.join(tasksDir, ".runs"),
     repoRoot: REPO_ROOT,
     tasksDir,
-    taskStoreKind
+    taskStoreKind,
+    // Ownership gates reaping only -- `enabled` already carries the ORPHAN_RECOVERY env switch,
+    // and a non-owner keeps every other server capability.
+    owned: ownership.owned
   });
   const selfImprovementLoop = createSelfImprovementLoop({
     store,
@@ -152,9 +179,11 @@ export async function startBoardServer({
     }
   });
 
-  // A fresh process has zero active runs by definition, so any card still sitting at
-  // in-progress/validation here belongs to a run that died with the previous process --
-  // reap those before anything else touches the store.
+  // A fresh process has zero *tracked* active runs by definition, but a card sitting at
+  // in-progress/validation here may still have a genuinely live child process behind it (see
+  // orphanReaper.js's own docstring -- a detached `claude` child survives a board restart with
+  // the same pid). reapOnStartup applies the same pid/run-log liveness check sweepOnce does
+  // before resetting anything, and only reaps what it can't corroborate as still alive.
   await orphanReaper.reapOnStartup();
   orphanReaper.start();
   selfImprovementLoop.start();

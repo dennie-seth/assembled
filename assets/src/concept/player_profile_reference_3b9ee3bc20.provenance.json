@@ -1,0 +1,19 @@
+{
+  "card": "T-0273",
+  "consumerCard": "T-0274",
+  "sourcedVia": "T-0276 referenceFetch.js (fetched fresh by T-0273 after PR #312's transport fix)",
+  "model_hash": "N/A — fetched open-licence reference photograph, not model-generated",
+  "generator": "tools/board/scripts/referenceFetch.js",
+  "sourceId": "openverse",
+  "assetId": "531b7e05-8b0a-4da9-bf60-f7df50cd8c05",
+  "title": "Silhouette walking man illustration",
+  "sourceUrl": "https://api.openverse.org/v1/images/531b7e05-8b0a-4da9-bf60-f7df50cd8c05/thumb/",
+  "license": "cc0",
+  "licenseNormalized": "cc0",
+  "retrievedAt": "2026-09-03T17:06:41.677Z",
+  "promotedAt": "2026-09-03",
+  "mime": "image/jpeg",
+  "sha256": "3b9ee3bc209c591799f2389f9e7d7b33a50fbfdaca8afa4531040a91bcc84f5b",
+  "byteLength": 15833,
+  "verdict": "KEPT -- clean flat vector-style silhouette, true 90-degree side-on stance mid-stride, unambiguous profile. Supplements the photographic Muybridge plates with a clean flat-silhouette read."
+}

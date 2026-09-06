@@ -7,10 +7,32 @@ import {
   sortTasks,
   SORT_KEYS
 } from "./board.js";
+import { createAutoScrollController } from "./dragAutoScroll.js";
 
 export const BATCH_SIZE = 20;
 
 let _batchObserver = null;
+
+// One controller shared across every column: only the column currently under the pointer
+// during a drag ever has anything to scroll. `_dragCardOffset` is `{grabOffsetY, height}`
+// captured on the most recent `dragstart` -- NOT a reference to the dragged element itself.
+// The source element never moves during an HTML5 drag (the drag image is a detached snapshot
+// with no queryable rect), so its own `getBoundingClientRect()` would report a stale position;
+// the offset lets dragAutoScroll.js derive the card's *visible* leading edge from the live
+// pointer position instead (see computeAutoScroll's doc comment).
+const _autoScroll = createAutoScrollController();
+let _dragCardOffset = null;
+
+// Registered once at module load, not per-render: `dragend` fires on the source card whenever
+// a drag operation concludes -- dropped, cancelled, or released outside the window -- so this
+// is what stops a leaked auto-scroll loop for every one of those cases in one place, rather than
+// requiring a matching listener on every drop target.
+if (typeof document !== "undefined") {
+  document.addEventListener("dragend", () => {
+    _autoScroll.detach();
+    _dragCardOffset = null;
+  });
+}
 
 const STATUS_LABELS = {
   backlog: "Backlog",
@@ -111,6 +133,8 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, depen
 
   card.addEventListener("dragstart", (event) => {
     event.dataTransfer.setData("text/plain", task.id);
+    const rect = card.getBoundingClientRect();
+    _dragCardOffset = { grabOffsetY: event.clientY - rect.top, height: rect.height };
   });
   card.addEventListener("click", () => onCardClick(task.id));
 
@@ -209,9 +233,29 @@ function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus,
 
   list.addEventListener("dragover", (event) => {
     event.preventDefault();
+    // Cheap: just latches the latest pointer/card state. The actual getBoundingClientRect()/
+    // scrollBy() work happens on the next animation frame (see dragAutoScroll.js), not here --
+    // dragover fires far too often to do that work per-event without jitter.
+    _autoScroll.attach(list);
+    _autoScroll.update(event.clientY, _dragCardOffset);
+  });
+  list.addEventListener("dragleave", (event) => {
+    // VALIDATION FAIL (run 3): dragover attaches this column whenever the pointer is over it,
+    // but with no dragleave counterpart the controller stayed latched onto -- and kept
+    // scrolling -- the last column even after the pointer left every column entirely (onto the
+    // side panel, the console, the inter-column gap, or the board's own padding), scrolling
+    // against a stale pointerY until it hit its scroll limit or dragend fired. `relatedTarget`
+    // is null when the drag leaves the window, and it's outside `list` for any genuine leave;
+    // the browser also fires dragleave when the pointer moves onto a *child* card within this
+    // same list, which `list.contains(...)` correctly does not treat as a leave.
+    if (!event.relatedTarget || !list.contains(event.relatedTarget)) {
+      _autoScroll.detach();
+    }
   });
   list.addEventListener("drop", (event) => {
     event.preventDefault();
+    _autoScroll.detach();
+    _dragCardOffset = null;
     const taskId = event.dataTransfer.getData("text/plain");
     if (taskId) {
       callbacks.onDrop(taskId, status);

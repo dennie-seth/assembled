@@ -9,6 +9,19 @@ const CATEGORY_LABELS = {
   "code-test-bug": "Code/test bug"
 };
 
+/**
+ * Statuses in which a remediation card is closed -- no longer a live gate for its parent.
+ * `retired` is the explicit human "this is not the way forward" verdict; `done` is ordinary
+ * completion. Neither is eligible for re-linking as a fresh dependency (T-0310): the escalation
+ * dedupe must check status, not mere existence, or a second escalation re-attaches its parent to
+ * a card nobody will ever act on again.
+ */
+export const CLOSED_REMEDIATION_STATUSES = new Set(["done", "retired"]);
+
+export function isClosedRemediationStatus(status) {
+  return CLOSED_REMEDIATION_STATUSES.has(status);
+}
+
 /** True iff `task`'s body carries the escalation-remediation marker for `originalId` -- the de-dupe key (mirrors flowImprovementCard.js's isAutoProposedCard). */
 export function isRemediationCardFor(task, originalId) {
   const body = task && task.body;
@@ -17,9 +30,39 @@ export function isRemediationCardFor(task, originalId) {
   return Boolean(match && match[1] === originalId);
 }
 
-/** Finds the remediation card already open for `originalId` among `tasks`, or null if none exists yet. */
+/** Finds a remediation card for `originalId` among `tasks` by marker alone, regardless of status, or null if none exists yet. */
 export function findExistingRemediationCard(tasks, originalId) {
   return tasks.find((task) => isRemediationCardFor(task, originalId)) ?? null;
+}
+
+/** Every remediation card (open or closed) filed against `originalId`, in list order. */
+export function findRemediationCardsFor(tasks, originalId) {
+  return tasks.filter((task) => isRemediationCardFor(task, originalId));
+}
+
+/**
+ * The remediation card for `originalId` that is still open (not `done`/`retired`), or null when
+ * every match is closed or none exist. A long escalation history can carry several closed cards
+ * for the same parent -- this only ever returns one that's actually still actionable.
+ */
+export function findOpenRemediationCard(tasks, originalId) {
+  return findRemediationCardsFor(tasks, originalId).find((task) => !isClosedRemediationStatus(task.status)) ?? null;
+}
+
+function taskIdSequence(id) {
+  const match = /(\d+)/.exec(id ?? "");
+  return match ? Number(match[1]) : -Infinity;
+}
+
+/**
+ * The most recently created closed remediation card for `originalId` (highest task id), or null
+ * when none is closed. Used to name what a fresh escalation supersedes -- picking correctly
+ * across a long history matters more than matching whichever closed card happens to sort first.
+ */
+export function findMostRecentClosedRemediationCard(tasks, originalId) {
+  const closed = findRemediationCardsFor(tasks, originalId).filter((task) => isClosedRemediationStatus(task.status));
+  if (closed.length === 0) return null;
+  return closed.reduce((latest, task) => (taskIdSequence(task.id) > taskIdSequence(latest.id) ? task : latest));
 }
 
 /**
@@ -30,7 +73,7 @@ export function findExistingRemediationCard(tasks, originalId) {
  * `cardCreation.js`'s `createCard` is what actually writes it, exactly like
  * flowImprovementCard.js's `draftImprovementCard`.
  */
-export function draftRemediationCard({ task, report, attemptCount, now = () => new Date() }) {
+export function draftRemediationCard({ task, report, attemptCount, now = () => new Date(), supersedes = null }) {
   const dateStr = now().toISOString().slice(0, 10);
   const marker = `<!-- escalation-remediation-for: ${task.id} -->`;
   const label = CATEGORY_LABELS[report.lacks.category] ?? report.lacks.category;
@@ -44,6 +87,12 @@ export function draftRemediationCard({ task, report, attemptCount, now = () => n
     "## Context",
     "",
     contextLine,
+    ...(supersedes
+      ? [
+          "",
+          `**Supersedes:** \`${supersedes.id}\` (closed: ${supersedes.status}) -- that remediation did not resolve the blocker; this card carries the current failure.`
+        ]
+      : []),
     "",
     "## Blocker report",
     "",

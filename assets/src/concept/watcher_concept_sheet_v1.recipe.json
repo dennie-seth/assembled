@@ -1,0 +1,16 @@
+{
+  "name": "watcher_concept_sheet_v1",
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "prompt": "flat side-on concept sheet, orthographic full-body elevation, no perspective, no vanishing point, single figure centred on a plain background, Soviet brutalist institutional aesthetic, muted desaturated home palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, pixel art game asset reference sheet style, silhouette study. A humanoid figure with an owl head: large forward-facing owl eyes, a pronounced owl facial disc, and feathered head plumage on an otherwise ordinary upright humanoid body wearing a plain utilitarian institutional coverall, hands empty, unarmed, standing in a neutral relaxed posture, a passive stealth obstacle to route around, not a combatant. Concrete grey and institutional green muted colour palette. The head is unmistakably an owl's, dominated by eyes, telegraphing acute vision at a glance.",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, multiple figures, weapon, gun, sword, blade, knife, rifle, armor, armour, aggressive combat pose, battle stance, fighting stance, human face without owl features, small or hidden eyes, animal body, non-humanoid body, robot, mechanical parts, multiple eyes clusters, insect features",
+  "seed": 27501,
+  "steps": 30,
+  "cfg": 7.0,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "width": 1024,
+  "height": 1024,
+  "generator": "assets/src/character/gen_enemy_concept_T0275.py"
+}

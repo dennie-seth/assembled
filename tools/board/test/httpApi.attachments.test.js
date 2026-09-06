@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { rmTemp } from "./helpers/rmTemp.js";
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -57,7 +58,10 @@ afterEach(async () => {
   // instead of returning. Force them closed so cleanup is instant either way.
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(repoRoot, { recursive: true, force: true });
+  // rmTemp, not a bare fs.rm: git's background repacking can write into .git/objects/pack
+  // between this walk's readdir and its rmdir, which surfaced in CI as
+  // "ENOTEMPTY: directory not empty, rmdir '.../.git/objects/pack'" while passing locally.
+  await rmTemp(repoRoot);
 });
 
 async function createTask(overrides = {}) {

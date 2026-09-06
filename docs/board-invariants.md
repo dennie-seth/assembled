@@ -269,6 +269,7 @@ that gains comment or PATCH rights.
 | AP-7 | A planner run may **add** `requires_approval` to a card — flagging a direction card is spec work — but may never write, alter or erase an approval record. Enforced twice: `checkPlannerDiffGuard` fails the run in fs mode, and `plannerFileView`'s `MUTABLE_FIELDS` allowlist (whose `diffPlannerFileView` runs that same guard) fails it in db mode. | The planner is the one agent that legitimately rewrites card frontmatter wholesale, so it is the one agent that could forge an approval as a side effect of ordinary work. Treated exactly like the existing "planner never touches status" rule. | ✅ Covered — `plannerDiffGuard.test.js` (forge, erase, and the legitimate add), `plannerFileView.test.js` (db-mode add applied, db-mode forge rejected). |
 | AP-8 | An approval-by-comment fires the same terminal-status side effects a drag to Done does — artifact-cache purge and the `origin/develop` deploy pull. | Two routes to `done` that do *different* amounts of follow-through is precisely the shape of divergence that produced PULL-1, where one mode silently stopped deploying. Both routes now go through one `applyTerminalStatusEffects`. | ✅ Covered — `httpApi.approval.test.js` ("triggers the same deploy pull…", and not for an ordinary comment). |
 | AP-9 | Cards already `done` before this gate existed are **not** retroactively re-parked. | A migration that reopened settled cards would rewrite history the board has already acted on, and would unblock/reblock downstream work with no human in the loop. The one card this actually matters for (T-0239's synthetic sheet) was already superseded by T-0257 through the normal card flow, which is the right mechanism: a new card carrying the gate, not a retro-edit of an old one. | ✅ By construction — the migration defaults every existing row to `requires_approval = 0`; no code path re-parks a `done` card. |
+| AP-10 | A card's approval verdict has exactly one authoritative *read* path: `approvalVerdict(task)` in `approvalGate.js`, exposed as `GET /api/tasks/:id/approval`. It resolves `requires_approval`/`approved_by`/`approved_at` off the board record only. It is a pure read with no path to set `approved_by`/`approved_at` — it can forward an existing human stamp, never mint one. `ASSET_PROVENANCE.md`'s prose is a second, existing consumer of that same verdict (the `assets` package's own pytest gates check it directly, offline, outside board reach) — it is kept truthful by a write-through (`approvalProvenanceSync.js`'s `refreshApprovalProvenanceFile`) that forwards the same already-recorded human stamp into the one row `findApprovalDrift` flags as stale, and never mints an approval either. | T-0257 was approved on the board 2026-08-30 while `ASSET_PROVENANCE.md`'s row for its concept sheet still read "Not yet approved" — a second, hand-maintained mirror of the same verdict that nothing kept in sync, blocking T-0243/T-0244/T-0245/T-0246 for days on a decision already made (PR #307 fixed that one row by hand; `docs/decision-log.md` DL-27 records the class fix, the Option A vs Option B trade, and the run-4 addendum explaining why a narrow write-through was added on top of Option A). | ✅ Covered — `approvalGate.test.js` (`approvalVerdict`, incl. the T-0257/T-0243 drift scenario reproduced and resolved), `httpApi.approval.test.js` §AP-10 (end-to-end over the real endpoint, incl. the 404 and agent-cannot-approve cases), `approvalProvenanceSync.test.js` + `httpApi.approvalProvenanceNotice.test.js` (write-through, incl. the exact stale-row scenario, both approval routes, and the never-mints-an-approval guard). |
 
 **The general pattern for direction cards.** Every future concept-art,
 style-direction or reference-producing card sets `requires_approval: true` at
@@ -276,6 +277,101 @@ authoring time. The card's Acceptance must describe *producing and parking* —
 never "get it approved", which is not a criterion an agent can satisfy and is
 what made T-0233 unsatisfiable across five attempts. T-0257 (the real Signal
 Tower prop concept sheet gating T-0243–T-0246) is the first card to carry it.
+
+**The second record (T-0286, DL-27).** AP-1..AP-9 above cover the board's own
+state faithfully, but say nothing about *other* readers of a card's approval
+verdict. `ASSET_PROVENANCE.md` keeps a prose note per curated asset, and
+until AP-10 nothing kept it in sync with the board — see AP-10 above for the
+incident and the fix. `ASSET_PROVENANCE.md`'s note stays human-readable
+documentation for a reader with no board access, but it **is** consulted for
+the verdict by at least one real, existing, mechanical gate: each of
+`assets/src/concept/tests/test_{power_substation,equipment_floor,antenna_shaft}_room_manifest.py`
+defines `test_t0257_concept_sheet_is_approved()`, a plain pytest assertion
+that does `"APPROVED" in row` against the file on disk. An earlier draft of
+this line claimed the opposite ("not consulted for the verdict"); that was
+wrong, and is corrected here (`docs/decision-log.md` DL-27's run-4 addendum
+has the full account). No existing row is retroactively rewritten by any of
+this — only a row `findApprovalDrift` flags as `stale-unapproved-claim` for a
+card the board has since approved is ever touched, and only the matched
+stale phrase within it.
+
+**AP-10's mechanical backstop, and the instruction edit still owed.**
+`findApprovalDrift` (`tools/board/src/lib/approvalProvenanceDrift.js`) plus
+`ci-approval-provenance-drift.yml` cross-check every provenance row naming a
+card against that card's real `approvalVerdict` on every PR touching
+`ASSET_PROVENANCE.md` or `tasks/**` — a code-only, git-diff-level catch for
+exactly the T-0257/T-0243 drift shape, independent of any agent's own tool
+grants. The live board process goes one step further:
+`approvalProvenanceSync.js`'s `refreshApprovalProvenanceFile`, wired into
+both of `httpApi.js`'s approval write paths, rewrites the specific stale row
+the moment a human's AP-3/AP-4 gesture stamps an approval — forwarding only
+the `approved_by`/`approved_at` that gesture just wrote, never minting one —
+which is what makes the three pytest gates above self-heal without their own
+code changing. What did **not** land in this pass: instructing the `assets`
+agent itself (`.claude/rules/assets.md`) to resolve approval from
+`GET /api/tasks/:id/approval` rather than from `ASSET_PROVENANCE.md`'s prose
+*before it generates* — the write-through above fixes the existing mechanical
+gates, but does not stop an agent from reading stale prose in the moment
+before an approval lands. Editing anything under `.claude/**` was refused at
+the session level while T-0286 was in progress; see
+`docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` for the exact
+refusals and the exact text to apply once a session with `.claude/**` write
+access is available.
+
+## 11. Unsatisfiable acceptance criteria (T-0300)
+
+`docs/reviews/2026-09-03-run-lifecycle-state-management.md` §4.0b named a distinct failure class:
+a card's own `## Acceptance` criterion demands evidence no agent in this repo can ever gather. Every
+retry reproduces the identical failure signature, and the no-progress guard (§23-a) then correctly
+— but expensively — aborts the run. The guard is not the bug; the criterion was unsatisfiable from
+the moment the card was written. Confirmed on six real cards: T-0222/T-0258/T-0288 (PR-open/CI-green
+circularity — push and PR-open happen only inside the orchestrator's own PASS handler, so requiring
+either beforehand is always a deadlock), T-0233 (a named human's approval — the same circularity §10
+above already covers for `requires_approval` cards specifically), T-0288 again (a real-browser
+observation with no browser driver at the time), T-0290 (`systemctl`/`journalctl` evidence with no
+matching grant, and unsafe to gather even with one — see `tools/board/DEPLOY.md`), and T-0273 (a hard
+"both external reference sources must succeed" bar against upstream services that rate-limit
+independently).
+
+**The fix is a card-authoring convention, not a runner change.** Full write-up:
+`docs/card-authoring-agent-satisfiability.md`. In one line: every acceptance criterion is exactly
+one of (1) the agent has the capability — require it and name the tool, (2) the capability can
+reasonably be added — add it, then require it, or (3) neither — it becomes a
+`## Human verification (NOT an agent criterion — does not gate PASS)` step, never a PASS-gating
+criterion.
+
+`tools/board/src/runner/impossibleAcceptancePreflight.js` is the mechanical, **warn-only**
+backstop, run in `runOrchestrator.js` alongside `acceptancePreflight.js` (T-0186) and
+`capabilityPreflight.js` (T-0225), before the implementer is spawned. Unlike those two, it never
+calls `_blocked` — a false positive over freeform English must never stop a legitimate card from
+running. It flags human-observation-only phrasing, a named operational/browser-driver tool the
+*assigned* agent's own `.claude/agents/<agent>.md` grants don't cover, PR/CI-green circularity in
+either voice, named-human approval circularity, and an external-source "all must succeed"
+requirement (derived from `referenceSourcePolicy.js`'s real source list, not a hardcoded one).
+Warnings post as a run-log event and an `assembled-board` card comment, the same authorship
+convention `formatBlockerReportComment`/`parkedForApprovalComment` (§10 above) already use.
+
+**Does not weaken the reviewer.** The reviewer's fail-closed rule — an unrunnable required check
+is a FAIL, not an unverified pass — is untouched. This changes what a planner writes, never what a
+reviewer accepts.
+
+**The planner-guidance edit could not land in this session.** The natural place for this
+convention in prose is `.claude/rules/planner.md`; every attempt to write to it (and, to rule out a
+per-file cause, to the unrelated `.claude/rules/js.md`) was refused by the harness itself —
+the identical `.claude/**`-wide block T-0286 already hit and documented in
+`docs/T-0286-claude-instruction-edit-blocked-attempt-log.md`. See
+`docs/T-0300-planner-rule-edit-blocked-attempt-log.md` for this session's own attempts and the
+exact bullet to paste in once a session with `.claude/**` write access is available. This document
+and `docs/card-authoring-agent-satisfiability.md` are the durable record in the meantime.
+
+| ID | Invariant | Why it matters | Status |
+|----|-----------|-----------------|--------|
+| UAC-1 | An AC item phrased as human-observation-only ("say what you observed", "do not infer it from the code", "verify by looking", "confirm visually") is flagged before the implementer runs, but never blocks the run. | T-0288's exact failure shape — five rounds burned on a criterion no agent session could ever satisfy truthfully. | ✅ Covered — `impossibleAcceptancePreflight.test.js`, `runOrchestrator.impossibleAcceptancePreflight.test.js`. |
+| UAC-2 | An AC item naming an operational/browser-driver tool (`systemctl`, `journalctl`, `playwright`, `puppeteer`, `selenium`, `chromedriver`, `geckodriver`, `webdriver`) is flagged only when the **assigned** agent's own resolved grants don't cover it — a per-agent cross-check, not a blanket rule. | T-0290's exact shape, and T-0300's own edge case: impossible for `client` can be fine for `infra`. | ✅ Covered — same-tool-name fixtures for both a granting and a non-granting agent. |
+| UAC-3 | An AC item requiring a PR to be open, pushed, or CI-green before PASS is flagged, in both active and passive voice. | T-0222 ("open a PR"), T-0258 ("a PR is opened with CI green"), same shape on T-0288 — push/PR-open only ever happen inside `_handlePass`. | ✅ Covered. Also still a hard block for the active-voice forms via `capabilityPreflight.js`'s `FORBIDDEN_ACTIONS` (T-0225), unchanged by this card. |
+| UAC-4 | An AC item requiring a named human's approval (`@handle approves`, "is approved by") is flagged. | T-0233 — the same circularity §10's `requires_approval` convention already guards against by construction; this is the textual detector for it. | ✅ Covered. |
+| UAC-5 | An AC item requiring **all** of two-or-more named external reference sources to succeed is flagged; "at least one succeeds" phrasing across the same sources is not. | Generalizes T-0273 — Wikimedia/Openverse/Met rate-limit and time out independently (`referenceSourcePolicy.js`'s `required: true/false` split, T-0283/T-0284). | ✅ Covered. |
+| UAC-6 | None of UAC-1..5 ever calls `_blocked` — the implementer still runs regardless of how many warnings fire. | A false positive over freeform English must never stop a legitimate card; that would trade one wasted-cycle failure mode for another. | ✅ Covered — `runOrchestrator.impossibleAcceptancePreflight.test.js` asserts the implementer is spawned and PASS is reached alongside the warning comment. |
 
 ---
 
@@ -293,6 +389,7 @@ Tower prop concept sheet gating T-0243–T-0246) is the first card to carry it.
 | Worktree artifact preservation | WT-1..WT-5 | — | — | — |
 | Character-generation quality reference (§9, DL-25) | CHR-2 | CHR-1 | — | CHR-1 (see §9) |
 | Human direction approval | AP-9 | — | AP-1..AP-8 (new mechanism) | — |
+| Unsatisfiable acceptance criteria (§11) | — | — | UAC-1..UAC-6 (new mechanism) | — |
 
 **Deferred, not silently dropped:** LC-7 (no guard against a manual card edit
 racing an active orchestrator run) is a real, confirmed gap found while
