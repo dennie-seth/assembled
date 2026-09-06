@@ -227,5 +227,47 @@ def test_check_attempt_cap_allows_a_fresh_round_4_budget() -> None:
     1-3's spent 1..16 -- attempts 17..24, not a re-run of 1..16."""
     gen.check_attempt_cap(17)
     gen.check_attempt_cap(24)  # must not raise
+
+
+def test_check_attempt_cap_allows_the_round_4_defect_fix_budget() -> None:
+    """The round-4 reviewer FAIL required actually testing a costume-bearing
+    secondary reference that round 4's own 17..24 budget never tried (defect
+    2) -- a small, explicitly-scoped continuation budget, attempts 25..28,
+    not a fresh 8-attempt round."""
+    gen.check_attempt_cap(25)
+    gen.check_attempt_cap(28)  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(25)
+        gen.check_attempt_cap(29)
+
+
+def test_prepare_secondary_reference_inverts_when_requested(tmp_path) -> None:
+    """The default, unchanged behaviour for T-0273's dark-silhouette-on-light
+    references (round 3 Test D)."""
+    from PIL import Image
+
+    src = tmp_path / "src.png"
+    Image.new("RGB", (4, 4), color=(10, 20, 30)).save(src)
+    dest = tmp_path / "dest.png"
+
+    gen.prepare_secondary_reference(src, dest, needs_invert=True)
+
+    out = Image.open(dest).convert("RGB")
+    assert out.getpixel((0, 0)) == (245, 235, 225)
+
+
+def test_prepare_secondary_reference_passes_through_when_already_toned(tmp_path) -> None:
+    """T-0272's own derived style reference (derive_profile_style_reference_T0272.py)
+    already forces its background to solid black -- the opposite tone problem
+    T-0273's references had, so it must NOT be inverted a second time, or the
+    correctly-black background would be flipped back to near-white and
+    reintroduce exactly the bleed round 3's Test D fixed."""
+    from PIL import Image
+
+    src = tmp_path / "src.png"
+    Image.new("RGB", (4, 4), color=(10, 20, 30)).save(src)
+    dest = tmp_path / "dest.png"
+
+    gen.prepare_secondary_reference(src, dest, needs_invert=False)
+
+    out = Image.open(dest).convert("RGB")
+    assert out.getpixel((0, 0)) == (10, 20, 30)
