@@ -210,6 +210,24 @@ def invert_reference_for_conditioning(src_path: Path, dest_path: Path) -> None:
     source, not a new reference."""
     inverted = ImageOps.invert(Image.open(src_path).convert("RGB"))
     inverted.save(dest_path)
+
+
+def prepare_secondary_reference(src_path: Path, dest_path: Path, needs_invert: bool) -> None:
+    """Round 4 defect-fix: `invert_reference_for_conditioning` was applied
+    unconditionally to every secondary reference, which is correct for
+    T-0273's dark-silhouette-on-light-background photographs but wrong for
+    `derive_profile_style_reference_T0272.py`'s own output, whose background
+    is already forced to solid black -- inverting it a second time would flip
+    that correct tone back to near-white and reintroduce the exact bleed
+    round 3's Test D fixed (round-3 attempt 12: only 76 fg px survived
+    cutout). `needs_invert` makes that choice explicit per secondary source
+    instead of assuming every reference needs the same fix T-0273's did."""
+    if needs_invert:
+        invert_reference_for_conditioning(src_path, dest_path)
+    else:
+        dest_path.write_bytes(src_path.read_bytes())
+
+
 PROFILE_NEGATIVE = (
     IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric front-facing pose, "
     "three-quarter view, back view, both shoulders equally visible, washed out colour, "
@@ -441,12 +459,17 @@ def check_attempt_cap(attempt: int) -> None:
     (attempts 5-8) spent the first budget; round 3 (isolation + promote)
     spent a second 8-attempt budget, attempts 9-16. Round 4 (generalized
     cutout + costume-bearing reference + promote, see the card's own
-    "ROUND 4" section) gets a third, fresh 8-attempt budget, attempts
-    17-24 -- not a re-run of 1-16."""
-    if not (1 <= attempt <= 24):
+    "ROUND 4" section) spent a third 8-attempt budget, attempts 17-24.
+
+    The round-4 reviewer FAIL (defect 2) found that budget never actually
+    tested a costume-bearing secondary reference -- attempts 25-28 are a
+    small, explicitly-scoped continuation to fix that specific defect (test
+    `player_profile_style_reference_T0272.png`, derived after the FAIL), not
+    a fresh 8-attempt round of its own."""
+    if not (1 <= attempt <= 28):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 4 adds a third 8-attempt budget on "
-            "top of rounds 1-3's spent 1..16 (attempts 17..24) -- refusing to run a 25th attempt"
+            "attempt cap is 8 per round (DL-21); round 4's defect-fix continuation adds "
+            "attempts 25..28 on top of rounds 1-4's spent 1..24 -- refusing to run a 29th attempt"
         )
 
 
@@ -591,6 +614,7 @@ def run_attempt(
     enable_ipadapter: bool = True,
     secondary_concept_path: Path | None = None,
     secondary_ipadapter_weight: float = 0.6,
+    secondary_needs_invert: bool = True,
 ) -> dict:
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
@@ -642,14 +666,16 @@ def run_attempt(
                 f"secondary IP-Adapter reference not found: {secondary_concept_path}"
             )
         secondary_hash = sha256_of(secondary_concept_path)
-        secondary_inverted_path = out_dir / "secondary_reference_inverted.png"
-        invert_reference_for_conditioning(secondary_concept_path, secondary_inverted_path)
+        secondary_prepared_path = out_dir / "secondary_reference_prepared.png"
+        prepare_secondary_reference(
+            secondary_concept_path, secondary_prepared_path, secondary_needs_invert
+        )
 
     t0 = time.monotonic()
     skeleton_filename = upload_image(skeleton_path)
     concept_filename = upload_image(identity_reference_path)
     if secondary_concept_path is not None:
-        secondary_filename = upload_image(secondary_inverted_path)
+        secondary_filename = upload_image(secondary_prepared_path)
     graph = build_graph(
         seed=seed,
         concept_filename=concept_filename,
@@ -774,22 +800,41 @@ def run_attempt(
         "palette_source": "assets/final/palette/home_palette.json",
     }
     if secondary_concept_path is not None:
-        provenance["secondary_ip_adapter_reference"] = {
-            "path": str(secondary_concept_path.relative_to(REPO_ROOT)),
-            "hash": secondary_hash,
-            "weight": secondary_ipadapter_weight,
-            "transform": (
+        if secondary_needs_invert:
+            transform_note = (
                 "RGB channel invert (PIL.ImageOps.invert, invert_reference_for_conditioning) "
                 "applied to the committed source before conditioning -- the source is a dark "
                 "silhouette on an off-white background, the opposite tone of this card's "
                 "black-background target; uninverted, the light background bled into the "
                 "generation and defeated cutout (round-3 attempt 12: 76 fg px survived)"
-            ),
-            "note": (
+            )
+            reference_note = (
                 "T-0273's approved side-profile reference set, stacked via a second "
                 "IPAdapterAdvanced node chained after the front concept sheet's -- explicitly "
                 "NOT a costume match (anonymous gait/silhouette reference); round 3 Test D"
-            ),
+            )
+        else:
+            transform_note = (
+                "none -- the source (derive_profile_style_reference_T0272.py's own output) "
+                "already forces its background to solid black, matching this card's target "
+                "tone; inverting it a second time would flip that correct tone back to "
+                "near-white and reintroduce round-3 Test D's own bleed defect"
+            )
+            reference_note = (
+                "a same-render-style side-profile panel cropped from T-0209's own concept "
+                "sheet (assets/src/concept/player_profile_style_reference_T0272.png), stacked "
+                "via a second IPAdapterAdvanced node chained after the front concept sheet's -- "
+                "explicitly NOT a costume match (the sheet's grey/tan tactical-variant tier, "
+                "not the green cloth-coat tier); round-4 defect-fix continuation, tested as an "
+                "alternative to T-0273's anonymous photographic set"
+            )
+        provenance["secondary_ip_adapter_reference"] = {
+            "path": str(secondary_concept_path.relative_to(REPO_ROOT)),
+            "hash": secondary_hash,
+            "weight": secondary_ipadapter_weight,
+            "needs_invert": secondary_needs_invert,
+            "transform": transform_note,
+            "note": reference_note,
         }
     (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
     return provenance
@@ -832,6 +877,15 @@ def main() -> None:
         "the front concept sheet's",
     )
     parser.add_argument("--secondary-ipadapter-weight", type=float, default=0.6)
+    parser.add_argument(
+        "--secondary-no-invert",
+        action="store_false",
+        dest="secondary_needs_invert",
+        default=True,
+        help="round-4 defect-fix continuation: the secondary reference (e.g. "
+        "player_profile_style_reference_T0272.png) already has the correct tone -- skip "
+        "invert_reference_for_conditioning rather than flipping it a second time",
+    )
     parser.add_argument(
         "--promote-attempt",
         type=int,
@@ -876,6 +930,7 @@ def main() -> None:
         enable_ipadapter=not args.disable_ipadapter,
         secondary_concept_path=secondary_concept_path,
         secondary_ipadapter_weight=args.secondary_ipadapter_weight,
+        secondary_needs_invert=args.secondary_needs_invert,
     )
     provenance["promoted"] = False
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_profile" / f"attempt_{args.attempt}"
