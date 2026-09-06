@@ -151,3 +151,18 @@ def test_provenance_records_motion_class_for_chr1_cap_selection(out_dir: Path) -
     result = _run(max_frames=walk.FRAME_COUNT)
     assert result is not None
     assert result["motion_class"] == walk.MOTION_CLASS == "locomotion"
+
+
+def test_walk_negative_prompt_extends_idle_negative_without_editing_it() -> None:
+    """T-0259: every real attempt (5-9) shows chromatic-fringe/channel-
+    misalignment/glow artifacting the idle recipe's shared negative prompt
+    has no term for -- it was never a problem for a static idle pose. The
+    walk recipe's own negative prompt must be a strict, additive extension
+    of the idle one (never an edit of the shared constant in place, which
+    would risk regressing the idle sheet's own already-shipped recipe)."""
+    from gen_pose_authority_idle_T0249 import MAIN_NEGATIVE as idle_negative
+
+    assert walk.WALK_NEGATIVE.startswith(idle_negative)
+    assert walk.WALK_NEGATIVE != idle_negative
+    for term in ("chromatic aberration", "glow", "halo"):
+        assert term in walk.WALK_NEGATIVE

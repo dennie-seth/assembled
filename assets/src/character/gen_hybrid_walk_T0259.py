@@ -223,7 +223,17 @@ WALK_PROMPT = (
     "value-separated pixel art silhouette, clean readable pixel outline, solid flat black "
     "background, no perspective, no vanishing point, no text, no UI"
 )
-WALK_NEGATIVE = IDLE_MAIN_NEGATIVE
+# The idle recipe's shared negative prompt has no term for the chromatic-
+# fringe/channel-misalignment/glow artifact this card's own attempt log
+# documents on every walk frame tested (attempts 5-9, both seeds tried) --
+# it was never a problem for a static idle pose, so the idle recipe never
+# needed one. Additive only: WALK-specific terms appended to the shared
+# constant, never edited in place, so the idle sheet's own recipe is
+# untouched.
+WALK_NEGATIVE = IDLE_MAIN_NEGATIVE + (
+    ", chromatic aberration, rgb split, channel shift, glow, halo, lens flare, "
+    "duplicate outline, ghosting, motion blur"
+)
 
 # ── Graph node ids -- named, not raw string literals re-derived per call ────
 CHECKPOINT_NODE_ID = "1"
@@ -759,18 +769,6 @@ def run_attempt(
     raw_cells: dict[tuple[int, int], Image.Image] = {}
     fg_masks: dict[tuple[int, int], object] = {}
 
-    # The cutout hint is the whole cycle's own keypoint envelope, NOT this
-    # frame's own keypoints -- see walk_cycle_hint_keypoints' docstring.
-    # CROSS_EXTENT_NORM narrows a single passing frame's own keypoint bbox
-    # well below the gait's real silhouette width, and
-    # extract_foreground_mask gives no partial credit: a real, merely-
-    # partially-overlapping figure component is dropped outright the
-    # moment any other (even tiny) component in the frame clears the 50%
-    # majority bar on its own. Frame 0/1/etc still get their OWN keypoints
-    # for the ControlNet skeleton and the provenance record below --only
-    # the cutout call uses the wider, cycle-level hint.
-    cutout_hint_points = pose_rig_walk_T0259.walk_cycle_hint_keypoints(FRAME_COUNT)
-
     for i, cell in enumerate(FRAME_CELLS):
         keypoints_path = out_dir / f"frame_{i}_keypoints.json"
         skeleton_path = out_dir / f"frame_{i}_pose_skeleton_384.png"
@@ -780,6 +778,18 @@ def run_attempt(
 
         prompt_ids.append(meta["comfyui_prompt_id"])
         gpu_seconds += meta["generation_seconds"]
+
+        # This frame's own keypoints widened by frame 0's contact/stance
+        # pose -- see walk_cutout_hint_keypoints' docstring. CROSS_EXTENT_NORM
+        # narrows a single passing frame's own keypoint bbox well below the
+        # gait's real silhouette width, and extract_foreground_mask gives no
+        # partial credit: a real, merely-partially-overlapping figure
+        # component is dropped outright the moment any other (even tiny)
+        # component in the frame clears the 50% majority bar on its own.
+        # The ControlNet skeleton and the provenance record below still use
+        # this frame's OWN (unwidened) keypoints -- only the cutout call
+        # uses the widened hint.
+        cutout_hint_points = pose_rig_walk_T0259.walk_cutout_hint_keypoints(i, FRAME_COUNT)
 
         raw_cells[cell] = Image.open(cell_raw_path).convert("RGB")
         main_img = Image.open(main_path).convert("RGB")

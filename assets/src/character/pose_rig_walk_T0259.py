@@ -247,10 +247,12 @@ def walk_keypoints_for_frame(
     return points
 
 
-def walk_cycle_hint_keypoints(frame_count: int = FRAME_COUNT) -> dict[int, Point]:
-    """Union of every frame's own keypoints across one full walk cycle,
-    keyed contiguously -- a cutout hint region for the WHOLE gait, not any
-    single frame.
+def walk_cutout_hint_keypoints(
+    frame_index: int, frame_count: int = FRAME_COUNT
+) -> dict[int, Point]:
+    """This frame's own keypoints, unioned with frame 0's -- a cutout hint
+    region wide enough for a gait cycle's passing/cross frames, without
+    over-widening every other frame.
 
     `char_gen.cutout.extract_foreground_mask` scores a candidate foreground
     component against a keypoints-derived bbox+margin, requiring a MAJORITY
@@ -264,23 +266,38 @@ def walk_cycle_hint_keypoints(frame_count: int = FRAME_COUNT) -> dict[int, Point
     independent seeds): the single largest real foreground component's
     overlap with that frame's OWN hint sat at 8-46% on these three frames --
     below the 50% majority bar -- so most of a correctly-generated figure
-    was being discarded as background, not clipped for cause. Re-scoring
-    the same components against the union of every frame's keypoints
-    (this function) instead of just the current frame's own recovered
-    90-98% of the true foreground on every previously-affected frame, on
-    every attempt tested, with no cutout.py change at all: the shared
-    module's hint contract already accepts any points_norm dict, and a
-    walking figure's own silhouette occupies roughly the cycle's full
-    envelope in every frame, not just the current instant's stick-figure
-    extent.
+    was being discarded as background, not clipped for cause.
+
+    A first fix unioned ALL 8 frames' keypoints into one hint shared by
+    every frame. It recovered the cross frames correctly, but measurably
+    over-widened every OTHER frame too: real background clutter that a
+    tighter, frame-appropriate hint would have correctly excluded now
+    cleared the majority bar right alongside the real figure, and every
+    cell's own background_fraction dropped (57.5-62.9% sheet-wide, against
+    the sheet's own 65% cleanliness floor -- see the gate's
+    `test_sheet_background_is_mostly_clean`).
+
+    Frame 0 (`t=0`) is itself a genuine two-leg-wide contact/stance pose --
+    both ankles at their full `STRIDE_EXTENT_NORM` extent simultaneously, in
+    opposite directions -- so its own bbox already spans (and slightly
+    exceeds) the lateral range any cross frame's true silhouette needs.
+    Unioning just frame 0 with the CURRENT frame (this function) recovered
+    the same 90%+ foreground on every previously-affected frame in the same
+    empirical sweep, while leaving frame 0 itself (`walk_cutout_hint_keypoints(0, n)`
+    is a no-op union with itself) and every other already-wide-enough frame
+    essentially unchanged -- closing the cross-frame gap without reopening
+    the cleanliness one.
 
     Keys are re-numbered contiguously (0..len-1) purely because
     `_keypoints_hint_mask` only reads `.values()` -- the merged dict has no
     joint-identity meaning of its own, unlike a single frame's keypoints."""
+    sources = [walk_keypoints_for_frame(frame_index, frame_count)]
+    if frame_index % frame_count != 0:
+        sources.append(walk_keypoints_for_frame(0, frame_count))
     merged: dict[int, Point] = {}
     idx = 0
-    for i in range(frame_count):
-        for point in walk_keypoints_for_frame(i, frame_count).values():
+    for source in sources:
+        for point in source.values():
             merged[idx] = point
             idx += 1
     return merged
