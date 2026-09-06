@@ -291,3 +291,29 @@ profile-topology pose rig (T-0272's own scope, currently blocked on this card) i
 required, not just a profile-trained identity LoRA. Evidence (frame + full generation
 provenance): `assets/src/character/smoke_check_profile_T0274/`. Full attempt trace across this
 and prior interrupted training sessions: `assets/src/character/ARM_PROFILE_LORA_ATTEMPT_LOG_T0274.md`.
+
+**Derived, not generated (2026-09-06, T-0272 round-4 defect-fix continuation):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/src/concept/player_profile_style_reference_T0272.png` | N/A — deterministic crop/cleanup of an already-generated, already-provenanced source, produced by `assets/src/character/derive_profile_style_reference_T0272.py`; no new model inference performed. Source: `assets/src/concept/player_character_concept_sheet_v1.png` ([T-0209](tasks/T-0209.md)); `model_hash` inherited from that sheet's own provenance sidecar (`player_character_concept_sheet_v1.provenance.json`), not re-stated here. | Inherits the source concept sheet's own licence — no new generation | N/A — no generation prompt; a border-connected tolerant Oklab flood (`char_gen.cutout.border_flood_background_mask`) plus largest-connected-component selection crops the source sheet's row-3/col-5 side-profile panel (pixel box `819,256,1024,512`), forces every non-figure pixel to solid black, and crops to the figure's own bbox + 6px margin. | N/A (deterministic derivation, no seed) |
+
+Round 4's reviewer FAIL required the round's cheapest costume-reference option
+("crop a profile-ish view from the concept sheet or the promoted T-0252 idle
+sheet") to be tried or declined with reasons, not silently skipped. Direct
+visual inspection (panel-by-panel, via the Read tool) found neither source has
+a *green-coat* panel in profile — every green-coat panel on the T-0209 sheet
+is a pure front or rear view, and the T-0252 idle sheet is itself entirely
+front-facing by construction. The sheet does carry one unambiguous side-profile
+panel, in the grey/tan tactical-variant costume tier rather than the green
+cloth-coat tier, drawn in the same render style/linework as the rest of the
+sheet and already facing right (matching `pose_rig_profile_T0272.FACING`) —
+that panel is what this derivation crops. Sidecar with full extraction detail:
+`assets/src/concept/player_profile_style_reference_T0272.provenance.json`.
+Tested as a secondary IP-Adapter reference in
+`assets/src/character/ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s attempts 25-28: it
+did not resolve T-0272's colour/pose trade-off (its own competing tactical
+costume design pulled against the green coat about as much as T-0273's
+anonymous photographs did) — see that log for the full result. Nothing under
+`assets/final/character/` was promoted from these attempts; this entry
+records the derived *reference* only, not a shipped keyframe.

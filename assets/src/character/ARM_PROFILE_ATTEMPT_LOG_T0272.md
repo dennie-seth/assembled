@@ -558,3 +558,31 @@ Follow-up #1 (a profile-specific costume identity LoRA) and #2 (a genuine
 side-profile costume concept sheet) from round 4's own list stand unchanged
 and are now the only two paths left untried.
 
+## Budget exhausted -- both remaining paths are out of this card's own scope
+
+`check_attempt_cap` now hard-refuses any attempt above 28
+(`gen_hybrid_profile_T0272.py:456-470`); the DL-21 budget spent across four
+rounds (1-4, 5-8, 9-16, 17-24, plus the 25-28 defect-fix continuation) is
+fully closed. Round 4's own text withdraws the finding escape hatch ("A
+finding is not an acceptable outcome now that the cause is isolated and the
+direction demonstrated") -- but this card's own "Do not" list simultaneously
+forbids the one lever most likely to close the gap: **"Do not retrain any
+LoRA in this card."** The two paths this log's own analysis converges on
+(follow-up #1: a profile-specific costume identity LoRA; follow-up #2: a
+genuine side-profile costume concept sheet, itself a multi-attempt generation
+or sourcing effort in its own right) both require work this card is
+explicitly barred from doing itself.
+
+That is a scope conflict inside the card's own instructions, not something
+an implementer should resolve by quietly promoting an unconvincing frame to
+satisfy criterion 8, or by quietly ignoring "do not retrain" to keep
+attempting a fix. Twenty-eight real, honestly-reported attempts across three
+isolated causes (prompt-token confound, IP-Adapter's front-facing image
+conditioning, and now a same-style-but-wrong-costume secondary reference)
+converge on the same conclusion every time: no reference or reference
+combination available *within this card's scope* carries both the profile
+pose and the institutional green costume at once. `assets/final/character/`
+correctly carries no T-0272 file. The decision this leaves for @DennieSeth is
+which of the two out-of-scope follow-ups to fund as its own card -- not
+something this card can decide or work around on its own.
+
