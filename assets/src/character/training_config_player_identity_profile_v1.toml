@@ -1,0 +1,69 @@
+# T-0274 — Player-identity PROFILE-pose SDXL LoRA training configuration
+#
+# Per the locked per-pose, per-character/monster LoRA decision (@DennieSeth,
+# Pipeline chat, 2026-08-31) and T-0272's finding (player_identity_v2, trained
+# only on front-facing material, cannot place a profile in 4 attempts), this
+# is a SEPARATE, additive artifact -- player_identity_v2 and its own
+# training_config_player_identity_v2.toml are untouched.
+#
+# Loaded/validated by the same assets/src/lora/src/lora_train/config.py and
+# driven by the same assets/src/lora/src/lora_train/train.py as every other
+# identity LoRA config -- no changes to the shared WSL-native training stack.
+#
+# Run (from the repo root, training venv per assets/src/lora/setup-training-env.sh):
+#   PYTHONPATH=assets/src/lora/src:assets/src/character/src /home/dennieseth/dev/lora-train-venv/bin/python3 \
+#     -m lora_train.train --config assets/src/character/training_config_player_identity_profile_v1.toml \
+#     --save-every-n-steps 4
+#
+# Dataset: assets/src/character/identity_refs_profile_v1/ (6 images,
+# letterboxed-to-square real photographs/illustrations from T-0273's
+# committed, approved profile reference set -- see
+# PROFILE_POSE_SELECTION_T0274.md and
+# identity_curation_manifest_profile_T0274.json). These are anonymous
+# pose/form reference, not player-costume material -- this LoRA teaches the
+# side-on pose only, meant to be stacked with player_identity_v2 (costume)
+# at generation time via two distinct trigger tokens.
+#
+# Network rank/alpha/learning-rate/optimizer are unchanged from v2
+# (training_config_player_identity_v2.toml) -- same recipe, only the
+# training set and trigger token change, so this run isolates exactly the
+# one variable this card exists to test.
+#
+# num_epochs=12 x 6 refs = 72 steps, matching v1's original 72-step budget
+# (12 refs x 6 epochs) given proportionally fewer but higher-quality/diverse
+# images than either prior identity round.
+
+[model]
+base_checkpoint = "sd_xl_base_1.0.safetensors"
+checkpoint_license = "CreativeML Open RAIL++-M"
+
+[output]
+name = "player_identity_profile_v1"
+dir = "assets/final/lora"
+format = "safetensors"
+
+[train]
+resolution = 1024
+batch_size = 1
+mixed_precision = "fp16"
+num_epochs = 12
+learning_rate = 1.0e-4
+optimizer = "AdamW8bit"
+save_every_n_epochs = 1
+
+[network]
+rank = 8
+alpha = 4
+type = "lora"
+target_modules = [
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+]
+
+[dataset]
+dir = "assets/src/character/identity_refs_profile_v1"
+caption_ext = ".txt"
+shuffle = true
+cache_latents = true

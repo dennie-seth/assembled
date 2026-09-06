@@ -48,6 +48,42 @@ _BASELINE_FILENAME = "character_arm_c_baseline.txt"
 #: section. Everything else is reported as passing, skipped.
 CHARACTER_CLASS = "character"
 
+#: DL-21 criterion 2's cap, pre-registered against the player IDLE sheet.
+#: Unchanged by T-0271 -- every idle-class (or unrecognised-class, see
+#: `frame_delta_cap_for_motion_class`) sheet keeps exactly this bar.
+IDLE_FRAME_DELTA_CAP = 0.30
+
+#: T-0271/DL-26: locomotion/transition/loop legitimately move more
+#: silhouette pixels per frame than an idle pose. T-0259's calibration trail
+#: (docs/decision-log.md DL-26) measured sheets that read as a real walk on
+#: human review at 0.212-0.375 (attempt 6) and 0.328-0.473 (attempt 5,
+#: full-amplitude), with a restored leg-cross pushing higher still -- so the
+#: cap must clear ~0.47 with headroom while staying low enough to still
+#: catch gross drift. 0.50 is chosen: it clears every measured real-walk
+#: upper bound with room to spare, while still failing sheets that drift far
+#: past what any of T-0259's attempts produced.
+MOTION_FRAME_DELTA_CAP = 0.50
+
+#: Motion classes that get the higher `MOTION_FRAME_DELTA_CAP`. `idle` is
+#: deliberately not listed here -- it, and anything not in this set
+#: (including a missing motion class), falls through to
+#: `IDLE_FRAME_DELTA_CAP` in `frame_delta_cap_for_motion_class`. This is the
+#: fail-closed behaviour the card requires: an unlabelled or unrecognised
+#: sheet must never silently get the permissive cap.
+_HIGHER_CAP_MOTION_CLASSES = frozenset({"locomotion", "transition", "loop"})
+
+
+def frame_delta_cap_for_motion_class(motion_class: object) -> float:
+    """The frame-delta cap for a character sheet's motion class.
+
+    `idle`, `None`, and any value not in `_HIGHER_CAP_MOTION_CLASSES` all
+    resolve to `IDLE_FRAME_DELTA_CAP` -- a missing or unrecognised motion
+    class fails closed to the strict cap, never the permissive one.
+    """
+    if motion_class in _HIGHER_CAP_MOTION_CLASSES:
+        return MOTION_FRAME_DELTA_CAP
+    return IDLE_FRAME_DELTA_CAP
+
 
 def asset_class(relative_path: Path | str) -> str:
     """The top-level asset class of a path relative to `assets/final/`.
@@ -132,6 +168,61 @@ def check_character_arm_c_provenance(provenance: dict, sheet_name: str = "<sheet
     )
 
 
+def check_character_frame_delta_cap(provenance: dict, sheet_name: str = "<sheet>") -> CheckResult:
+    """Fail if a character sheet's `frame_delta_range` exceeds the cap for
+    its `motion_class` (T-0271, docs/decision-log.md DL-26).
+
+    The cap depends on what the sheet is doing: `idle` (and anything
+    missing or unrecognised -- fail-closed) keeps DL-21's original 0.30;
+    `locomotion`/`transition`/`loop` get `MOTION_FRAME_DELTA_CAP`. Reads
+    `motion_class` from the provenance sidecar itself rather than card
+    metadata, so a sheet is self-describing without a board lookup.
+
+    Only evaluates the cap -- CHR-1's own presence/shape check
+    (`check_character_arm_c_provenance`) is unchanged and unrelated; a sheet
+    can fail this check while still passing that one, and vice versa.
+
+    Args:
+        provenance: dict loaded from a `.provenance.json` sidecar.
+        sheet_name: identifies the sheet in the failure message.
+
+    Returns:
+        `CheckResult` with `passed=True` iff `frame_delta_range` is present,
+        well-formed, and its upper bound is within the cap for the sidecar's
+        `motion_class`.
+    """
+    frame_delta_range = provenance.get("frame_delta_range", _MISSING)
+    if frame_delta_range is _MISSING or not _is_well_formed_range(frame_delta_range):
+        return CheckResult(
+            check="character_frame_delta_cap",
+            passed=False,
+            reason=(
+                f"{sheet_name} is missing or has a malformed frame_delta_range -- "
+                "cannot evaluate the motion-class frame-delta cap"
+            ),
+            details={"missing": ["frame_delta_range"]},
+        )
+
+    motion_class = provenance.get("motion_class")
+    cap = frame_delta_cap_for_motion_class(motion_class)
+    _, hi = frame_delta_range
+    passed = hi <= cap
+
+    return CheckResult(
+        check="character_frame_delta_cap",
+        passed=passed,
+        reason=(
+            f"{sheet_name}: motion_class={motion_class!r} frame-delta upper bound "
+            f"{hi:.4f} {'<=' if passed else '>'} cap {cap}"
+        ),
+        details={
+            "frame_delta_range": frame_delta_range,
+            "motion_class": motion_class,
+            "cap": cap,
+        },
+    )
+
+
 def _default_baseline_path() -> Path:
     return Path(__file__).parent / _BASELINE_FILENAME
 
@@ -210,6 +301,77 @@ def sweep_character_arm_c_provenance(
         results.append(
             CheckResult(
                 check="character_arm_c_provenance",
+                passed=single.passed,
+                reason=single.reason,
+                details={**single.details, "path": rel_str},
+            )
+        )
+    return results
+
+
+def sweep_character_frame_delta_cap(
+    root: Path | str, baseline: frozenset[str] = frozenset()
+) -> list[CheckResult]:
+    """Run `check_character_frame_delta_cap` against every `*.provenance.json`
+    under *root*, scoped to the `character` asset class -- the T-0271/DL-26
+    motion-class-aware cap's actual enforcement path.
+
+    Same shape and scope as `sweep_character_arm_c_provenance`, and reuses
+    that check's baseline idiom: a sidecar predating CHR-1 has no
+    `frame_delta_range` at all (there is no cap to evaluate it against), so
+    it is exempted by the same `character_arm_c_baseline.txt` list, not a
+    second one -- the two sweeps share exactly the same set of pre-CHR-1
+    gaps by construction.
+
+    Args:
+        root: directory to search recursively (e.g. `assets/final`). Asset
+            class is read from each sidecar's path relative to *root* --
+            pass a root whose immediate subdirectories are the asset
+            classes (`character/`, `props/`, `tiles/`, ...), not a directory
+            already scoped to `character/` itself.
+        baseline: paths (relative to *root*, forward-slashed) allowed to
+            keep failing -- documented pre-existing gaps (see
+            `load_character_arm_c_baseline`). Anything not in *baseline*
+            must pass.
+    """
+    root_path = Path(root)
+    results = []
+    for path in sorted(root_path.rglob("*.provenance.json")):
+        rel = path.relative_to(root_path)
+        rel_str = rel.as_posix()
+        cls = asset_class(rel)
+
+        if cls != CHARACTER_CLASS:
+            results.append(
+                CheckResult(
+                    check="character_frame_delta_cap",
+                    passed=True,
+                    reason=(
+                        f"{rel_str}: asset class {cls!r} is not character -- "
+                        "the motion-class frame-delta cap does not apply"
+                    ),
+                    details={"path": rel_str, "asset_class": cls, "skipped": True},
+                )
+            )
+            continue
+
+        provenance = json.loads(path.read_text())
+        single = check_character_frame_delta_cap(provenance, sheet_name=rel_str)
+
+        if not single.passed and rel_str in baseline:
+            results.append(
+                CheckResult(
+                    check="character_frame_delta_cap",
+                    passed=True,
+                    reason=f"{single.reason} [baseline-exempt: predates CHR-1, T-0258]",
+                    details={**single.details, "path": rel_str, "baseline_exempt": True},
+                )
+            )
+            continue
+
+        results.append(
+            CheckResult(
+                check="character_frame_delta_cap",
                 passed=single.passed,
                 reason=single.reason,
                 details={**single.details, "path": rel_str},

@@ -28,12 +28,16 @@ Steps, in order:
    point of the script -- **the service is stopped before the working tree is touched**, so
    `node --watch` cannot observe or react to the merge at all. Every step after this point
    operates on a tree nothing is watching.
-3. **Fetch + merge**: `git fetch origin develop` then `git merge --no-ff --no-edit
-   origin/develop`. Deliberately `merge --no-ff`, not `pull --ff-only` -- `develop` carries
-   local runtime commits (see above), so a fast-forward is often not even possible, and this
-   script must never leave the tree mid-merge. On conflict, it runs `git merge --abort`
-   immediately (restoring the pre-merge tree, no conflict markers left on disk), restarts the
-   service on that last-known-good tree, and exits non-zero with instructions.
+3. **Fetch + merge**: `git fetch origin develop`, then `node scripts/mergeOriginRef.js`
+   (wrapping `gitOps.js`'s `mergeOriginRef`, the same decision logic `mergeNoFF` uses):
+   fast-forward when repoRoot has nothing local to preserve, falling back to `merge --no-ff
+   --no-edit origin/develop` only when it genuinely does (local runtime commits, see above).
+   Not a bare `pull --ff-only` -- a fast-forward is often not possible, and this script must
+   never leave the tree mid-merge. Before T-0304 this was an unconditional `--no-ff`, which
+   manufactured an empty merge commit on every no-op deploy. On conflict (only reachable via
+   the `--no-ff` fallback), it runs `git merge --abort` immediately (restoring the pre-merge
+   tree, no conflict markers left on disk), restarts the service on that last-known-good tree,
+   and exits non-zero with instructions.
 4. **`npm install`, conditionally**: only if `tools/board/package.json` actually changed
    between the pre- and post-merge commit (compared via `git diff --name-only`). Skipped
    entirely on a no-op merge -- keeps re-running the script idempotent and fast.
@@ -78,10 +82,10 @@ runtime commit now also pushes `develop` to origin.
   git's ref locks -- e.g. two attachment uploads seconds apart each queue their own push
   attempt, and the second one runs only once the first has settled.
 - **Non-fast-forward handling:** if origin has moved on, the plain push is rejected. The
-  module then reconciles with one `git fetch` + `merge --no-ff` (`gitOps.js`'s `mergeNoFF`)
-  and retries the push exactly once. Never uses `--force`/`--force-with-lease`.
-  It never has to shell out to the deploy script's merge logic -- `mergeNoFF` is the one
-  shared implementation both use.
+  module then reconciles with one `git fetch` + a fast-forward-or-`--no-ff` merge
+  (`gitOps.js`'s `mergeNoFF`, wrapping `mergeOriginRef`) and retries the push exactly once.
+  Never uses `--force`/`--force-with-lease`. It never has to shell out to the deploy script's
+  merge logic -- `mergeOriginRef` is the one shared decision implementation both use.
 - **Failure is non-fatal:** any other failure (unreachable origin, protected branch, a
   persistent conflict the retry couldn't clear) is logged as a warning and swallowed. The
   local commit always stands either way -- only whether it's reached origin yet is in
@@ -118,6 +122,75 @@ the Done path uses -- no separate pull/restart logic to keep in sync with PULL-1
   path already does, and only ever restarts through the same idle-guarded
   `restartCoordinator` -- it does not add a new restart path or a new way to touch the tree
   while the service is mid-merge.
+
+## Clean shutdown (T-0290)
+
+Every restart this poller (or `npm run deploy`, or a manual `systemctl --user restart`) triggers
+used to take the full length of systemd's `TimeoutStopSec` -- 90s by default -- because `npm run
+dev`'s process tree is several layers of `sh -c '<cmd>'` deep (`npm -> sh -c "concurrently ..." ->
+concurrently -> sh -c "npm run dev:server" -> npm -> sh -c "node --watch ..."`, and the same again
+for the client). A `sh -c '<cmd>'` layer that doesn't `exec` into `<cmd>` **forks and waits**
+instead of replacing itself, so it stays alive in the unit's cgroup as its own process, separate
+from the real work process it launched -- exactly the "three bare bash processes ignored [SIGTERM]
+entirely" the journal caught still sitting there when the `final-sigterm` timeout expired and
+systemd SIGKILLed them. Confirmed on this box with `/proc/<pid>/task/<pid>/children`: before the
+fix `npm run dev` has 5 such wrapper shells in its tree; after, none.
+
+**Fixed in this repo:** `dev`, `dev:server`, and `dev:client` in `package.json` now all prefix
+their command with `exec`, so every `sh -c` layer replaces itself with the program it runs instead
+of parenting it. This is verified by `test/devShutdown.test.js`, which walks the real process tree
+after `npm run dev` boots and asserts no `sh`/`bash`/`dash` PID remains anywhere in it.
+`test/devWatchReload.test.js` covers the remaining edge case named in the card -- that `node
+--watch`'s own reload keeps working once its `sh -c` layer is `exec`'d -- by reproducing the exact
+`sh -c 'exec node --watch <file>'` shape `dev:server` now runs, editing the watched file, and
+asserting the entry script re-runs. It does, because `exec` only changes what a shell layer *is*
+(the shell process becomes the program it launches instead of forking it); it has no effect on
+`node --watch`'s own internal file-watch/restart cycle, which is unrelated to how the `node`
+process was originally spawned.
+
+**Not fixed here -- needs a human edit to the live unit, which is outside this repo (see
+`~/.config/systemd/user/assembled-board.service` and its
+`assembled-board.service.d/override.conf` drop-in; **do not** touch `AUTO_LAUNCH_*` or
+`BOARD_TASK_STORE` in the drop-in while editing it):**
+
+- Change `ExecStart=/bin/bash -lc 'npm run dev'` to `ExecStart=/bin/bash -lc 'exec npm run dev'`.
+  Locally, `bash -lc '<single command>'` already self-optimizes into an `exec` (no separate `bash`
+  PID was observed surviving in testing here), so this specific host may already be fine without
+  it -- but it's a free, zero-risk hardening against whatever bash build/version is actually
+  running there, and it's what closes the loop with the `package.json` fix above end to end.
+- Confirm `KillMode` is left at its default (`control-group`) in the unit and the drop-in -- i.e.
+  neither sets `KillMode=process` or `KillMode=mixed`. `control-group` is what makes systemd signal
+  every process in the unit's cgroup on stop rather than only the tracked main PID; `process`/
+  `mixed` would only reach the top process, leaving the rest of the tree to a raw SIGKILL sweep on
+  timeout regardless of the `package.json` fix.
+- Leave `TimeoutStopSec` as is (or lower it as defense-in-depth only, never as the fix -- see the
+  card's acceptance criteria). The point of the change above is a clean stop that finishes in
+  seconds on its own, not a faster forced kill.
+- After editing: `systemctl --user daemon-reload && systemctl --user restart assembled-board`,
+  then `journalctl --user -u assembled-board -n 50` -- a clean stop reports success, not `Failed
+  with result 'timeout'`, and shows no `final-sigterm` timeout or `Killing process ... SIGKILL`
+  lines. Time the stop (e.g. `time systemctl --user stop assembled-board`) to confirm it's seconds,
+  not ~90s. This must be checked against the real unit -- the whole point is observed shutdown
+  behavior, not what the unit file says on paper.
+- This does not change `restartCoordinator`/PULL-3's idle-deferral behavior at all -- a restart
+  while a card run is active still waits for `notifyIdle()` before it ever calls `systemctl
+  restart`, same as before.
+
+**Why no agent run ever performs the measurement above itself, confirmed again in the T-0290
+implementer/reviewer sessions:** it is not just that neither role is granted `systemctl`/
+`journalctl` (`systemctl --user status assembled-board` was attempted directly and came back
+"This command requires approval" with no grant to satisfy it) -- even with the grant it would be
+unsafe to use from inside a card run. `restartBoardService` in `src/runner/serviceRestart.js`
+spells out why: "The card runner (`claude -p`) is a child of this same unit, so a naive restart
+from inside a request handler would tear itself down along with any in-flight run." An implementer
+or reviewer session *is* exactly such a card run -- issuing `systemctl --user restart
+assembled-board` from inside one would SIGTERM its own ancestor unit mid-verification, which is
+the identical false-alarm shape this whole card exists to stop (T-0111's failure mode, and the
+"the board CRASHED" false alarm this card's own description opens with). The before/after stop
+duration and the SIGKILL/timeout-free journal excerpt the acceptance criteria ask for can only be
+gathered by a human, running the commands above from a shell that is *not* itself a descendant of
+`assembled-board.service`, after this branch lands. Recording that measurement on the card is the
+one remaining step; it is not something a future implementer or reviewer run should keep re-trying.
 
 ## Auto-launch poller (`src/runner/autoLaunchPoller.js`)
 

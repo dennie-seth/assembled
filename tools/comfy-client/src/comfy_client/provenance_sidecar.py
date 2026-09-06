@@ -304,7 +304,9 @@ ARM_C_BENCHMARK = (0.072, 0.112)
 _ARM_C_BENCHMARK_OWNED_KEYS = ("frame_delta_range", "arm_c_benchmark", "beats_arm_c_benchmark")
 
 
-def apply_arm_c_benchmark_fields(record: dict, ratios: Sequence[float]) -> dict:
+def apply_arm_c_benchmark_fields(
+    record: dict, ratios: Sequence[float], motion_class: str | None = None
+) -> dict:
     """Derive and attach CHR-1's frame-delta + Arm-C benchmark fields.
 
     Callers pass the measured per-adjacent-frame silhouette-delta ratios
@@ -317,6 +319,16 @@ def apply_arm_c_benchmark_fields(record: dict, ratios: Sequence[float]) -> dict:
     - ``beats_arm_c_benchmark``: whether the worst (max) ratio clears Arm
       C's upper bound -- always derived from *ratios*, never trusted from
       *record* (see ``_ARM_C_BENCHMARK_OWNED_KEYS``)
+    - ``motion_class``: set verbatim from *motion_class* when a caller
+      supplies one -- one of ``idle`` | ``locomotion`` | ``transition`` |
+      ``loop`` (T-0271, docs/decision-log.md DL-26). This is the field
+      ``asset_gate.character.check_character_frame_delta_cap`` reads to pick
+      the cap it grades ``frame_delta_range`` against. Left unset (the
+      default) when a caller has not classified its own motion -- that is
+      backward compatible with every writer predating T-0271, and the read
+      side fails closed to the strict idle cap for a sidecar with no
+      ``motion_class`` at all, so omitting it is never the permissive
+      choice.
 
     Args:
         record: a dict to extend -- a provenance record in progress, or a
@@ -324,9 +336,13 @@ def apply_arm_c_benchmark_fields(record: dict, ratios: Sequence[float]) -> dict:
             mutated; a new dict is returned.
         ratios: the measured frame-delta ratios this sheet's own adjacent
             frames produced. Must be non-empty.
+        motion_class: this sheet's motion class, if the caller knows it.
+            ``None`` (the default) leaves the field unset entirely, not set
+            to a placeholder.
 
     Returns:
-        A new dict: *record* with the three owned keys set from *ratios*.
+        A new dict: *record* with the owned keys set from *ratios* (and
+        ``motion_class`` set from *motion_class*, if provided).
 
     Raises:
         ValueError: *ratios* is empty -- there is nothing to derive a range
@@ -344,4 +360,6 @@ def apply_arm_c_benchmark_fields(record: dict, ratios: Sequence[float]) -> dict:
     payload["frame_delta_range"] = [min(ratios), max(ratios)]
     payload["arm_c_benchmark"] = list(ARM_C_BENCHMARK)
     payload["beats_arm_c_benchmark"] = max(ratios) <= ARM_C_BENCHMARK[1]
+    if motion_class is not None:
+        payload["motion_class"] = motion_class
     return payload

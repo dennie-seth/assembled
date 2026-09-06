@@ -1,0 +1,28 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "lora_license": "CreativeML OpenRAIL++-M",
+  "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "prompt": "a single giant spider creature, arachnid monster concept art, eight long segmented legs, a smooth rounded blank head with absolutely no eyes and no eye clusters anywhere on its body, long thin sensory pedipalps built for sensing vibration and proximity, a low wide crouching stance. flat side-on concept sheet, orthographic full-body elevation, no perspective, no vanishing point, single figure centred on a plain background, Soviet brutalist institutional aesthetic, muted desaturated home palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, pixel art game asset reference sheet style, silhouette study. Dark utilitarian concrete grey and near-black chitinous exoskeleton, hands empty, unarmed, standing in a neutral relaxed posture, a passive stealth obstacle to route around, not a combatant. It is completely eyeless -- it never spots you, you are simply within reach when it arrives.",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, multiple figures, weapon, gun, sword, blade, knife, rifle, armor, armour, aggressive combat pose, battle stance, fighting stance, eyes, eye cluster, pupils, glowing eyes, face, fangs bared aggressively, venom drip, humanoid body, robot, vehicle, truck, bus, van, car, trailer, blueprint, technical drawing, engineering schematic, wheels",
+  "seed": 27510,
+  "steps": 30,
+  "cfg": 7.0,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "7fbdc91ebe963f9e47b05e60e6bf560f9a56338370026e6ff59f4e5002e571e4",
+  "prompt_id": "9b084303-5e55-4180-840c-d6e2a50bf2b4",
+  "concept_hash": "893fbd194e0d607d05d8836bd7217a1d9624197919bcf869d6c3d61c2efaeb4c",
+  "generator": "assets/src/character/gen_enemy_concept_T0275.py",
+  "card": "T-0275",
+  "sensor_role": "proximity / patrol",
+  "supersedes": [
+    "T-0200 (v1, synthetic -- model N/A, model_hash None)",
+    "T-0214 (v2, real SDXL abstract orb/field/presence forms)"
+  ]
+}

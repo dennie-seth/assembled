@@ -1,0 +1,28 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "lora_license": "CreativeML OpenRAIL++-M",
+  "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "prompt": "flat side-on concept sheet, orthographic full-body elevation, no perspective, no vanishing point, single figure centred on a plain background, Soviet brutalist institutional aesthetic, muted desaturated home palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, pixel art game asset reference sheet style, silhouette study. A non-human robot construction: boxy industrial chassis, no face and no eyes, an array of microphone dish and antenna sensors mounted where a head would be, exposed conduit and rivets, rusted institutional green and concrete grey plating, hands empty, unarmed, standing in a neutral relaxed posture, a passive stealth obstacle to route around, not a combatant. It hunts by sound alone and has nothing resembling a face to read.",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, multiple figures, weapon, gun, sword, blade, knife, rifle, armor, armour, aggressive combat pose, battle stance, fighting stance, face, eyes, humanoid head, human features, readable facial expression, organic skin, fur, feathers",
+  "seed": 27502,
+  "steps": 30,
+  "cfg": 7.0,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "e9942905fd5ee9fcdac35c55370f84fd8a2a913b9a289739fc9e9cf3bff58a1a",
+  "prompt_id": "a80f7689-9803-4f53-88d0-7a51d023b14c",
+  "concept_hash": "70da98277062ee6f360d50890c564e9941e5effaa4adcc084c2952348a38efd7",
+  "generator": "assets/src/character/gen_enemy_concept_T0275.py",
+  "card": "T-0275",
+  "sensor_role": "sound radius",
+  "supersedes": [
+    "T-0200 (v1, synthetic -- model N/A, model_hash None)",
+    "T-0214 (v2, real SDXL abstract orb/field/presence forms)"
+  ]
+}
