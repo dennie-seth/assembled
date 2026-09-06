@@ -240,6 +240,49 @@ def test_check_attempt_cap_allows_the_round_4_defect_fix_budget() -> None:
     gen.check_attempt_cap(28)  # must not raise
 
 
+def test_green_emphasis_upweights_the_costume_colour_phrase() -> None:
+    """Round 5 Lever 2 ("stronger green emphasis in the prompt"): a ComfyUI
+    A1111-style attention weight on the costume-colour phrase, plus an extra
+    explicit institutional-green descriptor, distinguishes this from the
+    plain unweighted phrase every prior attempt used."""
+    plain = gen.build_positive_prompt(emphasize_green=False)
+    emphasized = gen.build_positive_prompt(emphasize_green=True)
+    assert "(vivid saturated institutional green costume colour:1.4)" in emphasized
+    assert "(vivid saturated institutional green costume colour:1.4)" not in plain
+    assert "vivid saturated green costume colour" in plain
+
+
+def test_green_emphasis_off_by_default() -> None:
+    assert "(vivid saturated institutional green costume colour:1.4)" not in gen.PROFILE_PROMPT
+
+
+def test_negative_prompt_gains_anti_olive_terms_when_green_emphasized() -> None:
+    """The muted-olive failure mode (attempts 24-28) is a specific, nameable
+    colour drift, not just generic desaturation -- the plain negative prompt
+    already covers "washed out"/"pale"/"desaturated", so the emphasized
+    negative adds terms that specifically push away from olive/khaki/grey-green."""
+    plain = gen.build_negative_prompt(emphasize_green=False)
+    emphasized = gen.build_negative_prompt(emphasize_green=True)
+    assert plain == gen.PROFILE_NEGATIVE
+    assert "olive" in emphasized and "khaki" in emphasized
+    assert "olive" not in plain
+
+
+def test_build_graph_threads_green_emphasis_into_both_prompt_nodes() -> None:
+    graph = _graph(emphasize_green=True)
+    assert "(vivid saturated institutional green costume colour:1.4)" in (
+        graph[gen.POSITIVE_PROMPT_NODE_ID]["inputs"]["text"]
+    )
+    assert "olive" in graph[gen.NEGATIVE_PROMPT_NODE_ID]["inputs"]["text"]
+
+
+def test_build_graph_green_emphasis_off_by_default() -> None:
+    graph = _graph()
+    assert "(vivid saturated institutional green costume colour:1.4)" not in (
+        graph[gen.POSITIVE_PROMPT_NODE_ID]["inputs"]["text"]
+    )
+
+
 def test_check_attempt_cap_allows_a_fresh_round_5_budget() -> None:
     """Round 5 ("vivid green on the profile") gets its own fresh 8-attempt
     DL-21 budget on top of rounds 1-4's spent 1..24 plus the round-4
