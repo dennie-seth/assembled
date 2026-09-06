@@ -36,7 +36,9 @@ from char_gen.cutout import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-IDLE_ANCHOR_PATH = REPO_ROOT / "assets" / "final" / "character" / "player_idle_sheet_hybrid_T0252.png"
+IDLE_ANCHOR_PATH = (
+    REPO_ROOT / "assets" / "final" / "character" / "player_idle_sheet_hybrid_T0252.png"
+)
 
 SIZE = 64
 BACKGROUND_RGB = (0, 0, 0)
@@ -213,7 +215,9 @@ def test_promoted_front_sheet_cells_survive_the_new_selection_whole() -> None:
                 "in full -- dropping any of them regresses the already-promoted T-0252 sheet"
             )
             checked_cells += 1
-    assert checked_cells == 9, f"expected the known 3x3 T-0252 sheet layout, found {checked_cells} cells"
+    assert checked_cells == 9, (
+        f"expected the known 3x3 T-0252 sheet layout, found {checked_cells} cells"
+    )
 
 
 def test_legacy_name_is_a_drop_in_alias() -> None:
