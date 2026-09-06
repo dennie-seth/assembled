@@ -1065,7 +1065,19 @@ reproduce it bit-exactly and was correctly discarded rather than promoted.
 Promoted: `assets/final/character/player_profile_keyframe_hybrid_T0272.png`
 + `.provenance.json`.
 
-| 28 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 72.1 | PASS | yes | T-0315 round 2: re-cut with the fixed absolute-background-distance cutout (minimum-separated border-colour clustering, correcting round 1's "every distinct border colour" regression on this exact un-quantized frame); frame recovered from the committed, hash-verified evidence copy since original scratch was reaped and a same-seed regeneration did not reproduce bit-exactly (see T-0315 step 3 above). Legible at 48px (529 fg px, 4 components) -- promoted. |
+**Attempt 28 summary (seed 31416, ControlNet 1.0/1.0, style LoRA 0.7,
+identity LoRA 0.5, pose LoRA 0.6, primary IP-Adapter 0.6, style-reference
+secondary 0.15, 72.1 GPU-s): re-cut with the fixed absolute-background-
+distance cutout (round 2: minimum-separated border-colour clustering,
+correcting round 1's "every distinct border colour" regression on this
+exact un-quantized frame); frame recovered from the committed, hash-
+verified evidence copy since original scratch was reaped and a same-seed
+regeneration did not reproduce bit-exactly (see T-0315 step 3 above).
+Mechanical gate PASS at every round (2, 3, 4). Promoted round 2, replaced
+round 3, un-promoted round 4 -- see that section below for why: the mask is
+now genuinely correct, but the frame's own colour content does not read as
+the logged "coat-wide olive colour" at 40px, a defect no cutout-mask fix can
+close.**
 
 ## T-0315 round 3: round 2's own reviewer FAIL, closed -- greedy set-cover by border pixel mass
 
@@ -1146,3 +1158,89 @@ recovered detail and by a spurious background blob; this round adds a test
 that checks colour, not just count). Legible at 40px as a leaning, hooded,
 olive-drab coat with a visible strap, matching attempt 28's own logged
 description closely enough to promote.
+
+## T-0315 round 4: round 3's own reviewer FAIL, closed -- majority-overlap component selection, and a second, independent, unfixable-here blocker
+
+Reviewer VALIDATION on round 3 re-traced its own "component 2/3 are the
+coat's own back-edge trim" claim (the paragraph immediately above) against
+the actual pixel content and found it backwards: those components are 62.6%
+and 61.4% flat grey-blue background, with essentially no black outline and
+no white accent (0.1-0.9% each) -- the opposite of round 3's own
+characterisation. Round 3's fix (greedy set-cover, closing round 2's
+separation-floor gap) was real, but it was solving a problem one layer
+below the actual defect.
+
+**Root cause, finally isolated correctly.** `border_flood_background_mask`
+was never the bug in rounds 2 or 3 -- it was already correctly classifying
+these background panels as non-background (they are their own disjoint
+components, never merged with the true border-connected background flood).
+The bug is one layer up, in `extract_foreground_mask`'s component-selection
+rule: `overlapping_labels = [lbl for lbl, ov in overlaps.items() if ov > 0]`
+kept a component if it overlapped the keypoints hint AT ALL, however small
+that overlap. Measured directly on this frame: a genuinely disjoint
+8,427px-at-384px background-panel component survived in full because a mere
+698px of it (8.3%) happened to fall inside the hint's own bbox+margin. That
+one component alone accounts for the bulk of both round 2's 129px and round
+3's 207px retained-background defects -- both rounds were re-tuning
+`border_flood_background_mask`'s colour classification (separation floor,
+then coverage target) to chase a bug that was never in that function.
+
+**The fix:** `extract_foreground_mask` now requires a component's own area
+to be at least `MIN_HINT_OVERLAP_FRACTION` (50%) inside the hint before
+keeping it on overlap grounds, falling back to the old "any overlap"
+behaviour only when nothing clears that bar, and to the largest component
+when nothing overlaps at all. A real limb/head split from the torso by an
+outline seam (T-0272 round 4's own regression, `test_multi_part_figure_
+survives_whole_when_every_part_overlaps_hint`) sits with the overwhelming
+majority of its own area inside the hint and is unaffected; a large decoy
+mostly outside the hint, grazing it by a sliver, is now dropped
+(`test_component_barely_grazing_the_hint_is_excluded`, RED-verified against
+round 3's code before the fix).
+
+**Result, mask now correct.** Through the real production pipeline, this
+frame now measures 17,144px foreground at 384px
+(`docs/assets/evidence/T-0272/attempt_28_cutout_mask_round4_after_384.png`)
+and 248px at 48x48 after quantization/cleanup, 3 connected components, 98.8%
+in the single largest one (245px) -- verified both by the component-overlap
+maths above and by direct visual inspection: no floating background bar
+beside the figure, unlike rounds 2 and 3's own promotions. Mechanical gate
+PASS (`background_fraction` 0.892). This is *fewer* raw pixels than round
+3's 452px -- deliberately: round 3's extra 204px were exactly the retained
+background this round removes, not recovered character detail. The old
+regression test asserting "48px foreground must not drop below 351px"
+(flagged as a non-discriminating monotone bound since round 1, never fixed)
+is replaced with a majority-largest-component-share assertion that this
+figure was chasing all along.
+
+**Second, independent finding: attempt 28 still cannot be promoted.** With
+the mask now genuinely correct, the promoted candidate's own colour content
+is measurable on its own terms for the first time. Of its 248 foreground
+pixels, only 24 (10%) quantize to the home palette's own "green family"
+slots (2, 3, 5, 7, 9, 11); the other 224 (90%) quantize to the neutral ramp
+(`docs/assets/evidence/T-0272/attempt_28_palette_index_histogram_round4.png`).
+This is not a quantization-nearest-neighbour artifact of a good green
+render landing badly -- sampled directly on the un-quantized raw frame, the
+coat's own main body fill sits closer in Oklab space to the palette's
+neutral ramp than to any green-family swatch. Composited over a dark
+backdrop for a fair read (transparency against plain white washes out
+perceived saturation), the fixed cutout reads as a grey-taupe silhouette
+with a few dark-olive flecks near the collar -- independently corroborating
+round 3's own reviewer finding on this exact point ("the figure reads as a
+grey slab with a few dark-olive flecks... not the 'coat-wide olive colour'
+this card exists to ship"), which this round's mask fix does not and cannot
+move, because it is not a mask defect. `border_flood_background_mask` and
+`extract_foreground_mask` classify *which* pixels are character; they have
+no way to change what colour those pixels already are.
+
+**Decision: not promoted.** `player_profile_keyframe_hybrid_T0272.png` and
+its provenance sidecar (added round 2, replaced round 3) are removed from
+`assets/final/character/` rather than promoted a third time on a colour
+basis that a second independent check (this round's own palette-index
+measurement, corroborating round 3's reviewer) says will not read as the
+logged "coat-wide olive colour." This returns the file to the state it was
+in before T-0315 began -- absent, exactly as T-0272's own original 8
+attempts left it -- per this card's own instruction: "If the fixed cutout
+still cannot rescue attempt 28, say so with the before/after masks as
+evidence and stop." The cutout fix itself (both the round-1-3 absolute-
+distance rework and this round's majority-overlap selection) is real,
+tested against every listed consumer, and kept.

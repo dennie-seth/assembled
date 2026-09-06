@@ -231,3 +231,77 @@ substitute a different attempt.
 two new round-3 paths above returns nothing for either; neither is caught by
 `**/assets/out/` or any other rule, so no `.gitignore` change was needed to
 commit this evidence either.
+
+**T-0315 round 4: round 3's own reviewer FAIL, closed -- and a second,
+independent, mask-unrelated blocker found.** Round 3's reviewer traced its
+retained background components (124px and 71px, wrongly attributed above to
+"the coat's own back-edge trim") back through the pipeline and found the
+opposite of what round 3's own log claimed: they are 62-63% flat grey-blue
+background, not coat trim. Tracing the defect one layer further --
+`extract_foreground_mask`'s component-selection logic, not
+`border_flood_background_mask`'s colour classification that rounds 2 and 3
+both kept re-tuning -- finds the real root cause: a plain "any overlap
+counts" rule kept a large, genuinely disjoint background-panel component
+(8,427 of 384x384px raw foreground pixels) in full because a mere 698px
+sliver of it (8.3%) grazed the keypoints hint. `border_flood_background_mask`
+itself was already correctly classifying these blobs as non-background in
+rounds 2 and 3 alike; the bug was one layer up, in which components
+`extract_foreground_mask` chose to keep. The fix: a component must have a
+**majority** (>=50%) of its own area inside the hint to be kept on overlap
+grounds, not merely `> 0` (`MIN_HINT_OVERLAP_FRACTION`, `char_gen/cutout.py`).
+
+- **`attempt_28_cutout_mask_round4_before_384.png`** -- round 3's own
+  selection rule (any overlap counts), reproduced directly and visualized the
+  same way as every mask image above (green tint over the original frame,
+  background dimmed to grayscale): 31,108px foreground. The diffuse green
+  margin running down both sides of the coat, well outside its own
+  silhouette, is the defect -- background connected to the hint by only a
+  sliver, kept in full.
+- **`attempt_28_cutout_mask_round4_after_384.png`** -- the majority-overlap
+  fix, same frame, same visualization: 17,144px foreground, cleanly confined
+  to the actual figure. The flanking margins are grayscale background again,
+  with no diffuse green fringe.
+- **`attempt_28_cutout_result_round4_48_zoomed.png`** -- the fixed cutout,
+  palette-quantized and descended to 48x48 (8x zoomed, composited over a
+  near-black backdrop): 248px, 3 connected components, 98.8% in the single
+  largest one (245px) -- character-only, verified both by component-overlap
+  math and by direct visual inspection (no floating background bar, unlike
+  rounds 2 and 3's promotions). Mechanical gate PASS (`background_fraction`
+  0.892). This *is* fewer total pixels than round 3's 452px -- round 3's own
+  extra pixels were exactly the retained background this round removes, not
+  recovered character detail (`test_raw_unquantized_render_is_character_only_not_merely_more_pixels`,
+  which replaces the old, reviewer-flagged ">= 351px" monotone bound with
+  this majority-share assertion).
+- **`attempt_28_palette_index_histogram_round4.png`** -- the second, wholly
+  independent finding this round surfaces once the mask is finally correct:
+  of the fixed cutout's 248 foreground pixels, only 24 (10%) quantize to the
+  home palette's own "green family" slots (indices 2, 3, 5, 7, 9, 11, per
+  `home_palette.json`'s own `_note`); the other 224 (90%) quantize to the
+  neutral ramp (8, 10, 12, 13, 14). This is not a mask defect -- it is
+  measured directly on the *un-quantized* raw render too (the coat's own
+  main body fill samples closer to the neutral end of Oklab space than to
+  any green-family swatch) -- and it is not something a cutout-classification
+  fix can move. Composited over a dark backdrop for a fair read (transparency
+  against plain white washes out perceived saturation), the promoted
+  candidate reads as a grey-taupe silhouette with a few dark-olive flecks
+  near the collar, not "coat-wide olive colour" -- independently corroborating
+  round 3's own reviewer finding on this exact point, which this round's mask
+  fix does not and cannot change.
+
+**Not promoted.** `player_profile_keyframe_hybrid_T0272.png` and its
+provenance sidecar (both added by round 2, replaced by round 3) have been
+removed from `assets/final/character/` rather than replaced a third time.
+The mask defect that blocked rounds 2 and 3 is genuinely fixed and verified
+above; attempt 28 still cannot be promoted, for a second, independent, and
+unfixable-by-this-card reason -- its own recovered frame does not read as a
+legible olive-green coat at 40px, per the measurement above. This matches
+the card's own instruction: "If the fixed cutout still cannot rescue
+attempt 28, say so with the before/after masks as evidence and stop." Doing
+so returns `player_profile_keyframe_hybrid_T0272.png` to the state it was in
+before T-0315 began (absent -- T-0272's own gate test never went green in
+that card's original 8 attempts either); this is not a new regression, it is
+this card's honest conclusion.
+
+`.gitignore` check (re-run for round 4): `git check-ignore -v` against the
+four new round-4 paths above returns nothing for any of them, so no
+`.gitignore` change was needed to commit this evidence either.
