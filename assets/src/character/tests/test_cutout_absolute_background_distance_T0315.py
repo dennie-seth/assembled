@@ -380,23 +380,60 @@ def test_promoted_front_sheet_whole_cell_hint_still_exact() -> None:
 # rig keypoints as the hint, then `downscale_mask` to the real final cell
 # size) -- exactly what `gen_hybrid_profile_T0272.build_indexed_cell` does.
 #
-# The baseline below is the PRE-T-0315 foreground pixel count at 48x48,
+# The count below is the PRE-T-0315 foreground pixel count at 48x48,
 # measured by reconstructing the original tolerance-chained BFS flood
 # (`git show <the pre-T-0315 commit>:.../cutout.py`'s own
 # `border_flood_background_mask`, kept in git history, not duplicated here
 # as importable code) against this same frame through the same real
-# pipeline: 24,300px raw at 384, 351px after `downscale_mask`. The fix must
-# not drop below that -- the whole point of this card is to do better than
-# the leaky original on exactly this frame, not merely to not regress it.
+# pipeline: 24,300px raw at 384, 351px after `downscale_mask`. It is kept
+# here as documented HISTORY, not as a floor any more -- see the round-4
+# note below for why a strictly *higher* count stopped being the right bar.
 _ATTEMPT_28_PRE_T0315_FG_PX_48 = 351
 
+#: T-0315 round 4: this project's own real mechanical gate floor
+#: (`tests/test_player_profile_hybrid_T0272_gate.py`'s `MIN_FOREGROUND_PIXELS`,
+#: duplicated here rather than imported -- a *test* asserting the same
+#: numeric floor as the gate it is meant to double-check should not import
+#: the gate's own module and risk both changing together silently).
+_MIN_FOREGROUND_PIXELS = 50
 
-def test_raw_unquantized_render_does_not_regress_below_pre_fix() -> None:
-    """The regression case round 1's baseline suite structurally could not
-    catch (every `_BASELINE_FG_PX` fixture already has a single-colour
-    border): a genuine, raw, un-quantized 384px render whose border carries
-    many distinct colours, run through the real consumer pipeline this
-    card exists to fix (`gen_hybrid_profile_T0272`)."""
+#: A correct cutout's largest component must be the overwhelming majority of
+#: its own surviving foreground -- "character-only," not "character plus a
+#: retained background band." See the round-4 note below for the measured
+#: history this bar replaces.
+_MIN_LARGEST_COMPONENT_SHARE = 0.9
+
+
+def test_raw_unquantized_render_is_character_only_not_merely_more_pixels() -> None:
+    """T-0315 rounds 2 and 3 each chased a HIGHER `small.sum()` on this exact
+    frame as the bar to clear -- and each time, reviewer inspection found the
+    extra pixels were retained BACKGROUND, not recovered character: round 2
+    promoted 529px whose second-largest component (129px, 24%) was a
+    disjoint grey-blue panel; round 3 promoted 452px with the same defect
+    worse (207px, 46%, across two components). Both passed the OLD version
+    of this test (`>= 351`) trivially, because a monotone "more foreground
+    survived" bound cannot distinguish genuine recovered detail from a
+    spuriously-retained background blob inflating the same count -- exactly
+    the property `test_no_surviving_raw_component_is_background_coloured`
+    already exists to catch at the RAW (384px) resolution, but that test's
+    own "dominant background colour" reference was independently found
+    non-discriminating on this frame (it locked onto the frame's single most
+    frequent border colour -- a white edge strip -- not the grey-lavender
+    interior panel the retained blobs actually matched).
+
+    Round 4's actual root cause, found by tracing the retained blobs back
+    through `extract_foreground_mask`'s own component-selection layer rather
+    than `border_flood_background_mask`'s colour classification: a large,
+    genuinely disjoint background-panel component was being kept in full
+    because a mere SLIVER of its own area (698 of 8,427px at 384, 8.3%)
+    happened to fall inside the keypoints hint -- see
+    `MIN_HINT_OVERLAP_FRACTION`'s own docstring. Fixing that drops this
+    frame's own 48px count from round 3's 452px to 249px -- BELOW the
+    pre-T-0315 351px baseline documented above -- while the surviving
+    foreground is now 98.4% a single component (the genuine figure). A lower
+    but overwhelmingly character-only count is the correct outcome; this
+    test asserts that property directly instead of a pixel floor that a
+    retained background blob satisfies just as well as real detail."""
     path = EVIDENCE_T0272_DIR / "attempt_28_secondary_reference_colour_lean.png"
     if not path.exists():
         pytest.skip(f"evidence frame not present in this checkout: {path}")
@@ -407,13 +444,22 @@ def test_raw_unquantized_render_does_not_regress_below_pre_fix() -> None:
         img, CUTOUT_OKLAB_TOLERANCE, points, BACKGROUND_MASK_MARGIN_FRAC
     )
     small = downscale_mask(mask, 48)
+    total = int(small.sum())
 
-    assert int(small.sum()) >= _ATTEMPT_28_PRE_T0315_FG_PX_48, (
-        f"attempt 28's own frame: 48px foreground dropped to {int(small.sum())}px, below the "
-        f"pre-T-0315 original algorithm's {_ATTEMPT_28_PRE_T0315_FG_PX_48}px on this same raw "
-        "render through the same real pipeline -- round 1's 'use every distinct border colour' "
-        "fix regressed exactly this un-quantized case even though it never regressed any "
-        "already-quantized baseline fixture"
+    assert total >= _MIN_FOREGROUND_PIXELS, (
+        f"attempt 28's own frame: 48px foreground is only {total}px, below this project's own "
+        f"{_MIN_FOREGROUND_PIXELS}px mechanical-gate floor -- the cutout likely erased the figure"
+    )
+
+    labels, count = label_foreground_components(small)
+    assert count > 0
+    largest = max(int((labels == lbl).sum()) for lbl in range(1, count + 1))
+    share = largest / total
+    assert share >= _MIN_LARGEST_COMPONENT_SHARE, (
+        f"attempt 28's own frame: the largest surviving 48px component is only {share:.1%} of "
+        f"total foreground ({largest}/{total}px), below the {_MIN_LARGEST_COMPONENT_SHARE:.0%} "
+        "'character-only' bar -- a retained background blob is inflating the count the same way "
+        "rounds 2 and 3's own promotions did"
     )
 
 

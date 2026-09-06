@@ -84,6 +84,21 @@ BORDER_COLOR_COVERAGE_TARGET = 0.95
 #: is no longer a meaningful description.
 _MAX_BORDER_REPRESENTATIVES = 64
 
+#: T-0315 round 4: the minimum fraction of a candidate foreground component's
+#: OWN area that must fall inside the keypoints hint's own bbox+margin for
+#: that component to be kept on overlap grounds alone. `extract_foreground_mask`
+#: previously kept ANY component with `> 0` overlap, however small -- round 3's
+#: own reviewer FAIL traced a 24%-of-foreground grey background panel in the
+#: promoted attempt-28 sprite to exactly this: a genuinely disjoint 8,427px
+#: (at 384px) background-panel component survived in full because only 698px
+#: of it (8.3%) happened to fall inside the hint. Requiring a MAJORITY of the
+#: component's own area to overlap keeps a real limb/head that is mostly
+#: inside its own hint (T-0272 round 4's own regression, still covered by
+#: `test_multi_part_figure_survives_whole_when_every_part_overlaps_hint`,
+#: where both parts overlap 100%) while dropping a large decoy that is mostly
+#: outside it (`test_component_barely_grazing_the_hint_is_excluded`).
+MIN_HINT_OVERLAP_FRACTION = 0.5
+
 
 def _srgb_to_linear(c: np.ndarray) -> np.ndarray:
     c = c / 255.0
@@ -363,14 +378,22 @@ def extract_foreground_mask(
 ) -> np.ndarray:
     """Boolean HxW array, True = character. Background is the border-
     connected tolerant Oklab flood; the foreground is its complement, reduced
-    to every connected component that overlaps `keypoints_norm`'s own
-    bbox+margin (a real figure often splits into several -- a limb or head
-    separated from the torso by a background-coloured outline seam, and
-    ALL of them must survive, not just the largest), or (when nothing
-    overlaps the hint, or when no hint is given at all) the single largest
-    foreground component. `keypoints_norm` is a HINT, never a hard frame: it
-    can never cause a pixel belonging to an overlapping component to be
-    dropped."""
+    to every connected component whose OWN area sits at least
+    `MIN_HINT_OVERLAP_FRACTION` inside `keypoints_norm`'s own bbox+margin (a
+    real figure often splits into several -- a limb or head separated from
+    the torso by a background-coloured outline seam, and ALL of them must
+    survive, not just the largest), or (when nothing meets that bar, or when
+    no hint is given at all) a looser fallback -- see below. `keypoints_norm`
+    is a HINT, never a hard frame: it can never cause a pixel belonging to a
+    kept component to be dropped.
+
+    T-0315 round 4: a plain `> 0` overlap test (any overlap at all, however
+    small) let a large, genuinely disjoint component survive in full merely
+    because a sliver of it grazed the hint -- see `MIN_HINT_OVERLAP_FRACTION`'s
+    own docstring for the measured attempt-28 defect this closed. Requiring a
+    MAJORITY of the component's own area to overlap still keeps a real
+    limb/head that sits mostly inside its own hint, while dropping a decoy
+    that sits mostly outside it."""
     size = img.size[0]
     background = border_flood_background_mask(img, tolerance)
     foreground = ~background
@@ -386,16 +409,28 @@ def extract_foreground_mask(
         return labels == largest_label
 
     hint = _keypoints_hint_mask(keypoints_norm, bbox_margin_frac, size)
+    areas = {lbl: int((labels == lbl).sum()) for lbl in range(1, count + 1)}
     overlaps = {lbl: int(((labels == lbl) & hint).sum()) for lbl in range(1, count + 1)}
+
+    majority_labels = [
+        lbl
+        for lbl, ov in overlaps.items()
+        if areas[lbl] and ov / areas[lbl] >= MIN_HINT_OVERLAP_FRACTION
+    ]
+    if majority_labels:
+        return np.isin(labels, majority_labels)
+
     overlapping_labels = [lbl for lbl, ov in overlaps.items() if ov > 0]
     if not overlapping_labels:
         # The rendered figure sits entirely outside the hint region (a
         # stacked profile reference pulling the pose off-rig, T-0272 round
         # 3's attempts 13-15) -- fall back to the largest foreground blob
         # rather than reporting "no figure."
-        areas = {lbl: int((labels == lbl).sum()) for lbl in range(1, count + 1)}
         largest_label = max(areas, key=areas.get)
         return labels == largest_label
+    # Nothing clears the majority bar, but something grazes the hint at all --
+    # keep every component that does, the pre-round-4-fix fallback, rather
+    # than reporting "no figure" outright.
     return np.isin(labels, overlapping_labels)
 
 
@@ -452,11 +487,15 @@ CUTOUT_METHOD_DESCRIPTION = (
     "background is the border-connected region of qualifying pixels -- removes background "
     "clutter connected to the frame edge regardless of how many distinct palette indices it "
     "later quantizes to. The resulting "
-    "foreground is reduced to every connected component that overlaps a keypoints hint region "
-    "(falling back to the single largest component when nothing overlaps the hint, "
-    "or when no hint is given) -- a content-aware selection (T-0272 round 4) that supersedes "
-    "the original hard 'outside this frame's own keypoint bbox is background' clip, which could "
-    "zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. "
+    "foreground is reduced to every connected component whose OWN area sits at least "
+    f"{MIN_HINT_OVERLAP_FRACTION:.0%} inside a keypoints hint region (T-0315 round 4 -- a plain "
+    "'any overlap counts' rule let a large, genuinely disjoint background-panel component "
+    "survive in full on a mere sliver of incidental overlap), falling back to every component "
+    "with any overlap at all, then to the single largest component, when nothing clears that "
+    "majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that "
+    "supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, "
+    "which could zero or clip a real figure whose rendered pose deviates from its own ControlNet "
+    "skeleton. "
     "Applied to each frame's own image and downscaled alongside it BEFORE the frames are "
     "assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep "
     "their quantized palette index; every other pixel is forced to background_index=0."
