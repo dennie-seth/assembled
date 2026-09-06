@@ -39,6 +39,7 @@ robot-Sound, spider-Still-Air) unmodified.
 
 from __future__ import annotations
 
+import warnings
 from collections import deque
 
 import numpy as np
@@ -54,6 +55,26 @@ CUTOUT_OKLAB_TOLERANCE = 0.03
 #: `background_hold_mask` (gen_chained_idle_T0250), which still owns its own
 #: definition site for that unrelated frame-to-frame compositing fix.
 BACKGROUND_MASK_MARGIN_FRAC = 0.14
+
+#: T-0315 round-2 fix: the minimum Oklab distance two accepted *representative*
+#: border colours must keep between each other. Every representative anchors
+#: a classification ball of radius `CUTOUT_OKLAB_TOLERANCE`; two
+#: representatives closer than 2x that tolerance have overlapping balls, so a
+#: pixel just past one ball's edge can still fall inside its neighbour's --
+#: exactly the hop-to-hop bridging defect this module exists to close,
+#: reproduced via the border SAMPLE LIST instead of spatial adjacency (a raw,
+#: un-quantized 384px SDXL render's border sampled 511 distinct raw colours in
+#: this card's own diagnostic, densely packed enough that even deduplicating
+#: exact repeats left representatives averaging little more than one
+#: tolerance apart -- still a walkable chain). 2x tolerance is the strict
+#: minimum that guarantees disjoint balls; this constant adds headroom above
+#: that floor for the same reason the tolerance itself carries headroom --
+#: floating-point boundary cases and near-miss colours -- and was confirmed
+#: against that same diagnostic frame to sit on a stable plateau (2.5x-3x
+#: tolerance both resolve to the same handful of genuinely distinct colour
+#: regions and produce materially the same mask; exactly 2x still leaves
+#: visible fragmentation the plateau does not).
+BORDER_COLOR_MIN_SEPARATION = 2.5 * CUTOUT_OKLAB_TOLERANCE
 
 
 def _srgb_to_linear(c: np.ndarray) -> np.ndarray:
@@ -85,17 +106,52 @@ def _oklab_grid(rgb_uint8: np.ndarray) -> np.ndarray:
     return flat.reshape(h, w, 3)
 
 
+def _representative_border_colors(
+    unique_border_colors: np.ndarray, counts: np.ndarray
+) -> np.ndarray:
+    """Reduce every distinct colour actually present on the frame's own edge
+    to a genuinely small set of representatives, each at least
+    `BORDER_COLOR_MIN_SEPARATION` from every other -- greedy, most-frequent
+    colour first, so the representatives that survive are the true dominant
+    border tones rather than whichever rare colour happened to sort first.
+
+    T-0315 round 2: using *every* distinct border colour as its own
+    classification anchor (round 1's fix) reproduces the exact defect this
+    module exists to close, just relocated from spatial adjacency to the
+    border's own sample list -- a raw, un-quantized 384px render's border can
+    carry hundreds of distinct colours (anti-aliasing noise, or a real figure
+    edge legitimately touching the frame border) packed closely enough in
+    Oklab space that consecutive anchors sit barely over one tolerance apart,
+    so their matching balls (radius `CUTOUT_OKLAB_TOLERANCE` each) still
+    overlap and still let a chain of small hops bridge into the figure's
+    interior. Enforcing a minimum gap between accepted representatives (see
+    `BORDER_COLOR_MIN_SEPARATION`'s own derivation) closes that path: distinct
+    representatives can no longer have touching balls, so classification can
+    only connect colours that are *directly* close to a genuine border tone,
+    never colours that merely lie along a densely-sampled ramp between two
+    such tones."""
+    order = np.argsort(-counts)
+    ordered_colors = unique_border_colors[order]
+    min_sep2 = BORDER_COLOR_MIN_SEPARATION * BORDER_COLOR_MIN_SEPARATION
+    representatives: list[np.ndarray] = []
+    for color in ordered_colors:
+        if all(((color - rep) ** 2).sum() > min_sep2 for rep in representatives):
+            representatives.append(color)
+    return np.array(representatives)
+
+
 def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarray:
     """Boolean HxW array, True = background. T-0315: every pixel's own
     qualifying test is its absolute Oklab distance to a small set of sampled
-    *true* border colours (every distinct colour actually present on the
-    frame's own edge) -- never a hop-to-hop tolerance test against whatever
-    neighbour it happened to grow from. Background is still exactly the
-    border-connected region of qualifying pixels (a real figure that is
-    merely the same shade as the background *somewhere else in the frame*,
-    without itself touching the edge through a connected qualifying path,
-    must not be swept -- verified against every promoted sheet this module
-    already serves, not just asserted).
+    *true* border colours (a small, minimum-separated set of representatives
+    drawn from the colours actually present on the frame's own edge -- see
+    `_representative_border_colors`) -- never a hop-to-hop tolerance test
+    against whatever neighbour it happened to grow from. Background is still
+    exactly the border-connected region of qualifying pixels (a real figure
+    that is merely the same shade as the background *somewhere else in the
+    frame*, without itself touching the edge through a connected qualifying
+    path, must not be swept -- verified against every promoted sheet this
+    module already serves, not just asserted).
 
     The previous implementation (kept in git history, not here) was a
     tolerance-chained ("magic wand, contiguous") BFS: a pixel qualified as
@@ -105,19 +161,26 @@ def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarr
     figure's interior, even when the *direct* distance from background to
     interior was many times `tolerance` (T-0272 round 5's own diagnosis of
     attempt 28's lost coat colour: `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
-    "Lever 3" section). Testing every pixel against the border's own sampled
-    colours directly, instead of against its immediate predecessor, closes
+    "Lever 3" section). Testing every pixel against a small set of
+    minimum-separated border representatives directly, instead of against
+    its immediate predecessor or every raw distinct border colour, closes
     that path: a chain of small hops can no longer accumulate into a large
-    total displacement the way repeated hop-to-hop comparison allowed, since
-    every step of the walk must independently stay close to a *real*
-    border colour, not merely close to the previous step.
+    total displacement, and the representatives themselves cannot chain
+    into each other either, since every step of the walk must independently
+    stay close to a *real, distinct* border colour, not merely close to the
+    previous step or to a densely-sampled neighbour of one.
 
     A smoothly-varying background (a vignette/gradient) is still handled
     without any special-casing: sampling from *every* border pixel, not just
     one seed colour, means a gradient's full value range is already in the
     sample set whenever that range is reached at the frame's own edge (the
     common case -- a vignette darkens toward the corners, which are on the
-    border)."""
+    border). When that range itself exceeds `tolerance` -- so no single
+    small set of representatives can be trusted to capture it without also
+    risking a real figure edge -- a `UserWarning` is raised: a loud signal a
+    caller or test can observe, rather than a silent guess in either
+    direction (T-0315's own "fail loudly rather than silently mis-cutting"
+    edge case)."""
     arr = np.array(img.convert("RGB"), dtype=np.uint8)
     h, w = arr.shape[:2]
     oklab = _oklab_grid(arr)
@@ -127,7 +190,26 @@ def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarr
     border[h - 1, :] = True
     border[:, 0] = True
     border[:, w - 1] = True
-    border_colors = np.unique(oklab[border], axis=0)
+    unique_border_colors, counts = np.unique(oklab[border], axis=0, return_counts=True)
+
+    if len(unique_border_colors) > 1:
+        diffs = unique_border_colors[:, None, :] - unique_border_colors[None, :, :]
+        border_spread = float(np.sqrt((diffs**2).sum(axis=-1)).max())
+    else:
+        border_spread = 0.0
+    if border_spread > tolerance:
+        warnings.warn(
+            "border_flood_background_mask: this frame's own border colours span "
+            f"{border_spread / tolerance:.2f}x the classification tolerance "
+            f"({tolerance}) -- too wide to trust a small representative set without "
+            "risking either a missed background region or a swept figure edge. "
+            "Classification proceeded, but the result should be checked visually "
+            "(T-0315's 'fail loudly rather than silently mis-cutting' edge case).",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    border_colors = _representative_border_colors(unique_border_colors, counts)
 
     tol2 = tolerance * tolerance
     min_dist2 = np.full((h, w), np.inf, dtype=np.float64)
@@ -298,11 +380,15 @@ def apply_cutout_masks(
 
 
 CUTOUT_METHOD_DESCRIPTION = (
-    "Per-frame border-connected tolerant region-growing in Oklab space "
-    f"(tolerance={CUTOUT_OKLAB_TOLERANCE}) over that frame's own 384x384 sampled/held image, "
-    "seeded from every border pixel and grown through 4-connected neighbours within the "
-    "tolerance of the pixel it grows from -- removes background clutter connected to the frame "
-    "edge regardless of how many distinct palette indices it later quantizes to. The resulting "
+    "Per-frame border-connected background classification in Oklab space "
+    f"(tolerance={CUTOUT_OKLAB_TOLERANCE}) over that frame's own 384x384 sampled/held image: "
+    "every distinct colour on the frame's own border is reduced to a small set of "
+    f"representatives at least {BORDER_COLOR_MIN_SEPARATION} apart (T-0315), each pixel "
+    "qualifies as background by its own absolute Oklab distance to the NEAREST representative "
+    "(never by a hop-to-hop tolerance test against whatever neighbour it grew from), and "
+    "background is the border-connected region of qualifying pixels -- removes background "
+    "clutter connected to the frame edge regardless of how many distinct palette indices it "
+    "later quantizes to. The resulting "
     "foreground is reduced to every connected component that overlaps a keypoints hint region "
     "(falling back to the single largest component when nothing overlaps the hint, "
     "or when no hint is given) -- a content-aware selection (T-0272 round 4) that supersedes "

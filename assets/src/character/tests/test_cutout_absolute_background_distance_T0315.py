@@ -32,6 +32,8 @@ assertion made by eye.
 
 from __future__ import annotations
 
+import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -42,12 +44,20 @@ from char_gen.cutout import (
     BACKGROUND_MASK_MARGIN_FRAC,
     CUTOUT_OKLAB_TOLERANCE,
     border_flood_background_mask,
+    downscale_mask,
     extract_foreground_mask,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FINAL_CHARACTER_DIR = REPO_ROOT / "assets" / "final" / "character"
 FINAL_ENTITY_DIR = REPO_ROOT / "assets" / "final" / "entity"
+EVIDENCE_T0272_DIR = REPO_ROOT / "docs" / "assets" / "evidence" / "T-0272"
+
+_CHARACTER_DIR = Path(__file__).resolve().parents[1]
+if str(_CHARACTER_DIR) not in sys.path:
+    sys.path.insert(0, str(_CHARACTER_DIR))
+
+import pose_rig_profile_T0272  # noqa: E402
 
 # ── The outline-leak reproduction ────────────────────────────────────────
 #
@@ -202,7 +212,8 @@ def test_wide_range_vignette_fails_loud_rather_than_mis_cutting() -> None:
     arr = np.stack([value, value, value], axis=-1)
     img = Image.fromarray(arr, mode="RGB")
 
-    background = border_flood_background_mask(img, CUTOUT_OKLAB_TOLERANCE)
+    with pytest.warns(UserWarning, match="border colours span"):
+        background = border_flood_background_mask(img, CUTOUT_OKLAB_TOLERANCE)
     assert not background.all(), (
         "a gradient wide enough that its centre sits far outside absolute tolerance of every "
         "border sample must not be silently swept into background -- that would be exactly "
@@ -213,6 +224,30 @@ def test_wide_range_vignette_fails_loud_rather_than_mis_cutting() -> None:
         "the gradient's own centre (its furthest point from every border sample) must survive "
         "as foreground, not be silently absorbed as background"
     )
+
+
+def test_narrow_vignette_and_flat_background_do_not_warn() -> None:
+    """The loud signal above must actually be loud only for the ambiguous
+    case -- a `UserWarning` on every call (flat single-colour borders,
+    subtle vignettes whose own border spread stays inside tolerance) would
+    train callers and CI logs to ignore it, defeating the point. Both
+    companion fixtures above (subtle vignette, and its real-figure variant)
+    must raise nothing."""
+    size = 64
+    yy, xx = np.mgrid[0:size, 0:size]
+    dist = np.sqrt((yy - size / 2) ** 2 + (xx - size / 2) ** 2)
+    value = np.clip(40 - dist * 0.13, 34, 40).astype(np.uint8)
+    arr = np.stack([value, value, value], axis=-1)
+    img = Image.fromarray(arr, mode="RGB")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        border_flood_background_mask(img, CUTOUT_OKLAB_TOLERANCE)
+
+    flat = Image.new("RGB", (size, size), (40, 40, 40))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        border_flood_background_mask(flat, CUTOUT_OKLAB_TOLERANCE)
 
 
 # ── Baseline regression: every real consumer fixture, measured before the
@@ -319,3 +354,60 @@ def test_promoted_front_sheet_whole_cell_hint_still_exact() -> None:
                 cell_img, CUTOUT_OKLAB_TOLERANCE, whole_cell_hint, BACKGROUND_MASK_MARGIN_FRAC
             )
             assert int(mask.sum()) == int(raw_foreground.sum())
+
+
+# ── Raw, un-quantized render regression (T-0315 round 2) ────────────────────
+#
+# Every fixture in `_BASELINE_FG_PX` above is an already-palette-quantized
+# sheet, whose border (measured directly: `git show`-diffed against this
+# card's own round-1 review) carries exactly ONE distinct Oklab colour --
+# so round 1's "use every distinct border colour" fix was trivially
+# equivalent to the true fix on all of them, and none could catch round 1's
+# actual defect: on a raw SDXL render, the border can carry hundreds of
+# distinct colours (anti-aliasing noise, or -- this frame -- a figure whose
+# own black outline genuinely touches the frame edge), and using every one
+# of them as an independent classification anchor reproduces the exact
+# hop-to-hop bridging defect this module exists to close, just relocated
+# from spatial adjacency to the border's own sample list. This fixture
+# closes that gap: the actual, committed, hash-verified attempt 28 evidence
+# frame (`docs/assets/evidence/T-0272/attempt_28_secondary_reference_colour_lean.png`,
+# raw, never quantized), run through the REAL consumer pipeline
+# (`extract_foreground_mask` with `gen_hybrid_profile_T0272`'s own profile
+# rig keypoints as the hint, then `downscale_mask` to the real final cell
+# size) -- exactly what `gen_hybrid_profile_T0272.build_indexed_cell` does.
+#
+# The baseline below is the PRE-T-0315 foreground pixel count at 48x48,
+# measured by reconstructing the original tolerance-chained BFS flood
+# (`git show <the pre-T-0315 commit>:.../cutout.py`'s own
+# `border_flood_background_mask`, kept in git history, not duplicated here
+# as importable code) against this same frame through the same real
+# pipeline: 24,300px raw at 384, 351px after `downscale_mask`. The fix must
+# not drop below that -- the whole point of this card is to do better than
+# the leaky original on exactly this frame, not merely to not regress it.
+_ATTEMPT_28_PRE_T0315_FG_PX_48 = 351
+
+
+def test_raw_unquantized_render_does_not_regress_below_pre_fix() -> None:
+    """The regression case round 1's baseline suite structurally could not
+    catch (every `_BASELINE_FG_PX` fixture already has a single-colour
+    border): a genuine, raw, un-quantized 384px render whose border carries
+    many distinct colours, run through the real consumer pipeline this
+    card exists to fix (`gen_hybrid_profile_T0272`)."""
+    path = EVIDENCE_T0272_DIR / "attempt_28_secondary_reference_colour_lean.png"
+    if not path.exists():
+        pytest.skip(f"evidence frame not present in this checkout: {path}")
+    img = Image.open(path).convert("RGB")
+    points = pose_rig_profile_T0272.profile_keypoints()
+
+    mask = extract_foreground_mask(
+        img, CUTOUT_OKLAB_TOLERANCE, points, BACKGROUND_MASK_MARGIN_FRAC
+    )
+    small = downscale_mask(mask, 48)
+
+    assert int(small.sum()) >= _ATTEMPT_28_PRE_T0315_FG_PX_48, (
+        f"attempt 28's own frame: 48px foreground dropped to {int(small.sum())}px, below the "
+        f"pre-T-0315 original algorithm's {_ATTEMPT_28_PRE_T0315_FG_PX_48}px on this same raw "
+        "render through the same real pipeline -- round 1's 'use every distinct border colour' "
+        "fix regressed exactly this un-quantized case even though it never regressed any "
+        "already-quantized baseline fixture"
+    )

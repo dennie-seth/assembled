@@ -426,7 +426,6 @@ the other. In order of expected leverage, cheapest first:
 | 25 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 69.4 | PASS | no | round-4 defect-fix Test: secondary reference is the newly derived same-style side-profile crop (player_profile_style_reference_T0272.png), not inverted (already correct tone), replicating attempt 24's weights otherwise |
 | 26 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.75 | 48.1 | PASS | no | round-4 defect-fix Test 2: same style-reference secondary as attempt 25 but weight 0.3 (down from 0.45) and primary IP-Adapter 0.75 (up from 0.6) to push more costume colour through |
 | 27 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 63.1 | PASS | no | round-4 defect-fix Test 3: push secondary (pose/style-ref) weight up to 0.6 (matching primary) to see if a stronger profile pull still keeps some costume colour |
-| 28 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 72.1 | PASS | no | round-4 defect-fix Test 4 (final, cap 28): style-reference secondary at a much lighter weight (0.15, down from 0.3/0.45/0.6) -- testing whether a light touch keeps colour while still nudging the pose, or whether the reference's own competing grey/tan costume design (not just its art style) is what fights the green at any weight that actually moves the pose |
 
 ## Round 4, continued (attempts 25-28): the reviewer's two FAIL defects, fixed and tested
 
@@ -981,3 +980,89 @@ or a higher source:target descent ratio for silhouettes this thin) --
 scoped as its own change for the same reason the mask fix was scoped
 separately from the component-selection layer above it.
 
+## T-0315 round 2: the step-3 conclusion above is unsound -- the real root cause, the fix, and the promotion
+
+Reviewer VALIDATION on round 1 (recorded on the card, not duplicated in full
+here) found the "T-0315 step 3" conclusion immediately above **factually
+wrong on its own evidence**, and traced why: `border_flood_background_mask`'s
+round-1 fix (`cutout.py:130`, `np.unique(oklab[border], axis=0)`) used
+*every distinct colour actually present on the frame's own border* as an
+independent classification anchor -- 511 distinct Oklab colours on this
+exact raw, un-quantized render, because the figure's own black outline
+genuinely touches the frame edge in several places (this frame's border
+spans the full Oklab lightness range, 0.0 to 1.0, plus a mid-tone
+grey-purple background tone -- not a single flat colour). Deduplicating
+exact repeats does not bound how *close together* the remaining 511
+anchors sit: consecutive anchors averaged little more than one tolerance
+apart, so their matching balls (radius `CUTOUT_OKLAB_TOLERANCE` each) still
+overlapped, reproducing the exact hop-to-hop bridging defect this card
+exists to close -- just relocated from spatial adjacency (the pre-T-0315
+defect) to the border's own sample list (round 1's regression). The
+regression suite's own 11 baseline fixtures could not see this: every one
+is an already-palette-quantized sheet whose border carries exactly ONE
+distinct colour (measured directly), so round 1's fix was trivially
+equivalent to a correct one on all of them and only diverges on
+un-quantized renders -- exactly the case this card's own target frame is.
+
+**The step-3 "silhouette too thin for `downscale_mask`'s descent" claim is
+therefore false, not merely superseded.** Re-running the *unchanged*
+`downscale_mask` against the **pre-T-0315** mask (the original
+tolerance-chained flood, kept in git history) on this same frame yields
+**351px at 48x48** -- the descent step was never the blocker. Round 1's own
+mask (5,184px foreground, `attempt_28_cutout_mask_after_fix_384.png`) is
+also not "a clean, coherent, correctly-traced outline" as originally
+written -- it is fragmented and hole-riddled (compare it directly against
+`attempt_28_cutout_mask_before_fix_384.png`'s solid silhouette in
+`docs/assets/evidence/T-0272/`). Both claims in the step-3 section above are
+retracted; the section is left in place, uncorrected in its own text, so
+the record shows the actual mistake rather than erasing it. See
+`docs/assets/evidence/T-0272/README.md`'s own "T-0315 round 2" caption for
+the corrected before/after.
+
+**The fix:** `border_flood_background_mask` now reduces the border's
+distinct colours to a small set of *representatives*, each at least
+`BORDER_COLOR_MIN_SEPARATION` (2.5x `CUTOUT_OKLAB_TOLERANCE`) from every
+other -- greedy, most-frequent-colour-first, so the survivors are the true
+dominant border tones, not whichever rare anti-aliasing colour happened to
+sort first. 2x tolerance is the strict minimum that guarantees two
+representatives' matching balls cannot overlap (centres more than 2x the
+ball radius apart); 2.5x adds headroom for the same reason the tolerance
+itself carries headroom, and was confirmed empirically stable against this
+exact frame (2.5x and 3x resolve to the same handful of genuinely distinct
+colour regions and produce materially the same mask; exactly 2x still
+leaves visible fragmentation the plateau does not). A new regression
+fixture (`test_raw_unquantized_render_does_not_regress_below_pre_fix`,
+`tests/test_cutout_absolute_background_distance_T0315.py`) runs this exact
+frame through the real consumer pipeline (`extract_foreground_mask` with
+`pose_rig_profile_T0272`'s own keypoints, then `downscale_mask`) and asserts
+the result never drops below the pre-T-0315 baseline (351px) -- the gap
+round 1's baseline suite structurally could not see, now closed. A second
+fix, also reviewer-requested: when a frame's border colours span more than
+`CUTOUT_OKLAB_TOLERANCE` (this frame: 33x), `border_flood_background_mask`
+now raises a `UserWarning` -- a loud, observable signal that the border
+isn't a single clean colour and the result should be checked visually,
+rather than a silent guess in either direction (the card's own "fail loudly
+rather than silently mis-cutting" edge case; the round-1 gradient edge-case
+test only asserted the mis-cut region stayed foreground, which is not
+loud -- `test_narrow_vignette_and_flat_background_do_not_warn` and the
+updated wide-vignette test now assert the warning fires exactly when the
+frame is actually ambiguous, not on every call).
+
+**Result: attempt 28 is now legible at 48px and is promoted.** Through the
+real production pipeline (`extract_foreground_mask` -> `downscale_mask` ->
+`quantize_to_palette` -> `apply_cutout_masks` -> orphan cleanup, exactly
+`gen_hybrid_profile_T0272.build_indexed_cell`), this frame now measures
+36,392px foreground at 384px (a solid, legible hooded-coat-with-strap
+silhouette -- `docs/assets/evidence/T-0272/attempt_28_cutout_mask_round2_384.png`)
+and 529px at 48x48 after quantization/cleanup, 4 connected components,
+mechanical gate PASS (`background_fraction` 0.770). Visually legible at 40px
+as a hooded olive-drab coat with a visible strap, matching attempt 28's own
+logged description ("an olive coat body with a hood and a visible strap")
+closely enough to promote. The 384px source is attempt 28's own frame --
+the already-committed, sha256-verified evidence copy, re-cut with the fixed
+mask -- since a fresh same-seed regeneration (step 3 above) did not
+reproduce it bit-exactly and was correctly discarded rather than promoted.
+Promoted: `assets/final/character/player_profile_keyframe_hybrid_T0272.png`
++ `.provenance.json`.
+
+| 28 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 72.1 | PASS | yes | T-0315 round 2: re-cut with the fixed absolute-background-distance cutout (minimum-separated border-colour clustering, correcting round 1's "every distinct border colour" regression on this exact un-quantized frame); frame recovered from the committed, hash-verified evidence copy since original scratch was reaped and a same-seed regeneration did not reproduce bit-exactly (see T-0315 step 3 above). Legible at 48px (529 fg px, 4 components) -- promoted. |

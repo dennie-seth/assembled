@@ -5,12 +5,12 @@ Round 3's decisive frames (attempts 13-15) were gitignored scratch under
 investigation produced no longer exist anywhere reviewable. This directory
 commits a small, representative set from each subsequent generation round
 instead, so the evidence behind `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s findings
-survives worktree cleanup and is visible in the PR diff itself. None of
-these are a promoted deliverable -- no attempt across any round has satisfied
-"genuinely side-facing AND costume-colour legible AND passing the mechanical
-gate simultaneously," so `assets/final/character/` carries no T-0272 file.
-See the attempt log's own "Round 4" and "Round 5" sections for the full
-analysis.
+survives worktree cleanup and is visible in the PR diff itself. Rounds 1-5
+produced no promotable frame -- no attempt satisfied "genuinely side-facing
+AND costume-colour legible AND passing the mechanical gate simultaneously"
+with a correct cutout. **T-0315 (below) fixes the cutout defect round 5
+isolated and promotes attempt 28 through it** -- see the attempt log's own
+"Round 4", "Round 5", and "T-0315" sections for the full analysis.
 
 - **`pose_skeleton_384.png`** -- the profile-topology ControlNet input
   (`pose_rig_profile_T0272.py`), unchanged since round 1: legs collapsed to
@@ -101,38 +101,69 @@ JSON (not committed here -- the gitignored
 `assets/out/hybrid_profile/attempt_<N>/provenance_candidate.json` per
 attempt).
 
-**T-0315 cutout-fix before/after (see `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
-own "T-0315 step 3" section for the full write-up):**
+**T-0315 cutout-fix before/after, round 1 (see `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
+own "T-0315 step 3" section for the full write-up -- corrected below by
+round 2, kept here rather than deleted so the regression is visible, not
+erased):**
 
 - **`attempt_28_cutout_mask_before_fix_384.png`** -- `border_flood_
-  background_mask`'s foreground (green), pre-fix, over
+  background_mask`'s foreground (green), pre-T-0315, over
   `attempt_28_secondary_reference_colour_lean.png` above: a mostly-solid
   24,300px fill that nonetheless comes apart into several
   background-separated islands once descended (round 5's own diagnosis).
-- **`attempt_28_cutout_mask_after_fix_384.png`** -- the same frame, T-0315's
-  absolute-background-distance fix: a clean, coherent, correctly-traced
-  5,184px outline of the hooded-coat-with-strap silhouette -- the mask
-  defect this card set out to fix, confirmed fixed.
-- **`attempt_28_cutout_result_after_fix_48_zoomed.png`** -- the same frame,
-  masked with the fixed cutout, quantized, and descended to 48x48 (shown
-  10x zoomed, nearest-neighbour). Not legible as a coat or a figure --
-  scattered specks and slivers, the mechanical gate barely passing on raw
-  count (54px) while failing the card's own human-visual-legibility
-  requirement. Diagnosed as a second, independent, newly-isolated blocker
-  (this frame's silhouette is too thin at 384px to survive
-  `downscale_mask`'s 8x/50%-threshold descent, regardless of mask
-  correctness) -- not a re-run of the original outline-bridging defect,
-  which the two mask images above show is genuinely fixed.
+- **`attempt_28_cutout_mask_after_fix_384.png`** -- round 1's fix (classify
+  by absolute distance to *every distinct* border colour, no clustering):
+  5,184px. **Correction (round 2, below): this is not the "clean, coherent,
+  correctly-traced outline" round 1's own log entry described** -- it is a
+  fragmented, hole-riddled mask. Round 1's reviewer FAIL isolated why: this
+  raw, un-quantized 384px render has 511 distinct border colours (the
+  figure's own black outline genuinely touches the frame edge in several
+  places), and using every one of them as an independent classification
+  anchor reproduces the exact hop-to-hop bridging defect T-0315 exists to
+  close, just relocated from spatial adjacency to the border's own sample
+  list.
+- **`attempt_28_cutout_result_after_fix_48_zoomed.png`** -- round 1's mask,
+  descended to 48x48 (10x zoomed, nearest-neighbour): scattered specks and
+  slivers, 55px total -- *below* the pre-T-0315 original algorithm's 351px
+  on this same frame through the same pipeline, not an improvement on it.
+  Round 1's own log entry attributed this to a second, independent blocker
+  ("this frame's silhouette is too thin at 384px to survive
+  `downscale_mask`'s descent regardless of mask correctness") -- **round 2
+  found that diagnosis unsound**: the identical descent on the identical
+  frame yields 351px from the pre-T-0315 mask, so the descent was never the
+  blocker. The mask was.
 
-No file is promoted to `assets/final/character/` from this card either --
-the fixed cutout is real and correctly scoped, but does not by itself
-close attempt 28's own gap.
+**T-0315 round 2 (this fix): minimum-separated border-colour clustering,
+and the promoted result.** `border_flood_background_mask` now reduces the
+border's distinct colours to a small set of representatives, each at least
+`BORDER_COLOR_MIN_SEPARATION` (2.5x the classification tolerance) from
+every other -- greedy, most-frequent-colour-first -- so two representatives
+can never have overlapping matching balls, closing the round-1 regression
+without reintroducing the original hop-to-hop chain. A frame whose border
+spread exceeds the tolerance (this one: 33x) now also raises a `UserWarning`
+-- a loud, observable signal that the frame's own border isn't a single
+clean colour, rather than a silent guess in either direction.
 
-`.gitignore` check (round-4 addendum, re-run for round 5): `git check-ignore
--v` against every path added to this directory across both rounds -- the
-round-4 frames and the three round-5 frames above -- returns nothing for
-each; none are caught by `**/assets/out/` or any other rule, so no
-`.gitignore` change was needed to commit this evidence either round. The
-images were missing from this directory only because they were never copied
-out of gitignored `assets/out/` scratch, not because git refused to track
-them.
+- **`attempt_28_cutout_mask_round2_384.png`** -- the fixed mask (green) over
+  the same frame: 36,392px, a solid, legible hooded-coat-with-strap
+  silhouette -- both the round-1 regression (511-colour over-sweep) and the
+  original outline-leak defect (hop-to-hop bridging) are closed.
+- **`attempt_28_cutout_result_round2_48_zoomed.png`** -- the actual promoted
+  `player_profile_keyframe_hybrid_T0272.png`, palette-quantized and
+  descended to 48x48 (10x zoomed, nearest-neighbour): 557px, 4 connected
+  components, mechanical gate PASS (`background_fraction` 0.770). Legible
+  at 48px as a hooded coat with a strap -- matching attempt 28's own logged
+  description ("an olive coat body with a hood and a visible strap") well
+  enough to promote, per this card's own instruction.
+
+**Promoted:** `assets/final/character/player_profile_keyframe_hybrid_T0272.png`
++ `.provenance.json`, from this card. The 384px source is attempt 28's own
+frame (the already-committed, sha256-verified evidence copy above, re-cut
+with the fixed mask) -- a fresh same-seed regeneration attempted first
+(T-0315 step 3) did not reproduce it bit-exactly and was discarded, per this
+card's own instruction not to substitute a different attempt.
+
+`.gitignore` check (re-run for round 2): `git check-ignore -v` against the
+two new round-2 paths above returns nothing for either; neither is caught by
+`**/assets/out/` or any other rule, so no `.gitignore` change was needed to
+commit this evidence either.
