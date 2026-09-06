@@ -123,6 +123,162 @@ this card's scope):
    for this character class, or IP-Adapter's front-facing concept-sheet crop,
    both upstream of any identity/pose LoRA) is still untested in isolation --
    e.g. a profile attempt with IP-Adapter disabled entirely.
+
+## Round 3 (attempts 9-16): the three isolations, and a decisive cause -- still not promotable
+
+A fresh 8-attempt DL-21 budget was granted for this round specifically to run
+round 2's own three untested follow-ups (prompt-token control, IP-Adapter
+disabled, a genuine profile reference) and, if any of them unlocked the
+facing, iterate toward promotion. All 8 attempts (9-16) are spent; **no
+attempt is promoted**, but unlike rounds 1-2, this round isolates and names a
+specific cause rather than reporting "not achieved" with no mechanism.
+
+### Test A (attempt 9): the prompt-token confound is resolved -- it has no effect
+
+Same seed and pose-LoRA weight as attempt 8 (31416, 0.05), but
+`sbrutalistprofilepose` stripped from the prompt entirely
+(`build_positive_prompt(include_pose_trigger_token=False)`). Visual verdict
+(`main_384.png`, opened directly): identical to the attempt 1/5/7/8 cluster --
+the same boxy, front-facing, bilaterally symmetric silhouette. **This closes
+round 2's own open question**: the pose LoRA's trigger token was never doing
+anything, at any weight, at this seed. Round 2's data stands as originally
+read.
+
+### Test B (attempt 10): IP-Adapter is not just a facing bias -- it is what makes the output a coherent human at all
+
+Pose LoRA weight 0.6, IP-Adapter and its concept-image node removed from the
+graph entirely (`enable_ipadapter=False` -- the sampler's `model` input wired
+straight off the end of the LoRA chain, not merely a zero IP-Adapter weight).
+Visual verdict: **not** a front-facing human, and **not** a side profile
+either -- an incoherent panel-like collage of cyan/yellow/green vertical
+stripes on a patterned background, structurally similar to the seed-27182
+"wrong subject" failures (round 1's attempt 3, round 2's attempt 6) but now
+reproduced at seed 31416, which had never previously produced a wrong-subject
+failure. **This is the round's key negative result**: removing IP-Adapter
+does not free the pose to go profile -- it removes the thing anchoring
+subject coherence in the first place.
+
+### Test C (attempt 11): confirms Test B, not the token
+
+IP-Adapter disabled AND the pose-LoRA trigger token stripped (combining A+B),
+pose LoRA weight 0.6. Visual verdict: a different but equally incoherent
+collapse -- an abstract creature-like blob (white ear-like shapes, blue/yellow
+limbs) on a clean black background. Still not a recognisable human, side-on
+or otherwise. Confirms Test A's finding (the token is inert) and Test B's
+(IP-Adapter's absence, not the prompt, drives the collapse).
+
+### Test D (attempts 12-16): stacking a genuine profile reference DOES shift the pose -- and breaks something else every time
+
+IP-Adapter re-enabled (front concept sheet, weight 0.6, as every prior
+attempt), with a **second** `IPAdapterAdvanced` node chained after it,
+conditioned on one of T-0273's approved side-profile references
+(`player_profile_reference_3b9ee3bc20.jpg` -- a clean, unambiguous side-on
+silhouette walking right, matching this rig's own `FACING`). This
+combination -- front sheet for identity, genuine profile photo for pose -- had
+never been tried before this card (`gen_hybrid_profile_T0272.py`'s own prior
+module comment called it untested).
+
+- **Attempt 12** (secondary weight 0.5, reference used as-is): the first
+  attempt all round to visually break out of the front-facing cluster --
+  a plausible side-profile-reading silhouette (rounded head, leaning torso,
+  olive/white coat-like colouring) unlike anything in rounds 1-2. But the
+  reference's own off-white studio background bled into the generation (a
+  light grey backdrop instead of the prompt's "solid flat black background"),
+  and `cutout_foreground_mask`'s border-connected region growing treated most
+  of the frame as background as a result: only 76 fg px survived.
+- **Fix attempted**: `invert_reference_for_conditioning` (new this round) --
+  a plain RGB channel invert of the committed T-0273 source, done in-code,
+  not a new committed reference -- turns the dark-silhouette-on-light-backdrop
+  photo into a light-silhouette-on-near-black field, matching this card's own
+  target tone.
+- **Attempt 13** (secondary weight 0.5, inverted reference): the clearest
+  side-profile silhouette of the entire card to date -- an unambiguous human
+  side-on stance (head, leaning torso, one leg extended forward), rendered in
+  near-monochrome black/white with a faint dark-green fill, on a clean
+  near-black background. But the pose shifted far enough from the ControlNet
+  skeleton's own keypoint positions that almost none of the figure fell
+  inside `cutout_foreground_mask`'s keypoint-bbox+margin region: **0 fg px
+  survived** -- the mechanical gate zeroed the entire figure.
+- **Attempt 14** (secondary weight 0.5->0.3, to reduce how far the pose
+  drifts from the skeleton): still a clear, legible side profile -- head,
+  coat with a visible olive-green patch, forward-reaching arm -- on a clean
+  black background. The best combination of facing and identity colour this
+  round produced. 43 fg px survived, just under the 50px floor.
+- **Attempt 15** (secondary weight 0.3->0.4, controlnet strength 1.0->1.3, to
+  pull the pose back toward the skeleton): same reading as attempt 14 --
+  clear side profile, green torso patch, clean background -- plus an
+  unexplained bright blob outside the main silhouette. 45 fg px, still under
+  the floor.
+- **Attempt 16** (final attempt, DL-21 cap: controlnet strength pushed to
+  1.8): the mechanical gate technically **passed** (94 fg px, background
+  fraction 0.96) -- but the visual result is no longer a legible human
+  silhouette at all: an abstract bird/blob shape with a beak-like spike and
+  wing-like white lobes. Forcing enough ControlNet strength to pull the pose
+  back inside the keypoint bbox broke subject coherence instead, the same
+  failure mode Test B produced by a different route. **Not promoted despite
+  the passing mechanical gate** -- per the card's own instruction, "genuinely
+  side-facing" is a human visual call made by opening the image, not a
+  substitute the mechanical gate can satisfy on its own, and this attempt
+  fails that call.
+
+### The isolated cause
+
+Tests A-C establish that **IP-Adapter's front-concept-sheet image
+conditioning, not the prompt token and not the pose LoRA, is what the
+front-facing bias actually traces to** -- removing it does not produce a
+profile, it produces subject collapse, meaning the front image is also
+carrying the "this is a coherent human" signal, not just the "facing the
+camera" signal. Test D confirms the mechanism by fixing it: stacking a
+genuine profile reference through a second IP-Adapter node **does** pull the
+pose into a real side-on silhouette (attempts 12-15, consistently, across
+four different weight/strength combinations) -- something no attempt in
+rounds 1-2 ever achieved. What Test D also shows is that this pipeline's two
+supporting mechanisms are not yet compatible with that pose shift:
+
+1. **The cutout's keypoint-bbox gate assumes the rendered figure stays near
+   the ControlNet skeleton's own keypoint positions.** A profile-reference
+   stack pulls the actual figure far enough from that anchor that the
+   mechanical gate either zeroes the whole figure (attempt 13) or comes in
+   just under its foreground floor (attempts 14-15) -- and the one attempt
+   that pushed ControlNet strength hard enough to force alignment (16)
+   destroyed subject coherence instead, converging with Test B's failure
+   mode from the opposite direction.
+2. **A single anonymous silhouette reference does not carry costume colour.**
+   Every Test D attempt reads as black/white/olive at best, never the
+   confidently green coat the identity acceptance criterion requires --
+   consistent with T-0274's own training-config note that this reference set
+   is "explicitly NOT a costume match."
+
+Both are pre-existing constraints of the current cutout and IP-Adapter setup,
+not new bugs introduced this round, but this is the first time either has
+been exercised against a pose that genuinely deviates from the skeleton's own
+footprint.
+
+### Why this round stops here, and what a follow-up should try first
+
+All 8 of this round's attempts are spent (DL-21 cap, attempts 9-16). Per
+`.claude/rules/assets.md` and this card's own acceptance criteria, no result
+from this round satisfies "genuinely side-facing AND identity legible AND
+passing the mechanical gate simultaneously," so nothing is promoted. This is
+a different outcome from rounds 1-2's "not achieved, no isolated cause": this
+round isolates the cause (IP-Adapter's front-image conditioning) and
+demonstrates a working direction (a stacked genuine profile reference), but
+closing the remaining gap is out-of-cap work for a follow-up card. In order
+of expected leverage, cheapest first:
+
+1. **Widen `BACKGROUND_MASK_MARGIN_FRAC` for a profile-stacked attempt, or
+   condition the mechanical gate on a bbox around the profile reference's own
+   silhouette rather than the ControlNet skeleton's keypoints.** Attempts 14
+   and 15 were visually convincing and only 5-7px under the floor -- the gate
+   itself, tuned for a skeleton-anchored pose, may be the binding constraint,
+   not the generation.
+2. **A costume-bearing profile reference**, not an anonymous gait photograph
+   -- either a profile render of T-0209's own concept sheet (if one can be
+   produced) or a profile-specific identity LoRA trained on in-costume
+   material, so IP-Adapter's second reference carries colour as well as pose.
+3. Re-run attempts 14/15's exact recipe at a second seed, to check whether the
+   43-45px near-miss is a stable property of this stack or a seed artifact
+   before spending a full budget tuning it further.
 | 9 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.05 | 0.6 | 42.1 | PASS | no | Test A (prompt-token control): same seed/pose-LoRA-weight as attempt 8 but sbrutalistprofilepose stripped from the prompt. Visual verdict: identical cluster to attempts 1/5/7/8 -- boxy front-facing silhouette, green-square head, white torso. Confirms the prompt token has NO effect; the confound flagged in round 2 is resolved. |
 | 10 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | None | 39.1 | PASS | no | Test B: IP-Adapter removed from the graph entirely (not zero-weight), pose LoRA weight 0.6. Visual verdict: NOT a front-facing human and NOT a side profile either -- an incoherent panel-like collage of cyan/yellow/green stripes, similar in kind to the seed-27182 'wrong subject' failures (attempts 3/6) but at seed 31416. Shows IP-Adapter's front concept-sheet conditioning is what anchors coherent human-subject rendering at this seed, not just what biases it toward front-facing. |
 | 11 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | None | 30.1 | PASS | no | Test C: IP-Adapter disabled AND pose-trigger token stripped (combine A+B). Visual verdict: a different incoherent collapse -- an abstract creature-like blob (white 'ears', blue/yellow limbs) on a clean black background, still not a recognisable human, side-facing or otherwise. Confirms disabling IP-Adapter is the dominant factor in the collapse (Test A's token removal made no difference here either). |
