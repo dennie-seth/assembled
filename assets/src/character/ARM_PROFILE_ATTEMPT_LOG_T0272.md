@@ -1244,3 +1244,20 @@ still cannot rescue attempt 28, say so with the before/after masks as
 evidence and stop." The cutout fix itself (both the round-1-3 absolute-
 distance rework and this round's majority-overlap selection) is real,
 tested against every listed consumer, and kept.
+
+**T-0315 round 5: round 4's own reviewer FAIL, closed.** Round 4's un-promote
+commit (`cc3436f`) deleted the PNG and its sidecar but never touched
+`ASSET_PROVENANCE.md`'s own row for this asset -- that row (added round 2,
+rewritten round 3) still stated the file was "**Promoted here (T-0315),
+after fixing that cutout defect**" and cited round 3's superseded 452px/
+6-component mechanical result as current, for a path that no longer exists
+in the tree (`git ls-files` confirms). Both claims were false at HEAD and
+directly contradicted this file's own decision above. The row is deleted
+outright rather than rewritten into a "not promoted" record: this file
+documents promoted assets, `develop`'s own copy of `ASSET_PROVENANCE.md`
+never had a row for this path (it was added entirely within this branch),
+and the not-promoted decision -- with its full before/after evidence -- is
+already recorded here and in `docs/assets/evidence/T-0272/README.md`, so a
+second copy of that narrative in the provenance file would only be another
+place for it to drift out of sync. No other change this round; the mask fix
+and round-4 colour finding both stand.
