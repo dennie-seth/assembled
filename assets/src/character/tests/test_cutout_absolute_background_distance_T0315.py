@@ -42,10 +42,14 @@ from PIL import Image
 
 from char_gen.cutout import (
     BACKGROUND_MASK_MARGIN_FRAC,
+    BORDER_COLOR_COVERAGE_TARGET,
     CUTOUT_OKLAB_TOLERANCE,
+    _oklab_grid,
+    _representative_border_colors,
     border_flood_background_mask,
     downscale_mask,
     extract_foreground_mask,
+    label_foreground_components,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -411,3 +415,133 @@ def test_raw_unquantized_render_does_not_regress_below_pre_fix() -> None:
         "fix regressed exactly this un-quantized case even though it never regressed any "
         "already-quantized baseline fixture"
     )
+
+
+# ── T-0315 round 3: closing round 2's own reviewer FAIL ─────────────────────
+#
+# Round 2 chose border representatives by a minimum SEPARATION (>= 2.5x
+# tolerance apart). That guarantees the accepted set is spread out; it does
+# not guarantee every rejected colour ends up within classification range of
+# one of them. On this card's own diagnostic frame, 222 of 511 sampled border
+# colours (259 of 1,532 actual border pixels) sat strictly between 1x and
+# 2.5x tolerance from every accepted representative -- excluded from
+# candidacy by the separation floor, but too far to classify as background
+# under any survivor. Those pixels never seeded the flood, so a region of the
+# frame's own true background, connected only through them, was retained as
+# an erroneous "foreground" component alongside the real character.
+
+
+def test_representative_border_colors_cover_a_gap_separation_alone_would_miss() -> None:
+    """Reproduces round 2's exact failure shape directly on
+    `_representative_border_colors`, without needing image I/O: three border
+    colours along a line, each step smaller than the OLD 2.5x-tolerance
+    separation floor (so colour B would never itself become a representative
+    -- A arrives first by frequency and excludes it) but each step also
+    LARGER than the classification tolerance (so B is not actually within
+    range of A either). Round 2's separation-only rule leaves B uncovered by
+    construction; greedy coverage by pixel mass cannot, since it does not
+    stop until the coverage target is met."""
+    tol = CUTOUT_OKLAB_TOLERANCE
+    color_a = np.array([0.5, 0.0, 0.0])
+    step = tol * 1.5  # > tol (so not auto-covered by A) but < 2.5x tol (the old separation floor)
+    color_b = color_a + np.array([step, 0.0, 0.0])
+    color_c = color_b + np.array([step, 0.0, 0.0])
+    colors = np.array([color_a, color_b, color_c])
+    counts = np.array([100, 50, 10])  # frequency-descending, matching real border sampling
+
+    reps = _representative_border_colors(colors, counts, tol)
+
+    min_dist_to_rep = np.array(
+        [min(float(np.linalg.norm(c - r)) for r in reps) for c in colors]
+    )
+    assert (min_dist_to_rep <= tol).all(), (
+        "every sampled border colour must end up within tolerance of some representative -- "
+        f"got distances {min_dist_to_rep.tolist()} against tolerance {tol} (representatives: "
+        f"{reps.tolist()})"
+    )
+
+
+def test_border_coverage_meets_its_own_target_on_the_real_diagnostic_frame() -> None:
+    """The property round 2's reviewer actually asked for -- most of a
+    frame's own border pixels classify as background -- reframed as a
+    measured majority (`BORDER_COLOR_COVERAGE_TARGET`) rather than literal
+    100%: chasing every last, most-blended border sample into coverage was
+    measured (see `_representative_border_colors`'s own docstring) to sweep
+    genuine figure colour on this exact frame instead. This asserts the
+    guarantee actually holds at the PIXEL level (not just the internal
+    colour-mass bookkeeping) on the raw, un-quantized, wide-border-spread
+    frame this card's own regression targets."""
+    path = EVIDENCE_T0272_DIR / "attempt_28_secondary_reference_colour_lean.png"
+    if not path.exists():
+        pytest.skip(f"evidence frame not present in this checkout: {path}")
+    img = Image.open(path).convert("RGB")
+    arr = np.array(img)
+    h, w = arr.shape[:2]
+
+    background = border_flood_background_mask(img, CUTOUT_OKLAB_TOLERANCE)
+
+    border = np.zeros((h, w), dtype=bool)
+    border[0, :] = True
+    border[h - 1, :] = True
+    border[:, 0] = True
+    border[:, w - 1] = True
+    border_background_fraction = float(background[border].mean())
+
+    assert border_background_fraction >= BORDER_COLOR_COVERAGE_TARGET - 1e-9, (
+        f"only {border_background_fraction:.1%} of this frame's own border pixels classified "
+        f"as background, below the {BORDER_COLOR_COVERAGE_TARGET:.0%} coverage target -- a "
+        "regression of the T-0315 round 2 FAIL this fix exists to close"
+    )
+
+
+def test_no_surviving_raw_component_is_background_coloured() -> None:
+    """The property that actually distinguishes T-0315 round 2's FAIL from a
+    correct fix: not "more total foreground pixels survived" (a spurious
+    background-coloured blob inflates that count exactly as well as genuine
+    recovered character detail does -- `test_raw_unquantized_render_does_not_regress_below_pre_fix`
+    above cannot tell the two apart), but "every surviving component is
+    actually character-coloured." A component retained as foreground only
+    because a border-colour coverage gap broke its flood connection back to
+    the border (round 2's own bug) would, by construction, have a mean
+    colour close to the frame's own dominant border/background colour --
+    this checks every surviving raw (pre component-selection) blob above a
+    small noise floor sits meaningfully farther from that colour than
+    classification tolerance."""
+    path = EVIDENCE_T0272_DIR / "attempt_28_secondary_reference_colour_lean.png"
+    if not path.exists():
+        pytest.skip(f"evidence frame not present in this checkout: {path}")
+    img = Image.open(path).convert("RGB")
+    arr = np.array(img)
+    h, w = arr.shape[:2]
+    oklab = _oklab_grid(arr)
+
+    border = np.zeros((h, w), dtype=bool)
+    border[0, :] = True
+    border[h - 1, :] = True
+    border[:, 0] = True
+    border[:, w - 1] = True
+    unique_border_colors, counts = np.unique(oklab[border], axis=0, return_counts=True)
+    dominant_background = unique_border_colors[np.argmax(counts)]
+
+    points = pose_rig_profile_T0272.profile_keypoints()
+    mask = extract_foreground_mask(
+        img, CUTOUT_OKLAB_TOLERANCE, points, BACKGROUND_MASK_MARGIN_FRAC
+    )
+    labels, count = label_foreground_components(mask)
+
+    min_component_size = 5  # ignore single/few-pixel anti-aliasing noise specks
+    min_safe_multiple = 2.0  # a genuinely background-coloured blob sits within ~1x tolerance
+    for label in range(1, count + 1):
+        component = labels == label
+        size = int(component.sum())
+        if size < min_component_size:
+            continue
+        mean_color = oklab[component].mean(axis=0)
+        distance = float(np.linalg.norm(mean_color - dominant_background))
+        assert distance > min_safe_multiple * CUTOUT_OKLAB_TOLERANCE, (
+            f"component {label} ({size}px): mean colour is only {distance:.4f} from this "
+            f"frame's own dominant border colour ({min_safe_multiple}x tolerance = "
+            f"{min_safe_multiple * CUTOUT_OKLAB_TOLERANCE:.4f}) -- likely a background-coloured "
+            "blob retained as foreground by a border-colour coverage gap (T-0315 round 2's own "
+            "FAIL), not genuine character content"
+        )

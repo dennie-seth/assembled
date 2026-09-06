@@ -150,20 +150,84 @@ clean colour, rather than a silent guess in either direction.
   original outline-leak defect (hop-to-hop bridging) are closed.
 - **`attempt_28_cutout_result_round2_48_zoomed.png`** -- the actual promoted
   `player_profile_keyframe_hybrid_T0272.png`, palette-quantized and
-  descended to 48x48 (10x zoomed, nearest-neighbour): 557px, 4 connected
+  descended to 48x48 (10x zoomed, nearest-neighbour): 557px raw before
+  orphan-speck cleanup, **529px in the actually-committed PNG** (this
+  caption originally said "557px" for the file itself -- round 3's reviewer
+  correctly flagged that as a disagreement with the provenance sidecar,
+  which always recorded the true post-cleanup 529px). 4 connected
   components, mechanical gate PASS (`background_fraction` 0.770). Legible
   at 48px as a hooded coat with a strap -- matching attempt 28's own logged
   description ("an olive coat body with a hood and a visible strap") well
   enough to promote, per this card's own instruction.
 
-**Promoted:** `assets/final/character/player_profile_keyframe_hybrid_T0272.png`
-+ `.provenance.json`, from this card. The 384px source is attempt 28's own
-frame (the already-committed, sha256-verified evidence copy above, re-cut
-with the fixed mask) -- a fresh same-seed regeneration attempted first
-(T-0315 step 3) did not reproduce it bit-exactly and was discarded, per this
-card's own instruction not to substitute a different attempt.
+**T-0315 round 3: round 2's own reviewer FAIL, closed.** Round 2's fix chose
+representatives by a minimum SEPARATION (>= 2.5x tolerance apart), which
+guarantees the accepted set is spread out but not that every rejected colour
+ends up within classification range of one of them. Measured on this exact
+frame: 222 of 511 sampled border colours (259 of 1,532 actual border pixels)
+sat strictly between 1x and 2.5x tolerance from every accepted
+representative -- too close to survive the separation floor as their own
+representative, but too far to classify as background under any survivor.
+Round 2's own promoted PNG has exactly this defect: its 529 opaque pixels
+split into 4 components, and the second-largest (129px, 24.4% of the
+foreground) is a background-coloured region that the round-1-fix's
+tolerance-chained predecessor correctly swept but round 2's own algorithm
+failed to connect back to the border-seeded flood.
 
-`.gitignore` check (re-run for round 2): `git check-ignore -v` against the
-two new round-2 paths above returns nothing for either; neither is caught by
+`border_flood_background_mask` now reduces the border's distinct colours to
+representatives chosen by GREEDY SET COVER over border pixel MASS (not
+distinct-colour count, and not a fixed separation floor): repeatedly take
+the most-frequent still-uncovered colour, mark every colour (and the
+pixels it accounts for) within tolerance of it as covered, and stop once
+`BORDER_COLOR_COVERAGE_TARGET` (95%, not literal 100%) of the frame's own
+border pixels are covered. Literal 100% coverage was tried first and
+measured, on this exact frame, to be actively worse: this frame's figure
+legitimately touches the frame border along most of one edge with a wide,
+gradual anti-aliased blend (border spread 33x tolerance), and chasing every
+last, most-blended border sample into coverage produces representatives
+close enough in Oklab space to the coat's own pale hood/shoulder fill to
+sweep it into background -- reproducing this module's original hop-to-hop
+leak defect via absolute distance instead of connectivity (measured: 48px
+foreground collapsed to 117px, *below* even the pre-T-0315 351px baseline,
+with the hood visibly swept). Targeting a strong pixel-mass majority instead
+closes round 2's actual regression -- the frame's dominant true-background
+tone is always covered within the first handful of representatives, since
+coverage proceeds most-frequent-colour-first -- without chasing the rarest,
+most-blended samples that caused the sweep.
+
+- **`attempt_28_cutout_mask_round3_384.png`** -- the round-3 mask (green
+  tint over the original frame, background dimmed to grayscale) over the
+  same frame: 31,108px foreground, a solid, coherent hooded-coat-with-strap
+  silhouette. Directly comparable to `attempt_28_cutout_mask_round2_384.png`
+  above (36,392px) -- round 3 correctly reclassifies some of round 2's
+  erroneous foreground as background (the true border pixel classification
+  rate rises from an unmeasured, gapped rate under round 2's algorithm to a
+  measured 95.2% under round 3's, verified by
+  `test_border_coverage_meets_its_own_target_on_the_real_diagnostic_frame`).
+- **`attempt_28_cutout_result_round3_48_zoomed.png`** -- the actual promoted
+  `player_profile_keyframe_hybrid_T0272.png` (this round's replacement),
+  palette-quantized and descended to 48x48 (10x zoomed, composited over a
+  mid-grey backdrop for visibility -- the true file is a transparent RGBA
+  cutout): 452px, 6 connected components, mechanical gate PASS
+  (`background_fraction` 0.804). The two largest secondary components
+  (124px and 71px) were checked directly against the raw frame's own pixel
+  colours -- `test_no_surviving_raw_component_is_background_coloured` --
+  and are the coat's own back-edge trim (a black outline with the render's
+  own neon rim-glow, a white accent shape, and a row of blue rivet-like
+  dots), not background clutter; round 2's specific 129px background-
+  coloured component does not reproduce. Legible at 40px as a leaning,
+  hooded, olive-drab coat with a visible strap, matching attempt 28's own
+  logged description closely enough to promote.
+
+**Promoted:** `assets/final/character/player_profile_keyframe_hybrid_T0272.png`
++ `.provenance.json`, from this card (round 3's re-cut supersedes round 2's).
+The 384px source is attempt 28's own frame (the already-committed,
+sha256-verified evidence copy above, re-cut with the fixed mask) -- a fresh
+same-seed regeneration attempted first (T-0315 step 3) did not reproduce it
+bit-exactly and was discarded, per this card's own instruction not to
+substitute a different attempt.
+
+`.gitignore` check (re-run for round 3): `git check-ignore -v` against the
+two new round-3 paths above returns nothing for either; neither is caught by
 `**/assets/out/` or any other rule, so no `.gitignore` change was needed to
 commit this evidence either.

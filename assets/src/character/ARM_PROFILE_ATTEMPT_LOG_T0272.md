@@ -1066,3 +1066,83 @@ Promoted: `assets/final/character/player_profile_keyframe_hybrid_T0272.png`
 + `.provenance.json`.
 
 | 28 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 72.1 | PASS | yes | T-0315 round 2: re-cut with the fixed absolute-background-distance cutout (minimum-separated border-colour clustering, correcting round 1's "every distinct border colour" regression on this exact un-quantized frame); frame recovered from the committed, hash-verified evidence copy since original scratch was reaped and a same-seed regeneration did not reproduce bit-exactly (see T-0315 step 3 above). Legible at 48px (529 fg px, 4 components) -- promoted. |
+
+## T-0315 round 3: round 2's own reviewer FAIL, closed -- greedy set-cover by border pixel mass
+
+Reviewer VALIDATION on round 2 found the promotion immediately above **not
+"a true RGBA cutout, character only"** as Step 3 requires: the promoted
+529px file's second-largest component (129px, 24.4% of the foreground, bbox
+x29-34/y2-45 at 48px) is a background-coloured region incorrectly retained
+as foreground. Root cause, precisely diagnosed: `BORDER_COLOR_MIN_SEPARATION`
+(round 2's fix) chose representatives by a minimum *separation* (>= 2.5x
+tolerance apart), which guarantees the accepted set is spread out but never
+guarantees every rejected colour ends up within classification range of one
+of them. Measured on this exact frame: 222 of 511 sampled border colours
+(259 of 1,532 actual border pixels) sat strictly between 1x and 2.5x
+tolerance from every accepted representative -- excluded from candidacy by
+the separation floor, but too far to classify as background under any
+survivor. Those pixels never seeded the flood, so the region of true
+background connected only through them was retained as foreground.
+
+**The fix:** `_representative_border_colors` now chooses representatives by
+GREEDY SET COVER over border pixel MASS: repeatedly take the most-frequent
+still-uncovered colour, mark every colour (and the border pixels it
+accounts for) within tolerance of it as covered, and continue until
+`BORDER_COLOR_COVERAGE_TARGET` of the frame's own border pixels are covered
+(95%, a new named constant, not literal 100%) or a representative cap is
+hit (64, warning loudly if reached).
+
+**Why not literal 100% coverage.** This was tried first, against this exact
+frame, and measured to be actively worse than round 2's own bug: the
+frame's figure legitimately touches the frame border along most of one edge
+(the coat's own black outline and its neon rim-glow run the full right
+edge; the coat's hem touches the bottom edge directly), with a wide, gradual
+anti-aliased blend, not a thin seam (border spread 33x tolerance). Chasing
+every last, most-blended border sample into coverage requires
+representatives packed closely enough across that whole span that some end
+up within tolerance of genuine, non-border figure colours elsewhere in the
+frame -- specifically the coat's own pale hood/shoulder fill, which sits
+close in Oklab space to the pale end of that same blend. Measured result:
+48px foreground collapsed from round 2's 529px to 117px, *below* even the
+pre-T-0315 351px baseline, with the hood visibly swept into background
+(`docs/assets/evidence/T-0272/README.md`'s own round-3 section has the
+full before/after). A strong pixel-mass MAJORITY (95%) closes round 2's
+actual regression instead: the frame's dominant true-background tone is
+always covered within the first handful of representatives (coverage
+proceeds most-frequent-colour-first), without chasing the rarest,
+most-blended samples that caused the sweep.
+
+**On round 2's own "component 2 is background" finding, more precisely.**
+Direct pixel inspection of the corresponding region in the raw frame
+(`docs/assets/evidence/T-0272/README.md`'s round-3 section has the crop)
+shows it is not flat background at all: it is the coat's own back-edge trim
+-- a black outline stroke with the render's own neon rim-glow (already
+named in round 5's own "Lever 3" analysis as a `soviet_brutalism_style_v1`
+trait at this weight), a white accent shape, and a row of small blue
+rivet-like dots -- correctly a separate connected component from the main
+torso (the same "a real figure often splits into several parts" property
+`extract_foreground_mask`'s own module docstring already documents), not a
+spurious background sweep. What round 2's reviewer measured as "8,982px
+background" at 384px was almost entirely the TRUE grey-purple background to
+the right of this trim (x272-357 of their cited x223-357 range), which
+round 2's own bug also failed to correctly seed from the border in that
+specific region -- both things were true at once: a real coverage gap
+existed (closed by this round's fix, verified by
+`test_border_coverage_meets_its_own_target_on_the_real_diagnostic_frame`
+and `test_no_surviving_raw_component_is_background_coloured`), and the
+specific component that survives in both round 2's and round 3's final
+529px/452px files is genuine character trim, not the bug itself.
+
+**Result: attempt 28 remains promoted, through the round-3 fix.** Through
+the real production pipeline, this frame now measures 31,108px foreground
+at 384px (`docs/assets/evidence/T-0272/attempt_28_cutout_mask_round3_384.png`)
+and 452px at 48x48 after quantization/cleanup, 6 connected components,
+mechanical gate PASS (`background_fraction` 0.804). Every component above a
+5px noise floor was checked directly against the raw frame's own dominant
+border colour and confirmed meaningfully distant from it (not background-
+coloured) -- the property round 2's own regression suite could not
+distinguish ("more foreground survived" is satisfied equally by genuine
+recovered detail and by a spurious background blob; this round adds a test
+that checks colour, not just count). Legible at 40px as a leaning, hooded,
+olive-drab coat with a visible strap, matching attempt 28's own logged
+description closely enough to promote.

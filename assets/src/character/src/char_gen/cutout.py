@@ -56,25 +56,33 @@ CUTOUT_OKLAB_TOLERANCE = 0.03
 #: definition site for that unrelated frame-to-frame compositing fix.
 BACKGROUND_MASK_MARGIN_FRAC = 0.14
 
-#: T-0315 round-2 fix: the minimum Oklab distance two accepted *representative*
-#: border colours must keep between each other. Every representative anchors
-#: a classification ball of radius `CUTOUT_OKLAB_TOLERANCE`; two
-#: representatives closer than 2x that tolerance have overlapping balls, so a
-#: pixel just past one ball's edge can still fall inside its neighbour's --
-#: exactly the hop-to-hop bridging defect this module exists to close,
-#: reproduced via the border SAMPLE LIST instead of spatial adjacency (a raw,
-#: un-quantized 384px SDXL render's border sampled 511 distinct raw colours in
-#: this card's own diagnostic, densely packed enough that even deduplicating
-#: exact repeats left representatives averaging little more than one
-#: tolerance apart -- still a walkable chain). 2x tolerance is the strict
-#: minimum that guarantees disjoint balls; this constant adds headroom above
-#: that floor for the same reason the tolerance itself carries headroom --
-#: floating-point boundary cases and near-miss colours -- and was confirmed
-#: against that same diagnostic frame to sit on a stable plateau (2.5x-3x
-#: tolerance both resolve to the same handful of genuinely distinct colour
-#: regions and produce materially the same mask; exactly 2x still leaves
-#: visible fragmentation the plateau does not).
-BORDER_COLOR_MIN_SEPARATION = 2.5 * CUTOUT_OKLAB_TOLERANCE
+#: T-0315 round-3 fix: the fraction of the frame's own border PIXELS (by
+#: count, not by distinct colour) that `_representative_border_colors` must
+#: cover before it stops adding representatives. Deliberately not 1.0 -- see
+#: that function's own docstring for why chasing literal 100% distinct-
+#: colour coverage on a wide-spread border is actively harmful, not merely
+#: unnecessary. 0.95 was chosen empirically against this card's own
+#: diagnostic frame (a raw render whose figure legitimately touches the
+#: frame border along most of one edge, `border_spread` 33x tolerance): it
+#: closes round 2's regression (the frame's dominant true-background tone,
+#: covered within the first handful of representatives since coverage is
+#: frequency-ordered, is fully covered long before 95% mass is reached) while
+#: still refusing the last, rarest, most steeply blended border colours --
+#: exactly the ones a wide anti-aliased transition contributes and exactly
+#: the ones that, if forced into coverage, produce representatives close
+#: enough to genuine figure colours to sweep them (measured: chasing the
+#: same frame to 100% mass swept the coat's own hood/shoulder fill into
+#: background, dropping the final 48px keyframe from 490px at 90% coverage
+#: to 117px at 100%).
+BORDER_COLOR_COVERAGE_TARGET = 0.95
+
+#: Hard cap on how many representative border colours
+#: `_representative_border_colors` will accept before giving up on reaching
+#: `BORDER_COLOR_COVERAGE_TARGET` and warning loudly instead. Bounds
+#: worst-case cost and surfaces a frame whose border is so fragmented that
+#: "a small set of sampled border colours" (this card's own Step 2 wording)
+#: is no longer a meaningful description.
+_MAX_BORDER_REPRESENTATIVES = 64
 
 
 def _srgb_to_linear(c: np.ndarray) -> np.ndarray:
@@ -107,44 +115,91 @@ def _oklab_grid(rgb_uint8: np.ndarray) -> np.ndarray:
 
 
 def _representative_border_colors(
-    unique_border_colors: np.ndarray, counts: np.ndarray
+    unique_border_colors: np.ndarray, counts: np.ndarray, tolerance: float
 ) -> np.ndarray:
     """Reduce every distinct colour actually present on the frame's own edge
-    to a genuinely small set of representatives, each at least
-    `BORDER_COLOR_MIN_SEPARATION` from every other -- greedy, most-frequent
-    colour first, so the representatives that survive are the true dominant
-    border tones rather than whichever rare colour happened to sort first.
+    to a genuinely small set of representatives, chosen by GREEDY SET COVER
+    over border PIXEL MASS (not distinct-colour count): repeatedly take the
+    most-frequent still-uncovered colour as a new representative, then mark
+    every sampled colour within `tolerance` of it -- and the border pixels
+    that colour accounts for -- as covered, until at least
+    `BORDER_COLOR_COVERAGE_TARGET` of the frame's own border PIXELS are
+    covered (or the representative cap is hit). Every representative anchors
+    a classification ball of radius `tolerance`; a pixel qualifies as
+    background only by its own distance to the NEAREST representative.
 
-    T-0315 round 2: using *every* distinct border colour as its own
-    classification anchor (round 1's fix) reproduces the exact defect this
-    module exists to close, just relocated from spatial adjacency to the
-    border's own sample list -- a raw, un-quantized 384px render's border can
-    carry hundreds of distinct colours (anti-aliasing noise, or a real figure
-    edge legitimately touching the frame border) packed closely enough in
-    Oklab space that consecutive anchors sit barely over one tolerance apart,
-    so their matching balls (radius `CUTOUT_OKLAB_TOLERANCE` each) still
-    overlap and still let a chain of small hops bridge into the figure's
-    interior. Enforcing a minimum gap between accepted representatives (see
-    `BORDER_COLOR_MIN_SEPARATION`'s own derivation) closes that path: distinct
-    representatives can no longer have touching balls, so classification can
-    only connect colours that are *directly* close to a genuine border tone,
-    never colours that merely lie along a densely-sampled ramp between two
-    such tones."""
+    T-0315 round 2's fix chose representatives by a minimum *separation*
+    (>= 2.5x tolerance apart) instead of by coverage. That guarantees the
+    accepted set is spread out; it does not guarantee every rejected colour
+    ends up within classification range of one of them. Measured on this
+    card's own diagnostic frame: 222 of 511 sampled border colours (259 of
+    1,532 actual border pixels) sat strictly between 1x and 2.5x tolerance
+    from every accepted representative -- too close to survive the
+    separation floor as their own representative, but too far to classify as
+    background under any survivor. Those pixels never seeded the flood, so
+    the background region connected only through them was kept as
+    foreground -- a large, detached, background-coloured blob survived
+    inside the promoted cutout.
+
+    T-0315 round 3 first tried closing that gap with LITERAL 100% coverage
+    (every sampled colour, no exceptions) and found it, measured against the
+    same diagnostic frame, actively worse: that frame's figure legitimately
+    touches the frame border along most of one edge and the anti-aliased
+    transition there is a wide gradual blend, not a thin seam, so its border
+    samples span the full Oklab lightness range (33x `tolerance`). Chasing
+    literal 100% coverage of that span requires representatives packed
+    closely enough across the whole range that some of them end up within
+    `tolerance` of genuine, non-border figure colours elsewhere in the frame
+    (the coat's own pale hood/shoulder fill sits close, in Oklab space, to
+    the pale end of that same blend) -- reproducing this module's original
+    hop-to-hop leak defect via absolute distance instead of connectivity, and
+    measurably worse than round 2's own bug (48px foreground dropped to
+    117px, below even the pre-T-0315 baseline of 351px, with the coat's own
+    hood visibly swept into background). Targeting a strong PIXEL-MASS
+    majority instead of every last distinct colour closes round 2's actual
+    regression -- the dominant true-background tone is always covered within
+    the first handful of representatives, since coverage proceeds most-
+    frequent-colour-first -- without chasing the rarest, most-blended border
+    samples into coverage, which is exactly what caused the sweep."""
     order = np.argsort(-counts)
     ordered_colors = unique_border_colors[order]
-    min_sep2 = BORDER_COLOR_MIN_SEPARATION * BORDER_COLOR_MIN_SEPARATION
+    ordered_counts = counts[order]
+    total = int(ordered_counts.sum())
+    tol2 = tolerance * tolerance
+    covered = np.zeros(len(ordered_colors), dtype=bool)
     representatives: list[np.ndarray] = []
-    for color in ordered_colors:
-        if all(((color - rep) ** 2).sum() > min_sep2 for rep in representatives):
-            representatives.append(color)
+    covered_mass = 0
+    for i in range(len(ordered_colors)):
+        if covered[i]:
+            continue
+        if covered_mass / total >= BORDER_COLOR_COVERAGE_TARGET:
+            break
+        if len(representatives) >= _MAX_BORDER_REPRESENTATIVES:
+            warnings.warn(
+                "border_flood_background_mask: hit the "
+                f"{_MAX_BORDER_REPRESENTATIVES}-representative cap on this frame's border "
+                f"colours with only {covered_mass / total:.1%} of border pixels covered "
+                f"(target {BORDER_COLOR_COVERAGE_TARGET:.0%}) -- classification proceeded, but "
+                "the result should be checked visually.",
+                UserWarning,
+                stacklevel=3,
+            )
+            break
+        color = ordered_colors[i]
+        representatives.append(color)
+        dist2 = ((ordered_colors - color) ** 2).sum(axis=1)
+        newly_covered = (dist2 <= tol2) & ~covered
+        covered_mass += int(ordered_counts[newly_covered].sum())
+        covered |= newly_covered
     return np.array(representatives)
 
 
 def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarray:
     """Boolean HxW array, True = background. T-0315: every pixel's own
     qualifying test is its absolute Oklab distance to a small set of sampled
-    *true* border colours (a small, minimum-separated set of representatives
-    drawn from the colours actually present on the frame's own edge -- see
+    *true* border colours (a small set of representatives covering at least
+    `BORDER_COLOR_COVERAGE_TARGET` of the frame's own border pixels, drawn
+    from the colours actually present on the frame's own edge -- see
     `_representative_border_colors`) -- never a hop-to-hop tolerance test
     against whatever neighbour it happened to grow from. Background is still
     exactly the border-connected region of qualifying pixels (a real figure
@@ -161,14 +216,20 @@ def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarr
     figure's interior, even when the *direct* distance from background to
     interior was many times `tolerance` (T-0272 round 5's own diagnosis of
     attempt 28's lost coat colour: `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
-    "Lever 3" section). Testing every pixel against a small set of
-    minimum-separated border representatives directly, instead of against
-    its immediate predecessor or every raw distinct border colour, closes
-    that path: a chain of small hops can no longer accumulate into a large
-    total displacement, and the representatives themselves cannot chain
-    into each other either, since every step of the walk must independently
-    stay close to a *real, distinct* border colour, not merely close to the
-    previous step or to a densely-sampled neighbour of one.
+    "Lever 3" section). Testing every pixel against a small, majority-
+    coverage set of border representatives directly, instead of against its
+    immediate predecessor or every raw distinct border colour, closes that
+    path: a chain of small hops can no longer accumulate into a large total
+    displacement, since every step of the walk must independently stay
+    within `tolerance` of a *real, dominant* border colour, not merely close
+    to the previous step or to a densely-sampled neighbour of one -- and the
+    frame's true background tone, being dominant by construction, is
+    guaranteed such a representative well before the coverage target is
+    reached (`_representative_border_colors`'s own docstring explains why the
+    target is a strong majority, not literal 100%: chasing every last,
+    rarest, most-blended border sample into coverage reintroduces this same
+    leak defect via absolute distance instead of connectivity, on a frame
+    whose border spans a wide colour range).
 
     A smoothly-varying background (a vignette/gradient) is still handled
     without any special-casing: sampling from *every* border pixel, not just
@@ -209,7 +270,7 @@ def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarr
             stacklevel=2,
         )
 
-    border_colors = _representative_border_colors(unique_border_colors, counts)
+    border_colors = _representative_border_colors(unique_border_colors, counts, tolerance)
 
     tol2 = tolerance * tolerance
     min_dist2 = np.full((h, w), np.inf, dtype=np.float64)
@@ -383,7 +444,9 @@ CUTOUT_METHOD_DESCRIPTION = (
     "Per-frame border-connected background classification in Oklab space "
     f"(tolerance={CUTOUT_OKLAB_TOLERANCE}) over that frame's own 384x384 sampled/held image: "
     "every distinct colour on the frame's own border is reduced to a small set of "
-    f"representatives at least {BORDER_COLOR_MIN_SEPARATION} apart (T-0315), each pixel "
+    f"representatives via greedy set cover over border pixel mass -- covering at least "
+    f"{BORDER_COLOR_COVERAGE_TARGET:.0%} of the frame's own border pixels, most-frequent-colour-"
+    "first (T-0315) -- each pixel "
     "qualifies as background by its own absolute Oklab distance to the NEAREST representative "
     "(never by a hop-to-hop tolerance test against whatever neighbour it grew from), and "
     "background is the border-connected region of qualifying pixels -- removes background "
