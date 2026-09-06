@@ -586,3 +586,200 @@ correctly carries no T-0272 file. The decision this leaves for @DennieSeth is
 which of the two out-of-scope follow-ups to fund as its own card -- not
 something this card can decide or work around on its own.
 
+| 29 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 3.1 | PASS | no | round 5 Lever 2: bootstrap from attempt 24's own output (background not off-white, no invert) + green-emphasis prompt lever (attention-weighted costume phrase + explicit anti-olive/khaki negatives), holding attempt 24's other weights, to test whether pushing colour harder breaks the muted-olive plateau |
+| 30 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 60.1 | PASS | no | round 5 Lever 2: replicate attempt 21's exact recipe (T-0273 photo secondary, inverted, weight 0.4 -- the cleanest side-facing silhouette this card has produced) but add green-emphasis, to test whether the prompt lever alone can recover costume colour on a recipe already proven to hold the profile pose, without a competing bootstrap chain |
+| 31 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | PASS | no | round 5 Lever 2 isolation: primary front concept sheet only (no secondary reference at all), green-emphasis on, otherwise matching attempts 21/24's weights -- tests whether the prompt lever alone can recover vivid green in a clean render, decoupled from any secondary-reference cutout/style side effects seen in attempts 29-30 |
+| 32 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.65 | 54.1 | PASS | no | round 5 Lever 2: interpolate primary IP-Adapter weight to 0.65 (between attempt 24's 0.6, which kept the profile with a small olive patch, and attempt 26's 0.75, which broke fully front-facing), same attempt-20-bootstrap secondary as attempt 24, no green-emphasis (30/31 showed the emphasis phrase pushes toward a flat neon-outlined style, not more saturated colour) -- looking for a wider olive/green coat area without losing the pose |
+| 33 | 84512 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 69.1 | PASS | no | round 5 Lever 2 seed control: attempt 21's exact recipe (T-0273 photo secondary, inverted, weight 0.4, primary 0.6, no green-emphasis) but a fresh seed (84512, untried) instead of 31416, to check whether the abstract-glow/rainbow collapse seen in attempts 29-32 whenever colour signal is pushed is specific to seed 31416 or structural to this stack |
+| 34 | 31416 | 1.0/1.0 | 0.4 | 0.5 | 0.6 | 0.6 | 54.1 | PASS | no | round 5 Lever 2, new untested axis: every attempt across all 4 rounds fixed style_lora_weight at 0.7. The hard black outline + neon rim-glow seen whenever colour signal increases (attempts 24/28-33) is a soviet_brutalism_style_v1 trait at that weight, and is also the likely cause of attempt 28's cutout fragmentation (the outline's near-black tone bridges to the border-background via Oklab-tolerance flood). Testing whether a much lighter style weight (0.4) keeps the profile pose/colour lever from attempt 21's recipe while producing a flatter render the existing cutout can segment cleanly |
+| 35 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 69.1 | PASS | no | round 5 Lever 2, refined: attempt 24's exact recipe (attempt-20 bootstrap secondary, no invert) plus the updated green-emphasis negative, which now also negatives the heavy-black-outline/neon-rim-light look diagnosed as the shared cause of both the colour-emphasis style collapse (29-30, 32-34) and attempt 28's cutout fragmentation |
+| 36 | 31416 | 0.85/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 72.1 | PASS | no | round 5 Lever 2, final attempt of this round's budget: lowering ControlNet strength to 0.85 (never tried below 1.0 in 35 prior attempts) on attempt 21's clean-recipe secondary, with the outline/rim-glow-negating green-emphasis prompt, to test whether loosening the skeleton's rigid conditioning reduces the hard-edge/neon-outline collapse seen whenever colour signal is pushed, while still holding the profile pose |
+
+## Round 5 ("vivid green on the profile"): still not achieved, with a newly isolated blocker
+
+Round 5 opened a fresh 8-attempt DL-21 budget (`check_attempt_cap` now allows
+29..36, `gen_hybrid_profile_T0272.py:457-474`) and asked for one of three
+levers -- (1) crop a costume-bearing side reference from the concept sheet,
+(2) iterate the attempt-24 bootstrap harder, (3) a general, palette-driven
+recolour of the costume region during descent -- to close the colour gap
+round 4 isolated, and to promote once profile + cutout + legible green held
+simultaneously. **None of the three closed the gap.** No file was promoted;
+`assets/final/character/` still carries no T-0272 keyframe. `pose_rig_profile_T0272.py`
+and `char_gen/cutout.py` are both untouched this round (verified: `git diff
+--stat 79d88fe..HEAD -- assets/src/character/pose_rig_profile_T0272.py
+assets/src/character/src/char_gen/cutout.py` is empty), so the settled rig
+and cutout invariants stand.
+
+### Lever 1, re-checked with fresh evidence: still not literally achievable
+
+Round 5's own text named two candidate panels on `player_character_concept_sheet_v1.png`
+by approximate pixel box -- "the row-3 panel (approximately x 820-1024, y
+500-740)" and "a near-profile panel above it at roughly y 260-490" -- and
+explicitly said "look at the sheet and pick the panel yourself rather than
+trusting these numbers." Both were opened directly with the Read tool at 3x
+scale (`/tmp/panels/round5_candidate_820_500_1024_740.png`,
+`/tmp/panels/round5_candidate_820_260_1024_490.png`, not committed --
+throwaway inspection crops, not a generated asset). **Both are the sheet's
+grey/tan tactical-variant costume tier**, the same panel column
+`derive_profile_style_reference_T0272.py` already identified and cropped in
+round 4 -- not the green cloth-coat tier. A green-pixel histogram scan across
+the whole 1024x1024 sheet (`g > r+8 and g > b+8 and g < 160`, i.e. a broad
+olive-to-forest-green band) quantifies this rather than relying on a visual
+call alone: both round-5-named boxes, the round-4 derived panel's own box,
+and the full rightmost column of the sheet's character rows (y512-704, the
+same band the row-3/row-4 side-profile panels sit in) each come in at
+**1.0-1.7% green pixels** -- consistent with stray anti-aliasing noise, not a
+costume region -- versus **6,000-6,900 green pixels (roughly 15-20x more)**
+in the confirmed front-facing green-coat panels the same scan finds in the
+sheet's row 1 and row 3 first three columns. There is still no side-profile
+or three-quarter panel anywhere on the sheet rendered in the green coat.
+Lever 1 is not available to this card, exactly as round 4 found, now with a
+quantitative check rather than only a visual one.
+
+### Lever 2: eight new attempts, a newly isolated third failure mode
+
+Attempts 29-36 tested six axes no prior round had tried: reusing a prior
+attempt's own output as the secondary bootstrap reference (29), replicating
+attempt 21's clean recipe with an attention-weighted colour phrase (30),
+isolating that phrase with no secondary reference at all (31), interpolating
+primary IP-Adapter weight to 0.65 between the known 0.6/0.75 endpoints (32),
+a fresh seed on attempt 21's recipe (33), a much lighter style-LoRA weight
+(34), an emphasis prompt that also negatives the heavy-outline/rim-glow look
+(35), and a lower ControlNet strength (36) -- see each row's own Notes above
+for the full recipe and reasoning. Every `main_384.png` was opened and read
+directly, not inferred from the mechanical gate alone.
+
+**The trade-off round 4 isolated persists, along the same two axes:**
+whenever a configuration keeps the profile lean (attempts 24, 28-32, 34-36,
+all seed 31416, primary IP-Adapter <= 0.65), any costume colour that appears
+stays a muted olive/khaki patch, never the vivid saturated green
+`player_idle_sheet_hybrid_T0252.png` itself carries. Attempt 33's seed change
+(84512) is the one case that produced genuinely vivid, saturated green --
+but the resulting figure reads as bilaterally symmetric with two visible
+legs and a geometric circuit-board-like leg pattern that resembles neither
+the coat's actual silhouette nor a profile stance; a strong colour and a
+correct pose have still never co-occurred in the same frame across 36
+attempts.
+
+**A third, newly-named failure mode:** attempts 29-35 -- every attempt this
+round that carried any costume colour at all, whether via a secondary
+reference, a higher primary weight, or the green-emphasis phrase -- collapse
+into a flat, hard-black-outlined, neon-rim-lit abstraction: large flat
+colour blocks behind a thick black silhouette line and a glowing coloured
+halo, rather than the soft-shaded pixel art attempt 21 (this round's one
+colourless, clean-recipe replication) produces. This is distinct from the
+front-facing collapse (attempts 2, 19, 26-27, 33) and the wrong-subject
+collapse (attempts 3, 6, 10-11): it is a rendering-style collapse that
+tracks colour signal, independent of whether the pose itself holds --
+attempt 33 shows it can co-occur with genuinely vivid, saturated green
+(a first for this card) and still fail on identity, since the result reads
+as a geometric circuit-board pattern rather than the coat. Two targeted
+attempts to suppress the collapse directly both failed: dropping the style
+LoRA to 0.4 (attempt 34, versus every other attempt's 0.7) did not remove
+the hard outline or rim glow, showing it is not purely a
+`soviet_brutalism_style_v1` trait at high weight; explicitly negativing
+"heavy black outline, thick black border, neon rim light, glowing outline,
+vignette" in the emphasized negative prompt (attempt 35) made the collapse
+*more* pronounced (432 fg px of chaotic multi-colour blocks, the largest and
+least legible frame of the round) rather than less. The one lever that
+visibly softened it -- lowering ControlNet strength to 0.85 (attempt 36,
+never tried below 1.0 in 35 prior attempts, still carrying the same
+outline-negating emphasis prompt as attempt 35) -- produced the clearest
+single-lean silhouette with the least glow of any colour-bearing attempt
+this round, but the surviving costume colour was still a small yellow-green
+patch (78 fg px total), not a coat-wide vivid green.
+
+One caveat for the record, not load-bearing to the conclusion: attempt 29's
+`gpu_seconds` (3.1, versus 48-75s for every sibling) is an implausible
+outlier, almost certainly a ComfyUI node-cache hit from being re-run twice in
+a row with identical sampler inputs (only the provenance note text differed
+between the two runs, fixed by the `f21389b` commit below) -- the same
+pattern round 3's attempt 12 footnote already named. The image and gate
+numbers are real and were generated fresh on the first of the two runs.
+
+### Lever 3: still not soundly applicable, and why
+
+Round 5 said Lever 3 (a general, palette-driven recolour of the costume
+region) was legitimate "if the profile and pose are right and only the hue
+is muted" -- but applying it needs a candidate that is simultaneously (a)
+genuinely side-facing, (b) survives cutout as one coherent silhouette, and
+(c) carries a coat-*wide* muted colour a recolour could plausibly correct,
+not a colourless figure (nothing to recolour) or a small isolated patch on
+an otherwise white figure (recolouring the patch would not make the coat
+read as green, since ~95% of the figure would still be white). No attempt in
+this round or any prior round satisfies all three at once:
+
+- Attempt 21 (this card's own cleanest, most-confirmed side-facing
+  silhouette, re-confirmed again this round as the closest a `--secondary-concept`
+  recipe gets to a clean pose): zero costume colour at all. Nothing for a
+  recolour step to key off.
+- Attempts 24, 29-32, 34, 36: a small isolated colour patch (53-238 fg px
+  total, patch itself smaller still) on an otherwise white/black figure.
+  Recolouring the patch's own pixels would not satisfy "recognisably the
+  same character... including the green costume" -- it would still read as
+  a mostly-white figure with a coloured rectangle on it.
+- Attempt 28 (round 4's own best colour-coverage result, an olive coat body
+  with a hood and a visible strap, opened again this round at 3x zoom,
+  `/tmp/panels/attempt28_zoom.png`, not committed) is the one candidate
+  whose colour genuinely covers the coat rather than a patch, and reads as a
+  recognisable hooded-coat silhouette with a plausible forward lean --
+  exactly what a recolour step would need to start from. It is not usable
+  this round for a diagnosed, general reason, not a value judgement: its
+  border-connected cutout mask (re-derived this round with the current,
+  already-fixed `char_gen.cutout.extract_foreground_mask` --
+  `/tmp/panels/attempt28_mask384.png`, not committed) shows the figure's own
+  bold black outline stroke bridging, via the Oklab-tolerance flood, to the
+  plain background wherever the outline's near-black tone falls inside
+  tolerance of a path back to the border -- this eats clean through the
+  torso/leg boundary and a diagonal strap, splitting the figure into several
+  background-separated islands rather than one blob. That is *why* it
+  "fragments into scattered disconnected debris" at 48px (round 4's own
+  description, reconfirmed): the mask itself has already lost most of the
+  coat before descent, not a downstream palette or descent-step problem a
+  recolour could fix.
+
+  Closing this soundly needs the underlying flood to stop treating a
+  character's own outline stroke as bridgeable background -- e.g. an
+  absolute background-colour-distance test instead of the current
+  neighbour-chained Oklab tolerance, so a long chain of gradually-shifting
+  anti-aliased pixels can no longer walk from the true background, through
+  the outline, into the coat interior. That is a change to
+  `border_flood_background_mask` itself, which round 5's own "Do not" list
+  says not to regress ("do not... regress `char_gen`'s content-aware cutout
+  -- both are settled and T-0259 reuses them") -- correctly read as
+  "don't touch it this round," not as permission to attempt a fix without
+  the regression-test rigour that change would deserve against every
+  existing cutout consumer (T-0252, T-0259, the entity gates). Attempting it
+  under this round's time and attempt budget, without that rigour, is a
+  worse risk than leaving attempt 28 unpromoted.
+
+### Conclusion and what would actually close this
+
+Two independent, newly-diagnosed causes now stand between this card and a
+promotable keyframe, on top of round 4's original colour/pose trade-off:
+(1) a colour-signal-triggered rendering collapse into a hard-outlined,
+glow-lit abstraction, worsened rather than fixed by the two most
+straightforward prompt-level countermeasures tried against it; and (2) a
+cutout mask defect specific to frames whose art carries a heavy black
+outline near-tolerance-adjacent to the plain background, which is what
+stands between attempt 28's coat-wide colour and a usable 48px cell. Neither
+is fixable inside this round's own constraints (no LoRA retraining, no
+cutout regression). `assets/final/character/` correctly carries no T-0272
+file this round either. Follow-ups, in order of what this round's evidence
+newly supports:
+
+1. **A cutout enhancement using absolute background-colour-distance
+   segmentation** (compare each pixel to a small set of sampled true-border
+   colours directly, not neighbour-chained tolerance) instead of, or
+   supplementing, `border_flood_background_mask`'s current algorithm --
+   scoped as its own card so it gets the regression-test coverage against
+   every existing cutout consumer that a change to a "settled" shared
+   primitive deserves. This is the one lever this round's evidence points at
+   that neither round 4 nor round 5 had actually diagnosed before now, and
+   it is the only remaining blocker on attempt 28's own candidate.
+2. **A profile-specific costume identity LoRA** (round 3/4's follow-up #1) --
+   still out of this card's scope per @DennieSeth's standing direction and
+   this card's own "do not retrain any LoRA" instruction.
+3. **A genuine side-profile costume concept sheet** (round 3/4's follow-up
+   #2) -- still the most direct fix for Lever 1's own gap, unchanged.
+
