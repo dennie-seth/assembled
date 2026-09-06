@@ -801,3 +801,80 @@ newly supports:
    particular seed) rather than the node genuinely sampling and being
    overridden.
 
+## T-0315 diagnostic: attempts 30/31's pixel-identity resolved -- genuine no-op, NOT a caching artifact
+
+Follow-up #4 above is now closed, at zero new GPU spend, using two sources
+that cost nothing to query: (1) `build_graph()` itself is a pure function of
+its arguments, so both attempts' submitted graphs can be reconstructed
+exactly from the recipe each row's Notes already records, and (2) ComfyUI's
+own `/history` endpoint on the dev-box host still held both jobs
+(`1b6393dc-2343-4f3e-ba3c-fa1c4d9615c7` for attempt 30,
+`09a0983a-8b4b-42cb-884b-7a6892c7a9fc` for attempt 31 -- the full IDs the
+existing footnote only truncated), so the graphs actually submitted, and
+ComfyUI's own per-node cache/execution log for each job, were read directly
+rather than re-derived. No image was regenerated.
+
+**Full node-by-node diff, not just IPAdapterAdvanced/KSampler wiring.**
+Comparing every node ComfyUI actually ran (`history[prompt_id]["prompt"][2]`)
+for the two jobs: attempt 30 has 20 nodes, attempt 31 has 18; the only nodes
+present in one and not the other are `27` (secondary `LoadImage`) and `28`
+(secondary `IPAdapterAdvanced`), both present only in attempt 30. Every
+other shared node -- both `CLIPTextEncode` nodes (confirming the
+green-emphasis prompt text is byte-identical between the two, not just
+"probably the same"), `ControlNetApplyAdvanced`, all three `LoraLoader`
+nodes, `CheckpointLoaderSimple`, `EmptyLatentImage`, `VAEDecode`, both
+`SaveImage` nodes, and the descent `ImageScale` node -- is byte-for-byte
+identical. The **only** wiring difference anywhere in the graph is
+`KSampler`'s (`21`) `model` input: `["28", 0]` in attempt 30, `["19", 0]`
+(the primary IP-Adapter output, skipping the secondary chain) in attempt 31.
+This confirms and extends the existing footnote's own partial check (which
+only compared the IPAdapterAdvanced/KSampler wiring) to every node in both
+graphs.
+
+**Independently re-verified the pixel-identity claim itself**, not just
+trusted it: fetched both jobs' `main_384.png` directly from ComfyUI's `/view`
+endpoint (`hybrid_profile_T0272_main_384_00031_.png` /
+`..._00032_.png`, still present in ComfyUI's own output history) and diffed
+them with the same PIL/numpy method the original footnote used --
+`max abs diff = 0` across all four RGBA channels, confirming pixel-identity
+independently rather than re-stating the merged commit's own claim.
+
+**The decisive new evidence: ComfyUI's own execution log, not just the
+graph shape.** Both jobs' `history[prompt_id]["status"]["messages"]` include
+an `execution_cached` event listing exactly which node IDs were served from
+cache rather than actually executed. For **both** attempt 30 and attempt 31,
+the cached node list is identical:
+`['1', '10', '11', '12', '26', '13', '14', '15', '16', '17', '18', '19',
+'20']` -- the checkpoint, pose skeleton image, style/identity/pose LoRA
+loaders, both prompt encodes, the ControlNet loader/apply pair, the primary
+concept image and its IP-Adapter loader/apply. **Nodes `27` and `28`
+(attempt 30's secondary reference chain) are absent from that cached list --
+they were genuinely executed, not served from cache.** `21` (`KSampler`) is
+absent from both jobs' cached lists too, confirming both attempts genuinely
+resampled rather than reusing a prior sampler output (consistent with both
+jobs' real `gpu_seconds`, 60.1 and 54.1 -- nothing like attempt 29's 3.1s
+cache-hit outlier).
+
+**Conclusion: this is a genuine no-op, not a caching short-circuit.** The
+second `IPAdapterAdvanced` node in attempt 30 really ran, on its own real
+input image, at its own real weight (0.4), and produced a real patched-model
+object that `KSampler` really resampled from scratch -- and the result was
+still bit-for-bit identical to sampling with no secondary patch at all. That
+rules out the caching explanation this follow-up was raised to check: **no
+prior "the secondary reference had no effect" conclusion in this log needs
+to be marked unsound because of a caching bug**, because there was no
+caching bug here. What it does newly establish is narrower and still
+important: at seed 31416, with `combine_embeds="concat"` and this specific
+secondary weight (0.4) on this specific image, a second, genuinely-executed
+`IPAdapterAdvanced` node chained onto the model can be a real no-op --
+consistent with, not contradicting, the existing footnote's own caveat that
+this "does not generalise to 'the secondary IP-Adapter is inert'" (attempts
+25/27/28 differ from each other by 32-82 mean-abs specifically because they
+vary that same weight against each other). The mechanism inside the
+`IPAdapterAdvanced` custom node that makes one particular weight/seed/
+`combine_embeds` combination sample to an identical result is outside this
+repo's own code (the node itself lives on the ComfyUI host, not in
+`assets/src/`) and is not investigated further here -- this diagnostic's
+scope was "caching bug or genuine no-op," and the ComfyUI execution log
+settles that question directly.
+
