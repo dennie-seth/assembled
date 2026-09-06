@@ -220,5 +220,12 @@ def test_check_attempt_cap_allows_a_fresh_round_3_budget() -> None:
     1-2's spent 1..8 -- attempts 9..16, not a re-run of 1..8."""
     gen.check_attempt_cap(9)
     gen.check_attempt_cap(16)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_4_budget() -> None:
+    """Round 4 gets its own fresh 8-attempt DL-21 budget on top of rounds
+    1-3's spent 1..16 -- attempts 17..24, not a re-run of 1..16."""
+    gen.check_attempt_cap(17)
+    gen.check_attempt_cap(24)  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(17)
+        gen.check_attempt_cap(25)

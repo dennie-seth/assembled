@@ -44,6 +44,8 @@ if str(_CHARACTER_DIR) not in sys.path:
 
 import pose_rig_profile_T0272  # noqa: E402
 
+from char_gen.cutout import label_foreground_components  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FINAL_CHARACTER_DIR = REPO_ROOT / "assets" / "final" / "character"
 KEYFRAME_PATH = FINAL_CHARACTER_DIR / "player_profile_keyframe_hybrid_T0272.png"
@@ -62,7 +64,6 @@ BACKGROUND_INDEX = 0
 # a real per-pixel cutout leaves the great majority of the cell as background_index.
 MIN_BACKGROUND_FRACTION = 0.65
 MIN_FOREGROUND_PIXELS = 50
-BBOX_TEST_PIXEL_BUFFER = 3
 
 # Animation-only fields that must NEVER appear on a static keyframe's
 # provenance -- see this module's own docstring ("read before editing").
@@ -244,35 +245,20 @@ def test_silhouette_not_erased() -> None:
     )
 
 
-def test_no_foreground_outside_the_profile_rigs_keypoint_bbox(provenance: dict) -> None:
-    """No residual background clutter may survive far from the character:
-    every non-background pixel must fall within the PROFILE rig's own
-    keypoint bounding box (not the front rig's), expanded by the same margin
-    the cutout itself used."""
-    margin = provenance["cutout_bbox_margin_frac"]
-    points = pose_rig_profile_T0272.profile_keypoints()
-    xs = [x for x, _ in points.values()]
-    ys = [y for _, y in points.values()]
-    x0n, x1n = min(xs), max(xs)
-    y0n, y1n = min(ys), max(ys)
-    wn, hn = x1n - x0n, y1n - y0n
-    x0n = max(0.0, x0n - wn * margin)
-    x1n = min(1.0, x1n + wn * margin)
-    y0n = max(0.0, y0n - hn * margin)
-    y1n = min(1.0, y1n + hn * margin)
-
+def test_foreground_forms_a_single_connected_blob() -> None:
+    """No disconnected background clutter may survive alongside the
+    character. Round 4 generalized the cutout (`char_gen.cutout`) away from
+    a hard keypoint-bbox clip -- a legitimately shifted figure (a stacked
+    profile reference pulling the pose off its own rig) is no longer
+    required to sit inside the profile rig's own keypoint bbox, so this gate
+    no longer asserts a position; it asserts the shape invariant
+    `extract_foreground_mask` actually guarantees instead: every surviving
+    foreground pixel belongs to the ONE connected blob the cutout selected,
+    wherever in the frame it landed."""
     arr = np.array(Image.open(KEYFRAME_PATH))
-    size = arr.shape[0]
-    px0 = max(0, int(x0n * size) - BBOX_TEST_PIXEL_BUFFER)
-    px1 = min(size, int(x1n * size) + BBOX_TEST_PIXEL_BUFFER)
-    py0 = max(0, int(y0n * size) - BBOX_TEST_PIXEL_BUFFER)
-    py1 = min(size, int(y1n * size) + BBOX_TEST_PIXEL_BUFFER)
-
     fg = arr != BACKGROUND_INDEX
-    outside = fg.copy()
-    outside[py0:py1, px0:px1] = False
-    stray = int(outside.sum())
-    assert stray == 0, (
-        f"keyframe: {stray} foreground px outside the profile rig's keypoint bbox+margin "
-        f"({px0},{py0})-({px1},{py1}) -- residual background clutter survived cutout"
+    _, count = label_foreground_components(fg)
+    assert count <= 1, (
+        f"keyframe: foreground splits into {count} disconnected components -- residual "
+        "background clutter survived cutout alongside the character"
     )

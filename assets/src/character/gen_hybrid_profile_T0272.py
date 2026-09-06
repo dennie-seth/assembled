@@ -104,18 +104,6 @@ from gen_arm_a_idle_T0228 import (  # noqa: E402
     wait_for_completion,
 )
 
-# Reused directly from T-0250's own per-pixel background-cutout fix (same
-# functions gen_hybrid_source_idle_T0252.py and gen_hybrid_walk_T0259.py
-# already apply to their own frames).
-from gen_chained_idle_T0250 import (  # noqa: E402
-    BACKGROUND_MASK_MARGIN_FRAC,
-    CUTOUT_METHOD_DESCRIPTION,
-    CUTOUT_OKLAB_TOLERANCE,
-    apply_cutout_masks,
-    cutout_foreground_mask,
-    downscale_mask,
-)
-
 # Reused directly from T-0259 (T-0266's own recipe finding: the full concept
 # sheet's ~24-panel grid leaks its own layout into IP-Adapter conditioning).
 from gen_hybrid_walk_T0259 import (  # noqa: E402
@@ -133,6 +121,23 @@ from gen_pose_authority_idle_T0249 import (  # noqa: E402
 )
 from gen_pose_authority_idle_T0249 import MAIN_NEGATIVE as IDLE_MAIN_NEGATIVE  # noqa: E402
 
+# T-0272 round 4: the per-pixel background-cutout family (same functions
+# gen_hybrid_source_idle_T0252.py and gen_hybrid_walk_T0259.py apply to their
+# own frames) now lives in the shared char_gen package, imported directly
+# rather than reached by importing gen_chained_idle_T0250 -- and
+# `extract_foreground_mask` replaces the old hard keypoint-bbox clip with
+# content-aware connected-component selection (see that module's own
+# docstring): a rendered figure that deviates from this card's profile
+# skeleton, exactly what round 3's Test D produced, is no longer zeroed or
+# clipped just for landing outside the skeleton's own footprint.
+from char_gen.cutout import (  # noqa: E402
+    BACKGROUND_MASK_MARGIN_FRAC,
+    CUTOUT_METHOD_DESCRIPTION,
+    CUTOUT_OKLAB_TOLERANCE,
+    apply_cutout_masks,
+    downscale_mask,
+    extract_foreground_mask,
+)
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 CONCEPT_SHEET_PATH = (
@@ -433,13 +438,15 @@ def build_graph(
 
 def check_attempt_cap(attempt: int) -> None:
     """DL-21's cap is 8 attempts per round. Round 1 (attempts 1-4) and round 2
-    (attempts 5-8) spent the first budget; round 3 (isolation + promote, see
-    the card's own "ROUND 3" section) gets a second, fresh 8-attempt budget,
-    attempts 9-16 -- not a re-run of 1-8."""
-    if not (1 <= attempt <= 16):
+    (attempts 5-8) spent the first budget; round 3 (isolation + promote)
+    spent a second 8-attempt budget, attempts 9-16. Round 4 (generalized
+    cutout + costume-bearing reference + promote, see the card's own
+    "ROUND 4" section) gets a third, fresh 8-attempt budget, attempts
+    17-24 -- not a re-run of 1-16."""
+    if not (1 <= attempt <= 24):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 3 adds a second 8-attempt budget on "
-            "top of round 1-2's spent 1..8 (attempts 9..16) -- refusing to run a 17th attempt"
+            "attempt cap is 8 per round (DL-21); round 4 adds a third 8-attempt budget on "
+            "top of rounds 1-3's spent 1..16 (attempts 17..24) -- refusing to run a 25th attempt"
         )
 
 
@@ -524,12 +531,15 @@ def build_indexed_cell(
 ) -> Image.Image:
     """Quantize the descended 48x48 raw cell to the home palette, then cut
     the character out of its background with a real per-pixel segmentation
-    (`cutout_foreground_mask`, T-0250's own fix, reused unchanged) against
-    THIS card's profile rig keypoint bounding box, not the front rig's."""
+    (`char_gen.cutout.extract_foreground_mask`, T-0250's original fix,
+    generalized round 4). THIS card's profile rig keypoints are passed as a
+    HINT, not a hard frame -- a figure that lands outside them (a stacked
+    profile reference pulling the pose off-rig, round 3's Test D) is still
+    recovered in full, provided it is the single largest surviving blob."""
     indexed = quantize_to_palette(raw_cell, palette)
     fg_mask = downscale_mask(
-        cutout_foreground_mask(
-            main_384, points_norm, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
+        extract_foreground_mask(
+            main_384, CUTOUT_OKLAB_TOLERANCE, points_norm, BACKGROUND_MASK_MARGIN_FRAC
         ),
         FINAL_CELL_PX,
     )
@@ -541,40 +551,27 @@ def build_indexed_cell(
     return indexed
 
 
-def compute_mechanical_gate(
-    indexed: Image.Image, points_norm: dict[int, tuple[float, float]]
-) -> dict:
+def compute_mechanical_gate(indexed: Image.Image) -> dict:
     """The only checks that make sense against a single static frame: is the
-    background actually clean, is the silhouette not erased, and did no
-    foreground clutter survive outside this pose's own keypoint bbox? There
-    is no adjacent frame to compute a delta against."""
+    background actually clean, and is the silhouette not erased? There is no
+    adjacent frame to compute a delta against.
+
+    Round 4 drops the old "no foreground pixel survives outside this pose's
+    own keypoint bbox" check: `build_indexed_cell` no longer clips to that
+    bbox at all (`extract_foreground_mask` selects a single connected
+    component regardless of where it sits), so every surviving foreground
+    pixel already belongs to the one blob the cutout chose -- re-deriving a
+    bbox here and flagging pixels outside it would only re-introduce the
+    same hard-clip assumption this round removed, penalising a genuinely
+    shifted but legitimate figure instead of catching a real defect."""
     arr = np.array(indexed)
     bg_fraction = float((arr == 0).mean())
     fg_count = int((arr != 0).sum())
 
-    margin = BACKGROUND_MASK_MARGIN_FRAC
-    xs = [x for x, _ in points_norm.values()]
-    ys = [y for _, y in points_norm.values()]
-    x0n, x1n = min(xs), max(xs)
-    y0n, y1n = min(ys), max(ys)
-    wn, hn = x1n - x0n, y1n - y0n
-    x0n = max(0.0, x0n - wn * margin)
-    x1n = min(1.0, x1n + wn * margin)
-    y0n = max(0.0, y0n - hn * margin)
-    y1n = min(1.0, y1n + hn * margin)
-    size = arr.shape[0]
-    px0, px1 = int(x0n * size), int(x1n * size)
-    py0, py1 = int(y0n * size), int(y1n * size)
-    outside = arr != 0
-    outside = outside.copy()
-    outside[py0:py1, px0:px1] = False
-    stray_px = int(outside.sum())
-
-    passed = bg_fraction >= 0.65 and fg_count >= 50 and stray_px == 0
+    passed = bg_fraction >= 0.65 and fg_count >= 50
     return {
         "background_fraction": bg_fraction,
         "foreground_pixels": fg_count,
-        "stray_foreground_pixels": stray_px,
         "passed": passed,
     }
 
@@ -683,7 +680,7 @@ def run_attempt(
     indexed = build_indexed_cell(raw, main_img, palette, points)
     save_sprite_sheet(indexed, out_dir / "cell_48_indexed.png")
 
-    mechanical_gate = compute_mechanical_gate(indexed, points)
+    mechanical_gate = compute_mechanical_gate(indexed)
 
     identity_anchor = {
         "path": str(IDLE_ANCHOR_PATH.relative_to(REPO_ROOT)),
