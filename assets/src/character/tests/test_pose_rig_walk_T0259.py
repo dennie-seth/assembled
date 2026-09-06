@@ -190,6 +190,26 @@ def test_amplitudes_are_meaningfully_larger_than_the_previous_sheet() -> None:
     assert pose_rig_walk_T0259.ARM_SWING_EXTENT_NORM >= 0.09 * 1.5
 
 
+def test_cross_extent_restored_under_the_locomotion_cap() -> None:
+    """T-0271/DL-26 fixed the bug this card's own 2026-08-31 improvement pass
+    flagged: DL-21's 0.30 cap was pre-registered against the player IDLE
+    sheet, and grading a real walk gait against it forced attempts 6-8 to
+    cut CROSS_EXTENT_NORM 0.14 -> 0.05 -> 0.02, a 7x reduction from the value
+    that actually reads as a leg cross, purely to chase a number that was
+    never this motion's own bar. Now that a walk cycle is graded at the
+    locomotion cap (0.50, `asset_gate.character.MOTION_FRAME_DELTA_CAP`) --
+    which attempt 5's own real measured range, 0.328-0.473, already clears
+    with room to spare -- that trade is cancelled and the full attempt-5
+    amplitude set is restored: CROSS_EXTENT_NORM back to 0.14 (large enough
+    for the lifted ankle to reach the other leg's resting x outright, a real
+    cross, not the 0.02 'narrowing' compromise), alongside attempt 5's
+    STRIDE/KNEE/ARM values."""
+    assert pose_rig_walk_T0259.CROSS_EXTENT_NORM == pytest.approx(0.14)
+    assert pose_rig_walk_T0259.STRIDE_EXTENT_NORM == pytest.approx(0.30)
+    assert pose_rig_walk_T0259.KNEE_LIFT_NORM == pytest.approx(0.18)
+    assert pose_rig_walk_T0259.ARM_SWING_EXTENT_NORM == pytest.approx(0.20)
+
+
 def test_legs_swing_opposite_phase_at_contact() -> None:
     """Opposed leg swing (motion spec): at the contact pose, one leg is at
     its forward extreme and the other at its back extreme -- not moving the
