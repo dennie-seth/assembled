@@ -645,6 +645,7 @@ def run_attempt(
     secondary_ipadapter_weight: float = 0.6,
     secondary_needs_invert: bool = True,
     emphasize_green: bool = False,
+    secondary_reference_note: str | None = None,
 ) -> dict:
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
@@ -835,31 +836,32 @@ def run_attempt(
         if secondary_needs_invert:
             transform_note = (
                 "RGB channel invert (PIL.ImageOps.invert, invert_reference_for_conditioning) "
-                "applied to the committed source before conditioning -- the source is a dark "
-                "silhouette on an off-white background, the opposite tone of this card's "
-                "black-background target; uninverted, the light background bled into the "
-                "generation and defeated cutout (round-3 attempt 12: 76 fg px survived)"
-            )
-            reference_note = (
-                "T-0273's approved side-profile reference set, stacked via a second "
-                "IPAdapterAdvanced node chained after the front concept sheet's -- explicitly "
-                "NOT a costume match (anonymous gait/silhouette reference); round 3 Test D"
+                "applied to the committed source before conditioning -- an off-white/light "
+                "background is the opposite tone of this card's black-background target; "
+                "uninverted, a light background bled into the generation and defeated cutout "
+                "(round-3 attempt 12: 76 fg px survived)"
             )
         else:
             transform_note = (
-                "none -- the source (derive_profile_style_reference_T0272.py's own output) "
-                "already forces its background to solid black, matching this card's target "
-                "tone; inverting it a second time would flip that correct tone back to "
-                "near-white and reintroduce round-3 Test D's own bleed defect"
+                "none -- the source's own background is already dark-toned, matching this "
+                "card's black-background target; inverting it would flip that correct tone "
+                "back toward light and reintroduce round-3 Test D's own bleed defect"
             )
-            reference_note = (
-                "a same-render-style side-profile panel cropped from T-0209's own concept "
-                "sheet (assets/src/concept/player_profile_style_reference_T0272.png), stacked "
-                "via a second IPAdapterAdvanced node chained after the front concept sheet's -- "
-                "explicitly NOT a costume match (the sheet's grey/tan tactical-variant tier, "
-                "not the green cloth-coat tier); round-4 defect-fix continuation, tested as an "
-                "alternative to T-0273's anonymous photographic set"
-            )
+        # Round-5 fix: the two branches above used to hardcode prose naming a specific
+        # source script (T-0273's photographs / derive_profile_style_reference_T0272.py) --
+        # accurate only for the attempts that first used them, and already caught going
+        # stale twice (round-4 review, attempts 23/24 vs 25-28). Deriving the reference
+        # note from the actual path passed in keeps it correct for any future source
+        # (e.g. round 5 bootstrapping from a prior attempt's own output) without the
+        # caller having to remember to update prose here.
+        try:
+            secondary_display_path = secondary_concept_path.relative_to(REPO_ROOT)
+        except ValueError:
+            secondary_display_path = secondary_concept_path
+        reference_note = secondary_reference_note or (
+            f"secondary IP-Adapter reference sourced from {secondary_display_path}, stacked "
+            "via a second IPAdapterAdvanced node chained after the front concept sheet's"
+        )
         provenance["secondary_ip_adapter_reference"] = {
             "path": str(secondary_concept_path.relative_to(REPO_ROOT)),
             "hash": secondary_hash,
