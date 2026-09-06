@@ -465,11 +465,16 @@ def check_attempt_cap(attempt: int) -> None:
     tested a costume-bearing secondary reference -- attempts 25-28 are a
     small, explicitly-scoped continuation to fix that specific defect (test
     `player_profile_style_reference_T0272.png`, derived after the FAIL), not
-    a fresh 8-attempt round of its own."""
-    if not (1 <= attempt <= 28):
+    a fresh 8-attempt round of its own.
+
+    Round 5 ("vivid green on the profile") spends a fourth fresh 8-attempt
+    budget, attempts 29-36, on top of rounds 1-4's 1-24 and the round-4
+    defect-fix continuation's 25-28."""
+    if not (1 <= attempt <= 36):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 4's defect-fix continuation adds "
-            "attempts 25..28 on top of rounds 1-4's spent 1..24 -- refusing to run a 29th attempt"
+            "attempt cap is 8 per round (DL-21); round 5 adds attempts 29..36 on top of "
+            "rounds 1-4's spent 1..24 and the round-4 defect-fix continuation's 25..28 -- "
+            "refusing to run a 37th attempt"
         )
 
 

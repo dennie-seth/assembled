@@ -233,11 +233,11 @@ def test_check_attempt_cap_allows_the_round_4_defect_fix_budget() -> None:
     """The round-4 reviewer FAIL required actually testing a costume-bearing
     secondary reference that round 4's own 17..24 budget never tried (defect
     2) -- a small, explicitly-scoped continuation budget, attempts 25..28,
-    not a fresh 8-attempt round."""
+    not a fresh 8-attempt round. (Attempt 29 is no longer expected to raise
+    here -- round 5 opens its own fresh budget starting there; see
+    test_check_attempt_cap_allows_a_fresh_round_5_budget for that boundary.)"""
     gen.check_attempt_cap(25)
     gen.check_attempt_cap(28)  # must not raise
-    with pytest.raises(SystemExit):
-        gen.check_attempt_cap(29)
 
 
 def test_check_attempt_cap_allows_a_fresh_round_5_budget() -> None:
