@@ -255,7 +255,11 @@ def build_negative_prompt(emphasize_green: bool = False) -> str:
     sampler something concrete to steer away from."""
     if not emphasize_green:
         return PROFILE_NEGATIVE
-    return PROFILE_NEGATIVE + ", olive coat, khaki coat, brownish coat, muted green, grey-green"
+    return (
+        PROFILE_NEGATIVE
+        + ", olive coat, khaki coat, brownish coat, muted green, grey-green"
+        + ", heavy black outline, thick black border, neon rim light, glowing outline, vignette"
+    )
 
 # ── Graph node ids -- named, not raw string literals re-derived per call ────
 CHECKPOINT_NODE_ID = "1"
