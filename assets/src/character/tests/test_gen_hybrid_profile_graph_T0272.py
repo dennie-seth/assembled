@@ -383,8 +383,24 @@ def test_check_attempt_cap_allows_a_fresh_round_11_budget() -> None:
     DL-21 budget on top of rounds 1-10's spent 1..68 -- attempts 69..76."""
     gen.check_attempt_cap(69)
     gen.check_attempt_cap(76)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_12_budget() -> None:
+    """Round 12 (T-0317: @DennieSeth's decision on T-0272's own probe finding
+    -- CUBLAS_WORKSPACE_CONFIG, not --deterministic, is the sharper suspect
+    for coherence collapse. ComfyUI has been restored to the exact baseline
+    regime that produced attempt 39: no `--deterministic`, no
+    `CUBLAS_WORKSPACE_CONFIG` set at all. Eleven rounds and 76 attempts have
+    exhausted the parameter space -- the only variable left is the seed,
+    under a regime known to have produced coherence exactly once. This is a
+    bounded reroll (stop at the first usable coherent frame, cap at 8 fresh
+    seeds), not a re-run of round 6's seed+weight sweep -- it gets its own
+    fresh 8-attempt DL-21 budget on top of rounds 1-11's spent 1..76 --
+    attempts 77..84."""
+    gen.check_attempt_cap(77)
+    gen.check_attempt_cap(84)  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(77)
+        gen.check_attempt_cap(85)
 
 
 def test_positive_prompt_matches_the_known_good_round_6_baseline() -> None:
