@@ -194,15 +194,21 @@ def build_positive_prompt(
     green_emphasis = (
         "(vivid saturated institutional green costume colour:1.4), " if emphasize_green else ""
     )
+    # Round 7 (T-0317): the "no grey background, no multi-tone background" fix is
+    # appended at the very END, not spliced into the middle -- CLIP truncates at 77
+    # BPE tokens and this prompt is already close to that budget (see PROFILE_NEGATIVE's
+    # own comment on attempt 45's regression), so inserting new terms earlier pushes
+    # existing, load-bearing terms ("no perspective, no vanishing point, no text, no UI")
+    # further toward the truncation boundary instead of the new, less-tested ones.
     return (
         f"{TRIGGER_TOKEN}, {pose_token}pixel art side-profile base pose, "
         f"single standing figure seen from the side, facing {FACING}, flat side-on "
         "orthographic view, exactly one figure matching the pose skeleton exactly, "
         f"{green_emphasis}institutional green coat, hooded, white gloves, same uniform and "
-        "same equipment loadout, upright standing posture, solid flat pure black background, "
-        "no grey background, no multi-tone background, uniform unbroken black backdrop, "
+        "same equipment loadout, upright standing posture, solid flat black background, "
         "value-separated pixel art silhouette, clean readable pixel outline, vivid saturated "
-        "green costume colour, no perspective, no vanishing point, no text, no UI"
+        "green costume colour, no perspective, no vanishing point, no text, no UI, "
+        "no grey background, no multi-tone background"
     )
 
 
@@ -243,11 +249,18 @@ def prepare_secondary_reference(src_path: Path, dest_path: Path, needs_invert: b
 
 PROFILE_NEGATIVE = (
     IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric front-facing pose, "
-    "three-quarter view, back view, both shoulders equally visible, washed out colour, "
-    "pale colour, desaturated, faded costume, grayscale, grey background, gray background, "
-    "multi-toned background, mottled background, patchy background, uneven background "
-    "lighting, textured background"
+    "back view, both shoulders equally visible, washed out colour, pale colour, desaturated, "
+    "faded costume, grayscale, multi-toned background"
 )
+# Round 7 (T-0317): IDLE_MAIN_NEGATIVE is already 67 words on its own, shared verbatim
+# across T-0228/T-0249/T-0252/T-0259 (out of this card's scope to trim), and CLIP's
+# text encoder truncates at 77 BPE tokens -- attempt 45 (this round) reused attempt
+# 39's exact seed/graph but regressed from a coherent visual to an incoherent
+# outline-and-glow render purely from a longer negative prompt, the signature of a
+# truncation-order shift, not a deliberate style change. This addition therefore
+# drops the two terms it used to duplicate from IDLE_MAIN_NEGATIVE outright
+# ("three-quarter view", "grey background") rather than adding new synonyms
+# ("gray background", "mottled/patchy/textured background") on top of them.
 
 
 def build_negative_prompt(emphasize_green: bool = False) -> str:
