@@ -329,11 +329,26 @@ def test_check_attempt_cap_allows_a_fresh_round_7_budget() -> None:
     -- alongside a strengthened black-background prompt term to fix the
     multi-toned-background render that starved attempt 39's cutout) gets its
     own fresh 8-attempt DL-21 budget on top of rounds 1-6's spent 1..44 --
-    attempts 45..52, not a re-run of anything already spent."""
+    attempts 45..52, not a re-run of anything already spent. (Attempt 53 is
+    no longer expected to raise here -- round 9 opens its own fresh budget
+    starting there; see test_check_attempt_cap_allows_a_fresh_round_9_budget
+    for that boundary.)"""
     gen.check_attempt_cap(45)
     gen.check_attempt_cap(52)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_9_budget() -> None:
+    """Round 9 (T-0317, PR #350/T-0319 merged into this branch): the walk
+    generator's background-fix primitive (`force_border_background_to_fill`)
+    is now wired into this generator's own per-frame cutout path, and
+    attempt 39's exact recipe (seed 31416, secondary weight 0.10) is
+    reproduced against a forced-black render background -- a background-fix
+    re-test, not the round 6 seed+weight sweep. Gets its own fresh 8-attempt
+    DL-21 budget on top of rounds 1-7's spent 1..52 -- attempts 53..60."""
+    gen.check_attempt_cap(53)
+    gen.check_attempt_cap(60)  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(53)
+        gen.check_attempt_cap(61)
 
 
 def test_positive_prompt_matches_the_known_good_round_6_baseline() -> None:
@@ -399,3 +414,48 @@ def test_prepare_secondary_reference_passes_through_when_already_toned(tmp_path)
 
     out = Image.open(dest).convert("RGB")
     assert out.getpixel((0, 0)) == (10, 20, 30)
+
+
+def test_build_indexed_cell_forces_render_background_before_cutout(monkeypatch) -> None:
+    """T-0317 round 9: attempt 39's own coherent, green-legible visual
+    gate-failed (27-39 fg px, under the 50px floor) because the RENDER's own
+    background came out multi-toned grey rather than the prompt's requested
+    solid black, starving `extract_foreground_mask`'s border-flood
+    classification -- the same class of defect T-0319 fixed for the walk
+    generator's identity-reference crop, applied here to this generator's own
+    per-frame cutout the way `gen_hybrid_walk_T0259.reprocess_attempt_background_fix`
+    applies it to an already-sampled frame before re-cutting.
+
+    RED: `build_indexed_cell` calls `extract_foreground_mask` directly on the
+    raw, uncorrected `main_384` -- `force_border_background_to_fill` is not
+    yet called from `build_indexed_cell` at all."""
+    from PIL import Image
+
+    calls: list[tuple[Image.Image, float]] = []
+    corrected_sentinel = Image.new("RGB", (8, 8), color=(1, 2, 3))
+
+    def spy_force_border_background_to_fill(img, tolerance, **kwargs):
+        calls.append((img, tolerance))
+        return corrected_sentinel
+
+    seen_mask_input: list[Image.Image] = []
+    real_extract_foreground_mask = gen.extract_foreground_mask
+
+    def spy_extract_foreground_mask(img, *args, **kwargs):
+        seen_mask_input.append(img)
+        return real_extract_foreground_mask(img, *args, **kwargs)
+
+    monkeypatch.setattr(
+        gen, "force_border_background_to_fill", spy_force_border_background_to_fill
+    )
+    monkeypatch.setattr(gen, "extract_foreground_mask", spy_extract_foreground_mask)
+
+    raw_cell = Image.new("RGB", (48, 48), color=(18, 17, 14))
+    main_384 = Image.new("RGB", (384, 384), color=(144, 143, 145))
+    palette = [(18, 17, 14), (40, 120, 60)]
+    points_norm = {0: (0.5, 0.5)}
+
+    gen.build_indexed_cell(raw_cell, main_384, palette, points_norm)
+
+    assert calls == [(main_384, gen.CUTOUT_OKLAB_TOLERANCE)]
+    assert seen_mask_input == [corrected_sentinel]
