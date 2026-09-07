@@ -504,3 +504,63 @@ set remotely) is, as in rounds 7-8, a human call.
 `.gitignore` check (re-run for round 9): `git check-ignore -v` against
 `attempt_53_54_fixed_background_still_diverges_T0317.png` returns nothing,
 so no `.gitignore` change was needed to commit this evidence either.
+
+## T-0317 round 10: determinism proven within-session, but every fresh seed under `--deterministic` converges on a new, consistent failure mode
+
+ComfyUI was restarted with `--deterministic` and `CUBLAS_WORKSPACE_CONFIG=:4096:8`
+set (`GET /system_stats`'s `argv` confirms this), per round 9's own named next
+probe. `check_attempt_cap` opened a fresh 61-68 budget. Attempt 39's recipe
+was deliberately **not** reproduced -- round 9 already showed the defect is
+session-scoped, so restarting pins *future* sessions, not the one that
+produced attempt 39's coherent visual.
+
+- **`attempt_61_first_fresh_seed_deterministic_striped_T0317.png`** -- the
+  first fresh-seed attempt (61023), secondary weight held at 0.10 (attempt
+  39's own value). A vertical white/green architectural totem with fine
+  horizontal ribbing; mechanical gate correctly reports 0 fg px. Not a
+  person.
+- **Attempts 62-64** (seeds 200601, 771001, 305092) -- not committed
+  individually, but each is the same shape of failure: black background cut
+  by regular horizontal green/white/cyan bars, a narrow vertical spine.
+  None read as a human figure.
+- **`attempt_65_gate_passing_but_incoherent_striped_T0317.png`** -- seed
+  918273. Mechanical gate **passed** (53 fg px, `background_fraction`
+  0.977) -- the same "gate-passing but incoherent" trap attempts 41, 52 and
+  53 already demonstrated. Striped/barred pattern, no legible head, torso,
+  arm or leg.
+- **Attempt 66** (seed 445566) -- sixth and last fresh sample before
+  stopping the sweep. Same striped failure mode.
+
+**Six seeds, six for six the same new failure signature** -- a regular
+horizontal-banding artifact, distinct in character from rounds 6-9's totems
+and glowing-silhouette abstractions. Likely mechanism (inference, not
+confirmed root cause from this agent's HTTP-only access): `--deterministic`
+forces PyTorch/cuDNN onto non-fused, deterministic kernel paths, changing
+this dual-IPAdapter + ControlNet graph's actual numerical output, not just
+its reproducibility -- determinism and this graph's prior fragile coherence
+may be in tension.
+
+- **`attempt_66_67_68_determinism_proof_T0317.png`** (attempt 68's frame,
+  representative of 66/67/68 -- all three are byte-identical) -- the "prove
+  the pin" deliverable. Attempt 67 repeated attempt 66's exact recipe and
+  matched by `sha256`, but at `gpu_seconds` 3.1 (a ComfyUI node-cache hit,
+  the same signature attempt 51 showed) -- not independent evidence. `POST
+  /free` was issued and attempt 68 repeated the recipe a third time:
+  `gpu_seconds` 60.1 (a genuine full recompute) and **still byte-identical**
+  to 66 and 67. This is the meaningful claim: the seed now pins the render
+  within a session, confirmed by an independent, non-cached recompute. A
+  cross-restart check remains untested and belongs to a determinism-infra
+  card, not this one.
+
+**Not promoted. Budget (61-68) fully spent, no extension taken**, per the
+round's own stop condition once six seeds converged on the same failure
+signature. `player_profile_keyframe_hybrid_T0272.png` remains absent from
+`assets/final/character/`. The costume-bearing side reference itself
+(`player_profile_costume_reference_T0317.png`) remains sound and unaffected
+by any of this. Whether to descope the keyframe to a follow-up and bank the
+reference, or investigate the specific `--deterministic`/graph interaction
+further, is a human call.
+
+`.gitignore` check (re-run for round 10): `git check-ignore -v` against all
+three of this round's evidence frames returns nothing, so no `.gitignore`
+change was needed to commit them either.
