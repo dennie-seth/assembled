@@ -19,6 +19,7 @@ RED state: gen_player_profile_costume_reference_T0317 does not exist yet.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -79,7 +80,7 @@ def test_positive_prompt_names_the_green_cloth_coat_not_the_tactical_tier():
     assert "green" in prompt.lower()
     assert "coat" in prompt.lower()
     assert "tactical" not in prompt.lower()
-    assert "tan" not in prompt.lower()
+    assert not re.search(r"\btan\b", prompt.lower())
 
 
 def test_positive_prompt_asks_for_a_genuine_side_view():

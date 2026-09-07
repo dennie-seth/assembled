@@ -65,7 +65,23 @@ from gen_arm_a_idle_T0228 import (  # noqa: E402
     submit_prompt,
     wait_for_completion,
 )
+
+# Must follow the gen_arm_a_idle_T0228 import: that module's own top-level
+# sys.path.insert (for asset-gate/src and character/src) is what makes
+# char_gen importable, which derive_profile_style_reference_T0272 itself
+# needs but does not insert on its own.
+from derive_profile_style_reference_T0272 import extract_panel_reference  # noqa: E402
 from green_content import count_green_pixels  # noqa: E402
+
+# Attempt-specific: the pixel box of the single genuinely side-on panel within
+# the promoted attempt's own 3-panel (front/side/back) turnaround sheet,
+# located by background-diff column/row scanning against that attempt's own
+# main_1024.png (same "hardcode a known source's own panel box" precedent as
+# `derive_profile_style_reference_T0272.PANEL_BOX`, which is source-specific
+# for the same reason -- SDXL's own panel placement is not guaranteed stable
+# across seeds, so this is not meant to generalise to a different attempt).
+PROMOTED_PANEL_BOX = (450, 40, 625, 960)
+PROMOTED_PANEL_MARGIN = 4
 
 GEN_PX = 1024  # matches player_character_concept_sheet_v1.recipe.json's 1024x1024
 
@@ -80,32 +96,35 @@ GREEN_MEASURE_CROP_SIZE = (187, 200)
 STYLE_LORA_WEIGHT = 0.70  # matches T-0209's own recipe
 
 POSITIVE_PROMPT = (
-    "flat side-on character concept reference panel, orthographic game asset, "
-    "no perspective, no vanishing point, single reference panel, one figure only, "
-    "full body side profile pose, exactly one shoulder visible, one arm forward, "
-    "profile silhouette of the head and face turned to the side. Player character: "
-    "40px tall humanoid figure in a 48x48 cell, wearing a long institutional green "
-    "cloth coat, hooded, white gloves, concrete-grey head and skin tones, deep "
-    "shadow values, vivid saturated institutional green coat colour covering the "
-    "torso and legs of the coat. Soviet brutalist interior aesthetic, muted "
-    "desaturated palette everywhere except the coat's own vivid green, hard value "
-    "separation, dark darks and light lights, flat even lighting, no atmospheric "
-    "haze, no depth of field, no scene composition, no background elements, solid "
-    "flat black background. Game asset reference panel style, pixel art scale "
-    "reference, side-view figure silhouette study"
+    "flat side-on character concept reference sheet, orthographic game asset, "
+    "no perspective, no vanishing point, one reference panel: full-body side "
+    "profile standing pose, figure's face and nose seen in strict profile facing "
+    "right, one shoulder visible, near arm bent forward, far arm hidden behind "
+    "the torso. Player character: 40px tall humanoid figure in a 48x48 cell, "
+    "wearing a long vivid institutional green cloth coat (the coat itself is "
+    "green, not black, not grey), concrete-grey head and skin tones, deep "
+    "shadow values on the coat's own folds. Soviet brutalist interior aesthetic, "
+    "muted desaturated palette for the environment only, the coat itself stays "
+    "vivid green, hard value separation, dark darks and light lights, flat even "
+    "lighting, no atmospheric haze, no depth of field, no scene composition, no "
+    "background elements, solid flat black background only. Game asset reference "
+    "sheet style, pixel art scale reference, figure silhouette study"
 )
 
 NEGATIVE_PROMPT = (
-    "front view, facing the camera, symmetric front-facing pose, three-quarter "
-    "view, back view, both shoulders equally visible, "
+    "perspective, vanishing point, three-quarter view, isometric, receding "
+    "walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, "
+    "composed illustration, photorealistic, 3d render, soft gradient lighting, "
+    "ambient occlusion, painterly, cartoon, cheerful, "
+    "text, watermark, signature, blurry, low quality, "
+    "front view, facing the camera, symmetric front-facing pose, back view, "
+    "rear view, both shoulders equally visible, both arms visible, "
+    "city, skyscraper, buildings, urban background, architecture background, "
+    "windows, cityscape, scenery, multiple figures, two figures, group of people, "
     "grey tactical costume, tan tactical costume, khaki uniform, army fatigues, "
     "muted olive costume, brownish coat, washed out colour, pale colour, "
-    "desaturated coat, grayscale, "
-    "perspective, vanishing point, isometric, receding walls, atmospheric haze, "
-    "depth of field, sky, clouds, foliage, scene, composed illustration, "
-    "photorealistic, 3d render, soft gradient lighting, ambient occlusion, "
-    "painterly, cartoon, cheerful, multiple figures, two figures, text, "
-    "watermark, signature, blurry, low quality"
+    "desaturated coat, grayscale, black coat, grey coat, black armor, "
+    "monochrome, colourless"
 )
 
 # ── Graph node ids -- named, not raw string literals re-derived per call ────
@@ -237,10 +256,12 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
     if not ATTEMPT_LOG_PATH.exists():
         ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
     green = provenance["green_content"]
+    whole_frame = green.get("whole_frame_green_pixels", "n/a")
+    centred_crop = green.get("centred_crop_green_pixels", green.get("promoted_reference_green_pixels", "n/a"))
     row = (
         f"| {provenance['attempt']} | {provenance['seed']} "
         f"| {provenance['style_lora_weight']} | {provenance['gpu_seconds']} "
-        f"| {green['whole_frame_green_pixels']} | {green['centred_crop_green_pixels']} "
+        f"| {whole_frame} | {centred_crop} "
         f"| {'yes' if provenance.get('promoted') else 'no'} "
         f"| {notes} |\n"
     )
@@ -319,18 +340,47 @@ def run_attempt(attempt: int, seed: int, style_lora_weight: float = STYLE_LORA_W
 
 
 def promote_attempt(attempt: int, notes: str = "") -> None:
-    out_dir = REPO_ROOT / "assets" / "out" / "costume_reference" / f"attempt_{attempt}"
-    provenance = json.loads((out_dir / "provenance_candidate.json").read_text())
-    main_bytes = (out_dir / "main_1024.png").read_bytes()
-    FINAL_PATH.write_bytes(main_bytes)
+    """Unlike T-0272's own `promote_attempt` (which promotes a generation's
+    raw output directly), this crops the promoted attempt's 3-panel
+    front/side/back sheet down to its single genuinely side-on panel
+    (`PROMOTED_PANEL_BOX`) and runs it through `extract_panel_reference`
+    (T-0272's own border-flood + largest-component cleanup, reused directly)
+    so the committed deliverable is the side reference itself, not the whole
+    turnaround sheet it was sampled from."""
     import hashlib
 
+    out_dir = REPO_ROOT / "assets" / "out" / "costume_reference" / f"attempt_{attempt}"
+    provenance = json.loads((out_dir / "provenance_candidate.json").read_text())
+    main_img = Image.open(out_dir / "main_1024.png").convert("RGB")
+    panel = main_img.crop(PROMOTED_PANEL_BOX)
+    reference = extract_panel_reference(panel, margin=PROMOTED_PANEL_MARGIN)
+    reference.save(FINAL_PATH)
+    reference_bytes = FINAL_PATH.read_bytes()
+
     promoted = dict(provenance)
-    promoted["concept_hash"] = hashlib.sha256(main_bytes).hexdigest()
+    promoted["concept_hash"] = hashlib.sha256(reference_bytes).hexdigest()
+    promoted["panel_source"] = {
+        "source_attempt": attempt,
+        "source_file": str((out_dir / "main_1024.png").relative_to(REPO_ROOT)),
+        "panel_box": list(PROMOTED_PANEL_BOX),
+        "panel_margin": PROMOTED_PANEL_MARGIN,
+        "extraction_method": (
+            "border-flood background detection + largest-connected-component selection "
+            "(derive_profile_style_reference_T0272.extract_panel_reference, reused directly), "
+            "crop to the figure's own bbox + margin -- the source sheet's other two panels "
+            "(front, back) and any text label are discarded, not just cropped around"
+        ),
+    }
+    promoted["green_content"] = {
+        "promoted_reference_green_pixels": count_green_pixels(reference),
+        "benchmark_green_band": [6000, 6900],
+        "benchmark_noise_floor_fraction": [0.010, 0.017],
+    }
     promoted["promoted"] = True
     FINAL_PROVENANCE_PATH.write_text(json.dumps(promoted, indent=2) + "\n")
     append_attempt_log(promoted, notes=notes)
     print(f"promoted attempt {attempt} -> {FINAL_PATH}")
+    print(f"promoted reference green px: {promoted['green_content']['promoted_reference_green_pixels']}")
 
 
 def main() -> None:
