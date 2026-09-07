@@ -573,11 +573,22 @@ def check_attempt_cap(attempt: int) -> None:
     `CUBLAS_WORKSPACE_CONFIG=:4096:8` stays set, to test round 10's own
     hypothesis that `--deterministic` forcing non-fused kernel paths is
     what excluded coherence -- a genuinely new, untested host
-    configuration, not a re-run of round 10's fresh-seed sweep."""
-    if not (1 <= attempt <= 76):
+    configuration, not a re-run of round 10's fresh-seed sweep.
+
+    Round 12 (T-0317 continuation: @DennieSeth's decision on round 11's own
+    probe finding -- CUBLAS_WORKSPACE_CONFIG, present in both of rounds
+    10-11's failing regimes and absent from the only regime that ever
+    produced attempt 39's coherent visual, is the sharper suspect) spends a
+    tenth fresh 8-attempt budget, attempts 77-84, on top of rounds 1-11's
+    spent 1-76. ComfyUI has been restored to the exact baseline regime that
+    produced attempt 39: no `--deterministic`, no `CUBLAS_WORKSPACE_CONFIG`
+    set at all. Eleven rounds have exhausted the parameter space -- the
+    only variable left is the seed -- so this is a bounded reroll capped at
+    8 fresh seeds, not a re-run of round 6's seed+weight sweep."""
+    if not (1 <= attempt <= 84):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 11 adds attempts 69..76 on top of "
-            "rounds 1-10's spent 1..68 -- refusing to run a 77th attempt"
+            "attempt cap is 8 per round (DL-21); round 12 adds attempts 77..84 on top of "
+            "rounds 1-11's spent 1..76 -- refusing to run an 85th attempt"
         )
 
 
