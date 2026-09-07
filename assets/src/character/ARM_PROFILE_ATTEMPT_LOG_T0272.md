@@ -1484,3 +1484,112 @@ off, which this agent cannot do via the ComfyUI HTTP API alone).
 `.gitignore` check (round 11): `git check-ignore -v` against all three of
 this round's evidence frames returns nothing, so no `.gitignore` change was
 needed to commit them either.
+| 77 | 500009 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 36.1 | FAIL | no | round 12 (T-0317): seed reroll 1/8 under restored CUBLAS-baseline regime (no --deterministic, no CUBLAS_WORKSPACE_CONFIG), attempt-39 recipe otherwise |
+| 78 | 500017 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 27.1 | PASS | no | round 12 (T-0317): seed reroll 2/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 79 | 500023 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | PASS | no | round 12 (T-0317): seed reroll 3/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 80 | 500029 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 12 (T-0317): seed reroll 4/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 81 | 500041 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 12 (T-0317): seed reroll 5/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 82 | 500051 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 12 (T-0317): seed reroll 6/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 83 | 500063 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 12 (T-0317): seed reroll 7/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 84 | 500077 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.2 | PASS | no | round 12 (T-0317): seed reroll 8/8 (final, budget exhausted after this) under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+
+## Round 12 (T-0317, attempts 77-84): baseline regime restored, full 8-seed reroll spent -- zero coherent frames, and the CUBLAS_WORKSPACE_CONFIG hypothesis is now weakened, not confirmed
+
+`@DennieSeth`'s decision, acting on round 11's own narrowed finding: restore
+ComfyUI to the exact baseline regime that produced attempt 39 (no
+`--deterministic`, no `CUBLAS_WORKSPACE_CONFIG` at all), spend the only
+variable left -- the seed -- against an 8-attempt bound, and ship the first
+coherent frame. **Precondition confirmed before generating anything**: `GET
+/system_stats` returned `"argv": ["main.py", "--listen", "0.0.0.0", "--port",
+"8188"]` (no `--deterministic`) and `vram_free` 7.44GB (model unloaded,
+matching the baseline's own headroom); `CUBLAS_WORKSPACE_CONFIG`'s absence
+cannot be read from the HTTP API and is taken on the round's own instruction,
+per every prior round's identical constraint. `check_attempt_cap` opened a
+fresh 77-84 budget (TDD RED/GREEN pair `test_check_attempt_cap_allows_a_fresh_round_12_budget`
+/ implementation, both committed before any generation).
+
+**Eight fresh seeds (500009, 500017, 500023, 500029, 500041, 500051, 500063,
+500077), the established recipe otherwise** -- secondary reference
+`player_profile_costume_reference_T0317.png` at weight 0.10, primary front
+sheet 0.6, pose LoRA 0.6, ControlNet 1.0/1.0, `--secondary-no-invert`. Each
+`main_384.png` opened directly, judged on coherence first, mechanical gate
+second:
+
+- **Attempt 77** (seed 500009): gate FAIL (29 fg px). Vertical
+  black/green/white striped abstraction, the same failure family rounds
+  10-11 saw repeatedly. Not a person.
+- **Attempt 78** (seed 500017, `attempt_78_gate_passing_but_incoherent_T0317.png`):
+  gate **PASSED** (88 fg px) -- a colourful red/yellow/cyan circuit-board
+  pattern, no legible head/torso/limb structure. Another instance of the
+  "gate-passing but incoherent" trap (attempts 41, 52, 53, 65, 73).
+- **Attempt 79** (seed 500023): gate PASSED (68 fg px). A symmetric,
+  front-facing blue/red/white block abstraction -- dominant colour is blue,
+  not green, and bilaterally symmetric rather than side-facing.
+- **Attempt 80** (seed 500029): gate FAIL (11 fg px). Horizontal-banded
+  dark abstraction, olive/black, no figure.
+- **Attempt 81** (seed 500041): gate FAIL (13 fg px). A symmetric,
+  robot-like white/green form, front-facing, not a side profile.
+- **Attempt 82** (seed 500051): gate FAIL (4 fg px). Front-facing symmetric
+  shape with a large flat green rectangle, orange/teal accents, no
+  recognisable figure.
+- **Attempt 83** (seed 500063): gate FAIL (5 fg px). Vertical striped
+  blue/green/black abstraction, same failure family as attempt 77.
+- **Attempt 84** (seed 500077, final attempt in this round's budget,
+  `attempt_84_seed_reroll_final_still_incoherent_T0317.png`): gate
+  **PASSED**, the round's highest foreground count (124 fg px). A
+  black/white striped abstraction against a blue-teal background, faint
+  green accents only -- still no legible head, torso, or limb structure,
+  still not side-facing.
+
+**Zero of eight attempts produced an attempt-39-class coherent, side-facing,
+green-legible figure. Not promoted. Budget (77-84) fully spent, no
+extension taken**, per the round's own stop condition ("stop and report" at
+8 seeds, "do not extend the budget"). `player_profile_keyframe_hybrid_T0272.png`
+remains absent from `assets/final/character/`.
+
+**What this round adds.** Three of eight seeds passed the mechanical gate
+(78, 79, 84) -- a higher pass rate than round 11's partial-determinism sweep
+(2/6) or round 10's full-determinism sweep (2/6) -- but every gate-passing
+frame was, on visual inspection, exactly the "gate-passing but incoherent"
+failure mode this card has now documented seven times across four regimes.
+Passing the mechanical gate is evidently uncorrelated with coherence at this
+sample size; it screens out totally-blank renders, not incoherent ones.
+
+**This weakens, rather than confirms, round 11's own `CUBLAS_WORKSPACE_CONFIG`
+hypothesis.** The baseline regime -- the one round 11 named as "the only
+regime that ever produced attempt 39" -- was restored exactly, and produced
+zero coherent frames across 8 fresh seeds, the same outcome as both pinned
+regimes (rounds 10 and 11) before it. Four regimes have now been sampled
+against this graph (uncontrolled baseline: 1 coherent hit in dozens of
+attempts across rounds 1-8, including attempt 39; full `--deterministic` +
+`CUBLAS_WORKSPACE_CONFIG`: 0/6; partial `CUBLAS_WORKSPACE_CONFIG` only: 0/8
+combined probe+reroll; restored baseline: 0/8) and the honest reading is that
+attempt 39 was not evidence of a reliably-coherent regime at all -- it was a
+single rare success inside a regime that, sampled at n=8 here, looks exactly
+as unreliable as the two pinned ones. The determinism-flag hypothesis is not
+falsified (n=8 is a small sample against whatever attempt 39's true hit rate
+is), but it no longer has positive evidence behind it either: restoring the
+named "good" regime did not reproduce anything like attempt 39's coherence.
+
+**This round's own stop condition is met and is taken at face value, not
+extended.** The card's instruction was explicit: "if a reasonable number of
+seeds (say 8) yields none, stop and report -- do not extend." Eight distinct
+seeds were sampled, three passed the mechanical gate, and all eight were
+visually incoherent. Continuing to roll further seeds within this round would
+be exactly the open-ended sweep the card's "Do not" section forbids.
+
+**This card's remaining routes are unchanged from every review since round
+6, and are still human calls, not implementer calls.** Twelve rounds and 84
+attempts have now been spent: (a) descope the keyframe promotion to a
+follow-up and bank the reference -- sound, provenanced, measured, and
+unaffected by any of this across twelve rounds; or (b) treat attempt 39
+itself as a rare, currently-unreproducible draw from an inherently unreliable
+graph (dual-IPAdapter + ControlNet + two stacked LoRAs, a combination this
+card's own round 3 already showed is fragile) and scope a structural redesign
+of the graph rather than further seed/regime sampling, since four regimes at
+a combined n>20 fresh seeds have now produced exactly zero repeats of
+attempt 39's coherence.
+
+`.gitignore` check (round 12): `git check-ignore -v` against both of this
+round's evidence frames returns nothing, so no `.gitignore` change was
+needed to commit them either.

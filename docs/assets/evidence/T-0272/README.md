@@ -653,3 +653,66 @@ regime, rather than something to reproduce on demand under a pinned one.
 `.gitignore` check (round 11): `git check-ignore -v` against all three of
 this round's evidence frames returns nothing, so no `.gitignore` change was
 needed to commit them either.
+
+## Round 12 (T-0317, attempts 77-84): baseline regime restored, full 8-seed reroll spent -- zero coherent frames
+
+`@DennieSeth`'s decision: restore ComfyUI to the exact regime that produced
+attempt 39 (no `--deterministic`, no `CUBLAS_WORKSPACE_CONFIG` at all) and
+spend a bounded 8-seed reroll, stopping at the first usable coherent frame.
+Confirmed before generating: `GET /system_stats` `argv` carries no
+`--deterministic` flag, `vram_free` 7.44GB (model unloaded). `check_attempt_cap`
+opened a fresh 77-84 budget.
+
+Eight fresh seeds (500009, 500017, 500023, 500029, 500041, 500051, 500063,
+500077), the established recipe otherwise (secondary reference
+`player_profile_costume_reference_T0317.png` at weight 0.10, primary 0.6,
+pose LoRA 0.6, ControlNet 1.0/1.0, `--secondary-no-invert`). Every one judged
+by opening the image, not by the mechanical gate alone:
+
+- Attempt 77 (500009): vertical black/green/white striped abstraction, the
+  same failure family rounds 10-11 saw repeatedly. Gate **failed** (29 fg px).
+- **`attempt_78_gate_passing_but_incoherent_T0317.png`** (500017): a
+  colourful red/yellow/cyan circuit-board pattern, no legible head/torso/limb
+  structure. Gate **passed** (88 fg px) -- another instance of the
+  "gate-passing but incoherent" trap attempts 41/52/53/65/73 already
+  demonstrated.
+- Attempt 79 (500023): a symmetric, front-facing blue/red/white block
+  abstraction -- dominant colour blue, not green, bilaterally symmetric
+  rather than side-facing. Gate **passed** (68 fg px).
+- Attempt 80 (500029): horizontal-banded dark olive/black abstraction, no
+  figure. Gate **failed** (11 fg px).
+- Attempt 81 (500041): a symmetric, robot-like white/green form, front-facing,
+  not a side profile. Gate **failed** (13 fg px).
+- Attempt 82 (500051): front-facing symmetric shape with a large flat green
+  rectangle and orange/teal accents, no recognisable figure. Gate **failed**
+  (4 fg px).
+- Attempt 83 (500063): vertical striped blue/green/black abstraction, same
+  failure family as attempt 77. Gate **failed** (5 fg px).
+- **`attempt_84_seed_reroll_final_still_incoherent_T0317.png`** (500077,
+  final attempt in this round's budget): the round's highest foreground count
+  (124 fg px), a black/white striped abstraction against a blue-teal
+  background with only faint green accents -- still no legible head, torso,
+  or limb structure, still not side-facing. Gate **passed**.
+
+**Zero of eight attempts produced an attempt-39-class coherent, side-facing,
+green-legible figure.** Budget fully spent; no extension taken, per the
+round's own stop condition. `player_profile_keyframe_hybrid_T0272.png`
+remains absent from `assets/final/character/`.
+
+**What this round adds.** Three of eight seeds passed the mechanical gate
+(78, 79, 84), a higher pass rate than either pinned regime's own sweep, but
+every gate-passing frame was, on inspection, the same "gate-passing but
+incoherent" failure mode documented seven times now across four regimes --
+the gate screens blank renders, not incoherent ones. More importantly, this
+weakens rather than confirms round 11's own `CUBLAS_WORKSPACE_CONFIG`
+hypothesis: restoring the exact regime that produced attempt 39 did not
+reproduce anything like its coherence across 8 fresh seeds, the same outcome
+as both pinned regimes before it. Four regimes now sampled (uncontrolled
+baseline: 1 coherent hit across rounds 1-8; full determinism: 0/6; partial
+determinism: 0/8; restored baseline: 0/8) suggest attempt 39 was a rare draw
+from an inherently fragile graph (dual-IPAdapter + ControlNet + two stacked
+LoRAs), not evidence of a reliably-coherent regime waiting to be restored.
+
+`.gitignore` check (round 12): `git check-ignore -v` against both of this
+round's evidence frames returns nothing, so no `.gitignore` change was
+needed to commit them either.
