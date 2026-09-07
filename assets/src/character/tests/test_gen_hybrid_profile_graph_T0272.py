@@ -300,11 +300,23 @@ def test_check_attempt_cap_allows_a_fresh_round_5_budget() -> None:
     """Round 5 ("vivid green on the profile") gets its own fresh 8-attempt
     DL-21 budget on top of rounds 1-4's spent 1..24 plus the round-4
     defect-fix continuation's 25..28 -- attempts 29..36, not a re-run of
-    anything already spent."""
+    anything already spent. (Attempt 37 is no longer expected to raise here --
+    round 6 (T-0317) opens its own fresh budget starting there; see
+    test_check_attempt_cap_allows_a_fresh_round_6_budget for that boundary.)"""
     gen.check_attempt_cap(29)
     gen.check_attempt_cap(36)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_6_budget() -> None:
+    """Round 6 (T-0317: the generated green-costume side reference wired into
+    the secondary IP-Adapter slot, replacing the pose-only T-0273 photograph
+    and the colour-thin derived crop both tried in rounds 3-5) gets its own
+    fresh 8-attempt DL-21 budget on top of rounds 1-5's spent 1..36 --
+    attempts 37..44, not a re-run of anything already spent."""
+    gen.check_attempt_cap(37)
+    gen.check_attempt_cap(44)  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(37)
+        gen.check_attempt_cap(45)
 
 
 def test_prepare_secondary_reference_inverts_when_requested(tmp_path) -> None:
