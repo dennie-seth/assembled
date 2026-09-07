@@ -137,6 +137,7 @@ from char_gen.cutout import (  # noqa: E402
     apply_cutout_masks,
     downscale_mask,
     extract_foreground_mask,
+    force_border_background_to_fill,
 )
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
@@ -194,6 +195,20 @@ def build_positive_prompt(
     green_emphasis = (
         "(vivid saturated institutional green costume colour:1.4), " if emphasize_green else ""
     )
+    # Round 7 (T-0317) tried appending a "no grey background, no multi-tone
+    # background" term here (both mid-string and, after that regressed, tail-
+    # appended to stay clear of CLIP's ~77-token truncation point). Neither
+    # placement worked: attempts 46-48 proved the text edit itself, not token
+    # count or the secondary IP-Adapter weight, was what destabilized seed
+    # 31416's composition -- 46 (secondary weight 0.1), 47 (0.05), and 48 (no
+    # secondary reference at all) rendered byte-for-byte the SAME incoherent
+    # frame, meaning the secondary reference had zero effect and the prompt
+    # text alone fully re-routed the diffusion trajectory. Reverted to the
+    # exact wording that produced attempt 39's coherent (if gate-failing)
+    # visual; see ARM_PROFILE_ATTEMPT_LOG_T0272.md's round-7 section for the
+    # full isolation. Any future attempt to touch this wording should re-run
+    # attempt 39's own recipe (seed 31416, secondary weight 0.1) first and
+    # confirm the visual survives before trusting a gate-pass number alone.
     return (
         f"{TRIGGER_TOKEN}, {pose_token}pixel art side-profile base pose, "
         f"single standing figure seen from the side, facing {FACING}, flat side-on "
@@ -240,6 +255,16 @@ def prepare_secondary_reference(src_path: Path, dest_path: Path, needs_invert: b
         dest_path.write_bytes(src_path.read_bytes())
 
 
+# Round 7 (T-0317) tried extending this with background-defect terms (first
+# stacked synonyms, then a trimmed, deduped, tail-appended version to stay
+# clear of CLIP's ~77-token truncation point). Neither survived: attempts
+# 46-48 proved ANY edit to this string reroutes seed 31416's whole diffusion
+# trajectory regardless of length -- the secondary IP-Adapter weight (0.1,
+# 0.05, and no reference at all) made zero visible difference across those
+# three attempts, all byte-identical, while the earlier text edit alone had
+# already fully changed the composition from attempt 39's coherent visual.
+# Reverted to the exact wording that produced attempt 39's result; see
+# ARM_PROFILE_ATTEMPT_LOG_T0272.md's round-7 section for the full isolation.
 PROFILE_NEGATIVE = (
     IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric front-facing pose, "
     "three-quarter view, back view, both shoulders equally visible, washed out colour, "
@@ -497,12 +522,73 @@ def check_attempt_cap(attempt: int) -> None:
 
     Round 5 ("vivid green on the profile") spends a fourth fresh 8-attempt
     budget, attempts 29-36, on top of rounds 1-4's 1-24 and the round-4
-    defect-fix continuation's 25-28."""
-    if not (1 <= attempt <= 36):
+    defect-fix continuation's 25-28.
+
+    Round 6 (T-0317: the generated green-costume side reference wired into
+    the secondary IP-Adapter slot) spends a fifth fresh 8-attempt budget,
+    attempts 37-44, on top of rounds 1-5's spent 1-36. This is new
+    conditioning input -- a reference that finally carries both the side pose
+    and the green coat, unlike the pose-only T-0273 photograph (round 3) and
+    the colour-thin derived crop (round 4-5) -- not a re-run of the same
+    §24-e parameter sweep.
+
+    Round 7 (T-0317 continuation, per round 6's own reviewer FAIL and its
+    "what a follow-up would need to try" note) spends a sixth fresh
+    8-attempt budget, attempts 45-52, on top of rounds 1-6's spent 1-44: two
+    specific, previously-untried levers on round 6's own two failure
+    modes -- fine-stepping the secondary IP-Adapter weight between attempt
+    39's 0.1 (coherent, gate-fails) and attempt 41's 0.15-0.3 (gate-passes,
+    incoherent) while holding attempt 39's own seed (31416) fixed, and the
+    strengthened "no grey background, no multi-tone background" prompt term
+    to address the multi-toned-background render that starved attempt 39's
+    cutout -- not a re-run of round 6's own seed+weight sweep. Round 8
+    (attempt 52) spent the last of that budget on the reviewer's own named
+    determinism precondition test (real VRAM headroom via ComfyUI's own
+    `/free` endpoint), which did not restore reproducibility.
+
+    Round 9 (T-0317 continuation: PR #350/T-0319's `force_border_background_to_fill`
+    is now merged into this branch and wired into this generator's own
+    per-frame cutout, see `build_indexed_cell`) spends a seventh fresh
+    8-attempt budget, attempts 53-60, on top of rounds 1-8's spent 1-52:
+    reproducing attempt 39's exact recipe against a forced-black render
+    background is a background-fix re-test of a defect this round's own new
+    input (the fix, not new weights) targets -- not a re-run of round 6's
+    seed+weight sweep. Round 9 spent only attempts 53-54 of this budget;
+    54-53 confirmed byte-identical, both diverging from attempt 39's own
+    preserved render -- the reproducibility defect is session-scoped, not
+    seed-scoped.
+
+    Round 10 (T-0317 continuation: ComfyUI restarted with `--deterministic`
+    and `CUBLAS_WORKSPACE_CONFIG=:4096:8` set, per round 9's own named next
+    probe) spends an eighth fresh 8-attempt budget, attempts 61-68, on top
+    of rounds 1-9's spent 1-60: the determinism flags pin *future* server
+    sessions, not resurrect the one that produced attempt 39's coherent
+    visual, so this round generates fresh rather than chasing attempt 39's
+    exact recipe again -- not a re-run of round 6's seed+weight sweep.
+
+    Round 11 (T-0317 continuation: `@DennieSeth`'s T-0324 decision -- a
+    bounded probe under a new host regime, then ship) spends a ninth fresh
+    8-attempt budget, attempts 69-76, on top of rounds 1-10's spent 1-68.
+    ComfyUI has been restarted again with `--deterministic` REMOVED while
+    `CUBLAS_WORKSPACE_CONFIG=:4096:8` stays set, to test round 10's own
+    hypothesis that `--deterministic` forcing non-fused kernel paths is
+    what excluded coherence -- a genuinely new, untested host
+    configuration, not a re-run of round 10's fresh-seed sweep.
+
+    Round 12 (T-0317 continuation: @DennieSeth's decision on round 11's own
+    probe finding -- CUBLAS_WORKSPACE_CONFIG, present in both of rounds
+    10-11's failing regimes and absent from the only regime that ever
+    produced attempt 39's coherent visual, is the sharper suspect) spends a
+    tenth fresh 8-attempt budget, attempts 77-84, on top of rounds 1-11's
+    spent 1-76. ComfyUI has been restored to the exact baseline regime that
+    produced attempt 39: no `--deterministic`, no `CUBLAS_WORKSPACE_CONFIG`
+    set at all. Eleven rounds have exhausted the parameter space -- the
+    only variable left is the seed -- so this is a bounded reroll capped at
+    8 fresh seeds, not a re-run of round 6's seed+weight sweep."""
+    if not (1 <= attempt <= 84):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 5 adds attempts 29..36 on top of "
-            "rounds 1-4's spent 1..24 and the round-4 defect-fix continuation's 25..28 -- "
-            "refusing to run a 37th attempt"
+            "attempt cap is 8 per round (DL-21); round 12 adds attempts 77..84 on top of "
+            "rounds 1-11's spent 1..76 -- refusing to run an 85th attempt"
         )
 
 
@@ -594,9 +680,19 @@ def build_indexed_cell(
     profile reference pulling the pose off-rig, round 3's Test D) is still
     recovered in full, provided it is the single largest surviving blob."""
     indexed = quantize_to_palette(raw_cell, palette)
+    # T-0317 round 9: force this render's OWN background to a genuinely dark
+    # fill before segmenting it -- the same primitive T-0319 wired into
+    # gen_hybrid_walk_T0259's identity-reference crop, applied here to this
+    # generator's own per-frame cutout instead. Attempt 39's coherent,
+    # green-legible visual gate-failed at 27-39 fg px because the render's
+    # own background came out multi-toned grey rather than the prompt's
+    # requested solid black, starving border_flood_background_mask's
+    # classification -- correcting it first removes that starvation
+    # regardless of which future attempt's render carries the same defect.
+    corrected_384 = force_border_background_to_fill(main_384, CUTOUT_OKLAB_TOLERANCE)
     fg_mask = downscale_mask(
         extract_foreground_mask(
-            main_384, CUTOUT_OKLAB_TOLERANCE, points_norm, BACKGROUND_MASK_MARGIN_FRAC
+            corrected_384, CUTOUT_OKLAB_TOLERANCE, points_norm, BACKGROUND_MASK_MARGIN_FRAC
         ),
         FINAL_CELL_PX,
     )

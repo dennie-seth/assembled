@@ -317,3 +317,103 @@ costume design pulled against the green coat about as much as T-0273's
 anonymous photographs did) — see that log for the full result. Nothing under
 `assets/final/character/` was promoted from these attempts; this entry
 records the derived *reference* only, not a shipped keyframe.
+
+**Generated, [T-0317](tasks/T-0317.md) (2026-09-07):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/src/concept/player_profile_costume_reference_T0317.png` | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.7) — plain txt2img, no ControlNet, no IP-Adapter, no identity/pose LoRA, same recipe shape as [T-0209](tasks/T-0209.md)'s own concept sheet | CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA) | "flat side-on character concept reference sheet, orthographic game asset, no perspective, no vanishing point, one reference panel: full-body side profile standing pose, figure's face and nose seen in strict profile facing right, one shoulder visible, near arm bent forward, far arm hidden behind the torso. Player character: 40px tall humanoid figure in a 48x48 cell, wearing a long vivid institutional green cloth coat (the coat itself is green, not black, not grey), concrete-grey head and skin tones, deep shadow values on the coat's own folds. Soviet brutalist interior aesthetic, muted desaturated palette for the environment only, the coat itself stays vivid green, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, no background elements, solid flat black background only. Game asset reference sheet style, pixel art scale reference, figure silhouette study" (full negative prompt in the `.provenance.json` sidecar) | 31700 |
+
+This card's own feasibility gate: T-0272's own §24-e stack (ControlNet +
+IP-Adapter + identity/pose LoRA) proved, across 36 attempts and 5 rounds,
+that it cannot hold both a side-facing pose and legible institutional-green
+costume colour at once — round 3's own finding is that ControlNet's
+structural conditioning dominates the text prompt's camera-angle request.
+This generator carries neither node, so prompt steering has authority here
+it never had under §24-e. 3 attempts (not a sweep,
+`assets/src/concept/ARM_COSTUME_REFERENCE_ATTEMPT_LOG_T0317.md`): attempt 1
+drifted into an illustrated cityscape scene; attempt 2 fixed framing but
+rendered fully monochrome; attempt 3 combined both fixes and produced a
+genuine 3-panel front/side/back turnaround with a strict side profile in a
+vivid institutional green cloth coat. The committed reference is that
+turnaround's own middle (side) panel, cropped and cleaned via
+`derive_profile_style_reference_T0272.extract_panel_reference` (T-0272's own
+border-flood + largest-component function, reused directly) — 48,547 green
+pixels (`char_gen.green_content`'s `g > r+8 and g > b+8 and g < 160`
+predicate, T-0272 round 5's own methodology), comfortably past round 5's
+6,000-6,900 confirmed-match band and its 1.0-1.7% noise floor alike.
+
+Wired as the secondary IP-Adapter reference in
+`gen_hybrid_profile_T0272.py` (`--secondary-concept
+assets/src/concept/player_profile_costume_reference_T0317.png
+--secondary-no-invert` — its own background is already forced solid black
+by `extract_panel_reference`, so inverting it again would reintroduce round
+3 Test D's own light-background bleed) across a fresh round-6 attempt budget
+(37-44). No attempt in that budget combined a clean per-pixel cutout with a
+genuinely legible, side-facing figure at 40px — see
+`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 6 (T-0317)" section and
+`docs/assets/evidence/T-0272/README.md`'s own T-0317 section for the full
+result and evidence frames.
+
+**Round 7 (attempts 45-51):** the round-6 reviewer named two specific,
+untried levers — a stronger black-background prompt term, and fine-stepping
+the secondary weight between 0.1 and 0.15 while holding seed 31416 fixed.
+Both were tried and both are exhausted: the prompt-term lever is retracted
+after attempts 45-48 proved any edit to the prompt text (independent of the
+secondary reference or its weight) fully rerouted the seed's own
+composition, and the weight-stepping lever was undermined when attempt 50
+— an exact re-run of attempt 39's own recipe — failed to reproduce attempt
+39's recorded result at all, from byte-identical inputs. This pipeline's
+seed does not guarantee cross-session reproducibility (a plausible cause:
+`system_stats` showed ~28MB free VRAM against a ~5.9GB torch allocation on
+an 8GB card, tight enough to trigger per-job fallback to different
+attention/memory code paths), which every round's methodology since round 3
+has implicitly assumed. See `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 7
+(T-0317)" section and `docs/assets/evidence/T-0272/README.md`'s own round-7
+section for the full isolation and evidence frames. Nothing under
+`assets/final/character/` was promoted from either round; this entry
+records the generated *reference* only, exactly as the T-0272 round-4 entry
+above records its own derived reference without a shipped keyframe.
+
+**Round 8 (attempt 52, final attempt in this card's own budget):** the
+round-7 reviewer's own suggested precondition test — real VRAM headroom,
+then an exact re-run of attempt 39/50's recipe — was carried out via
+ComfyUI's `POST /free` endpoint (no shell access to the host to restart the
+process with different launch flags, but `/free` unloads resident models to
+the same effect). `torch_vram_total` dropped to 33MB and `vram_free` rose to
+~7.36GB, roughly 260x round 7's own ~28MB reading. The identical recipe
+(seed 31416, secondary weight 0.10, unchanged prompt), run immediately
+after and confirmed a full recompute (`gpu_seconds` 51.1, not a cache hit),
+still produced a fourth distinct composition — gate-passing (144 fg px) but
+an incoherent glowing-silhouette abstraction, not a legible figure. Real
+VRAM headroom does not rescue reproducibility; the VRAM-pressure hypothesis
+is not the (whole) explanation. See `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
+"Round 8 (T-0317)" section and `docs/assets/evidence/T-0272/README.md`'s own
+round-8 section. This card's full attempt-cap budget (1-52) is now spent;
+nothing under `assets/final/character/` was promoted. The generated
+reference above is unaffected and remains this card's delivered asset.
+
+**Round 9 (attempts 53-54, fresh 53-60 budget):** PR #350/T-0319's
+`force_border_background_to_fill` — merged into this branch — is now wired
+into `gen_hybrid_profile_T0272.build_indexed_cell`, correcting this
+generator's own rendered frame background before segmentation (previously
+only the primary identity-reference crop inherited the fix, via the shared
+`crop_identity_reference` import). Re-cutting attempt 39's own preserved
+render through the fixed path directly (no GPU spend) measured 36 fg px
+before, 34 after — materially unchanged, matching T-0319's own finding that
+this class of fix cannot rescue pixel content already baked into an
+already-sampled frame. A live re-run of attempt 39/50/52's exact recipe
+(attempt 53) passed the mechanical gate (74 fg px) but rendered a fifth
+distinct, incoherent composition. A second re-run after `POST /free`
+(attempt 54, confirmed full recompute, `gpu_seconds` 54.1) was
+byte-identical to attempt 53 — new evidence that this pipeline's
+nondeterminism is session-scoped, not seed-scoped: identical within one
+ComfyUI server lifetime, but different across the lifetime that produced
+attempt 39's original coherent visual. See
+`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 9 (T-0317)" section and
+`docs/assets/evidence/T-0272/README.md`'s own round-9 section. Per the
+card's own explicit stop condition, no further attempts were spent
+sweeping for a coherent result; six of this round's eight budgeted
+attempts (55-60) are unspent. Nothing under `assets/final/character/` was
+promoted. The generated reference above is unaffected and remains this
+card's delivered asset.
