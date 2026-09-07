@@ -4,6 +4,7 @@ _compute_hashes.js
 _wf_canon.json
 # Python venv and cache
 .venv/
+.venv_test/
 __pycache__/
 # Temporary planning/scratch files
 conftest_props_addition.py

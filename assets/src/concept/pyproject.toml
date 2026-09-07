@@ -16,5 +16,8 @@ dev = [
     "numpy==2.2.5",
 ]
 
+[tool.setuptools]
+py-modules = []
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
