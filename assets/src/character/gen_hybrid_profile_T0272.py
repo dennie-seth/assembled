@@ -194,12 +194,20 @@ def build_positive_prompt(
     green_emphasis = (
         "(vivid saturated institutional green costume colour:1.4), " if emphasize_green else ""
     )
-    # Round 7 (T-0317): the "no grey background, no multi-tone background" fix is
-    # appended at the very END, not spliced into the middle -- CLIP truncates at 77
-    # BPE tokens and this prompt is already close to that budget (see PROFILE_NEGATIVE's
-    # own comment on attempt 45's regression), so inserting new terms earlier pushes
-    # existing, load-bearing terms ("no perspective, no vanishing point, no text, no UI")
-    # further toward the truncation boundary instead of the new, less-tested ones.
+    # Round 7 (T-0317) tried appending a "no grey background, no multi-tone
+    # background" term here (both mid-string and, after that regressed, tail-
+    # appended to stay clear of CLIP's ~77-token truncation point). Neither
+    # placement worked: attempts 46-48 proved the text edit itself, not token
+    # count or the secondary IP-Adapter weight, was what destabilized seed
+    # 31416's composition -- 46 (secondary weight 0.1), 47 (0.05), and 48 (no
+    # secondary reference at all) rendered byte-for-byte the SAME incoherent
+    # frame, meaning the secondary reference had zero effect and the prompt
+    # text alone fully re-routed the diffusion trajectory. Reverted to the
+    # exact wording that produced attempt 39's coherent (if gate-failing)
+    # visual; see ARM_PROFILE_ATTEMPT_LOG_T0272.md's round-7 section for the
+    # full isolation. Any future attempt to touch this wording should re-run
+    # attempt 39's own recipe (seed 31416, secondary weight 0.1) first and
+    # confirm the visual survives before trusting a gate-pass number alone.
     return (
         f"{TRIGGER_TOKEN}, {pose_token}pixel art side-profile base pose, "
         f"single standing figure seen from the side, facing {FACING}, flat side-on "
@@ -207,8 +215,7 @@ def build_positive_prompt(
         f"{green_emphasis}institutional green coat, hooded, white gloves, same uniform and "
         "same equipment loadout, upright standing posture, solid flat black background, "
         "value-separated pixel art silhouette, clean readable pixel outline, vivid saturated "
-        "green costume colour, no perspective, no vanishing point, no text, no UI, "
-        "no grey background, no multi-tone background"
+        "green costume colour, no perspective, no vanishing point, no text, no UI"
     )
 
 
@@ -247,20 +254,21 @@ def prepare_secondary_reference(src_path: Path, dest_path: Path, needs_invert: b
         dest_path.write_bytes(src_path.read_bytes())
 
 
+# Round 7 (T-0317) tried extending this with background-defect terms (first
+# stacked synonyms, then a trimmed, deduped, tail-appended version to stay
+# clear of CLIP's ~77-token truncation point). Neither survived: attempts
+# 46-48 proved ANY edit to this string reroutes seed 31416's whole diffusion
+# trajectory regardless of length -- the secondary IP-Adapter weight (0.1,
+# 0.05, and no reference at all) made zero visible difference across those
+# three attempts, all byte-identical, while the earlier text edit alone had
+# already fully changed the composition from attempt 39's coherent visual.
+# Reverted to the exact wording that produced attempt 39's result; see
+# ARM_PROFILE_ATTEMPT_LOG_T0272.md's round-7 section for the full isolation.
 PROFILE_NEGATIVE = (
     IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric front-facing pose, "
-    "back view, both shoulders equally visible, washed out colour, pale colour, desaturated, "
-    "faded costume, grayscale, multi-toned background"
+    "three-quarter view, back view, both shoulders equally visible, washed out colour, "
+    "pale colour, desaturated, faded costume, grayscale"
 )
-# Round 7 (T-0317): IDLE_MAIN_NEGATIVE is already 67 words on its own, shared verbatim
-# across T-0228/T-0249/T-0252/T-0259 (out of this card's scope to trim), and CLIP's
-# text encoder truncates at 77 BPE tokens -- attempt 45 (this round) reused attempt
-# 39's exact seed/graph but regressed from a coherent visual to an incoherent
-# outline-and-glow render purely from a longer negative prompt, the signature of a
-# truncation-order shift, not a deliberate style change. This addition therefore
-# drops the two terms it used to duplicate from IDLE_MAIN_NEGATIVE outright
-# ("three-quarter view", "grey background") rather than adding new synonyms
-# ("gray background", "mottled/patchy/textured background") on top of them.
 
 
 def build_negative_prompt(emphasize_green: bool = False) -> str:

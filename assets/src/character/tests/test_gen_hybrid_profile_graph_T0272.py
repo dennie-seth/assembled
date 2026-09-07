@@ -336,29 +336,36 @@ def test_check_attempt_cap_allows_a_fresh_round_7_budget() -> None:
         gen.check_attempt_cap(53)
 
 
-def test_positive_prompt_forbids_grey_and_multitone_background() -> None:
-    """Round 6's attempt 39 (seed 31416, secondary weight 0.1) was the
-    round's best coherent, green-legible visual, but its own render came out
-    with a multi-toned grey background rather than the prompt's existing
-    "solid flat black background" phrase -- `border_flood_background_mask`
-    warned at generation time that the frame's border colours spanned
-    13-33x its own classification tolerance. This is untried in round 6
-    (named in ARM_PROFILE_ATTEMPT_LOG_T0272.md's own "what a follow-up would
-    need to try" note): name the failure mode directly, not just its
-    opposite ("solid flat black")."""
-    assert "no grey background" in gen.PROFILE_PROMPT
-    assert "no multi-tone background" in gen.PROFILE_PROMPT
+def test_positive_prompt_matches_the_known_good_round_6_baseline() -> None:
+    """Round 7 (T-0317) tried adding a "no grey background, no multi-tone
+    background" term here, in two different placements. Both regressed:
+    attempts 46-48 proved the text edit itself -- not token count, not the
+    secondary IP-Adapter weight -- fully rerouted seed 31416's diffusion
+    trajectory. 46 (secondary weight 0.1), 47 (0.05), and 48 (no secondary
+    reference at all) rendered byte-identical incoherent frames, so the
+    weight had zero effect once the prompt text changed. This locks the
+    wording that produced attempt 39's coherent (if gate-failing) visual so
+    a future edit here is a deliberate, re-verified choice, not an
+    accidental one -- see ARM_PROFILE_ATTEMPT_LOG_T0272.md's round-7
+    section for the full isolation."""
+    assert gen.PROFILE_PROMPT == (
+        "sbrutalistplayer, sbrutalistprofilepose, pixel art side-profile base pose, "
+        "single standing figure seen from the side, facing right, flat side-on "
+        "orthographic view, exactly one figure matching the pose skeleton exactly, "
+        "institutional green coat, hooded, white gloves, same uniform and same "
+        "equipment loadout, upright standing posture, solid flat black background, "
+        "value-separated pixel art silhouette, clean readable pixel outline, vivid "
+        "saturated green costume colour, no perspective, no vanishing point, no text, no UI"
+    )
 
 
-def test_negative_prompt_forbids_grey_and_multitone_background() -> None:
-    """Companion to the positive-prompt phrase above, present unconditionally
-    (not gated behind emphasize_green, since this is a composition defect,
-    not a costume-colour one)."""
-    plain = gen.build_negative_prompt(emphasize_green=False)
-    emphasized = gen.build_negative_prompt(emphasize_green=True)
-    for terms_prompt in (plain, emphasized):
-        assert "grey background" in terms_prompt
-        assert "multi-toned background" in terms_prompt
+def test_negative_prompt_matches_the_known_good_round_6_baseline() -> None:
+    """Companion lock to the positive-prompt test above."""
+    assert gen.PROFILE_NEGATIVE == (
+        gen.IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric "
+        "front-facing pose, three-quarter view, back view, both shoulders equally "
+        "visible, washed out colour, pale colour, desaturated, faded costume, grayscale"
+    )
 
 
 def test_prepare_secondary_reference_inverts_when_requested(tmp_path) -> None:
