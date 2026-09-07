@@ -199,7 +199,8 @@ def build_positive_prompt(
         f"single standing figure seen from the side, facing {FACING}, flat side-on "
         "orthographic view, exactly one figure matching the pose skeleton exactly, "
         f"{green_emphasis}institutional green coat, hooded, white gloves, same uniform and "
-        "same equipment loadout, upright standing posture, solid flat black background, "
+        "same equipment loadout, upright standing posture, solid flat pure black background, "
+        "no grey background, no multi-tone background, uniform unbroken black backdrop, "
         "value-separated pixel art silhouette, clean readable pixel outline, vivid saturated "
         "green costume colour, no perspective, no vanishing point, no text, no UI"
     )
@@ -243,7 +244,9 @@ def prepare_secondary_reference(src_path: Path, dest_path: Path, needs_invert: b
 PROFILE_NEGATIVE = (
     IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric front-facing pose, "
     "three-quarter view, back view, both shoulders equally visible, washed out colour, "
-    "pale colour, desaturated, faded costume, grayscale"
+    "pale colour, desaturated, faded costume, grayscale, grey background, gray background, "
+    "multi-toned background, mottled background, patchy background, uneven background "
+    "lighting, textured background"
 )
 
 
@@ -505,11 +508,22 @@ def check_attempt_cap(attempt: int) -> None:
     conditioning input -- a reference that finally carries both the side pose
     and the green coat, unlike the pose-only T-0273 photograph (round 3) and
     the colour-thin derived crop (round 4-5) -- not a re-run of the same
-    §24-e parameter sweep."""
-    if not (1 <= attempt <= 44):
+    §24-e parameter sweep.
+
+    Round 7 (T-0317 continuation, per round 6's own reviewer FAIL and its
+    "what a follow-up would need to try" note) spends a sixth fresh
+    8-attempt budget, attempts 45-52, on top of rounds 1-6's spent 1-44: two
+    specific, previously-untried levers on round 6's own two failure
+    modes -- fine-stepping the secondary IP-Adapter weight between attempt
+    39's 0.1 (coherent, gate-fails) and attempt 41's 0.15-0.3 (gate-passes,
+    incoherent) while holding attempt 39's own seed (31416) fixed, and the
+    strengthened "no grey background, no multi-tone background" prompt term
+    to address the multi-toned-background render that starved attempt 39's
+    cutout -- not a re-run of round 6's own seed+weight sweep."""
+    if not (1 <= attempt <= 52):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 6 adds attempts 37..44 on top of "
-            "rounds 1-5's spent 1..36 -- refusing to run a 45th attempt"
+            "attempt cap is 8 per round (DL-21); round 7 adds attempts 45..52 on top of "
+            "rounds 1-6's spent 1..44 -- refusing to run a 53rd attempt"
         )
 
 
