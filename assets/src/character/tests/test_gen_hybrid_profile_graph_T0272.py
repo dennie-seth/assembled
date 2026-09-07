@@ -344,11 +344,29 @@ def test_check_attempt_cap_allows_a_fresh_round_9_budget() -> None:
     attempt 39's exact recipe (seed 31416, secondary weight 0.10) is
     reproduced against a forced-black render background -- a background-fix
     re-test, not the round 6 seed+weight sweep. Gets its own fresh 8-attempt
-    DL-21 budget on top of rounds 1-7's spent 1..52 -- attempts 53..60."""
+    DL-21 budget on top of rounds 1-7's spent 1..52 -- attempts 53..60.
+
+    (Round 9 spent only 53-54 of this budget; see
+    test_check_attempt_cap_allows_a_fresh_round_10_budget for the next
+    boundary.)"""
     gen.check_attempt_cap(53)
     gen.check_attempt_cap(60)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_10_budget() -> None:
+    """Round 10 (T-0317: ComfyUI restarted with `--deterministic` +
+    `CUBLAS_WORKSPACE_CONFIG=:4096:8`, per round 9's own named next probe).
+    Round 9 characterized the reproducibility defect as session-scoped, not
+    seed-scoped -- attempt 39's own coherent visual came from a server
+    session that no longer exists, and the determinism flags pin *future*
+    runs, not resurrect a past one. This round is not a re-run of attempt
+    39 or the round 6 seed+weight sweep -- it is fresh generation on a
+    newly-deterministic server, so it gets its own fresh 8-attempt DL-21
+    budget on top of rounds 1-9's spent 1..60 -- attempts 61..68."""
+    gen.check_attempt_cap(61)
+    gen.check_attempt_cap(68)  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(61)
+        gen.check_attempt_cap(69)
 
 
 def test_positive_prompt_matches_the_known_good_round_6_baseline() -> None:
