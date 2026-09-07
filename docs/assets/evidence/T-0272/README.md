@@ -443,3 +443,64 @@ own authority to decide.
 `.gitignore` check (re-run for round 7): `git check-ignore -v` against the
 two new round-7 paths above returns nothing for either, so no `.gitignore`
 change was needed to commit this evidence either.
+
+## T-0317 round 9: T-0319's background fix is correctly wired, but it does not rescue this card's own defect
+
+PR #350/T-0319 merged into this branch (`6c5143d`), adding
+`char_gen.cutout.force_border_background_to_fill`. Measured before this
+round's own code change: `gen_hybrid_walk_T0259.py` already called it 6
+times; `gen_hybrid_profile_T0272.py` called it 0 times directly (the
+primary identity-reference crop inherited the fix for free via the shared
+`crop_identity_reference` import, but this generator's own rendered frame
+never had its background corrected before segmentation).
+`build_indexed_cell` now applies it to `main_384` before
+`extract_foreground_mask` runs, TDD RED/GREEN (test committed first).
+
+- **No-GPU-cost check first:** attempt 39's own preserved
+  `attempt_39_coherent_but_gate_failing_T0317.png` was re-cut in-process
+  through the fixed path -- 36 fg px before, 34 after, materially
+  unchanged and still under the 50px floor. The fix cannot rescue pixel
+  content already baked into an already-sampled frame, the same honest
+  conclusion T-0319 reached for the walk generator's own preserved
+  attempts.
+- **`attempt_53_54_fixed_background_still_diverges_T0317.png`** -- a live
+  re-run of attempt 39/50/52's exact recipe (seed 31416, secondary weight
+  0.10, `--secondary-no-invert`), now against the fixed cutout path.
+  Mechanical gate **passed** (74 fg px, `background_fraction` 0.9679), but
+  the image is a **fifth** distinct composition: an abstract vertically
+  striped shape with white/green fragments, no legible head, torso, arm,
+  or leg structure. Not a person, not promotable, despite passing the
+  mechanical gate -- the same "gate-passing but incoherent" trap attempts
+  41 and 52 already demonstrated.
+- **Attempt 54** re-ran the identical recipe after `POST /free`
+  (`torch_vram_free` ~97MB -> ~1.89GB). `gpu_seconds` 54.1 confirms a full
+  recompute, not a cache hit. Its `main_384.png` is **byte-identical**
+  (`sha256` match) to attempt 53's.
+
+**Finding: the nondeterminism is session-scoped, not seed-scoped.** Rounds
+7-8 established that repeated runs of the identical recipe diverge from
+each other across separate implementer sessions, and that freeing VRAM
+does not restore reproducibility. This round adds the missing control:
+*within* one continuous ComfyUI server lifetime, the identical recipe
+reproduces itself deterministically (53 == 54, byte-identical, one before
+and one after a `/free` call). The seed alone does not pin this pipeline's
+output -- the server process's own lifetime does too, and that cannot be
+pinned from the HTTP API this agent has (no shell access to the Windows
+host to restart the process or set determinism env vars).
+
+**Not promoted. No further attempts spent sweeping.** The card's own stop
+condition -- "if attempt 39's recipe still will not reproduce ... stop and
+report that as the finding ... rather than sweeping" -- is met, confirmed
+twice (attempts 53 and 54). `player_profile_keyframe_hybrid_T0272.png`
+remains absent from `assets/final/character/`. Six of this round's eight
+budgeted attempts (55-60) are deliberately unspent, per the card's own
+"Do not" instruction against sweeping for a coherent result. Whether to
+descope the keyframe to T-0272 or spend a further round investigating the
+session-scoped determinism itself (a concrete next probe: ComfyUI/PyTorch
+determinism settings, `torch.use_deterministic_algorithms` /
+`cudnn.benchmark` / `CUBLAS_WORKSPACE_CONFIG`, none of which this agent can
+set remotely) is, as in rounds 7-8, a human call.
+
+`.gitignore` check (re-run for round 9): `git check-ignore -v` against
+`attempt_53_54_fixed_background_still_diverges_T0317.png` returns nothing,
+so no `.gitignore` change was needed to commit this evidence either.

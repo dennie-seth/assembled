@@ -392,3 +392,28 @@ is not the (whole) explanation. See `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
 round-8 section. This card's full attempt-cap budget (1-52) is now spent;
 nothing under `assets/final/character/` was promoted. The generated
 reference above is unaffected and remains this card's delivered asset.
+
+**Round 9 (attempts 53-54, fresh 53-60 budget):** PR #350/T-0319's
+`force_border_background_to_fill` — merged into this branch — is now wired
+into `gen_hybrid_profile_T0272.build_indexed_cell`, correcting this
+generator's own rendered frame background before segmentation (previously
+only the primary identity-reference crop inherited the fix, via the shared
+`crop_identity_reference` import). Re-cutting attempt 39's own preserved
+render through the fixed path directly (no GPU spend) measured 36 fg px
+before, 34 after — materially unchanged, matching T-0319's own finding that
+this class of fix cannot rescue pixel content already baked into an
+already-sampled frame. A live re-run of attempt 39/50/52's exact recipe
+(attempt 53) passed the mechanical gate (74 fg px) but rendered a fifth
+distinct, incoherent composition. A second re-run after `POST /free`
+(attempt 54, confirmed full recompute, `gpu_seconds` 54.1) was
+byte-identical to attempt 53 — new evidence that this pipeline's
+nondeterminism is session-scoped, not seed-scoped: identical within one
+ComfyUI server lifetime, but different across the lifetime that produced
+attempt 39's original coherent visual. See
+`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 9 (T-0317)" section and
+`docs/assets/evidence/T-0272/README.md`'s own round-9 section. Per the
+card's own explicit stop condition, no further attempts were spent
+sweeping for a coherent result; six of this round's eight budgeted
+attempts (55-60) are unspent. Nothing under `assets/final/character/` was
+promoted. The generated reference above is unaffected and remains this
+card's delivered asset.
