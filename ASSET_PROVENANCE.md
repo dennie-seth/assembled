@@ -317,3 +317,43 @@ costume design pulled against the green coat about as much as T-0273's
 anonymous photographs did) — see that log for the full result. Nothing under
 `assets/final/character/` was promoted from these attempts; this entry
 records the derived *reference* only, not a shipped keyframe.
+
+**Generated, [T-0317](tasks/T-0317.md) (2026-09-07):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/src/concept/player_profile_costume_reference_T0317.png` | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.7) — plain txt2img, no ControlNet, no IP-Adapter, no identity/pose LoRA, same recipe shape as [T-0209](tasks/T-0209.md)'s own concept sheet | CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA) | "flat side-on character concept reference sheet, orthographic game asset, no perspective, no vanishing point, one reference panel: full-body side profile standing pose, figure's face and nose seen in strict profile facing right, one shoulder visible, near arm bent forward, far arm hidden behind the torso. Player character: 40px tall humanoid figure in a 48x48 cell, wearing a long vivid institutional green cloth coat (the coat itself is green, not black, not grey), concrete-grey head and skin tones, deep shadow values on the coat's own folds. Soviet brutalist interior aesthetic, muted desaturated palette for the environment only, the coat itself stays vivid green, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, no background elements, solid flat black background only. Game asset reference sheet style, pixel art scale reference, figure silhouette study" (full negative prompt in the `.provenance.json` sidecar) | 31700 |
+
+This card's own feasibility gate: T-0272's own §24-e stack (ControlNet +
+IP-Adapter + identity/pose LoRA) proved, across 36 attempts and 5 rounds,
+that it cannot hold both a side-facing pose and legible institutional-green
+costume colour at once — round 3's own finding is that ControlNet's
+structural conditioning dominates the text prompt's camera-angle request.
+This generator carries neither node, so prompt steering has authority here
+it never had under §24-e. 3 attempts (not a sweep,
+`assets/src/concept/ARM_COSTUME_REFERENCE_ATTEMPT_LOG_T0317.md`): attempt 1
+drifted into an illustrated cityscape scene; attempt 2 fixed framing but
+rendered fully monochrome; attempt 3 combined both fixes and produced a
+genuine 3-panel front/side/back turnaround with a strict side profile in a
+vivid institutional green cloth coat. The committed reference is that
+turnaround's own middle (side) panel, cropped and cleaned via
+`derive_profile_style_reference_T0272.extract_panel_reference` (T-0272's own
+border-flood + largest-component function, reused directly) — 48,547 green
+pixels (`char_gen.green_content`'s `g > r+8 and g > b+8 and g < 160`
+predicate, T-0272 round 5's own methodology), comfortably past round 5's
+6,000-6,900 confirmed-match band and its 1.0-1.7% noise floor alike.
+
+Wired as the secondary IP-Adapter reference in
+`gen_hybrid_profile_T0272.py` (`--secondary-concept
+assets/src/concept/player_profile_costume_reference_T0317.png
+--secondary-no-invert` — its own background is already forced solid black
+by `extract_panel_reference`, so inverting it again would reintroduce round
+3 Test D's own light-background bleed) across a fresh round-6 attempt budget
+(37-44). No attempt in that budget combined a clean per-pixel cutout with a
+genuinely legible, side-facing figure at 40px — see
+`ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 6 (T-0317)" section and
+`docs/assets/evidence/T-0272/README.md`'s own T-0317 section for the full
+result and evidence frames. Nothing under `assets/final/character/` was
+promoted from this round; this entry records the generated *reference*
+only, exactly as the T-0272 round-4 entry above records its own derived
+reference without a shipped keyframe.

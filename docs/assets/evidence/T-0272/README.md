@@ -305,3 +305,52 @@ this card's honest conclusion.
 `.gitignore` check (re-run for round 4): `git check-ignore -v` against the
 four new round-4 paths above returns nothing for any of them, so no
 `.gitignore` change was needed to commit this evidence either.
+
+## T-0317: the missing colour-bearing side reference now exists -- keyframe still not promotable
+
+T-0317's own premise: round 4's colour finding above ("the coat's own main
+body fill sits closer to the palette's neutral ramp than to any green-family
+swatch") is a conditioning-input problem, not a cutout problem -- there was
+no side-on reference anywhere in the repo that carried the actual green
+cloth coat (`player_character_concept_sheet_v1.png`'s green panels are all
+front-facing; T-0273's photographs and `player_profile_style_reference_
+T0272.png` are both pose-only, explicitly not a costume match).
+
+- **`player_profile_costume_reference_T0317.png`** (committed under
+  `assets/src/concept/`, not duplicated here) -- generated through a
+  genuinely different stack from this card's own §24-e (plain txt2img +
+  style LoRA only, no ControlNet, no IP-Adapter, same recipe shape as
+  T-0209's own concept sheet), then cropped to its own genuinely side-on
+  panel out of a 3-panel front/side/back turnaround. 48,547 green pixels --
+  comfortably past both round 5's 1.0-1.7% noise floor and its 6,000-6,900
+  confirmed-match band. This is the reference this section's own "why this
+  card exists" text said did not exist.
+- **`attempt_39_coherent_but_gate_failing_T0317.png`** -- round 6's best
+  *visual* result (seed 31416, the new reference in the secondary IP-Adapter
+  slot at weight 0.1): a legible, coherent, vivid-green coat with a genuine
+  side lean. Not promotable -- the render's own background came out
+  multi-toned grey rather than solid black, so the per-pixel cutout starved
+  (27-39 fg px, under the 50px mechanical-gate floor).
+- **`attempt_41_gate_passing_but_incoherent_384_T0317.png`** and
+  **`attempt_41_gate_passing_but_incoherent_48_T0317.png`** -- round 6's only
+  attempt to pass the mechanical gate (seed 84512, secondary weight 0.15:
+  265 fg px, `background_fraction` 0.885) -- but at both 384px and the
+  actual 48px target resolution it reads as an incoherent cropped
+  abstraction, not a legible standing figure. The same "gate passes, human
+  visual call still fails" pattern rounds 1-5 already established
+  repeatedly, now reproduced with a reference that finally carries the
+  right colour.
+
+**Not promoted.** 8 attempts (37-44, this round's own fresh DL-21 budget)
+alternated between wrong-subject/incoherent collapses (raising the new
+reference's own weight past ~0.15, visually much busier than round 4's
+near-empty derived crop) and the two results captured above. No attempt
+combined a clean cutout with a legible, genuinely side-facing figure.
+`player_profile_keyframe_hybrid_T0272.png` remains absent from
+`assets/final/character/`. Full per-attempt parameters and the round's own
+write-up are in `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 6 (T-0317)"
+section.
+
+`.gitignore` check (re-run for T-0317): `git check-ignore -v` against the
+three new paths above returns nothing for any of them, so no `.gitignore`
+change was needed to commit this evidence either.
