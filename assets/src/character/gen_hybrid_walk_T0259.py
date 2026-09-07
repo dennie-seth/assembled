@@ -164,6 +164,14 @@ from gen_pose_authority_idle_T0249 import (  # noqa: E402
 from gen_pose_authority_idle_T0249 import MAIN_NEGATIVE as IDLE_MAIN_NEGATIVE  # noqa: E402
 
 from char_gen import chunked_frames  # noqa: E402
+
+# T-0319: the IP-Adapter identity reference's own background bleeds into
+# every generated frame (see crop_identity_reference's docstring below) --
+# force_border_background_to_fill is the shared primitive that fixes both
+# the reference (here) and the preserved attempt 5/7 re-cut path
+# (WALK_BACKGROUND_FIX_T0319.md). Reuses the same border-flood detector the
+# per-frame cutout above already relies on -- no new segmentation logic.
+from char_gen.cutout import force_border_background_to_fill  # noqa: E402
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
@@ -450,8 +458,24 @@ def crop_identity_reference(concept_sheet_path: Path, dest_path: Path) -> Path:
     front-on panel (`IDENTITY_REFERENCE_CROP_BOX`) and write it to
     `dest_path` -- this crop, not the full sheet, is what gets uploaded to
     ComfyUI and fed to IPAdapterAdvanced. See the T-0266 recipe finding
-    above `IDENTITY_REFERENCE_CROP_BOX` for why."""
-    Image.open(concept_sheet_path).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX).save(dest_path)
+    above `IDENTITY_REFERENCE_CROP_BOX` for why the crop itself exists.
+
+    T-0319: the crop's OWN panel background is mid-grey (modal RGB measured
+    at ~144,143,145), not the black WALK_PROMPT asks for -- fed to
+    IPAdapterAdvanced as-is, IP-Adapter's image-level conditioning carries
+    that grey into every generated frame's own background regardless of
+    what the text prompt/negative prompt say (WALK_NEGATIVE already names
+    "grey background" explicitly, inherited unchanged from the idle recipe;
+    it made no difference, because IP-Adapter's conditioning pathway is
+    independent of CLIP text conditioning). Measured modal border RGB on the
+    frames this crop conditioned (142-153 range, attempts 5 and 7) matches
+    this panel's own modal background almost exactly -- the reference, not
+    the prompt weighting, is the root cause. `force_border_background_to_fill`
+    corrects the crop's own background to a genuinely dark fill before it is
+    ever uploaded, the same border-flood detector this pipeline's own
+    per-frame cutout already trusts, so the correction cannot drift from it."""
+    crop = Image.open(concept_sheet_path).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX)
+    force_border_background_to_fill(crop, CUTOUT_OKLAB_TOLERANCE).save(dest_path)
     return dest_path
 
 
