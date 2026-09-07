@@ -553,11 +553,22 @@ def check_attempt_cap(attempt: int) -> None:
     reproducing attempt 39's exact recipe against a forced-black render
     background is a background-fix re-test of a defect this round's own new
     input (the fix, not new weights) targets -- not a re-run of round 6's
-    seed+weight sweep."""
-    if not (1 <= attempt <= 60):
+    seed+weight sweep. Round 9 spent only attempts 53-54 of this budget;
+    54-53 confirmed byte-identical, both diverging from attempt 39's own
+    preserved render -- the reproducibility defect is session-scoped, not
+    seed-scoped.
+
+    Round 10 (T-0317 continuation: ComfyUI restarted with `--deterministic`
+    and `CUBLAS_WORKSPACE_CONFIG=:4096:8` set, per round 9's own named next
+    probe) spends an eighth fresh 8-attempt budget, attempts 61-68, on top
+    of rounds 1-9's spent 1-60: the determinism flags pin *future* server
+    sessions, not resurrect the one that produced attempt 39's coherent
+    visual, so this round generates fresh rather than chasing attempt 39's
+    exact recipe again -- not a re-run of round 6's seed+weight sweep."""
+    if not (1 <= attempt <= 68):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 9 adds attempts 53..60 on top of "
-            "rounds 1-8's spent 1..52 -- refusing to run a 61st attempt"
+            "attempt cap is 8 per round (DL-21); round 10 adds attempts 61..68 on top of "
+            "rounds 1-9's spent 1..60 -- refusing to run a 69th attempt"
         )
 
 
