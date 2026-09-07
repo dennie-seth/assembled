@@ -564,3 +564,92 @@ further, is a human call.
 `.gitignore` check (re-run for round 10): `git check-ignore -v` against all
 three of this round's evidence frames returns nothing, so no `.gitignore`
 change was needed to commit them either.
+
+## T-0317 round 11: bounded probe under a partial-determinism regime, then a bounded seed reroll -- still not promotable, but the finding narrows the cause
+
+`@DennieSeth`'s decision on T-0324: a narrow probe first, then ship if it
+works. ComfyUI was restarted again with `--deterministic` **removed** while
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` stayed set (`GET /system_stats`'s `argv`
+confirms this: `["main.py", "--listen", "0.0.0.0", "--port", "8188"]`, no
+`--deterministic`). `check_attempt_cap` opened a fresh 69-76 budget.
+
+**Step 1 -- the bounded probe (attempts 69-70), exactly as scoped.** The
+established recipe (secondary reference `player_profile_costume_reference_T0317.png`
+at weight 0.10, primary front sheet 0.6, pose LoRA 0.6, ControlNet 1.0/1.0,
+`--secondary-no-invert`) was rendered twice at a fresh seed (271828):
+
+- **`attempt_69_70_probe_reproducible_but_incoherent_T0317.png`** (attempt
+  69's frame, representative of both -- byte-identical `sha256`). Mechanical
+  gate **passed** (54 fg px, `background_fraction` 0.977). Visually: a
+  blocky, bilaterally-symmetric front-facing figure with glitch-like white
+  fragmentation and only faint green flecks -- not side-facing, not the
+  green coat, not a coherent person.
+- Attempt 70 re-ran the identical recipe after `POST /free` (`torch_vram_free`
+  33MB after unload). `gpu_seconds` 39.1 for both, and `GET /history/<id>`'s
+  own `execution_cached` message lists **zero** cached nodes for attempt 70 --
+  a genuine, independently-confirmed full recompute, not a cache hit (unlike
+  attempt 67's 3.1s cache-hit signature). Result: **byte-identical** to
+  attempt 69.
+
+**Probe answer: coherent = NO, reproducible = YES** (confirmed by a
+non-cached recompute, the same bar round 10 set for its own determinism
+claim). This is a real result in its own right: the seed pins the render
+under this partial regime too, not just under round 10's full
+`--deterministic` regime -- but it does not rescue coherence, which is the
+whole point of running the probe before spending the rest of the budget.
+
+**Step 2 -- the bounded seed reroll (attempts 71-76), stopped exactly at
+budget per the round's own instruction ("stop the moment you have one usable
+frame... do not extend").** Six fresh seeds (100003, 100019, 100043, 100057,
+100069, 100103), secondary weight held at 0.10, everything else unchanged.
+Every one judged by opening the image, not by the mechanical gate alone:
+
+- Attempt 71 (100003): abstract green/red/cyan circuit-board pattern. Gate
+  **failed** (2 fg px).
+- Attempt 72 (100019): banded architectural shape with light-green blocks and
+  horizontal rules. Gate **failed** (23 fg px).
+- **`attempt_73_seed_reroll_best_case_still_incoherent_T0317.png`** (100043):
+  the round's highest foreground count (242 px) and the most green content of
+  the six, but a bilaterally-symmetric striped abstraction against a light
+  background, not a figure. Gate **passed** on pixel count alone -- another
+  instance of the "gate-passing but incoherent" trap attempts 41/52/53/65
+  already demonstrated.
+- Attempt 74 (100057): vertical striping with green fragments threaded
+  through it, no legible head/torso/limb structure. Gate **passed** (151 fg
+  px) but not a person.
+- Attempt 75 (100069): a colourful, machine-like abstraction (blues, reds,
+  yellows, an incidental "F"-shaped fragment) -- the least figure-like result
+  of the six. Gate **passed** (91 fg px).
+- **`attempt_76_seed_reroll_final_still_incoherent_T0317.png`** (100103,
+  final attempt in this round's budget): a symmetric, robot-like cyan/white
+  form, still front-facing-symmetric rather than side-on, no green. Gate
+  **failed** (3 fg px).
+
+**Zero of eight attempts (69-76) produced an attempt-39-class coherent,
+side-facing, green-legible figure.** Budget fully spent; no extension taken,
+per the round's own stop condition. `player_profile_keyframe_hybrid_T0272.png`
+remains absent from `assets/final/character/`.
+
+**What this round narrows down.** Three regimes have now been tried against
+this graph: (0) the original unpinned regime (rounds 1-8) -- nondeterministic
+across sessions, but the one session that produced attempt 39's coherent
+result came from here; (1) round 10's full `--deterministic` +
+`CUBLAS_WORKSPACE_CONFIG` -- reproducible, uniformly incoherent
+(horizontal-banding failure); (2) this round's partial regime,
+`CUBLAS_WORKSPACE_CONFIG` alone -- also reproducible (at least for the one
+seed tested), also uniformly incoherent, in a *different* failure family
+(architectural/circuit abstractions rather than banding). Removing
+`--deterministic` changed the failure's character but not its presence,
+which weighs against round 10's own hypothesis that `--deterministic`
+specifically (via non-fused kernel paths) was excluding coherence. The
+regime shared by both failing determinism attempts, and absent from the one
+regime that ever produced attempt 39, is `CUBLAS_WORKSPACE_CONFIG` itself --
+now the more specific suspect. Recommended permanent config, pending a
+dedicated determinism-infra investigation: for this graph specifically, do
+not set `CUBLAS_WORKSPACE_CONFIG` at generation time; treat coherent output
+as something to catch and bank when it appears under the original unpinned
+regime, rather than something to reproduce on demand under a pinned one.
+
+`.gitignore` check (round 11): `git check-ignore -v` against all three of
+this round's evidence frames returns nothing, so no `.gitignore` change was
+needed to commit them either.

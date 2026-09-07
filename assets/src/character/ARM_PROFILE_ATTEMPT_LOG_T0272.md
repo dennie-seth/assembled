@@ -1380,3 +1380,107 @@ All four match, independently recomputed in round 11 -- the committed evidence f
 **What this round adds for whoever picks this up next.** Two separable findings, not one: (1) the pipeline is now genuinely deterministic within a session (proven, not just asserted, via a forced non-cached recompute) -- a real improvement over rounds 7-9's session-scoped nondeterminism; but (2) fresh generation under this deterministic configuration reliably produces a *worse*, more consistent failure mode than the session that produced attempt 39, across every seed sampled. Determinism was purchased; coherence was not restored, and may in fact have been actively excluded by the same kernel-path change. The costume-bearing side reference itself (`player_profile_costume_reference_T0317.png`, 48,547 green px, genuinely side-on) remains sound and unaffected by any of this -- it is the profile keyframe's own §24-e sampling behaviour, now under a third distinct regime (uncontrolled nondeterminism -> session-scoped determinism -> apparently-coherence-excluding determinism), that has not produced a promotable result across ten rounds and 68 attempts. Whether to (a) descope the keyframe to a follow-up and bank the reference, which has been sound since round 6, or (b) investigate the specific interaction between `--deterministic`/`CUBLAS_WORKSPACE_CONFIG` and this graph's dual-IPAdapter conditioning (a different, narrower probe than rounds 7-9's own VRAM/session investigation) is, as in every round since round 6's own reviewer FAIL, a human call.
 
 `.gitignore` check (re-run for round 10): `git check-ignore -v` against all three of this round's evidence frames returns nothing, so no `.gitignore` change was needed to commit them either.
+| 69 | 271828 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 39.1 | PASS | no | round 11 (T-0317): probe render 1/2, partial-determinism regime (--deterministic removed, CUBLAS_WORKSPACE_CONFIG kept), fresh seed, attempt-39 recipe otherwise |
+| 70 | 271828 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 39.1 | PASS | no | round 11 (T-0317): probe render 2/2, same seed as attempt 69 after POST /free (genuine recompute check), partial-determinism regime |
+| 71 | 100003 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 27.1 | FAIL | no | round 11 (T-0317): seed reroll 1/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 72 | 100019 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 27.1 | FAIL | no | round 11 (T-0317): seed reroll 2/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 73 | 100043 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | PASS | no | round 11 (T-0317): seed reroll 3/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 74 | 100057 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | PASS | no | round 11 (T-0317): seed reroll 4/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 75 | 100069 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | PASS | no | round 11 (T-0317): seed reroll 5/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 76 | 100103 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 11 (T-0317): seed reroll 6/6 (final, budget exhausted after this) under partial-determinism regime, attempt-39 recipe otherwise |
+
+## Round 11 (T-0317, attempts 69-76): a bounded probe under a partial-determinism regime, then a bounded seed reroll -- still not promotable, but the finding narrows the suspect
+
+`@DennieSeth`'s decision on T-0324: run a narrow, bounded probe first, then
+ship if it works, rather than open a further unbounded investigation.
+ComfyUI was restarted with `--deterministic` **removed** while
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` stayed set (confirmed via `GET
+/system_stats` before generating anything: `argv` no longer contains
+`--deterministic`). `check_attempt_cap` opened a fresh 69-76 budget.
+
+**Step 0, done first as instructed:** the round-10 digest gap two reviewers
+flagged is now closed (see the top of this file, "Digest, recorded per the
+round-10 reviewer's request") -- attempts 66/67/68 and their evidence frame
+all hash to `ff18f51c...d957a`, independently reverified this round.
+
+**Step 1, the bounded probe (attempts 69-70), exactly as scoped -- two
+renders, same seed, judged on both coherence and reproducibility.** Fresh
+seed 271828, the established recipe otherwise (secondary reference
+`player_profile_costume_reference_T0317.png` at weight 0.10, primary 0.6,
+pose LoRA 0.6, ControlNet 1.0/1.0, `--secondary-no-invert`). Attempt 69
+passed the mechanical gate (54 fg px) but is a blocky, front-facing,
+bilaterally-symmetric glitch-fragmented figure with only faint green flecks
+-- not side-facing, not the green coat. Attempt 70 repeated the identical
+recipe after `POST /free`; `GET /history/<prompt_id>`'s own
+`execution_cached` message lists zero cached nodes (a genuine full
+recompute, `gpu_seconds` 39.1, not attempt 67's 3.1s cache-hit signature),
+and produced a **byte-identical** `main_384.png` to attempt 69 (`sha256`
+match). **Probe answer: coherent = NO, reproducible = YES.** The seed pins
+the render under this partial regime too, not only round 10's full
+`--deterministic` regime -- but that does not by itself rescue coherence.
+
+**Step 2, the bounded seed reroll (attempts 71-76), stopped exactly at
+budget per the round's own instruction not to extend it.** Six fresh seeds
+(100003, 100019, 100043, 100057, 100069, 100103), secondary weight held at
+0.10, everything else unchanged, each judged by opening the image:
+
+- 71 (100003): green/red/cyan circuit-board abstraction. Gate FAIL (2 fg px).
+- 72 (100019): banded architectural shape, light-green blocks. Gate FAIL (23 fg px).
+- 73 (100043): the round's highest foreground count (242 px) and most green
+  content, but a bilaterally-symmetric striped abstraction against a light
+  background, not a figure -- gate PASS on pixel count alone, another
+  "gate-passing but incoherent" instance (see attempts 41/52/53/65).
+- 74 (100057): vertical striping threaded with green fragments, no legible
+  head/torso/limb structure. Gate PASS (151 fg px) but not a person.
+- 75 (100069): a colourful machine-like abstraction, the least figure-like of
+  the six. Gate PASS (91 fg px).
+- 76 (100103, final attempt in this round's budget): a symmetric, robot-like
+  cyan/white form, still front-facing-symmetric, no green. Gate FAIL (3 fg px).
+
+**Zero of eight attempts (69-76) produced an attempt-39-class coherent,
+side-facing, green-legible figure. Not promoted. Budget fully spent, no
+extension taken**, per the round's own stop condition
+(`docs/assets/evidence/T-0272/attempt_69_70_probe_reproducible_but_incoherent_T0317.png`,
+`attempt_73_seed_reroll_best_case_still_incoherent_T0317.png`,
+`attempt_76_seed_reroll_final_still_incoherent_T0317.png`).
+`player_profile_keyframe_hybrid_T0272.png` remains absent from
+`assets/final/character/`.
+
+**What this round narrows down.** Three regimes have now been tried against
+this graph: (0) the original unpinned regime (rounds 1-8) -- nondeterministic
+across sessions, but the one session that produced attempt 39's coherent
+result came from here; (1) round 10's full `--deterministic` +
+`CUBLAS_WORKSPACE_CONFIG` -- reproducible, uniformly incoherent
+(horizontal-banding failure, six for six); (2) this round's partial regime,
+`CUBLAS_WORKSPACE_CONFIG` alone -- also reproducible (confirmed for the one
+seed tested), also uniformly incoherent, but in a *different* failure family
+(architectural/circuit abstractions, not banding). Removing `--deterministic`
+changed the character of the failure but not its presence, which weighs
+against round 10's own hypothesis that `--deterministic` specifically (via
+non-fused kernel paths) was what excluded coherence. The one variable shared
+by both failing determinism regimes and absent from the one regime that ever
+produced attempt 39 is `CUBLAS_WORKSPACE_CONFIG` itself -- now the sharper
+suspect, though still inference from this agent's HTTP-only access, not a
+confirmed root cause reachable without shell access to the Windows host.
+
+**Recommendation for the permanent config (feeds the determinism-infra
+follow-up):** for this specific dual-IPAdapter + ControlNet graph, do not set
+`CUBLAS_WORKSPACE_CONFIG` at generation time -- across ten rounds and 76
+attempts, every regime that has included it has produced zero coherent side
+profiles, while the one regime that never had it produced exactly one
+(attempt 39, still not reproducible from it). Treat coherent output on this
+graph as something to catch and bank when the unpinned regime happens to
+produce it, not something to reproduce on demand under a pinned one.
+
+**This card's remaining routes are unchanged from every review since round
+6, and are still human calls, not implementer calls:** (a) descope the
+keyframe promotion to a follow-up and bank the reference -- sound,
+provenanced, measured, and unaffected by any of this across eleven rounds;
+or (b) scope a determinism-infra investigation that needs Windows-host shell
+access this agent does not have (to test the `CUBLAS_WORKSPACE_CONFIG`-off
+hypothesis directly, e.g. by unsetting it while keeping `--deterministic`
+off, which this agent cannot do via the ComfyUI HTTP API alone).
+
+`.gitignore` check (round 11): `git check-ignore -v` against all three of
+this round's evidence frames returns nothing, so no `.gitignore` change was
+needed to commit them either.
