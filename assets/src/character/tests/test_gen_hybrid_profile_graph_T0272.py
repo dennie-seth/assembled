@@ -369,6 +369,22 @@ def test_check_attempt_cap_allows_a_fresh_round_10_budget() -> None:
         gen.check_attempt_cap(69)
 
 
+def test_check_attempt_cap_allows_a_fresh_round_11_budget() -> None:
+    """Round 11 (T-0317: `@DennieSeth`'s decision on T-0324 -- a bounded
+    probe under a new host regime, then ship). ComfyUI has been restarted
+    again: `--deterministic` is now REMOVED (round 10's flag), while
+    `CUBLAS_WORKSPACE_CONFIG=:4096:8` stays set -- partial determinism,
+    testing whether round 10's coherence collapse traces to
+    `--deterministic` forcing non-fused kernel paths. This is a new,
+    untested host configuration, not a re-run of round 10's fresh-seed
+    sweep or round 6's seed+weight sweep -- it gets its own fresh 8-attempt
+    DL-21 budget on top of rounds 1-10's spent 1..68 -- attempts 69..76."""
+    gen.check_attempt_cap(69)
+    gen.check_attempt_cap(76)  # must not raise
+    with pytest.raises(SystemExit):
+        gen.check_attempt_cap(77)
+
+
 def test_positive_prompt_matches_the_known_good_round_6_baseline() -> None:
     """Round 7 (T-0317) tried adding a "no grey background, no multi-tone
     background" term here, in two different placements. Both regressed:
