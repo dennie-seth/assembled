@@ -362,11 +362,13 @@ def test_check_attempt_cap_allows_a_fresh_round_10_budget() -> None:
     runs, not resurrect a past one. This round is not a re-run of attempt
     39 or the round 6 seed+weight sweep -- it is fresh generation on a
     newly-deterministic server, so it gets its own fresh 8-attempt DL-21
-    budget on top of rounds 1-9's spent 1..60 -- attempts 61..68."""
+    budget on top of rounds 1-9's spent 1..60 -- attempts 61..68.
+
+    (Round 10 spent the full 61-68; see
+    test_check_attempt_cap_allows_a_fresh_round_11_budget for the next
+    boundary.)"""
     gen.check_attempt_cap(61)
     gen.check_attempt_cap(68)  # must not raise
-    with pytest.raises(SystemExit):
-        gen.check_attempt_cap(69)
 
 
 def test_check_attempt_cap_allows_a_fresh_round_11_budget() -> None:

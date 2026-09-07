@@ -564,11 +564,20 @@ def check_attempt_cap(attempt: int) -> None:
     of rounds 1-9's spent 1-60: the determinism flags pin *future* server
     sessions, not resurrect the one that produced attempt 39's coherent
     visual, so this round generates fresh rather than chasing attempt 39's
-    exact recipe again -- not a re-run of round 6's seed+weight sweep."""
-    if not (1 <= attempt <= 68):
+    exact recipe again -- not a re-run of round 6's seed+weight sweep.
+
+    Round 11 (T-0317 continuation: `@DennieSeth`'s T-0324 decision -- a
+    bounded probe under a new host regime, then ship) spends a ninth fresh
+    8-attempt budget, attempts 69-76, on top of rounds 1-10's spent 1-68.
+    ComfyUI has been restarted again with `--deterministic` REMOVED while
+    `CUBLAS_WORKSPACE_CONFIG=:4096:8` stays set, to test round 10's own
+    hypothesis that `--deterministic` forcing non-fused kernel paths is
+    what excluded coherence -- a genuinely new, untested host
+    configuration, not a re-run of round 10's fresh-seed sweep."""
+    if not (1 <= attempt <= 76):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 10 adds attempts 61..68 on top of "
-            "rounds 1-9's spent 1..60 -- refusing to run a 69th attempt"
+            "attempt cap is 8 per round (DL-21); round 11 adds attempts 69..76 on top of "
+            "rounds 1-10's spent 1..68 -- refusing to run a 77th attempt"
         )
 
 
