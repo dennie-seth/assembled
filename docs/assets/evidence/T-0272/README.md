@@ -354,3 +354,39 @@ section.
 `.gitignore` check (re-run for T-0317): `git check-ignore -v` against the
 three new paths above returns nothing for any of them, so no `.gitignore`
 change was needed to commit this evidence either.
+
+## T-0317 round 7: the reviewer's two named levers, both tried; a reproducibility defect found underneath them
+
+- **`attempt_45_prompt_edit_regression_T0317.png`** -- attempt 39's exact
+  recipe (seed 31416, secondary weight 0.10) with a "no grey background, no
+  multi-tone background" term added to the prompt, the reviewer's own named
+  Lever 2. Gate-passing (124 fg px) but a black-outlined, neon-rim-lit
+  abstraction, not a legible figure -- a regression from attempt 39's own
+  coherent visual. Attempts 46 (trimmed, truncation-safe rewording), 47
+  (secondary weight lowered to 0.05), and 48 (secondary reference removed
+  entirely) all rendered this same shape, proving the prompt edit itself,
+  not token length or the secondary reference's weight, was responsible.
+  This lever is retracted; `PROFILE_PROMPT`/`PROFILE_NEGATIVE` are reverted
+  to the exact wording that produced attempt 39's result.
+- **`attempt_50_reproduction_diverges_T0317.png`** -- attempt 39's recipe
+  re-run **exactly** (seed 31416, secondary weight 0.10, prompt confirmed
+  byte-identical to the reverted baseline), as a sanity check before trusting
+  attempt 49's fine-stepped-weight result (the reviewer's Lever 1). This did
+  not reproduce attempt 39's own recorded coherent visual, or attempts
+  45-49's shared totem shape -- a third, distinct composition from
+  byte-identical graph inputs. This is the round's real finding: this
+  pipeline's seed does not guarantee cross-session reproducibility, which
+  every round's methodology since round 3 has implicitly assumed. See
+  `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 7 (T-0317)" section for the
+  full isolation and the VRAM-pressure hypothesis for why.
+
+**Not promoted.** Both of the round-6 reviewer's named levers are now
+exhausted (one retracted with evidence, one undermined by the
+reproducibility finding), and `player_profile_keyframe_hybrid_T0272.png`
+remains absent from `assets/final/character/`. The costume reference this
+card exists to produce is unaffected -- it does not depend on §24-e's own
+sampling behaviour -- and remains committed, provenanced, and measured.
+
+`.gitignore` check (re-run for round 7): `git check-ignore -v` against the
+two new round-7 paths above returns nothing for either, so no `.gitignore`
+change was needed to commit this evidence either.

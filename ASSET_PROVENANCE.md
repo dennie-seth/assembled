@@ -353,7 +353,24 @@ by `extract_panel_reference`, so inverting it again would reintroduce round
 genuinely legible, side-facing figure at 40px — see
 `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 6 (T-0317)" section and
 `docs/assets/evidence/T-0272/README.md`'s own T-0317 section for the full
-result and evidence frames. Nothing under `assets/final/character/` was
-promoted from this round; this entry records the generated *reference*
-only, exactly as the T-0272 round-4 entry above records its own derived
-reference without a shipped keyframe.
+result and evidence frames.
+
+**Round 7 (attempts 45-51):** the round-6 reviewer named two specific,
+untried levers — a stronger black-background prompt term, and fine-stepping
+the secondary weight between 0.1 and 0.15 while holding seed 31416 fixed.
+Both were tried and both are exhausted: the prompt-term lever is retracted
+after attempts 45-48 proved any edit to the prompt text (independent of the
+secondary reference or its weight) fully rerouted the seed's own
+composition, and the weight-stepping lever was undermined when attempt 50
+— an exact re-run of attempt 39's own recipe — failed to reproduce attempt
+39's recorded result at all, from byte-identical inputs. This pipeline's
+seed does not guarantee cross-session reproducibility (a plausible cause:
+`system_stats` showed ~28MB free VRAM against a ~5.9GB torch allocation on
+an 8GB card, tight enough to trigger per-job fallback to different
+attention/memory code paths), which every round's methodology since round 3
+has implicitly assumed. See `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s "Round 7
+(T-0317)" section and `docs/assets/evidence/T-0272/README.md`'s own round-7
+section for the full isolation and evidence frames. Nothing under
+`assets/final/character/` was promoted from either round; this entry
+records the generated *reference* only, exactly as the T-0272 round-4 entry
+above records its own derived reference without a shipped keyframe.
