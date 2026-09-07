@@ -374,3 +374,21 @@ section for the full isolation and evidence frames. Nothing under
 `assets/final/character/` was promoted from either round; this entry
 records the generated *reference* only, exactly as the T-0272 round-4 entry
 above records its own derived reference without a shipped keyframe.
+
+**Round 8 (attempt 52, final attempt in this card's own budget):** the
+round-7 reviewer's own suggested precondition test — real VRAM headroom,
+then an exact re-run of attempt 39/50's recipe — was carried out via
+ComfyUI's `POST /free` endpoint (no shell access to the host to restart the
+process with different launch flags, but `/free` unloads resident models to
+the same effect). `torch_vram_total` dropped to 33MB and `vram_free` rose to
+~7.36GB, roughly 260x round 7's own ~28MB reading. The identical recipe
+(seed 31416, secondary weight 0.10, unchanged prompt), run immediately
+after and confirmed a full recompute (`gpu_seconds` 51.1, not a cache hit),
+still produced a fourth distinct composition — gate-passing (144 fg px) but
+an incoherent glowing-silhouette abstraction, not a legible figure. Real
+VRAM headroom does not rescue reproducibility; the VRAM-pressure hypothesis
+is not the (whole) explanation. See `ARM_PROFILE_ATTEMPT_LOG_T0272.md`'s
+"Round 8 (T-0317)" section and `docs/assets/evidence/T-0272/README.md`'s own
+round-8 section. This card's full attempt-cap budget (1-52) is now spent;
+nothing under `assets/final/character/` was promoted. The generated
+reference above is unaffected and remains this card's delivered asset.

@@ -387,6 +387,59 @@ remains absent from `assets/final/character/`. The costume reference this
 card exists to produce is unaffected -- it does not depend on §24-e's own
 sampling behaviour -- and remains committed, provenanced, and measured.
 
+## T-0317 round 8: the reviewer's own suggested precondition tried, and it does not rescue the frame either
+
+Round 7's reviewer asked for exactly one more thing before any further
+descope decision: spend the single remaining budgeted attempt (52) on the
+determinism precondition itself, not another weight value -- get real VRAM
+headroom, re-run attempt 39/50's exact recipe, and see if seed 31416
+reproduces.
+
+- `POST /free` (`{"unload_models": true, "free_memory": true}`) was issued
+  to the ComfyUI instance directly. `system_stats` before: `torch_vram_free`
+  ~25-77MB against an ~8.5GB card (matching round 7's own ~28MB reading).
+  After: `torch_vram_total` dropped to 33MB (all models unloaded) and
+  `vram_free` (the OS-level figure) rose to ~7.36GB -- a genuine, large
+  headroom change, not a marginal one.
+- **`attempt_52_free_vram_still_diverges_T0317.png`** -- attempt 39/50's
+  recipe re-run a third time, byte-identical inputs (seed 31416, secondary
+  weight 0.10, reverted prompt, same LoRA/ControlNet/IP-Adapter weights),
+  immediately after the `/free` call and with `gpu_seconds` 51.1 (a full
+  recompute, not a cache hit -- ruling out the round-7 concern that a fast
+  return means nothing happened). The mechanical gate now passes (144 fg
+  px, `background_fraction` 0.9375) -- more foreground than either attempt
+  39 (gate-failed) or attempt 50 (gate-failed) -- but the image itself is a
+  fourth **distinct** composition: neither attempt 39's coherent green-coat
+  figure, nor attempts 45-49's shared totem/glow-outline shape, nor attempt
+  50's own divergent render. It reads as an abstract glowing silhouette with
+  a green fragment near the top and no legible head/torso/leg structure --
+  not a person, and not promotable on the "legible side-facing figure with
+  green visible at 40px" standard this card has held throughout.
+
+**Finding: real VRAM headroom does not fix the reproducibility defect.**
+Round 7 hypothesized VRAM-pressure-driven fallback code paths (chunked vs.
+resident attention) as the likely cause of seed 31416 producing different
+outputs run to run. This round tested that hypothesis directly by removing
+the pressure (`/free`, ~7.36GB headroom vs. round 7's own ~28MB) and running
+the identical recipe again. The output still diverged -- a fourth distinct
+result, not a reproduction of any prior one. VRAM pressure may still be *a*
+contributing factor, but it is not the whole explanation, and this was the
+specific, scoped test the round-7 reviewer asked for before any further
+attempt. The attempt-cap budget opened for this card (1-52) is now fully
+spent; `check_attempt_cap` refuses a 53rd attempt without an explicit new
+budget grant, and this card's own "Do not" section forbids sweeping further
+regardless.
+
+**Not promoted, and no further attempts remain in this card's own budget.**
+`player_profile_keyframe_hybrid_T0272.png` stays absent from
+`assets/final/character/`. The reviewer's own two proposed routes forward
+were (a) spend attempt 52 on the determinism precondition, then promote only
+if it reproduces cleanly, or (b) a human descope decision banking the
+reference (already delivered, unaffected by any of this) against T-0272
+directly. Route (a) has now been tried in full and did not yield a
+promotable frame -- the remaining path is (b), which is outside this card's
+own authority to decide.
+
 `.gitignore` check (re-run for round 7): `git check-ignore -v` against the
 two new round-7 paths above returns nothing for either, so no `.gitignore`
 change was needed to commit this evidence either.
