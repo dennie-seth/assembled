@@ -137,6 +137,7 @@ from char_gen.cutout import (  # noqa: E402
     apply_cutout_masks,
     downscale_mask,
     extract_foreground_mask,
+    force_border_background_to_fill,
 )
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
@@ -540,11 +541,23 @@ def check_attempt_cap(attempt: int) -> None:
     incoherent) while holding attempt 39's own seed (31416) fixed, and the
     strengthened "no grey background, no multi-tone background" prompt term
     to address the multi-toned-background render that starved attempt 39's
-    cutout -- not a re-run of round 6's own seed+weight sweep."""
-    if not (1 <= attempt <= 52):
+    cutout -- not a re-run of round 6's own seed+weight sweep. Round 8
+    (attempt 52) spent the last of that budget on the reviewer's own named
+    determinism precondition test (real VRAM headroom via ComfyUI's own
+    `/free` endpoint), which did not restore reproducibility.
+
+    Round 9 (T-0317 continuation: PR #350/T-0319's `force_border_background_to_fill`
+    is now merged into this branch and wired into this generator's own
+    per-frame cutout, see `build_indexed_cell`) spends a seventh fresh
+    8-attempt budget, attempts 53-60, on top of rounds 1-8's spent 1-52:
+    reproducing attempt 39's exact recipe against a forced-black render
+    background is a background-fix re-test of a defect this round's own new
+    input (the fix, not new weights) targets -- not a re-run of round 6's
+    seed+weight sweep."""
+    if not (1 <= attempt <= 60):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 7 adds attempts 45..52 on top of "
-            "rounds 1-6's spent 1..44 -- refusing to run a 53rd attempt"
+            "attempt cap is 8 per round (DL-21); round 9 adds attempts 53..60 on top of "
+            "rounds 1-8's spent 1..52 -- refusing to run a 61st attempt"
         )
 
 
@@ -636,9 +649,19 @@ def build_indexed_cell(
     profile reference pulling the pose off-rig, round 3's Test D) is still
     recovered in full, provided it is the single largest surviving blob."""
     indexed = quantize_to_palette(raw_cell, palette)
+    # T-0317 round 9: force this render's OWN background to a genuinely dark
+    # fill before segmenting it -- the same primitive T-0319 wired into
+    # gen_hybrid_walk_T0259's identity-reference crop, applied here to this
+    # generator's own per-frame cutout instead. Attempt 39's coherent,
+    # green-legible visual gate-failed at 27-39 fg px because the render's
+    # own background came out multi-toned grey rather than the prompt's
+    # requested solid black, starving border_flood_background_mask's
+    # classification -- correcting it first removes that starvation
+    # regardless of which future attempt's render carries the same defect.
+    corrected_384 = force_border_background_to_fill(main_384, CUTOUT_OKLAB_TOLERANCE)
     fg_mask = downscale_mask(
         extract_foreground_mask(
-            main_384, CUTOUT_OKLAB_TOLERANCE, points_norm, BACKGROUND_MASK_MARGIN_FRAC
+            corrected_384, CUTOUT_OKLAB_TOLERANCE, points_norm, BACKGROUND_MASK_MARGIN_FRAC
         ),
         FINAL_CELL_PX,
     )

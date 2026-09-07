@@ -450,9 +450,11 @@ def test_build_indexed_cell_forces_render_background_before_cutout(monkeypatch) 
     )
     monkeypatch.setattr(gen, "extract_foreground_mask", spy_extract_foreground_mask)
 
+    asset_gate_palette = pytest.importorskip("asset_gate.palette")
+
     raw_cell = Image.new("RGB", (48, 48), color=(18, 17, 14))
     main_384 = Image.new("RGB", (384, 384), color=(144, 143, 145))
-    palette = [(18, 17, 14), (40, 120, 60)]
+    palette = asset_gate_palette.load_palette(gen.PALETTE_PATH)
     points_norm = {0: (0.5, 0.5)}
 
     gen.build_indexed_cell(raw_cell, main_384, palette, points_norm)
