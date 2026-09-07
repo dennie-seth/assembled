@@ -312,11 +312,53 @@ def test_check_attempt_cap_allows_a_fresh_round_6_budget() -> None:
     the secondary IP-Adapter slot, replacing the pose-only T-0273 photograph
     and the colour-thin derived crop both tried in rounds 3-5) gets its own
     fresh 8-attempt DL-21 budget on top of rounds 1-5's spent 1..36 --
-    attempts 37..44, not a re-run of anything already spent."""
+    attempts 37..44, not a re-run of anything already spent. (Attempt 45 is
+    no longer expected to raise here -- round 7 opens its own fresh budget
+    starting there; see test_check_attempt_cap_allows_a_fresh_round_7_budget
+    for that boundary.)"""
     gen.check_attempt_cap(37)
     gen.check_attempt_cap(44)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_7_budget() -> None:
+    """Round 7 (T-0317 continuation, the reviewer's named next steps: fine-step
+    the secondary IP-Adapter weight between attempt 39's 0.1 (coherent visual,
+    gate-fails on background) and attempt 41's 0.15-0.3 (gate-passes at a
+    different seed, but incoherent) while HOLDING attempt 39's own seed 31416
+    fixed -- round 6 varied seed and weight together and never isolated this
+    -- alongside a strengthened black-background prompt term to fix the
+    multi-toned-background render that starved attempt 39's cutout) gets its
+    own fresh 8-attempt DL-21 budget on top of rounds 1-6's spent 1..44 --
+    attempts 45..52, not a re-run of anything already spent."""
+    gen.check_attempt_cap(45)
+    gen.check_attempt_cap(52)  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(45)
+        gen.check_attempt_cap(53)
+
+
+def test_positive_prompt_forbids_grey_and_multitone_background() -> None:
+    """Round 6's attempt 39 (seed 31416, secondary weight 0.1) was the
+    round's best coherent, green-legible visual, but its own render came out
+    with a multi-toned grey background rather than the prompt's existing
+    "solid flat black background" phrase -- `border_flood_background_mask`
+    warned at generation time that the frame's border colours spanned
+    13-33x its own classification tolerance. This is untried in round 6
+    (named in ARM_PROFILE_ATTEMPT_LOG_T0272.md's own "what a follow-up would
+    need to try" note): name the failure mode directly, not just its
+    opposite ("solid flat black")."""
+    assert "no grey background" in gen.PROFILE_PROMPT
+    assert "no multi-tone background" in gen.PROFILE_PROMPT
+
+
+def test_negative_prompt_forbids_grey_and_multitone_background() -> None:
+    """Companion to the positive-prompt phrase above, present unconditionally
+    (not gated behind emphasize_green, since this is a composition defect,
+    not a costume-colour one)."""
+    plain = gen.build_negative_prompt(emphasize_green=False)
+    emphasized = gen.build_negative_prompt(emphasize_green=True)
+    for terms_prompt in (plain, emphasized):
+        assert "grey background" in terms_prompt
+        assert "multi-toned background" in terms_prompt
 
 
 def test_prepare_secondary_reference_inverts_when_requested(tmp_path) -> None:
