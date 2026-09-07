@@ -497,12 +497,19 @@ def check_attempt_cap(attempt: int) -> None:
 
     Round 5 ("vivid green on the profile") spends a fourth fresh 8-attempt
     budget, attempts 29-36, on top of rounds 1-4's 1-24 and the round-4
-    defect-fix continuation's 25-28."""
-    if not (1 <= attempt <= 36):
+    defect-fix continuation's 25-28.
+
+    Round 6 (T-0317: the generated green-costume side reference wired into
+    the secondary IP-Adapter slot) spends a fifth fresh 8-attempt budget,
+    attempts 37-44, on top of rounds 1-5's spent 1-36. This is new
+    conditioning input -- a reference that finally carries both the side pose
+    and the green coat, unlike the pose-only T-0273 photograph (round 3) and
+    the colour-thin derived crop (round 4-5) -- not a re-run of the same
+    §24-e parameter sweep."""
+    if not (1 <= attempt <= 44):
         raise SystemExit(
-            "attempt cap is 8 per round (DL-21); round 5 adds attempts 29..36 on top of "
-            "rounds 1-4's spent 1..24 and the round-4 defect-fix continuation's 25..28 -- "
-            "refusing to run a 37th attempt"
+            "attempt cap is 8 per round (DL-21); round 6 adds attempts 37..44 on top of "
+            "rounds 1-5's spent 1..36 -- refusing to run a 45th attempt"
         )
 
 
