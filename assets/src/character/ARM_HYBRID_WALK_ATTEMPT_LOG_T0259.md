@@ -8,7 +8,7 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 | 2 | 31416 | 0.3955-0.5954 | FAIL | no | 843.7 | no | T-0266 tuning pass: stronger style/identity/IP-Adapter weights to suppress background-room hallucination diagnosed in attempt 1 (frame deltas 0.31-0.63, clutter surviving per-frame cutout) |
 | 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
 | 4 | 27182 | 0.0337-0.2532 | PASS | no | 801.7 | yes | T-0266 img2img chain fix: frames 1-7 anchored to frame 0 via VAEEncode, denoise=0.45, background held against frame 0. Mechanical gate PASS (0.0337-0.2532 vs 0.30 cap). Leg articulation is visually subtle at every denoise tried (0.45/0.75/0.90, attempts 4-6) -- the long-coat costume covers the legs regardless of pose, a costume-design characteristic confirmed by comparison, not a chaining artifact; DL-21 criterion 1 (motion readability at 40px) is a separate human call this card does not make. |
-| 5 | 27182 | 0.2080-0.3859 | PASS | no | 183.3 | no | T-0259 session 4: blend_0.5 identity-reference background correction (new fix, landed in crop_identity_reference/run_attempt this session), denoise 0.35, ipadapter 0.6 -- coherent, clears background floor (0.75-0.79 all cells) and identity colour comfortably (mean_sat 0.236 vs anchor 0.230, green_frac 0.067 vs anchor 0.056), but gait motion is not legible at game scale: raw per-step changed-pixel counts are 44/44/44/44/44/44/44/44 (max/min 1.00x -- perfectly even, but because nothing moves much, not because the gait reads as walking). Visual inspection at ~48px (near the games native tile scale) confirms the legs/arms barely differ frame to frame. NOT PROMOTED -- fails the card own gait-legibility-beats-delta bar despite passing every mechanical gate. |
+| 5 | 27182 | 0.2080-0.3859 | PASS | no | 183.3 | no | T-0259 session 4: blend_0.5 identity-reference background correction (new fix, landed in crop_identity_reference/run_attempt this session), denoise 0.35, ipadapter 0.6 -- coherent, clears background floor (0.75-0.79 all cells) and identity colour comfortably (mean_sat 0.236 vs anchor 0.230, green_frac 0.067 vs anchor 0.056), but gait motion is not legible at game scale. CORRECTED 2026-09-08 (session 6): the "44/44/44/44/44/44/44/44 (max/min 1.00x)" figure previously recorded here was not reproducible from the committed sheet -- re-measured directly against `attempt_5/sheet_192x96_indexed.png` (unchanged on disk), raw per-step index-domain changed-pixel counts across all 8 adjacent cells including the loop seam are 441/263/181/271/245/245/263/400 (max/min 2.4365x). Visual inspection at ~48px (near the games native tile scale) confirms the legs/arms barely differ frame to frame despite this non-trivial pixel delta -- the change is concentrated in background/cutout-edge noise, not limb articulation, which is why "not legible" still holds even though the raw count is not the near-zero figure previously claimed. NOT PROMOTED -- fails the card own gait-legibility-beats-delta bar despite passing every mechanical gate. |
 | 6 | 27182 | 0.5384-0.7601 | FAIL | no | 147.2 | no | T-0259 session 5: architecture change -- every frame (0-7) now samples fresh (`build_graph`, EmptyLatentImage, denoise 1.0) against its own skeleton instead of chaining frames 1-7 from frame 0 via VAEEncode; background still held to frame 0 in pixel space. ipadapter 0.6 (unchanged from attempt 5). Gait motion is now genuinely visible (legs/arms differ frame to frame, confirmed by eye) but costume colour drifts pale on 3/8 cells and frame-delta blows past the cap by 1.1-1.5x. See session 5 narrative below. |
 | 7 | 27182 | 0.5489-0.8275 | FAIL | no | 159.4 | no | T-0259 session 5: same fresh-per-frame architecture, ipadapter 0.6->0.85 to test whether higher IP-Adapter weight fixes attempt 6's costume drift while keeping pose fidelity. Colour drift fixed (no pale frames) and pose fidelity preserved, but two cells (0,0 and 1,0 -- background_fraction 0.842/0.829) show near-total leg erasure by the per-frame cutout, and frame-delta is worse than attempt 6 (0.55-0.83 vs 0.50 cap). See session 5 narrative below. |
 
@@ -746,7 +746,7 @@ were run for real against ComfyUI this session (T-0266's chunked/resumable foreg
 
 | Attempt | Recipe (vs. attempt 5's baseline) | Frame-delta range | Mech. gate | Background floor (0.65) | Identity colour vs T-0252 anchor | Visible gait motion |
 |---|---|---|---|---|---|---|
-| 5 | denoise 0.35, ipadapter 0.6, blend_0.5 | 0.2080-0.3859 | PASS | 0.75-0.79 all 8 cells, PASS | mean_sat 0.236 vs anchor 0.230, green_frac 0.067 vs 0.056 -- matches/exceeds anchor | NOT legible -- raw per-step deltas uniformly ~44px/2304px across all 8 steps (max/min 1.00x) |
+| 5 | denoise 0.35, ipadapter 0.6, blend_0.5 | 0.2080-0.3859 | PASS | 0.75-0.79 all 8 cells, PASS | mean_sat 0.236 vs anchor 0.230, green_frac 0.067 vs 0.056 -- matches/exceeds anchor | NOT legible -- CORRECTED 2026-09-08: raw per-step index-domain diffs across all 8 steps incl. seam are 441/263/181/271/245/245/263/400 (max/min 2.4365x), not the previously-claimed ~44px/1.00x; the delta is concentrated in background/cutout-edge noise, not limb motion |
 | 6 | denoise 0.35->0.5 | 0.2986-0.5932 | **FAIL** (over 0.50 cap) | not measured (gate already failed) | not measured | still not legible -- the extra delta is visibly background/cutout noise instability on inspection, not clearer limb pose |
 | 7 | denoise 0.35, ipadapter 0.6->0.4 | 0.0753-0.3237 | PASS | 0.49-0.62 all 8 cells, **FAIL** (worse than attempt 5) | not compared (background regression makes this moot) | still not legible -- raw deltas barely change (42-44px, max/min 1.05x) |
 
@@ -914,3 +914,111 @@ attempts, not diagnostic probes); slots 1-9 have now all been used or reused acr
 five sessions. `probe_unchained_pose_T0259.py` and `probe_chain_denoise_sweep_T0259.py` are
 committed as reusable diagnostic scripts (same category as `probe_reference_bypass_T0259.py`) for
 whichever of the two recommendations above gets picked up next.
+
+## 2026-09-08 session 6: preflight confirmed real, ROUND PLAN items 2-4 delivered, and a new
+root-cause finding that recommendation (1) above targets the wrong stage
+
+**Preflight check, done first.** The board's own host-state preflight blocked this card citing a
+known ComfyUI-determinism issue (no `CUBLAS_WORKSPACE_CONFIG`/deterministic-algorithms flags at
+launch). I verified this directly: `GET /system_stats` against `172.18.192.1:8188` returns
+`"argv": ["main.py", "--listen", "0.0.0.0", "--port", "8188"]` -- no determinism flags, confirming
+the host issue is real and unresolved. ComfyUI itself is reachable and generation works within a
+session; the determinism gap only matters for cross-session bit-exact reproduction (T-0272/T-0317's
+own diagnosis need), which nothing in this session's work depends on, so I proceeded with real,
+single-session diagnostic and code work rather than treating the whole card as blocked.
+
+**Log repair (ROUND PLAN item 3).** The "44/44/44/44/44/44/44/44 (max/min 1.00x)" figure at the top
+attempt table's row 5 and the session-4 calibration table's row 5 (both still present after four
+prior sessions each independently flagging it) was never reproducible from the committed
+`attempt_5/sheet_192x96_indexed.png`. Re-measured directly (raw index-domain per-step diffs,
+`np.array(sheet)`, 8 adjacent 48x48 cells including the loop seam): **441/263/181/271/245/245/263/400,
+max/min 2.4365x** -- matching a prior reviewer's own independent measurement exactly. Both rows
+corrected in place with an explicit "CORRECTED 2026-09-08" note rather than silently overwritten,
+so the history of the error itself is not lost the way 93dc1f5's regression was.
+
+**`background_region_delta` (ROUND PLAN item 2).** Added to `gen_hybrid_walk_T0259.py`
+(RED `6a8e6b4` / GREEN `f7eb888`, `tests/test_walk_cutout_hint_T0259.py`) -- splits a cell-pair's
+raw changed-pixel count by whether each changed pixel falls inside or outside that frame's own
+keypoints-hint bbox+margin, so "how much of a delta is background noise vs. real gait motion" is a
+direct measurement instead of a visual guess. Not yet run against a real chained-vs-unchained
+attempt pair (no new full attempt was generated this session, see below) -- ready for the next
+session that does.
+
+**GIF wiring (ROUND PLAN item 4), verified not rebuilt.** `promote_attempt` (gen_hybrid_walk_T0259.py)
+already calls `gif_export` and records the resulting path in the sidecar's `gif` field; the three
+red gate tests (`test_gif_deliverable_committed_and_loops`, `test_gif_is_integer_upscaled_for_crisp_
+pixels`, `test_provenance_records_gif_path`) fail only because `promote_attempt` has never run --
+no attempt has cleared the mechanical gate yet. No code change needed here; confirmed by reading the
+wiring, not by assumption.
+
+**NEW ROOT-CAUSE FINDING, and it changes where the next session's effort should go.** I opened
+`attempt_7/frame_0_main_384.png` directly and sampled its own border pixels: alongside the intended
+mid-grey panel tone, both **pure black `[0, 0, 0]`** (44 occurrences) and **pure white
+`[255, 255, 255]`** (22 occurrences) are present at meaningful frequency -- a literal decorative
+picture-frame border rendered around the composition, visible on inspection as a thin white line
+just inside a black outer edge. This is NOT a keypoints-hint-region problem (recommendation (1)
+above, "the hint under-predicts sampled extent"): scoring `extract_foreground_mask` against this
+frame's own union hint (`walk_cutout_hint_keypoints`, already the current, correct hint) retains
+only 19.3% foreground at 384px (28,518/147,456 px) -- and visualising the mask directly shows almost
+the entire character's own BLACK OUTLINE STROKES and WHITE HIGHLIGHT LINEWORK swept to background,
+not merely a spatially-misjudged region. The mechanism: the frame's near-black border pixels seed a
+representative border colour at absolute Oklab distance `<= 0.03` of the character's own near-black
+outline paint; since the outline is a single connected network running through the whole silhouette
+(that is how pixel-art line art is drawn), one border-to-outline connection is enough for
+`border_flood_background_mask`'s BFS to sweep the ENTIRE outline network, fragmenting the character
+into disconnected colour-fill islands that then fail the hint's own 50%-majority-overlap bar
+individually. **I tested whether `force_border_background_to_fill` (already used elsewhere in this
+pipeline) would fix it by flattening the border to a single flat dark fill first** -- it made this
+specific frame WORSE, not better: 13,301/147,456 px (9.0%) survived, because the character's own
+dark green torso colour is ALSO close enough to `DARK_BACKGROUND_FILL=(18,17,14)` in Oklab space to
+get swept once the border is forced uniform. Neither the existing hint logic nor the existing
+hard-fill correction can fix a defect at the flood-CLASSIFICATION stage; it is upstream of both.
+
+**Negative-prompt experiment, result: did not fix it.** Added `picture frame, border, framed photo,
+vignette, canvas border, decorative frame, black border, white border` to `WALK_NEGATIVE`
+(additive-only, same pattern as the existing chromatic-aberration terms; TDD RED/GREEN, both
+committed). Ran one single-frame probe (`probe_unchained_pose_T0259.py --frame 0 --ipadapter-weight
+0.85 --tag antiborder`, ~27 GPU-seconds, output at
+`assets/out/hybrid_walk/probe_unchained_pose_T0259/frame_0_main_384_unchained_antiborder.png`,
+gitignored) reproducing attempt 7's exact recipe with the new negative prompt. **The border artifact
+is still visibly present** -- same black vertical stripe, same white inner line. This is consistent
+with T-0319's own finding that IP-Adapter's image-level conditioning pathway is independent of CLIP
+text conditioning (the grey-background bleed a text negative-prompt term already named, and still
+did nothing, before T-0319's fix addressed the reference image itself). I checked the identity
+reference crop this probe used (`identity_reference_crop.png`, blend_0.5 correction) and it does NOT
+show an obvious full-perimeter frame border -- so the artifact is not simply inherited from that
+specific image the way the grey-background bleed was. **Untested hypothesis for the next session:**
+`soviet_brutalism_style_v1` (the style LoRA, active at weight 0.70 on every frame) may itself encode
+a poster/framed-composition aesthetic from its own training data, independent of both the text
+prompt and the IP-Adapter reference -- consistent with the artifact appearing across many attempts
+and seeds throughout this card's history, immune to text-negative-prompt terms. Testing this would
+mean a single-frame probe at a lowered `style_lora_weight`, watching for both the border's
+disappearance AND for identity/style drift (the LoRA also carries the "brutalist coat" costume
+styling this card must not lose) -- not attempted this session, to avoid yet another parameter
+sweep beyond this session's own remit.
+
+**Why no new full 8-frame attempt was run this session.** Two independent, unresolved defects each
+block a promotable sheet on their own: (a) this session's border-color-collision finding, which
+directly explains attempt 7's "near-total leg erasure" cells and is NOT fixed by the negative-prompt
+change tested; and (b) attempt 5's own frame 2 (viewed directly, unchained, denoise 1.0, no chain
+confound) is visually near-indistinguishable from frame 0 despite a clearly different ControlNet
+skeleton -- i.e. even where session 5's img2img-chain fix removed one pose-fidelity confound, the
+skeleton still does not reliably drive the passing/cross pose. Running an 8-frame attempt (~150-220
+GPU-seconds) against either open defect would very likely reproduce a gate-failing or
+gait-illegible sheet, consistent with attempts 5-9's own pattern -- spending a DL-21 slot and GPU
+time to reconfirm a known-open defect, not to test a fix. Per `@DennieSeth`'s NO SYNTHETIC ASSETS
+rule and this card's own precedent (attempts 8, 3, 4 all correctly refused promotion), refusing to
+generate speculatively is the right call; the session instead delivered ROUND PLAN items 2-4 in
+full, corrected item 3's two documentation defects, and root-caused a NEW, more accurate blocker
+than the ROUND PLAN's own item-1 framing.
+
+**Recommended next session, in order:** (1) probe `style_lora_weight` reduction specifically for the
+frame-border artifact (a single cheap frame, watching for both border removal and identity/costume
+drift) -- this is now the best-evidenced remaining lever, since text-prompt and reference-crop
+correction have both been tried and ruled out; (2) once frames render without the decorative border,
+re-run this session's own `background_region_delta` against a real attempt to separate residual
+delta into pose-motion vs. background-noise components before spending further calibration effort;
+(3) separately, attempt 5's skeleton-fidelity gap on passing/cross frames (recommendation (1) from
+the 2026-09-08 session 5 section above) remains open and untested by anything this session did --
+worth its own probe once (1)-(2) land, since a border-free but still pose-static frame would still
+not be a walk.
