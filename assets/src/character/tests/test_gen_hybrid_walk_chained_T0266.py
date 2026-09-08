@@ -303,3 +303,47 @@ def test_resume_tolerates_a_pre_existing_attempt_whose_meta_predates_this_field(
     assert provenance["frame_generation"][0]["background_held_from_frame"] is None
     for record in provenance["frame_generation"][1:]:
         assert record["background_held_from_frame"] is None
+
+
+def test_resumed_sidecar_does_not_claim_fresh_generation_it_did_not_do(
+    out_dir: Path,
+) -> None:
+    """T-0259 session 10, review 2026-09-08T17:51:36.207Z: `model_summary` and
+    `method` are hardcoded strings that unconditionally assert 'every frame
+    sampled fresh (EmptyLatentImage, denoise 1.0)', written with only the
+    current fresh-per-frame architecture in mind. A resume over a
+    pre-existing attempt whose frames actually predate that architecture
+    (attempt 5's real img2img-chained frames, exercised by the previous
+    test) makes that claim FALSE for the very sidecar `frame_generation`
+    faithfully records as `img2img_chained` a line above -- an internally
+    self-contradictory provenance record that would misdescribe its own
+    generation method if ever promoted. The top-level description must
+    agree with what `frame_generation` actually says happened."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(walk.FRAME_COUNT):
+        rgb = FRAME0_RGB if i == 0 else SAMPLED_RGB
+        (out_dir / f"frame_{i}_main_384.png").write_bytes(_png_bytes(walk.GEN_PX, rgb))
+        (out_dir / f"frame_{i}_cell_48_raw.png").write_bytes(_png_bytes(walk.FINAL_CELL_PX, rgb))
+        meta = {
+            "comfyui_prompt_id": f"legacy-prompt-{i}",
+            "generation_seconds": 20.0,
+            "generation_mode": "fresh" if i == 0 else "img2img_chained",
+        }
+        (out_dir / f"frame_{i}_meta.json").write_text(json.dumps(meta))
+
+    provenance = _run(max_frames=walk.FRAME_COUNT)
+    assert provenance is not None
+
+    modes = {record["generation_mode"] for record in provenance["frame_generation"]}
+    assert modes == {"fresh", "img2img_chained"}, "fixture sanity: this test needs a mixed resume"
+
+    lowered_model = provenance["model"].lower()
+    lowered_method = provenance["method"].lower()
+    assert "every frame sampled fresh" not in lowered_model, (
+        "model summary affirmatively claims every frame was sampled fresh, but "
+        "frame_generation records an img2img_chained frame"
+    )
+    assert "img2img_chained" in lowered_model or "img2img_chained" in lowered_method, (
+        "provenance must disclose the chained frames its own frame_generation records, "
+        "not just silently omit them from the human-readable summary"
+    )
