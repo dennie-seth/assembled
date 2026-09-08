@@ -262,7 +262,8 @@ WALK_PROMPT = (
 # untouched.
 WALK_NEGATIVE = IDLE_MAIN_NEGATIVE + (
     ", chromatic aberration, rgb split, channel shift, glow, halo, lens flare, "
-    "duplicate outline, ghosting, motion blur"
+    "duplicate outline, ghosting, motion blur, picture frame, border, framed photo, "
+    "vignette, canvas border, decorative frame, black border, white border"
 )
 
 # ── Graph node ids -- named, not raw string literals re-derived per call ────
