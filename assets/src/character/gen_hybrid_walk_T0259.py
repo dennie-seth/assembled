@@ -835,6 +835,71 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
     ATTEMPT_LOG_PATH.write_text("".join(new_lines))
 
 
+def describe_generation(
+    frame_generation: list[dict],
+    *,
+    style_lora_weight: float,
+    identity_lora_weight: float,
+    ipadapter_weight: float,
+) -> tuple[str, str]:
+    """Derive the human-readable `model`/`method` provenance strings from
+    what `frame_generation` actually records happened, never from what this
+    recipe's current architecture does by default.
+
+    Pulled out of `run_attempt` (T-0259 session 10) so `promote_attempt` can
+    call the SAME derivation at promotion time (session 11, finding B):
+    `--promote-attempt` reads a candidate's `provenance_candidate.json`
+    verbatim off disk, so a candidate written before this derivation existed
+    (or before a later fix to it) would otherwise ship whatever stale
+    top-level strings happened to be cached, even though its own
+    `frame_generation` records the truth right next to them."""
+    chained_frame_indices = [
+        r["frame_index"] for r in frame_generation if r["generation_mode"] == "img2img_chained"
+    ]
+    if chained_frame_indices:
+        generation_summary = (
+            f"a mixed-provenance resume -- frame(s) {chained_frame_indices} were "
+            "img2img_chained (T-0266-era resume, EmptyLatentImage/denoise 1.0 did not apply "
+            "to them; see each frame's own frame_generation record for its actual denoise)"
+        )
+    else:
+        generation_summary = (
+            "every frame sampled fresh (EmptyLatentImage, denoise 1.0) against its own skeleton, "
+            "frames 1-7's decoded output background held to frame 0's in pixel space"
+        )
+    model_summary = (
+        f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
+        f"+ LoRA {IDENTITY_LORA_NAME} (player identity, weight {identity_lora_weight}) "
+        f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME} "
+        f"-- {generation_summary}"
+    )
+    method = (
+        "pose_rig_walk_T0259 derives 18-keypoint COCO walk-gait frame keypoints "
+        "deterministically -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each "
+        "frame's skeleton (384x384, reused renderer) -> ControlNetApplyAdvanced (xinsir "
+        "OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, "
+        "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- "
+        + (
+            f"frame(s) {chained_frame_indices} were resumed from a pre-existing "
+            "img2img_chained (T-0266-era) attempt and were NOT sampled fresh under this "
+            "recipe -- see each frame's own frame_generation record. "
+            if chained_frame_indices
+            else ""
+        )
+        + "every OTHER frame samples fresh from EmptyLatentImage (denoise 1.0) against its own "
+        "skeleton (T-0259 session 5: the T-0266 img2img chain this recipe originally used "
+        "for frames 1-7 suppressed pose fidelity to the ControlNet skeleton regardless of "
+        "denoise or IP-Adapter weight -- probe_unchained_pose_T0259.py). Frames 1-7's "
+        "decoded output is still background-held against frame 0's (apply_background_hold, "
+        "pixel space) so only the figure region -- not the background -- is allowed to vary "
+        "per frame -> per-frame area descent to 48x48 (frame 0 from ComfyUI, frames 1-7 "
+        "locally from the held image) -> per-frame background cutout (this frame's own "
+        "keypoint bbox) -> frames assembled into a 192x96 sheet -> Oklab-nearest palette "
+        "quantization (dithering off, §3.1) -> orphan cleanup -> true-RGBA sprite write."
+    )
+    return model_summary, method
+
+
 def promote_attempt(out_dir: Path, provenance: dict) -> None:
     """Copy this attempt's indexed sheet + provenance into
     assets/final/character/, re-home its 8 per-frame ControlNet
@@ -844,7 +909,15 @@ def promote_attempt(out_dir: Path, provenance: dict) -> None:
     looping, upscaled GIF preview alongside the sheet -- baked into
     promotion itself (the only path that ships a sheet to
     assets/final/character/) so the GIF is produced on every promoted run,
-    never a manual afterthought."""
+    never a manual afterthought.
+
+    Also RE-DERIVES `model`/`method` from `provenance["frame_generation"]`
+    via `describe_generation` rather than trusting whatever those two
+    top-level strings already say (T-0259 session 11, finding B): the
+    candidate this is called with may have been written to disk before a
+    fix to that derivation landed, and copying it verbatim would ship a
+    stale, self-contradictory description regardless of what actually
+    happened to the frames."""
     FINAL_CHARACTER_DIR.mkdir(parents=True, exist_ok=True)
     FINAL_SHEET_PATH.write_bytes((out_dir / "sheet_192x96_indexed.png").read_bytes())
 
@@ -870,6 +943,15 @@ def promote_attempt(out_dir: Path, provenance: dict) -> None:
         promoted_frame["pose_skeleton_file"] = str(skeleton_dst.relative_to(REPO_ROOT))
         promoted_frames.append(promoted_frame)
     promoted["frame_generation"] = promoted_frames
+
+    model_summary, method = describe_generation(
+        promoted["frame_generation"],
+        style_lora_weight=promoted.get("style_lora_weight", 0.70),
+        identity_lora_weight=promoted.get("identity_lora_weight", 0.50),
+        ipadapter_weight=promoted.get("ip_adapter_weight", 0.6),
+    )
+    promoted["model"] = model_summary
+    promoted["method"] = method
 
     promoted["promoted"] = True
     promoted["gif"] = str(FINAL_GIF_PATH.relative_to(REPO_ROOT))
@@ -1201,30 +1283,17 @@ def run_attempt(
     # A resumed attempt can complete over frames whose meta.json predates the
     # current fresh-per-frame architecture (attempt 5's own real T-0266
     # img2img-chained frames -- see the "background_held_from_frame" .get()
-    # comment above). The description below must say what actually happened,
-    # not what this recipe currently does by default -- a hardcoded "every
-    # frame sampled fresh" claim next to a frame_generation record reading
+    # comment above). describe_generation() says what actually happened, not
+    # what this recipe currently does by default -- a hardcoded "every frame
+    # sampled fresh" claim next to a frame_generation record reading
     # "img2img_chained" is a self-contradictory provenance record (T-0259
-    # session 10).
-    chained_frame_indices = [
-        r["frame_index"] for r in frame_records if r["generation_mode"] == "img2img_chained"
-    ]
-    if chained_frame_indices:
-        generation_summary = (
-            f"a mixed-provenance resume -- frame(s) {chained_frame_indices} were "
-            "img2img_chained (T-0266-era resume, EmptyLatentImage/denoise 1.0 did not apply "
-            "to them; see each frame's own frame_generation record for its actual denoise)"
-        )
-    else:
-        generation_summary = (
-            "every frame sampled fresh (EmptyLatentImage, denoise 1.0) against its own skeleton, "
-            "frames 1-7's decoded output background held to frame 0's in pixel space"
-        )
-    model_summary = (
-        f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
-        f"+ LoRA {IDENTITY_LORA_NAME} (player identity, weight {identity_lora_weight}) "
-        f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME} "
-        f"-- {generation_summary}"
+    # session 10; session 11 pulled this out to a shared helper so
+    # promote_attempt can re-derive the same way at promotion time).
+    model_summary, method = describe_generation(
+        frame_records,
+        style_lora_weight=style_lora_weight,
+        identity_lora_weight=identity_lora_weight,
+        ipadapter_weight=ipadapter_weight,
     )
     provenance = {
         "model": model_summary,
@@ -1271,30 +1340,7 @@ def run_attempt(
             "frame deltas past the 0.30 cap"
         ),
         "frame_generation": frame_records,
-        "method": (
-            "pose_rig_walk_T0259 derives 18-keypoint COCO walk-gait frame keypoints "
-            "deterministically -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each "
-            "frame's skeleton (384x384, reused renderer) -> ControlNetApplyAdvanced (xinsir "
-            "OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, "
-            "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- "
-            + (
-                f"frame(s) {chained_frame_indices} were resumed from a pre-existing "
-                "img2img_chained (T-0266-era) attempt and were NOT sampled fresh under this "
-                "recipe -- see each frame's own frame_generation record. "
-                if chained_frame_indices
-                else ""
-            )
-            + "every OTHER frame samples fresh from EmptyLatentImage (denoise 1.0) against its own "
-            "skeleton (T-0259 session 5: the T-0266 img2img chain this recipe originally used "
-            "for frames 1-7 suppressed pose fidelity to the ControlNet skeleton regardless of "
-            "denoise or IP-Adapter weight -- probe_unchained_pose_T0259.py). Frames 1-7's "
-            "decoded output is still background-held against frame 0's (apply_background_hold, "
-            "pixel space) so only the figure region -- not the background -- is allowed to vary "
-            "per frame -> per-frame area descent to 48x48 (frame 0 from ComfyUI, frames 1-7 "
-            "locally from the held image) -> per-frame background cutout (this frame's own "
-            "keypoint bbox) -> frames assembled into a 192x96 sheet -> Oklab-nearest palette "
-            "quantization (dithering off, §3.1) -> orphan cleanup -> true-RGBA sprite write."
-        ),
+        "method": method,
         "generator": "assets/src/character/gen_hybrid_walk_T0259.py",
         "card": "T-0259",
         "mechanism": (
