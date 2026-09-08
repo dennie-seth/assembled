@@ -193,3 +193,27 @@ def test_walk_negative_prompt_extends_idle_negative_without_editing_it() -> None
     assert walk.WALK_NEGATIVE != idle_negative
     for term in ("chromatic aberration", "glow", "halo"):
         assert term in walk.WALK_NEGATIVE
+
+
+def test_walk_negative_prompt_excludes_decorative_frame_borders() -> None:
+    """2026-09-08 session-6 finding: every real unchained attempt (5-9) has a
+    literal black-and-white decorative frame/border rendered around the
+    composition -- confirmed by sampling attempt 7 frame 0's own border
+    pixels directly ([0, 0, 0] and [255, 255, 255] both present at
+    meaningful frequency alongside the intended mid-grey panel tone). That
+    border poisons `char_gen.cutout.border_flood_background_mask`: its
+    near-black representative is, by absolute Oklab distance, indistinguishable
+    from this character's own near-black outline stroke colour, so the
+    border-connected flood walks straight through the (fully connected)
+    outline network into the character's interior -- sweeping entire limbs
+    to background regardless of the keypoints hint (measured: attempt 7
+    frame 0 retains only 19.3% foreground at 384px with the outline gone,
+    down further to 9% if the border is additionally hard-filled first,
+    since the character's own dark green torso then also collides with a
+    forced near-black fill). No keypoints-hint recalibration can fix a
+    defect at the flood-classification stage, upstream of any hint use.
+    Never a term the idle recipe needed (a static portrait framing rarely
+    renders a decorative border); additive-only, like the other WALK-specific
+    terms above."""
+    for term in ("picture frame", "border", "vignette", "framed photo"):
+        assert term in walk.WALK_NEGATIVE
