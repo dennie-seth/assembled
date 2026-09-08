@@ -6,7 +6,6 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 |---|---|---|---|---|---|---|---|
 | 1 | 31416 | 0.3051-0.6274 | FAIL | no | 813.9 | no |  |
 | 2 | 31416 | 0.3955-0.5954 | FAIL | no | 843.7 | no | T-0266 tuning pass: stronger style/identity/IP-Adapter weights to suppress background-room hallucination diagnosed in attempt 1 (frame deltas 0.31-0.63, clutter surviving per-frame cutout) |
-| 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
 | 4 | 27182 | 0.0337-0.2532 | PASS | no | 801.7 | yes | T-0266 img2img chain fix: frames 1-7 anchored to frame 0 via VAEEncode, denoise=0.45, background held against frame 0. Mechanical gate PASS (0.0337-0.2532 vs 0.30 cap). Leg articulation is visually subtle at every denoise tried (0.45/0.75/0.90, attempts 4-6) -- the long-coat costume covers the legs regardless of pose, a costume-design characteristic confirmed by comparison, not a chaining artifact; DL-21 criterion 1 (motion readability at 40px) is a separate human call this card does not make. |
 
 ## 2026-08-31 improvement pass -- profile-view finding (not a numbered attempt)
@@ -468,3 +467,117 @@ per-attempt denoise every chained frame currently shares -- a targeted architect
 blind sweep; (b) try `controlnet_end`/`style_lora_weight` adjustments at the already-good
 denoise=0.40 rather than further denoise search, since the denoise axis has now been swept fairly
 thoroughly and shows diminishing, noisy returns.
+| 3 | 27182 | 0.4336-0.7904 | FAIL | no | 144.2 | no | fresh run w/ T-0319 generation-time background fix wired via crop_identity_reference; CROSS_EXTENT_NORM restored to 0.14 |
+
+## 2026-09-08 session: develop merge, then two fresh attempts both come back structurally incoherent (host-level, not a calibration finding) -- DL-21 budget now exhausted
+
+**Merge first.** `origin/develop` was 303-350 commits ahead of this branch and had landed
+everything this card's own re-run preconditions and prior reviews were waiting on:
+
+- **T-0319** (`06e856f`..`29e1f94`, PR #350) -- diagnosed the raw 384px frames rendering on
+  mid-grey instead of black (root cause: `IDENTITY_REFERENCE_CROP_BOX`'s own panel background in
+  the concept sheet is mid-grey, and IP-Adapter's image-embedding conditioning bleeds that into
+  every sample through a path text negative-prompting cannot reach) and fixed it at the
+  generation-time source: `crop_identity_reference` now runs the crop through
+  `char_gen.cutout.force_border_background_to_fill` before it is ever uploaded to ComfyUI. T-0319's
+  own card measured that *re-cutting the already-sampled* attempt 5/7 frames against this fix does
+  **not** clear their failing cells (the defect is baked into already-sampled pixels, not just
+  border tone) and explicitly left "does a **fresh** regeneration through the corrected reference
+  clear the gates" as this card's own next question -- which is what this session set out to
+  answer.
+- **T-0271** (locomotion frame-delta cap, 0.50) and **T-0272** (side-profile keyframe) were
+  already reflected in this branch's own prior session; the merge did not change their status.
+  T-0272 itself has since gone through 12 further rounds (`b1fb1ce`..`2b049cf`, PR #351) and is
+  **still not promotable** -- `assets/final/character/` on `origin/develop` has no profile file
+  (`git ls-tree -r origin/develop -- assets/final/character/ | grep -i profile` is empty), so
+  criterion 5 (side profile) remains genuinely blocked upstream, not by anything this card did.
+  See "Criterion 5" below.
+
+One merge conflict, in this file's own import block (`gif_export`, added by this branch, vs.
+`force_border_background_to_fill`, added by T-0319 to the same import block) -- resolved by
+keeping both; nothing else conflicted. Merge commit `720390a`.
+
+**Two fresh attempts, both structurally broken -- not a delta/colour/background calibration
+problem, a sampler-coherence problem.**
+
+- **Attempt 3** (seed 27182 -- reused for continuity with the prior session's sweep, denoise 0.30,
+  full 8-frame run, two chunks of 4). `frame_delta_range` **0.4336-0.7904**, gate FAIL, motion_class
+  `locomotion`. `identity_reference_crop.png` for this attempt is clean -- a well-formed green-coat
+  figure on a genuinely dark (T-0319-fixed) background, confirming the Python-side crop/fix code is
+  not the problem. But every one of the 8 raw `frame_N_main_384.png` files is **not a character at
+  all**: heavy vertical black/white/tan barred striping with only fragmentary limb-like shapes
+  breaking through, and the assembled/cutout sheet is almost entirely wiped to background (the
+  cutout correctly recognised almost none of it as foreground, because almost none of it *is*
+  foreground -- a few scattered dark specks per cell). Visually inspected `frame_0_main_384.png`
+  and `frame_4_main_384.png` directly; both show the same barred-abstraction failure mode, not a
+  one-frame fluke.
+- **Attempt 4** (seed 12321 -- a different seed specifically to rule out seed 27182 itself being
+  the cause, denoise 0.35, `--max-frames 1` as a cheap single-frame probe before committing a full
+  attempt's GPU time). `frame_0_main_384.png` is again incoherent -- a different failure signature
+  (horizontal red/orange/olive bars and blocky green/white/black fragments instead of attempt 3's
+  vertical bars) but the same *class* of defect: no legible head/torso/limb structure, not a
+  person. Different seed, different denoise, same class of breakage -- rules out both the specific
+  seed and the specific denoise value as the cause.
+
+**This is not a new defect class -- it is the exact one T-0317's own card spent 12 rounds on and
+never resolved, on this same ComfyUI host.** `docs/assets/evidence/T-0272/README.md` (T-0317's
+attempt-log-equivalent) documents the identical symptom under headings like "gate-passing but
+incoherent," "striped," and "abstract glowing silhouette... not a person" across rounds 6-12, and
+round 8 specifically tested and **falsified** the VRAM-pressure hypothesis: `POST /free` there
+produced a confirmed, large recovery (`torch_vram_total` to 33MB, OS-level `vram_free` to ~7.36GB)
+and the re-run **still diverged** into a fourth distinct, non-promotable composition. This session
+issued the identical `POST /free {"unload_models": true, "free_memory": true}` before attempt 4 and
+got a *weaker* result than T-0317's round 8 did -- `torch_vram_total` stayed at ~5.87-5.9GB
+(barely moved from ~5.9GB before the call) and `torch_vram_free` was 7-40MB throughout, an order of
+magnitude tighter than the ~7.36GB T-0317 achieved and still found insufficient. `GET
+/system_stats`'s `argv` confirms ComfyUI is running plain (`["main.py", "--listen", "0.0.0.0",
+"--port", "8188"]`, no `--deterministic`), so this is not T-0317 round 10's specific
+`--deterministic`/CUBLAS regime either -- it is a broader host-coherence problem that persists even
+outside that regime, consistent with T-0317 round 12's own finding that its "CUBLAS-baseline"
+regime (no `--deterministic`, no pinned `CUBLAS_WORKSPACE_CONFIG`) *also* produced striped output.
+
+**DL-21 budget is now exhausted for this round.** Attempts 1, 2 (T-0266-era stalls), 5, 6, 7, 8
+(prior session's denoise sweep, all coherent generations), 9 (prior session, over-cap, already
+invalid), 3 and 4 (this session) account for all 8 numbered slots `check_attempt_cap` permits.
+Per this card's own repeated precedent ("this needs a HUMAN BUDGET DECISION, not another automated
+retry"), a 9th slot is not something to open unilaterally, and would not be well spent regardless:
+sweeping denoise/seed further against a sampler that is currently producing structurally
+non-character output on ANY input is exactly the wrong move this card's own history warns against
+-- the two attempts here already vary both axes and both come back broken.
+
+**Not promoted, and nothing else was in contention to promote.** Neither attempt 3 nor attempt 4
+is a candidate under any reading of the NO SYNTHETIC ASSETS rule or this card's own repeated
+standing precedent against shipping a gate-failing (or here, not-even-a-character) sheet.
+`assets/final/character/player_walk_sheet_hybrid.png` remains attempt 4 (the *pre-improvement-pass*
+attempt-4 promoted in T-0266, an unrelated numbering coincidence with this session's attempt-4
+probe -- the promoted sheet is untouched by this session).
+
+**What this session leaves for the next one:** the merge (T-0319's generation-time fix, confirmed
+correctly wired and producing a clean identity-reference crop; T-0271/T-0272 status) is real,
+correct, committed progress independent of the generation outcome. The open question is now
+squarely an infrastructure one, not a calibration one: **is the ComfyUI host at
+`172.18.192.1:8188` currently capable of producing a coherent SDXL+LoRA+IPAdapter+ControlNet sample
+at all**, on any card, right now -- not specific to this card's prompt/pose/weights. Recommend,
+before any further DL-21 attempts are opened on T-0259 (or T-0272/T-0317, which would hit the same
+wall): (a) a host-side restart of the ComfyUI process itself (not just `POST /free`, which this
+session and T-0317 round 8 both show is insufficient) to rule out an accumulated corrupted
+CUDA/allocator state from the many hours of prior sessions' generation load; (b) a check of the
+Windows host's GPU driver/other-process VRAM usage outside ComfyUI's own accounting, since
+`vram_free` (OS-level, 1.51GB) barely moved across this session's `/free` call despite
+`torch_vram_total` nominally holding ~5.9GB, suggesting something outside ComfyUI's own pool
+accounting may be holding the remainder; (c) once host coherence is independently re-confirmed
+(e.g. a trivial unconditioned single-frame SDXL sample that comes back as a recognisable image),
+re-open a fresh attempt budget and re-run this exact recipe (T-0319's fix + CROSS_EXTENT_NORM=0.14
++ denoise in the 0.30-0.40 range this and the prior session both explored) rather than starting
+calibration over.
+
+**Criterion 5 (side profile), status unchanged and independently confirmed still blocked:**
+`origin/develop` has no `assets/final/character/*profile*` file after T-0317's full 12-round,
+84-attempt investigation (`git ls-tree -r origin/develop -- assets/final/character/` has no match
+for "profile"; only `assets/final/lora/player_identity_profile_v1.safetensors`, the LoRA, and
+`assets/src/concept/player_profile_costume_reference_T0317.png`, a costume reference that is
+explicitly not a generated keyframe, exist). Refusing to generate a profile walk against a
+non-existent, never-produced anchor remains correct, and is now backed by 12 rounds of a sibling
+card's own exhaustive, unsuccessful attempt to produce exactly that anchor through the identical
+host. This is not a T-0259 scope item to re-attempt; it is upstream infrastructure/host state, the
+same blocker this session's own attempts 3-4 hit independently.
