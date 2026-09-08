@@ -1089,3 +1089,103 @@ alongside this card's own attempt frames. Once that lands, re-run this card's ex
 (unchained per-frame generation, `CROSS_EXTENT_NORM=0.14`, attempt 5/6/7's IP-Adapter/denoise
 settings) unchanged -- no further amplitude, denoise, or LoRA-weight calibration is indicated by
 anything found this session or the five before it.
+
+## 2026-09-08 session 8: the `cutout.py` fix landed IN THIS CARD, opt-in -- recovers the swept
+outline, but the two most recent reviewer verdicts were right that it belonged here, and this
+session also found the fix trades against `MIN_BACKGROUND_FRACTION` rather than clearing it outright
+
+**The last two reviewer verdicts explicitly rejected session 7's "this is planner/board work"
+framing** and said to attempt the `border_flood_background_mask` / `extract_foreground_mask`
+classification fix directly in this card, guarded by the already-green regression suite, evaluated
+by re-cutting attempt 5/6/7's cached raw frames at zero GPU cost. This session did exactly that.
+
+**Root cause, confirmed identical to session 6/7's diagnosis, visualised directly this session:**
+`attempt_7/frame_0_main_384.png`'s own outline strokes and highlight linework sit within
+`CUTOUT_OKLAB_TOLERANCE` of the frame's sampled border colours by genuine coincidence (both
+near-black / near-white), and because that linework is one connected network through the whole
+silhouette, `border_flood_background_mask`'s BFS sweeps the network's full length from a single
+contact point. Visualising the raw qualifying mask directly (magenta = classified background)
+shows this precisely: the character's own outline and highlight strokes are swept, not merely a
+spatially-misjudged region.
+
+**Fix implemented, tested, and landed: morphological OPENING, gated behind a new opt-in parameter.**
+`border_flood_background_mask` / `extract_foreground_mask` / `cutout_foreground_mask` gain
+`sever_thin_conduits` (default `False`). When enabled, the qualifying set is eroded then dilated by
+`OUTLINE_BRIDGE_EROSION_ITERATIONS` (3x3 neighbourhood, 1 iteration) before the border-seeded flood --
+a conduit only 1-2px wide does not survive; a genuinely wide background region does. Geodesic
+reconstruction (dilating the eroded marker back into the *original* mask) was tried first, exactly as
+session 7 speculated might work, and rejected: measured on `attempt_7`'s frames, it reproduced the
+background fraction unchanged to three decimal places across erosion depths 1-6, because dilating
+into the original (un-eroded) mask just re-floods straight back through the same bridge. Opening --
+dilating only the *eroded* result -- is the operation that actually severs a bridge.
+
+**Why opt-in, not a blanket default:** turning severance on unconditionally was measured to REGRESS
+the already-promoted T-0252 idle sheet. Its own cell (0,0) grew from 474px foreground to 576px once
+severed unconditionally -- not a defect conduit being recovered, but a genuine background enclave (a
+gap between an arm and the torso) being absorbed into foreground. At 48px-cell scale (already
+quantized, already cutout), a real enclave and a defect conduit are the same width (1-3 raw px); the
+same absolute erosion depth that only ever touches a hairline defect on a raw ~384px frame cannot
+tell them apart at 48px. Making it an explicit opt-in (default `False`, byte-identical behaviour for
+every existing caller) resolves this without a scale-dependent heuristic: only
+`gen_hybrid_walk_T0259`'s own raw-frame cutout call opts in.
+
+**TDD:** `tests/test_cutout_outline_bridge_severance_T0259.py`, six tests, RED-then-GREEN (commits
+`1dd9bf1` test, `4e1771f` impl): a synthetic figure split by a colour-colliding 1px seam (fragments
+without severance, recovers fully with it), a wide true-background-intrusion control (must NOT flip
+to foreground), the legacy `cutout_foreground_mask` alias's default-vs-opt-in behaviour, and the
+T-0252 idle-sheet regression anchor (`test_promoted_idle_sheet_cells_are_unaffected_by_the_new_
+parameter`, unchanged from `test_cutout_T0272`'s own anchor since idle never opts in). Full suite:
+19 failed / 911 passed / 131 errors -- the 19 failures + 131 errors are the same pre-existing,
+unattributable-to-this-branch entity/idle-arm-a/profile-hybrid failures every prior session's
+verdict has already traced to other cards' test fixtures; this branch's own three red tests are
+still only the missing GIF (unchanged, expected pending promotion). `ruff check` on every
+diff-touched file: all checks passed.
+
+**Recut experiment against cached frames, zero new GPU spend (`attempts 5, 6, 7` re-assembled from
+their own already-sampled `frame_N_main_384.png` + `frame_N_cell_48_raw.png`, cutout re-run with
+`sever_thin_conduits=True`, nothing else changed):**
+
+| attempt | severance | max frame-delta ratio | mechanical gate (<=0.50) | min background_fraction | background gate (>=0.65) |
+|---|---|---|---|---|---|
+| 5 | off (as promoted-candidate before) | 0.3859 | PASS | 0.755 | PASS |
+| 5 | on | 0.4917 | PASS (barely) | 0.519 (cell 1,0) | **FAIL** |
+| 6 | off | 0.7601 | FAIL | 0.449 (cell 1,0) | FAIL |
+| 6 | on | 0.6384 | FAIL | 0.357 (cell 1,0) | FAIL |
+| 7 | off | 0.8275 | FAIL | 0.469 (cell 0,1) | FAIL |
+| 7 | on | 0.8031 | FAIL | 0.433 (cell 0,1) | FAIL |
+
+**Finding, and it is the honest one, not the one I went looking for: severance did not produce a
+promotable candidate from any cached attempt -- and attempt 5, the one candidate that cleared both
+gates WITHOUT severance, now fails the background-fraction floor WITH it.** This is not a bug in the
+fix; it is a direct, structural consequence of the fix doing its job correctly. Recovering the
+outline/highlight strokes the old cutout swept necessarily ADDS real foreground pixels back --
+`MIN_BACKGROUND_FRACTION`'s own 0.65 floor was met, on every previously-measured attempt, by a cutout
+that was silently over-cutting the character's own outline detail. Correcting that (correctly)
+lowers measured `background_fraction`, and on attempt 5 it lowers cell (1,0) specifically to 0.519,
+under the floor. It also raises frame-to-frame delta somewhat (0.386 -> 0.492 on attempt 5, still
+under the 0.50 locomotion cap by a hair), since recovered outline pixels differ frame to frame too --
+consistent with a MORE correct measurement, not a worse one.
+
+**This is not fixable by anything left in this card's own generation-parameter scope.** Every lever
+this card can tune -- denoise, IP-Adapter weight, style-LoRA weight, chained-vs-unchained sampling,
+STRIDE/KNEE/ARM/CROSS amplitudes, the anti-fringe negative prompt -- was already closed out across
+sessions 2-7 against the OLD (over-cutting) background-fraction accounting. None of those experiments
+were run against the corrected cutout, so re-litigating any of them now would not be new information
+about the pose/generation recipe; it would just be re-measuring the same frames under a fairer ruler.
+**A fresh DL-21 attempt at any of this card's already-tried recipes would reproduce byte-identical
+raw frames** (ComfyUI is deterministic for a fixed seed within a session, confirmed repeatedly this
+card's own history), so re-running attempt 5's exact settings spends GPU time for zero new
+information. Regenerating from scratch under different amplitudes to specifically re-target the
+corrected `background_fraction` floor is possible but is exactly the kind of blind recalibration this
+card's own escalation history (and DL-21's cap) argues against attempting without new evidence of
+which direction to move -- and DL-21's attempt slots are already exhausted (`attempt_1`..`attempt_9`
+all consumed per session 5-7's own accounting; `check_attempt_cap` refuses a 9th).
+
+**What this needs next, and it is a genuine finding for a human, not a retry:** either (a) a fresh
+DL-21 round explicitly re-tuning stride/cross amplitude AND `MIN_BACKGROUND_FRACTION` together now
+that the cutout correctly counts outline detail (the floor may simply need to move now that the
+measurement it gates is more accurate than when it was calibrated), or (b) accept that this card's
+existing recipe cannot clear both gates under a correct cutout without a new attempt round, and treat
+that as the actual remaining blocker rather than a further code fix. The `cutout.py` fix itself is
+real, tested, committed, and does not regress any other generator -- that part of the last two
+verdicts' instruction is done.
