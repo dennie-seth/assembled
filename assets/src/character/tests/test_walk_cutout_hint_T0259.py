@@ -139,3 +139,70 @@ def test_gen_hybrid_walk_uses_the_widened_hint_not_the_bare_per_frame_hint() -> 
         "gen_hybrid_walk_T0259 must call pose_rig_walk_T0259.walk_cutout_hint_keypoints() "
         "for its cutout hint region"
     )
+
+
+# ── background_region_delta (2026-09-08 session 6, ROUND PLAN item 2) ──────
+#
+# The card's own frame-delta gate (asset_gate.art.check_frame_consistency)
+# measures the WHOLE cell -- it cannot say whether a large delta between two
+# adjacent frames comes from real limb motion (inside the keypoints hint
+# region) or from background/cutout-hold instability (outside it). Session
+# 5's own real attempts show both failure modes on the same sheet (attempt 6
+# cells 4/5 leak background at ~0.45-0.61 background_fraction; attempt 7
+# cells 0/4 erase real limb content at ~0.83-0.84) -- a single whole-cell
+# delta number cannot distinguish them. `background_region_delta` splits a
+# cell-pair's raw changed-pixel count by whether each changed pixel falls
+# inside or outside that frame's own keypoints-hint bbox+margin (the same
+# bbox `char_gen.cutout._keypoints_hint_mask` scores foreground components
+# against), so "how much of this delta is background noise vs. actual gait
+# motion" becomes a directly reported number instead of a visual guess.
+
+CELL = 48
+
+
+def _cell(fill: tuple[int, int, int]) -> Image.Image:
+    return Image.new("RGB", (CELL, CELL), fill)
+
+
+def _paint(img: Image.Image, box: tuple[int, int, int, int], fill: tuple[int, int, int]) -> Image.Image:
+    out = img.copy()
+    x0, y0, x1, y1 = box
+    arr = np.array(out)
+    arr[y0:y1, x0:x1] = fill
+    return Image.fromarray(arr, mode="RGB")
+
+
+# A hint bbox roughly centred on the cell, independent of any real pose --
+# background_region_delta only needs points_norm's own min/max extent, not a
+# gait-shaped skeleton.
+_CENTRE_HINT = {0: (0.35, 0.35), 1: (0.65, 0.65)}
+
+
+def test_change_inside_the_hint_region_does_not_count_as_background_delta() -> None:
+    """A change confined to the hint bbox (simulated real limb motion) must
+    report zero background-region delta, even though the whole-cell delta is
+    large."""
+    from gen_hybrid_walk_T0259 import background_region_delta
+
+    a = _cell((10, 10, 10))
+    # (0.35*48, 0.35*48) .. (0.65*48, 0.65*48) with 0 margin is inside the
+    # hint's own bbox -- paint well within it.
+    b = _paint(a, (18, 18, 30, 30), (200, 200, 200))
+    result = background_region_delta(a, b, _CENTRE_HINT, bbox_margin_frac=0.0)
+    assert result["background_region_changed_px"] == 0
+    assert result["background_region_delta_ratio"] == 0.0
+    assert result["hint_region_changed_px"] > 0
+
+
+def test_change_outside_the_hint_region_is_reported_as_background_delta() -> None:
+    """A change confined to a corner well outside the hint bbox (simulated
+    background/cutout-hold leak) must report zero hint-region delta and a
+    non-zero background-region delta."""
+    from gen_hybrid_walk_T0259 import background_region_delta
+
+    a = _cell((10, 10, 10))
+    b = _paint(a, (0, 0, 6, 6), (200, 200, 200))
+    result = background_region_delta(a, b, _CENTRE_HINT, bbox_margin_frac=0.0)
+    assert result["hint_region_changed_px"] == 0
+    assert result["background_region_changed_px"] == 36
+    assert result["background_region_delta_ratio"] > 0.0
