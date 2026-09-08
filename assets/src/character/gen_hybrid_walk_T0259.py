@@ -1120,7 +1120,14 @@ def run_attempt(
                 "cutout_oklab_tolerance": CUTOUT_OKLAB_TOLERANCE,
                 "cutout_bbox_margin_frac": BACKGROUND_MASK_MARGIN_FRAC,
                 "generation_mode": meta["generation_mode"],
-                "background_held_from_frame": meta["background_held_from_frame"],
+                # .get(), not [...]: a resume over an already-complete frame
+                # generated before this field existed (attempt 5's own
+                # T-0266-chained-era meta.json, which carries
+                # chained_from_frame/denoise instead) must not raise --
+                # chunked_frames' whole "skip-existing" contract depends on
+                # resuming from *any* prior complete state, not just one
+                # written by the current schema (T-0259 session 9).
+                "background_held_from_frame": meta.get("background_held_from_frame"),
             }
         )
 
