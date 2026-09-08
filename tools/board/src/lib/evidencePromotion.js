@@ -26,21 +26,103 @@ const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
 // filename, or a config path is never mistaken for a cited frame.
 const CITATION_PATTERN = /`([^`\s]+\.(?:png|jpe?g|webp|gif))`/gi;
 
+// A markdown table data row: starts and ends with `|`. If its own leading cell is a bare integer,
+// that integer is the row's attempt number -- unconditionally, regardless of any *other* attempt
+// number mentioned in that row's own prose (e.g. "matches attempt 30's result" inside attempt 31's
+// own row still belongs to attempt 31: the row's own subject always wins over a cross-reference).
+const TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
+const TABLE_ROW_ATTEMPT_PATTERN = /^\s*\|\s*(\d+)\s*\|/;
+
+// A prose mention of a specific attempt: "Attempt 39", "attempt 41's", "attempts 39, 40" (only the
+// first number of a list is captured -- it is only ever used to disambiguate a bare-filename
+// citation appearing in the very same sentence, never to enumerate every number named).
+const ATTEMPT_MENTION_PATTERN = /\battempts?\s+(\d+)\b/gi;
+
+// End of a sentence: a period followed by whitespace, a closing `**` bold marker, or end of
+// string. Deliberately excludes a bare decimal like `0.15`/`31.416`, which is always followed
+// directly by a digit, never by whitespace or `**`.
+const SENTENCE_END_PATTERN = /\.(?=\s|\*\*|$)/g;
+
+function addResolved(resolved, seen, ordered) {
+  if (seen.has(resolved)) return;
+  seen.add(resolved);
+  ordered.push(resolved);
+}
+
+/**
+ * The nearest attempt number named in a same-sentence prose mention preceding `citationIndex` in
+ * `blockText` -- e.g. "attempt 39's `main_384.png`" resolves to `"39"`. Never looks past the most
+ * recent sentence boundary and never looks forward, so an unrelated "Attempt N" appearing later in
+ * the same paragraph (or naming a different attempt in an earlier sentence) is never attributed to
+ * a citation it doesn't actually belong to -- returns null rather than guessing wrong.
+ */
+function nearestPrecedingAttempt(blockText, citationIndex) {
+  const prefix = blockText.slice(0, citationIndex);
+  let sentenceStart = 0;
+  for (const match of prefix.matchAll(SENTENCE_END_PATTERN)) {
+    sentenceStart = match.index + 1;
+  }
+  const sentence = blockText.slice(sentenceStart, citationIndex);
+  let nearest = null;
+  for (const match of sentence.matchAll(ATTEMPT_MENTION_PATTERN)) {
+    nearest = match[1]; // matchAll preserves order, so the last match is the nearest one
+  }
+  return nearest;
+}
+
+function resolveBareCitation(cited, blockText, citationIndex) {
+  const attemptNumber = nearestPrecedingAttempt(blockText, citationIndex);
+  return attemptNumber ? `attempt_${attemptNumber}/${cited}` : cited;
+}
+
+function extractFromProseBlock(blockText, seen, ordered) {
+  for (const match of blockText.matchAll(CITATION_PATTERN)) {
+    const cited = match[1];
+    if (!IMAGE_EXTENSIONS.test(cited)) continue;
+    const resolved = cited.includes("/") ? cited : resolveBareCitation(cited, blockText, match.index);
+    addResolved(resolved, seen, ordered);
+  }
+}
+
+function extractFromTableBlock(lines, seen, ordered) {
+  for (const line of lines) {
+    const tableMatch = TABLE_ROW_ATTEMPT_PATTERN.exec(line);
+    for (const match of line.matchAll(CITATION_PATTERN)) {
+      const cited = match[1];
+      if (!IMAGE_EXTENSIONS.test(cited)) continue;
+      const resolved = cited.includes("/") || !tableMatch ? cited : `attempt_${tableMatch[1]}/${cited}`;
+      addResolved(resolved, seen, ordered);
+    }
+  }
+}
+
 /**
  * Every run-relative image path an attempt log cites via an inline-code span, in first-seen
  * order, deduped. This is the entire selection rule: a frame is a "decisive frame" iff the log's
  * own prose names it this way -- mechanical, bounded by what the log actually cites, and
  * unaffected by whether the round's own outcome was a promotion or a finding.
+ *
+ * A citation is either already run-relative (`` `attempt_14/main_384.png` ``, used as-is) or a
+ * bare filename (`` `main_384.png` ``) -- the shape T-0272's own real attempt log actually uses
+ * throughout. A bare filename is resolved against whichever attempt it is cited *for*: a markdown
+ * table row's own leading attempt-number cell, or the nearest "attempt N" mention in the same
+ * sentence of surrounding prose. A bare filename with no such context (e.g. a conditioning input
+ * that sits at the top of the run directory, like `pose_skeleton_384.png`) is left unresolved and
+ * promoted from the top of `runDir` directly. Paragraphs are reconstituted across hard-wrapped
+ * source lines (no blank line between them) before resolution, so a citation and the attempt
+ * mention that names it are seen together even when the log's own line-wrapping split them.
  */
 export function parseCitedEvidencePaths(logText) {
   const seen = new Set();
   const ordered = [];
-  for (const match of logText.matchAll(CITATION_PATTERN)) {
-    const cited = match[1];
-    if (!IMAGE_EXTENSIONS.test(cited)) continue;
-    if (seen.has(cited)) continue;
-    seen.add(cited);
-    ordered.push(cited);
+  for (const block of logText.split(/\n\s*\n/)) {
+    const lines = block.split("\n").filter((line) => line.trim().length > 0);
+    if (lines.length === 0) continue;
+    if (lines.every((line) => TABLE_ROW_PATTERN.test(line))) {
+      extractFromTableBlock(lines, seen, ordered);
+    } else {
+      extractFromProseBlock(lines.join(" "), seen, ordered);
+    }
   }
   return ordered;
 }
@@ -73,7 +155,7 @@ async function firstAvailableDestPath(evidenceDir, destFileName) {
   const base = destFileName.slice(0, destFileName.length - ext.length);
   let candidate = path.join(evidenceDir, destFileName);
   let n = 2;
-  while (await fileSize(candidate)) {
+  while ((await fileSize(candidate)) !== null) {
     candidate = path.join(evidenceDir, `${base}__${n}${ext}`);
     n += 1;
   }
@@ -153,7 +235,7 @@ export async function promoteEvidence({
 
     const destFileName = destFileNameFor(citedPath);
     const existingSamePath = path.join(evidenceDir, destFileName);
-    if (await fileSize(existingSamePath)) {
+    if ((await fileSize(existingSamePath)) !== null) {
       if (await buffersEqual(sourcePath, existingSamePath)) {
         unchanged.push(citedPath);
         continue;
