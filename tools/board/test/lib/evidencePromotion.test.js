@@ -87,6 +87,125 @@ describe("parseCitedEvidencePaths", () => {
   it("returns an empty list for text with no inline code spans at all", () => {
     expect(parseCitedEvidencePaths("Nothing promoted this round.")).toEqual([]);
   });
+
+  it("resolves a bare filename cited in a markdown table row via that row's own leading attempt number", () => {
+    const text = [
+      "| Attempt | Seed | Notes |",
+      "|---|---|---|",
+      "| 1 | 31416 | Visual verdict (Read tool, `main_384.png`): front-facing, boxy. |",
+      "| 8 | 31416 | Visual verdict (re-checked, `main_384.png`): same cluster as attempts 1, 5, and 7. |"
+    ].join("\n");
+
+    expect(parseCitedEvidencePaths(text)).toEqual(["attempt_1/main_384.png", "attempt_8/main_384.png"]);
+  });
+
+  it("resolves a bare filename cited in prose via the nearest preceding attempt mention in the same sentence", () => {
+    const text = [
+      "- **Coherent but gate-failing** (attempts 39, 40): the visual read as the round's best",
+      "  result by far (attempt 39's `main_384.png`, kept in `docs/assets/evidence/T-0272/`) --",
+      "  but the background is wrong.",
+      "- **One attempt passed the mechanical gate** (attempt 41, seed 84512) but its own",
+      "  `main_384.png` and `cell_48_indexed.png` do not read as a legible standing figure."
+    ].join("\n");
+
+    expect(parseCitedEvidencePaths(text)).toEqual([
+      "attempt_39/main_384.png",
+      "attempt_41/main_384.png",
+      "attempt_41/cell_48_indexed.png"
+    ]);
+  });
+
+  it("does not attribute a bare filename to an attempt mentioned only in a different, earlier sentence", () => {
+    // "attempt 52's 144" ends its own sentence before "But `main_384.png`" starts a new one --
+    // the citation must not be mis-attributed to the nearer-but-wrong attempt 52.
+    const text = [
+      "Attempt 53: reproduce attempt 39's exact recipe. Mechanical gate passed -- more foreground",
+      "than attempts 39/40/49/50 and roughly half of attempt 52's 144. But `main_384.png` is a",
+      "fifth distinct composition."
+    ].join("\n");
+
+    expect(parseCitedEvidencePaths(text)).toEqual(["main_384.png"]);
+  });
+
+  it("reconstitutes a hard-wrapped paragraph (no blank lines) into one sentence before resolving", () => {
+    const text = [
+      "Per this round's own instructions, attempts 23 and 24 tested conditioning",
+      "IP-Adapter's secondary input on this pipeline's own prior output -- pre-inverting",
+      "attempt 21's (23) and attempt 20's (24) own `main_384.png` so the invert restores",
+      "the original tone before it reaches IP-Adapter."
+    ].join("\n");
+
+    expect(parseCitedEvidencePaths(text)).toEqual(["attempt_20/main_384.png"]);
+  });
+
+  it("leaves a bare filename unresolved when no attempt context precedes it in the same sentence", () => {
+    // Matches the doc's own convention for a conditioning input at the top of the run directory
+    // (e.g. `pose_skeleton_384.png`) -- a later, unrelated "Attempt N" mention must not attach to it.
+    const text = "`pose_skeleton_384.png`. Attempt 14 is re-confirmed later, unrelated to the frame above.";
+
+    expect(parseCitedEvidencePaths(text)).toEqual(["pose_skeleton_384.png"]);
+  });
+});
+
+describe("parseCitedEvidencePaths against the real T-0272 attempt log", () => {
+  it("recovers the decisive frames T-0272's own round 3/5/6 prose and tables cite, without inventing paths that were never cited", async () => {
+    const logPath = path.resolve(
+      path.dirname(new URL(import.meta.url).pathname),
+      "../../../../assets/src/character/ARM_PROFILE_ATTEMPT_LOG_T0272.md"
+    );
+    const logText = await fs.readFile(logPath, "utf8");
+
+    const cited = parseCitedEvidencePaths(logText);
+
+    // These are real citations in the real log (round 1's table rows, round 5's table row, and
+    // round 6's prose bullets) -- proof the resolver works against this repo's own prior art, not
+    // only a synthetic fixture shaped to fit the regex.
+    expect(cited).toEqual(
+      expect.arrayContaining([
+        "attempt_1/main_384.png",
+        "attempt_8/main_384.png",
+        "attempt_31/main_384.png",
+        "attempt_39/main_384.png",
+        "attempt_41/main_384.png",
+        "attempt_41/cell_48_indexed.png"
+      ])
+    );
+  });
+
+  it("promotes exactly the decisive frames that exist on disk for a fake run directory shaped like T-0272's, bounded by the default cap", async () => {
+    const logPath = path.resolve(
+      path.dirname(new URL(import.meta.url).pathname),
+      "../../../../assets/src/character/ARM_PROFILE_ATTEMPT_LOG_T0272.md"
+    );
+
+    for (const rel of [
+      "assets/out/hybrid_profile/attempt_1/main_384.png",
+      "assets/out/hybrid_profile/attempt_8/main_384.png",
+      "assets/out/hybrid_profile/attempt_31/main_384.png",
+      "assets/out/hybrid_profile/attempt_39/main_384.png",
+      "assets/out/hybrid_profile/attempt_41/main_384.png",
+      "assets/out/hybrid_profile/attempt_41/cell_48_indexed.png"
+    ]) {
+      await writeFile(repoRoot, rel, `fixture-content-${rel}`);
+    }
+
+    const result = await promoteEvidence({ repoRoot, cardId: "T-0272", runDir, logPath });
+
+    const destRelPaths = result.promoted.map((p) => p.destRelPath).sort();
+    expect(destRelPaths).toEqual(
+      [
+        "docs/assets/evidence/T-0272/attempt_1_main_384.png",
+        "docs/assets/evidence/T-0272/attempt_8_main_384.png",
+        "docs/assets/evidence/T-0272/attempt_31_main_384.png",
+        "docs/assets/evidence/T-0272/attempt_39_main_384.png",
+        "docs/assets/evidence/T-0272/attempt_41_main_384.png",
+        "docs/assets/evidence/T-0272/attempt_41_cell_48_indexed.png"
+      ].sort()
+    );
+    // Bounded: this fake run only has 6 real files, well under the default 20-file cap, and
+    // nothing outside that fixture set was fabricated.
+    expect(result.promoted.length).toBeLessThan(DEFAULT_MAX_FILES_PER_RUN);
+  });
 });
 
 describe("promoteEvidence", () => {
@@ -210,6 +329,24 @@ describe("promoteEvidence", () => {
     expect(second.unchanged).toEqual(["attempt_1/main_384.png"]);
     const dir = path.join(repoRoot, "docs/assets/evidence/T-9999");
     expect((await fs.readdir(dir)).sort()).toEqual(["attempt_1_main_384.png"]);
+  });
+
+  it("does not treat a pre-existing zero-byte destination file as absent -- appends a suffix instead of silently overwriting it", async () => {
+    const evidenceDir = path.join(repoRoot, "docs/assets/evidence/T-9999");
+    await fs.mkdir(evidenceDir, { recursive: true });
+    await fs.writeFile(path.join(evidenceDir, "attempt_1_main_384.png"), Buffer.alloc(0));
+
+    await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_1/main_384.png", "real-content");
+    await writeAbs(logPath, "Decisive: `attempt_1/main_384.png`.");
+
+    const result = await promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath });
+
+    expect(result.promoted).toHaveLength(1);
+    expect(result.promoted[0].destRelPath).toBe("docs/assets/evidence/T-9999/attempt_1_main_384__2.png");
+    expect(await readFile(repoRoot, "docs/assets/evidence/T-9999/attempt_1_main_384.png")).toEqual(Buffer.alloc(0));
+    expect(await readFile(repoRoot, "docs/assets/evidence/T-9999/attempt_1_main_384__2.png")).toEqual(
+      Buffer.from("real-content")
+    );
   });
 
   it("appends a suffix rather than clobbering when a later round cites a different frame under the same destination name", async () => {
