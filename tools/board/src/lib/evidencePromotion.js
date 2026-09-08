@@ -191,6 +191,116 @@ async function buffersEqual(a, b) {
  *
  * @returns {Promise<{evidenceDir: string, promoted: Array<{cited: string, sourcePath: string, destPath: string, destRelPath: string, bytes: number}>, skippedMissing: string[], skippedTooLarge: Array<{cited: string, bytes: number}>, skippedOverCap: string[], unchanged: string[]}>}
  */
+// `.claude/rules/assets.md`'s own blocked-generation-log convention: `ARM_<NAME>_ATTEMPT_LOG_<CARD>.md`,
+// e.g. `ARM_HYBRID_ATTEMPT_LOG_T0272.md`. The `<CARD>` segment is the card id with its dash
+// removed (`T-0272` -> `T0272`) -- verified against that exact file's own name in this repo.
+const ATTEMPT_LOG_FILENAME_PATTERN = /^ARM_.+_ATTEMPT_LOG_(.+)\.md$/;
+
+/** `T-0272` -> `T0272` -- the card-id form the attempt-log filename convention uses. */
+function attemptLogCardSuffix(cardId) {
+  return cardId.replace(/-/g, "");
+}
+
+/**
+ * Every `ARM_*_ATTEMPT_LOG_<cardId>.md` file under `<repoRoot>/assets/src/` (any depth), paired
+ * with every top-level directory under `<repoRoot>/assets/out/` -- the round-level run
+ * directories a citation inside one of those logs is resolved relative to.
+ *
+ * Nothing on disk records which run directory a given attempt log's citations belong to, so this
+ * returns every candidate rather than guessing one: `promoteEvidenceForCard` tries each log
+ * against each run dir, and a citation that isn't actually under a given candidate simply reports
+ * `skippedMissing` for that pairing (the same "never fatal" behaviour `promoteEvidence` already
+ * has) rather than the caller needing to know the mapping upfront.
+ *
+ * Best-effort discovery, never throws: a card that never touched `assets/**` -- overwhelmingly
+ * the common case for every other agent's cards -- has neither directory at all, and that
+ * degrades to two empty lists rather than an ENOENT escaping to the caller.
+ */
+export async function discoverEvidenceSources({ repoRoot, cardId }) {
+  const suffix = attemptLogCardSuffix(cardId);
+
+  const logPaths = [];
+  try {
+    const entries = await fs.readdir(path.join(repoRoot, "assets", "src"), { recursive: true, withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const match = ATTEMPT_LOG_FILENAME_PATTERN.exec(entry.name);
+      if (match && match[1] === suffix) {
+        logPaths.push(path.join(entry.parentPath ?? entry.path, entry.name));
+      }
+    }
+  } catch {
+    // No assets/src tree at all -- nothing to find.
+  }
+  logPaths.sort();
+
+  const runDirs = [];
+  try {
+    const entries = await fs.readdir(path.join(repoRoot, "assets", "out"), { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) runDirs.push(path.join(repoRoot, "assets", "out", entry.name));
+    }
+  } catch {
+    // No assets/out tree at all -- nothing generated (or already reaped).
+  }
+  runDirs.sort();
+
+  return { logPaths, runDirs };
+}
+
+/**
+ * Promotes a card's decisive attempt frames with no caller-supplied `runDir`/`logPath` -- the
+ * entry point an automated caller (e.g. `runOrchestrator.js`'s pre-commit PASS step) uses, since
+ * it cannot know either path ahead of time. Discovers both via `discoverEvidenceSources` and runs
+ * `promoteEvidence` once per (log, run dir) candidate pair, merging the results.
+ *
+ * `maxFiles` is a total across every pairing, not a per-pairing allowance -- each call passes
+ * down whatever budget the merged result hasn't already spent, so a log cited against several
+ * candidate run dirs can never promote more than `maxFiles` frames in total just because more
+ * than one candidate existed.
+ */
+export async function promoteEvidenceForCard({
+  repoRoot,
+  cardId,
+  evidenceRoot = DEFAULT_EVIDENCE_ROOT,
+  maxFiles = DEFAULT_MAX_FILES_PER_RUN,
+  maxFileBytes = DEFAULT_MAX_FILE_BYTES
+}) {
+  const { logPaths, runDirs } = await discoverEvidenceSources({ repoRoot, cardId });
+
+  const merged = {
+    evidenceDir: path.join(repoRoot, evidenceRoot, cardId),
+    promoted: [],
+    skippedMissing: [],
+    skippedTooLarge: [],
+    skippedOverCap: [],
+    unchanged: []
+  };
+
+  for (const logPath of logPaths) {
+    for (const runDir of runDirs) {
+      const remaining = maxFiles - merged.promoted.length;
+      if (remaining <= 0) break;
+      const result = await promoteEvidence({
+        repoRoot,
+        cardId,
+        runDir,
+        logPath,
+        evidenceRoot,
+        maxFiles: remaining,
+        maxFileBytes
+      });
+      merged.promoted.push(...result.promoted);
+      merged.skippedMissing.push(...result.skippedMissing);
+      merged.skippedTooLarge.push(...result.skippedTooLarge);
+      merged.skippedOverCap.push(...result.skippedOverCap);
+      merged.unchanged.push(...result.unchanged);
+    }
+  }
+
+  return merged;
+}
+
 export async function promoteEvidence({
   repoRoot,
   cardId,
