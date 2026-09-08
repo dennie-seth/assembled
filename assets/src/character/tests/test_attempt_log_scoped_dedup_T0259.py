@@ -34,24 +34,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import gen_hybrid_walk_T0259 as walk  # noqa: E402
 
-FIXTURE = """# Hybrid walk-cycle attempt log (T-0259, HANDOFF §24-e)
+# Reuses the real header/separator text verbatim, rather than a hand-typed
+# copy, so this fixture can never silently drift from what the function
+# under test actually searches for.
+_MAIN_HEADER_ROW, _MAIN_SEPARATOR_ROW = walk.ATTEMPT_LOG_HEADER.splitlines(keepends=True)[-2:]
 
-Some prose.
-
-| Attempt | Seed | Frame-delta range | Mechanical gate | Beats Arm C (0.072-0.112) | GPU seconds | Promoted | Notes |
-|---|---|---|---|---|---|---|---|
-| 5 | 11111 | 0.10-0.20 | FAIL | no | 100.0 | no | historical attempt 5, main table |
-| 6 | 22222 | 0.10-0.20 | FAIL | no | 100.0 | no | historical attempt 6, main table |
-
-Some more prose between the two tables.
-
-| Attempt | STRIDE / KNEE / ARM / CROSS | Denoise | Frame-delta range | Pairs over 0.30 |
-|---|---|---|---|---|
-| 5 | 0.30 / 0.18 / 0.20 / 0.14 | 0.45 | 0.328-0.473 | 8/8 |
-| 6 | 0.22 / 0.13 / 0.15 / 0.05 | 0.45 | 0.212-0.375 | 6/8 |
-
-Trailing prose that must survive untouched.
-"""
+FIXTURE = (
+    "# Hybrid walk-cycle attempt log (T-0259, HANDOFF §24-e)\n\n"
+    "Some prose.\n\n"
+    f"{_MAIN_HEADER_ROW}{_MAIN_SEPARATOR_ROW}"
+    "| 5 | 11111 | 0.10-0.20 | FAIL | no | 100.0 | no | historical attempt 5, main table |\n"
+    "| 6 | 22222 | 0.10-0.20 | FAIL | no | 100.0 | no | historical attempt 6, main table |\n"
+    "\n"
+    "Some more prose between the two tables.\n\n"
+    "| Attempt | STRIDE / KNEE / ARM / CROSS | Denoise | Frame-delta range | Pairs over 0.30 |\n"
+    "|---|---|---|---|---|\n"
+    "| 5 | 0.30 / 0.18 / 0.20 / 0.14 | 0.45 | 0.328-0.473 | 8/8 |\n"
+    "| 6 | 0.22 / 0.13 / 0.15 / 0.05 | 0.45 | 0.212-0.375 | 6/8 |\n"
+    "\n"
+    "Trailing prose that must survive untouched.\n"
+)
 
 
 @pytest.fixture

@@ -689,6 +689,22 @@ ATTEMPT_LOG_HEADER = (
 
 
 def append_attempt_log(provenance: dict, notes: str = "") -> None:
+    """Append (or replace, if reusing an already-recorded attempt number)
+    this attempt's own row in the MAIN table only.
+
+    2026-09-08 (session 4): a real re-run under a reused slot number
+    (`--attempt 5`) exposed a documentation-destroying bug -- the previous
+    implementation deleted ANY line in the WHOLE FILE whose second
+    pipe-delimited field matched the attempt number as plain text, which
+    collides with the separate STRIDE/KNEE/ARM/CROSS calibration table
+    further down this same document (its own first column is also headed
+    "Attempt" and also contains bare numerals). Two prior sessions
+    hand-repaired that exact damage without ever fixing this function, so
+    it recurred immediately the next time an attempt number was reused.
+    Now scoped: only the contiguous `|`-prefixed block that immediately
+    follows THIS function's own header row (matched by its literal text,
+    not just "starts with `|`") is ever read or rewritten. Everything else
+    in the file -- other tables, all prose -- is left untouched."""
     if not ATTEMPT_LOG_PATH.exists():
         ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
     lo, hi = provenance["frame_delta_range"]
@@ -701,15 +717,39 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
         f"| {'yes' if provenance.get('promoted') else 'no'} "
         f"| {notes} |\n"
     )
+    header_row = ATTEMPT_LOG_HEADER.splitlines(keepends=True)[-2]
+    separator_row = ATTEMPT_LOG_HEADER.splitlines(keepends=True)[-1]
     lines = ATTEMPT_LOG_PATH.read_text().splitlines(keepends=True)
+
+    try:
+        header_index = next(i for i, line in enumerate(lines) if line == header_row)
+    except StopIteration:
+        raise RuntimeError(
+            f"{ATTEMPT_LOG_PATH}: this function's own table header "
+            f"({header_row!r}) was not found -- refusing to guess where the "
+            "attempt table starts"
+        ) from None
+    if lines[header_index + 1] != separator_row:
+        raise RuntimeError(
+            f"{ATTEMPT_LOG_PATH}: line after the table header is not the "
+            f"expected separator row ({separator_row!r}) -- refusing to guess"
+        )
+
+    table_start = header_index + 2
+    table_end = table_start
+    while table_end < len(lines) and lines[table_end].startswith("|"):
+        table_end += 1
+
     attempt_str = str(provenance["attempt"])
-    kept = [
+    table_rows = [
         line
-        for line in lines
-        if not (line.startswith("|") and line.split("|")[1].strip() == attempt_str)
+        for line in lines[table_start:table_end]
+        if line.split("|")[1].strip() != attempt_str
     ]
-    kept.append(row)
-    ATTEMPT_LOG_PATH.write_text("".join(kept))
+    table_rows.append(row)
+
+    new_lines = lines[:table_start] + table_rows + lines[table_end:]
+    ATTEMPT_LOG_PATH.write_text("".join(new_lines))
 
 
 def promote_attempt(out_dir: Path, provenance: dict) -> None:
