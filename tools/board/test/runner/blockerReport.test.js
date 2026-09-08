@@ -1,10 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { categorizeFailure, buildBlockerReport, formatBlockerReportComment, BLOCKER_CATEGORIES } from "../../src/runner/blockerReport.js";
+import { formatHostActionRequest } from "../../src/lib/hostActionRequest.js";
 
 const TASK = {
   id: "T-0042",
   title: "Wire up the widget",
   branch: "feature/T-0042"
+};
+
+const HOST_ACTION = {
+  host: "Windows ComfyUI host (F:\\ComfyUI)",
+  action: "Edit start-comfyui.bat to set CUBLAS_WORKSPACE_CONFIG=:4096:8, then restart ComfyUI.",
+  reason: "No agent has a shell on this host; the launch flags live in a .bat file only a human can edit.",
+  verify: "Submit the same seed twice across two server lifetimes and confirm identical output hashes."
 };
 
 describe("categorizeFailure", () => {
@@ -34,8 +42,18 @@ describe("categorizeFailure", () => {
     expect(categorizeFailure("Expected 3 but received 2 -- assertion failed in boardView.test.js:44")).toBe("code-test-bug");
   });
 
-  it("exposes the full set of categories in a stable order", () => {
+  it("categorizes a structured host-action-request block as host-action (T-0323)", () => {
+    expect(categorizeFailure(formatHostActionRequest(HOST_ACTION))).toBe("host-action");
+  });
+
+  it("prefers host-action over a keyword match when both are present in the same text (structural beats heuristic)", () => {
+    const text = `permission denied writing to /etc\n\n${formatHostActionRequest(HOST_ACTION)}`;
+    expect(categorizeFailure(text)).toBe("host-action");
+  });
+
+  it("exposes the full set of categories in a stable order, host-action first", () => {
     expect(BLOCKER_CATEGORIES).toEqual([
+      "host-action",
       "permission-grant",
       "tool",
       "env-dependency",
@@ -75,6 +93,22 @@ describe("buildBlockerReport", () => {
     expect(report.lacks.category).toBe("code-test-bug");
     expect(report.lacks.detail).toBe("assertion failed on third pass, different line");
   });
+
+  it("carries the parsed structured payload through as lacks.hostAction when a host-action-request block is present (T-0323)", () => {
+    const attemptRecords = [
+      { attempt: 1, notes: "trying a workaround, no luck" },
+      { attempt: 2, notes: `still stuck.\n\n${formatHostActionRequest(HOST_ACTION)}` }
+    ];
+    const report = buildBlockerReport({ task: TASK, attemptRecords, attemptCount: 2 });
+    expect(report.lacks.category).toBe("host-action");
+    expect(report.lacks.hostAction).toEqual(HOST_ACTION);
+  });
+
+  it("omits hostAction entirely for every other category", () => {
+    const attemptRecords = [{ attempt: 1, notes: "permission denied writing to /etc" }];
+    const report = buildBlockerReport({ task: TASK, attemptRecords, attemptCount: 1 });
+    expect(report.lacks.hostAction ?? null).toBeNull();
+  });
 });
 
 describe("formatBlockerReportComment", () => {
@@ -90,5 +124,19 @@ describe("formatBlockerReportComment", () => {
     expect(text).toContain("Run 1 of 5: x");
     expect(text).toContain("Tool");
     expect(text).toContain("Godot binary not on PATH");
+  });
+
+  it("renders host/action/reason/verify as distinct labeled fields, not folded into prose (T-0323)", () => {
+    const report = {
+      attempted: "Attempted T-0042 across 5 cycles.",
+      failureSignature: "Run 1 of 5: x\nRun 5 of 5: x",
+      lacks: { category: "host-action", detail: HOST_ACTION.reason, hostAction: HOST_ACTION }
+    };
+    const text = formatBlockerReportComment(report);
+    expect(text).toContain("Host action required");
+    expect(text).toContain(`**Host:** ${HOST_ACTION.host}`);
+    expect(text).toContain(`**Action:** ${HOST_ACTION.action}`);
+    expect(text).toContain(`**Reason:** ${HOST_ACTION.reason}`);
+    expect(text).toContain(`**Verify:** ${HOST_ACTION.verify}`);
   });
 });
