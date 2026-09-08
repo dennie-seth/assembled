@@ -51,6 +51,26 @@ describe("categorizeFailure", () => {
     expect(categorizeFailure(text)).toBe("host-action");
   });
 
+  it("falls back to a prose-keyword match for a host-only diagnosis with no fenced block (T-0323, T-0272/T-0317 round 9)", () => {
+    // The actual prose the reviewer would see if an agent's own diagnosis never gets wrapped
+    // in the fenced block -- this is exactly the T-0321 misclassification this card exists to
+    // fix: a correct diagnosis that still fell through to "code-test-bug" because nothing told
+    // the writer the structured format existed yet.
+    const text =
+      "Attempts 53 and 54 are byte-identical within a session and diverge across sessions. " +
+      "The remedy is to set torch.use_deterministic_algorithms and CUBLAS_WORKSPACE_CONFIG in " +
+      "ComfyUI's launch flags, but those flags are fixed on the Windows host and this agent has " +
+      "no shell there to edit start-comfyui.bat.";
+    expect(categorizeFailure(text)).toBe("host-action");
+  });
+
+  it("recognizes other host-only phrasings as a prose fallback", () => {
+    expect(categorizeFailure("This is a host-only configuration change; no tool grant reaches it.")).toBe("host-action");
+    expect(categorizeFailure("The fix requires host-side access to the Windows host's launcher script.")).toBe(
+      "host-action"
+    );
+  });
+
   it("exposes the full set of categories in a stable order, host-action first", () => {
     expect(BLOCKER_CATEGORIES).toEqual([
       "host-action",

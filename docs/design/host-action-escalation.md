@@ -4,8 +4,11 @@
 code:** `tools/board/src/lib/hostActionRequest.js`, `tools/board/src/runner/blockerReport.js`,
 `tools/board/src/lib/escalationRemediation.js`, `tools/board/src/runner/knownHostIssues.js`,
 `tools/board/src/runner/hostStatePreflight.js`, `tools/board/src/runner/runOrchestrator.js`
-(`_blockOnHostAction`, `_recordBlockerReport`). Extends [[escalation-workflow.md]] -- read that
-first; this document only covers what's different for a host-only blocker.
+(`_blockOnHostAction`, `_recordBlockerReport`), `tools/board/src/runner/promptBuilder.js`
+(`FOOTER_SECTION`) and `tools/board/src/runner/reviewerPrompt.js` (`VERDICT_FOOTER`) -- where
+every implementer and reviewer run is actually taught the fenced format exists. Extends
+[[escalation-workflow.md]] -- read that first; this document only covers what's different for a
+host-only blocker.
 
 ## Problem (T-0323)
 
@@ -109,10 +112,19 @@ never folded back into a single prose sentence -- and the remediation card's `##
 section asks for the named action and the named verification specifically, not a generic "root
 cause resolved."
 
-An implementer that reaches this wall mid-run emits the fenced block in its own notes/comment
-the same way any other diagnosis gets written up; the reviewer's FAIL verdict text (already the
-input `blockerReport.js` reads, per [[escalation-workflow.md]]) carries it forward with no new
-plumbing.
+Nothing about the fenced format is guessable from first principles, so both the implementer and
+reviewer prompts teach it explicitly (`promptBuilder.js`'s `FOOTER_SECTION`, `reviewerPrompt.js`'s
+`VERDICT_FOOTER` -- `.claude/rules/conduct.md` was the first choice, since it already reaches
+every agent, but the harness treats `.claude/rules/*.md` as a protected file the implementer
+agent cannot edit, so the instruction lives in the prompt builders instead). An implementer that
+reaches this wall mid-run is told to emit the fenced block in its own notes/commit/comment the
+moment it hits the wall; the reviewer is told to look for that block (or diagnose one itself) and
+carry it forward verbatim inside its FAIL verdict's `notes` field -- the one piece of text
+`blockerReport.js` actually reads (per [[escalation-workflow.md]]). `categorizeFailure` also
+keeps a narrow prose-keyword fallback (`no shell`, `host-only`, `host-side`, `Windows host`, ...)
+for a diagnosis that names the wall correctly but never reaches the fenced form -- a lower-
+confidence catch, checked only after the structural block match, for exactly the T-0321 failure
+mode this card exists to close.
 
 ### The preflight (Option 4)
 

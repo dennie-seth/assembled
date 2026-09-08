@@ -170,6 +170,20 @@ describe("buildPrompt — template correctness", () => {
     expect(prompt).toContain("Build the thing.");
   });
 
+  it("teaches the implementer the fenced host-action-request format for a host-only blocker (T-0323)", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).toContain("```host-action-request");
+    expect(prompt).toMatch(/host:/);
+    expect(prompt).toMatch(/action:/);
+    expect(prompt).toMatch(/reason:/);
+    expect(prompt).toMatch(/verify:/);
+  });
+
+  it("includes the host-action-request instruction on a continuing run too (T-0323)", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, continuing: true });
+    expect(prompt).toContain("```host-action-request");
+  });
+
   it("throws when task or task.body is missing", () => {
     expect(() => buildPrompt({})).toThrow();
     expect(() => buildPrompt({ task: { id: "T-0001" } })).toThrow();

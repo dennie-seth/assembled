@@ -40,6 +40,16 @@ describe("buildReviewerPrompt", () => {
     expect(prompt.toLowerCase()).toContain("never move");
   });
 
+  it("teaches the reviewer the fenced host-action-request format and to carry it into FAIL notes (T-0323)", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("```host-action-request");
+    expect(prompt).toMatch(/host:/);
+    expect(prompt).toMatch(/action:/);
+    expect(prompt).toMatch(/reason:/);
+    expect(prompt).toMatch(/verify:/);
+    expect(prompt.toLowerCase()).toMatch(/\bnotes\b/);
+  });
+
   it("injects the task body verbatim inside the delimited block", () => {
     const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
     expect(prompt).toContain(TASK.body);
