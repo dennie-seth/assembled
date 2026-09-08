@@ -79,6 +79,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frame", type=int, default=2, help="frame index, 0..7 (default 2)")
     parser.add_argument("--ipadapter-weight", type=float, default=IPADAPTER_WEIGHT)
+    parser.add_argument(
+        "--style-lora-weight",
+        type=float,
+        default=STYLE_LORA_WEIGHT,
+        help="soviet_brutalism_style_v1 weight (default 0.70) -- session 6's untested "
+        "hypothesis that the style LoRA itself, not the text prompt or the IP-Adapter "
+        "reference, encodes the recurring decorative-frame-border artifact",
+    )
     parser.add_argument("--tag", type=str, default="", help="output filename suffix")
     args = parser.parse_args()
 
@@ -105,7 +113,7 @@ def main() -> None:
         controlnet_strength=CONTROLNET_STRENGTH,
         controlnet_end=CONTROLNET_END,
         ipadapter_weight=args.ipadapter_weight,
-        style_lora_weight=STYLE_LORA_WEIGHT,
+        style_lora_weight=args.style_lora_weight,
         identity_lora_weight=IDENTITY_LORA_WEIGHT,
     )
 
@@ -126,6 +134,7 @@ def main() -> None:
                 "denoise": 1.0,
                 "seed": SEED,
                 "ipadapter_weight": args.ipadapter_weight,
+                "style_lora_weight": args.style_lora_weight,
                 "background_correction": BACKGROUND_CORRECTION,
                 "comfyui_prompt_id": prompt_id,
                 "generation_seconds": generation_seconds,

@@ -1022,3 +1022,70 @@ delta into pose-motion vs. background-noise components before spending further c
 the 2026-09-08 session 5 section above) remains open and untested by anything this session did --
 worth its own probe once (1)-(2) land, since a border-free but still pose-static frame would still
 not be a walk.
+
+## 2026-09-08 session 7: style-LoRA hypothesis tested and falsified -- every in-scope generation
+lever is now ruled out; the remaining fix is upstream of this card
+
+**Recommendation (1) from session 6, run.** Extended `probe_unchained_pose_T0259.py` with a
+`--style-lora-weight` flag (previously hard-coded to `STYLE_LORA_WEIGHT = 0.70`) and generated one
+diagnostic frame (frame 0, attempt-7's own recipe otherwise unchanged: seed 27182, ipadapter 0.6,
+blend_0.5 reference correction) at `style_lora_weight=0.35` -- half the production value --
+`assets/out/hybrid_walk/probe_unchained_pose_T0259/frame_0_main_384_unchained_stylehalf.png`
+(gitignored, ~21 GPU-seconds, real ComfyUI `prompt_id=dd8abbc5-60f3-49b3-9107-9aa9e2b74e62`).
+
+**Result: falsified on both counts the hypothesis needed to hold.**
+
+1. **The border artifact is still present, if anything more visible.** Sampling this frame's own
+   border pixels directly: pure black `[0,0,0]` 63 occurrences, pure white `[255,255,255]` 77
+   occurrences -- both *higher* than attempt 7's own border sample (44 black, 22 white) at the full
+   0.70 weight. Halving the style LoRA's influence did not touch the decorative-frame-border
+   artifact at all; if anything the border reads more starkly against the now-flatter background.
+2. **Identity and costume are destroyed at this weight.** Viewing the frame directly: the
+   recognisable green brutalist costume is gone, replaced by a grey/tan mechanical-looking figure
+   with none of the T-0252 anchor's silhouette or colour cues. This confirms the log's own stated
+   risk ("watching for ... identity/style drift") was not a hypothetical -- 0.35 is already past the
+   point where the character stops reading as the same character, well before any border-removal
+   benefit could be banked even if one existed.
+
+**This closes out every generation-parameter lever available inside this card's own scope.**
+Across sessions 2-7 the following have each been tried and independently ruled out as the fix for
+either the frame-delta/gait-legibility gap or the border/erasure defect: denoise (chained
+0.24-0.45, a full sweep via `probe_chain_denoise_sweep_T0259.py`), IP-Adapter weight (0.6, 0.85),
+identity-reference background correction (`force_border_background_to_fill`, blend_0.5, blend_0.8,
+full bypass), chained vs. unchained sampling (resolved -- unchained is required and now production,
+session 5), the anti-frame-border negative prompt (session 6), and now style LoRA weight (this
+session). None of them reaches the actual defect session 6 root-caused: `cutout.py`'s
+`border_flood_background_mask` sweeping the character's own outline network when a border pixel and
+an outline pixel collide in Oklab space, upstream of every parameter this card's own generator
+controls.
+
+**Why this session did not attempt a `cutout.py` fix directly.** `border_flood_background_mask` and
+`extract_foreground_mask` are shared across `gen_chained_idle_T0250`, `gen_hybrid_source_idle_T0252`,
+`gen_hybrid_walk_T0259` and `gen_hybrid_profile_T0272`, and the module's own docstring documents four
+prior tuning rounds (T-0315 rounds 1-4), each of which fixed one failure mode and introduced or
+surfaced another against an already-promoted sheet (round 1's single-best-overlap component
+selection silently dropped up to 161px of the promoted T-0252 idle sheet; round 2's minimum-
+separation representative selection left a background blob connected only through under-covered
+colours; round 3's 100% literal coverage swept a real coat colour). A border/outline Oklab-distance
+collision fix attempted in a single session, without the same iterative measurement discipline
+against every already-promoted sheet (idle, profile, all three entity sheets) that each of those
+four rounds required, is exactly the shape of change likely to repeat that history. This is squarely
+the "scoped card... with the idle / T-0272 / entity sheets as required regression checks" the last
+two reviewer verdicts recommended, not a same-session fix -- and creating that card is outside this
+agent's `assets/**`-scoped, code-only remit (it is planner/board work, not generation work).
+
+**State at end of session 7:** no new full 8-frame attempt was run (all levers that could plausibly
+change the outcome are now exhausted or ruled out; spending a DL-21 slot to reconfirm the known
+border-collision defect would not be new information). DL-21 budget note: attempt slots 1-9 remain
+as left by session 5 (all used or reused); this session's only ComfyUI spend was the one 21-second
+style-LoRA probe frame above, not a numbered attempt. `probe_unchained_pose_T0259.py`'s new
+`--style-lora-weight` flag is committed for reuse by whoever validates a future `cutout.py` fix
+against this card's own recipe.
+
+**What unblocks this card next:** a scoped follow-up card against `char_gen/cutout.py`'s
+`border_flood_background_mask` / `extract_foreground_mask` border-vs-outline Oklab collision, with
+the idle (T-0252), profile (T-0272) and all three entity sheets as required regression checks
+alongside this card's own attempt frames. Once that lands, re-run this card's existing recipe
+(unchained per-frame generation, `CROSS_EXTENT_NORM=0.14`, attempt 5/6/7's IP-Adapter/denoise
+settings) unchanged -- no further amplitude, denoise, or LoRA-weight calibration is indicated by
+anything found this session or the five before it.
