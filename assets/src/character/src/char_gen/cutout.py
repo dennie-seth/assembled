@@ -99,6 +99,65 @@ _MAX_BORDER_REPRESENTATIVES = 64
 #: outside it (`test_component_barely_grazing_the_hint_is_excluded`).
 MIN_HINT_OVERLAP_FRACTION = 0.5
 
+#: T-0259 sessions 6-8 finding: a raw-generated frame's own outline strokes
+#: or highlight linework can sit within `CUTOUT_OKLAB_TOLERANCE` of a sampled
+#: border colour by genuine colour coincidence (both near-black, or both
+#: near-white) -- not a T-0315 hop-to-hop chaining artifact, since each
+#: pixel's own absolute distance to a border representative really is within
+#: tolerance. Because that linework forms a single connected network running
+#: through the whole silhouette (how pixel art / SDXL-rendered line art is
+#: drawn), one contact point between the network and the border-connected
+#: background is enough for the flood to sweep the network's full length --
+#: measured directly against `attempt_7/frame_0_main_384.png`
+#: (`ARM_HYBRID_WALK_ATTEMPT_LOG_T0259.md`), which retained only 19.3%
+#: foreground against a complete, fully-rendered figure. A genuine background
+#: region is many pixels wide wherever it meets the frame's edge; a
+#: colour-collision conduit through line art is reliably only 1-2px wide.
+#: Morphological OPENING (erode, then dilate, by this many iterations) on
+#: the qualifying set before the border-seeded flood severs a conduit that
+#: thin while leaving a genuinely wide background region intact. Geodesic
+#: reconstruction (dilating the eroded marker back into the original,
+#: un-eroded mask) was tried first and rejected: it re-floods straight back
+#: through the same thin bridge, leaving the background fraction on this
+#: card's own diagnostic frames unchanged to three decimal places across
+#: erosion depths 1-6 -- opening, not reconstruction, is the operation that
+#: actually severs a bridge rather than restoring it.
+OUTLINE_BRIDGE_EROSION_ITERATIONS = 1
+
+
+def _binary_erode(mask: np.ndarray, iterations: int) -> np.ndarray:
+    """3x3-neighbourhood binary erosion, `iterations` times. Pads with True
+    so a background region that is genuinely wide right up to the frame's
+    own edge is not eroded away merely for lacking neighbours past that
+    edge -- only a conduit flanked by non-qualifying pixels on some side,
+    interior or otherwise, is affected."""
+    out = mask
+    for _ in range(iterations):
+        padded = np.pad(out, 1, mode="constant", constant_values=True)
+        eroded = np.ones_like(padded)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                eroded &= np.roll(np.roll(padded, dy, axis=0), dx, axis=1)
+        out = eroded[1:-1, 1:-1]
+    return out
+
+
+def _binary_dilate(mask: np.ndarray, iterations: int) -> np.ndarray:
+    """3x3-neighbourhood binary dilation, `iterations` times -- the second
+    half of morphological OPENING, restoring a surviving region's own
+    boundary without ever re-growing through a conduit erosion already
+    severed (unlike geodesic reconstruction, this dilates the eroded result
+    itself, never the original un-eroded mask)."""
+    out = mask
+    for _ in range(iterations):
+        padded = np.pad(out, 1, mode="constant", constant_values=False)
+        dilated = np.zeros_like(padded)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                dilated |= np.roll(np.roll(padded, dy, axis=0), dx, axis=1)
+        out = dilated[1:-1, 1:-1]
+    return out
+
 
 def _srgb_to_linear(c: np.ndarray) -> np.ndarray:
     c = c / 255.0
@@ -209,7 +268,9 @@ def _representative_border_colors(
     return np.array(representatives)
 
 
-def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarray:
+def border_flood_background_mask(
+    img: Image.Image, tolerance: float, sever_thin_conduits: bool = False
+) -> np.ndarray:
     """Boolean HxW array, True = background. T-0315: every pixel's own
     qualifying test is its absolute Oklab distance to a small set of sampled
     *true* border colours (a small set of representatives covering at least
@@ -222,6 +283,28 @@ def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarr
     frame*, without itself touching the edge through a connected qualifying
     path, must not be swept -- verified against every promoted sheet this
     module already serves, not just asserted).
+
+    `sever_thin_conduits` (T-0259 sessions 6-8, default OFF): a raw
+    generated frame's own outline strokes or highlight linework can sit
+    within `tolerance` of a sampled border colour by genuine colour
+    coincidence, not a T-0315 hop-to-hop artifact -- and since that linework
+    is a single connected network through the whole silhouette, one contact
+    point with the border-connected background sweeps the network's full
+    length. Enabling this applies morphological opening (see
+    `OUTLINE_BRIDGE_EROSION_ITERATIONS`) to the qualifying set first, which
+    severs a conduit that thin while leaving a genuinely wide background
+    region intact. Measured to be the right default OFF for already-cutout,
+    small (48px-cell-scale) sheets: their own legitimate background
+    enclaves (a gap between an arm and torso) are proportionally similar in
+    width to a defect conduit but only 1-3 *raw* pixels at that scale, so
+    the same absolute erosion depth that only ever touches hairline defects
+    on a raw ~384px frame would instead swallow real background gaps whole
+    on a small cell (measured on `player_idle_sheet_hybrid_T0252.png`'s own
+    cell (0,0): foreground grew from 474px to 576px, i.e. genuine
+    background enclaves absorbed, not defect conduits severed). Only
+    `gen_hybrid_walk_T0259`'s own raw-frame cutout call opts in; every other
+    caller (`gen_chained_idle_T0250`, `gen_hybrid_source_idle_T0252`,
+    `gen_hybrid_profile_T0272`) is unaffected by default.
 
     The previous implementation (kept in git history, not here) was a
     tolerance-chained ("magic wand, contiguous") BFS: a pixel qualified as
@@ -294,6 +377,11 @@ def border_flood_background_mask(img: Image.Image, tolerance: float) -> np.ndarr
         dist2 = diff[..., 0] ** 2 + diff[..., 1] ** 2 + diff[..., 2] ** 2
         np.minimum(min_dist2, dist2, out=min_dist2)
     qualifies = min_dist2 <= tol2
+    if sever_thin_conduits and OUTLINE_BRIDGE_EROSION_ITERATIONS > 0:
+        qualifies = _binary_dilate(
+            _binary_erode(qualifies, OUTLINE_BRIDGE_EROSION_ITERATIONS),
+            OUTLINE_BRIDGE_EROSION_ITERATIONS,
+        )
 
     visited = np.zeros((h, w), dtype=bool)
     queue: deque[tuple[int, int]] = deque()
@@ -375,6 +463,7 @@ def extract_foreground_mask(
     tolerance: float,
     keypoints_norm: dict[int, tuple[float, float]] | None = None,
     bbox_margin_frac: float = BACKGROUND_MASK_MARGIN_FRAC,
+    sever_thin_conduits: bool = False,
 ) -> np.ndarray:
     """Boolean HxW array, True = character. Background is the border-
     connected tolerant Oklab flood; the foreground is its complement, reduced
@@ -395,7 +484,7 @@ def extract_foreground_mask(
     limb/head that sits mostly inside its own hint, while dropping a decoy
     that sits mostly outside it."""
     size = img.size[0]
-    background = border_flood_background_mask(img, tolerance)
+    background = border_flood_background_mask(img, tolerance, sever_thin_conduits)
     foreground = ~background
     labels, count = label_foreground_components(foreground)
     if count == 0:
@@ -439,12 +528,18 @@ def cutout_foreground_mask(
     points_norm: dict[int, tuple[float, float]],
     tolerance: float,
     bbox_margin_frac: float,
+    sever_thin_conduits: bool = False,
 ) -> np.ndarray:
     """Pre-round-4 name, kept as a drop-in alias: every existing caller
     (`gen_chained_idle_T0250`, `gen_hybrid_source_idle_T0252`,
     `gen_hybrid_walk_T0259`, `gen_hybrid_profile_T0272`) calls this
-    positionally as (img, points_norm, tolerance, bbox_margin_frac)."""
-    return extract_foreground_mask(img, tolerance, points_norm, bbox_margin_frac)
+    positionally as (img, points_norm, tolerance, bbox_margin_frac);
+    `sever_thin_conduits` (T-0259 sessions 6-8, default OFF -- see
+    `border_flood_background_mask`) is keyword-only in practice since every
+    existing call site is positional and none pass a 5th argument."""
+    return extract_foreground_mask(
+        img, tolerance, points_norm, bbox_margin_frac, sever_thin_conduits
+    )
 
 
 def downscale_mask(fg_mask: np.ndarray, target_size: int) -> np.ndarray:

@@ -1088,9 +1088,22 @@ def run_attempt(
 
         raw_cells[cell] = Image.open(cell_raw_path).convert("RGB")
         main_img = Image.open(main_path).convert("RGB")
+        # sever_thin_conduits=True (T-0259 sessions 6-8): this generator's own
+        # raw 384px frames carry outline/highlight linework whose colour can
+        # collide with the sampled border tolerance class by coincidence,
+        # sweeping the whole connected outline network through a hairline
+        # conduit -- see char_gen.cutout.border_flood_background_mask's own
+        # docstring. Only this card's raw-frame cutout call opts in; the
+        # already-small, already-quantized regression anchors (idle/profile)
+        # never do, since a defect conduit and a genuine background enclave
+        # are the same width at that scale.
         fg_masks[cell] = downscale_mask(
             cutout_foreground_mask(
-                main_img, cutout_hint_points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
+                main_img,
+                cutout_hint_points,
+                CUTOUT_OKLAB_TOLERANCE,
+                BACKGROUND_MASK_MARGIN_FRAC,
+                sever_thin_conduits=True,
             ),
             FINAL_CELL_PX,
         )
