@@ -8,9 +8,9 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 | 2 | 31416 | 0.3955-0.5954 | FAIL | no | 843.7 | no | T-0266 tuning pass: stronger style/identity/IP-Adapter weights to suppress background-room hallucination diagnosed in attempt 1 (frame deltas 0.31-0.63, clutter surviving per-frame cutout) |
 | 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
 | 4 | 27182 | 0.0337-0.2532 | PASS | no | 801.7 | yes | T-0266 img2img chain fix: frames 1-7 anchored to frame 0 via VAEEncode, denoise=0.45, background held against frame 0. Mechanical gate PASS (0.0337-0.2532 vs 0.30 cap). Leg articulation is visually subtle at every denoise tried (0.45/0.75/0.90, attempts 4-6) -- the long-coat costume covers the legs regardless of pose, a costume-design characteristic confirmed by comparison, not a chaining artifact; DL-21 criterion 1 (motion readability at 40px) is a separate human call this card does not make. |
-| 6 | 27182 | 0.5384-0.7601 | FAIL | no | 147.2 | no | T-0259 session 5: architecture change -- every frame (0-7) now samples fresh (`build_graph`, EmptyLatentImage, denoise 1.0) against its own skeleton instead of chaining frames 1-7 from frame 0 via VAEEncode; background still held to frame 0 in pixel space. ipadapter 0.6 (unchanged from attempt 5). Gait motion is now genuinely visible (legs/arms differ frame to frame, confirmed by eye) but costume colour drifts pale on 3/8 cells and frame-delta blows past the cap by 1.1-1.5x. See session 5 narrative below. |
-| 7 | 27182 | 0.5489-0.8275 | FAIL | no | 159.4 | no | T-0259 session 5: same fresh-per-frame architecture, ipadapter 0.6->0.85 to test whether higher IP-Adapter weight fixes attempt 6's costume drift while keeping pose fidelity. Colour drift fixed (no pale frames) and pose fidelity preserved, but two cells (0,0 and 1,0 -- background_fraction 0.842/0.829) show near-total leg erasure by the per-frame cutout, and frame-delta is worse than attempt 6 (0.55-0.83 vs 0.50 cap). See session 5 narrative below. |
 | 5 | 27182 | 0.1881-0.3951 | PASS | no | 183.3 | no | T-0259 session 9: recut against the now-fixed sever_thin_conduits (border_flood_background_mask no longer orphans a wide background region reached only via a narrow neck -- e.g. cell (1,0)'s 39,327px blue-grey panel, mean RGB ~(74,80,102), 89.5% inside the keypoints hint bbox, previously flipped to false foreground once its narrow connecting neck was opened away). Fix: re-admit any opened-qualifying component disconnected from the border by opening but entirely reachable from the border via the ORIGINAL, un-opened qualifying set. No new GPU spend -- all 8 frames already complete on disk from the 2026-09-06 generation; also fixed run_attempt's own resume path (background_held_from_frame now read via .get(), since this attempt's meta.json predates that field). Clears both gates for the first time under a correct cutout: locomotion frame-delta range 0.1881-0.3951 (cap 0.50), min background_fraction 0.6927 on cell (0,1) (floor 0.65). |
+| 6 | 27182 | 0.5179-0.6934 | FAIL | no | 147.2 | no |  |
+| 7 | 27182 | 0.5094-0.8144 | FAIL | no | 159.4 | no |  |
 
 ## 2026-08-31 improvement pass -- profile-view finding (not a numbered attempt)
 
@@ -1305,3 +1305,115 @@ itself require re-litigating denoise, chaining, style-LoRA weight, or amplitude 
 which the ROUND PLAN and sessions 2-8 already closed. This needs a human call on whether to spend a
 DL-21 slot on it now, since every prior generation attempt this card has made has failed one gate or
 the other and this would be the ninth-plus reuse.
+
+## 2026-09-08 session 10: the resumed sidecar's provenance is fixed, session 9's "combination that
+has never existed" is actually confirmed to already exist and to already fail -- no new GPU spend,
+and a clear read on what is genuinely left in this card's own scope
+
+**Provenance defect fixed first, per the last reviewer verdict.** `model_summary`/`method` were
+hardcoded strings unconditionally asserting "every frame sampled fresh," written with only the
+current fresh-per-frame architecture in mind. A resume over a pre-existing attempt whose frames
+actually predate it (attempt 5's real `img2img_chained` frames) made that claim false for the exact
+sidecar `frame_generation` correctly records as chained a line above it -- a self-contradictory
+provenance record that would misdescribe its own generation method if ever promoted. RED
+`9e50562`/GREEN `17e0b62`: `model`/`method` are now derived from `frame_generation`'s own
+`generation_mode` values, and disclose the chained frame indices by name instead of the fresh claim
+when any are present. `tests/test_gen_hybrid_walk_chained_T0266.py::
+test_resumed_sidecar_does_not_claim_fresh_generation_it_did_not_do` reuses the previous session's
+mixed-resume fixture and checks both strings.
+
+**The reviewer's proposed "combination that has never existed" (unchained architecture + the
+session-9 cutout fix, generated from the start) turns out to be mechanically identical to what
+session 9's own table already reported, and re-running it for real confirms the numbers rather than
+changing them.** The cutout stage is pure post-processing over already-sampled raw 384px frames --
+it does not care when those pixels were generated, only what `sever_thin_conduits`'s current code
+does with them. Attempts 6 and 7's raw frames are already the unchained (`fresh_background_held`)
+architecture; re-running `gen_hybrid_walk_T0259.py --attempt 6/7` with their own original seed/weight
+arguments hits every required output file already on disk, so `chunked_frames.run_chunk` skips
+generation entirely (0 GPU-seconds, confirmed by the printed `generated []` line) and only
+re-assembles the sheet -- exactly "unchained frames through the fixed cutout," because that is all
+the fixed cutout ever changes. This was, in fact, already computed by session 9 (its own table's
+"on (FIXED)" rows), but session 9's `provenance_candidate.json` files on disk were left at their
+pre-fix values -- the previous reviewer verdict's own direct read of those files ("I confirmed their
+on-disk candidates still record the pre-recut 0.5384-0.7601 and 0.5489-0.8275") caught exactly this
+gap. Running the real CLI this session closes it:
+
+| attempt | frame_delta_range (this session, real re-run) | gate (<=0.50) | max/min raw-step ratio |
+|---|---|---|---|
+| 6 | 0.5179-0.6934 | FAIL | 2.0015 (was 5.3077 on the committed sheet) |
+| 7 | 0.5094-0.8144 | FAIL | 1.9244 |
+
+These match session 9's table to four decimal places (0.6934≈0.6933962, 0.8144≈0.8143507) --
+confirming the table was right and closing the on-disk staleness gap, not a new result. **Neither
+clears the 0.50 locomotion cap.** The hoped-for "never-existed combination" does exist, was already
+measured, and does not pass.
+
+**A genuinely new finding: the raw per-step evenness on both candidates is now inside the card's own
+~1.5-2x target** (criterion 1), even though the overall magnitude still fails the cap -- attempt 6's
+2.00x and attempt 7's 1.92x are the best max/min ratios any candidate on this card has produced,
+against the committed sheet's 5.3077x baseline. The frame-0-hitch problem this card opened with is
+solved; what remains is that every step, not just one outlier step, sits above the 0.50 floor
+(attempt 6's own minimum single-step ratio is 0.518, i.e. even its BEST pair fails the cap on its
+own) -- a uniformly elevated floor, not a spike concentrated at one seam.
+
+**`background_region_delta` (ROUND PLAN item 2, requested by name in three prior reviewer verdicts,
+never actually recorded before this session) -- finally measured and logged, against the real
+current sheets:**
+
+| attempt | per-step background share of changed pixels (8 steps incl. seam) |
+|---|---|
+| 5 | 12.0%, 1.8%, 33.9%, 9.3%, 30.7%, 1.2%, 4.7%, 9.7% |
+| 6 | 8.3%, 1.5%, 0.9%, 14.8%, 8.6%, 6.2%, 2.1%, 3.2% |
+| 7 | 17.3%, 15.5%, 3.6%, 10.3%, 11.8%, 7.7%, 8.7%, 7.4% |
+
+Every step on every attempt has the large majority of its changed pixels INSIDE the keypoints-hint
+(figure) region, not outside it. The pixel-space background hold is doing its job; the excess delta
+against the 0.50 cap is not a background leak.
+
+**Why that rules out the "regenerate fresh instead of recut" framing, and clarifies why an
+intermediate denoise never worked either.** Every frame in a single attempt is submitted with the
+SAME `seed` (`_generate_one_frame`'s `seed` parameter is passed through unchanged per frame index) --
+only the ControlNet skeleton differs frame to frame. A prior reviewer verdict's own independent
+`md5sum` check (2026-09-06T22:03, not recorded in this log until now) found a fresh denoise=1.0
+frame 0 byte-identical across two sessions six days apart, which shows this recipe is deterministic
+per (seed, skeleton, weights) tuple, not noisy in the sense of "re-running produces a different
+result." That means the hint-region delta between two
+adjacent frames is not sampling noise in the traditional sense -- it is a deterministic function of
+how much the ControlNet-conditioned render differs when the skeleton changes, including the
+fringing/silhouette-edge artifacts that come along with a genuinely different pose. Session 5's own
+intermediate-denoise sweep (0.6/0.75/0.9, chained specifically to frame 0) already established there
+is no usable middle ground on THAT axis: below ~0.9 the chain suppresses pose fidelity outright,
+and at 0.9 the frame is already as noisy/fringed as full independence while still nominally
+"chained." Combined with this session's background-region-share finding, the picture is now
+complete: this recipe's frame-to-frame delta under full independence is overwhelmingly figure-region
+render variance that tracks genuine skeleton differences, not a fixable background or cutout defect,
+and no denoise value between "suppresses pose" and "as noisy as independence" exists to trade
+against it.
+
+**Not promoted, and no new DL-21 slot was spent.** Every generation-parameter axis this card's own
+scope can tune -- denoise (chained 0.24-0.90, full sweep), chained-vs-unchained architecture,
+IP-Adapter weight (0.6, 0.85), style-LoRA weight (0.35, session 7), the identity-reference background
+correction (four variants, T-0319-adjacent), and now the cutout module's own outline/border
+classification defect (sessions 8-9) -- has been tried and independently verified. No combination
+found so far is simultaneously gait-legible (attempts 6/7, gate-failing) and gate-passing (attempt 5,
+not gait-legible). This is the §23-b "stop and report" case the card's own NO SYNTHETIC ASSETS section
+anticipates: generation has been driven hard against this recipe's actual limits, not abandoned early.
+
+**What is genuinely left, for whoever picks this up next, in priority order:**
+1. **A human/planner decision on scope**, not another parameter sweep inside this card: either accept
+   a walk sheet with more limited limb articulation than DL-21's own criteria ask for (this card's own
+   Edge case explicitly forbids that trade), further relax the locomotion frame-delta cap for this
+   specific recipe (a DL-26/T-0271-adjacent decision, not this card's to make unilaterally), or fund a
+   genuinely different generation strategy for this motion (e.g. a temporal-consistency net, which
+   `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md` already evaluated and rejected for this pipeline --
+   revisiting that decision is out of this card's scope).
+2. **A fresh attempt with a different seed** is the one lever not yet tried at all (every real 8-frame
+   attempt on the unchained architecture, 6 and 7, used the same seed 27182) -- worth trying if a new
+   DL-21 slot is granted, but this session did not spend one on a single-variable gamble against a
+   uniformly-elevated floor (attempt 6's best single step already exceeds the cap on its own) with no
+   prior evidence seed variation moves this recipe's floor rather than just its shape.
+3. This is NOT a host-side blocker (ComfyUI answers fine within a session; the known determinism gap
+   only affects cross-session bit-exact reproduction, which nothing here depends on) and NOT a
+   cutout/background defect (background_region_delta above rules that out) -- filing either would
+   mis-categorise the actual blocker, which is this recipe's own frame-to-frame render variance under
+   full independent sampling.
