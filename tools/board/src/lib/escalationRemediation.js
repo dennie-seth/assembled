@@ -1,6 +1,7 @@
 const MARKER_RE = /<!-- escalation-remediation-for: (T-\d{4}) -->/;
 
 const CATEGORY_LABELS = {
+  "host-action": "Host action required",
   "permission-grant": "Permission/grant",
   tool: "Tool",
   "env-dependency": "Environment/dependency",
@@ -77,9 +78,15 @@ export function draftRemediationCard({ task, report, attemptCount, now = () => n
   const dateStr = now().toISOString().slice(0, 10);
   const marker = `<!-- escalation-remediation-for: ${task.id} -->`;
   const label = CATEGORY_LABELS[report.lacks.category] ?? report.lacks.category;
-  const contextLine = report.noProgress
-    ? `Auto-escalated after \`${task.id}\` (${task.title}) had its auto-retry loop aborted for no progress after ${attemptCount} attempt(s) (proposed ${dateStr}).`
-    : `Auto-escalated after \`${task.id}\` (${task.title}) exhausted ${attemptCount} auto-retry attempts (proposed ${dateStr}).`;
+  const hostAction = report.lacks.hostAction ?? null;
+  // T-0323: a preflight-detected known host issue never spent an implementer attempt, so it gets
+  // its own context line -- "exhausted 0 auto-retry attempts" would misreport a wall the card
+  // never even walked into.
+  const contextLine = report.preflight
+    ? `Auto-escalated after \`${task.id}\` (${task.title}) failed a host-state preflight check (proposed ${dateStr}) -- no auto-retry attempts were spent.`
+    : report.noProgress
+      ? `Auto-escalated after \`${task.id}\` (${task.title}) had its auto-retry loop aborted for no progress after ${attemptCount} attempt(s) (proposed ${dateStr}).`
+      : `Auto-escalated after \`${task.id}\` (${task.title}) exhausted ${attemptCount} auto-retry attempts (proposed ${dateStr}).`;
 
   const body = [
     marker,
@@ -103,11 +110,24 @@ export function draftRemediationCard({ task, report, attemptCount, now = () => n
     "",
     report.failureSignature,
     "",
-    `**Lacks:** ${label} — ${report.lacks.detail}`,
+    hostAction ? `**Lacks:** ${label} — this cannot be completed without host-side access.` : `**Lacks:** ${label} — ${report.lacks.detail}`,
+    ...(hostAction
+      ? [
+          "",
+          "## Host action requested",
+          "",
+          `**Host:** ${hostAction.host}`,
+          `**Action:** ${hostAction.action}`,
+          `**Reason:** ${hostAction.reason}`,
+          `**Verify:** ${hostAction.verify}`
+        ]
+      : []),
     "",
     "## Acceptance",
     "",
-    `- [ ] Root cause behind \`${task.id}\`'s blocker resolved (${label.toLowerCase()} fix as identified above)`,
+    ...(hostAction
+      ? [`- [ ] Host action performed on ${hostAction.host}: ${hostAction.action}`, `- [ ] Verified: ${hostAction.verify}`]
+      : [`- [ ] Root cause behind \`${task.id}\`'s blocker resolved (${label.toLowerCase()} fix as identified above)`]),
     `- [ ] \`${task.id}\` re-run succeeds once this is resolved`
   ].join("\n");
 

@@ -53,4 +53,29 @@ describe("checkHostStatePreflight", () => {
     const result = checkHostStatePreflight({ id: "T-0500" }, "infra");
     expect(typeof result.ok).toBe("boolean");
   });
+
+  it("does not block a card whose body does not match the issue's bodyPattern (scoped to the cards actually affected)", () => {
+    const scoped = { ...HOST_ISSUE, bodyPattern: /determinism/i };
+    const result = checkHostStatePreflight(
+      { id: "T-0500", body: "## Context\nGenerate a texture.\n\n## Acceptance\n- [ ] looks right\n" },
+      "assets",
+      { registry: [scoped] }
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("blocks a card whose body matches the issue's bodyPattern", () => {
+    const scoped = { ...HOST_ISSUE, bodyPattern: /determinism/i };
+    const result = checkHostStatePreflight(
+      { id: "T-0500", body: "## Acceptance\n- [ ] output is byte-identical across runs, verifying determinism\n" },
+      "assets",
+      { registry: [scoped] }
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("has no bodyPattern requirement when the entry omits it -- applies to every card the agent matches", () => {
+    const result = checkHostStatePreflight({ id: "T-0500", body: "anything at all" }, "assets", { registry: [HOST_ISSUE] });
+    expect(result.ok).toBe(false);
+  });
 });

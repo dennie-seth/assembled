@@ -13,6 +13,13 @@ describe("knownHostIssues", () => {
     expect(entry.verify.length).toBeGreaterThan(0);
   });
 
+  it("scopes the ComfyUI determinism entry to cards that actually mention reproducibility, not every assets/audio card", () => {
+    const entry = KNOWN_HOST_ISSUES.find((i) => i.id === "comfyui-determinism-flags");
+    expect(entry.bodyPattern).toBeInstanceOf(RegExp);
+    expect(entry.bodyPattern.test("## Acceptance\n- [ ] render is byte-identical across two runs")).toBe(true);
+    expect(entry.bodyPattern.test("## Acceptance\n- [ ] the sprite looks good")).toBe(false);
+  });
+
   it("gives every entry the full required shape", () => {
     for (const entry of KNOWN_HOST_ISSUES) {
       expect(typeof entry.id).toBe("string");
