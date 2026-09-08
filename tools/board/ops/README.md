@@ -6,6 +6,16 @@ daily integrity checker. These are copied here from `~/.local/bin` and
 `~/.config/systemd/user` for version control and backup — they are **not**
 imported or built as part of the app. See "Deploying changes" below.
 
+This directory also holds `comfyui-regime.json` and `comfyui/` (T-0322): the
+declared ComfyUI determinism regime and a version-controlled reconstruction
+of its launcher, checked by `tools/board/scripts/checkComfyUiRegime.js`
+(part of the JS/Vitest-tested board tooling, not this Python integrity
+checker — see that script's own header and
+[`docs/comfyui-setup.md#determinism`](../../../docs/comfyui-setup.md#determinism)
+for why it's a separate check rather than a new function in
+`board-integrity-check.py`: this agent's toolchain can run and TDD Node/
+Vitest, not Python/pytest, and TDD is non-negotiable for either).
+
 ## Data flow
 
 ```
@@ -68,6 +78,7 @@ scope for these scripts.
 | `board-assets-sync.sh` | Orchestrates stage -> drivemap -> copy under a single `flock`; used by the hourly timer. |
 | `board-integrity-check.py` | Read-only daily health check (DB integrity, DB<->API<->attachments consistency, backup freshness, staged-export freshness). |
 | `board-db-backup.sh` | Runs the app's `npm run backup:db` (WAL-safe online backup) then prunes old backups under `<dataDir>/backups/` to a retention count; used by the daily timer. Also uploads the newest backup to Drive and prunes the Drive folder to a small retention count. |
+| `../scripts/checkComfyUiRegime.js` (T-0322) | **Not** copied to `~/.local/bin` like the scripts above -- it's part of the ordinary `tools/board` npm/Vitest project (`npm run check:comfyui-regime`), invoked as a preflight before generation or ad hoc, not (yet) wired into a timer. Fails loudly if the live ComfyUI server's `argv` has drifted from the regime declared in `comfyui-regime.json`, in either direction. See `docs/comfyui-setup.md#determinism`. |
 
 ## Install locations on the box
 
