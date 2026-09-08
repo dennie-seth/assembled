@@ -18,13 +18,27 @@ command, not by an agent remembering to `cp` files.
 
 ## The citation convention
 
-`promoteEvidence` does not parse prose. Its entire selection rule is:
+`promoteEvidence` does not parse arbitrary prose. Its selection rule is:
+**a frame is "decisive" iff the round's own attempt log cites it via an
+inline-code span**, in one of two shapes:
 
-> **A frame is "decisive" iff the round's own attempt log cites it via an
-> inline-code span containing its path relative to the run directory** —
-> e.g. `` `attempt_14/main_384.png` `` or, for a conditioning input that
-> sits at the top of the run directory rather than inside an
-> `attempt_<N>/` folder, `` `pose_skeleton_384.png` ``.
+- **Path-relative to the run directory** — e.g. `` `attempt_14/main_384.png` ``
+  or, for a conditioning input that sits at the top of the run directory
+  rather than inside an `attempt_<N>/` folder, `` `pose_skeleton_384.png` ``.
+  Always unambiguous; prefer this shape when convenient.
+- **A bare filename** — e.g. `` `main_384.png` `` — the shape T-0272's own
+  real attempt log actually uses throughout (verified directly against
+  `assets/src/character/ARM_PROFILE_ATTEMPT_LOG_T0272.md`; the tool
+  recovers attempt 1/8/31/39/41's cited frames from that log's real text).
+  Resolved against whichever attempt names it: a markdown table row's own
+  leading attempt-number cell, or the nearest "attempt N" mention in the
+  **same sentence** of surrounding prose (paragraphs are reconstituted
+  across hard-wrapped source lines first, so line-wrapping alone never
+  breaks the pairing). A bare filename with no attempt number anywhere in
+  its own sentence is promoted from the top of the run directory directly,
+  never guessed at — see `parseCitedEvidencePaths` in
+  `tools/board/src/lib/evidencePromotion.js` for the exact rule and its
+  test coverage against both a synthetic log and the real T-0272 one.
 
 This is mechanical and bounded by construction: only what the log already
 names as significant gets promoted, nothing more. It runs identically
@@ -32,11 +46,22 @@ whether the round's outcome is a **promotion** or a **finding** — a
 "Not promoted" verdict that names the frame proving why is exactly the
 T-0272 case this exists for, and the tool does not distinguish the two.
 
-Asset/audio agents cite decisive frames this way as a matter of course —
-see `.claude/rules/assets.md`'s attempt-log conventions. A log that
-narrates a verdict in prose without naming the file in this shape simply
-promotes nothing for that verdict; the fix is to cite it, not to make the
-tool guess.
+**This convention is documented here, not (yet) in `.claude/rules/assets.md`
+or the `assets`/`audio` agent definitions.** T-0314's implementer session
+did not have write access to `.claude/agents/**` or `.claude/rules/**` (both
+refused every write attempt as out of grant for this session, independent
+of the `infra` agent's own stated path scope) — so, per this card's own
+"say so in the doc instead of claiming the convention already exists"
+instruction, this is an explicit, named follow-up, not a completed step:
+**nothing currently invokes `promoteEvidence.js` automatically, and no rule
+file tells the `assets`/`audio` agents to cite frames in a way this parser
+resolves.** Until that wiring lands, running the CLI at the end of a round
+is a manual step the round's own implementer has to remember — exactly the
+failure mode this card exists to remove. A follow-up card needs: (1) a
+`Bash(node tools/board/scripts/promoteEvidence.js:*)` grant added to the
+`assets` and `audio` agent definitions' `tools:` frontmatter, and (2) a
+bullet in `.claude/rules/assets.md` instructing agents to cite decisive
+frames in the shapes above and run the CLI before stopping.
 
 ## What gets promoted, and what doesn't
 

@@ -4,11 +4,13 @@
  * gitignored `assets/out/` scratch and into a tracked `docs/assets/evidence/<CARD>/` path, so they
  * survive the worktree that produced them being reaped and show up in the PR diff for review
  * (T-0314; see docs/assets/evidence-promotion.md for the full rationale and the citation
- * convention `.claude/rules/assets.md` documents).
+ * convention it documents).
  *
- * This is the whole fix for "an agent forgot to copy the frames by hand": the agent runs this one
- * command at the end of every round, promotion or finding alike, instead of manually `cp`-ing
- * files it has to remember to pick.
+ * This is the intended fix for "an agent forgot to copy the frames by hand": run this one command
+ * at the end of every round, promotion or finding alike, instead of manually `cp`-ing files you
+ * have to remember to pick. As of T-0314 nothing invokes this automatically yet -- see
+ * docs/assets/evidence-promotion.md's "citation convention" section for the still-open
+ * `.claude/rules/assets.md` / agent-grant wiring this needs.
  *
  * usage: node tools/board/scripts/promoteEvidence.js <cardId> <runDir> <logPath>
  *          [--evidence-root <path>] [--max-files <n>] [--max-file-bytes <n>] [--repo-root <path>]
