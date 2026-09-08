@@ -10,7 +10,9 @@ import {
   DEFAULT_MAX_FILE_BYTES,
   DEFAULT_MAX_FILES_PER_RUN,
   parseCitedEvidencePaths,
-  promoteEvidence
+  promoteEvidence,
+  discoverEvidenceSources,
+  promoteEvidenceForCard
 } from "../../src/lib/evidencePromotion.js";
 
 const execFileAsync = promisify(execFile);
@@ -385,6 +387,100 @@ describe("defaults", () => {
     expect(DEFAULT_EVIDENCE_ROOT).toBe("docs/assets/evidence");
     expect(DEFAULT_MAX_FILE_BYTES).toBeGreaterThan(0);
     expect(DEFAULT_MAX_FILES_PER_RUN).toBeGreaterThan(0);
+  });
+});
+
+describe("discoverEvidenceSources", () => {
+  it("finds an ARM_*_ATTEMPT_LOG_<card>.md anywhere under assets/src and every top-level dir under assets/out", async () => {
+    const foundLogPath = await writeFile(
+      repoRoot,
+      "assets/src/character/ARM_HYBRID_ATTEMPT_LOG_T0272.md",
+      "Decisive: `attempt_14/main_384.png`."
+    );
+    await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_14/main_384.png", "frame");
+    await writeFile(repoRoot, "assets/out/hybrid_profile_round2/.gitkeep", "");
+
+    const result = await discoverEvidenceSources({ repoRoot, cardId: "T-0272" });
+
+    expect(result.logPaths).toEqual([foundLogPath]);
+    expect(result.runDirs.sort()).toEqual(
+      [
+        path.join(repoRoot, "assets/out/hybrid_profile"),
+        path.join(repoRoot, "assets/out/hybrid_profile_round2")
+      ].sort()
+    );
+  });
+
+  it("ignores an attempt log written for a different card", async () => {
+    await writeFile(repoRoot, "assets/src/character/ARM_HYBRID_ATTEMPT_LOG_T0111.md", "Decisive: `main_384.png`.");
+
+    const result = await discoverEvidenceSources({ repoRoot, cardId: "T-0272" });
+
+    expect(result.logPaths).toEqual([]);
+  });
+
+  it("degrades to empty lists, never throwing, when the card never touched assets/** at all", async () => {
+    await expect(discoverEvidenceSources({ repoRoot, cardId: "T-0900" })).resolves.toEqual({
+      logPaths: [],
+      runDirs: []
+    });
+  });
+});
+
+describe("promoteEvidenceForCard", () => {
+  it("discovers the card's own attempt log and run directory with no explicit runDir/logPath and promotes its cited frames", async () => {
+    await writeFile(
+      repoRoot,
+      "assets/src/character/ARM_HYBRID_ATTEMPT_LOG_T0272.md",
+      "Decisive: `attempt_14/main_384.png`."
+    );
+    await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_14/main_384.png", "the-decisive-frame");
+
+    const result = await promoteEvidenceForCard({ repoRoot, cardId: "T-0272" });
+
+    expect(result.promoted.map((p) => p.destRelPath)).toEqual(["docs/assets/evidence/T-0272/attempt_14_main_384.png"]);
+    expect(await readFile(repoRoot, "docs/assets/evidence/T-0272/attempt_14_main_384.png")).toEqual(
+      Buffer.from("the-decisive-frame")
+    );
+  });
+
+  it("does not double-count a citation that happens to be missing from every wrong candidate run dir but present in the right one", async () => {
+    await writeFile(
+      repoRoot,
+      "assets/src/character/ARM_HYBRID_ATTEMPT_LOG_T0272.md",
+      "Decisive: `attempt_1/main_384.png`."
+    );
+    await writeFile(repoRoot, "assets/out/unrelated_workflow/.gitkeep", "");
+    await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_1/main_384.png", "frame-1");
+
+    const result = await promoteEvidenceForCard({ repoRoot, cardId: "T-0272" });
+
+    expect(result.promoted).toHaveLength(1);
+  });
+
+  it("stays bounded at maxFiles in total across every discovered run dir, not per run dir", async () => {
+    const cited = [];
+    for (let i = 0; i < 5; i += 1) {
+      await writeFile(repoRoot, `assets/out/hybrid_profile/attempt_${i}/main_384.png`, `frame-${i}`);
+      cited.push(`attempt_${i}/main_384.png`);
+    }
+    await writeFile(
+      repoRoot,
+      "assets/src/character/ARM_HYBRID_ATTEMPT_LOG_T0272.md",
+      cited.map((c) => `\`${c}\``).join(" and ")
+    );
+    // A second, empty candidate run dir must not grant a second maxFiles budget.
+    await writeFile(repoRoot, "assets/out/hybrid_profile_round2/.gitkeep", "");
+
+    const result = await promoteEvidenceForCard({ repoRoot, cardId: "T-0272", maxFiles: 2 });
+
+    expect(result.promoted).toHaveLength(2);
+  });
+
+  it("promotes nothing and never throws for a card with no attempt log and no assets/out tree at all", async () => {
+    await expect(promoteEvidenceForCard({ repoRoot, cardId: "T-0900" })).resolves.toMatchObject({
+      promoted: []
+    });
   });
 });
 
