@@ -502,22 +502,30 @@ problem, a sampler-coherence problem.**
 
 - **Attempt 3** (seed 27182 -- reused for continuity with the prior session's sweep, denoise 0.30,
   full 8-frame run, two chunks of 4). `frame_delta_range` **0.4336-0.7904**, gate FAIL, motion_class
-  `locomotion`. `identity_reference_crop.png` for this attempt is clean -- a well-formed green-coat
-  figure on a genuinely dark (T-0319-fixed) background, confirming the Python-side crop/fix code is
-  not the problem. But every one of the 8 raw `frame_N_main_384.png` files is **not a character at
-  all**: heavy vertical black/white/tan barred striping with only fragmentary limb-like shapes
-  breaking through, and the assembled/cutout sheet is almost entirely wiped to background (the
-  cutout correctly recognised almost none of it as foreground, because almost none of it *is*
-  foreground -- a few scattered dark specks per cell). Visually inspected `frame_0_main_384.png`
-  and `frame_4_main_384.png` directly; both show the same barred-abstraction failure mode, not a
-  one-frame fluke.
+  `locomotion`. `attempt_3/identity_reference_crop.png` for this attempt is clean -- a well-formed
+  green-coat figure on a genuinely dark (T-0319-fixed) background, confirming the Python-side
+  crop/fix code is not the problem. But every one of the 8 raw `frame_N_main_384.png` files is
+  **not a character at all**: heavy vertical black/white/tan barred striping with only fragmentary
+  limb-like shapes breaking through, and the assembled/cutout sheet is almost entirely wiped to
+  background (the cutout correctly recognised almost none of it as foreground, because almost none
+  of it *is* foreground -- a few scattered dark specks per cell). Visually inspected
+  `attempt_3/frame_0_main_384.png` and `attempt_3/frame_4_main_384.png` directly; both show the
+  same barred-abstraction failure mode, not a one-frame fluke.
 - **Attempt 4** (seed 12321 -- a different seed specifically to rule out seed 27182 itself being
   the cause, denoise 0.35, `--max-frames 1` as a cheap single-frame probe before committing a full
-  attempt's GPU time). `frame_0_main_384.png` is again incoherent -- a different failure signature
-  (horizontal red/orange/olive bars and blocky green/white/black fragments instead of attempt 3's
-  vertical bars) but the same *class* of defect: no legible head/torso/limb structure, not a
-  person. Different seed, different denoise, same class of breakage -- rules out both the specific
-  seed and the specific denoise value as the cause.
+  attempt's GPU time). `attempt_4/frame_0_main_384.png` is again incoherent -- a different failure
+  signature (horizontal red/orange/olive bars and blocky green/white/black fragments instead of
+  attempt 3's vertical bars) but the same *class* of defect: no legible head/torso/limb structure,
+  not a person. Different seed, different denoise, same class of breakage -- rules out both the
+  specific seed and the specific denoise value as the cause.
+
+Decisive frames for this session, citation paths relative to the `assets/out/hybrid_walk/` run
+directory (for `promoteEvidence.js`/`promoteEvidenceForCard`, T-0314, to pick up if this round is
+ever revisited before the worktree is reaped -- this session's own tool grants do not include a
+raw file-copy command or the promotion CLI itself, so committing curated copies by hand was not
+possible here; citing them correctly is the fallback): `attempt_3/frame_0_main_384.png`,
+`attempt_3/frame_4_main_384.png`, `attempt_3/identity_reference_crop.png`,
+`attempt_4/frame_0_main_384.png`.
 
 **This is not a new defect class -- it is the exact one T-0317's own card spent 12 rounds on and
 never resolved, on this same ComfyUI host.** `docs/assets/evidence/T-0272/README.md` (T-0317's
