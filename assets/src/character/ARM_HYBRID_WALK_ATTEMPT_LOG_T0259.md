@@ -9,8 +9,8 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 | 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
 | 4 | 27182 | 0.0337-0.2532 | PASS | no | 801.7 | yes | T-0266 img2img chain fix: frames 1-7 anchored to frame 0 via VAEEncode, denoise=0.45, background held against frame 0. Mechanical gate PASS (0.0337-0.2532 vs 0.30 cap). Leg articulation is visually subtle at every denoise tried (0.45/0.75/0.90, attempts 4-6) -- the long-coat costume covers the legs regardless of pose, a costume-design characteristic confirmed by comparison, not a chaining artifact; DL-21 criterion 1 (motion readability at 40px) is a separate human call this card does not make. |
 | 5 | 27182 | 0.1881-0.3951 | PASS | no | 183.3 | no | T-0259 session 9: recut against the now-fixed sever_thin_conduits (border_flood_background_mask no longer orphans a wide background region reached only via a narrow neck -- e.g. cell (1,0)'s 39,327px blue-grey panel, mean RGB ~(74,80,102), 89.5% inside the keypoints hint bbox, previously flipped to false foreground once its narrow connecting neck was opened away). Fix: re-admit any opened-qualifying component disconnected from the border by opening but entirely reachable from the border via the ORIGINAL, un-opened qualifying set. No new GPU spend -- all 8 frames already complete on disk from the 2026-09-06 generation; also fixed run_attempt's own resume path (background_held_from_frame now read via .get(), since this attempt's meta.json predates that field). Clears both gates for the first time under a correct cutout: locomotion frame-delta range 0.1881-0.3951 (cap 0.50), min background_fraction 0.6927 on cell (0,1) (floor 0.65). |
-| 6 | 27182 | 0.5179-0.6934 | FAIL | no | 147.2 | no |  |
-| 7 | 27182 | 0.5094-0.8144 | FAIL | no | 159.4 | no |  |
+| 6 | 27182 | 0.5179-0.6934 | FAIL | no | 147.2 | no | T-0259 session 5: architecture change -- every frame (0-7) now samples fresh (`build_graph`, EmptyLatentImage, denoise 1.0) against its own skeleton instead of chaining frames 1-7 from frame 0 via VAEEncode; background still held to frame 0 in pixel space. ipadapter 0.6 (unchanged from attempt 5). Gait motion is now genuinely visible (legs/arms differ frame to frame, confirmed by eye) but costume colour drifts pale on 3/8 cells and frame-delta blows past the cap by 1.1-1.5x. See session 5 narrative below. Re-confirmed by a zero-GPU recut under the fixed cutout in session 10 (2026-09-08): frame_delta_range 0.5179-0.6934, still FAIL against the 0.50 locomotion cap -- the excess delta is figure-region render variance under independent sampling, not a cutout leak (background_region_delta share ~7.5% of changed pixels). |
+| 7 | 27182 | 0.5094-0.8144 | FAIL | no | 159.4 | no | T-0259 session 5: same fresh-per-frame architecture, ipadapter 0.6->0.85 to test whether higher IP-Adapter weight fixes attempt 6's costume drift while keeping pose fidelity. Colour drift fixed (no pale frames) and pose fidelity preserved, but two cells (0,0 and 1,0 -- background_fraction 0.842/0.829) show near-total leg erasure by the per-frame cutout, and frame-delta is worse than attempt 6 (0.55-0.83 vs 0.50 cap). See session 5 narrative below. Re-confirmed by a zero-GPU recut under the fixed cutout in session 10 (2026-09-08): frame_delta_range 0.5094-0.8144, still FAIL -- background_region_delta share ~8.3% of changed pixels, so the leg-erasure defect is a real, separate driver from cutout leakage. |
 
 ## 2026-08-31 improvement pass -- profile-view finding (not a numbered attempt)
 
@@ -1480,3 +1480,75 @@ regression sweep as a required check; re-running `--promote-attempt` against att
 necessary now that promotion self-corrects the model/method fields regardless of what is cached on
 disk, but attempt 5 (or a fresh attempt) still needs the fringe fix before it is both gate-passing
 AND gait-legible -- session 10's own finding that no combination found so far is both remains true.
+
+## 2026-09-08 session 12: two documentation defects repaired, item (a) tested and CLOSED (zero GPU),
+## and the one open question is escalated rather than attempted again
+
+Two things landed this session, both zero-GPU and both requested by prior reviewer verdicts.
+
+**Notes-blanking data restored.** Session 11 fixed the `append_attempt_log` function bug (a reused
+slot re-run without an explicit `--notes` blanked its existing Notes column), but did not restore the
+two rows the bug had already destroyed. The main table's attempt 6 and 7 rows now carry back their
+original session-5 descriptions verbatim from `6eaf83c`'s diff (architecture change to fresh-per-frame
+sampling, ipadapter 0.6 vs 0.6->0.85, the pale-costume vs leg-erasure tradeoff between them), plus a
+one-line pointer to session 10's re-confirmation numbers so a reader does not have to cross-reference.
+
+**Item (a), the silhouette-boundary fringe/bulk stabilization, is now CLOSED, not just deferred.**
+The 2026-09-08T18:27:51.908Z reviewer verdict ran the actual experiment session 11 declined to attempt
+without a regression sweep: a 1px silhouette stabilization (drop foreground pixels with <=2 of 8
+foreground neighbours, then fill background pixels with >=6 of 8 foreground neighbours) applied
+per-frame before the gate's silhouette-XOR/union metric. I independently re-ran the identical
+experiment myself against the same three cached sheets on disk (`attempt_5/6/7/sheet_192x96_indexed.png`,
+zero new GPU spend) and reproduced the reviewer's numbers exactly:
+
+| Attempt | Raw frame-delta range | Stabilized frame-delta range |
+|---|---|---|
+| 5 | 0.1881-0.3951 | 0.2156-0.4484 |
+| 6 | 0.5179-0.6934 | 0.5683-0.7930 |
+| 7 | 0.5094-0.8144 | 0.5141-0.8629 |
+
+Every candidate gets WORSE under stabilization, not better -- `check_frame_consistency`
+(`asset_gate/art.py:194-221`) is delta/union, and stripping boundary-adjacent pixels shrinks the union
+at least as fast as the delta, so this lever cannot close the gap regardless of how carefully it is
+scoped or regression-tested. **Do not attempt this again.** The regression-sweep concern that made
+session 11 defer it (not destabilizing idle/T-0252, profile/T-0272, or entity sheets) is now moot --
+the technique itself does not help even on this card's own sheets, so there is nothing left to sweep
+for.
+
+**The excess delta on attempts 6/7 is whole-figure re-render variance, not a localized cutout leak or
+a background-hold leak.** Per the same reviewer verdict: on attempt 6 the WORST adjacent pair
+(frame 6 -> frame 7, ratio 0.6934) sits between two cells with clean background_fraction (0.793 and
+0.726) -- not the two leaking cells (4/5, background_fraction 0.416/0.576) -- and attempt 7 shows the
+same shape. Combined with session 10's already-recorded `background_region_delta` split (attempt 6
+~7.5%, attempt 7 ~8.3% of changed pixels falling outside the keypoints-hint bbox), the dominant driver
+is independent-sampling render variance across the whole figure, which no cutout-stage or
+descent-stage fix can suppress -- it has to be addressed at the sampling architecture (chained vs
+unchained) or the pose amplitude itself, both axes this card's calibration trail (sessions 2-8, plus
+session 5's chained/unchained A-B test) has already closed without finding a combination that is both
+gate-passing and gait-legible. Seed-locking, the standard remaining lever, is also already in place
+(`gen_hybrid_walk_T0259.py`'s `_generate_one_frame`/`build_graph` pass the same `seed` to every frame).
+
+**Context for the scope decision below, per the reviewer's own measurement:** neither predecessor
+sheet in this repo has ever carried real silhouette motion under this metric -- `player_move_sheet_v1`
+scores 0.000-1.000 and `player_move_sheet_v2` scores 0.021-0.081 -- so there is no in-repo existence
+proof that a gait-legible 48px walk cycle can score under a 0.50 (or even a looser) frame-delta cap at
+all. This card may be the first one to actually try.
+
+**What this needs, and why it is not another runner iteration:** every generation-parameter axis
+(denoise, IP-Adapter weight, style-LoRA weight, negative prompts, chaining vs unchained sampling,
+seed-locking, amplitude calibration) and every cutout/descent-stage axis (hint-region majority-overlap,
+border-flood over-severance, silhouette-boundary fringe) this card's own scope can tune has now been
+tried, verified, and either fixed or closed as a dead end, across twelve sessions. The one remaining
+axis -- whether [T-0271](T-0271)'s 0.50 LOCOMOTION frame-delta cap is the right instrument for grading
+an 8-frame, 48px walk cycle at all, given that `check_frame_consistency` is a whole-silhouette XOR/union
+ratio and a wide-stride gait on a ~600px silhouette structurally cannot score low except by barely
+moving -- is a cross-cutting change to `asset_gate/character.py` shared with the idle and T-0272 gates,
+and is explicitly not this card's to make. This is escalated to @DennieSeth / the planner rather than
+attempted here. Attempt 5 remains the best candidate on record (mechanical gate PASS at 0.1881-0.3951,
+identity colour matching the T-0252 anchor) but is not gait-legible (frames 0/2/4 render near-identically
+despite visibly different skeletons, per the 2026-09-08T13:47:24.886Z verdict); promoting it would ship
+a walk cycle that does not walk, which fails the card's own Edge case before the delta number does.
+No new ComfyUI generation this session (`find assets/out -name 'frame_*_main_384.png' -newermt`
+against this session's start returns nothing) -- both fixes above were zero-GPU documentation/analysis
+work, and spending a DL-21 slot on a thirteenth blind attempt without a scope answer would repeat the
+exact mistake this log exists to prevent.
