@@ -159,6 +159,61 @@ def test_wide_background_intrusion_still_classified_as_background_when_severed()
     )
 
 
+def _wide_background_room_behind_a_narrow_neck() -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """A real background room -- a wide 20x20 block, not touching the frame
+    border at all -- reachable from the border ONLY through a 1px-wide
+    corridor (the same absolute width as a colour-collision outline
+    conduit). A separate, unrelated figure block sits elsewhere, touching
+    neither the corridor nor the room, so it can never influence either
+    region's classification. Returns (image, (y0, y1, x0, x1) of the room).
+    """
+    arr = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    arr[:, :] = (150, 60, 200)  # an inert filler colour, far from BG and FIGURE
+    arr[0, :] = BG
+    arr[SIZE - 1, :] = BG
+    arr[:, 0] = BG
+    arr[:, SIZE - 1] = BG
+    # 1px-wide corridor from the top border down to the room.
+    arr[1:20, 30] = BG
+    # The room itself: a genuinely wide 20x20 block, not touching any edge.
+    room = (20, 40, 20, 40)  # y0, y1, x0, x1
+    arr[room[0] : room[1], room[2] : room[3]] = BG
+    # An unrelated figure, nowhere near the corridor or the room.
+    arr[45:60, 45:60] = FIGURE
+    return Image.fromarray(arr, mode="RGB"), room
+
+
+def test_wide_room_behind_a_narrow_neck_stays_background_when_severed() -> None:
+    """The over-severance defect this session fixes (T-0259 session 9,
+    found by the reviewer measuring `attempt_5/frame_4_main_384.png`'s own
+    cell (1,0): a 39,327px wide background panel, spanning nearly the full
+    frame and surviving 5 erosion iterations, was wrongly flipped to
+    foreground once its only connecting neck -- exactly as thin as a real
+    colour-collision conduit -- was opened away). Opening correctly severs a
+    genuine hairline conduit (see the seam tests above), but severing must
+    not also disconnect a real, wide background region from the border seed
+    merely because its OWN path back to the border happens to be narrow too.
+    A component that survives the opening AND was already reachable from
+    the border via the *original*, un-opened qualifying set must be
+    re-admitted to background, not left orphaned as a false foreground
+    island."""
+    img, (y0, y1, x0, x1) = _wide_background_room_behind_a_narrow_neck()
+    foreground = ~border_flood_background_mask(
+        img, CUTOUT_OKLAB_TOLERANCE, sever_thin_conduits=True
+    )
+    room_foreground = int(foreground[y0:y1, x0:x1].sum())
+    assert room_foreground == 0, (
+        f"the wide room behind the narrow neck must stay classified as background once "
+        f"the neck is severed, not become {room_foreground}px of false foreground -- "
+        "severing a thin conduit must not also orphan a real, wide background region"
+    )
+    # The corridor's own severed conduit pixels are still correctly excluded
+    # from background (unchanged from the seam tests): only the room itself
+    # is re-admitted, not blanket-restored connectivity through the neck.
+    figure_foreground = int(foreground[45:60, 45:60].sum())
+    assert figure_foreground == 15 * 15, "the unrelated figure block must be untouched"
+
+
 def test_legacy_alias_defaults_to_unsevered_and_accepts_the_new_keyword() -> None:
     """`cutout_foreground_mask` (the name every real generator calls) must
     keep its existing 4-positional-argument call sites working unchanged,
