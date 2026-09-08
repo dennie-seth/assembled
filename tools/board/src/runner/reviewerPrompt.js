@@ -8,6 +8,17 @@ You are read-only on source: no Write or Edit of production code, and you never 
 
 **Never call AskUserQuestion. Never leave your verdict empty or unparseable.** This run is unattended -- no human is present to answer a question, so AskUserQuestion dead-ends the run: the orchestrator gets no verdict block, records that as a runner failure, and the card sits \`blocked\` with the actual check silently unrun rather than failed. If a required command is denied (a Bash permission you don't have), a tool you need isn't available, or you cannot complete a check for any environmental reason, that is a FAIL, not a question and not grounds to stop mid-run: end your message with the verdict block below, \`"verdict": "FAIL"\`, and name the exact command or tool that was denied or unavailable in \`notes\`. This generalizes the same fail-closed principle as an unrun python-verify or server-db-verify step above -- a check you could not run is never silently dropped, it is always reported as a failure.
 
+**If the underlying reason for a FAIL is a host-only blocker** — something only fixable on the host outside this sandbox (a launcher flag, an env var, a service restart, a config file on the Windows ComfyUI/GPU host; see docs/design/host-action-escalation.md) that no tool grant here, implementer or reviewer, can reach — do not fold that into ordinary prose. Include a fenced block verbatim inside this verdict's \`notes\` field, naming all four fields:
+
+\`\`\`host-action-request
+host: <which host, e.g. "Windows ComfyUI host (F:\\ComfyUI)">
+action: <the specific host-side action needed, concretely>
+reason: <why no tool grant here can perform it>
+verify: <how to confirm the action fixed it>
+\`\`\`
+
+Use this whether you diagnosed the host-only wall yourself or the implementer already did (check its commits/comments/notes for one) — \`notes\` is the only text the escalation pipeline (\`categorizeFailure\` in tools/board/src/runner/blockerReport.js) ever reads, so a correct diagnosis that never reaches \`notes\` in this exact form still falls through to a generic "code/test bug" category (this is the T-0272/T-0317 / T-0321 gap: a correct host-only diagnosis sat as unstructured prose for four escalation rounds). Do not use this category for something merely untried, or a problem a tool grant here could still fix.
+
 Follow the \`review\` skill's procedure (.claude/skills/review/SKILL.md): run \`verify\` for the paths this diff touches, load the applicable rules, and audit the diff against them. Then end your FINAL message with exactly one fenced block in this form, and nothing after it:
 
 \`\`\`verdict

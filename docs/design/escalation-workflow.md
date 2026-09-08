@@ -70,6 +70,16 @@ This is appended to the blocked card as a comment (`author: "assembled-board"`, 
 existing `BOARD_COMMIT_AUTHOR` convention for board-authored content), not a body note -- it's
 addressed to a human reader, not another transition in the status-change log.
 
+**`host-action` category (T-0323):** a seventh category, checked before every keyword heuristic
+in `categorizeFailure`, for a blocker that is genuinely host-side -- something no agent can fix
+without a shell on a host it doesn't have one on (the Windows ComfyUI/GPU host, for this repo).
+Unlike the other six, it is detected structurally, not by keyword: `blockerReport.js` looks for a
+fenced `host-action-request` block naming `{host, action, reason, verify}` rather than guessing
+from prose, and every downstream rendering (this comment, the remediation card) keeps those four
+fields distinct instead of folding them into a sentence. See [[host-action-escalation.md]] for
+the full design and the T-0272/T-0317 incident that motivated it, and
+`tools/board/src/runner/knownHostIssues.js` for the preflight registry that ships alongside it.
+
 ## Remediation card: create-direct, not a live planner agent run
 
 `escalationRemediation.js`'s `draftRemediationCard` turns the blocker report into card fields:

@@ -1744,3 +1744,83 @@ fast-forward from local to origin is impossible by definition (local has commits
 `isBehindOrigin` would report `false` in that exact state (nothing to pull), so neither writer's
 merge step would even run. Nothing about this fix un-does that specific historical shape; it only
 guarantees no *new* instance of it going forward.
+
+## DL-29 — Host-action escalation: structured category + preflight, no new execution surface (T-0323)
+
+### The problem
+
+A board agent runs with no shell on the Windows host where ComfyUI/GPU/training live. When a
+card's failure is genuinely host-side, the agent can diagnose it in full and still cannot fix it,
+and had no way to say so except prose. T-0272/T-0317's profile keyframe took four escalation
+rounds to get from "doesn't reproduce" to a merged fix; round 9 named the exact remedy (a two-line
+edit to `F:\ComfyUI\start-comfyui.bat` plus a restart) and named why the agent couldn't apply it
+-- and that diagnosis sat unactioned for four rounds because the existing escalation taxonomy
+(`docs/design/escalation-workflow.md`'s `BLOCKER_CATEGORIES`) has no category between "code/test
+bug" and "external service" for "this needs a host shell." T-0321 shows the existing dispatch path
+firing and being closed as "nothing for Dispatch to do" for exactly this reason.
+
+### Options considered
+
+1. A host-action escalation category: extend the taxonomy with a structured `{host, action,
+   reason, verify}` payload instead of prose. Cheapest, no new execution surface, reuses the
+   entire existing dispatch-card machinery.
+2. A dispatch-runnable host action: a narrow allowlist of host operations a Dispatch card may
+   execute directly. More capable, but a privilege boundary into a Windows host from a WSL
+   sandbox is its own project, disproportionate to this card's worked example.
+3. A host-side agent/shim with its own grants over a local endpoint. Most capable, most to build
+   and secure -- a standing service on the one machine `CLAUDE.md`'s network-binding rule says
+   should never expose a shell.
+4. Preflight known host state: a small hand-maintained registry of already-diagnosed, unresolved
+   host problems, checked before the implementer spawns. Cheap and additive, but only helps once
+   an issue has already gone through option 1 at least once.
+
+Full writeup: `docs/design/host-action-escalation.md`.
+
+### Decision: options 1 + 4, both implemented; 2 and 3 deferred (not rejected)
+
+Option 1 gives an agent the vocabulary to name a host-only wall precisely the first time it's
+hit. Option 4 stops the *next* card that would hit the *same* wall from burning a full retry
+cycle to rediscover it -- the card brief's own framing ("preflight should ship with it -- the
+cheapest half of the value is telling the agent early that the wall is a wall"). Neither adds any
+execution surface: nothing here lets an agent or Dispatch touch the host, matching the card's
+explicit non-goals (no broad host shell access, no ad hoc SSH/`wsl.exe` out of the sandbox).
+Options 2/3 stay on the table if host issues start recurring often enough that the bottleneck
+shifts from "diagnose" to "a human has to go apply the two-line fix by hand" -- and this card's
+structured payload is exactly the input shape a future allowlisted executor would need, so
+choosing 1+4 now doesn't foreclose 2 later.
+
+### Implementation
+
+`tools/board/src/lib/hostActionRequest.js` (new): `formatHostActionRequest`/
+`parseHostActionRequest` for the fenced `host-action-request` block, all four fields required or
+the parse is `null` (never mistake a partial diagnosis for an actionable one).
+
+`tools/board/src/runner/blockerReport.js`: new `host-action` category, checked first in
+`categorizeFailure` (a structural match beats every keyword heuristic); `buildBlockerReport`
+carries the parsed payload as `report.lacks.hostAction`; `formatBlockerReportComment` renders it
+as labeled fields, never folded back into prose.
+
+`tools/board/src/lib/escalationRemediation.js`: `draftRemediationCard` renders a `## Host action
+requested` section and host-specific `## Acceptance` items when `report.lacks.hostAction` is
+present; a new `report.preflight` flag gets its own context line ("failed a host-state preflight
+check ... no auto-retry attempts were spent") distinct from the exhausted-retries/no-progress
+wording the card already had.
+
+`tools/board/src/runner/knownHostIssues.js` (new): the hand-maintained registry, seeded with the
+T-0272/T-0317 ComfyUI-determinism entry (`appliesToAgents: ["assets","audio"]`, `resolved:
+false`) as the worked example -- flipped to `resolved: true` once the sibling determinism-flags
+card lands and is verified, never deleted.
+
+`tools/board/src/runner/hostStatePreflight.js` (new): `checkHostStatePreflight`, same `{ok,
+message}` contract as `capabilityPreflight.js`, wired into `runOrchestrator.js`'s
+`_runCardInWorktree` in the same preflight slot. A match blocks immediately via the new
+`_blockOnHostAction`, which builds the same report shape retry-exhaustion escalation would have
+built and routes it through a `_recordBlockerReport` helper extracted from
+`_escalateIfGenuineBlocker` so both paths share one comment/remediation-card/dependency-wiring
+implementation.
+
+**Verified, not assumed:** `npx vitest run` green across the new/extended suites
+(`hostActionRequest.test.js`, `blockerReport.test.js`, `escalationRemediation.test.js`,
+`hostStatePreflight.test.js`, `runOrchestrator.hostStatePreflight.test.js`), plus the full
+existing `tools/board` suite to confirm the `_escalateIfGenuineBlocker` refactor changed no
+existing escalation behavior.
