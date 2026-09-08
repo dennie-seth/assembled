@@ -45,6 +45,7 @@ gets submitted, what gets uploaded, what pixels land on disk) is under test.
 from __future__ import annotations
 
 import io
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -267,3 +268,38 @@ def test_provenance_records_fresh_generation_for_every_frame(out_dir: Path) -> N
     assert "denoise" not in provenance
     assert "chained_from_frame" not in provenance["frame_generation"][0]
     assert "background held" in provenance["model"].lower()
+
+
+def test_resume_tolerates_a_pre_existing_attempt_whose_meta_predates_this_field(
+    out_dir: Path,
+) -> None:
+    """T-0259 session 9: attempt 5's own real cached directory (the T-0266
+    img2img-chain era, predating this field entirely -- its frame_1..7
+    `_meta.json` files carry `chained_from_frame`/`denoise` instead) hits a
+    bare `KeyError` at `run_attempt`'s per-frame provenance-record step the
+    moment every frame is already complete on disk and generation is
+    skipped, because that step unconditionally indexes
+    `meta["background_held_from_frame"]`. A resume over ALREADY-COMPLETE
+    frames must not depend on a field this card added after some of its own
+    already-generated attempts were written -- see
+    `char_gen.chunked_frames`'s own "skip-existing resume" contract, which
+    this session's fix now actually holds for a real historical attempt."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(walk.FRAME_COUNT):
+        rgb = FRAME0_RGB if i == 0 else SAMPLED_RGB
+        (out_dir / f"frame_{i}_main_384.png").write_bytes(_png_bytes(walk.GEN_PX, rgb))
+        (out_dir / f"frame_{i}_cell_48_raw.png").write_bytes(_png_bytes(walk.FINAL_CELL_PX, rgb))
+        # The OLD (pre-T-0259-session-5) schema: no "background_held_from_frame"
+        # key at all, exactly as a real attempt 5 `frame_N_meta.json` reads.
+        meta = {
+            "comfyui_prompt_id": f"legacy-prompt-{i}",
+            "generation_seconds": 20.0,
+            "generation_mode": "fresh" if i == 0 else "img2img_chained",
+        }
+        (out_dir / f"frame_{i}_meta.json").write_text(json.dumps(meta))
+
+    provenance = _run(max_frames=walk.FRAME_COUNT)
+    assert provenance is not None, "every frame is already complete -- must resume, not stall"
+    assert provenance["frame_generation"][0]["background_held_from_frame"] is None
+    for record in provenance["frame_generation"][1:]:
+        assert record["background_held_from_frame"] is None
