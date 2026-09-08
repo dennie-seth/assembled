@@ -913,8 +913,20 @@ def run_attempt(
     out_dir = REPO_ROOT / "assets" / "out" / "hybrid_walk" / f"attempt_{attempt}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # 2026-09-08 probe finding: T-0319's hard-fill default destabilises
+    # IP-Adapter when applied to THIS reference crop (attempts 3-4); a
+    # partial blend toward the same fill stays coherent (attempts'
+    # blend_0.5/0.8 probes) and is darker than no correction at all
+    # (bypass, attempts 5-9's own regime, which measured under the
+    # background-fraction floor). See crop_identity_reference's own
+    # docstring for the full evidence.
+    identity_reference_background_correction = "blend_0.5"
     identity_reference_path = out_dir / "identity_reference_crop.png"
-    crop_identity_reference(CONCEPT_SHEET_PATH, identity_reference_path)
+    crop_identity_reference(
+        CONCEPT_SHEET_PATH,
+        identity_reference_path,
+        background_correction=identity_reference_background_correction,
+    )
     concept_filename = upload_image(identity_reference_path)
 
     def generate_frame(frame_index: int) -> None:
@@ -1093,6 +1105,7 @@ def run_attempt(
             "with no derivation step in between -- the model is given no say in the pose"
         ),
         "identity_anchor": identity_anchor,
+        "identity_reference_background_correction": identity_reference_background_correction,
         "seed": seed,
         "denoise": denoise,
         "steps": 30,
