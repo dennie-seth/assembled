@@ -1,41 +1,56 @@
-"""Per-frame generation for the walk gait (T-0266's img2img chain, superseded
-2026-09-08 session 5 -- T-0259).
+"""Per-frame generation for the walk gait -- T-0266's img2img chain
+(chain-from-frame-0), superseded 2026-09-08 session 5 by independent
+per-frame sampling, itself superseded 2026-09-08 session 13 by SEQUENTIAL
+img2img chaining (frame N from frame N-1, not frame 0).
 
 T-0266 (iter 3) chained frames 1-7 to frame 0's own decoded output via
 VAEEncode at denoise < 1.0, to solve independent sampling's frame-delta
 blowout (nothing tied the background -- or the costume colours -- across
 independently-sampled frames). It worked for that problem. It created a
 different one: `probe_unchained_pose_T0259.py` and this card's own session-4
-attempt log show the chain suppresses pose fidelity to the ControlNet
-skeleton regardless of denoise (0.35, attempt 5) or IP-Adapter weight
-(attempt 7) -- frame 0's own contact-pose skeleton is visibly followed, but
-every chained frame stays close to frame 0's own rendered pose even when its
-own skeleton (e.g. frame 2's passing/cross stance) is unambiguously
-different. Session 5's own `probe_unchained_pose_T0259.py --frame 2` (fresh,
-denoise 1.0, no VAEEncode, otherwise identical inputs to attempt 5) visibly
-adopts the crossed-leg silhouette attempt 5's own chained frame 2 never does
--- confirming the chain, not the pose rig, was the bottleneck.
+attempt log show chain-FROM-FRAME-0 suppresses pose fidelity to the
+ControlNet skeleton regardless of denoise (0.35, attempt 5) or IP-Adapter
+weight (attempt 7) -- frame 0's own contact-pose skeleton is visibly
+followed, but every chained frame stays close to frame 0's own rendered pose
+even when its own skeleton (e.g. frame 2's passing/cross stance) is
+unambiguously different.
 
-Frame-to-frame consistency (T-0266's original problem) turns out not to
-depend on the chain at all: `apply_background_hold` (gen_chained_idle_T0250,
-reused unchanged here) composites in PIXEL SPACE, after decode -- it forces
-every background pixel to frame 0's own regardless of how the foreground was
-sampled. And IP-Adapter + identity LoRA + the SAME seed already hold costume
-colour consistent across independently-sampled frames (verified visually:
-session 5's probe frame matches frame 0's costume colour and style).
+Session 5 concluded the CHAIN itself was the bottleneck and switched every
+frame to independent fresh sampling (`build_graph`, `EmptyLatentImage`,
+denoise 1.0). That fixed pose fidelity but reintroduced whole-figure
+re-render variance far above the LOCOMOTION cap (0.51-0.81 measured,
+sessions 5-11) -- with no chain of any kind tying one frame's sampled
+figure to its neighbour's, only the BACKGROUND is held consistent
+(`apply_background_hold`, pixel space); the figure is free to re-render
+however the sampler likes.
 
-RED (session 5): `gen_hybrid_walk_T0259.py` still builds frames 1-7 via
-`build_chained_graph` (VAEEncode, denoise < 1.0), which the evidence above
-shows suppresses pose motion.
-GREEN: every frame (0 through 7) is generated via `build_graph` (fresh,
-`EmptyLatentImage`, denoise fixed at 1.0, this frame's own skeleton) -- the
-only difference from frame 0 frames 1-7 still have is that their DECODED
-output is background-held (pixel space, `apply_background_hold`) against
-frame 0's own decoded output before being written to disk, exactly as
-before. `build_chained_graph` itself is left intact and still independently
-tested below as a reusable primitive (T-0260/T-0261 or a future card may
-still want a true low-denoise chain for a different motion); it is simply no
-longer called by `_generate_one_frame`.
+Session 13's finding: session 5's A/B was chain-from-frame-0 vs fully
+independent -- never SEQUENTIAL chaining (frame N from N-1's own decoded
+output). Chain-from-frame-0 forces the sampler to travel from frame 0's
+own contact pose all the way to, e.g., frame 4's passing/cross pose in one
+denoise step -- a large pose delta the low denoise that keeps costume/
+background stable cannot also traverse. Chaining each frame from its own
+IMMEDIATE PREDECESSOR instead caps every step's required pose travel at the
+same adjacent-frame magnitude that already worked when frames were sampled
+independently (each adjacent pair's skeleton is close by construction --
+it's one gait's phase steps), while restoring the same-source-latent
+anchor that suppresses whole-figure re-render variance. Frame 0 has no
+predecessor and stays fresh, exactly as before.
+
+RED (session 13): `gen_hybrid_walk_T0259.py`'s `_generate_one_frame` still
+builds every frame (including 1-7) via `build_graph` (fresh,
+`EmptyLatentImage`), never via `build_chained_graph`.
+GREEN: frame 0 stays fresh; frames 1-7 each chain from the immediately
+PRECEDING frame's own already-written `frame_{i-1}_main_384.png` via
+`build_chained_graph` (VAEEncode, denoise `SEQUENTIAL_CHAIN_DENOISE`), and
+each frame's `_meta.json` records `chained_from_frame: i - 1` and `denoise`
+so the true per-frame provenance is never lost, distinct from T-0266's
+legacy `"img2img_chained"` mode (which always chained from frame 0). Frames
+1-7's decoded output is STILL background-held (pixel space,
+`apply_background_hold`) against frame 0's own, exactly as before --
+chaining and the pixel-space hold are independent mechanisms, not
+alternatives. `build_chained_graph` itself needed no change; it already
+took an arbitrary `init_image_filename` and denoise.
 
 No GPU needed: the ComfyUI HTTP boundary is monkeypatched exactly as
 `test_gen_hybrid_walk_chunking_T0266.py` does; only wiring (which graph shape
@@ -205,26 +220,47 @@ def test_frame_zero_is_generated_fresh(out_dir: Path, submitted_graphs: list) ->
     assert walk.VAE_ENCODE_NODE_ID not in submitted_graphs[0]
 
 
-def test_frames_after_zero_are_also_generated_fresh_not_chained(
+def test_frame_one_chains_from_frame_zero_via_vaeencode(
     out_dir: Path, submitted_graphs: list, uploaded_paths: list
 ) -> None:
-    """The core session-5 fix: frame 1 gets its own EmptyLatentImage graph,
-    exactly like frame 0, not a VAEEncode of frame 0's own pixels -- so its
-    own ControlNet skeleton (a different pose than frame 0's) actually gets
-    to influence the sampled result."""
+    """Session 13: frame 1 is chained (VAEEncode), not fresh
+    (EmptyLatentImage) -- its init image is frame 0's own just-written main
+    output, uploaded back to ComfyUI as this frame's chain source."""
     _run(max_frames=2)
 
     assert len(submitted_graphs) == 2
     frame1_graph = submitted_graphs[1]
-    assert walk.LATENT_NODE_ID in frame1_graph
-    assert walk.VAE_ENCODE_NODE_ID not in frame1_graph
-    assert walk.INIT_IMAGE_NODE_ID not in frame1_graph
+    assert walk.VAE_ENCODE_NODE_ID in frame1_graph
+    assert walk.LATENT_NODE_ID not in frame1_graph
+    assert frame1_graph[walk.SAMPLER_NODE_ID]["inputs"]["denoise"] == walk.SEQUENTIAL_CHAIN_DENOISE
 
-    # frame 0's own main output is never uploaded as an init image any more
-    # -- it is still read locally (for the background hold below), but never
-    # sent back to ComfyUI as VAEEncode input.
     uploaded_names = [p.name for p in uploaded_paths]
-    assert not any(name.startswith("frame_0_main") for name in uploaded_names)
+    assert any(name.startswith("frame_0_main") for name in uploaded_names), (
+        "frame 0's own main output must be uploaded as frame 1's chain init image"
+    )
+
+
+def test_frame_two_chains_from_frame_one_not_frame_zero(
+    out_dir: Path, submitted_graphs: list, uploaded_paths: list
+) -> None:
+    """The core session-13 fix: SEQUENTIAL chaining, not chain-from-frame-0.
+    Frame 2's init image must be frame 1's own output, never frame 0's --
+    chaining from a fixed anchor is exactly the T-0266/session-5 regime this
+    session supersedes."""
+    _run(max_frames=3)
+
+    assert len(submitted_graphs) == 3
+    frame2_graph = submitted_graphs[2]
+    assert walk.VAE_ENCODE_NODE_ID in frame2_graph
+    assert frame2_graph[walk.INIT_IMAGE_NODE_ID]["inputs"]["image"].startswith("frame_1_main")
+
+    upload_calls_by_name = [p.name for p in uploaded_paths]
+    # frame 0's main output is uploaded once (as frame 1's init image); it
+    # must NOT be uploaded again as frame 2's init image.
+    frame0_main_uploads = [n for n in upload_calls_by_name if n.startswith("frame_0_main")]
+    frame1_main_uploads = [n for n in upload_calls_by_name if n.startswith("frame_1_main")]
+    assert len(frame0_main_uploads) == 1
+    assert len(frame1_main_uploads) == 1
 
 
 def test_background_is_held_to_frame_zero_for_every_later_frame(out_dir: Path) -> None:
@@ -253,21 +289,27 @@ def test_background_is_held_to_frame_zero_for_every_later_frame(out_dir: Path) -
     assert raw_sampled.getpixel((walk.GEN_PX // 2, walk.GEN_PX // 2)) == SAMPLED_RGB
 
 
-def test_provenance_records_fresh_generation_for_every_frame(out_dir: Path) -> None:
+def test_provenance_records_sequential_chaining_for_every_later_frame(out_dir: Path) -> None:
     provenance = _run(max_frames=walk.FRAME_COUNT)
     assert provenance is not None
 
     frame0_record = provenance["frame_generation"][0]
     assert frame0_record["generation_mode"] == "fresh"
     assert frame0_record["background_held_from_frame"] is None
+    assert frame0_record["chained_from_frame"] is None
+    assert frame0_record["denoise"] is None
 
     for record in provenance["frame_generation"][1:]:
-        assert record["generation_mode"] == "fresh_background_held"
+        assert record["generation_mode"] == "sequential_chained"
         assert record["background_held_from_frame"] == 0
+        assert record["chained_from_frame"] == record["frame_index"] - 1
+        assert record["denoise"] == walk.SEQUENTIAL_CHAIN_DENOISE
 
     assert "denoise" not in provenance
-    assert "chained_from_frame" not in provenance["frame_generation"][0]
     assert "background held" in provenance["model"].lower()
+    lowered_model = provenance["model"].lower()
+    lowered_method = provenance["method"].lower()
+    assert "sequential" in lowered_model or "sequential" in lowered_method
 
 
 def test_resume_tolerates_a_pre_existing_attempt_whose_meta_predates_this_field(
