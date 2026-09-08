@@ -26,6 +26,13 @@ async function writeFile(root, rel, contents) {
   return target;
 }
 
+/** Same as writeFile but for callers that already have an absolute target path (e.g. logPath). */
+async function writeAbs(target, contents) {
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, contents);
+  return target;
+}
+
 async function readFile(root, rel) {
   return fs.readFile(path.join(root, rel));
 }
@@ -86,7 +93,7 @@ describe("promoteEvidence", () => {
   it("promotes every cited frame that resolves under runDir into docs/assets/evidence/<card>/", async () => {
     await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_14/main_384.png", "frame-14");
     await writeFile(repoRoot, "assets/out/hybrid_profile/pose_skeleton_384.png", "skeleton");
-    await writeFile(
+    await writeAbs(
       logPath,
       "The decisive frame is `attempt_14/main_384.png`, conditioned on `pose_skeleton_384.png`."
     );
@@ -108,7 +115,7 @@ describe("promoteEvidence", () => {
     // The T-0272 case this card exists for: the round's own verdict is "Not promoted", but the
     // log still names the decisive frame that justifies the finding.
     await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_25/main_384.png", "best-lean");
-    await writeFile(
+    await writeAbs(
       logPath,
       [
         "**Not promoted.** `attempt_25/main_384.png` is the single most confidently side-facing",
@@ -125,7 +132,7 @@ describe("promoteEvidence", () => {
   });
 
   it("reports (never throws for) a citation whose file does not exist under runDir", async () => {
-    await writeFile(logPath, "The decisive frame is `attempt_99/main_384.png`.");
+    await writeAbs(logPath, "The decisive frame is `attempt_99/main_384.png`.");
 
     const result = await promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath });
 
@@ -134,7 +141,7 @@ describe("promoteEvidence", () => {
   });
 
   it("does not fail when the run crashed before generating anything -- runDir does not exist at all", async () => {
-    await writeFile(logPath, "The decisive frame is `attempt_1/main_384.png`.");
+    await writeAbs(logPath, "The decisive frame is `attempt_1/main_384.png`.");
     // runDir deliberately never created.
 
     await expect(promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath })).resolves.toMatchObject({
@@ -159,7 +166,7 @@ describe("promoteEvidence", () => {
 
   it("never resolves a citation outside runDir, even one that looks like a path-traversal attempt", async () => {
     await writeFile(repoRoot, "secret.png", "outside-run-dir");
-    await writeFile(logPath, "See `../../secret.png` for reference.");
+    await writeAbs(logPath, "See `../../secret.png` for reference.");
 
     const result = await promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath });
 
@@ -169,7 +176,7 @@ describe("promoteEvidence", () => {
 
   it("skips a cited frame over the byte cap and reports it, rather than committing an oversized file", async () => {
     await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_1/main_384.png", Buffer.alloc(20, 1));
-    await writeFile(logPath, "Decisive: `attempt_1/main_384.png`.");
+    await writeAbs(logPath, "Decisive: `attempt_1/main_384.png`.");
 
     const result = await promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath, maxFileBytes: 10 });
 
@@ -183,7 +190,7 @@ describe("promoteEvidence", () => {
       await writeFile(repoRoot, `assets/out/hybrid_profile/attempt_${i}/main_384.png`, `frame-${i}`);
       cited.push(`attempt_${i}/main_384.png`);
     }
-    await writeFile(logPath, cited.map((c) => `\`${c}\``).join(" and "));
+    await writeAbs(logPath, cited.map((c) => `\`${c}\``).join(" and "));
 
     const result = await promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath, maxFiles: 2 });
 
@@ -193,7 +200,7 @@ describe("promoteEvidence", () => {
 
   it("is idempotent -- re-promoting byte-identical content does not create a duplicate or churn the tree", async () => {
     await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_1/main_384.png", "frame-1");
-    await writeFile(logPath, "Decisive: `attempt_1/main_384.png`.");
+    await writeAbs(logPath, "Decisive: `attempt_1/main_384.png`.");
 
     const first = await promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath });
     const second = await promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath });
@@ -207,7 +214,7 @@ describe("promoteEvidence", () => {
 
   it("appends a suffix rather than clobbering when a later round cites a different frame under the same destination name", async () => {
     await writeFile(repoRoot, "assets/out/hybrid_profile/attempt_1/main_384.png", "round-1-content");
-    await writeFile(logPath, "Decisive: `attempt_1/main_384.png`.");
+    await writeAbs(logPath, "Decisive: `attempt_1/main_384.png`.");
     await promoteEvidence({ repoRoot, cardId: "T-9999", runDir, logPath });
 
     // A second round's run directory happens to reuse the same attempt-numbered relative path
@@ -215,7 +222,7 @@ describe("promoteEvidence", () => {
     const round2RunDir = path.join(repoRoot, "assets", "out", "hybrid_profile_round2");
     await writeFile(repoRoot, "assets/out/hybrid_profile_round2/attempt_1/main_384.png", "round-2-content");
     const round2LogPath = path.join(repoRoot, "assets/src/character/ARM_ROUND2_LOG_T9999.md");
-    await writeFile(round2LogPath, "Decisive: `attempt_1/main_384.png`.");
+    await writeAbs(round2LogPath, "Decisive: `attempt_1/main_384.png`.");
 
     const result = await promoteEvidence({
       repoRoot,
@@ -263,7 +270,7 @@ describe("promoteEvidence end-to-end -- survives real worktree removal", () => {
     const wtRunDir = path.join(worktreeDir, "assets", "out", "hybrid_profile");
     const wtLogPath = path.join(worktreeDir, "assets", "src", "character", "ARM_HYBRID_ATTEMPT_LOG_T9999.md");
     await writeFile(worktreeDir, "assets/out/hybrid_profile/attempt_14/main_384.png", "the-decisive-frame");
-    await writeFile(wtLogPath, "The decisive frame is `attempt_14/main_384.png`.");
+    await writeAbs(wtLogPath, "The decisive frame is `attempt_14/main_384.png`.");
 
     const result = await promoteEvidence({
       repoRoot: worktreeDir,
