@@ -23,6 +23,19 @@ const REPORT = {
   lacks: { category: "permission-grant", detail: "Bash tool has no grant to write outside worktrees/T-0042" }
 };
 
+const HOST_ACTION = {
+  host: "Windows ComfyUI host (F:\\ComfyUI)",
+  action: "Edit start-comfyui.bat to set CUBLAS_WORKSPACE_CONFIG=:4096:8, then restart ComfyUI.",
+  reason: "No agent has a shell on this host; the launch flags live in a .bat file only a human can edit.",
+  verify: "Submit the same seed twice across two server lifetimes and confirm identical output hashes."
+};
+
+const HOST_ACTION_REPORT = {
+  attempted: "Attempted T-0042 (Wire up the widget) across 5 implementer/reviewer cycles on branch feature/T-0042.",
+  failureSignature: `Run 5 of 5: still stuck`,
+  lacks: { category: "host-action", detail: HOST_ACTION.reason, hostAction: HOST_ACTION }
+};
+
 describe("isRemediationCardFor", () => {
   it("is true for a card carrying the marker for the given original id", () => {
     const card = { body: "<!-- escalation-remediation-for: T-0042 -->\n\nfix it" };
@@ -178,5 +191,33 @@ describe("draftRemediationCard", () => {
   it("omits any supersession note when there is nothing to supersede", () => {
     const fields = draftRemediationCard({ task: ORIGINAL_TASK, report: REPORT, attemptCount: 5 });
     expect(fields.body).not.toMatch(/supersed/i);
+  });
+
+  it("renders a distinct Host action requested section with labeled fields when the report carries hostAction (T-0323)", () => {
+    const fields = draftRemediationCard({ task: ORIGINAL_TASK, report: HOST_ACTION_REPORT, attemptCount: 5 });
+    expect(fields.body).toContain("## Host action requested");
+    expect(fields.body).toContain(`**Host:** ${HOST_ACTION.host}`);
+    expect(fields.body).toContain(`**Action:** ${HOST_ACTION.action}`);
+    expect(fields.body).toContain(`**Reason:** ${HOST_ACTION.reason}`);
+    expect(fields.body).toContain(`**Verify:** ${HOST_ACTION.verify}`);
+  });
+
+  it("asks the Acceptance checklist for the named action and the named verification, not a generic root-cause item", () => {
+    const fields = draftRemediationCard({ task: ORIGINAL_TASK, report: HOST_ACTION_REPORT, attemptCount: 5 });
+    expect(fields.body).toContain(`Host action performed on ${HOST_ACTION.host}: ${HOST_ACTION.action}`);
+    expect(fields.body).toContain(`Verified: ${HOST_ACTION.verify}`);
+  });
+
+  it("names a distinct preflight context line, with no attempt count, when report.preflight is set", () => {
+    const preflightReport = { ...HOST_ACTION_REPORT, preflight: true };
+    const fields = draftRemediationCard({
+      task: ORIGINAL_TASK,
+      report: preflightReport,
+      attemptCount: 0,
+      now: () => new Date("2026-09-08T00:00:00.000Z")
+    });
+    expect(fields.body).toMatch(/preflight/i);
+    expect(fields.body).toMatch(/no auto-retry attempts were spent/i);
+    expect(fields.body).not.toContain("exhausted 0 auto-retry attempts");
   });
 });

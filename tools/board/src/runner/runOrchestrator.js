@@ -34,6 +34,8 @@ import { createCard as createCardDefault } from "./cardCreation.js";
 import { checkAcceptancePreflight } from "./acceptancePreflight.js";
 import { checkCapabilityPreflight } from "./capabilityPreflight.js";
 import { checkImpossibleAcceptancePreflight } from "./impossibleAcceptancePreflight.js";
+import { checkHostStatePreflight } from "./hostStatePreflight.js";
+import { KNOWN_HOST_ISSUES } from "./knownHostIssues.js";
 import { assertRunnerMayApply, needsApproval, parkedForApprovalComment } from "../lib/approvalGate.js";
 
 /**
@@ -337,6 +339,7 @@ export class RunOrchestrator {
     heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
     clearRunStateFn = clearRunState,
     createCardFn = createCardDefault,
+    hostIssueRegistry = KNOWN_HOST_ISSUES,
     now = () => new Date(),
     sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     onIdle = () => {}
@@ -383,6 +386,7 @@ export class RunOrchestrator {
     this._branchPushed = new Set();
     this.clearRunStateFn = clearRunStateFn;
     this.createCardFn = createCardFn;
+    this.hostIssueRegistry = hostIssueRegistry;
     this.now = now;
     this.sleepFn = sleepFn;
     this.onIdle = onIdle;
@@ -654,6 +658,20 @@ export class RunOrchestrator {
       });
       if (!capabilityPreflight.ok) {
         await this._blocked(taskId, capabilityPreflight.message);
+        return;
+      }
+
+      // Preflight (T-0323): a card whose assigned agent matches a *known, already-diagnosed*
+      // unresolved host-side blocker (docs/design/host-action-escalation.md; ComfyUI determinism
+      // flags from T-0272/T-0317 are the worked example) is told immediately instead of spending
+      // MAX_AUTO_RETRY_ATTEMPTS rediscovering a wall someone already hit. Routes through the same
+      // structured-report/remediation-card machinery retry-exhaustion escalation uses, via
+      // _blockOnHostAction, so a human/Dispatch gets the identical actionable handoff either way.
+      const hostStatePreflight = checkHostStatePreflight(preFlightTask, effectiveAgent, {
+        registry: this.hostIssueRegistry
+      });
+      if (!hostStatePreflight.ok) {
+        await this._blockOnHostAction(taskId, preFlightTask, hostStatePreflight, runLog);
         return;
       }
 
@@ -1384,19 +1402,66 @@ export class RunOrchestrator {
    * `blocked` by the time this runs, and escalation is additive, not load-bearing for that.
    */
   async _escalateIfGenuineBlocker(taskId, attemptRecords, runLog, { noProgress = false, repeatedSignature = null } = {}) {
-    try {
-      const allEvents = attemptRecords.flatMap((r) => r.events ?? []);
-      if (eventsContainUsageLimitSignature(allEvents)) {
-        await this._logEscalation(
-          taskId,
-          runLog,
-          "Escalation skipped: usage/rate-limit signature detected in the run output -- treated as a transient stop, card left blocked for a normal later re-run."
-        );
-        return;
-      }
+    const allEvents = attemptRecords.flatMap((r) => r.events ?? []);
+    if (eventsContainUsageLimitSignature(allEvents)) {
+      await this._logEscalation(
+        taskId,
+        runLog,
+        "Escalation skipped: usage/rate-limit signature detected in the run output -- treated as a transient stop, card left blocked for a normal later re-run."
+      );
+      return;
+    }
 
-      const task = await this.store.get(taskId);
-      const report = buildBlockerReport({ task, attemptRecords, attemptCount: attemptRecords.length, noProgress, repeatedSignature });
+    const task = await this.store.get(taskId);
+    const report = buildBlockerReport({ task, attemptRecords, attemptCount: attemptRecords.length, noProgress, repeatedSignature });
+    await this._recordBlockerReport(taskId, task, report, runLog, attemptRecords.length);
+  }
+
+  /**
+   * Fires when checkHostStatePreflight (T-0323) finds a known, unresolved host-side blocker
+   * before the implementer is ever even spawned -- the preflight half of the host-action
+   * escalation category (docs/design/host-action-escalation.md). Blocks the card immediately, the
+   * same as checkCapabilityPreflight, then routes through the identical structured-report/
+   * remediation-card machinery `_escalateIfGenuineBlocker` uses at retry exhaustion, via
+   * `_recordBlockerReport` -- the whole point is never spending a single auto-retry attempt on a
+   * wall someone already diagnosed.
+   */
+  async _blockOnHostAction(taskId, task, preflight, runLog) {
+    await this._blocked(taskId, preflight.message);
+    const report = {
+      attempted: `${taskId} (${task.title}) failed host-state preflight before any implementer attempt was spent.`,
+      failureSignature: `Preflight: ${preflight.message}`,
+      lacks: { category: "host-action", detail: preflight.hostAction.reason, hostAction: preflight.hostAction },
+      noProgress: false,
+      repeatedSignature: null,
+      abortReason: "Preflight detected a known, unresolved host-state blocker (knownHostIssues.js) -- no implementer attempt was spent.",
+      preflight: true
+    };
+    await this._recordBlockerReport(taskId, task, report, runLog, 0);
+  }
+
+  /**
+   * Shared tail of both escalation paths (retry-exhaustion `_escalateIfGenuineBlocker` and
+   * preflight `_blockOnHostAction`): appends the structured blocker-report comment, de-dupes
+   * against an already-OPEN remediation card for this same blocked card
+   * (escalationRemediation.js's `findOpenRemediationCard` -- status, not mere existence, is the
+   * dedupe key; see T-0310). A `done` or especially `retired` remediation card is never re-linked
+   * -- retiring it was the explicit human call that it wasn't the way forward, and reviving it as
+   * a live gate would invert that. When the only matches are closed, a fresh remediation card is
+   * created in `ready` status owned by the non-executable `agent: "dispatch"` sentinel, carrying
+   * the *current* blocker report and naming the most recent closed card it supersedes (reusing
+   * cardCreation.js's `createCard`, the same direct-to-store path flow-stats self-improvement uses
+   * -- not a live planner agent run, since that would require its own worktree/branch/PR and could
+   * never land a `ready` card on the live board immediately). Either way the original card's
+   * `depends_on` is wired to the winning remediation card, with any stale closed-card entry
+   * replaced rather than left alongside it (idempotent).
+   *
+   * Best-effort end to end: any failure here (a missing store.list in a lightweight caller, a
+   * create failure) is caught and logged, never rethrown -- the card is already correctly
+   * `blocked` by the time this runs, and escalation is additive, not load-bearing for that.
+   */
+  async _recordBlockerReport(taskId, task, report, runLog, attemptCount) {
+    try {
       await this._appendComment(taskId, "assembled-board", formatBlockerReportComment(report));
 
       const tasks = await this.store.list();
@@ -1416,7 +1481,7 @@ export class RunOrchestrator {
         const fields = draftRemediationCard({
           task,
           report,
-          attemptCount: attemptRecords.length,
+          attemptCount,
           now: this.now,
           supersedes: priorClosed ? { id: priorClosed.id, status: priorClosed.status } : null
         });

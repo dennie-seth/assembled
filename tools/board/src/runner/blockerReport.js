@@ -1,10 +1,18 @@
+import { parseHostActionRequest } from "../lib/hostActionRequest.js";
+
 /**
- * The six ways a card's auto-retry exhaustion is categorized (docs/design/escalation-workflow.md).
- * Order is significant for `categorizeFailure`: earlier categories are checked first, so a note
- * mentioning both a permission issue and an incidental "tool" word still lands on the more
- * specific match.
+ * The seven ways a card's auto-retry exhaustion is categorized (docs/design/escalation-workflow.md,
+ * docs/design/host-action-escalation.md). Order is significant for `categorizeFailure`: earlier
+ * categories are checked first, so a note mentioning both a permission issue and an incidental
+ * "tool" word still lands on the more specific match. `host-action` wins first via a *structural*
+ * check (a fenced host-action-request block, see .claude/rules/conduct.md for the format every
+ * agent is taught) before `categorizeFailure` even reaches the keyword table below -- a structural
+ * match always beats a guess. `host-action` also has a *prose* fallback as the keyword table's
+ * first entry (T-0323), for a diagnosis that names a host-only wall but never got wrapped in the
+ * fenced block -- exactly the failure mode that produced the T-0321 misclassification.
  */
 export const BLOCKER_CATEGORIES = [
+  "host-action",
   "permission-grant",
   "tool",
   "env-dependency",
@@ -14,6 +22,16 @@ export const BLOCKER_CATEGORIES = [
 ];
 
 const CATEGORY_PATTERNS = [
+  // T-0323: a prose fallback for a host-only diagnosis that never made it into the fenced
+  // ```host-action-request block (see .claude/rules/conduct.md) -- the exact T-0321 gap this
+  // card exists to close: a correct diagnosis of "no shell on the host" that fell through to
+  // "code-test-bug" because nothing told the writer the structured format existed. Checked
+  // first among the keyword patterns so it outranks an incidental "permission denied"/"tool"
+  // match elsewhere in the same notes.
+  {
+    category: "host-action",
+    re: /\bno (?:agent )?shell\b|\bhost-only\b|\bhost-side\b|\bWindows host\b|\bno host shell\b|\brequires? (?:a )?host (?:shell|action)\b/i
+  },
   { category: "permission-grant", re: /permission denied|not allowed|forbidden|\b403\b|EACCES|no grant|not authorized|access denied/i },
   { category: "tool", re: /tool not (?:available|found)|unknown tool|command not found|missing tool|not permitted to use/i },
   { category: "env-dependency", re: /ENOENT|module not found|cannot find module|not installed|missing dependency|package not found/i },
@@ -25,6 +43,7 @@ const CATEGORY_PATTERNS = [
 ];
 
 const CATEGORY_LABELS = {
+  "host-action": "Host action required",
   "permission-grant": "Permission/grant",
   tool: "Tool",
   "env-dependency": "Environment/dependency",
@@ -33,8 +52,13 @@ const CATEGORY_LABELS = {
   "code-test-bug": "Code/test bug"
 };
 
-/** Heuristically categorizes a block of FAIL-note text into one of BLOCKER_CATEGORIES, defaulting to "code-test-bug". */
+/**
+ * Categorizes a block of FAIL-note text into one of BLOCKER_CATEGORIES, defaulting to
+ * "code-test-bug". A structural host-action-request block always wins over every keyword
+ * heuristic below it (T-0323) -- see BLOCKER_CATEGORIES' docstring for why.
+ */
 export function categorizeFailure(text) {
+  if (parseHostActionRequest(text)) return "host-action";
   for (const { category, re } of CATEGORY_PATTERNS) {
     if (re.test(text)) return category;
   }
@@ -65,8 +89,19 @@ export function buildBlockerReport({ task, attemptRecords, attemptCount, noProgr
   const abortReason = noProgress
     ? `Retry loop aborted for no progress: the last two consecutive attempts failed with the identical failure signature \`${repeatedSignature}\` -- not because attempts were exhausted.`
     : `Retry loop aborted after exhausting all ${count} auto-retry attempts.`;
+  // T-0323: a structural host-action-request match carries its parsed {host,action,reason,verify}
+  // payload through so every downstream rendering can keep the fields distinct instead of folding
+  // them into `detail`'s prose.
+  const hostAction = category === "host-action" ? parseHostActionRequest(combinedText) : null;
 
-  return { attempted, failureSignature, lacks: { category, detail }, noProgress, repeatedSignature, abortReason };
+  return {
+    attempted,
+    failureSignature,
+    lacks: hostAction ? { category, detail, hostAction } : { category, detail },
+    noProgress,
+    repeatedSignature,
+    abortReason
+  };
 }
 
 /** Renders a blocker report as the markdown comment body appended to the blocked card. */
@@ -77,12 +112,23 @@ export function formatBlockerReportComment(report) {
   if (report.abortReason) {
     lines.push(`**Abort reason:** ${report.abortReason}`, "");
   }
-  lines.push(
-    "**Failure signature across attempts:**",
-    "",
-    report.failureSignature,
-    "",
-    `**Lacks:** ${label} — ${report.lacks.detail}`
-  );
+  lines.push("**Failure signature across attempts:**", "", report.failureSignature, "");
+
+  // T-0323: a host-action blocker renders as distinct labeled fields, never folded back into a
+  // single prose sentence -- the whole point of the structured category over free text.
+  if (report.lacks.hostAction) {
+    const { host, action, reason, verify } = report.lacks.hostAction;
+    lines.push(
+      `**Lacks:** ${label} — this cannot be completed without host-side access.`,
+      "",
+      `**Host:** ${host}`,
+      `**Action:** ${action}`,
+      `**Reason:** ${reason}`,
+      `**Verify:** ${verify}`
+    );
+  } else {
+    lines.push(`**Lacks:** ${label} — ${report.lacks.detail}`);
+  }
+
   return lines.join("\n");
 }
