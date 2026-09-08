@@ -347,3 +347,78 @@ def test_resumed_sidecar_does_not_claim_fresh_generation_it_did_not_do(
         "provenance must disclose the chained frames its own frame_generation records, "
         "not just silently omit them from the human-readable summary"
     )
+
+
+def test_promotion_re_derives_model_and_method_from_frame_generation(
+    monkeypatch: pytest.MonkeyPatch, out_dir: Path
+) -> None:
+    """T-0259 session 10 finding (B): the previous test proves `run_attempt`
+    now derives an accurate `model`/`method` from `frame_generation`, but
+    `--promote-attempt` reads a candidate's `provenance_candidate.json`
+    VERBATIM off disk and copies it into the final sidecar unchanged. A
+    candidate written before this session's fix landed (a real one: attempt
+    5's own on-disk file) still carries the stale, self-contradictory
+    strings the previous test guards against in `run_attempt`'s own output --
+    and `promote_attempt` would ship that lie to `assets/final/` untouched.
+    `promote_attempt` itself (not just `run_attempt`) must re-derive `model`
+    and `method` from the `frame_generation` records already present in
+    whatever provenance dict it is given, so promotion is self-correcting
+    regardless of how stale the on-disk candidate's top-level strings are."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sheet = Image.new("RGB", (walk.SHEET_W, walk.SHEET_H), (0, 0, 0)).convert("P")
+    sheet.save(out_dir / "sheet_192x96_indexed.png")
+
+    frame_generation = []
+    for i in range(walk.FRAME_COUNT):
+        (out_dir / f"frame_{i}_keypoints.json").write_text("[]")
+        Image.new("RGB", (walk.GEN_PX, walk.GEN_PX), (0, 0, 0)).save(
+            out_dir / f"frame_{i}_pose_skeleton_384.png"
+        )
+        frame_generation.append(
+            {
+                "frame_index": i,
+                "generation_mode": "fresh" if i == 0 else "img2img_chained",
+            }
+        )
+
+    stale_provenance = {
+        # Deliberately the OLD hardcoded strings, exactly as a pre-fix
+        # candidate on disk still reads -- the self-contradiction the
+        # previous test exists to catch at generation time.
+        "model": "checkpoint + LoRAs -- every frame sampled fresh (EmptyLatentImage, denoise 1.0)",
+        "method": "every frame samples fresh from EmptyLatentImage (denoise 1.0) against its own"
+        " skeleton",
+        "frame_generation": frame_generation,
+        "attempt": 9004,
+    }
+
+    # promote_attempt writes paths relative to REPO_ROOT into the sidecar
+    # (pose_keypoints_file/pose_skeleton_file/gif), so the scratch dirs must
+    # live under REPO_ROOT, not an unrelated tmp_path.
+    scratch = walk.REPO_ROOT / "assets" / "out" / "hybrid_walk" / "_test_promotion_9004"
+    final_dir = scratch / "final_character"
+    monkeypatch.setattr(walk, "FINAL_CHARACTER_DIR", final_dir)
+    monkeypatch.setattr(walk, "FINAL_SHEET_PATH", final_dir / "player_walk_sheet_hybrid.png")
+    monkeypatch.setattr(
+        walk, "FINAL_PROVENANCE_PATH", final_dir / "player_walk_sheet_hybrid.provenance.json"
+    )
+    monkeypatch.setattr(walk, "FINAL_GIF_PATH", final_dir / "player_walk_sheet_hybrid.gif")
+    monkeypatch.setattr(walk, "WALK_FRAME_EVIDENCE_DIR", scratch / "frame_evidence")
+
+    try:
+        walk.promote_attempt(out_dir, stale_provenance)
+        promoted = json.loads(walk.FINAL_PROVENANCE_PATH.read_text())
+    finally:
+        if scratch.exists():
+            shutil.rmtree(scratch)
+
+    lowered_model = promoted["model"].lower()
+    lowered_method = promoted["method"].lower()
+    assert "every frame sampled fresh" not in lowered_model, (
+        "promote_attempt shipped the stale on-disk model string unchanged instead of "
+        "re-deriving it from frame_generation"
+    )
+    assert "img2img_chained" in lowered_model or "img2img_chained" in lowered_method, (
+        "promote_attempt must re-derive model/method from frame_generation at promotion "
+        "time, not trust whatever was cached on disk"
+    )
