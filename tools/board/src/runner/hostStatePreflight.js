@@ -14,7 +14,14 @@ export function checkHostStatePreflight(task, agentName, { registry = KNOWN_HOST
   const id = task?.id ?? "unknown";
   const body = task?.body ?? "";
   const match = registry.find(
-    (issue) => !issue.resolved && issue.appliesToAgents.includes(agentName) && (!issue.bodyPattern || issue.bodyPattern.test(body))
+    (issue) =>
+      // `withdrawn` is a distinct closure state from `resolved`: resolved means a human performed the
+      // action and verified it; withdrawn means the entry's premise was disproven and the action must
+      // NOT be performed. Both stop the entry blocking; only one asserts the host was changed.
+      !issue.resolved &&
+      !issue.withdrawn &&
+      issue.appliesToAgents.includes(agentName) &&
+      (!issue.bodyPattern || issue.bodyPattern.test(body))
   );
   if (!match) {
     return { ok: true, message: "", hostAction: null };

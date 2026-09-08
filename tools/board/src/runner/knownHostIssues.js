@@ -11,6 +11,16 @@
  * deferred as their own privilege-boundary project). Flip `resolved: true` once a human confirms
  * the action was taken and verified per that entry's own `verify` field; never delete a closed
  * entry, so its history stays auditable.
+ *
+ * An entry can close two ways, and they mean different things:
+ *
+ *   `resolved: true`  -- a human performed `action` and confirmed it per `verify`.
+ *   `withdrawn: true` -- the entry's premise was DISPROVEN. Nobody performed the action, and
+ *                        nobody should; doing it is now known to make things worse. Record why in
+ *                        `withdrawnReason`. Marking such an entry `resolved` would assert a host
+ *                        change that never happened, and deleting it would lose the history.
+ *
+ * `hostStatePreflight.js` skips both, so either state stops an entry blocking runs.
  */
 export const KNOWN_HOST_ISSUES = Object.freeze([
   Object.freeze({
@@ -34,6 +44,26 @@ export const KNOWN_HOST_ISSUES = Object.freeze([
     verify:
       "Restart ComfyUI, submit the same seed/workflow twice across two separate server lifetimes, and confirm the " +
       "two outputs hash identically.",
-    resolved: false
+    resolved: false,
+    // WITHDRAWN 2026-09-08 -- the premise is disproven and the prescribed action is actively harmful.
+    // T-0317 rounds 10-12 measured all three regimes on the S24-e dual-IPAdapter + ControlNet graph:
+    //
+    //   --deterministic + CUBLAS_WORKSPACE_CONFIG : reproducible (attempts 66/67/68 byte-identical,
+    //                                               sha256 ff18f51c...d957a on a forced non-cached
+    //                                               recompute) but INCOHERENT, 6/6 fresh seeds
+    //   CUBLAS_WORKSPACE_CONFIG only              : reproducible (69 == 70) but INCOHERENT, 6/6 seeds
+    //   baseline (neither flag)                   : not reproducible, and incoherent 8/8 seeds
+    //
+    // Determinism was purchased; coherence was not restored and may have been actively excluded. The
+    // host was deliberately restored to BASELINE on that evidence, and T-0322's own card records this
+    // requirement as "wrong as written and must not be implemented as stated". Reproducibility for
+    // this graph is T-0322's open problem (per-graph config / pinning at a different layer), not a
+    // flag anyone should set globally.
+    withdrawn: true,
+    withdrawnReason:
+      "Disproven by T-0317 rounds 10-12: the prescribed determinism regime makes the S24-e graph reliably " +
+      "incoherent (6/6 seeds under full determinism, 6/6 under CUBLAS-only), so the host was deliberately " +
+      "restored to baseline. Nobody performed this action and nobody should; reproducing renders for this " +
+      "graph is T-0322's open problem, not a launch flag."
   })
 ]);
