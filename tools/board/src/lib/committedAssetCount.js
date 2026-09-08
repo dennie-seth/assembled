@@ -85,6 +85,12 @@ async function readCardOwner({ repoRoot, ref, filePath }) {
  * -- it is simply absent from the tree at `ref`, exactly like an asset that was never promoted
  * at all (T-0272). The tree is the only authority; there is no separate "was ever promoted"
  * bookkeeping to get out of sync with it.
+ *
+ * Deliberately scoped to assets/final/ only: a committed reference file elsewhere (e.g.
+ * assets/src/concept/, as T-0272 committed a costume side reference to) does not count. That
+ * mirrors this repo's own deliverable convention (assets/final/ is the curated, shipped
+ * output; assets/src/ is working material) and keeps this function's one job -- "what shipped"
+ * -- unambiguous.
  */
 export async function countCommittedAssets({ repoRoot, ref = "HEAD", cardId }) {
   const files = await listCommittedAssetFinalFiles({ repoRoot, ref });
