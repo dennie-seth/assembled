@@ -105,7 +105,19 @@ def main() -> None:
     if variant == "blend" and alpha is None:
         alpha = 0.5
 
-    out_dir = OUT_ROOT / (variant if variant == "bypass" else f"blend_{alpha}")
+    # "bypass" writes directly into OUT_ROOT with a distinguishing crop filename rather than
+    # its own subdirectory -- matching the artifacts the 2026-09-08 probe run actually produced
+    # on disk (OUT_ROOT/frame_0_main_384.png, OUT_ROOT/identity_reference_crop_bypassed.png) and
+    # that the attempt log cites by those exact paths. A prior revision of this script put
+    # "bypass" in its own OUT_ROOT/bypass/ subdirectory like the blend variants, which no longer
+    # matched the already-committed evidence and would silently regenerate to different paths on
+    # a re-run.
+    if variant == "bypass":
+        out_dir = OUT_ROOT
+        reference_filename = "identity_reference_crop_bypassed.png"
+    else:
+        out_dir = OUT_ROOT / f"blend_{alpha}"
+        reference_filename = "identity_reference_crop.png"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     crop = Image.open(CONCEPT_SHEET_PATH).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX)
@@ -114,7 +126,7 @@ def main() -> None:
     else:
         reference_img = blend_border_background(crop, CUTOUT_OKLAB_TOLERANCE, alpha)
 
-    reference_path = out_dir / "identity_reference_crop.png"
+    reference_path = out_dir / reference_filename
     reference_img.save(reference_path)
     concept_filename = upload_image(reference_path)
 

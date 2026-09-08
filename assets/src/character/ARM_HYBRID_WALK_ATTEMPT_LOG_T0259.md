@@ -6,6 +6,7 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 |---|---|---|---|---|---|---|---|
 | 1 | 31416 | 0.3051-0.6274 | FAIL | no | 813.9 | no |  |
 | 2 | 31416 | 0.3955-0.5954 | FAIL | no | 843.7 | no | T-0266 tuning pass: stronger style/identity/IP-Adapter weights to suppress background-room hallucination diagnosed in attempt 1 (frame deltas 0.31-0.63, clutter surviving per-frame cutout) |
+| 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
 | 4 | 27182 | 0.0337-0.2532 | PASS | no | 801.7 | yes | T-0266 img2img chain fix: frames 1-7 anchored to frame 0 via VAEEncode, denoise=0.45, background held against frame 0. Mechanical gate PASS (0.0337-0.2532 vs 0.30 cap). Leg articulation is visually subtle at every denoise tried (0.45/0.75/0.90, attempts 4-6) -- the long-coat costume covers the legs regardless of pose, a costume-design characteristic confirmed by comparison, not a chaining artifact; DL-21 criterion 1 (motion readability at 40px) is a separate human call this card does not make. |
 
 ## 2026-08-31 improvement pass -- profile-view finding (not a numbered attempt)
@@ -45,6 +46,8 @@ be its own card if wanted, seeded by this finding.
 | 5 (reuse, 2026-09-07b) | 27182 | 0.1047-0.2128 | PASS (locomotion cap 0.50) | no | 219.3 | briefly, then reverted | Reprocessed the SAME raw frames as the row above through the fixed cutout (walk_cycle_hint_keypoints, since-narrowed to walk_cutout_hint_keypoints) -- no new GPU generation. Confirms the cutout fix in isolation: identical pose/pixels, frame_delta_range drops from 0.11-0.95 to 0.10-0.21. Not promoted as the final artifact -- see the 2026-09-07 (session 3) section below for why. |
 | 6 (reuse, 2026-09-07b) | 27182 | 0.1953-0.2670 | PASS (locomotion cap 0.50) | no | 801.8 (original attempt-6 generation) | briefly, then reverted | Reprocessed attempt 6's original denoise=0.45 raw frames through the fixed cutout. PASSED the mechanical gate and was briefly promoted, then reverted on discovering it fails a DIFFERENT gate (`test_sheet_background_is_mostly_clean`, 65% floor) -- see below. |
 | 7 | 27182 | 0.2708-0.6000 | FAIL | no | 222.4 (frames 1-7 only; frame 0 reused across all denoise trials below) | no | Denoise=0.40, WITH the new anti-fringe negative prompt (see below). Best of the six denoise values swept this session -- see the full sweep table below. Still fails the 0.50 locomotion cap on exactly the two pairs touching frame 0 (the always-fresh, denoise=1.0, non-chained frame) -- see the 2026-09-07 (session 3) section's diagnosis. |
+| 3 (reuse, 2026-09-08) | 27182 | 0.4336-0.7904 | FAIL | no | 144.2 | no | Not a new numbered attempt -- reused attempt slot 3's scratch directory (same DL-21 precedent as the "5 (reuse, ...)" rows above), run fresh after the `origin/develop` merge landed T-0319's generation-time background fix (`crop_identity_reference` now runs the IP-Adapter reference crop through `force_border_background_to_fill` before upload). CROSS_EXTENT_NORM restored to 0.14. The reference crop itself came out clean (a well-formed green-coat figure on a genuinely dark background), but every one of the 8 raw generated frames is structurally incoherent -- barred/striped abstraction, not a character. See the 2026-09-08 session narrative below; later confirmed (session 2, same date) as a reference-side regression from the T-0319 fix, not a host defect. |
+| 4 (reuse, 2026-09-08) | 12321 | n/a -- single-frame probe (`--max-frames 1`), not a full 8-frame candidate | n/a | no | 24.0 | no | Not a new numbered attempt -- reused attempt slot 4's scratch directory. Frame 0 only, seed changed to 12321 (from attempt 3's 27182) specifically to test whether the seed itself was the cause. Frame 0 is always sampled at denoise=1.0 regardless of an attempt's own chained denoise setting (see attempt 7's note above), so this probe's frame 0 and attempt 3's frame 0 share the SAME denoise -- seed was the only variable changed. CORRECTION: this log previously stated "denoise 0.35" for this row in prose below; `attempt_4/frame_0_meta.json` records `"generation_mode": "fresh", "denoise": 1.0`, verified directly against the file on 2026-09-08 (session 2). Also came back structurally incoherent (a different failure signature -- horizontal bars instead of attempt 3's vertical bars -- but the same class of defect), which rules out seed as the cause; denoise was never actually a varying factor between these two probes. |
 
 ## 2026-08-31 improvement pass -- DL-21 budget exhausted, one pair short (summary)
 
@@ -467,7 +470,6 @@ per-attempt denoise every chained frame currently shares -- a targeted architect
 blind sweep; (b) try `controlnet_end`/`style_lora_weight` adjustments at the already-good
 denoise=0.40 rather than further denoise search, since the denoise axis has now been swept fairly
 thoroughly and shows diminishing, noisy returns.
-| 3 | 27182 | 0.4336-0.7904 | FAIL | no | 144.2 | no | fresh run w/ T-0319 generation-time background fix wired via crop_identity_reference; CROSS_EXTENT_NORM restored to 0.14 |
 
 ## 2026-09-08 session: develop merge, then two fresh attempts both come back structurally incoherent (host-level, not a calibration finding) -- DL-21 budget now exhausted
 
@@ -512,12 +514,17 @@ problem, a sampler-coherence problem.**
   `attempt_3/frame_0_main_384.png` and `attempt_3/frame_4_main_384.png` directly; both show the
   same barred-abstraction failure mode, not a one-frame fluke.
 - **Attempt 4** (seed 12321 -- a different seed specifically to rule out seed 27182 itself being
-  the cause, denoise 0.35, `--max-frames 1` as a cheap single-frame probe before committing a full
-  attempt's GPU time). `attempt_4/frame_0_main_384.png` is again incoherent -- a different failure
-  signature (horizontal red/orange/olive bars and blocky green/white/black fragments instead of
-  attempt 3's vertical bars) but the same *class* of defect: no legible head/torso/limb structure,
-  not a person. Different seed, different denoise, same class of breakage -- rules out both the
-  specific seed and the specific denoise value as the cause.
+  the cause; `--max-frames 1` as a cheap single-frame probe before committing a full attempt's GPU
+  time). Frame 0 is always sampled at denoise=1.0 regardless of an attempt's own chained denoise
+  setting (see attempt 7's note above), so this probe's frame 0 and attempt 3's frame 0 share the
+  SAME denoise -- seed was the only variable actually changed here. (CORRECTION, 2026-09-08 session
+  2: this paragraph previously said "denoise 0.35" for this attempt; `attempt_4/frame_0_meta.json`
+  records `"generation_mode": "fresh", "denoise": 1.0`, verified directly against the file. Denoise
+  was never a varying factor between attempts 3 and 4 -- see the corrected table row above.)
+  `attempt_4/frame_0_main_384.png` is again incoherent -- a different failure signature (horizontal
+  red/orange/olive bars and blocky green/white/black fragments instead of attempt 3's vertical
+  bars) but the same *class* of defect: no legible head/torso/limb structure, not a person.
+  Different seed, same denoise, same class of breakage -- rules out seed as the cause.
 
 Decisive frames for this session, citation paths relative to the `assets/out/hybrid_walk/` run
 directory (for `promoteEvidence.js`/`promoteEvidenceForCard`, T-0314, to pick up if this round is
@@ -661,3 +668,55 @@ existing recipe (CROSS_EXTENT_NORM=0.14, denoise 0.30-0.40, seed 27182) unchange
 
 **Criterion 5 (side profile): unchanged, still blocked upstream** -- nothing this session did
 touches that finding; see the prior session's own entry above.
+
+## 2026-09-08 session 3: documentation repair only, plus one new finding sharpening why the fix belongs upstream -- no new generation, DL-21 budget still exhausted
+
+Resumed per the last two reviewer verdicts' own guidance (both: real, correctly-diagnosed work,
+do not retry the same recipe blindly, seed a scoped follow-up card instead). No ComfyUI call was
+made this session; nothing here changes `assets/final/character/player_walk_sheet_hybrid.png`,
+still attempt 4 (T-0266).
+
+**Repaired two documentation defects the last verdict raised:**
+
+1. The historical `git show develop:...` row for T-0266's own attempt 3 (seed 31416,
+   0.3492-0.5610, FAIL, "IP-Adapter identity reference cropped to one clean panel...") had been
+   silently dropped from this branch's table by an earlier session's edit. Restored verbatim at
+   its original position.
+2. This session's own two 2026-09-08 attempts (reused slots 3 and 4) had been left as an orphan
+   table row after a prose paragraph, where they render as plain text, not a table -- and the
+   slot-3 row's numeral collided with the just-restored historical "3" row. Both are now proper
+   `| N (reuse, 2026-09-08) | ... |` rows in the main table, in the same labelling convention the
+   "5 (reuse, 2026-09-07...)" rows above already use, and the attempt-4 paragraph's incorrect
+   "denoise 0.35" claim is corrected in place (see the table row and the corrected paragraph
+   above) -- `attempt_4/frame_0_meta.json` was re-read directly to confirm `denoise: 1.0`.
+
+**Fixed a real reproducibility bug in `probe_reference_bypass_T0259.py`,** caught by the last
+review: the committed script's "bypass" variant wrote to `OUT_ROOT/bypass/...`, but the actual
+2026-09-08-session-2 probe run that produced the cited evidence wrote directly to
+`OUT_ROOT/frame_0_main_384.png` and `OUT_ROOT/identity_reference_crop_bypassed.png` (no `bypass/`
+subdirectory, a distinct crop filename). The script was edited for generality sometime after that
+run without re-running it, silently breaking the assets.md invariant that generation stay
+reproducible from `assets/src/` -- a fresh run of the committed script would not have reproduced
+the paths this log cites. Fixed to match the actual on-disk/cited evidence; the `blend_<alpha>`
+variants were already correct and are untouched.
+
+**New finding: the upstream fix is more cross-cutting than previously stated, which is a reason
+NOT to patch it from inside this card, not a reason to.** `crop_identity_reference` lives in this
+card's own `gen_hybrid_walk_T0259.py`, not in the shared `char_gen.cutout` module -- but
+`gen_hybrid_profile_T0272.py` imports it directly (`from gen_hybrid_walk_T0259 import ...,
+crop_identity_reference, ...`), so a fix here would also change T-0272's own identity-reference
+conditioning. T-0272 has independently spent 12 rounds (`b1fb1ce`..`2b049cf`, PR #351) fighting
+the same class of host/sampler incoherence and is still not promotable -- exactly the kind of
+in-flight, unrelated blast radius the prior two reviewer verdicts were right to want a scoped,
+reviewed follow-up card for, rather than an opportunistic edit made from inside T-0259's own
+session without T-0272's context loaded or its own gates re-run.
+
+**Recommendation, unchanged in substance from the last two sessions, restated for whoever picks
+this up next:** seed a follow-up card against `crop_identity_reference` (T-0259-owned function,
+shared by T-0272) and `force_border_background_to_fill` (T-0319-owned, `char_gen.cutout`), using
+this branch's three 2026-09-08-session-2 probes (`bypass`, `blend_0.5`, `blend_0.8`) as starting
+evidence and the [0.2, 0.6] alpha bracket as a starting range, with T-0272's own sheet as a
+required regression check alongside this card's. DL-21's 8 numbered attempt slots remain
+exhausted; this session opened none. Once that follow-up lands a reference correction that stays
+coherent AND clears `MIN_BACKGROUND_FRACTION`, T-0259 re-runs its existing recipe
+(CROSS_EXTENT_NORM=0.14, denoise 0.30-0.40, seed 27182) unchanged.
