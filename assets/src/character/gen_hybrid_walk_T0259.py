@@ -778,16 +778,6 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
     in the file -- other tables, all prose -- is left untouched."""
     if not ATTEMPT_LOG_PATH.exists():
         ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
-    lo, hi = provenance["frame_delta_range"]
-    row = (
-        f"| {provenance['attempt']} | {provenance['seed']} "
-        f"| {lo:.4f}-{hi:.4f} "
-        f"| {'PASS' if provenance['mechanical_gate_passed'] else 'FAIL'} "
-        f"| {'yes' if provenance['beats_arm_c_benchmark'] else 'no'} "
-        f"| {provenance['gpu_seconds']} "
-        f"| {'yes' if provenance.get('promoted') else 'no'} "
-        f"| {notes} |\n"
-    )
     header_row = ATTEMPT_LOG_HEADER.splitlines(keepends=True)[-2]
     separator_row = ATTEMPT_LOG_HEADER.splitlines(keepends=True)[-1]
     lines = ATTEMPT_LOG_PATH.read_text().splitlines(keepends=True)
@@ -812,11 +802,33 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
         table_end += 1
 
     attempt_str = str(provenance["attempt"])
-    table_rows = [
-        line
-        for line in lines[table_start:table_end]
-        if line.split("|")[1].strip() != attempt_str
-    ]
+    existing_rows = lines[table_start:table_end]
+
+    # 2026-09-08 (session 11): a real re-run of a reused slot supplies no
+    # --notes (the CLI default is ""), which silently blanked the slot's
+    # prior row description on every such re-run (T-0259 session 10 finding
+    # A). If this invocation supplies no notes of its own, carry the
+    # existing row's Notes column forward instead of overwriting it with
+    # nothing -- an explicit (even short) --notes still always wins.
+    if not notes:
+        for line in existing_rows:
+            if line.split("|")[1].strip() == attempt_str:
+                cells = line.split("|")
+                notes = cells[-2].strip() if len(cells) >= 2 else ""
+                break
+
+    lo, hi = provenance["frame_delta_range"]
+    row = (
+        f"| {provenance['attempt']} | {provenance['seed']} "
+        f"| {lo:.4f}-{hi:.4f} "
+        f"| {'PASS' if provenance['mechanical_gate_passed'] else 'FAIL'} "
+        f"| {'yes' if provenance['beats_arm_c_benchmark'] else 'no'} "
+        f"| {provenance['gpu_seconds']} "
+        f"| {'yes' if provenance.get('promoted') else 'no'} "
+        f"| {notes} |\n"
+    )
+
+    table_rows = [line for line in existing_rows if line.split("|")[1].strip() != attempt_str]
     table_rows.append(row)
 
     new_lines = lines[:table_start] + table_rows + lines[table_end:]
