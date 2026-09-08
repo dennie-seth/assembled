@@ -1186,12 +1186,33 @@ def run_attempt(
         ),
     }
 
+    # A resumed attempt can complete over frames whose meta.json predates the
+    # current fresh-per-frame architecture (attempt 5's own real T-0266
+    # img2img-chained frames -- see the "background_held_from_frame" .get()
+    # comment above). The description below must say what actually happened,
+    # not what this recipe currently does by default -- a hardcoded "every
+    # frame sampled fresh" claim next to a frame_generation record reading
+    # "img2img_chained" is a self-contradictory provenance record (T-0259
+    # session 10).
+    chained_frame_indices = [
+        r["frame_index"] for r in frame_records if r["generation_mode"] == "img2img_chained"
+    ]
+    if chained_frame_indices:
+        generation_summary = (
+            f"a mixed-provenance resume -- frame(s) {chained_frame_indices} were "
+            "img2img_chained (T-0266-era resume, EmptyLatentImage/denoise 1.0 did not apply "
+            "to them; see each frame's own frame_generation record for its actual denoise)"
+        )
+    else:
+        generation_summary = (
+            "every frame sampled fresh (EmptyLatentImage, denoise 1.0) against its own skeleton, "
+            "frames 1-7's decoded output background held to frame 0's in pixel space"
+        )
     model_summary = (
         f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight}) "
         f"+ LoRA {IDENTITY_LORA_NAME} (player identity, weight {identity_lora_weight}) "
         f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME} "
-        f"-- every frame sampled fresh (EmptyLatentImage, denoise 1.0) against its own skeleton, "
-        f"frames 1-7's decoded output background held to frame 0's in pixel space"
+        f"-- {generation_summary}"
     )
     provenance = {
         "model": model_summary,
@@ -1243,8 +1264,15 @@ def run_attempt(
             "deterministically -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each "
             "frame's skeleton (384x384, reused renderer) -> ControlNetApplyAdvanced (xinsir "
             "OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, "
-            "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- every frame (0 "
-            "through 7) samples fresh from EmptyLatentImage (denoise 1.0) against its own "
+            "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- "
+            + (
+                f"frame(s) {chained_frame_indices} were resumed from a pre-existing "
+                "img2img_chained (T-0266-era) attempt and were NOT sampled fresh under this "
+                "recipe -- see each frame's own frame_generation record. "
+                if chained_frame_indices
+                else ""
+            )
+            + "every OTHER frame samples fresh from EmptyLatentImage (denoise 1.0) against its own "
             "skeleton (T-0259 session 5: the T-0266 img2img chain this recipe originally used "
             "for frames 1-7 suppressed pose fidelity to the ControlNet skeleton regardless of "
             "denoise or IP-Adapter weight -- probe_unchained_pose_T0259.py). Frames 1-7's "
