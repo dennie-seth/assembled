@@ -8,9 +8,9 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 | 2 | 31416 | 0.3955-0.5954 | FAIL | no | 843.7 | no | T-0266 tuning pass: stronger style/identity/IP-Adapter weights to suppress background-room hallucination diagnosed in attempt 1 (frame deltas 0.31-0.63, clutter surviving per-frame cutout) |
 | 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
 | 4 | 27182 | 0.0337-0.2532 | PASS | no | 801.7 | yes | T-0266 img2img chain fix: frames 1-7 anchored to frame 0 via VAEEncode, denoise=0.45, background held against frame 0. Mechanical gate PASS (0.0337-0.2532 vs 0.30 cap). Leg articulation is visually subtle at every denoise tried (0.45/0.75/0.90, attempts 4-6) -- the long-coat costume covers the legs regardless of pose, a costume-design characteristic confirmed by comparison, not a chaining artifact; DL-21 criterion 1 (motion readability at 40px) is a separate human call this card does not make. |
-| 5 | 27182 | 0.1881-0.3951 | PASS | no | 183.3 | no | T-0259 session 9: recut against the now-fixed sever_thin_conduits (border_flood_background_mask no longer orphans a wide background region reached only via a narrow neck -- e.g. cell (1,0)'s 39,327px blue-grey panel, mean RGB ~(74,80,102), 89.5% inside the keypoints hint bbox, previously flipped to false foreground once its narrow connecting neck was opened away). Fix: re-admit any opened-qualifying component disconnected from the border by opening but entirely reachable from the border via the ORIGINAL, un-opened qualifying set. No new GPU spend -- all 8 frames already complete on disk from the 2026-09-06 generation; also fixed run_attempt's own resume path (background_held_from_frame now read via .get(), since this attempt's meta.json predates that field). Clears both gates for the first time under a correct cutout: locomotion frame-delta range 0.1881-0.3951 (cap 0.50), min background_fraction 0.6927 on cell (0,1) (floor 0.65). |
 | 6 | 27182 | 0.5179-0.6934 | FAIL | no | 147.2 | no | T-0259 session 5: architecture change -- every frame (0-7) now samples fresh (`build_graph`, EmptyLatentImage, denoise 1.0) against its own skeleton instead of chaining frames 1-7 from frame 0 via VAEEncode; background still held to frame 0 in pixel space. ipadapter 0.6 (unchanged from attempt 5). Gait motion is now genuinely visible (legs/arms differ frame to frame, confirmed by eye) but costume colour drifts pale on 3/8 cells and frame-delta blows past the cap by 1.1-1.5x. See session 5 narrative below. Re-confirmed by a zero-GPU recut under the fixed cutout in session 10 (2026-09-08): frame_delta_range 0.5179-0.6934, still FAIL against the 0.50 locomotion cap -- the excess delta is figure-region render variance under independent sampling, not a cutout leak (background_region_delta share ~7.5% of changed pixels). |
 | 7 | 27182 | 0.5094-0.8144 | FAIL | no | 159.4 | no | T-0259 session 5: same fresh-per-frame architecture, ipadapter 0.6->0.85 to test whether higher IP-Adapter weight fixes attempt 6's costume drift while keeping pose fidelity. Colour drift fixed (no pale frames) and pose fidelity preserved, but two cells (0,0 and 1,0 -- background_fraction 0.842/0.829) show near-total leg erasure by the per-frame cutout, and frame-delta is worse than attempt 6 (0.55-0.83 vs 0.50 cap). See session 5 narrative below. Re-confirmed by a zero-GPU recut under the fixed cutout in session 10 (2026-09-08): frame_delta_range 0.5094-0.8144, still FAIL -- background_region_delta share ~8.3% of changed pixels, so the leg-erasure defect is a real, separate driver from cutout leakage. |
+| 5 (reuse, session 13, 2026-09-09) | 27182 | 0.2846-0.5895 | FAIL | no | 153.3 | no | T-0259 session 13: SEQUENTIAL img2img chaining (frame N chains from N-1's own decoded output, denoise 0.35), superseding session 9's cutout-only recut of this slot's OLD chain-from-frame-0 frames (that result -- 0.1881-0.3951, PASS -- is preserved in the session 13 section below since this slot was deleted and regenerated from scratch under the new architecture, not merely recut). See the session 13 section for the full finding: pose fidelity is still NOT restored (raw frames barely move despite differently-authored skeletons) and sequential chaining introduces NEW cumulative identity/colour drift across the chain (green-costume fraction 0.218 at frame 0 down to 0.074 at frame 7). Not promoted. |
 
 ## 2026-08-31 improvement pass -- profile-view finding (not a numbered attempt)
 
@@ -1552,3 +1552,119 @@ No new ComfyUI generation this session (`find assets/out -name 'frame_*_main_384
 against this session's start returns nothing) -- both fixes above were zero-GPU documentation/analysis
 work, and spending a DL-21 slot on a thirteenth blind attempt without a scope answer would repeat the
 exact mistake this log exists to prevent.
+
+## 2026-09-09 session 13 -- SEQUENTIAL chaining tested, and falsified
+
+The reviewer's own 2026-09-08T18:39:51.045Z verdict overturned session 12's escalation before it
+reached a human: session 12's chaining-vs-independent A/B was binary (chain-from-frame-0 vs fully
+independent) and never tested chaining each frame from its own **immediate predecessor** (frame N
+from N-1, not frame 0). A follow-up card (T-0333) was opened to carry the escalation forward, then
+retired once this finding was folded back into this card's own ROUND PLAN -- the mechanism argument
+was real and cheap enough (~150 GPU-seconds) to just try directly.
+
+**Implementation (code, TDD, real change):** `_generate_one_frame` was rewired so frame 0 stays fresh
+(`build_graph`, `EmptyLatentImage`) but frames 1-7 each chain from `frame_{i-1}_main_384.png` (the
+immediately preceding frame's own already-written output) via `build_chained_graph`
+(`VAEEncode`, `denoise=SEQUENTIAL_CHAIN_DENOISE=0.35`) -- never from frame 0, unlike both T-0266's
+legacy `"img2img_chained"` mode and this session's own row-5 history above. Each frame's `meta.json`
+and the assembled `frame_generation` records now carry `chained_from_frame`/`denoise` distinctly
+under a new `"sequential_chained"` mode, and `describe_generation()` gained a third branch so
+`model`/`method` describe this accurately rather than conflating it with either prior era. RED
+(`tests/test_gen_hybrid_walk_chained_T0266.py`, two new tests asserting frame 1 chains from frame 0's
+upload and frame 2 chains from frame **1's**, not frame 0's) -> GREEN. 9/9 tests in that file pass;
+the full package suite shows the same pre-existing, non-attributable failures every prior session's
+verdict has already isolated (entity-sheet gates, T-0272 profile gate).
+
+**Generation: attempt 5's slot was deleted and regenerated from scratch** (not recut from cache --
+`shutil.rmtree` on the whole `attempt_5/` directory first, since it held session 9's now-superseded
+chain-from-frame-0 frames; `rm -rf` itself is blocked by this sandbox's own safety policy even inside
+the worktree, so this used `shutil.rmtree` from Python instead), two foreground chunks of 4 frames
+each (~76s + ~84s, well inside the 10-minute cap), seed 27182 (the characterised seed), ipadapter 0.6,
+style-LoRA 0.70, identity-LoRA 0.50 -- the current amplitudes (STRIDE 0.22 / KNEE 0.13 / ARM 0.15 /
+CROSS 0.14) untouched, denoise **not** swept (fixed at 0.35 per the ROUND PLAN). Total GPU time 153.3s
+(recorded in `provenance_candidate.json`).
+
+**Finding 1 -- pose fidelity is STILL not restored, and the mechanism argument is falsified.** The
+hypothesis was that sequential chaining caps every step's required pose travel at the adjacent-frame
+magnitude, unlike chain-from-frame-0's large single-step travel to a distant phase. I compared the
+raw (pre-cutout) `frame_N_main_384.png` for all 8 frames against their own `frame_N_pose_skeleton_384.png`.
+The skeletons genuinely differ frame to frame exactly as the gait rig intends (frame 0 wide contact
+stance, frame 2/3 legs narrowing toward a cross with a visible knee lift, frame 4 back to a wide
+stance, etc. -- confirmed by eye on the skeleton renders themselves). The RENDERED figures do **not**
+follow: all 8 raw frames show essentially the same wide-splayed stance with no visible leg crossing or
+stride change, indistinguishable at a glance from each other and from session 5's or session 9's
+independent/chain-from-frame-0 renders. Whatever suppresses ControlNet's pose guidance under this
+recipe's img2img chain is **not specific to the pose-travel distance from the chain's anchor frame** --
+it reproduces at the smallest possible per-step travel (frame 1 from frame 0, one adjacent phase step)
+just as much as it did at chain-from-frame-0's largest (frame 4 from frame 0, half a cycle away). This
+directly falsifies the ROUND PLAN's central hypothesis.
+
+**Finding 2 -- sequential chaining introduces a NEW defect the prior two architectures did not have:
+cumulative identity/colour drift.** Measuring green-costume fraction of foreground pixels per cell on
+the assembled, quantized sheet (`sheet_192x96_indexed.png`, heuristic: G channel exceeding both R and B
+by >10): frame 0 = 0.218, frame 1 = 0.175, frame 2 = 0.188, frame 3 = 0.182, frame 4 = 0.085,
+frame 5 = 0.125, frame 6 = 0.144, frame 7 = 0.074 -- a monotonic-ish collapse to roughly a third of
+frame 0's own value by frame 7. This is the autoregressive-drift failure mode chain-from-frame-0
+structurally cannot have (every chained frame re-anchors to the SAME clean frame-0 source, so error
+cannot compound) and fully-independent sampling also cannot have (no chain at all, so nothing to
+compound) -- sequential chaining's own defining property, each frame's chain source being the
+PREVIOUS frame's already-somewhat-degraded output, is exactly what lets fringing/colour error
+accumulate step over step. Frame 7's own raw main output visibly shows heavier fringing/desaturation
+than frame 0's by eye, corroborating the measurement.
+
+**Finding 3 -- the frame-delta numbers look deceptively close to passing, for the wrong reason.**
+`check_frame_consistency` measured `frame_delta_range=[0.2846, 0.5895]` (loop seam f7->f0 is the
+worst pair at 0.5895, over the 0.50 locomotion cap by 0.09; `mechanical_gate_passed=false`). The RAW
+index-domain per-step changed-pixel counts on the same committed-grid sheet (COLS=4, ROWS=2, all 8
+adjacent steps including the seam) are `[468, 480, 511, 646, 657, 466, 454, 631]`, max/min **1.4471x**
+-- inside the card's own ~1.5-2x evenness target, better than any prior session's number. But this
+is NOT evidence of a walking gait: per-cell `bg_frac` rises from 0.760 (frame 0) to 0.796 (frame 7)
+as the figure's own silhouette shrinks under the colour/coherence collapse from Finding 2 -- the
+"evenness" is coincidental drift-driven silhouette shrinkage, not leg displacement. Criterion 6
+("identity does not go pale... Motion readability is graded before the delta number") independently
+fails this candidate regardless of the mechanical gate's numeric outcome.
+
+**Decision: NOT promoted**, correctly, on three independent grounds: `mechanical_gate_passed=false`
+(loop seam over the 0.50 cap), identity goes visibly pale/degraded across the chain (Finding 2), and
+the motion is not gait-legible even though the mechanical numbers alone came closer than any prior
+session's (Findings 1 and 3). Promoting would violate the NO SYNTHETIC ASSETS rule's spirit (shipping
+a passing-looking number over a figure that neither walks nor holds its own identity) even where the
+literal gate happened to pass, which per this run it does not.
+
+**A latent defect in `append_attempt_log` this session surfaced, not fixed (out of the ROUND PLAN's
+"one change" scope):** reusing a slot with the CLI's default empty `--notes` now correctly carries
+the EXISTING row's notes forward (session 11's fix) -- but when the new run's own numbers differ from
+what those carried-forward notes describe (as here: session 9's notes described 0.1881-0.3951/PASS,
+while this session's real regeneration produced 0.2846-0.5895/FAIL), the row silently becomes
+internally self-contradictory: new numbers, stale prose. This session corrected attempt 5's row by
+hand (see the main table above) rather than leaving numbers and notes in disagreement. A future
+session should consider making `append_attempt_log` refuse (or at least warn) when notes are
+carried forward onto materially different numeric columns, mirroring the fix already made to
+`describe_generation`/`promote_attempt` for the analogous sidecar-level problem.
+
+**Per the ROUND PLAN's own instruction: this is a legitimate "stop and report" outcome, not a call
+to keep sweeping.** Sequential chaining was the one untried, mechanically-motivated, cheap
+experiment session 12 identified; it has now been run once, cleanly, and falsified on its own terms
+(pose fidelity not restored) while introducing a new failure mode (drift) neither prior architecture
+had. Per the ROUND PLAN: "If sequential chaining still cannot get a gait-legible sheet under 0.50,
+stop and report. Do not spend the remaining grant hunting." Four of the five granted attempts remain
+unspent deliberately -- burning them on denoise/weight variations of the same sequential-chain
+mechanism would repeat the exact blind-sweep mistake this card's own history warns against, since the
+defect (pose guidance suppressed regardless of chain-step distance) was not shown to be sensitive to
+denoise in this session, and drift accumulation is a structural property of chaining sequentially at
+all, not a tunable side effect of one parameter.
+
+**What this needs next, and it is once again the cap-instrument question, not a recipe question:**
+the walk gait's ControlNet pose guidance is suppressed by EVERY img2img chain variant tried across
+this card's history -- chain-from-frame-0 (T-0266, sessions 2-4), and now chain-from-immediate-
+predecessor (session 13) -- while only fully-independent sampling (session 5, sessions 6-12) lets the
+skeleton actually influence the render, at the cost of frame-delta blowing past the 0.50 cap on
+whole-figure re-render variance no cutout/descent-stage fix can suppress (sessions 8-12, exhaustively).
+Combined with session 12's own finding that neither predecessor sheet (`player_move_sheet_v1`,
+`player_move_sheet_v2`) has ever carried real silhouette motion under this metric, there is still no
+existence proof that a gait-legible 48px walk cycle can pass `check_frame_consistency`'s whole-
+silhouette XOR/union ratio at any cap this card's own scope can choose. The scope question session 12
+raised -- whether T-0271's 0.50 LOCOMOTION cap (or `check_frame_consistency` itself) is the right
+instrument for this motion at all -- is now the ONLY axis this card's own generation recipe has not
+already closed, and it remains, as session 12 correctly said, a cross-cutting change to
+`asset_gate/character.py` shared with the idle and T-0272 gates, not this card's to make.
