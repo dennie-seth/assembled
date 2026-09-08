@@ -236,6 +236,13 @@ MIN_BACKGROUND_FRACTION = 0.65
 # script and the sweep cannot drift apart.
 MOTION_CLASS = "locomotion"
 MAX_FRAME_DELTA_RATIO = asset_gate_character.frame_delta_cap_for_motion_class(MOTION_CLASS)
+
+# T-0259 session 13: frames 1-7 sequentially img2img-chain from the
+# immediately preceding frame's own decoded output (never frame 0, unlike
+# T-0266's legacy "img2img_chained" mode) -- 0.35 is the denoise T-0266's own
+# calibration trail already characterised (attempt 5) before session 5 ruled
+# out chaining-from-frame-0 specifically, not chaining as such.
+SEQUENTIAL_CHAIN_DENOISE = 0.35
 # The Arm-C benchmark pair itself is derived by apply_arm_c_benchmark_fields
 # (comfy_client.provenance_sidecar, CHR-1's single shared home, T-0258).
 
@@ -284,12 +291,14 @@ VAE_DECODE_NODE_ID = "22"
 MAIN_SAVE_NODE_ID = "23"
 DESCENT_NODE_ID = "24"
 CELL_SAVE_NODE_ID = "25"
-# img2img chain nodes (T-0266) -- only used by `build_chained_graph`, kept as
-# an independently-tested reusable primitive (see that function's own
-# docstring). `_generate_one_frame` no longer calls it (T-0259 session 5):
-# the chain suppressed gait pose fidelity to the ControlNet skeleton
-# regardless of denoise or IP-Adapter weight -- see `probe_unchained_pose_
-# T0259.py` and the 2026-09-08 session 5 attempt-log entry for the evidence.
+# img2img chain nodes -- used by `build_chained_graph`. T-0266 chained
+# frames 1-7 from frame 0 (a FIXED anchor); T-0259 session 5 found that
+# suppressed gait pose fidelity (see `probe_unchained_pose_T0259.py` and the
+# 2026-09-08 session 5 attempt-log entry) and switched to fully independent
+# per-frame sampling. T-0259 session 13 reintroduces chaining, but
+# SEQUENTIALLY -- frame N from N-1's own decoded output, never frame 0 --
+# see `_generate_one_frame`'s docstring for why that avoids session 5's
+# failure mode.
 INIT_IMAGE_NODE_ID = "30"
 VAE_ENCODE_NODE_ID = "31"
 
@@ -856,11 +865,26 @@ def describe_generation(
     chained_frame_indices = [
         r["frame_index"] for r in frame_generation if r["generation_mode"] == "img2img_chained"
     ]
+    sequential_frame_indices = [
+        r["frame_index"]
+        for r in frame_generation
+        if r["generation_mode"] == "sequential_chained"
+    ]
     if chained_frame_indices:
         generation_summary = (
             f"a mixed-provenance resume -- frame(s) {chained_frame_indices} were "
             "img2img_chained (T-0266-era resume, EmptyLatentImage/denoise 1.0 did not apply "
             "to them; see each frame's own frame_generation record for its actual denoise)"
+        )
+    elif sequential_frame_indices:
+        generation_summary = (
+            f"frame 0 sampled fresh (EmptyLatentImage, denoise 1.0); frame(s) "
+            f"{sequential_frame_indices} sequentially img2img-chained from the immediately "
+            f"preceding frame's own decoded output (VAEEncode, denoise "
+            f"{SEQUENTIAL_CHAIN_DENOISE}) -- T-0259 session 13, distinct from T-0266's "
+            "chain-from-frame-0 (which suppressed pose fidelity on frames demanding large "
+            "pose travel from a fixed anchor). Frames 1-7's decoded output is also still "
+            "background held to frame 0's in pixel space"
         )
     else:
         generation_summary = (
@@ -873,29 +897,46 @@ def describe_generation(
         f"+ IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight}) + ControlNet {CONTROLNET_NAME} "
         f"-- {generation_summary}"
     )
+    if chained_frame_indices:
+        per_frame_method_summary = (
+            f"frame(s) {chained_frame_indices} were resumed from a pre-existing "
+            "img2img_chained (T-0266-era) attempt and were NOT sampled fresh under this "
+            "recipe -- see each frame's own frame_generation record. every OTHER frame "
+            "samples fresh from EmptyLatentImage (denoise 1.0) against its own skeleton."
+        )
+    elif sequential_frame_indices:
+        per_frame_method_summary = (
+            f"frame 0 samples fresh from EmptyLatentImage (denoise 1.0) against its own "
+            f"skeleton; frame(s) {sequential_frame_indices} each sequentially img2img-chain "
+            f"(VAEEncode, denoise {SEQUENTIAL_CHAIN_DENOISE}) from the immediately preceding "
+            "frame's own decoded output -- T-0259 session 13. Session 5 found chaining every "
+            "frame from a FIXED anchor (frame 0) suppressed pose fidelity to the ControlNet "
+            "skeleton, since later frames demand large pose travel from that one anchor "
+            "regardless of denoise or IP-Adapter weight (probe_unchained_pose_T0259.py); "
+            "chaining from the IMMEDIATE predecessor instead caps every step's required pose "
+            "travel at the same adjacent-frame magnitude independent sampling already followed."
+        )
+    else:
+        per_frame_method_summary = (
+            "every OTHER frame samples fresh from EmptyLatentImage (denoise 1.0) against its "
+            "own skeleton (T-0259 session 5: the T-0266 img2img chain this recipe originally "
+            "used for frames 1-7 suppressed pose fidelity to the ControlNet skeleton "
+            "regardless of denoise or IP-Adapter weight -- probe_unchained_pose_T0259.py)."
+        )
     method = (
         "pose_rig_walk_T0259 derives 18-keypoint COCO walk-gait frame keypoints "
         "deterministically -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each "
         "frame's skeleton (384x384, reused renderer) -> ControlNetApplyAdvanced (xinsir "
         "OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, "
         "chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler -- "
-        + (
-            f"frame(s) {chained_frame_indices} were resumed from a pre-existing "
-            "img2img_chained (T-0266-era) attempt and were NOT sampled fresh under this "
-            "recipe -- see each frame's own frame_generation record. "
-            if chained_frame_indices
-            else ""
-        )
-        + "every OTHER frame samples fresh from EmptyLatentImage (denoise 1.0) against its own "
-        "skeleton (T-0259 session 5: the T-0266 img2img chain this recipe originally used "
-        "for frames 1-7 suppressed pose fidelity to the ControlNet skeleton regardless of "
-        "denoise or IP-Adapter weight -- probe_unchained_pose_T0259.py). Frames 1-7's "
-        "decoded output is still background-held against frame 0's (apply_background_hold, "
-        "pixel space) so only the figure region -- not the background -- is allowed to vary "
-        "per frame -> per-frame area descent to 48x48 (frame 0 from ComfyUI, frames 1-7 "
-        "locally from the held image) -> per-frame background cutout (this frame's own "
-        "keypoint bbox) -> frames assembled into a 192x96 sheet -> Oklab-nearest palette "
-        "quantization (dithering off, §3.1) -> orphan cleanup -> true-RGBA sprite write."
+        + per_frame_method_summary
+        + " Frames 1-7's decoded output is still background-held against frame 0's "
+        "(apply_background_hold, pixel space) so only the figure region -- not the "
+        "background -- is allowed to vary per frame -> per-frame area descent to 48x48 "
+        "(frame 0 from ComfyUI, frames 1-7 locally from the held image) -> per-frame "
+        "background cutout (this frame's own keypoint bbox) -> frames assembled into a "
+        "192x96 sheet -> Oklab-nearest palette quantization (dithering off, §3.1) -> "
+        "orphan cleanup -> true-RGBA sprite write."
     )
     return model_summary, method
 
@@ -977,21 +1018,33 @@ def _generate_one_frame(
     one piece of per-frame state that cannot be re-derived from disk on a
     later, separate invocation (the ComfyUI prompt id + generation time).
 
-    Every frame -- 0 through 7 -- is a fresh independent sample
-    (`build_graph`, `EmptyLatentImage`, denoise fixed at 1.0), conditioned on
-    its own ControlNet skeleton. T-0266 originally chained frames 1+ to
-    frame 0's own decoded output via `build_chained_graph`/`VAEEncode` at a
-    lower denoise; T-0259 session 5 found that chain suppressed pose
-    fidelity to the ControlNet skeleton regardless of denoise or IP-Adapter
-    weight (`probe_unchained_pose_T0259.py`, 2026-09-08 attempt log) -- a
+    Frame 0 is a fresh independent sample (`build_graph`, `EmptyLatentImage`,
+    denoise fixed at 1.0). T-0266 originally chained frames 1+ to frame 0's
+    own decoded output via `build_chained_graph`/`VAEEncode`; T-0259 session
+    5 found that chain-FROM-FRAME-0 suppressed pose fidelity to the
+    ControlNet skeleton regardless of denoise or IP-Adapter weight
+    (`probe_unchained_pose_T0259.py`, 2026-09-08 attempt log) -- a later
     frame's own skeleton could be visibly different from frame 0's and the
-    chained output would still barely move. Frame-to-frame consistency
-    (T-0266's original reason for chaining) turns out not to need the chain
-    at all: frames 1+'s decoded output is still background-held against
-    frame 0's in PIXEL SPACE (`gen_chained_idle_T0250.apply_background_hold`,
-    unchanged) so noise/clutter cannot vary across frames, and the same seed
-    + IP-Adapter + identity LoRA already hold costume colour consistent
-    across independently-sampled frames.
+    chained output would still barely move, because chaining from a fixed
+    anchor forces one denoise step to traverse however much pose distance
+    separates that frame from frame 0 (large, for e.g. a passing pose half a
+    cycle away). Session 5's fix (fully independent per-frame sampling)
+    solved pose fidelity but reintroduced whole-figure re-render variance
+    far above the LOCOMOTION cap, since nothing tied one frame's sampled
+    FIGURE to its neighbour's (only the background is pixel-space held).
+
+    T-0259 session 13: frames 1-7 instead each chain from the immediately
+    PRECEDING frame's own already-written `frame_{i-1}_main_384.png` (still
+    `build_chained_graph`/`VAEEncode`, at `SEQUENTIAL_CHAIN_DENOISE`) --
+    caps every step's required pose travel at the same adjacent-frame
+    magnitude that already worked when frames were sampled independently
+    (skeleton phase steps between adjacent frames are close by
+    construction), while restoring the same-source-latent anchor that
+    suppresses re-render variance. Frame-to-frame background consistency is
+    still additionally enforced in PIXEL SPACE
+    (`gen_chained_idle_T0250.apply_background_hold`, unchanged) against
+    frame 0's own decoded output -- chaining and the pixel-space hold are
+    independent, complementary mechanisms, not alternatives.
     """
     points = pose_rig_walk_T0259.walk_keypoints_for_frame(frame_index, FRAME_COUNT)
     skeleton_img = pose_rig_walk_T0259.render_pose_frame(points, GEN_PX)
@@ -1005,16 +1058,32 @@ def _generate_one_frame(
 
     skeleton_filename = upload_image(skeleton_path)
 
-    graph = build_graph(
-        seed=seed,
-        concept_filename=concept_filename,
-        pose_skeleton_filename=skeleton_filename,
-        controlnet_strength=controlnet_strength,
-        controlnet_end=controlnet_end,
-        ipadapter_weight=ipadapter_weight,
-        style_lora_weight=style_lora_weight,
-        identity_lora_weight=identity_lora_weight,
-    )
+    if frame_index == 0:
+        graph = build_graph(
+            seed=seed,
+            concept_filename=concept_filename,
+            pose_skeleton_filename=skeleton_filename,
+            controlnet_strength=controlnet_strength,
+            controlnet_end=controlnet_end,
+            ipadapter_weight=ipadapter_weight,
+            style_lora_weight=style_lora_weight,
+            identity_lora_weight=identity_lora_weight,
+        )
+    else:
+        prev_main_path = out_dir / f"frame_{frame_index - 1}_main_384.png"
+        init_image_filename = upload_image(prev_main_path)
+        graph = build_chained_graph(
+            seed=seed,
+            concept_filename=concept_filename,
+            pose_skeleton_filename=skeleton_filename,
+            init_image_filename=init_image_filename,
+            denoise=SEQUENTIAL_CHAIN_DENOISE,
+            controlnet_strength=controlnet_strength,
+            controlnet_end=controlnet_end,
+            ipadapter_weight=ipadapter_weight,
+            style_lora_weight=style_lora_weight,
+            identity_lora_weight=identity_lora_weight,
+        )
 
     frame_t0 = time.monotonic()
     prompt_id = submit_prompt(graph)
@@ -1044,8 +1113,10 @@ def _generate_one_frame(
         cell_img = held_img.resize((FINAL_CELL_PX, FINAL_CELL_PX), Image.Resampling.BOX)
         cell_img.save(out_dir / f"frame_{frame_index}_cell_48_raw.png")
 
-    generation_mode = "fresh" if frame_index == 0 else "fresh_background_held"
+    generation_mode = "fresh" if frame_index == 0 else "sequential_chained"
     background_held_from_frame = None if frame_index == 0 else 0
+    chained_from_frame = None if frame_index == 0 else frame_index - 1
+    denoise = None if frame_index == 0 else SEQUENTIAL_CHAIN_DENOISE
     (out_dir / f"frame_{frame_index}_meta.json").write_text(
         json.dumps(
             {
@@ -1053,6 +1124,8 @@ def _generate_one_frame(
                 "generation_seconds": generation_seconds,
                 "generation_mode": generation_mode,
                 "background_held_from_frame": background_held_from_frame,
+                "chained_from_frame": chained_from_frame,
+                "denoise": denoise,
             },
             indent=2,
         )
@@ -1215,13 +1288,14 @@ def run_attempt(
                 "cutout_bbox_margin_frac": BACKGROUND_MASK_MARGIN_FRAC,
                 "generation_mode": meta["generation_mode"],
                 # .get(), not [...]: a resume over an already-complete frame
-                # generated before this field existed (attempt 5's own
-                # T-0266-chained-era meta.json, which carries
-                # chained_from_frame/denoise instead) must not raise --
-                # chunked_frames' whole "skip-existing" contract depends on
-                # resuming from *any* prior complete state, not just one
-                # written by the current schema (T-0259 session 9).
+                # generated before these fields existed (attempt 5's own
+                # T-0266-chained-era meta.json predates all three) must not
+                # raise -- chunked_frames' whole "skip-existing" contract
+                # depends on resuming from *any* prior complete state, not
+                # just one written by the current schema (T-0259 session 9).
                 "background_held_from_frame": meta.get("background_held_from_frame"),
+                "chained_from_frame": meta.get("chained_from_frame"),
+                "denoise": meta.get("denoise"),
             }
         )
 
