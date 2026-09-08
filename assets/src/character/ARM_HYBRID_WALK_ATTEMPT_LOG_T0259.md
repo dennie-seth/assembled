@@ -9,8 +9,8 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 | 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
 | 4 | 27182 | 0.0337-0.2532 | PASS | no | 801.7 | yes | T-0266 img2img chain fix: frames 1-7 anchored to frame 0 via VAEEncode, denoise=0.45, background held against frame 0. Mechanical gate PASS (0.0337-0.2532 vs 0.30 cap). Leg articulation is visually subtle at every denoise tried (0.45/0.75/0.90, attempts 4-6) -- the long-coat costume covers the legs regardless of pose, a costume-design characteristic confirmed by comparison, not a chaining artifact; DL-21 criterion 1 (motion readability at 40px) is a separate human call this card does not make. |
 | 5 | 27182 | 0.2080-0.3859 | PASS | no | 183.3 | no | T-0259 session 4: blend_0.5 identity-reference background correction (new fix, landed in crop_identity_reference/run_attempt this session), denoise 0.35, ipadapter 0.6 -- coherent, clears background floor (0.75-0.79 all cells) and identity colour comfortably (mean_sat 0.236 vs anchor 0.230, green_frac 0.067 vs anchor 0.056), but gait motion is not legible at game scale: raw per-step changed-pixel counts are 44/44/44/44/44/44/44/44 (max/min 1.00x -- perfectly even, but because nothing moves much, not because the gait reads as walking). Visual inspection at ~48px (near the games native tile scale) confirms the legs/arms barely differ frame to frame. NOT PROMOTED -- fails the card own gait-legibility-beats-delta bar despite passing every mechanical gate. |
-| 6 | 27182 | 0.2986-0.5932 | FAIL | no | 189.3 | no | T-0259 session 4: same blend_0.5 correction, denoise raised 0.35->0.5 to test whether higher denoise unlocks visible limb motion. FAILS the mechanical gate outright (frame_delta_range 0.2986-0.5932, max over the 0.50 locomotion cap). Visual inspection shows the extra delta is background/cutout noise instability, not clearer pose motion -- the legs still do not read as stepping. Denoise alone is not the lever for motion legibility. |
-| 7 | 27182 | 0.0753-0.3237 | PASS | no | 204.3 | no | T-0259 session 4: denoise back to the proven-safe 0.35, ipadapter_weight lowered 0.6->0.4 to test whether IP-Adapter reference-anchoring was suppressing ControlNet pose differences. Passes the frame-delta cap (0.0753-0.3237) but background_fraction regresses badly (0.49-0.62, ALL 8 cells now under the 0.65 floor -- worse than attempt 5). Raw per-step deltas barely change (42-44px, max/min 1.05x) -- no meaningful motion improvement, and a new background-cleanliness failure. Lowering ipadapter_weight is not the fix either. |
+| 6 | 27182 | 0.5384-0.7601 | FAIL | no | 147.2 | no | T-0259 session 5: architecture change -- every frame (0-7) now samples fresh (`build_graph`, EmptyLatentImage, denoise 1.0) against its own skeleton instead of chaining frames 1-7 from frame 0 via VAEEncode; background still held to frame 0 in pixel space. ipadapter 0.6 (unchanged from attempt 5). Gait motion is now genuinely visible (legs/arms differ frame to frame, confirmed by eye) but costume colour drifts pale on 3/8 cells and frame-delta blows past the cap by 1.1-1.5x. See session 5 narrative below. |
+| 7 | 27182 | 0.5489-0.8275 | FAIL | no | 159.4 | no | T-0259 session 5: same fresh-per-frame architecture, ipadapter 0.6->0.85 to test whether higher IP-Adapter weight fixes attempt 6's costume drift while keeping pose fidelity. Colour drift fixed (no pale frames) and pose fidelity preserved, but two cells (0,0 and 1,0 -- background_fraction 0.842/0.829) show near-total leg erasure by the per-frame cutout, and frame-delta is worse than attempt 6 (0.55-0.83 vs 0.50 cap). See session 5 narrative below. |
 
 ## 2026-08-31 improvement pass -- profile-view finding (not a numbered attempt)
 
@@ -810,3 +810,107 @@ scratch directory, not a permanent identity; attempt 5's directory was cleared a
 fresh rather than reused stale (an early mistake this session that produced a provenance dict
 recording the new denoise/correction against the OLD frames -- caught before promotion, corrected
 by clearing the directory and regenerating).
+
+## 2026-09-08 session 5: the img2img chain is confirmed as the pose-fidelity bottleneck and
+removed from production -- but full independence is not a clean win either
+
+**Picked up the exact experiment session 4 named as the next real test, and it landed a clean
+result.** Session 4 root-caused (not just observed) that the img2img chain -- not the pose rig --
+was suppressing gait motion, and proposed a specific, cheap, one-variable test: generate a
+passing-pose frame (frame 2) fresh (denoise 1.0, no VAEEncode chain) instead of chained, with
+every other input held identical to attempt 5's own recipe, and see whether it visibly adopts
+frame 2's own crossed-leg skeleton where the chained version never does.
+
+`probe_unchained_pose_T0259.py --frame 2` (new diagnostic script, same category as
+`probe_reference_bypass_T0259.py`, not part of the gate suite): seed 27182, blend_0.5
+identity-reference correction, controlnet 1.0/1.0, ipadapter 0.6, style/identity LoRA 0.70/0.50 --
+identical to attempt 5 except `build_graph` (fresh) instead of `build_chained_graph` (denoise
+0.35). **24.0 GPU-seconds.** I compared the resulting frame's leg region against both frame 0
+(fresh, contact pose, wide stance) and attempt 5's own chained frame 2 (narrow/cross skeleton,
+same wide-stance silhouette as frame 0 -- confirms session 4's "barely moves" finding) side by
+side, cropped and 3x upscaled. The unchained probe's leg region is visibly, unambiguously
+different from both: a narrow, converged silhouette consistent with the passing/cross pose its own
+skeleton specifies, not the wide splay every chained frame renders regardless of its own skeleton.
+**This falsifies the "img2img chaining is required for a coherent walk sheet" assumption this
+card's own architecture has carried since T-0266, and confirms the chain itself -- not the pose
+rig, not the denoise value tried on the chain (0.35/0.5, attempts 5-6), not the IP-Adapter weight
+tried on the chain (0.6/0.4, attempts 5/7) -- is what suppresses pose fidelity.**
+
+**Landed the fix in production, test-first.** Rewrote `tests/test_gen_hybrid_walk_chained_T0266.py`
+RED (frames 1+ must use `EmptyLatentImage`/`build_graph`, not `VAEEncode`/`build_chained_graph`;
+provenance drops `denoise`/`chained_from_frame` for `background_held_from_frame`), then GREEN
+(`_generate_one_frame` now calls `build_graph` for every frame index, not just frame 0;
+`apply_background_hold` -- a pure pixel-space compositor, independent of how the input was
+sampled -- still holds frames 1-7's background to frame 0's own). `build_chained_graph` itself is
+untouched and still independently tested as a reusable primitive; nothing calls it from
+`_generate_one_frame` any more. Full suite green except the three pre-existing GIF-deliverable
+failures (no sheet promoted yet, unrelated to this change).
+
+**Ran two real, full 8-frame attempts against the new architecture -- neither is promotable, and
+both surface a second, DIFFERENT problem the probe (a single frame) could not have shown.**
+
+- **Attempt 6** (reused slot, ipadapter 0.6, otherwise attempt 5's recipe): frame_delta_range
+  **0.5384-0.7601** against the 0.50 locomotion cap -- FAIL, 1.1-1.5x over. Viewed the full 4x2
+  sheet at 5x scale: gait motion is now genuinely visible (legs and arms differ frame to frame,
+  confirmed by eye, unlike every previous attempt this card has produced) -- but costume colour
+  drifts badly on 3 of 8 cells (frames render mostly white/pale instead of the T-0252 anchor's
+  green), exactly the "identity does not go pale" failure mode the card's own acceptance criteria
+  name. This is T-0266's ORIGINAL problem resurfacing: independent sampling does not hold the
+  character's own rendered costume consistent across frames, even with the same seed.
+- **Attempt 7** (reused slot, ipadapter 0.6->0.85, testing whether stronger IP-Adapter weight
+  fixes attempt 6's colour drift while preserving pose fidelity): it does fix the colour --
+  costume stays solidly green across all 8 cells, no pale frames -- and a single-frame probe at
+  the same weight (`probe_unchained_pose_T0259.py --frame 2 --ipadapter-weight 0.85`, 27.0
+  GPU-seconds) confirmed the narrow/crossed pose survives the higher weight, ruling out "IP-Adapter
+  just biases everything back toward the reference's own front-on stance." But the full 8-frame
+  attempt surfaced a THIRD, unrelated problem the single-frame probe never exercised: cells (0,0)
+  and (1,0) measure `background_fraction` 0.842 and 0.829 (I counted palette-index-0 pixels per
+  cell myself) -- the legs are almost entirely erased by the per-frame cutout, not merely faded.
+  `walk_cutout_hint_keypoints`'s frame-0-union hint bbox (`pose_rig_walk_T0259.py`, documented
+  above) was empirically calibrated against the OLD chained regime's motion range; genuinely
+  independent per-frame sampling produces real pixel excursions (not just skeleton-predicted ones)
+  that can exceed even that widened hint, so `extract_foreground_mask`'s majority-overlap bar
+  discards real leg content as background. Frame-delta is WORSE than attempt 6 (0.55-0.83), not
+  better -- the erased-leg cells apparently still differ enough between frames (erasure boundary
+  position, remaining torso noise) to cost more than they save.
+
+**A denoise sweep on the (still-intact, no-longer-called-in-production) chained path,
+`probe_chain_denoise_sweep_T0259.py`, found no usable middle ground -- the transition from "chain
+suppresses pose" to "chain doesn't suppress pose" is sharp, not gradual, and lands right where
+independence itself starts costing coherence.** Chained frame 2 from attempt 6's own frame 0, at
+denoise 0.6 and 0.75 (18.0s each): leg region still reads as frame 0's own wide stance at BOTH
+values -- no visible narrowing/crossing, matching attempts 5-6's own finding that denoise alone on
+the chain doesn't unlock pose fidelity even pushed to 0.5-0.75. At denoise 0.9 (30.0s): the leg
+region finally narrows/converges (pose fidelity starting to appear) but the frame is visibly noisy
+and chromatically fringed -- effectively already paying independence's own instability cost while
+still nominally "chained." There is no discovered denoise value that is both legible and clean;
+0.75 is illegible, 0.9 is already messy, and full independence (1.0) is where every experiment
+above actually happened.
+
+**Recommendation for whoever picks this up next -- this remains a genuine architecture question,
+now narrowed to two concrete, scoped sub-problems rather than "which denoise":**
+
+1. **Recalibrate `walk_cutout_hint_keypoints` for full-range independent motion**, not just the
+   old chained regime's narrower true excursions -- attempt 7's cells (0,0)/(1,0) prove the
+   current hint (however carefully tuned against attempts 5-9's chained data) is now too tight.
+   A hint derived from the SKELETON's own keypoint range under-predicts the SAMPLED pixels' real
+   extent once the sampler has genuine freedom; a hint that measures actual rendered content
+   (e.g. a per-attempt calibration pass, or a looser, motion-class-aware margin) may be needed
+   instead of a purely skeleton-derived one.
+2. **Isolate how much of the excess frame-delta is real pose motion vs. inter-frame sampling
+   noise.** Attempt 6's own delta (0.54-0.76) is measured over the WHOLE cell, including
+   background-adjacent noise the old chain's tighter background-hold implicitly suppressed by
+   starting every frame from the same latent. A background-only sub-region delta (excluding the
+   keypoint-hint bbox entirely) compared between a chained and an unchained attempt at the same
+   recipe would directly quantify whether the 0.50 cap is being blown by pose motion (a win, per
+   the card's own "gait legibility beats delta") or by noise (a genuine defect to fix, likely via
+   a lighter-touch consistency mechanism than either extreme -- e.g. a partial per-frame VAEEncode
+   blend at a much higher denoise than 0.35/0.5 but below full independence, informed by where the
+   0.75->0.9 pose-fidelity transition actually sits once (1) is fixed and stops confounding the
+   measurement).
+
+Not promoted. DL-21 budget note: slots 6 and 7 were reused this session (both real 8-frame
+attempts, not diagnostic probes); slots 1-9 have now all been used or reused across this card's
+five sessions. `probe_unchained_pose_T0259.py` and `probe_chain_denoise_sweep_T0259.py` are
+committed as reusable diagnostic scripts (same category as `probe_reference_bypass_T0259.py`) for
+whichever of the two recommendations above gets picked up next.

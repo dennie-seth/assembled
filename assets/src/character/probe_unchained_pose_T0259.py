@@ -78,10 +78,13 @@ OUT_ROOT = REPO_ROOT / "assets" / "out" / "hybrid_walk" / "probe_unchained_pose_
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frame", type=int, default=2, help="frame index, 0..7 (default 2)")
+    parser.add_argument("--ipadapter-weight", type=float, default=IPADAPTER_WEIGHT)
+    parser.add_argument("--tag", type=str, default="", help="output filename suffix")
     args = parser.parse_args()
 
     out_dir = OUT_ROOT
     out_dir.mkdir(parents=True, exist_ok=True)
+    suffix = f"_{args.tag}" if args.tag else ""
 
     reference_path = out_dir / "identity_reference_crop.png"
     crop_identity_reference(
@@ -91,7 +94,7 @@ def main() -> None:
 
     points = pose_rig_walk_T0259.walk_keypoints_for_frame(args.frame, FRAME_COUNT)
     skeleton_img = pose_rig_walk_T0259.render_pose_frame(points, GEN_PX)
-    skeleton_path = out_dir / f"frame_{args.frame}_pose_skeleton_384.png"
+    skeleton_path = out_dir / f"frame_{args.frame}_pose_skeleton_384{suffix}.png"
     skeleton_img.save(skeleton_path)
     skeleton_filename = upload_image(skeleton_path)
 
@@ -101,7 +104,7 @@ def main() -> None:
         pose_skeleton_filename=skeleton_filename,
         controlnet_strength=CONTROLNET_STRENGTH,
         controlnet_end=CONTROLNET_END,
-        ipadapter_weight=IPADAPTER_WEIGHT,
+        ipadapter_weight=args.ipadapter_weight,
         style_lora_weight=STYLE_LORA_WEIGHT,
         identity_lora_weight=IDENTITY_LORA_WEIGHT,
     )
@@ -112,16 +115,17 @@ def main() -> None:
     generation_seconds = time.monotonic() - t0
 
     main_bytes = fetch_save_image(info, MAIN_SAVE_NODE_ID)
-    main_path = out_dir / f"frame_{args.frame}_main_384_unchained.png"
+    main_path = out_dir / f"frame_{args.frame}_main_384_unchained{suffix}.png"
     main_path.write_bytes(main_bytes)
 
-    (out_dir / f"frame_{args.frame}_probe_meta.json").write_text(
+    (out_dir / f"frame_{args.frame}_probe_meta{suffix}.json").write_text(
         json.dumps(
             {
                 "frame_index": args.frame,
                 "generation_mode": "fresh_unchained",
                 "denoise": 1.0,
                 "seed": SEED,
+                "ipadapter_weight": args.ipadapter_weight,
                 "background_correction": BACKGROUND_CORRECTION,
                 "comfyui_prompt_id": prompt_id,
                 "generation_seconds": generation_seconds,
