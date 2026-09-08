@@ -12,6 +12,7 @@ import { probeLivenessMtime, DEFAULT_LIVENESS_PROBE_INTERVAL_MS } from "./filesy
 import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { regenerateApprovalLedgerIfChanged } from "./approvalLedgerRegen.js";
+import { promoteEvidenceForCard } from "../lib/evidencePromotion.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
 import {
   materializePlannerFileView,
@@ -1493,6 +1494,7 @@ export class RunOrchestrator {
 
   async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false, effectiveAgent = task.agent ?? "generic") {
     await this._regenerateApprovalLedger(taskId, worktreeDir);
+    await this._promoteEvidence(taskId, worktreeDir);
 
     let commit;
     try {
@@ -1625,6 +1627,34 @@ export class RunOrchestrator {
       }
     } catch (err) {
       console.error(`Board: approval ledger regeneration failed for ${taskId}, pushing without it: ${err.message}`);
+    }
+  }
+
+  /**
+   * Commits an asset run's decisive attempt frames into `docs/assets/evidence/<card>/` from
+   * inside this card's own worktree, before `commitAll` below -- so the promoted files ride the
+   * same commit/PR and survive `removeWorktree` a few lines further down `_handlePass` (T-0314;
+   * see evidencePromotion.js and docs/assets/evidence-promotion.md). Runs unconditionally on
+   * every PASS rather than only for cards assigned to `assets`/`audio`: discovery itself is
+   * already the cheap no-op for every other card (no `ARM_*_ATTEMPT_LOG_*.md` anywhere under
+   * `assets/src/` and no `assets/out/` tree to find), so gating on `task.agent` would only add a second thing that
+   * could drift out of sync with the discovery convention.
+   *
+   * Best-effort, matching `_regenerateApprovalLedger`'s posture immediately above: a discovery or
+   * copy failure (a locked file, a full disk, a malformed log) is logged and swallowed rather
+   * than costing an otherwise-good PASS -- evidence that fails to promote is exactly the T-0272
+   * data loss this exists to prevent, not a reason to add a new one.
+   */
+  async _promoteEvidence(taskId, worktreeDir) {
+    try {
+      const result = await promoteEvidenceForCard({ repoRoot: worktreeDir, cardId: taskId });
+      if (result.promoted.length > 0) {
+        console.log(
+          `Board: promoted ${result.promoted.length} evidence frame(s) for ${taskId} into ${path.relative(worktreeDir, result.evidenceDir)}`
+        );
+      }
+    } catch (err) {
+      console.error(`Board: evidence promotion failed for ${taskId}, continuing without it: ${err.message}`);
     }
   }
 

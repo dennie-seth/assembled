@@ -1,0 +1,51 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7)",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "style_lora_name": "soviet_brutalism_style_v1.safetensors",
+  "style_lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "style_lora_weight": 0.7,
+  "style_lora_license": "CreativeML OpenRAIL++-M",
+  "prompt": "flat side-on character concept reference sheet, orthographic game asset, no perspective, no vanishing point, one reference panel: full-body side profile standing pose, figure's face and nose seen in strict profile facing right, one shoulder visible, near arm bent forward, far arm hidden behind the torso. Player character: 40px tall humanoid figure in a 48x48 cell, wearing a long vivid institutional green cloth coat (the coat itself is green, not black, not grey), concrete-grey head and skin tones, deep shadow values on the coat's own folds. Soviet brutalist interior aesthetic, muted desaturated palette for the environment only, the coat itself stays vivid green, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, no background elements, solid flat black background only. Game asset reference sheet style, pixel art scale reference, figure silhouette study",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, cartoon, cheerful, text, watermark, signature, blurry, low quality, front view, facing the camera, symmetric front-facing pose, back view, rear view, both shoulders equally visible, both arms visible, city, skyscraper, buildings, urban background, architecture background, windows, cityscape, scenery, multiple figures, two figures, group of people, grey tactical costume, tan tactical costume, khaki uniform, army fatigues, muted olive costume, brownish coat, washed out colour, pale colour, desaturated coat, grayscale, black coat, grey coat, black armor, monochrome, colourless",
+  "seed": 31700,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "comfyui_prompt_id": "a7e444d8-142d-4169-85ed-1266d263ad47",
+  "method": "Plain txt2img + LoraLoader(soviet_brutalism_style_v1) -> CLIPTextEncode -> KSampler -> VAEDecode -> SaveImage. No ControlNet, no IP-Adapter, no identity/pose LoRA -- deliberately the same stack as T-0209's own player_character_concept_sheet_v1.recipe.json, chosen because T-0272 round 3 found ControlNet's structural conditioning is what overrides camera-angle prompt steering under the \u00a724-e stack.",
+  "generator": "assets/src/concept/gen_player_profile_costume_reference_T0317.py",
+  "card": "T-0317",
+  "route": "generated",
+  "spec": "docs/design/13-asset-pipeline.md \u00a76.9-\u00a76.11, T-0272's own ARM_PROFILE_ATTEMPT_LOG_T0272.md round 5 finding (feasibility gate)",
+  "attempt": 3,
+  "gpu_seconds": 24.0,
+  "green_content": {
+    "promoted_reference_green_pixels": 48547,
+    "benchmark_green_band": [
+      6000,
+      6900
+    ],
+    "benchmark_noise_floor_fraction": [
+      0.01,
+      0.017
+    ]
+  },
+  "promoted": true,
+  "concept_hash": "603c00f2cc7a5da0462f05232176131d06678776de4876800e7b27af343d7f19",
+  "panel_source": {
+    "source_attempt": 3,
+    "source_file": "assets/out/costume_reference/attempt_3/main_1024.png",
+    "panel_box": [
+      450,
+      40,
+      625,
+      960
+    ],
+    "panel_margin": 4,
+    "extraction_method": "border-flood background detection + largest-connected-component selection (derive_profile_style_reference_T0272.extract_panel_reference, reused directly), crop to the figure's own bbox + margin -- the source sheet's other two panels (front, back) and any text label are discarded, not just cropped around"
+  }
+}

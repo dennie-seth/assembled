@@ -300,11 +300,139 @@ def test_check_attempt_cap_allows_a_fresh_round_5_budget() -> None:
     """Round 5 ("vivid green on the profile") gets its own fresh 8-attempt
     DL-21 budget on top of rounds 1-4's spent 1..24 plus the round-4
     defect-fix continuation's 25..28 -- attempts 29..36, not a re-run of
-    anything already spent."""
+    anything already spent. (Attempt 37 is no longer expected to raise here --
+    round 6 (T-0317) opens its own fresh budget starting there; see
+    test_check_attempt_cap_allows_a_fresh_round_6_budget for that boundary.)"""
     gen.check_attempt_cap(29)
     gen.check_attempt_cap(36)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_6_budget() -> None:
+    """Round 6 (T-0317: the generated green-costume side reference wired into
+    the secondary IP-Adapter slot, replacing the pose-only T-0273 photograph
+    and the colour-thin derived crop both tried in rounds 3-5) gets its own
+    fresh 8-attempt DL-21 budget on top of rounds 1-5's spent 1..36 --
+    attempts 37..44, not a re-run of anything already spent. (Attempt 45 is
+    no longer expected to raise here -- round 7 opens its own fresh budget
+    starting there; see test_check_attempt_cap_allows_a_fresh_round_7_budget
+    for that boundary.)"""
+    gen.check_attempt_cap(37)
+    gen.check_attempt_cap(44)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_7_budget() -> None:
+    """Round 7 (T-0317 continuation, the reviewer's named next steps: fine-step
+    the secondary IP-Adapter weight between attempt 39's 0.1 (coherent visual,
+    gate-fails on background) and attempt 41's 0.15-0.3 (gate-passes at a
+    different seed, but incoherent) while HOLDING attempt 39's own seed 31416
+    fixed -- round 6 varied seed and weight together and never isolated this
+    -- alongside a strengthened black-background prompt term to fix the
+    multi-toned-background render that starved attempt 39's cutout) gets its
+    own fresh 8-attempt DL-21 budget on top of rounds 1-6's spent 1..44 --
+    attempts 45..52, not a re-run of anything already spent. (Attempt 53 is
+    no longer expected to raise here -- round 9 opens its own fresh budget
+    starting there; see test_check_attempt_cap_allows_a_fresh_round_9_budget
+    for that boundary.)"""
+    gen.check_attempt_cap(45)
+    gen.check_attempt_cap(52)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_9_budget() -> None:
+    """Round 9 (T-0317, PR #350/T-0319 merged into this branch): the walk
+    generator's background-fix primitive (`force_border_background_to_fill`)
+    is now wired into this generator's own per-frame cutout path, and
+    attempt 39's exact recipe (seed 31416, secondary weight 0.10) is
+    reproduced against a forced-black render background -- a background-fix
+    re-test, not the round 6 seed+weight sweep. Gets its own fresh 8-attempt
+    DL-21 budget on top of rounds 1-7's spent 1..52 -- attempts 53..60.
+
+    (Round 9 spent only 53-54 of this budget; see
+    test_check_attempt_cap_allows_a_fresh_round_10_budget for the next
+    boundary.)"""
+    gen.check_attempt_cap(53)
+    gen.check_attempt_cap(60)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_10_budget() -> None:
+    """Round 10 (T-0317: ComfyUI restarted with `--deterministic` +
+    `CUBLAS_WORKSPACE_CONFIG=:4096:8`, per round 9's own named next probe).
+    Round 9 characterized the reproducibility defect as session-scoped, not
+    seed-scoped -- attempt 39's own coherent visual came from a server
+    session that no longer exists, and the determinism flags pin *future*
+    runs, not resurrect a past one. This round is not a re-run of attempt
+    39 or the round 6 seed+weight sweep -- it is fresh generation on a
+    newly-deterministic server, so it gets its own fresh 8-attempt DL-21
+    budget on top of rounds 1-9's spent 1..60 -- attempts 61..68.
+
+    (Round 10 spent the full 61-68; see
+    test_check_attempt_cap_allows_a_fresh_round_11_budget for the next
+    boundary.)"""
+    gen.check_attempt_cap(61)
+    gen.check_attempt_cap(68)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_11_budget() -> None:
+    """Round 11 (T-0317: `@DennieSeth`'s decision on T-0324 -- a bounded
+    probe under a new host regime, then ship). ComfyUI has been restarted
+    again: `--deterministic` is now REMOVED (round 10's flag), while
+    `CUBLAS_WORKSPACE_CONFIG=:4096:8` stays set -- partial determinism,
+    testing whether round 10's coherence collapse traces to
+    `--deterministic` forcing non-fused kernel paths. This is a new,
+    untested host configuration, not a re-run of round 10's fresh-seed
+    sweep or round 6's seed+weight sweep -- it gets its own fresh 8-attempt
+    DL-21 budget on top of rounds 1-10's spent 1..68 -- attempts 69..76."""
+    gen.check_attempt_cap(69)
+    gen.check_attempt_cap(76)  # must not raise
+
+
+def test_check_attempt_cap_allows_a_fresh_round_12_budget() -> None:
+    """Round 12 (T-0317: @DennieSeth's decision on T-0272's own probe finding
+    -- CUBLAS_WORKSPACE_CONFIG, not --deterministic, is the sharper suspect
+    for coherence collapse. ComfyUI has been restored to the exact baseline
+    regime that produced attempt 39: no `--deterministic`, no
+    `CUBLAS_WORKSPACE_CONFIG` set at all. Eleven rounds and 76 attempts have
+    exhausted the parameter space -- the only variable left is the seed,
+    under a regime known to have produced coherence exactly once. This is a
+    bounded reroll (stop at the first usable coherent frame, cap at 8 fresh
+    seeds), not a re-run of round 6's seed+weight sweep -- it gets its own
+    fresh 8-attempt DL-21 budget on top of rounds 1-11's spent 1..76 --
+    attempts 77..84."""
+    gen.check_attempt_cap(77)
+    gen.check_attempt_cap(84)  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(37)
+        gen.check_attempt_cap(85)
+
+
+def test_positive_prompt_matches_the_known_good_round_6_baseline() -> None:
+    """Round 7 (T-0317) tried adding a "no grey background, no multi-tone
+    background" term here, in two different placements. Both regressed:
+    attempts 46-48 proved the text edit itself -- not token count, not the
+    secondary IP-Adapter weight -- fully rerouted seed 31416's diffusion
+    trajectory. 46 (secondary weight 0.1), 47 (0.05), and 48 (no secondary
+    reference at all) rendered byte-identical incoherent frames, so the
+    weight had zero effect once the prompt text changed. This locks the
+    wording that produced attempt 39's coherent (if gate-failing) visual so
+    a future edit here is a deliberate, re-verified choice, not an
+    accidental one -- see ARM_PROFILE_ATTEMPT_LOG_T0272.md's round-7
+    section for the full isolation."""
+    assert gen.PROFILE_PROMPT == (
+        "sbrutalistplayer, sbrutalistprofilepose, pixel art side-profile base pose, "
+        "single standing figure seen from the side, facing right, flat side-on "
+        "orthographic view, exactly one figure matching the pose skeleton exactly, "
+        "institutional green coat, hooded, white gloves, same uniform and same "
+        "equipment loadout, upright standing posture, solid flat black background, "
+        "value-separated pixel art silhouette, clean readable pixel outline, vivid "
+        "saturated green costume colour, no perspective, no vanishing point, no text, no UI"
+    )
+
+
+def test_negative_prompt_matches_the_known_good_round_6_baseline() -> None:
+    """Companion lock to the positive-prompt test above."""
+    assert gen.PROFILE_NEGATIVE == (
+        gen.IDLE_MAIN_NEGATIVE + ", front view, facing the camera, symmetric "
+        "front-facing pose, three-quarter view, back view, both shoulders equally "
+        "visible, washed out colour, pale colour, desaturated, faded costume, grayscale"
+    )
 
 
 def test_prepare_secondary_reference_inverts_when_requested(tmp_path) -> None:
@@ -338,3 +466,50 @@ def test_prepare_secondary_reference_passes_through_when_already_toned(tmp_path)
 
     out = Image.open(dest).convert("RGB")
     assert out.getpixel((0, 0)) == (10, 20, 30)
+
+
+def test_build_indexed_cell_forces_render_background_before_cutout(monkeypatch) -> None:
+    """T-0317 round 9: attempt 39's own coherent, green-legible visual
+    gate-failed (27-39 fg px, under the 50px floor) because the RENDER's own
+    background came out multi-toned grey rather than the prompt's requested
+    solid black, starving `extract_foreground_mask`'s border-flood
+    classification -- the same class of defect T-0319 fixed for the walk
+    generator's identity-reference crop, applied here to this generator's own
+    per-frame cutout the way `gen_hybrid_walk_T0259.reprocess_attempt_background_fix`
+    applies it to an already-sampled frame before re-cutting.
+
+    RED: `build_indexed_cell` calls `extract_foreground_mask` directly on the
+    raw, uncorrected `main_384` -- `force_border_background_to_fill` is not
+    yet called from `build_indexed_cell` at all."""
+    from PIL import Image
+
+    calls: list[tuple[Image.Image, float]] = []
+    corrected_sentinel = Image.new("RGB", (8, 8), color=(1, 2, 3))
+
+    def spy_force_border_background_to_fill(img, tolerance, **kwargs):
+        calls.append((img, tolerance))
+        return corrected_sentinel
+
+    seen_mask_input: list[Image.Image] = []
+    real_extract_foreground_mask = gen.extract_foreground_mask
+
+    def spy_extract_foreground_mask(img, *args, **kwargs):
+        seen_mask_input.append(img)
+        return real_extract_foreground_mask(img, *args, **kwargs)
+
+    monkeypatch.setattr(
+        gen, "force_border_background_to_fill", spy_force_border_background_to_fill
+    )
+    monkeypatch.setattr(gen, "extract_foreground_mask", spy_extract_foreground_mask)
+
+    asset_gate_palette = pytest.importorskip("asset_gate.palette")
+
+    raw_cell = Image.new("RGB", (48, 48), color=(18, 17, 14))
+    main_384 = Image.new("RGB", (384, 384), color=(144, 143, 145))
+    palette = asset_gate_palette.load_palette(gen.PALETTE_PATH)
+    points_norm = {0: (0.5, 0.5)}
+
+    gen.build_indexed_cell(raw_cell, main_384, palette, points_norm)
+
+    assert calls == [(main_384, gen.CUTOUT_OKLAB_TOLERANCE)]
+    assert seen_mask_input == [corrected_sentinel]

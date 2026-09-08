@@ -99,6 +99,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -169,6 +170,14 @@ from gen_pose_authority_idle_T0249 import (  # noqa: E402
 from gen_pose_authority_idle_T0249 import MAIN_NEGATIVE as IDLE_MAIN_NEGATIVE  # noqa: E402
 
 from char_gen import chunked_frames, gif_export  # noqa: E402
+
+# T-0319: the IP-Adapter identity reference's own background bleeds into
+# every generated frame (see crop_identity_reference's docstring below) --
+# force_border_background_to_fill is the shared primitive that fixes both
+# the reference (here) and the preserved attempt 5/7 re-cut path
+# (WALK_BACKGROUND_FIX_T0319.md). Reuses the same border-flood detector the
+# per-frame cutout above already relies on -- no new segmentation logic.
+from char_gen.cutout import force_border_background_to_fill  # noqa: E402
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
@@ -197,6 +206,13 @@ FRAME_CELLS: list[tuple[int, int]] = [(r, c) for r in range(ROWS) for c in range
 # panel (green coat, front view -- row 3, column 1 of the sheet) so
 # IP-Adapter conditions on the character alone.
 IDENTITY_REFERENCE_CROP_BOX = (8, 298, 195, 498)  # left, upper, right, lower
+
+# T-0319: mirrors tests/test_player_walk_hybrid_T0259_gate.py's own
+# MIN_BACKGROUND_FRACTION literal -- the re-cut report below
+# (reprocess_attempt_background_fix) is only meaningful graded against the
+# exact same bar the real gate uses, not a locally re-derived approximation
+# of it.
+MIN_BACKGROUND_FRACTION = 0.65
 
 # T-0271/DL-26: a walk cycle is locomotion, not idle -- DL-21's 0.30 was
 # pre-registered against the player IDLE sheet, and grading a real walk
@@ -465,9 +481,118 @@ def crop_identity_reference(concept_sheet_path: Path, dest_path: Path) -> Path:
     front-on panel (`IDENTITY_REFERENCE_CROP_BOX`) and write it to
     `dest_path` -- this crop, not the full sheet, is what gets uploaded to
     ComfyUI and fed to IPAdapterAdvanced. See the T-0266 recipe finding
-    above `IDENTITY_REFERENCE_CROP_BOX` for why."""
-    Image.open(concept_sheet_path).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX).save(dest_path)
+    above `IDENTITY_REFERENCE_CROP_BOX` for why the crop itself exists.
+
+    T-0319: the crop's OWN panel background is mid-grey (modal RGB measured
+    at ~144,143,145), not the black WALK_PROMPT asks for -- fed to
+    IPAdapterAdvanced as-is, IP-Adapter's image-level conditioning carries
+    that grey into every generated frame's own background regardless of
+    what the text prompt/negative prompt say (WALK_NEGATIVE already names
+    "grey background" explicitly, inherited unchanged from the idle recipe;
+    it made no difference, because IP-Adapter's conditioning pathway is
+    independent of CLIP text conditioning). Measured modal border RGB on the
+    frames this crop conditioned (142-153 range, attempts 5 and 7) matches
+    this panel's own modal background almost exactly -- the reference, not
+    the prompt weighting, is the root cause. `force_border_background_to_fill`
+    corrects the crop's own background to a genuinely dark fill before it is
+    ever uploaded, the same border-flood detector this pipeline's own
+    per-frame cutout already trusts, so the correction cannot drift from it."""
+    crop = Image.open(concept_sheet_path).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX)
+    force_border_background_to_fill(crop, CUTOUT_OKLAB_TOLERANCE).save(dest_path)
     return dest_path
+
+
+def reprocess_attempt_background_fix(out_dir: Path) -> dict:
+    """T-0319 re-cut path: re-derive an already-sampled attempt's per-cell
+    background fraction from its already-written `frame_{i}_main_384.png` +
+    `frame_{i}_keypoints.json` (no new ComfyUI calls, no seed/denoise
+    change), both as originally sampled ('before') and after applying this
+    card's fix -- `force_border_background_to_fill` on each frame's own
+    detected background before re-running the SAME per-frame cutout a fresh
+    generation already uses ('after'). `out_dir` is any directory holding
+    those files; it does not have to live under this repo's own gitignored
+    `assets/out/` -- the preserved attempt 5/7 directories this card's own
+    acceptance criteria require re-cutting first live in a different
+    worktree entirely.
+
+    Card scope: this reports whether the fix alone clears an already-
+    generated attempt's cells against MIN_BACKGROUND_FRACTION -- it does not
+    promote, and it does not regenerate. See WALK_BACKGROUND_FIX_T0319.md for
+    the measured result against the real preserved attempts.
+    """
+    palette = asset_gate_palette.load_palette(PALETTE_PATH)
+
+    raw_before: dict[tuple[int, int], Image.Image] = {}
+    raw_after: dict[tuple[int, int], Image.Image] = {}
+    masks_before: dict[tuple[int, int], np.ndarray] = {}
+    masks_after: dict[tuple[int, int], np.ndarray] = {}
+
+    for i, cell in enumerate(FRAME_CELLS):
+        main_img = Image.open(out_dir / f"frame_{i}_main_384.png").convert("RGB")
+        coco_list = json.loads((out_dir / f"frame_{i}_keypoints.json").read_text())
+        points = {p["joint"]: (p["x"], p["y"]) for p in coco_list}
+
+        masks_before[cell] = downscale_mask(
+            cutout_foreground_mask(
+                main_img, points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
+            ),
+            FINAL_CELL_PX,
+        )
+        raw_before[cell] = main_img.resize((FINAL_CELL_PX, FINAL_CELL_PX), Image.Resampling.BOX)
+
+        corrected_img = force_border_background_to_fill(main_img, CUTOUT_OKLAB_TOLERANCE)
+        masks_after[cell] = downscale_mask(
+            cutout_foreground_mask(
+                corrected_img, points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
+            ),
+            FINAL_CELL_PX,
+        )
+        raw_after[cell] = corrected_img.resize((FINAL_CELL_PX, FINAL_CELL_PX), Image.Resampling.BOX)
+
+    def _assemble(
+        raw_cells: dict[tuple[int, int], Image.Image], fg_masks: dict[tuple[int, int], np.ndarray]
+    ) -> Image.Image:
+        raw_sheet = Image.new("RGB", (SHEET_W, SHEET_H))
+        for (r, c), cell_img in raw_cells.items():
+            raw_sheet.paste(cell_img, (c * FINAL_CELL_PX, r * FINAL_CELL_PX))
+        indexed = quantize_to_palette(raw_sheet, palette)
+        indexed = apply_cutout_masks(
+            indexed, fg_masks, cell_size=FINAL_CELL_PX, background_index=0
+        )
+        indexed = enforce_cell_margin(
+            indexed, cell_size=FINAL_CELL_PX, margin=2, background_index=0
+        )
+        return cleanup_orphans(indexed, background_index=0, size_threshold=4)
+
+    def _per_cell_background_fraction(indexed: Image.Image) -> dict[str, float]:
+        arr = np.array(indexed)
+        fractions = {}
+        for r, c in FRAME_CELLS:
+            y0, x0 = r * FINAL_CELL_PX, c * FINAL_CELL_PX
+            cell_arr = arr[y0 : y0 + FINAL_CELL_PX, x0 : x0 + FINAL_CELL_PX]
+            fractions[f"{r}_{c}"] = float((cell_arr == 0).mean())
+        return fractions
+
+    indexed_before = _assemble(raw_before, masks_before)
+    indexed_after = _assemble(raw_after, masks_after)
+    save_sprite_sheet(indexed_before, out_dir / "sheet_192x96_indexed_before_T0319.png")
+    save_sprite_sheet(indexed_after, out_dir / "sheet_192x96_indexed_after_T0319.png")
+
+    fractions_before = _per_cell_background_fraction(indexed_before)
+    fractions_after = _per_cell_background_fraction(indexed_after)
+
+    return {
+        "out_dir": str(out_dir),
+        "min_background_fraction": MIN_BACKGROUND_FRACTION,
+        "before": fractions_before,
+        "after": fractions_after,
+        "before_passes": {
+            cell: frac >= MIN_BACKGROUND_FRACTION for cell, frac in fractions_before.items()
+        },
+        "after_passes": {
+            cell: frac >= MIN_BACKGROUND_FRACTION for cell, frac in fractions_after.items()
+        },
+    }
 
 
 def check_attempt_cap(attempt: int) -> None:

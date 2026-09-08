@@ -1261,3 +1261,335 @@ already recorded here and in `docs/assets/evidence/T-0272/README.md`, so a
 second copy of that narrative in the provenance file would only be another
 place for it to drift out of sync. No other change this round; the mask fix
 and round-4 colour finding both stand.
+| 37 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 57.1 | FAIL | no | round 6 (T-0317): first attempt with the newly generated green-costume side reference in the secondary slot (needs_invert=False -- its background is already forced solid black by extract_panel_reference, same reasoning as round 4's own derived-crop precedent). Best-known recipe otherwise: seed 31416, pose LoRA 0.6, primary IP-Adapter 0.6, ControlNet 1.0/1.0. |
+| 38 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 72.1 | FAIL | no | round 6: attempt 37's weight 0.45 collapsed into an incoherent wrong-subject abstraction (2 fg px) -- the new reference is visually much busier (full rendered coat+linework) than round 4's near-empty derived crop, so even a moderate secondary weight may dominate/conflict. Lowered to 0.2. |
+| 39 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 66.1 | FAIL | no | round 6: attempt 38's weight 0.2 still fragmented (39 fg px, green blob but no coherent silhouette) -- lowering further to 0.1, a light colour nudge rather than a competing structural signal. |
+| 40 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 84.3 | FAIL | no | round 6: attempt 39 (weight 0.1) was the first genuinely promising visual -- legible green coat, coherent side lean -- but the cutout gate failed (32 fg px) because the render's own background came out multi-toned grey, not flat black, confusing border-flood classification. Nudging weight to 0.15 to test if a touch more conditioning yields a cleaner render at the same seed before trying a different seed. |
+| 41 | 84512 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 51.1 | PASS | no | round 6: seed 31416 (attempts 37-40) kept rendering a cropped/multi-toned-background composition regardless of secondary weight (0.1-0.45), so the cutout gate could never pass even when the visual read as coherent (attempt 39). Trying round 5's seed 84512 (attempt 33's own note: 'the first attempt across all 36 to produce genuinely vivid, saturated institutional green') at the same 0.15 secondary weight, everything else unchanged. |
+| 42 | 84512 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.4 | 48.1 | PASS | no | round 6: attempt 41 passed the mechanical gate (265 fg px) but reads as an incoherent cropped abstraction at 48px, not a legible standing figure -- same coherent-vs-gated trade-off T-0272 rounds 1-5 already hit. Lowering the primary (front-sheet) IP-Adapter weight 0.6->0.4 and raising the new secondary reference 0.15->0.3, rebalancing toward the side reference rather than adding a third unrelated lever (round 4's own attempt 19 precedent for trading these two weights against each other). |
+| 43 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.45 | 60.1 | FAIL | no | round 6: attempt 39's seed 31416 + secondary weight 0.1 was the best coherent+green-legible visual so far but framed as a tight crop (32 fg px, gate fail). attempt 42 (rebalanced weights, seed 84512) collapsed into a wrong-subject architectural abstraction. Returning to seed 31416 / secondary 0.1 and lowering the primary front-sheet IP-Adapter 0.6->0.45 to reduce its competing structural pull, hoping for a fuller-body composition. |
+| 44 | 55555 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 57.1 | FAIL | no | round 6, final attempt in this round's budget: seed 31416 gave the best coherent+legible visual (attempt 39) but never a clean-black-background composition (attempts 37-40, 43); seed 84512 passed the mechanical gate but read as incoherent/wrong-subject (attempts 41-42). Trying a fresh seed (55555) at the recipe's original primary weight (0.6) and a middle secondary weight (0.15) as a last, distinct data point before reporting. |
+
+## Round 6 (T-0317, attempts 37-44): a genuine green side reference now exists, but stacking it into the §24-e keyframe still does not produce a promotable frame
+
+**Step 1 -- feasibility gate, confirmed correct.** `assets/src/concept/gen_player_profile_costume_reference_T0317.py` generates through a genuinely different stack from this card's own §24-e (plain txt2img + style LoRA only -- no ControlNet, no IP-Adapter, no identity/pose LoRA), matching T-0209's own recipe. 3 attempts (not a sweep) produced `assets/src/concept/player_profile_costume_reference_T0317.png`: a strict side-profile panel, facing right, in a vivid institutional green cloth coat, cropped and cleaned from a genuine 3-panel front/side/back turnaround via `derive_profile_style_reference_T0272.extract_panel_reference` (reused directly). Its green content -- 48,547 matching pixels -- clears T-0272 round 5's own 1.0-1.7% noise floor by roughly two orders of magnitude and comfortably exceeds the 6,000-6,900 confirmed-match band. This is the colour-bearing side reference this card's own "why this card exists" section said did not exist anywhere in the repo.
+
+**Step 2 -- wiring the new reference into the profile keyframe stack, 8 attempts (37-44), still not promotable.** `check_attempt_cap` opened a fresh round-6 budget (37-44) for this specific reason: this is new conditioning input, not a re-run of rounds 1-5's own parameter sweep. `--secondary-no-invert` was the deliberate choice (documented per-attempt in `secondary_ip_adapter_reference.transform`): the new reference's own background is already forced solid black by `extract_panel_reference`, the same reasoning round 4 used for its own derived crop, so inverting it a second time would reintroduce round 3 Test D's own light-background bleed.
+
+Across the 8 attempts, two failure modes recurred, never both absent at once:
+
+- **Wrong-subject / incoherent collapse** (attempts 37, 38, 42, 43, 44): raising the new reference's own weight past roughly 0.15, or rebalancing the primary front-sheet weight down to compensate, consistently broke subject coherence entirely -- abstract colour-block or architectural-panel renders, not a person, the same "wrong_subject" failure class T-0218 first named and rounds 1/3 of this card already reproduced. This reference is visually far busier (a fully rendered coat with linework, folds, and a hood) than round 4's near-empty derived crop, so even moderate IP-Adapter weight appears to compete much more strongly with the primary conditioning and ControlNet than the prior secondary references did.
+- **Coherent but gate-failing** (attempts 39, 40): at a light 0.1-0.15 secondary weight and the original recipe's seed (31416), the *visual* read as the round's best result by far -- a legible, coherent, vivid-green coat with a genuine side lean (attempt 39's `main_384.png`, kept in `docs/assets/evidence/T-0272/`) -- but the render's own background came out multi-toned grey rather than the prompt's own "solid flat black background" request, which starved the per-pixel cutout (`border_flood_background_mask` itself warned at generation time that this frame's border colours span 13-33x its own classification tolerance). Only 27-39 foreground pixels survived to the 48x48 cell, well under the mechanical gate's 50px floor.
+- **One attempt passed the mechanical gate** (attempt 41, seed 84512, secondary weight 0.15: 265 fg px, background_fraction 0.885) but its own `main_384.png` and `cell_48_indexed.png` do not read as a legible standing figure at either resolution -- an incoherent cropped abstraction, the same "gate passes, human visual call still fails" pattern rounds 1-5 already established repeatedly. Not promoted on that basis, per this card's own instruction ("do not promote a keyframe whose green is not legible at 40px, or that is not genuinely side-facing").
+
+**Decision: not promoted, per the card's own instruction not to sweep further or fake a result.** The round-6 budget (37-44) is spent; `check_attempt_cap` refuses a 45th attempt without a further, explicitly-scoped budget bump, and this card's own "Do not" section forbids sweeping §24-e parameters again. `player_profile_keyframe_hybrid_T0272.png` remains absent from `assets/final/character/`, exactly as rounds 1-5 and T-0315 round 4/5 left it. Attempt 39's `main_384.png` (the round's best visual, gate-failing) and attempt 41's `main_384.png`/`cell_48_indexed.png` (the round's only gate-passing, visually-rejected attempt) are committed to `docs/assets/evidence/T-0272/` alongside the promoted reference itself, so the trade-off this round hit is reviewable without re-running the generator.
+
+**What a follow-up would need to try that this round's own 8-attempt budget did not reach:** a secondary-weight value between attempt 39's 0.1 (coherent, gate-fails) and attempt 41's 0.15-0.3 (gate-passes at 84512, incoherent) has not been tried *at seed 31416* specifically (the seed that gave attempt 39's coherent result) -- rounds 6's own attempts varied seed and weight together rather than holding the promising seed fixed and fine-stepping weight alone. A prompt-level fix naming "flat black background, no grey background, no multi-tone background" more forcefully in `PROFILE_PROMPT` itself (not just the light-reference-specific negative terms already present) is also untried. Both are legitimate next steps for whichever card picks this up, but are explicitly out of this round's own remaining budget.
+| 45 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 57.1 | PASS | no | round 7 (T-0317): re-run attempt 39's exact recipe (seed 31416, secondary weight 0.10) with the new strengthened black-background prompt term, to test whether the prompt fix alone rescues attempt 39's gate-failing multi-toned-background render before fine-stepping weight. |
+| 46 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 51.1 | PASS | no | round 7 (T-0317): attempt 45 (same recipe, new prompt) regressed into incoherence, traced to CLIP truncation from an over-long negative prompt. Re-running attempt 39's exact recipe with the trimmed, truncation-safe prompt (negative back to 92 words, matching attempt 39's own; new background terms appended at the tail of both prompts). |
+| 47 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 48.1 | PASS | no | round 7 (T-0317): attempt 46 (weight 0.1, fixed prompt) still incoherent/glow-outline, so the token-budget fix alone did not restore attempt 39's coherence -- any change to the negative prompt string reshuffles the whole trajectory regardless of length. Fine-stepping the secondary weight itself, seed still fixed at 31416: trying a lighter touch (0.05) than attempt 39's own 0.1. |
+| 48 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 45.1 | PASS | no | round 7 (T-0317): isolation -- attempts 46-47 (weight 0.05-0.1) both gave the same abstract outline/glow render regardless of secondary weight, suspiciously identical to each other. Testing whether the NEW prompt alone (no secondary reference at all) already produces this shape at seed 31416, to isolate the prompt's own effect from the secondary reference's. |
+| 49 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 57.1 | FAIL | no | round 7 (T-0317): reverted to attempt 39's exact prompt (see this round's isolation of the prompt-text regression). Fine-stepping the secondary weight in the untried 0.1-0.15 gap at seed 31416, holding everything else at attempt 39/40's own recipe: 0.11. |
+| 50 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | FAIL | no | round 7 (T-0317): direct reproduction check -- attempt 39's exact recipe (seed 31416, secondary weight 0.10, reverted prompt confirmed byte-identical), to test whether this environment can reproduce attempt 39's own recorded coherent visual at all, before trusting any further fine-stepped weight result as meaningful. |
+| 51 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 3.1 | FAIL | no | round 7 (T-0317): second reproduction check, identical recipe to attempts 39 and 50 (seed 31416, secondary weight 0.10) -- 50 already diverged from both 39's own recorded visual AND from 45/46/47/48/49's shared totem shape, despite byte-identical inputs. Confirming this is genuine run-to-run nondeterminism, not a one-off fluke, before concluding further fine-stepping cannot be trusted as a meaningful lever in this environment. |
+| 52 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 51.1 | PASS | no | round 8 (T-0317), final attempt in the card's own budget (cap 52): the round-7 reviewer's own named precondition test -- `POST /free` issued first (`torch_vram_free` rose from round 7's ~28MB to ~7.36GB `vram_free`/25MB resident-after-unload), then attempt 39/50's exact recipe re-run a third time (seed 31416, secondary weight 0.10, prompt byte-identical). `gpu_seconds` 51.1 confirms a full recompute, not a cache hit. Gate passed (144 fg px, background_fraction 0.9375) but the image is a FOURTH distinct composition -- neither attempt 39's coherent figure, nor 45-49's totem shape, nor attempt 50's own render -- an incoherent glowing-silhouette abstraction with no legible head/torso/leg structure. Real VRAM headroom does not rescue reproducibility. Not promoted. |
+
+## Round 7 (T-0317, attempts 45-51): the reviewer's own two named levers, both tried; a third, unnamed defect found underneath them -- still not promotable
+
+The round-6 reviewer FAIL named two specific, previously-untried levers and asked for either a promoted keyframe or an explicit human descope decision. Both levers were tried in full. Neither produced a promotable frame, and pursuing them surfaced a structural problem with the whole "hold seed fixed, vary one parameter" methodology every round since round 3 has relied on.
+
+**Lever 2 (background-defect prompt term), tried first, retracted.** Attempt 45 re-ran attempt 39's exact recipe with `no grey background, no multi-tone background` added to `PROFILE_PROMPT`/`PROFILE_NEGATIVE` and regressed from attempt 39's coherent (if gate-failing) visual to an incoherent black-outlined, neon-rim-lit abstraction (`docs/assets/evidence/T-0272/attempt_45_prompt_edit_regression_T0317.png`) -- gate-passing (124 fg px) but not a legible figure. Suspecting CLIP's 77-token truncation (the negative prompt was already 92 words before this round; `IDLE_MAIN_NEGATIVE`, shared verbatim across T-0228/T-0249/T-0252/T-0259 and out of this card's own scope to trim, is 67 words on its own), attempt 46 trimmed the addition to remove duplicated terms and moved it to the tail of both prompts -- restoring the negative to exactly 92 words, matching attempt 39's own. **Attempt 46 still produced the same incoherent shape as attempt 45.** Attempts 47 (secondary weight lowered 0.1 -> 0.05) and 48 (secondary reference removed entirely) confirmed why: both rendered a **byte-identical** frame to attempt 45/46, meaning the secondary IP-Adapter reference and its weight had zero visible effect once the prompt text changed at all -- the prompt edit alone, regardless of length or truncation safety, fully rerouted seed 31416's diffusion trajectory. `build_positive_prompt`/`PROFILE_NEGATIVE` are reverted to the exact wording that produced attempt 39's result (locked by `test_positive_prompt_matches_the_known_good_round_6_baseline` / `test_negative_prompt_matches_the_known_good_round_6_baseline`), and this lever is retracted: it cannot be applied without destabilizing the one known-coherent composition this whole card is trying to recover.
+
+**Lever 1 (fine-step secondary weight, seed held fixed), tried second, undermined by a reproducibility defect.** With the prompt reverted, attempt 49 tried the actual untried gap the reviewer named -- secondary weight 0.11, between attempt 39's 0.1 and attempt 40's 0.15, seed still 31416 -- and gate-failed at 5 fg px, visually the same incoherent shape as the (retracted) prompt-edit attempts. To check whether that result meant anything, attempt 50 re-ran attempt 39's own recipe **exactly** (seed 31416, secondary weight 0.10, prompt byte-identical, confirmed against the reverted `PROFILE_PROMPT`/`PROFILE_NEGATIVE`) -- expecting to reproduce attempt 39's own recorded coherent visual as a sanity check before trusting attempt 49's number. **It did not reproduce.** Attempt 50 (`docs/assets/evidence/T-0272/attempt_50_reproduction_diverges_T0317.png`) is neither attempt 39's green-coat figure nor attempts 45-49's totem shape -- a third, distinct composition, from byte-identical graph inputs. Attempt 51 re-ran the identical recipe again and matched attempt 50 (not attempt 39), but its GPU time (3.1s vs attempt 50's 54.1s) shows it was a ComfyUI node-cache hit against attempt 50's own just-computed result, not an independent draw -- so 50 and 51 together only establish that ComfyUI's *own* cache is self-consistent within one server session, not that the pipeline reproduces a result recorded in a *different* session.
+
+**Finding: this pipeline's "seed" does not guarantee cross-session reproducibility, and no round since round 3 has ever tested that it does.** Every prior round's methodology ("seed 31416 gave a coherent result at weight W, therefore try seed 31416 at weight W'") implicitly assumes the seed pins the composition and only the varied parameter moves the outcome. Attempt 50 disproves that assumption directly: identical seed, identical prompt, identical weight, identical graph -- a different outcome, generated one round later. `system_stats` at the top of this round showed `torch_vram_free: 29758994` (~28MB free against a `torch_vram_total` of ~5.9GB) on an 8GB card already carrying ComfyUI's own OS/driver overhead -- VRAM pressure this tight is a known trigger for ComfyUI to fall back to different attention/memory-management code paths per job (chunked vs. non-chunked attention, CPU-offloaded vs. resident weights), each with its own numerical behaviour, which would explain bit-level (and here, structural) divergence despite a fixed `KSampler` seed. This card did not set out to audit ComfyUI's own determinism and does not have the budget left to isolate that fully (round 7's 8-attempt budget, 45-51, is effectively spent -- one nominal attempt, 52, remains but would only be another single unverifiable draw, not new evidence).
+
+**Decision: not promoted.** Continuing to fire off further weight or prompt variants against a target that has now been shown not to hold still between attempts is exactly the open-ended sweep this card's own "Do not" section forbids, not a continuation of the two scoped levers the round-6 reviewer named -- both of those are now exhausted (one retracted with evidence, one undermined by the reproducibility finding above). `player_profile_keyframe_hybrid_T0272.png` remains absent from `assets/final/character/`. The costume reference this card exists to produce (`assets/src/concept/player_profile_costume_reference_T0317.png`) is unaffected by any of this -- it does not depend on §24-e's own sampling behaviour -- and remains committed, provenanced, and measured against the green-content benchmark.
+
+**Recommendation for the human decision this round's own reviewer already flagged as human-owned:** either (a) descope the keyframe promotion from T-0317 and bank the reference (the genuinely hard half, already delivered) against T-0272 directly, where a future round can open with a ComfyUI-determinism investigation as its own first step rather than an assumed precondition, or (b) scope a follow-up card specifically to characterize/fix the VRAM-pressure-driven nondeterminism (e.g. running ComfyUI with `--disable-smart-memory` or a reduced batch/resolution footprint to leave more free VRAM headroom, and re-testing whether a fixed seed then reproduces) before spending further attempts on this card's own keyframe.
+
+## Round 8 (T-0317, attempt 52): the reviewer's own precondition test, tried -- real VRAM headroom does not fix reproducibility
+
+The round-7 reviewer's own "TO PASS" note offered one specific, narrow next step before any descope decision: spend the single remaining budgeted attempt (52) on the determinism precondition itself -- get real VRAM headroom (their own suggestion: `--disable-smart-memory` or a reduced footprint) and re-run attempt 39's exact recipe, checking whether seed 31416 then reproduces. A full ComfyUI process restart with different launch flags is outside this agent's own reach (no shell access to the Windows host running it, only the HTTP API), but ComfyUI's own `/free` endpoint (`POST /free {"unload_models": true, "free_memory": true}`) achieves the same relevant effect -- releasing resident model weights back to the driver -- without needing a process restart, so this is a fair test of the same precondition, not a substitute for it.
+
+**Before:** `system_stats` showed `torch_vram_free` 25-77MB against `torch_vram_total` ~5.9GB on the 8.5GB card -- consistent with round 7's own ~28MB reading, the same tight-VRAM state the divergence was hypothesized against.
+
+**`/free` issued, then re-measured:** `torch_vram_total` dropped to 33MB (every resident model unloaded) and the OS-level `vram_free` rose to ~7.36GB -- headroom roughly 260x round 7's own figure, unambiguously a different VRAM regime.
+
+**Attempt 52, same exact recipe as attempts 39/50 (seed 31416, secondary weight 0.10, prompt confirmed unchanged), run immediately after:** `gpu_seconds` 51.1 -- a full recompute (not a cache hit, unlike attempt 51's 3.1s). The mechanical gate passed this time (144 fg px, `background_fraction` 0.9375, more foreground than either 39 or 50). But `attempt_52_free_vram_still_diverges_T0317.png` (`docs/assets/evidence/T-0272/`) is a **fourth** distinct composition -- not attempt 39's coherent green-coat figure, not attempts 45-49's shared totem/glow-outline shape, not attempt 50's own divergent render. It is an abstract glowing silhouette with a small green fragment near the top and no legible head, torso, or leg structure. Not a person, and not promotable.
+
+**Finding: the VRAM-pressure hypothesis is not the (whole) explanation.** Round 7 proposed VRAM pressure (chunked vs. resident attention, CPU-offload fallback) as the likely trigger for cross-session nondeterminism at a fixed seed. This round removed that pressure directly and re-ran the identical recipe: the output still diverged, to a result distinct from every prior run of the same inputs. VRAM pressure may still be a contributing factor in the mix, but freeing it does not, on its own, restore reproducibility -- so it cannot be the single lever a future round could pull to fix this.
+
+**Decision: not promoted. Card's own attempt-cap budget (1-52) is now fully spent.** `check_attempt_cap` refuses attempt 53 without an explicit new budget grant, and even setting that mechanical limit aside, this card's own "Do not" section forbids further sweeping. `player_profile_keyframe_hybrid_T0272.png` remains absent from `assets/final/character/`. The round-7 reviewer's own two routes forward were (a) this precondition test, then promote only if it reproduces cleanly, or (b) a human descope decision. Route (a) is now closed, having been tried in good faith and found not to rescue the frame; route (b) -- descoping the keyframe from this card and banking the already-delivered, unaffected reference against T-0272 directly -- is the only path this card can still offer, and it is a human call, not one an implementer or reviewer can make.
+| 52 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 51.1 | PASS | no | round 8 (T-0317): determinism precondition check per round-7 reviewer -- POST /free (unload_models+free_memory) issued first, torch_vram_free rose from round 7's ~28MB to ~7.36GB system-free/25MB-resident-after-unload before this run; re-running attempt 39/50's exact recipe (seed 31416, secondary weight 0.10) to test whether real VRAM headroom restores reproducibility of attempt 39's coherent visual. |
+| 53 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 66.7 | PASS | no | round 9 (T-0317): reproduce attempt 39's exact recipe against the now-forced-black render background (build_indexed_cell wiring). |
+| 54 | 31416 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | PASS | no | round 9 (T-0317): freed VRAM (POST /free) then re-ran attempt 53's exact recipe unchanged, to test whether a genuinely independent resample (not a node-cache hit) matches attempt 53's own render or diverges again. |
+
+## Round 9 (T-0317, attempts 53-54): the background fix is correctly wired and does not rescue attempt 39's own render either -- a sharper diagnosis of the reproducibility defect, still not promotable
+
+**Precondition confirmed before generating anything.** PR #350/T-0319 is merged into this branch (`6c5143d`); `grep -n force_border_background_to_fill assets/src/character/src/char_gen/cutout.py` finds the shared primitive. Measured before this round's own code change: `gen_hybrid_walk_T0259.py` called it 6 times (wired), `gen_hybrid_profile_T0272.py` called it 0 times directly -- the primary identity-reference crop already inherited T-0319's fix for free via the shared `crop_identity_reference` import, but this generator's own per-frame render background was never corrected before `extract_foreground_mask` ran on it. `build_indexed_cell` now calls `force_border_background_to_fill(main_384, CUTOUT_OKLAB_TOLERANCE)` before segmenting, mirroring `gen_hybrid_walk_T0259.reprocess_attempt_background_fix`'s own "before"/"after" pattern -- TDD RED/GREEN pair `test_build_indexed_cell_forces_render_background_before_cutout` / implementation, both committed. `check_attempt_cap` opened a fresh 53-60 budget.
+
+**Direct test first, no GPU spend: does the fix rescue attempt 39's OWN preserved render?** Before spending any new attempts, `attempt_39_coherent_but_gate_failing_T0317.png` (`docs/assets/evidence/T-0272/`, main_384 preserved from round 6) was re-cut through the new code path in-process -- no new ComfyUI call, the same no-GPU-cost check `gen_hybrid_walk_T0259.reprocess_attempt_background_fix` uses. Result: **36 fg px before the fix, 34 fg px after** -- materially unchanged, and still nowhere near the 50px floor. This falsifies the hope that attempt 39's own already-sampled render was a pure background-classification failure the fix alone could recover -- it matches T-0319's own honest conclusion for the walk generator's preserved attempts almost exactly ("baked into the sampled pixel content itself in a way a post-hoc background recolour cannot undo").
+
+**Attempt 53: reproduce attempt 39's exact recipe (seed 31416, secondary weight 0.10, `--secondary-no-invert`) against a live generation, with the fix now active end-to-end.** Mechanical gate **passed** (74 fg px, `background_fraction` 0.9679) -- more foreground than attempts 39/40/49/50 and roughly half of attempt 52's 144. But `main_384.png` (`docs/assets/evidence/T-0272/attempt_53_54_fixed_background_still_diverges_T0317.png`) is a **fifth** distinct composition against the same nominal inputs: an abstract vertically-striped shape with white/green fragments near the top, no legible head, torso, arm, or leg structure. Not a person, not side-facing, not promotable, despite passing the mechanical gate -- the same "gate-passing but incoherent" trap attempts 41 and 52 already demonstrated.
+
+**Attempt 54: the sharper diagnostic.** `POST /free` (`torch_vram_free` rose from ~97MB to ~1.89GB) issued first, then the identical recipe re-run. `gpu_seconds` 54.1 confirms a full recompute, not a cache hit (attempt 51's 3.1s remains the only cache-hit signature seen on this card). Result: **byte-identical to attempt 53** (`sha256` matches exactly). This is new information rounds 7-8 did not establish: **within one continuous ComfyUI server session, the identical recipe reproduces itself deterministically, before and after a `/free` call.** The nondeterminism this card has chased since round 7 is not "this pipeline never reproduces anything" -- it is specifically **cross-session**: whatever server-process-lifetime state seeds the sampler's actual random draws (most likely PyTorch/cuDNN algorithm selection or global RNG state fixed once per process start, not fully re-derived from the request's own `seed` field) differs between this round's live session and whatever session produced attempt 39's original coherent visual, but is stable within a session. That reframes "hold seed fixed" as an incomplete control in this environment -- the seed alone does not pin the output; the server process's own lifetime does too, and that cannot be pinned from the HTTP API this agent has.
+
+**Decision: not promoted, and no further attempts spent this round.** The card's own explicit stop condition -- "if attempt 39's recipe still will not reproduce on a clean-VRAM, background-fixed branch, stop and report that as the finding ... rather than sweeping" -- is met, and met twice over (attempts 53 and 54, one before and one after a VRAM free, both full recomputes, both diverging identically from attempt 39's original visual). Continuing to re-run the identical recipe a sixth or seventh time would only reconfirm the same session-scoped determinism already shown by 53==54; the card's "Do not" section forbids sweeping weights/prompt/seed to go looking for a coherent result instead. `player_profile_keyframe_hybrid_T0272.png` remains absent from `assets/final/character/`. Six of this round's eight budgeted attempts (55-60) are deliberately unspent.
+
+**What this round adds for whoever picks this up next.** The reproducibility defect is now characterized more precisely than "VRAM pressure doesn't explain it" (round 8): it is session-scoped, not seed-scoped, and it survives a component-level dependency merge (T-0319) that fixed a different, real defect (the identity-reference crop's own grey bleed) without touching this one. A future investigation has a concrete, cheap next probe this round did not run out of its own budget: read `/system_stats`' `argv`/version fields across two server lifetimes and check ComfyUI/PyTorch's own documented determinism knobs (`torch.use_deterministic_algorithms`, `cudnn.benchmark`, `CUBLAS_WORKSPACE_CONFIG`) -- none of which this agent can set from the HTTP API alone, since ComfyUI's `--listen`/`--port` launch flags are fixed on the Windows host and this agent has no shell there. That is a environment/infra probe, not a §24-e parameter, so it does not conflict with this card's own "no sweeping" instruction, but it is outside this round's own scope to chase further.
+| 61 | 61023 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 54.1 | FAIL | no | round 10 (T-0317): fresh seed on deterministic ComfyUI (--deterministic + CUBLAS_WORKSPACE_CONFIG), secondary weight 0.10 (attempt 39/41 band), not a re-run of attempt 39's own recipe |
+| 62 | 200601 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 39.1 | PASS | no | round 10 (T-0317): seed sweep on deterministic ComfyUI, weight held at 0.10, attempt 61 was incoherent totem-abstraction |
+| 63 | 771001 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 42.1 | FAIL | no | round 10 (T-0317): seed sweep on deterministic ComfyUI, weight held at 0.10, attempts 61-62 both incoherent |
+| 64 | 305092 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 42.1 | FAIL | no | round 10 (T-0317): seed sweep on deterministic ComfyUI, weight held at 0.10, attempts 61-63 all incoherent circuit/totem abstractions |
+| 65 | 918273 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 42.1 | PASS | no | round 10 (T-0317): seed sweep on deterministic ComfyUI, weight held at 0.10, attempts 61-64 all incoherent striped/circuit abstractions |
+| 66 | 445566 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 45.1 | FAIL | no | round 10 (T-0317): seed sweep on deterministic ComfyUI, weight held at 0.10, attempts 61-65 all incoherent striped/circuit abstractions -- sixth sample before stopping the sweep |
+| 67 | 445566 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 3.1 | FAIL | no | round 10 (T-0317): determinism proof -- exact recipe repeat of attempt 66 (same seed 445566, same weights) to confirm --deterministic pins output within this session |
+| 68 | 445566 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 60.1 | FAIL | no | round 10 (T-0317): determinism proof, take 2 -- POST /free issued first to force a genuine recompute (attempt 67's 3.1s was a ComfyUI node-cache hit, not independent evidence); same seed 445566 as attempts 66-67 |
+
+## Round 10 (T-0317, attempts 61-68): determinism is now proven, but every fresh seed under `--deterministic` produces a NEW, consistent failure mode -- still not promotable
+
+**Precondition confirmed before generating anything.** `GET /system_stats` on the live ComfyUI host returns `"argv": ["main.py", "--listen", "0.0.0.0", "--port", "8188", "--deterministic"]`, confirming the host restart round 9's own review named as the next probe actually happened. `vram_free` 7.44GB, `torch_vram_free` 0 (model unloaded) before the first generation -- real headroom, not the ~28MB pressure rounds 7-8 worked under. `check_attempt_cap` opened a fresh 61-68 budget (TDD RED/GREEN pair `test_check_attempt_cap_allows_a_fresh_round_10_budget` / implementation, both committed) since round 9 spent only 53-54 of its own 53-60 budget and this round's own input -- a newly-deterministic server -- is not a continuation of round 9's background-fix retest.
+
+**Per this round's own instruction, attempt 39's recipe was deliberately NOT reproduced.** Round 9 already proved the reproducibility defect is session-scoped: attempt 39's coherent visual came from a server session that no longer exists, and restarting ComfyUI with determinism flags pins *future* sessions rather than resurrecting a past one. Six fresh seeds were tried instead (attempts 61-66), secondary IP-Adapter weight held fixed at 0.10 (the value that produced attempt 39's own coherence), everything else at the recipe rounds 6-9 converged on (primary 0.6, pose 0.6, ControlNet 1.0/1.0, `--secondary-no-invert`).
+
+**Every one of the six seeds produced the same NEW failure mode -- not the totem/glowing-silhouette abstractions rounds 6-9 saw, but a horizontal-striped/circuit-board pattern.** Opened each `main_384.png` directly:
+
+- **Attempt 61** (seed 61023, `attempt_61_first_fresh_seed_deterministic_striped_T0317.png`): a vertical white/green architectural totem with fine horizontal ribbing, mechanical gate correctly reports 0 fg px (nothing meets the keypoints-hint overlap bar) -- not a person.
+- **Attempts 62-64** (seeds 200601, 771001, 305092): variations on the same theme -- black backgrounds cut by regular horizontal green/white/cyan bars, a narrow vertical spine down the centre. None read as a human figure, side-facing or otherwise.
+- **Attempt 65** (seed 918273, `attempt_65_gate_passing_but_incoherent_striped_T0317.png`): mechanical gate **passed** (53 fg px, `background_fraction` 0.977) -- the same "gate-passing but incoherent" trap attempts 41, 52 and 53 already demonstrated. Striped/barred pattern, no legible head, torso, arm or leg.
+- **Attempt 66** (seed 445566): sixth and last fresh sample before stopping the sweep, per the card's own "Do not sweep" instruction once a consistent pattern is clear. Same striped failure mode.
+
+Six for six. This is a different, more *consistent* failure signature than any prior round -- rounds 6-9's incoherent results varied in character (totems, glowing silhouettes, abstract grids); this round's six samples all converge on the same regular horizontal-banding artifact regardless of seed. The likely mechanism: `--deterministic` forces PyTorch/cuDNN onto non-fused, algorithmically-deterministic kernel paths (disabling optimized/fused attention implementations), which changes the actual numerical output of this dual-IPAdapter + ControlNet graph, not merely its reproducibility. Determinism and this graph's prior (fragile) coherence may be in tension -- pinning the sampler's behaviour session-to-session came at the cost of the specific kernel path that produced attempt 39's coherent result in the first place. This is inference, not confirmed root cause; nothing on this agent's HTTP-only access can distinguish it from, say, a `CUBLAS_WORKSPACE_CONFIG` interaction specific to this graph's attention pattern.
+
+**The "prove the pin" deliverable: done properly, on the second try.** Attempt 67 re-ran attempt 66's exact recipe (seed 445566, same weights) and produced a **byte-identical** `main_384.png` (`sha256` match) -- but at `gpu_seconds` 3.1, the same cache-hit signature attempt 51 showed, so it is not independent evidence. `POST /free` was issued (`unload_models`+`free_memory`) and attempt 68 re-ran the identical recipe a third time: `gpu_seconds` 60.1 (a genuine full recompute) and **still byte-identical** to attempts 66 and 67 (`attempt_66_67_68_determinism_proof_T0317.png`). **This is the meaningful claim this round set out to prove: the seed now pins the render within a session, confirmed by an independent (non-cached) recompute, not just a cache hit.** A cross-restart check -- whether the SAME seed reproduces across two separate server lifetimes -- is the stronger guarantee and remains untested; that belongs to a determinism-infra card, not this one, per this round's own instruction not to overclaim it here.
+
+**Digest, recorded per the round-10 reviewer's request (this line closes that gap):**
+
+```
+sha256(assets/out/hybrid_profile/attempt_66/main_384.png) = ff18f51ceb186ed14ed5ce0d18b3f0dccee94a5943ba35c28aefd196795d957a
+sha256(assets/out/hybrid_profile/attempt_67/main_384.png) = ff18f51ceb186ed14ed5ce0d18b3f0dccee94a5943ba35c28aefd196795d957a
+sha256(assets/out/hybrid_profile/attempt_68/main_384.png) = ff18f51ceb186ed14ed5ce0d18b3f0dccee94a5943ba35c28aefd196795d957a
+sha256(docs/assets/evidence/T-0272/attempt_66_67_68_determinism_proof_T0317.png) = ff18f51ceb186ed14ed5ce0d18b3f0dccee94a5943ba35c28aefd196795d957a
+```
+
+All four match, independently recomputed in round 11 -- the committed evidence frame is confirmed to be the same file as attempts 66-68's own raw output, not a re-export that could have silently diverged.
+
+**Decision: not promoted. Budget (61-68) fully spent, no extension taken.** The round's own stop condition -- "if seeds sweep without producing a coherent side-facing figure, stop at the budget and report which seeds were tried with the frames as evidence... do not extend the budget a second time within one round" -- is met: six distinct seeds (61-66), all incoherent by the same failure signature, plus two attempts (67-68) spent proving the determinism claim rather than searching further. `player_profile_keyframe_hybrid_T0272.png` remains absent from `assets/final/character/`.
+
+**What this round adds for whoever picks this up next.** Two separable findings, not one: (1) the pipeline is now genuinely deterministic within a session (proven, not just asserted, via a forced non-cached recompute) -- a real improvement over rounds 7-9's session-scoped nondeterminism; but (2) fresh generation under this deterministic configuration reliably produces a *worse*, more consistent failure mode than the session that produced attempt 39, across every seed sampled. Determinism was purchased; coherence was not restored, and may in fact have been actively excluded by the same kernel-path change. The costume-bearing side reference itself (`player_profile_costume_reference_T0317.png`, 48,547 green px, genuinely side-on) remains sound and unaffected by any of this -- it is the profile keyframe's own §24-e sampling behaviour, now under a third distinct regime (uncontrolled nondeterminism -> session-scoped determinism -> apparently-coherence-excluding determinism), that has not produced a promotable result across ten rounds and 68 attempts. Whether to (a) descope the keyframe to a follow-up and bank the reference, which has been sound since round 6, or (b) investigate the specific interaction between `--deterministic`/`CUBLAS_WORKSPACE_CONFIG` and this graph's dual-IPAdapter conditioning (a different, narrower probe than rounds 7-9's own VRAM/session investigation) is, as in every round since round 6's own reviewer FAIL, a human call.
+
+`.gitignore` check (re-run for round 10): `git check-ignore -v` against all three of this round's evidence frames returns nothing, so no `.gitignore` change was needed to commit them either.
+| 69 | 271828 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 39.1 | PASS | no | round 11 (T-0317): probe render 1/2, partial-determinism regime (--deterministic removed, CUBLAS_WORKSPACE_CONFIG kept), fresh seed, attempt-39 recipe otherwise |
+| 70 | 271828 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 39.1 | PASS | no | round 11 (T-0317): probe render 2/2, same seed as attempt 69 after POST /free (genuine recompute check), partial-determinism regime |
+| 71 | 100003 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 27.1 | FAIL | no | round 11 (T-0317): seed reroll 1/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 72 | 100019 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 27.1 | FAIL | no | round 11 (T-0317): seed reroll 2/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 73 | 100043 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | PASS | no | round 11 (T-0317): seed reroll 3/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 74 | 100057 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | PASS | no | round 11 (T-0317): seed reroll 4/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 75 | 100069 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | PASS | no | round 11 (T-0317): seed reroll 5/6 under partial-determinism regime, attempt-39 recipe otherwise |
+| 76 | 100103 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 11 (T-0317): seed reroll 6/6 (final, budget exhausted after this) under partial-determinism regime, attempt-39 recipe otherwise |
+
+## Round 11 (T-0317, attempts 69-76): a bounded probe under a partial-determinism regime, then a bounded seed reroll -- still not promotable, but the finding narrows the suspect
+
+`@DennieSeth`'s decision on T-0324: run a narrow, bounded probe first, then
+ship if it works, rather than open a further unbounded investigation.
+ComfyUI was restarted with `--deterministic` **removed** while
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` stayed set (confirmed via `GET
+/system_stats` before generating anything: `argv` no longer contains
+`--deterministic`). `check_attempt_cap` opened a fresh 69-76 budget.
+
+**Step 0, done first as instructed:** the round-10 digest gap two reviewers
+flagged is now closed (see the top of this file, "Digest, recorded per the
+round-10 reviewer's request") -- attempts 66/67/68 and their evidence frame
+all hash to `ff18f51c...d957a`, independently reverified this round.
+
+**Step 1, the bounded probe (attempts 69-70), exactly as scoped -- two
+renders, same seed, judged on both coherence and reproducibility.** Fresh
+seed 271828, the established recipe otherwise (secondary reference
+`player_profile_costume_reference_T0317.png` at weight 0.10, primary 0.6,
+pose LoRA 0.6, ControlNet 1.0/1.0, `--secondary-no-invert`). Attempt 69
+passed the mechanical gate (54 fg px) but is a blocky, front-facing,
+bilaterally-symmetric glitch-fragmented figure with only faint green flecks
+-- not side-facing, not the green coat. Attempt 70 repeated the identical
+recipe after `POST /free`; `GET /history/<prompt_id>`'s own
+`execution_cached` message lists zero cached nodes (a genuine full
+recompute, `gpu_seconds` 39.1, not attempt 67's 3.1s cache-hit signature),
+and produced a **byte-identical** `main_384.png` to attempt 69 (`sha256`
+match). **Probe answer: coherent = NO, reproducible = YES.** The seed pins
+the render under this partial regime too, not only round 10's full
+`--deterministic` regime -- but that does not by itself rescue coherence.
+
+**Step 2, the bounded seed reroll (attempts 71-76), stopped exactly at
+budget per the round's own instruction not to extend it.** Six fresh seeds
+(100003, 100019, 100043, 100057, 100069, 100103), secondary weight held at
+0.10, everything else unchanged, each judged by opening the image:
+
+- 71 (100003): green/red/cyan circuit-board abstraction. Gate FAIL (2 fg px).
+- 72 (100019): banded architectural shape, light-green blocks. Gate FAIL (23 fg px).
+- 73 (100043): the round's highest foreground count (242 px) and most green
+  content, but a bilaterally-symmetric striped abstraction against a light
+  background, not a figure -- gate PASS on pixel count alone, another
+  "gate-passing but incoherent" instance (see attempts 41/52/53/65).
+- 74 (100057): vertical striping threaded with green fragments, no legible
+  head/torso/limb structure. Gate PASS (151 fg px) but not a person.
+- 75 (100069): a colourful machine-like abstraction, the least figure-like of
+  the six. Gate PASS (91 fg px).
+- 76 (100103, final attempt in this round's budget): a symmetric, robot-like
+  cyan/white form, still front-facing-symmetric, no green. Gate FAIL (3 fg px).
+
+**Zero of eight attempts (69-76) produced an attempt-39-class coherent,
+side-facing, green-legible figure. Not promoted. Budget fully spent, no
+extension taken**, per the round's own stop condition
+(`docs/assets/evidence/T-0272/attempt_69_70_probe_reproducible_but_incoherent_T0317.png`,
+`attempt_73_seed_reroll_best_case_still_incoherent_T0317.png`,
+`attempt_76_seed_reroll_final_still_incoherent_T0317.png`).
+`player_profile_keyframe_hybrid_T0272.png` remains absent from
+`assets/final/character/`.
+
+**What this round narrows down.** Three regimes have now been tried against
+this graph: (0) the original unpinned regime (rounds 1-8) -- nondeterministic
+across sessions, but the one session that produced attempt 39's coherent
+result came from here; (1) round 10's full `--deterministic` +
+`CUBLAS_WORKSPACE_CONFIG` -- reproducible, uniformly incoherent
+(horizontal-banding failure, six for six); (2) this round's partial regime,
+`CUBLAS_WORKSPACE_CONFIG` alone -- also reproducible (confirmed for the one
+seed tested), also uniformly incoherent, but in a *different* failure family
+(architectural/circuit abstractions, not banding). Removing `--deterministic`
+changed the character of the failure but not its presence, which weighs
+against round 10's own hypothesis that `--deterministic` specifically (via
+non-fused kernel paths) was what excluded coherence. The one variable shared
+by both failing determinism regimes and absent from the one regime that ever
+produced attempt 39 is `CUBLAS_WORKSPACE_CONFIG` itself -- now the sharper
+suspect, though still inference from this agent's HTTP-only access, not a
+confirmed root cause reachable without shell access to the Windows host.
+
+**Recommendation for the permanent config (feeds the determinism-infra
+follow-up):** for this specific dual-IPAdapter + ControlNet graph, do not set
+`CUBLAS_WORKSPACE_CONFIG` at generation time -- across ten rounds and 76
+attempts, every regime that has included it has produced zero coherent side
+profiles, while the one regime that never had it produced exactly one
+(attempt 39, still not reproducible from it). Treat coherent output on this
+graph as something to catch and bank when the unpinned regime happens to
+produce it, not something to reproduce on demand under a pinned one.
+
+**This card's remaining routes are unchanged from every review since round
+6, and are still human calls, not implementer calls:** (a) descope the
+keyframe promotion to a follow-up and bank the reference -- sound,
+provenanced, measured, and unaffected by any of this across eleven rounds;
+or (b) scope a determinism-infra investigation that needs Windows-host shell
+access this agent does not have (to test the `CUBLAS_WORKSPACE_CONFIG`-off
+hypothesis directly, e.g. by unsetting it while keeping `--deterministic`
+off, which this agent cannot do via the ComfyUI HTTP API alone).
+
+`.gitignore` check (round 11): `git check-ignore -v` against all three of
+this round's evidence frames returns nothing, so no `.gitignore` change was
+needed to commit them either.
+| 77 | 500009 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 36.1 | FAIL | no | round 12 (T-0317): seed reroll 1/8 under restored CUBLAS-baseline regime (no --deterministic, no CUBLAS_WORKSPACE_CONFIG), attempt-39 recipe otherwise |
+| 78 | 500017 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 27.1 | PASS | no | round 12 (T-0317): seed reroll 2/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 79 | 500023 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | PASS | no | round 12 (T-0317): seed reroll 3/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 80 | 500029 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 12 (T-0317): seed reroll 4/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 81 | 500041 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 12 (T-0317): seed reroll 5/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 82 | 500051 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 12 (T-0317): seed reroll 6/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 83 | 500063 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.1 | FAIL | no | round 12 (T-0317): seed reroll 7/8 under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+| 84 | 500077 | 1.0/1.0 | 0.7 | 0.5 | 0.6 | 0.6 | 30.2 | PASS | no | round 12 (T-0317): seed reroll 8/8 (final, budget exhausted after this) under restored CUBLAS-baseline regime, attempt-39 recipe otherwise |
+
+## Round 12 (T-0317, attempts 77-84): baseline regime restored, full 8-seed reroll spent -- zero coherent frames, and the CUBLAS_WORKSPACE_CONFIG hypothesis is now weakened, not confirmed
+
+`@DennieSeth`'s decision, acting on round 11's own narrowed finding: restore
+ComfyUI to the exact baseline regime that produced attempt 39 (no
+`--deterministic`, no `CUBLAS_WORKSPACE_CONFIG` at all), spend the only
+variable left -- the seed -- against an 8-attempt bound, and ship the first
+coherent frame. **Precondition confirmed before generating anything**: `GET
+/system_stats` returned `"argv": ["main.py", "--listen", "0.0.0.0", "--port",
+"8188"]` (no `--deterministic`) and `vram_free` 7.44GB (model unloaded,
+matching the baseline's own headroom); `CUBLAS_WORKSPACE_CONFIG`'s absence
+cannot be read from the HTTP API and is taken on the round's own instruction,
+per every prior round's identical constraint. `check_attempt_cap` opened a
+fresh 77-84 budget (TDD RED/GREEN pair `test_check_attempt_cap_allows_a_fresh_round_12_budget`
+/ implementation, both committed before any generation).
+
+**Eight fresh seeds (500009, 500017, 500023, 500029, 500041, 500051, 500063,
+500077), the established recipe otherwise** -- secondary reference
+`player_profile_costume_reference_T0317.png` at weight 0.10, primary front
+sheet 0.6, pose LoRA 0.6, ControlNet 1.0/1.0, `--secondary-no-invert`. Each
+`main_384.png` opened directly, judged on coherence first, mechanical gate
+second:
+
+- **Attempt 77** (seed 500009): gate FAIL (29 fg px). Vertical
+  black/green/white striped abstraction, the same failure family rounds
+  10-11 saw repeatedly. Not a person.
+- **Attempt 78** (seed 500017, `attempt_78_gate_passing_but_incoherent_T0317.png`):
+  gate **PASSED** (88 fg px) -- a colourful red/yellow/cyan circuit-board
+  pattern, no legible head/torso/limb structure. Another instance of the
+  "gate-passing but incoherent" trap (attempts 41, 52, 53, 65, 73).
+- **Attempt 79** (seed 500023): gate PASSED (68 fg px). A symmetric,
+  front-facing blue/red/white block abstraction -- dominant colour is blue,
+  not green, and bilaterally symmetric rather than side-facing.
+- **Attempt 80** (seed 500029): gate FAIL (11 fg px). Horizontal-banded
+  dark abstraction, olive/black, no figure.
+- **Attempt 81** (seed 500041): gate FAIL (13 fg px). A symmetric,
+  robot-like white/green form, front-facing, not a side profile.
+- **Attempt 82** (seed 500051): gate FAIL (4 fg px). Front-facing symmetric
+  shape with a large flat green rectangle, orange/teal accents, no
+  recognisable figure.
+- **Attempt 83** (seed 500063): gate FAIL (5 fg px). Vertical striped
+  blue/green/black abstraction, same failure family as attempt 77.
+- **Attempt 84** (seed 500077, final attempt in this round's budget,
+  `attempt_84_seed_reroll_final_still_incoherent_T0317.png`): gate
+  **PASSED**, the round's highest foreground count (124 fg px). A
+  black/white striped abstraction against a blue-teal background, faint
+  green accents only -- still no legible head, torso, or limb structure,
+  still not side-facing.
+
+**Zero of eight attempts produced an attempt-39-class coherent, side-facing,
+green-legible figure. Not promoted. Budget (77-84) fully spent, no
+extension taken**, per the round's own stop condition ("stop and report" at
+8 seeds, "do not extend the budget"). `player_profile_keyframe_hybrid_T0272.png`
+remains absent from `assets/final/character/`.
+
+**What this round adds.** Three of eight seeds passed the mechanical gate
+(78, 79, 84) -- a higher pass rate than round 11's partial-determinism sweep
+(2/6) or round 10's full-determinism sweep (2/6) -- but every gate-passing
+frame was, on visual inspection, exactly the "gate-passing but incoherent"
+failure mode this card has now documented seven times across four regimes.
+Passing the mechanical gate is evidently uncorrelated with coherence at this
+sample size; it screens out totally-blank renders, not incoherent ones.
+
+**This weakens, rather than confirms, round 11's own `CUBLAS_WORKSPACE_CONFIG`
+hypothesis.** The baseline regime -- the one round 11 named as "the only
+regime that ever produced attempt 39" -- was restored exactly, and produced
+zero coherent frames across 8 fresh seeds, the same outcome as both pinned
+regimes (rounds 10 and 11) before it. Four regimes have now been sampled
+against this graph (uncontrolled baseline: 1 coherent hit in dozens of
+attempts across rounds 1-8, including attempt 39; full `--deterministic` +
+`CUBLAS_WORKSPACE_CONFIG`: 0/6; partial `CUBLAS_WORKSPACE_CONFIG` only: 0/8
+combined probe+reroll; restored baseline: 0/8) and the honest reading is that
+attempt 39 was not evidence of a reliably-coherent regime at all -- it was a
+single rare success inside a regime that, sampled at n=8 here, looks exactly
+as unreliable as the two pinned ones. The determinism-flag hypothesis is not
+falsified (n=8 is a small sample against whatever attempt 39's true hit rate
+is), but it no longer has positive evidence behind it either: restoring the
+named "good" regime did not reproduce anything like attempt 39's coherence.
+
+**This round's own stop condition is met and is taken at face value, not
+extended.** The card's instruction was explicit: "if a reasonable number of
+seeds (say 8) yields none, stop and report -- do not extend." Eight distinct
+seeds were sampled, three passed the mechanical gate, and all eight were
+visually incoherent. Continuing to roll further seeds within this round would
+be exactly the open-ended sweep the card's "Do not" section forbids.
+
+**This card's remaining routes are unchanged from every review since round
+6, and are still human calls, not implementer calls.** Twelve rounds and 84
+attempts have now been spent: (a) descope the keyframe promotion to a
+follow-up and bank the reference -- sound, provenanced, measured, and
+unaffected by any of this across twelve rounds; or (b) treat attempt 39
+itself as a rare, currently-unreproducible draw from an inherently unreliable
+graph (dual-IPAdapter + ControlNet + two stacked LoRAs, a combination this
+card's own round 3 already showed is fragile) and scope a structural redesign
+of the graph rather than further seed/regime sampling, since four regimes at
+a combined n>20 fresh seeds have now produced exactly zero repeats of
+attempt 39's coherence.
+
+`.gitignore` check (round 12): `git check-ignore -v` against both of this
+round's evidence frames returns nothing, so no `.gitignore` change was
+needed to commit them either.

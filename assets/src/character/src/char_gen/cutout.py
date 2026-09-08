@@ -475,6 +475,49 @@ def apply_cutout_masks(
     return result
 
 
+#: T-0319: the promoted T-0252 idle keyframe's own achieved background --
+#: what a genuinely dark background looks like on this pipeline, not an
+#: arbitrary "any dark colour". Used as the default fill whenever a frame's
+#: own border-connected background region is forced dark rather than trusted
+#: to have sampled that way on its own (see `force_border_background_to_fill`
+#: below, and its two call sites: `gen_hybrid_walk_T0259.crop_identity_reference`
+#: -- the generation-time fix -- and the T-0319 re-cut path, which reprocesses
+#: already-sampled frames with no new GPU spend).
+DARK_BACKGROUND_FILL = (18, 17, 14)
+
+
+def force_border_background_to_fill(
+    img: Image.Image,
+    tolerance: float,
+    fill_rgb: tuple[int, int, int] = DARK_BACKGROUND_FILL,
+) -> Image.Image:
+    """Paint every pixel `border_flood_background_mask` classifies as
+    background to `fill_rgb`; every other pixel is byte-identical to `img`.
+
+    T-0319's diagnosis: `gen_hybrid_walk_T0259`'s IP-Adapter identity
+    reference (a crop of the committed concept sheet) has its own mid-grey
+    panel background (~144,143,145) -- not the black the text prompt asks
+    for. IP-Adapter conditions on the whole reference image, background
+    included, through a pathway the CLIP text encoder's negative prompt
+    (which already names "grey background" explicitly, inherited from the
+    idle recipe unchanged) cannot reach -- so the reference's own background
+    tone bled into every generated frame regardless of what the prompt said.
+    Measured modal border RGB on the affected frames (142-153 range) matches
+    the reference crop's own modal border colour almost exactly.
+
+    This function adds no new segmentation logic: it reuses the same
+    border-connected Oklab-tolerant flood already proven out (T-0315) as the
+    single shared "what is background" detector across this pipeline, so a
+    reference image and an already-sampled frame are corrected by the exact
+    same rule a fresh generation's own post-cutout step already applies --
+    never a second, independently-tuned heuristic that could drift from it.
+    """
+    mask = border_flood_background_mask(img, tolerance)
+    arr = np.array(img.convert("RGB"), dtype=np.uint8)
+    arr[mask] = fill_rgb
+    return Image.fromarray(arr, mode="RGB")
+
+
 CUTOUT_METHOD_DESCRIPTION = (
     "Per-frame border-connected background classification in Oklab space "
     f"(tolerance={CUTOUT_OKLAB_TOLERANCE}) over that frame's own 384x384 sampled/held image: "
