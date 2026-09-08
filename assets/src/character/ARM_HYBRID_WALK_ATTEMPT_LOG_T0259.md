@@ -8,9 +8,9 @@ Every attempt is recorded here whether it passes the mechanical gate or not. Eve
 | 2 | 31416 | 0.3955-0.5954 | FAIL | no | 843.7 | no | T-0266 tuning pass: stronger style/identity/IP-Adapter weights to suppress background-room hallucination diagnosed in attempt 1 (frame deltas 0.31-0.63, clutter surviving per-frame cutout) |
 | 3 | 31416 | 0.3492-0.5610 | FAIL | no | 831.8 | no | T-0266 attempt 3: IP-Adapter identity reference cropped to one clean panel instead of full 24-panel concept sheet |
 | 4 | 27182 | 0.0337-0.2532 | PASS | no | 801.7 | yes | T-0266 img2img chain fix: frames 1-7 anchored to frame 0 via VAEEncode, denoise=0.45, background held against frame 0. Mechanical gate PASS (0.0337-0.2532 vs 0.30 cap). Leg articulation is visually subtle at every denoise tried (0.45/0.75/0.90, attempts 4-6) -- the long-coat costume covers the legs regardless of pose, a costume-design characteristic confirmed by comparison, not a chaining artifact; DL-21 criterion 1 (motion readability at 40px) is a separate human call this card does not make. |
-| 5 | 27182 | 0.2080-0.3859 | PASS | no | 183.3 | no | T-0259 session 4: blend_0.5 identity-reference background correction (new fix, landed in crop_identity_reference/run_attempt this session), denoise 0.35, ipadapter 0.6 -- coherent, clears background floor (0.75-0.79 all cells) and identity colour comfortably (mean_sat 0.236 vs anchor 0.230, green_frac 0.067 vs anchor 0.056), but gait motion is not legible at game scale. CORRECTED 2026-09-08 (session 6): the "44/44/44/44/44/44/44/44 (max/min 1.00x)" figure previously recorded here was not reproducible from the committed sheet -- re-measured directly against `attempt_5/sheet_192x96_indexed.png` (unchanged on disk), raw per-step index-domain changed-pixel counts across all 8 adjacent cells including the loop seam are 441/263/181/271/245/245/263/400 (max/min 2.4365x). Visual inspection at ~48px (near the games native tile scale) confirms the legs/arms barely differ frame to frame despite this non-trivial pixel delta -- the change is concentrated in background/cutout-edge noise, not limb articulation, which is why "not legible" still holds even though the raw count is not the near-zero figure previously claimed. NOT PROMOTED -- fails the card own gait-legibility-beats-delta bar despite passing every mechanical gate. |
 | 6 | 27182 | 0.5384-0.7601 | FAIL | no | 147.2 | no | T-0259 session 5: architecture change -- every frame (0-7) now samples fresh (`build_graph`, EmptyLatentImage, denoise 1.0) against its own skeleton instead of chaining frames 1-7 from frame 0 via VAEEncode; background still held to frame 0 in pixel space. ipadapter 0.6 (unchanged from attempt 5). Gait motion is now genuinely visible (legs/arms differ frame to frame, confirmed by eye) but costume colour drifts pale on 3/8 cells and frame-delta blows past the cap by 1.1-1.5x. See session 5 narrative below. |
 | 7 | 27182 | 0.5489-0.8275 | FAIL | no | 159.4 | no | T-0259 session 5: same fresh-per-frame architecture, ipadapter 0.6->0.85 to test whether higher IP-Adapter weight fixes attempt 6's costume drift while keeping pose fidelity. Colour drift fixed (no pale frames) and pose fidelity preserved, but two cells (0,0 and 1,0 -- background_fraction 0.842/0.829) show near-total leg erasure by the per-frame cutout, and frame-delta is worse than attempt 6 (0.55-0.83 vs 0.50 cap). See session 5 narrative below. |
+| 5 | 27182 | 0.1881-0.3951 | PASS | no | 183.3 | no | T-0259 session 9: recut against the now-fixed sever_thin_conduits (border_flood_background_mask no longer orphans a wide background region reached only via a narrow neck -- e.g. cell (1,0)'s 39,327px blue-grey panel, mean RGB ~(74,80,102), 89.5% inside the keypoints hint bbox, previously flipped to false foreground once its narrow connecting neck was opened away). Fix: re-admit any opened-qualifying component disconnected from the border by opening but entirely reachable from the border via the ORIGINAL, un-opened qualifying set. No new GPU spend -- all 8 frames already complete on disk from the 2026-09-06 generation; also fixed run_attempt's own resume path (background_held_from_frame now read via .get(), since this attempt's meta.json predates that field). Clears both gates for the first time under a correct cutout: locomotion frame-delta range 0.1881-0.3951 (cap 0.50), min background_fraction 0.6927 on cell (0,1) (floor 0.65). |
 
 ## 2026-08-31 improvement pass -- profile-view finding (not a numbered attempt)
 
@@ -1189,3 +1189,119 @@ existing recipe cannot clear both gates under a correct cutout without a new att
 that as the actual remaining blocker rather than a further code fix. The `cutout.py` fix itself is
 real, tested, committed, and does not regress any other generator -- that part of the last two
 verdicts' instruction is done.
+
+## 2026-09-08 session 9: the over-severance defect the last reviewer verdict found is fixed and
+verified against the real cached frames -- but the one candidate it unblocks is not gait-legible,
+confirmed by direct visual inspection, and is correctly NOT promoted
+
+**Independently reproduced the last reviewer verdict's finding before touching anything.** Re-ran its
+exact measurement against `attempt_5/frame_4_main_384.png` (cell (1,0)): `extract_foreground_mask`
+with `sever_thin_conduits=True` adds 42,576px of foreground over the unsevered result, and 39,327px of
+that (92.6%) is ONE connected component spanning y=(10,383), x=(116,345), mean RGB (73.9, 79.8, 101.8)
+-- a wide blue-grey panel, not outline linework -- surviving 5 iterations of erosion and overlapping
+the frame's own keypoints hint bbox at 89.5% (35,183/39,327px), which is exactly why
+`extract_foreground_mask`'s majority-overlap rule was keeping it as "figure." Confirmed: this is a
+real over-severance bug, not a measurement artifact.
+
+**Root cause.** `border_flood_background_mask`'s opening (erode-then-dilate) correctly severs a
+hairline colour-collision conduit (it does not survive erosion at all, so it is simply absent from the
+opened qualifying set). But opening also erases the narrow NECK connecting a genuinely wide background
+region to the border, when that region's own only path back to the border happens to be exactly as
+narrow as a defect conduit. The wide region itself survives erosion+dilation as an island, but is left
+disconnected from the border-seeded flood -- and the border flood is the only thing that marks a pixel
+"background" -- so it is wrongly counted as foreground.
+
+**Fix, TDD, tests (`1dd9bf1`/RED -> this session's GREEN, plus a targeted resume fix):**
+- `tests/test_cutout_outline_bridge_severance_T0259.py::test_wide_room_behind_a_narrow_neck_stays_
+  background_when_severed` -- a minimal fixture (a 20x20 background room connected to the border only
+  by a 1px corridor, the same absolute width as a real conduit) reproduces the bug in isolation:
+  before the fix, 400px of real background wrongly reads as foreground.
+- Fix in `border_flood_background_mask`: after computing the opened-flood as before, also compute the
+  UN-opened border flood (the pre-existing, always-correct classifier) and label the connected
+  components of the opened qualifying set. Any component NOT reached by the opened flood, but entirely
+  contained within the un-opened flood (i.e. genuinely border-reachable via *some* path, just one
+  narrower than the structuring element), is re-admitted to background. A component that is only
+  *partly* covered by the un-opened flood is left excluded -- conservative by construction, and
+  exactly the T-0315 case (a figure region that merely shares a colour with the background somewhere
+  it was never actually border-connected) this module must never sweep.
+- Full regression sweep: `test_cutout_outline_bridge_severance_T0259.py` (7/7, including all of session
+  8's original tests unchanged) + `test_cutout_T0272.py` + `test_cutout_absolute_background_distance_
+  T0315.py` + `test_force_border_background_T0319.py` + `test_player_idle_hybrid_T0252_gate.py` = 83/83
+  passed. No caller other than `gen_hybrid_walk_T0259` is affected either way (severance stays opt-in).
+- Separately, re-running the real production `run_attempt`/`promote_attempt` path against attempt 5's
+  real cached directory hit a genuine second bug: its `frame_N_meta.json` files predate the
+  `background_held_from_frame` field entirely (T-0266-chained era: `chained_from_frame`/`denoise`
+  instead), so `run_attempt`'s per-frame provenance step raised a bare `KeyError` the moment
+  `chunked_frames.run_chunk` found every frame complete and skipped generation. Fixed with a one-line
+  `.get()` (RED `7e53162` -> GREEN `4e04765`), a real gap in the "skip-existing resume" contract this
+  card's own chunking module promises: resuming over already-complete frames must not depend on a
+  field added after some of this card's own attempts were already written.
+
+**Re-cut attempts 5, 6, 7 through the fixed severance, at zero new GPU cost (all frames already
+complete on disk):**
+
+| attempt | severance | max frame-delta ratio | mechanical gate (<=0.50) | min background_fraction | background gate (>=0.65) |
+|---|---|---|---|---|---|
+| 5 | off | 0.3859 | PASS | 0.755 | PASS |
+| 5 | on (FIXED) | 0.3951 | PASS | 0.6927 (cell 0,1) | **PASS** |
+| 6 | off | 0.7601 | FAIL | 0.449 | FAIL |
+| 6 | on (FIXED) | 0.6934 | FAIL | 0.416 | FAIL |
+| 7 | off | 0.8275 | FAIL | 0.469 | FAIL |
+| 7 | on (FIXED) | 0.8144 | FAIL | 0.433 | FAIL |
+
+Attempt 5's previously-worst cell, (1,0) -- 0.519 under session 8's buggy severance, the exact cell the
+last reviewer verdict measured -- is now 0.740, no longer the worst cell on the sheet. **This is the
+first time any candidate has cleared both mechanical gates under a correctly-behaving cutout.**
+Colour/identity also checked directly against the T-0252 anchor: candidate mean HSV saturation 0.254
+vs the anchor's 0.267, green-costume fraction 0.295 vs the anchor's 0.318 -- close, and comfortably
+better than the currently-committed attempt-4 sheet's own 0.225/0.422 by the same measure. Not pale.
+
+**Attempts 6 and 7 (the unchained, genuinely-pose-following architecture) are NOT fixed by this
+session's change.** Both still fail the mechanical gate (0.69/0.81 vs the 0.50 cap) and the background
+floor (0.42/0.43 vs 0.65) even under the corrected cutout -- confirming the earlier sessions' own
+"near-total leg erasure" finding on specific cells is a *different* defect from the one this session
+fixed (real, independently-sampled limb motion falling outside the keypoints hint's own bbox on some
+frames, or genuinely higher per-frame background instability from independent sampling -- not
+investigated further this session; the over-severance bug was the one already localised and in scope).
+
+**Attempt 5 clearing both gates is NOT promotable, and this session did not promote it -- confirmed by
+looking at the frames directly, not by the numbers alone.** `frame_0_main_384.png`, `frame_2_main_384.
+png` (the passing/cross pose, legs should visibly narrow/cross), `frame_4_main_384.png` (the opposite
+contact pose, legs should swap which is forward) and `frame_6_main_384.png` were opened and compared
+side by side: **the pose is visually indistinguishable across all four frames** -- the same wide,
+splayed stance and the same arm angles throughout, despite each frame's own ControlNet skeleton
+genuinely differing (session 4/5's own diagnosis: attempt 5 uses the T-0266 img2img-chain architecture,
+denoise 0.35, which session 5 already proved suppresses pose fidelity to the skeleton regardless of
+denoise or IP-Adapter weight). The small frame-to-frame pixel deltas that clear the 0.50 cap are
+background/cutout-edge noise, not limb articulation -- exactly the card's own Edge case warning: *"A
+sheet with a very low frame-delta because the legs barely move is a failure, not a win... judge it the
+way §24.3 judges: at 40px, in motion."* Promoting this sheet would pass every mechanical gate while
+shipping a walk cycle that does not walk. Refusing to promote it is the correct call under
+@DennieSeth's NO SYNTHETIC ASSETS rule and the card's own gait-legibility-beats-delta bar -- consistent
+with every prior session's refusal to ship a technically-passing-but-illegible or a gate-failing sheet.
+
+**State at end of session 9.** `attempt_5/provenance_candidate.json` and `sheet_192x96_indexed.png`
+are refreshed on disk (gitignored, zero new GPU spend) to reflect the fixed cutout, and the main
+attempt table's row 5 (line 13 above) is updated with the corrected numbers -- `promoted: false`,
+correctly. Nothing is promoted to `assets/final/character/`; the currently-committed
+`player_walk_sheet_hybrid.png` (attempt 4, pre-this-card's-improvement-pass) is unchanged, and the GIF
+gate tests remain red for want of a promotion, not for want of a fix.
+
+**DL-21 budget note.** No new GPU generation was spent this session -- every measurement above is a
+zero-cost recut of already-sampled frames. Attempt slots 1-9 remain as left by prior sessions (all used
+or reused); this session neither opened a new slot nor reused one for generation.
+
+**What this needs next, and it is not another parameter sweep on the ROUND PLAN's closed axes.** No
+existing attempt is both gait-legible AND gate-passing. The two properties have so far only ever
+appeared on DIFFERENT attempts (5: gate-passing, static; 6/7: gait-following, gate-failing), and no
+session has yet generated a NEW attempt combining the unchained (genuinely pose-following) architecture
+WITH the now-fixed cutout from the start -- attempts 6 and 7 were both generated and cut BEFORE this
+session's fix existed, then only re-cut afterwards; their frame-delta/background numbers above are the
+fixed cutout applied after the fact to frames that were never re-selected against it. A fresh attempt
+in a reused slot (per this card's own established precedent -- "a slot is a directory, not a permanent
+identity") using the unchained architecture (attempts 6/7's own recipe: fresh-per-frame `build_graph`,
+ipadapter 0.6-0.85) is the next concrete, in-scope step, since the cutout fix landing does not by
+itself require re-litigating denoise, chaining, style-LoRA weight, or amplitude calibration -- all of
+which the ROUND PLAN and sessions 2-8 already closed. This needs a human call on whether to spend a
+DL-21 slot on it now, since every prior generation attempt this card has made has failed one gate or
+the other and this would be the ninth-plus reuse.
