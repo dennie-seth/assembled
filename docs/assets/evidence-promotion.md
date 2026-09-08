@@ -46,22 +46,33 @@ whether the round's outcome is a **promotion** or a **finding** — a
 "Not promoted" verdict that names the frame proving why is exactly the
 T-0272 case this exists for, and the tool does not distinguish the two.
 
-**This convention is documented here, not (yet) in `.claude/rules/assets.md`
-or the `assets`/`audio` agent definitions.** T-0314's implementer session
-did not have write access to `.claude/agents/**` or `.claude/rules/**` (both
-refused every write attempt as out of grant for this session, independent
-of the `infra` agent's own stated path scope) — so, per this card's own
-"say so in the doc instead of claiming the convention already exists"
-instruction, this is an explicit, named follow-up, not a completed step:
-**nothing currently invokes `promoteEvidence.js` automatically, and no rule
-file tells the `assets`/`audio` agents to cite frames in a way this parser
-resolves.** Until that wiring lands, running the CLI at the end of a round
-is a manual step the round's own implementer has to remember — exactly the
-failure mode this card exists to remove. A follow-up card needs: (1) a
-`Bash(node tools/board/scripts/promoteEvidence.js:*)` grant added to the
-`assets` and `audio` agent definitions' `tools:` frontmatter, and (2) a
-bullet in `.claude/rules/assets.md` instructing agents to cite decisive
-frames in the shapes above and run the CLI before stopping.
+**This is automatic — no agent has to run the CLI, or remember to.**
+`runOrchestrator.js`'s `_handlePass` (the step that runs once a card's
+reviewer verdict comes back PASS) calls `promoteEvidenceForCard()` — the
+`repoRoot`/`cardId`-only entry point in `evidencePromotion.js` — from
+inside the card's own worktree, immediately before it commits and pushes
+that worktree's branch and well before it removes the worktree. That call
+discovers the card's own attempt log(s) and run directory candidate(s)
+itself (`discoverEvidenceSources`: every `ARM_*_ATTEMPT_LOG_<card>.md`
+anywhere under `assets/src/`, and every top-level directory under
+`assets/out/`), so nothing about invoking it depends on `.claude/**`
+wiring, an agent grant, or an agent remembering a step — the same
+`git add -A` that stages the round's own commit picks up whatever landed
+under `docs/assets/evidence/<card>/` along the way. It is a no-op, at
+negligible cost, for the overwhelming majority of cards that never touch
+`assets/**` at all: discovery finds neither an attempt log nor an
+`assets/out/` tree and returns immediately.
+
+**The citation convention above is still not written into
+`.claude/rules/assets.md` or the `assets`/`audio` agent definitions.**
+That remains a documentation gap, not an automation gap — an agent
+writing a log in a shape this parser doesn't recognize (e.g. a citation
+with no attempt-number context anywhere nearby) still gets it promoted
+under the wrong name or not at all, even though the promotion step itself
+now runs unconditionally. Landing that bullet is still worth doing as a
+follow-up so a round's own author writes citations the parser resolves
+correctly on the first try, but it is no longer what stands between a
+round finishing and its evidence being committed.
 
 ## What gets promoted, and what doesn't
 

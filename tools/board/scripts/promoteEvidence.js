@@ -6,11 +6,12 @@
  * (T-0314; see docs/assets/evidence-promotion.md for the full rationale and the citation
  * convention it documents).
  *
- * This is the intended fix for "an agent forgot to copy the frames by hand": run this one command
- * at the end of every round, promotion or finding alike, instead of manually `cp`-ing files you
- * have to remember to pick. As of T-0314 nothing invokes this automatically yet -- see
- * docs/assets/evidence-promotion.md's "citation convention" section for the still-open
- * `.claude/rules/assets.md` / agent-grant wiring this needs.
+ * This is the manual/one-off entry point for the same mechanism `runOrchestrator.js`'s
+ * `_handlePass` already calls automatically on every PASS (via `promoteEvidenceForCard()` in
+ * `../src/lib/evidencePromotion.js`, which discovers the card's own attempt log and run
+ * directory with no arguments needed at all) -- useful for re-running promotion by hand against
+ * an explicit runDir/logPath while a round is still in progress, or for reproducing what an
+ * automated run did. See docs/assets/evidence-promotion.md.
  *
  * usage: node tools/board/scripts/promoteEvidence.js <cardId> <runDir> <logPath>
  *          [--evidence-root <path>] [--max-files <n>] [--max-file-bytes <n>] [--repo-root <path>]
