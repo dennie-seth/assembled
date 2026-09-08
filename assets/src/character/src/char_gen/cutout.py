@@ -377,12 +377,53 @@ def border_flood_background_mask(
         dist2 = diff[..., 0] ** 2 + diff[..., 1] ** 2 + diff[..., 2] ** 2
         np.minimum(min_dist2, dist2, out=min_dist2)
     qualifies = min_dist2 <= tol2
-    if sever_thin_conduits and OUTLINE_BRIDGE_EROSION_ITERATIONS > 0:
-        qualifies = _binary_dilate(
-            _binary_erode(qualifies, OUTLINE_BRIDGE_EROSION_ITERATIONS),
-            OUTLINE_BRIDGE_EROSION_ITERATIONS,
-        )
+    if not (sever_thin_conduits and OUTLINE_BRIDGE_EROSION_ITERATIONS > 0):
+        return _flood_from_border(qualifies)
 
+    qualifies_opened = _binary_dilate(
+        _binary_erode(qualifies, OUTLINE_BRIDGE_EROSION_ITERATIONS),
+        OUTLINE_BRIDGE_EROSION_ITERATIONS,
+    )
+    opened_flood = _flood_from_border(qualifies_opened)
+
+    # T-0259 session 9: opening a genuinely wide background region's own
+    # neck, not just a hairline colour-collision conduit, silently orphans
+    # that region from the border seed -- measured directly against
+    # `attempt_5/frame_4_main_384.png`'s cell (1,0), where a 39,327px
+    # background panel (mean RGB (74, 80, 102), surviving 5 erosion
+    # iterations, 89.5% inside the keypoints hint bbox) was wrongly flipped
+    # to foreground this way. Re-admit any component of the OPENED
+    # qualifying set that opening disconnected from the border seed, but
+    # that was already reachable from the border via the *original*,
+    # un-opened qualifying set -- i.e. a real region whose own connection to
+    # the border merely happens to be narrower than the structuring
+    # element, not a defect conduit. A colour-collision conduit itself never
+    # qualifies for re-admission: it is thin, so it does not survive opening
+    # at all and is never a component of `qualifies_opened` in the first
+    # place. Conservative by construction: a component that is only
+    # *partly* covered by the original flood (any pixel of it never
+    # qualified as border-connected pre-opening) is left excluded, since
+    # that is exactly the T-0315 case this module must never sweep -- a
+    # figure region that merely shares a colour with the background
+    # somewhere it was never actually border-connected.
+    original_flood = _flood_from_border(qualifies)
+    labels, count = label_foreground_components(qualifies_opened)
+    visited = opened_flood.copy()
+    for lbl in range(1, count + 1):
+        comp = labels == lbl
+        if visited[comp].any():
+            continue
+        if not (comp & ~original_flood).any():
+            visited |= comp
+    return visited
+
+
+def _flood_from_border(qualifies: np.ndarray) -> np.ndarray:
+    """Border-seeded BFS over a boolean qualifying grid: True = reachable
+    from the frame's own edge through a 4-connected chain of qualifying
+    pixels. Shared by `border_flood_background_mask`'s un-opened and
+    (when `sever_thin_conduits` is set) opened passes."""
+    h, w = qualifies.shape
     visited = np.zeros((h, w), dtype=bool)
     queue: deque[tuple[int, int]] = deque()
 
