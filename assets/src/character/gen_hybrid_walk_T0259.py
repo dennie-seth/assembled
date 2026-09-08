@@ -652,6 +652,82 @@ def reprocess_attempt_background_fix(out_dir: Path) -> dict:
     }
 
 
+def _hint_bbox_mask(
+    points_norm: dict[int, tuple[float, float]], bbox_margin_frac: float, size: int
+) -> np.ndarray:
+    """Duplicated deliberately from `char_gen.cutout._keypoints_hint_mask`
+    rather than imported: that function is private to the cutout module
+    (used only to score candidate foreground components there), and this is
+    a small, stable bbox+margin computation, not business logic that could
+    drift out of sync -- the same rationale `char_gen.cutout._srgb_to_oklab`
+    already documents for its own deliberate duplication."""
+    xs = [x for x, _ in points_norm.values()]
+    ys = [y for _, y in points_norm.values()]
+    x0n, x1n = min(xs), max(xs)
+    y0n, y1n = min(ys), max(ys)
+    wn, hn = x1n - x0n, y1n - y0n
+    x0n = max(0.0, x0n - wn * bbox_margin_frac)
+    x1n = min(1.0, x1n + wn * bbox_margin_frac)
+    y0n = max(0.0, y0n - hn * bbox_margin_frac)
+    y1n = min(1.0, y1n + hn * bbox_margin_frac)
+    x0, x1 = int(x0n * size), int(x1n * size)
+    y0, y1 = int(y0n * size), int(y1n * size)
+    mask = np.zeros((size, size), dtype=bool)
+    mask[y0:y1, x0:x1] = True
+    return mask
+
+
+def background_region_delta(
+    cell_a: Image.Image,
+    cell_b: Image.Image,
+    hint_points: dict[int, tuple[float, float]],
+    bbox_margin_frac: float = BACKGROUND_MASK_MARGIN_FRAC,
+) -> dict:
+    """Split a cell-pair's raw changed-pixel count by whether each changed
+    pixel falls inside or outside that frame's own keypoints-hint
+    bbox+margin -- the same bbox `char_gen.cutout.extract_foreground_mask`
+    scores candidate foreground components against.
+
+    ROUND PLAN item 2 (2026-09-08 session 6): the card's own frame-delta
+    gate (`asset_gate.art.check_frame_consistency`) measures the WHOLE
+    cell, so it cannot say whether a large delta comes from real limb
+    motion (inside the hint) or background/cutout-hold instability
+    (outside it). Session 5's own real attempts show both failure modes on
+    the same sheet -- attempt 6 leaks background on cells 4/5
+    (background_fraction ~0.45-0.61, well under the 0.65 cleanliness
+    floor) while attempt 7 erases real limb content on cells 0/4
+    (background_fraction ~0.83-0.84, "near-total leg erasure" on visual
+    inspection) -- and a single whole-cell delta number, or a single
+    background_fraction number, cannot distinguish "too much changed
+    outside where the pose lives" from "too little survived inside where
+    it does." This makes that split a directly reported measurement
+    instead of a visual guess.
+
+    `cell_a`/`cell_b` are same-size images (indexed or RGB); the hint bbox
+    is computed at their own resolution, not re-derived from a different
+    scale."""
+    arr_a = np.array(cell_a)
+    arr_b = np.array(cell_b)
+    size = arr_a.shape[0]
+    hint_mask = _hint_bbox_mask(hint_points, bbox_margin_frac, size)
+    changed = np.any(arr_a != arr_b, axis=-1) if arr_a.ndim == 3 else arr_a != arr_b
+
+    outside = ~hint_mask
+    outside_px = int(outside.sum())
+    outside_changed = int((changed & outside).sum())
+    inside_px = int(hint_mask.sum())
+    inside_changed = int((changed & hint_mask).sum())
+
+    return {
+        "background_region_px": outside_px,
+        "background_region_changed_px": outside_changed,
+        "background_region_delta_ratio": (outside_changed / outside_px) if outside_px else 0.0,
+        "hint_region_px": inside_px,
+        "hint_region_changed_px": inside_changed,
+        "hint_region_delta_ratio": (inside_changed / inside_px) if inside_px else 0.0,
+    }
+
+
 def check_attempt_cap(attempt: int) -> None:
     if not (1 <= attempt <= 8):
         raise SystemExit("attempt cap is 8 per round (DL-21) -- refusing to run a 9th attempt")

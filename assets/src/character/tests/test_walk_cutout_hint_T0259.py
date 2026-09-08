@@ -164,7 +164,9 @@ def _cell(fill: tuple[int, int, int]) -> Image.Image:
     return Image.new("RGB", (CELL, CELL), fill)
 
 
-def _paint(img: Image.Image, box: tuple[int, int, int, int], fill: tuple[int, int, int]) -> Image.Image:
+def _paint(
+    img: Image.Image, box: tuple[int, int, int, int], fill: tuple[int, int, int]
+) -> Image.Image:
     out = img.copy()
     x0, y0, x1, y1 = box
     arr = np.array(out)
