@@ -119,7 +119,7 @@ It is **not yet reachable from WSL** — the AssetAgent (which the task says
 applied by hand. Everything else (install, checkpoint, launch, local
 generation) is done and verified.
 
-## Determinism (T-0322)
+## Determinism
 
 ### The incident
 
