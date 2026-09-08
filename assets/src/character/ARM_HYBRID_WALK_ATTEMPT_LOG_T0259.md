@@ -1417,3 +1417,66 @@ anticipates: generation has been driven hard against this recipe's actual limits
    cutout/background defect (background_region_delta above rules that out) -- filing either would
    mis-categorise the actual blocker, which is this recipe's own frame-to-frame render variance under
    full independent sampling.
+
+## 2026-09-08 session 11: two provenance/documentation defects closed; no new generation this session
+
+The 2026-09-08T18:12:19.470Z reviewer verdict on session 10's work asked for four things, in order:
+(a) attack the silhouette-boundary fringe with a zero-GPU recut, (b) fix `append_attempt_log` blanking
+a reused slot's Notes column when re-run without an explicit `--notes`, (c) fix `--promote-attempt`
+copying a candidate's `provenance_candidate.json` verbatim instead of re-deriving `model`/`method`,
+(d) do not sweep denoise/weights again. This session closed (b) and (c), both TDD (RED test committed
+before the GREEN fix), and deliberately did NOT attempt (a) -- see below for why.
+
+**(b) fixed.** `append_attempt_log` now carries a reused slot's existing Notes column forward when the
+re-run supplies no `--notes` of its own (the CLI default is `""`, which is indistinguishable from "no
+notes" without this fix); an explicit `--notes`, even a short one, still always overrides. Two RED
+tests added to `tests/test_attempt_log_scoped_dedup_T0259.py`. This is a real fix, not a
+one-time patch -- prior sessions (93dc1f5, then again this same file's own history) hand-repaired
+destroyed rows in the log itself three separate times without ever fixing the function that kept
+destroying them; this closes the function-level bug.
+
+**(c) fixed.** The `model`/`method` derivation logic session 10 added to `run_attempt` (so a resumed
+sidecar states what a resumed attempt actually did, not what the current architecture does by
+default) is pulled out into a new shared function, `describe_generation(frame_generation, ...)`.
+`promote_attempt` now calls it against `provenance["frame_generation"]` and overwrites `model`/
+`method` at promotion time, rather than trusting whatever those two top-level strings already say in
+the `provenance_candidate.json` it was handed. This makes promotion self-correcting: even attempt 5's
+real on-disk candidate (written 2026-09-08T19:38, before session 10's fix landed at 19:56, and still
+carrying the stale "every frame sampled fresh" claim next to a `frame_generation` record that
+disagrees) would now be corrected automatically if promoted, without needing a separate zero-GPU
+recut just to refresh its cached top-level strings. One RED test added to
+`tests/test_gen_hybrid_walk_chained_T0266.py` covering the promotion path specifically (session 10's
+own test only covered `run_attempt`'s output, not what `--promote-attempt` does with a stale
+candidate). Full suite: `.venv/bin/pytest` on this card's test files -- 85 passed, 3 failed (all three
+are `test_gif_deliverable_committed_and_loops` / `test_gif_is_integer_upscaled_for_crisp_pixels` /
+`test_provenance_records_gif_path`, unchanged from before this session -- they require an actually
+promoted sheet, which still does not exist). `ruff check` on every file this session touched: all
+checks passed.
+
+**(a) deliberately not attempted this session -- reason, not an excuse.** The reviewer's own
+2026-09-08T18:12:19.470Z verdict decomposed the gated silhouette-XOR delta on attempts 6/7 into
+"fringe" (pixels 1px-adjacent to the two frames' shared silhouette core) vs "bulk" (interior limb
+displacement) and found roughly half the gated delta on both failing candidates is fringe, not real
+motion -- a finer-grained decomposition than this card's own `background_region_delta` (which splits
+by hint-bbox region, not by boundary-adjacency within the 48px cell) and NOT yet incorporated
+anywhere in this log before now. That is a real, well-evidenced lead, but closing it means designing
+and verifying a stabilization pass over the 384->48 area-descent / Oklab-quantize boundary that does
+not regress the idle (T-0252), profile (T-0272), or entity sheets sharing the same `char_gen.cutout`
+/ descent code paths this card already destabilized once this round (session 8's over-severance
+defect, fixed in session 9). Attempting that in the same session as two unrelated provenance fixes,
+without a full TDD cycle and the idle/profile/entity regression sweep to back it, is exactly the kind
+of rushed change that produced session 8's regression in the first place. Deferred to the next
+session with its own dedicated budget, not because it is out of scope.
+
+**No new ComfyUI generation this session** (`find assets/out -name 'frame_*_main_384.png'
+-newermt` against this session's start returns nothing) -- confirmed via `.venv/bin/python -c
+"urllib.request.urlopen('http://172.18.192.1:8188/system_stats')"`, `200 OK`, so this is not a host
+availability gap; the two fixes above did not need GPU time and spending it on (a) without the
+verification budget to do it safely would have been the wrong trade.
+
+**What is genuinely left, unchanged from session 10's list:** items 1-3 above still stand. In
+addition: (a) the silhouette-boundary fringe/bulk stabilization, scoped with the idle/profile/entity
+regression sweep as a required check; re-running `--promote-attempt` against attempt 5 is no longer
+necessary now that promotion self-corrects the model/method fields regardless of what is cached on
+disk, but attempt 5 (or a fresh attempt) still needs the fringe fix before it is both gate-passing
+AND gait-legible -- session 10's own finding that no combination found so far is both remains true.
