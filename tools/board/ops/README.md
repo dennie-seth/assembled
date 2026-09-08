@@ -78,7 +78,7 @@ scope for these scripts.
 | `board-assets-sync.sh` | Orchestrates stage -> drivemap -> copy under a single `flock`; used by the hourly timer. |
 | `board-integrity-check.py` | Read-only daily health check (DB integrity, DB<->API<->attachments consistency, backup freshness, staged-export freshness). |
 | `board-db-backup.sh` | Runs the app's `npm run backup:db` (WAL-safe online backup) then prunes old backups under `<dataDir>/backups/` to a retention count; used by the daily timer. Also uploads the newest backup to Drive and prunes the Drive folder to a small retention count. |
-| `../scripts/checkComfyUiRegime.js` (T-0322) | **Not** copied to `~/.local/bin` like the scripts above -- it's part of the ordinary `tools/board` npm/Vitest project (`npm run check:comfyui-regime`), invoked as a preflight before generation or ad hoc, not (yet) wired into a timer. Fails loudly if the live ComfyUI server's `argv` has drifted from the regime declared in `comfyui-regime.json`, in either direction. See `docs/comfyui-setup.md#determinism`. |
+| `check-comfyui-regime.sh` (T-0322) | Wrapper for `npm run check:comfyui-regime` (`../scripts/checkComfyUiRegime.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself), following the same `flock` + timestamped-log pattern as `board-db-backup.sh`. Read-only against ComfyUI (`GET /system_stats` only). Fails loudly if the live server's `argv` has drifted from the regime declared in `comfyui-regime.json`, in either direction. See `docs/comfyui-setup.md#determinism`. Also invocable directly (ad hoc or from an asset-generation preflight) without this wrapper. |
 
 ## Install locations on the box
 
@@ -125,10 +125,21 @@ folder-ID lookup, since it only ever needs the one destination.
 | `board-assets-sync.timer` | hourly (`OnCalendar=hourly`, ±120s random delay) | `board-assets-sync.sh` |
 | `board-db-backup.timer` | daily at 03:00 (±120s random delay) | `board-db-backup.sh` |
 | `board-integrity-check.timer` | daily at 03:20 (±300s random delay) | `board-integrity-check.py` |
+| `check-comfyui-regime.timer` (T-0322) | hourly (±120s random delay) | `check-comfyui-regime.sh` |
 
-Both timers are `Persistent=true` (catch up on a missed run after the box was
+All timers are `Persistent=true` (catch up on a missed run after the box was
 off) and installed under `~/.config/systemd/user/`, enabled with
 `systemctl --user enable --now <timer>`.
+
+`check-comfyui-regime.timer`'s unit files are new as of T-0322
+(`tools/board/ops/systemd/check-comfyui-regime.{service,timer}`) and, unlike
+every other file in this table, have not yet been deployed to the live box --
+no agent working T-0322 has had shell access to the WSL box outside this
+repo checkout's own Node/npm/git tools, so `cp` to `~/.local/bin` /
+`~/.config/systemd/user` and `systemctl --user enable --now
+check-comfyui-regime.timer` (the same "Deploying changes" step below) are
+still an open step for whoever next has that access. Until then, the only
+live check is the manual `npm run check:comfyui-regime` invocation.
 
 ## Deploying changes
 

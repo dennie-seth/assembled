@@ -223,6 +223,18 @@ code, or `import { evaluateRegime } from
 "../../board/src/lib/comfyuiRegime.js"` directly and call it with its own
 already-fetched `/system_stats` payload.
 
+An hourly standing check also now exists as version-controlled ops config:
+`tools/board/ops/check-comfyui-regime.sh` (a `flock`-guarded wrapper for
+`npm run check:comfyui-regime`, logging to
+`~/.local/state/check-comfyui-regime/check.log`) plus
+`tools/board/ops/systemd/check-comfyui-regime.{service,timer}`, mirroring
+`board-integrity-check.{py,timer}`'s existing pattern (see
+`tools/board/ops/README.md`). **Not yet deployed** — like the reconstructed
+launcher above, wiring the unit files into the live WSL box's
+`~/.local/bin` / `~/.config/systemd/user` and `systemctl --user enable --now`
+needs shell access this card's agents have not had; until that step happens
+the only live check is running `npm run check:comfyui-regime` by hand.
+
 ### Cross-restart reproducibility — the actual guarantee, still untested
 
 T-0317 round 10 proved *within-session* reproducibility under
