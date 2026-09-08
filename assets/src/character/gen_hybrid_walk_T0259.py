@@ -177,7 +177,21 @@ from char_gen import chunked_frames, gif_export  # noqa: E402
 # the reference (here) and the preserved attempt 5/7 re-cut path
 # (WALK_BACKGROUND_FIX_T0319.md). Reuses the same border-flood detector the
 # per-frame cutout above already relies on -- no new segmentation logic.
-from char_gen.cutout import force_border_background_to_fill  # noqa: E402
+#
+# 2026-09-08 probe finding (probe_reference_bypass_T0259.py, see the attempt
+# log): applying force_border_background_to_fill's HARD flat replace to this
+# reference crop specifically -- as opposed to a per-frame cutout, a
+# different call site -- destabilises IP-Adapter conditioning into
+# structurally incoherent output (attempts 3-4). The same crop with no
+# correction, or a PARTIAL alpha-blend toward the same fill, stays coherent.
+# DARK_BACKGROUND_FILL and border_flood_background_mask are the same
+# primitives force_border_background_to_fill is built from -- reused here,
+# not reimplemented, for blend_border_background below.
+from char_gen.cutout import (  # noqa: E402
+    DARK_BACKGROUND_FILL,
+    border_flood_background_mask,
+    force_border_background_to_fill,
+)
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
@@ -476,7 +490,30 @@ def build_chained_graph(
     return g
 
 
-def crop_identity_reference(concept_sheet_path: Path, dest_path: Path) -> Path:
+def blend_border_background(img: Image.Image, tolerance: float, alpha: float) -> Image.Image:
+    """Alpha-blend each border-flood-detected background pixel `alpha` of
+    the way toward `DARK_BACKGROUND_FILL`, instead of
+    `force_border_background_to_fill`'s hard replace -- preserves the
+    background's own gradient/texture rather than flattening it to one
+    exact colour with a sharp geometric edge, which the 2026-09-08 probe
+    found is what destabilises IP-Adapter conditioning specifically.
+    `alpha=0.0` is a no-op (identical to no correction); `alpha=1.0`
+    reproduces `force_border_background_to_fill` exactly. Moved here from
+    the diagnostic-only `probe_reference_bypass_T0259.py`, which now
+    imports it from this module instead of duplicating it."""
+    mask = border_flood_background_mask(img, tolerance)
+    arr = np.array(img.convert("RGB"), dtype=np.float64)
+    fill = np.array(DARK_BACKGROUND_FILL, dtype=np.float64)
+    arr[mask] = arr[mask] * (1 - alpha) + fill * alpha
+    return Image.fromarray(arr.astype(np.uint8), mode="RGB")
+
+
+def crop_identity_reference(
+    concept_sheet_path: Path,
+    dest_path: Path,
+    *,
+    background_correction: str = "hard_fill",
+) -> Path:
     """Crop the full concept-sheet turnaround grid down to one clean
     front-on panel (`IDENTITY_REFERENCE_CROP_BOX`) and write it to
     `dest_path` -- this crop, not the full sheet, is what gets uploaded to
@@ -493,12 +530,37 @@ def crop_identity_reference(concept_sheet_path: Path, dest_path: Path) -> Path:
     independent of CLIP text conditioning). Measured modal border RGB on the
     frames this crop conditioned (142-153 range, attempts 5 and 7) matches
     this panel's own modal background almost exactly -- the reference, not
-    the prompt weighting, is the root cause. `force_border_background_to_fill`
-    corrects the crop's own background to a genuinely dark fill before it is
-    ever uploaded, the same border-flood detector this pipeline's own
-    per-frame cutout already trusts, so the correction cannot drift from it."""
+    the prompt weighting, is the root cause.
+
+    2026-09-08 probe finding: T-0319's own fix -- a HARD flat replace of
+    every background pixel -- is itself what destabilises IP-Adapter into
+    structurally incoherent output when applied to THIS reference crop
+    (attempts 3-4), even though the identical primitive is safe applied to
+    a per-frame cutout. `background_correction` selects which correction
+    this crop gets: `"hard_fill"` (the default, UNCHANGED from before this
+    parameter existed -- `gen_hybrid_profile_T0272.py` imports and calls
+    this function without passing the new keyword, so its own identity
+    conditioning is provably unaffected by this change) applies
+    `force_border_background_to_fill` exactly as before; `"none"`
+    reproduces the probe's "bypass" variant (no correction at all -- proven
+    coherent, but not dark enough on its own to reliably clear the
+    background-fraction floor); `"blend_<alpha>"` (e.g. `"blend_0.5"`)
+    reproduces the probe's "blend" variant via `blend_border_background`
+    above -- coherent AND darker than doing nothing."""
     crop = Image.open(concept_sheet_path).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX)
-    force_border_background_to_fill(crop, CUTOUT_OKLAB_TOLERANCE).save(dest_path)
+    if background_correction == "none":
+        corrected = crop
+    elif background_correction == "hard_fill":
+        corrected = force_border_background_to_fill(crop, CUTOUT_OKLAB_TOLERANCE)
+    elif background_correction.startswith("blend_"):
+        alpha = float(background_correction.removeprefix("blend_"))
+        corrected = blend_border_background(crop, CUTOUT_OKLAB_TOLERANCE, alpha)
+    else:
+        raise ValueError(
+            f"unknown background_correction {background_correction!r} -- expected "
+            '"hard_fill", "none", or "blend_<alpha>"'
+        )
+    corrected.save(dest_path)
     return dest_path
 
 

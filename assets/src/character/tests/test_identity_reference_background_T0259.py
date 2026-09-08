@@ -42,12 +42,13 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from char_gen.cutout import DARK_BACKGROUND_FILL  # noqa: E402
 from gen_hybrid_walk_T0259 import (  # noqa: E402
     CUTOUT_OKLAB_TOLERANCE,
     blend_border_background,
     crop_identity_reference,
 )
+
+from char_gen.cutout import DARK_BACKGROUND_FILL  # noqa: E402
 
 
 def _make_synthetic_concept_sheet(tmp_path: Path) -> Path:
@@ -114,8 +115,9 @@ def test_background_correction_blend_is_strictly_between_raw_and_hard_fill(tmp_p
     crop and the hard-fill result on every background pixel -- darker than
     doing nothing, but not a flat geometric replace -- which is the
     property the probe's coherence finding depends on."""
-    from char_gen.cutout import border_flood_background_mask, force_border_background_to_fill
     from gen_hybrid_walk_T0259 import IDENTITY_REFERENCE_CROP_BOX
+
+    from char_gen.cutout import border_flood_background_mask, force_border_background_to_fill
 
     sheet_path = _make_synthetic_concept_sheet(tmp_path)
     dest = tmp_path / "blend.png"

@@ -49,7 +49,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -63,14 +62,13 @@ from gen_hybrid_walk_T0259 import (  # noqa: E402
     IDENTITY_REFERENCE_CROP_BOX,
     MAIN_SAVE_NODE_ID,
     REPO_ROOT,
+    blend_border_background,
     build_graph,
     fetch_save_image,
     submit_prompt,
     upload_image,
     wait_for_completion,
 )
-
-from char_gen.cutout import DARK_BACKGROUND_FILL, border_flood_background_mask  # noqa: E402
 
 # Attempt 3's own recipe, held fixed -- the only variable this probe changes
 # is how (or whether) the identity-reference crop's background is corrected.
@@ -83,18 +81,11 @@ IDENTITY_LORA_WEIGHT = 0.50
 
 OUT_ROOT = REPO_ROOT / "assets" / "out" / "hybrid_walk" / "probe_reference_bypass_T0259"
 
-
-def blend_border_background(img: Image.Image, tolerance: float, alpha: float) -> Image.Image:
-    """Alpha-blend each background pixel `alpha` of the way toward
-    `DARK_BACKGROUND_FILL`, using the same border-flood mask
-    `force_border_background_to_fill` trusts -- but never fully replacing a
-    pixel, so the reference keeps its own gradient/texture instead of
-    becoming a flat fill."""
-    mask = border_flood_background_mask(img, tolerance)
-    arr = np.array(img.convert("RGB"), dtype=np.float64)
-    fill = np.array(DARK_BACKGROUND_FILL, dtype=np.float64)
-    arr[mask] = arr[mask] * (1 - alpha) + fill * alpha
-    return Image.fromarray(arr.astype(np.uint8), mode="RGB")
+# `blend_border_background` now lives in gen_hybrid_walk_T0259 as a shared,
+# tested primitive (see tests/test_identity_reference_background_T0259.py)
+# -- `crop_identity_reference`'s own `background_correction="blend_<alpha>"`
+# path uses the exact same function, so this probe and the production path
+# cannot drift from each other.
 
 
 def main() -> None:
