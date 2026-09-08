@@ -121,6 +121,13 @@ generation) is done and verified.
 
 ## Determinism
 
+The launcher itself and its host-verified provenance (byte-exact mirror, the
+one-and-only-launch-path enumeration, the cross-restart reproducibility
+result) live in
+[`tools/board/ops/comfyui/README.md`](../tools/board/ops/comfyui/README.md) —
+this section covers the incident, the regime tradeoff, and the checkable
+drift guard; that README covers the launcher file itself.
+
 ### The incident
 
 Before 2026-09-07, ComfyUI ran with no determinism flags at all
@@ -168,27 +175,34 @@ still be caught if the graph produces one again — see round 11's own
 recommendation to "treat coherent output as something to catch and bank
 when it appears... rather than something to reproduce on demand."
 
-### Launch paths (enumerated, with a caveat)
+### Launch paths — enumerated, closed (2026-09-08)
 
-- **`tools/board/ops/comfyui/start-comfyui.bat`** — the only known launch
-  path, version-controlled here per this card. It is a **reconstruction**,
-  not a byte-exact mirror of the real `F:\ComfyUI\start-comfyui.bat`: no
-  agent working this card has had filesystem or shell access to the
-  Windows host, only ComfyUI's own HTTP API (`GET /system_stats`). The
-  card's own "Do not" section names a duplicate-instance guard that must
-  not be removed from the real file — its contents were never quoted
-  anywhere reachable from this repo, so this reconstruction does not
-  attempt to reproduce it. The next time a human or an agent with host
-  access touches the real file, its actual full contents should be pasted
-  back into this repo copy so it stops being a reconstruction.
-- **No other launch path is recorded anywhere in this repo** — not in this
-  doc's own history, not in `docs/env-inventory.md`, not in any prior
-  card's evidence. A Scheduled Task, Startup-folder shortcut, or service
-  wrapper may still exist on the host; ruling that out needs an interactive
-  check on the Windows host itself (Task Scheduler, `shell:startup`,
-  `services.msc`), which is outside what any WSL-side or HTTP-only agent
-  can do. **This is an open gap, not a closed item** — flagging it here
-  rather than asserting completeness that hasn't been verified.
+- **`tools/board/ops/comfyui/start-comfyui.bat`** is now a **byte-exact
+  mirror** of the real `F:\ComfyUI\start-comfyui.bat`
+  (sha256 `ad10755ed76c037ed95c68c0c174f827c5a545cc23ad9b45647bd2ba8eb11053`,
+  627 bytes), not a reconstruction. It was read directly from the host by
+  an authorised operator session with Windows-host access, which no
+  WSL-side or HTTP-only agent on this card has had. See
+  [`tools/board/ops/comfyui/README.md`](../tools/board/ops/comfyui/README.md)
+  for the full provenance, including the duplicate-instance guard, `cd /d`,
+  and startup logging the earlier reconstruction was missing.
+- **Every autostart mechanism on the host was enumerated the same day** —
+  Task Scheduler, Startup-folder shortcuts (user + all-users), Windows
+  services, and `Run`/`RunOnce` registry keys in both hives:
+
+  | Mechanism | Present? |
+  |---|---|
+  | Scheduled Task `\ComfyUI Server` | **yes — the one and only launch path** |
+  | Startup-folder shortcuts (user + all-users) | none |
+  | Windows service | none |
+  | `Run` / `RunOnce` registry keys (HKLM + HKCU) | none |
+
+  The task's action is `F:\ComfyUI\start-comfyui.bat`, working directory
+  `F:\ComfyUI`, on a **logon** trigger as user `denni` (LogonType
+  Interactive, RunLevel Limited). There is exactly one launch path, which
+  is what makes the single mirrored file above a sufficient record — this
+  is no longer an open gap. If a second launch path is ever added, this
+  table is what to update.
 
 ### Making drift checkable
 
@@ -235,43 +249,58 @@ launcher above, wiring the unit files into the live WSL box's
 needs shell access this card's agents have not had; until that step happens
 the only live check is running `npm run check:comfyui-regime` by hand.
 
-### Cross-restart reproducibility — the actual guarantee, still untested
+### Cross-restart reproducibility — measured 2026-09-08, and it passes
 
 T-0317 round 10 proved *within-session* reproducibility under
 `--deterministic` (a non-cached recompute matched byte-for-byte) but named
 its own gap explicitly: *"A cross-restart check remains untested and
 belongs to a determinism-infra card, not this one."* This is that card, and
-the check still has not been run, because it requires restarting the live
-ComfyUI service — something T-0322's own "Do not" section forbids doing
-casually ("do not restart ComfyUI while an asset card is generating"), and
-something no agent working this card has host shell access to do outside
-the HTTP API anyway. The procedure, ready for whoever next has both GPU
-time and permission to restart the service:
+the check has now been run — by an authorised operator session with
+Windows-host access, not by this repo's WSL-side agents, since it requires
+restarting the live ComfyUI service (the board was confirmed idle first,
+per T-0322's own "Do not restart while a card is generating" rule).
 
-1. Confirm the board is idle (no card mid-generation).
-2. Pick a **baseline-regime-safe** recipe — not the §24-e profile graph,
-   which the table above shows never reliably reproduces regardless of
-   regime; a simpler txt2img recipe (e.g. this doc's own T-0070 smoke test)
-   isolates the determinism question from that graph's separate coherence
-   problem.
-3. Render once, record the seed, recipe, and output sha256.
-4. Restart the ComfyUI service (whichever regime is currently declared in
-   `comfyui-regime.json`).
-5. Run `npm run check:comfyui-regime` (from `tools/board`) to confirm the
-   restart landed in the expected regime, not a silent drift.
-6. Re-render the identical recipe/seed and compare sha256.
-7. Record the result here (or in a new dated subsection) either way — a
-   negative result is as valuable as a positive one, per this card's own
-   evidence trail.
+A minimal txt2img probe (SDXL base, 512×512, seed 424242, 8 steps, cfg 7.0,
+euler/normal, fixed prompt) — deliberately not the fragile §24-e profile
+graph, which the table above shows never reliably reproduces regardless of
+regime — was run twice on the **baseline** launcher (no `--deterministic`,
+no `CUBLAS_WORKSPACE_CONFIG`), with ComfyUI killed and relaunched through
+the Scheduled Task's bat in between, so the two runs are genuinely separate
+process lifetimes:
+
+| Run | Server lifetime | prompt_id | Output bytes | SHA256 |
+|---|---|---|---|---|
+| 1 | A | `f51dd4f2…` | 194455 | `abe9f2e7a83c7261849ef7e7a9354e5b67200d54c524fe44211bf6e4c13822a4` |
+| 2 | B (after restart) | `e750e5d9…` | 194455 | `abe9f2e7…22a4` — **identical** |
+
+**Baseline ComfyUI is byte-reproducible across a restart, with no flags
+set.** This falsifies the premise this card was originally written on:
+determinism flags were never needed to buy cross-restart reproducibility
+for an ordinary graph — baseline already had it. What the flags actually
+did (see the regime table above) was flatten the sampler until the §24-e
+graph became reproducibly *incoherent*. The instability T-0272/T-0317 spent
+twelve rounds chasing is therefore **a property of that graph, not of the
+server** — which is why the remaining problem belongs to **T-0327**, not
+this card. Full provenance:
+[`tools/board/ops/comfyui/README.md`](../tools/board/ops/comfyui/README.md).
+
+The probe is deliberately not committed as an automated test: it needs a
+live GPU host, a service restart, and ~30s per run, and asserts on a
+specific checkpoint's weights. Re-derive it from the parameters above if it
+ever needs repeating.
 
 ### Throughput cost
 
-Not independently benchmarked (no controlled apples-to-apples run exists in
-this repo), but two data points from `docs/assets/evidence/T-0272/README.md`
-give a rough sense of the order of magnitude: round 9's baseline
-non-cached recompute (attempt 54) ran in `gpu_seconds` 54.1; round 10's
-`--deterministic` non-cached recompute (attempt 68) ran in `gpu_seconds`
-60.1 — roughly **+11%**, on different seeds and not a controlled A/B, so
-treat this as a rough signal rather than a measured cost. If this number
-ever needs to be load-bearing for a decision, it should be re-measured with
-the same seed/recipe under both regimes back-to-back.
+**Not applicable.** No determinism flags are adopted — the live regime is
+baseline, per `comfyui-regime.json` — so there is no throughput cost to pay
+or measure. This is a deliberate non-answer, not an unmeasured one:
+fabricating an A/B benchmark for a regime that was never adopted would
+misrepresent the decision above.
+
+For the record, one rough data point exists from when `--deterministic`
+*was tested* (never adopted), in `docs/assets/evidence/T-0272/README.md`:
+round 9's baseline non-cached recompute (attempt 54) ran in `gpu_seconds`
+54.1; round 10's `--deterministic` non-cached recompute (attempt 68) ran in
+`gpu_seconds` 60.1 — roughly +11%, on different seeds and not a controlled
+A/B. It played no part in the baseline decision above and is retained only
+as a stray data point, not a cost that was ever paid.
