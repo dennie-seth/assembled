@@ -16,7 +16,16 @@ board-assets-stage.py   -- re-derives $BOARD_ASSETS_EXPORT_ROOT/<task-id>/
         |                  (MANIFEST.md + attachment files) from each card's
         |                  `attachments` metadata; writes index.json.
         |                  Read-only against the board. Pinned (hand-curated)
-        |                  task dirs are left untouched.
+        |                  task dirs are left untouched. Staging (which tasks
+        |                  get a directory) is attachment-driven; the
+        |                  *counts* in index.json are not (T-0320) -- each
+        |                  task carries both `committedAssetCount` (files
+        |                  actually committed under assets/final/ at the
+        |                  card's branch/develop, via `git ls-tree` +
+        |                  provenance-sidecar attribution, shelled out to
+        |                  `node tools/board/scripts/countCommittedAssets.js`)
+        |                  and `attachmentCount` (the old, attachment-derived
+        |                  count -- review material, not shipped output).
         v
 board-assets-drivemap.py -- ensures a Drive subfolder exists per staged task
         |                   dir under a fixed parent folder, writing/updating
@@ -82,6 +91,10 @@ scope for these scripts.
 | `BOARD_ASSETS_API_TIMEOUT` | stage | `15` (seconds) |
 | `BOARD_API_TIMEOUT` | integrity-check | `15` (seconds) |
 | `BOARD_ASSETS_EXPORT_ROOT` | stage, drivemap, copy, integrity-check | `/mnt/f/PetProjects/board-assets-export` |
+| `BOARD_REPO_ROOT` | stage | `~/dev/assembled-board` (repo checkout, to locate `countCommittedAssets.js` and resolve git refs against -- this script itself is deployed standalone to `~/.local/bin`, see "Deploying changes" below) |
+| `BOARD_ASSETS_BASE_BRANCH` | stage | `develop` (ref a card's committed-asset count resolves against when the card has no recorded `branch`) |
+| `BOARD_ASSETS_COUNT_TIMEOUT` | stage | `30` (seconds, per-card `countCommittedAssets.js` subprocess) |
+| `BOARD_NODE_BIN` | stage | `node` (override to an absolute path if `node` isn't on systemd `--user`'s PATH, e.g. an nvm install -- same reasoning as `~/.local/bin/rclone` below) |
 | `BOARD_DB_PATH` | integrity-check | `~/.local/share/assembled-board/board.db` |
 | `BOARD_ATTACHMENTS_DIR` | integrity-check | `<dirname of BOARD_DB_PATH>/attachments` |
 | `BOARD_BACKUPS_DIR` | integrity-check | `<dirname of BOARD_DB_PATH>/backups` |
