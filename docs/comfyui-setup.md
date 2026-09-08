@@ -118,3 +118,189 @@ It is **not yet reachable from WSL** — the AssetAgent (which the task says
 "lives in WSL") cannot drive it over HTTP until the firewall rule above is
 applied by hand. Everything else (install, checkpoint, launch, local
 generation) is done and verified.
+
+## Determinism
+
+The launcher itself and its host-verified provenance (byte-exact mirror, the
+one-and-only-launch-path enumeration, the cross-restart reproducibility
+result) live in
+[`tools/board/ops/comfyui/README.md`](../tools/board/ops/comfyui/README.md) —
+this section covers the incident, the regime tradeoff, and the checkable
+drift guard; that README covers the launcher file itself.
+
+### The incident
+
+Before 2026-09-07, ComfyUI ran with no determinism flags at all
+(`argv: ["main.py", "--listen", "0.0.0.0", "--port", "8188"]`). Without them,
+ComfyUI 0.29.0 / PyTorch 2.5.1 fix cuDNN algorithm selection and global RNG
+state **once per server process lifetime**, not per request — a workflow's
+`seed` field pins output *within* one continuous ComfyUI server session, but
+**not across a restart**. T-0317 round 9 proved this directly: two runs of
+an identical recipe, one before and one after a `POST /free`, were
+byte-identical within a session; T-0317 round 7 had already shown the same
+recipe diverging across separate implementer sessions. See
+[`docs/assets/evidence/T-0272/README.md`](assets/evidence/T-0272/README.md)
+(rounds 7-9) for the full isolation. T-0272 and T-0317 together spent four
+rounds on this before finding the real cause — round 6's attempt 39
+produced the single best result either card ever got from the §24-e
+dual-IPAdapter + ControlNet profile graph, and it could never be
+reproduced, because the server session that produced it was gone.
+
+### The fix is not "always turn determinism on"
+
+The obvious fix — launch ComfyUI with `--deterministic` and
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` permanently — was tried and **made things
+worse for the one real graph it was tested against**
+(`docs/assets/evidence/T-0272/README.md` rounds 10-12):
+
+| Regime | Reproducible across a restart? | Ever produced a coherent §24-e frame? |
+|---|---|---|
+| `--deterministic` + `CUBLAS_WORKSPACE_CONFIG` (round 10) | yes (verified via a forced non-cached recompute) | no — 0/6 fresh seeds, horizontal-banding failure |
+| `CUBLAS_WORKSPACE_CONFIG` only (round 11) | yes | no — 0/8 fresh seeds, circuit-abstraction failure |
+| baseline, neither flag (rounds 1-8, and round 12's reroll) | no | attempt 39 only, once, in round 6 — round 12's own fresh 8-seed reroll under this exact regime found 0/8 |
+
+Round 12's conclusion: four regimes sampled, and none of them reliably
+reproduces a coherent frame from this particular graph — attempt 39 reads
+as a rare draw from an inherently fragile graph (dual IP-Adapter +
+ControlNet + two stacked LoRAs), not evidence that any one regime is
+"correct." Forcing determinism did not just fail to help; it actively
+destroyed the only regime that has ever produced a usable frame at all.
+
+**The live regime is therefore not fixed** — it is whatever a human most
+recently, deliberately decided, recorded in
+[`tools/board/ops/comfyui-regime.json`](../tools/board/ops/comfyui-regime.json)
+with the reasoning behind that decision. As of 2026-09-07 that is
+**baseline** (neither flag), restored specifically so a coherent frame can
+still be caught if the graph produces one again — see round 11's own
+recommendation to "treat coherent output as something to catch and bank
+when it appears... rather than something to reproduce on demand."
+
+### Launch paths — enumerated, closed (2026-09-08)
+
+- **`tools/board/ops/comfyui/start-comfyui.bat`** is now a **byte-exact
+  mirror** of the real `F:\ComfyUI\start-comfyui.bat`
+  (sha256 `ad10755ed76c037ed95c68c0c174f827c5a545cc23ad9b45647bd2ba8eb11053`,
+  627 bytes), not a reconstruction. It was read directly from the host by
+  an authorised operator session with Windows-host access, which no
+  WSL-side or HTTP-only agent on this card has had. See
+  [`tools/board/ops/comfyui/README.md`](../tools/board/ops/comfyui/README.md)
+  for the full provenance, including the duplicate-instance guard, `cd /d`,
+  and startup logging the earlier reconstruction was missing.
+- **Every autostart mechanism on the host was enumerated the same day** —
+  Task Scheduler, Startup-folder shortcuts (user + all-users), Windows
+  services, and `Run`/`RunOnce` registry keys in both hives:
+
+  | Mechanism | Present? |
+  |---|---|
+  | Scheduled Task `\ComfyUI Server` | **yes — the one and only launch path** |
+  | Startup-folder shortcuts (user + all-users) | none |
+  | Windows service | none |
+  | `Run` / `RunOnce` registry keys (HKLM + HKCU) | none |
+
+  The task's action is `F:\ComfyUI\start-comfyui.bat`, working directory
+  `F:\ComfyUI`, on a **logon** trigger as user `denni` (LogonType
+  Interactive, RunLevel Limited). There is exactly one launch path, which
+  is what makes the single mirrored file above a sufficient record — this
+  is no longer an open gap. If a second launch path is ever added, this
+  table is what to update.
+
+### Making drift checkable
+
+`tools/board/scripts/checkComfyUiRegime.js` (`npm run check:comfyui-regime`,
+from `tools/board`) fetches the live server's `GET /system_stats` and
+compares its `argv`'s `--deterministic` presence against
+`tools/board/ops/comfyui-regime.json`. It deliberately does **not**
+hardcode "`--deterministic` must be present" — per the table above, that
+would be actively wrong whenever baseline is the correct, deliberately
+chosen regime. It fails loudly on drift in **either** direction: someone
+bare-relaunching back to baseline when determinism was wanted, or
+`--deterministic` staying on for a graph (like §24-e) that needs baseline.
+Confirmed live and reachable from this WSL box during T-0322 (`GET
+http://172.18.192.1:8188/system_stats` returns 200; the WSL gateway IP may
+differ — see "Reachability" above).
+
+**Known gap: `CUBLAS_WORKSPACE_CONFIG` is not checkable this way at all.**
+It is a launch-time environment variable, not a CLI argument, and never
+appears anywhere in `/system_stats`'s response. Whoever changes the live
+regime must update `comfyui-regime.json`'s `deterministic` field *and* the
+launcher's env var by hand — the checker only proves `--deterministic`
+stayed where it was declared to be, not `CUBLAS_WORKSPACE_CONFIG`. The only
+way to indirectly confirm `CUBLAS_WORKSPACE_CONFIG` is actually live is the
+reproducibility test below (a fixed-workspace-config regime is
+reproducible; a non-fixed one usually isn't, though round 11/12 show that
+signal is noisy on a fragile graph).
+
+To wire this into an asset-generation preflight (refuse to render if the
+live regime has drifted from what a card's own recipe expects), a
+generator script can either shell out to this command and check its exit
+code, or `import { evaluateRegime } from
+"../../board/src/lib/comfyuiRegime.js"` directly and call it with its own
+already-fetched `/system_stats` payload.
+
+An hourly standing check also now exists as version-controlled ops config:
+`tools/board/ops/check-comfyui-regime.sh` (a `flock`-guarded wrapper for
+`npm run check:comfyui-regime`, logging to
+`~/.local/state/check-comfyui-regime/check.log`) plus
+`tools/board/ops/systemd/check-comfyui-regime.{service,timer}`, mirroring
+`board-integrity-check.{py,timer}`'s existing pattern (see
+`tools/board/ops/README.md`). **Not yet deployed** — like the reconstructed
+launcher above, wiring the unit files into the live WSL box's
+`~/.local/bin` / `~/.config/systemd/user` and `systemctl --user enable --now`
+needs shell access this card's agents have not had; until that step happens
+the only live check is running `npm run check:comfyui-regime` by hand.
+
+### Cross-restart reproducibility — measured 2026-09-08, and it passes
+
+T-0317 round 10 proved *within-session* reproducibility under
+`--deterministic` (a non-cached recompute matched byte-for-byte) but named
+its own gap explicitly: *"A cross-restart check remains untested and
+belongs to a determinism-infra card, not this one."* This is that card, and
+the check has now been run — by an authorised operator session with
+Windows-host access, not by this repo's WSL-side agents, since it requires
+restarting the live ComfyUI service (the board was confirmed idle first,
+per T-0322's own "Do not restart while a card is generating" rule).
+
+A minimal txt2img probe (SDXL base, 512×512, seed 424242, 8 steps, cfg 7.0,
+euler/normal, fixed prompt) — deliberately not the fragile §24-e profile
+graph, which the table above shows never reliably reproduces regardless of
+regime — was run twice on the **baseline** launcher (no `--deterministic`,
+no `CUBLAS_WORKSPACE_CONFIG`), with ComfyUI killed and relaunched through
+the Scheduled Task's bat in between, so the two runs are genuinely separate
+process lifetimes:
+
+| Run | Server lifetime | prompt_id | Output bytes | SHA256 |
+|---|---|---|---|---|
+| 1 | A | `f51dd4f2…` | 194455 | `abe9f2e7a83c7261849ef7e7a9354e5b67200d54c524fe44211bf6e4c13822a4` |
+| 2 | B (after restart) | `e750e5d9…` | 194455 | `abe9f2e7…22a4` — **identical** |
+
+**Baseline ComfyUI is byte-reproducible across a restart, with no flags
+set.** This falsifies the premise this card was originally written on:
+determinism flags were never needed to buy cross-restart reproducibility
+for an ordinary graph — baseline already had it. What the flags actually
+did (see the regime table above) was flatten the sampler until the §24-e
+graph became reproducibly *incoherent*. The instability T-0272/T-0317 spent
+twelve rounds chasing is therefore **a property of that graph, not of the
+server** — which is why the remaining problem belongs to **T-0327**, not
+this card. Full provenance:
+[`tools/board/ops/comfyui/README.md`](../tools/board/ops/comfyui/README.md).
+
+The probe is deliberately not committed as an automated test: it needs a
+live GPU host, a service restart, and ~30s per run, and asserts on a
+specific checkpoint's weights. Re-derive it from the parameters above if it
+ever needs repeating.
+
+### Throughput cost
+
+**Not applicable.** No determinism flags are adopted — the live regime is
+baseline, per `comfyui-regime.json` — so there is no throughput cost to pay
+or measure. This is a deliberate non-answer, not an unmeasured one:
+fabricating an A/B benchmark for a regime that was never adopted would
+misrepresent the decision above.
+
+For the record, one rough data point exists from when `--deterministic`
+*was tested* (never adopted), in `docs/assets/evidence/T-0272/README.md`:
+round 9's baseline non-cached recompute (attempt 54) ran in `gpu_seconds`
+54.1; round 10's `--deterministic` non-cached recompute (attempt 68) ran in
+`gpu_seconds` 60.1 — roughly +11%, on different seeds and not a controlled
+A/B. It played no part in the baseline decision above and is retained only
+as a stray data point, not a cost that was ever paid.

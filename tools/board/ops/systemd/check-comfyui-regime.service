@@ -1,0 +1,7 @@
+[Unit]
+Description=Read-only ComfyUI determinism-regime drift check (T-0322)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/check-comfyui-regime.sh
