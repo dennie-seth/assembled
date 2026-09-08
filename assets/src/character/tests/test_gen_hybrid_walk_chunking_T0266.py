@@ -153,6 +153,33 @@ def test_provenance_records_motion_class_for_chr1_cap_selection(out_dir: Path) -
     assert result["motion_class"] == walk.MOTION_CLASS == "locomotion"
 
 
+def test_run_attempt_uses_blend_background_correction_for_identity_reference(
+    out_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-0259 2026-09-08 probe finding: T-0319's hard-fill correction on the
+    IDENTITY REFERENCE crop specifically destabilises IP-Adapter into
+    incoherent output (attempts 3-4), while a partial alpha-blend toward
+    the same fill stays coherent (blend_0.5/0.8) and gets darker than doing
+    nothing at all (bypass, attempts 5-9's own regime, which stayed under
+    the background-fraction floor). `run_attempt` must select the blend
+    correction via `crop_identity_reference`'s new `background_correction`
+    keyword -- not the old hard_fill default, and not "none" -- and record
+    which correction it used in the returned provenance."""
+    calls: list[str | None] = []
+    original = walk.crop_identity_reference
+
+    def spy(concept_sheet_path, dest_path, **kwargs):
+        calls.append(kwargs.get("background_correction"))
+        return original(concept_sheet_path, dest_path, **kwargs)
+
+    monkeypatch.setattr(walk, "crop_identity_reference", spy)
+
+    result = _run(max_frames=walk.FRAME_COUNT)
+    assert result is not None
+    assert calls == ["blend_0.5"]
+    assert result["identity_reference_background_correction"] == "blend_0.5"
+
+
 def test_walk_negative_prompt_extends_idle_negative_without_editing_it() -> None:
     """T-0259: every real attempt (5-9) shows chromatic-fringe/channel-
     misalignment/glow artifacting the idle recipe's shared negative prompt
