@@ -106,3 +106,32 @@ def test_trailing_and_leading_prose_survive_byte_for_byte(log_path):
     text = log_path.read_text()
     assert "Trailing prose that must survive untouched." in text
     assert "Some more prose between the two tables." in text
+
+
+def test_reusing_a_slot_without_explicit_notes_carries_forward_the_old_row_notes(log_path):
+    """A re-run of a reused slot that supplies no --notes must not blank the
+    slot's prior history. Session 6's real re-run of attempt 5 (and 6) did
+    exactly this: append_attempt_log's CLI default for --notes is "" (main.py
+    passes it unconditionally), so any resume-and-recut invocation without an
+    explicit --notes silently replaced a rich historical description with an
+    empty one -- a code-caused documentation regression distinct from the
+    file-wide-dedup bug this test file otherwise covers (T-0259 session 10
+    finding (A))."""
+    walk.append_attempt_log(_provenance(5, 44444), notes="")
+    text = log_path.read_text()
+    assert "historical attempt 5, main table" in text, (
+        "empty --notes on a reused slot must carry the previous row's notes forward, "
+        "not blank them"
+    )
+    # the rest of the row (seed, gate, etc.) must still reflect THIS run
+    assert "44444" in text
+
+
+def test_reusing_a_slot_with_explicit_notes_still_overrides(log_path):
+    """The carry-forward only fires when the new run supplies no notes at
+    all -- an explicit --notes (even a short one) must still win, exactly as
+    the pre-existing dedup tests above already assume."""
+    walk.append_attempt_log(_provenance(5, 55555), notes="explicit new notes")
+    text = log_path.read_text()
+    assert "explicit new notes" in text
+    assert "historical attempt 5, main table" not in text
