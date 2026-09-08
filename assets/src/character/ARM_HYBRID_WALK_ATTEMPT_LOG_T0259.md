@@ -589,3 +589,75 @@ non-existent, never-produced anchor remains correct, and is now backed by 12 rou
 card's own exhaustive, unsuccessful attempt to produce exactly that anchor through the identical
 host. This is not a T-0259 scope item to re-attempt; it is upstream infrastructure/host state, the
 same blocker this session's own attempts 3-4 hit independently.
+
+## 2026-09-08 session 2: the reviewer's one-variable probe -- CONFIRMED, this is a T-0319
+reference-side regression, not host incoherence. Root cause localised; not a T-0259 fix.
+
+The prior session's own "host coherence" conclusion was directly challenged by that session's
+reviewer verdict: attempts 5-9 (pre-T-0319 raw reference crop) all produced recognisable figures;
+attempts 3-4 (T-0319's `force_border_background_to_fill` now also applied to the identity
+reference, not just the per-frame cutout) both came back as barred/blocky abstraction with no
+legible figure. A host-coherence explanation predicts failure regardless of which reference
+conditions IP-Adapter; a reference-regression explanation predicts exactly the split observed. The
+reviewer's recommended next step was a single, cheap (~24 GPU-second), one-variable frame-0 probe
+bypassing the reference-side fix, before spending anything on a host restart. This session ran
+that probe, plus one informative follow-up, via a new standalone diagnostic script,
+`probe_reference_bypass_T0259.py` (deliberately NOT `gen_hybrid_walk_T0259.py --attempt N` --
+does not touch `check_attempt_cap`, does not write a numbered `attempt_<N>/` directory, is not
+part of the pytest gate suite; same category as this card's own prior `tmp_probe/` and T-0317's
+`profile_probe_T0259/`). All three probes held seed (27182, attempt 3's own), pose, and every
+LoRA/ControlNet/IP-Adapter weight fixed at attempt 3's values -- the only variable was how (or
+whether) the identity-reference crop's background got corrected.
+
+`POST /free {"unload_models": true, "free_memory": true}` was issued first, as in every prior
+session; `torch_vram_free` stayed at ~7MB (unchanged from before the call, same weak-free
+signature the prior session and T-0317 round 8 both recorded) -- generation still proceeded, so
+this is not itself a blocker.
+
+- **Probe "bypass"** (reference = the raw crop, zero correction, i.e. exactly what attempts 5-9
+  used): **coherent.** A legible standing figure -- head, torso, two arms, two legs, dark
+  green costume -- visually consistent with attempt 5's own frame 0 (both chromatically fringed,
+  but unambiguously a person). Measured border RGB mean (134,138,141), matching attempt 5's own
+  (138,140,144) almost exactly. **This confirms the reviewer's hypothesis outright**: the ComfyUI
+  host is not broken. `probe_reference_bypass_T0259/frame_0_main_384.png`.
+- **Probe "blend 0.5"** (a follow-up hypothesis this session added: instead of T-0319's HARD flat
+  replace of every background pixel with the single flat `DARK_BACKGROUND_FILL` triple -- a
+  perfectly flat region with a sharp geometric edge, a very unnatural signal for a CLIP vision
+  encoder trained on photographic references -- alpha-blend each background pixel 50% of the way
+  toward the fill colour, preserving the original gradient/texture rather than flattening it):
+  **still coherent.** Same legible figure, background measurably darker (mean (100,111,114) vs.
+  bypass's (134,138,141)) -- real progress toward T-0319's actual goal, without the coherence
+  cost. `probe_reference_bypass_T0259/blend_0.5/frame_0_main_384.png`.
+- **Probe "blend 0.8"** (a stronger dose of the same correction, to find where coherence starts to
+  break): **degrading.** The silhouette is still head-shaped and roughly figure-proportioned, but
+  the torso and shoulders show the same banding/jagged-edge artifacts that dominate attempt 3's
+  fully-incoherent output, just not yet total -- a visibly worse, borderline result.
+  `probe_reference_bypass_T0259/blend_0.8/frame_0_main_384.png`.
+
+**This is a clean dose-response finding, not a binary one:** coherence degrades monotonically as
+the background correction moves from 0% (raw, too light) toward 100% (T-0319's current hard fill,
+fully incoherent), with 50% still coherent and measurably darker, and 80% already visibly
+degrading. `border_flood_background_mask` also warned on every one of these crops ("this frame's
+own border colours span 28.51x the classification tolerance ... too trust a small representative
+set") -- worth noting for whoever tunes this further, since the mask itself may be classifying
+more or less of the panel as "background" than intended for this particular reference image, not
+just the fill colour being the issue.
+
+**Not a T-0259 fix, and not attempted as one this session.** Getting BOTH a genuinely dark
+background (T-0319's own goal, still measurably unmet even at blend 0.5's (100,111,114) against
+the T-0252 anchor's ~(18,17,14)) AND full coherence is a real tuning task -- alpha sweep in a
+narrower band (this session's own data brackets a viable zone somewhere in roughly [0.2, 0.6]),
+possibly combined with a stricter background-mask threshold to reduce how much of the panel gets
+touched at all. That is real engineering, not a blind sweep, but it is also not something to
+improvise inside T-0259's own remaining budget: DL-21's 8 numbered candidate-sheet slots for this
+card are still exhausted (this session opened zero new numbered attempts), and even the best
+variant found here does not yet clear T-0319's own background-darkness goal. Recommend seeding a
+scoped follow-up card against `crop_identity_reference` / `force_border_background_to_fill`
+(T-0319's own module) with this session's three probes as ready-made evidence and starting
+brackets, rather than reopening a T-0259 attempt on an unresolved reference-side regression that
+would just reproduce attempts 3-4's failure a third and fourth time. Once that follow-up lands a
+reference correction that stays coherent AND passes `MIN_BACKGROUND_FRACTION`, T-0259 re-runs its
+existing recipe (CROSS_EXTENT_NORM=0.14, denoise 0.30-0.40, seed 27182) unchanged.
+
+**Criterion 5 (side profile): unchanged, still blocked upstream** -- nothing this session did
+touches that finding; see the prior session's own entry above.
