@@ -723,3 +723,90 @@ required regression check alongside this card's. DL-21's 8 numbered attempt slot
 exhausted; this session opened none. Once that follow-up lands a reference correction that stays
 coherent AND clears `MIN_BACKGROUND_FRACTION`, T-0259 re-runs its existing recipe
 (CROSS_EXTENT_NORM=0.14, denoise 0.30-0.40, seed 27182) unchanged.
+
+## 2026-09-08 session 4 -- the reference fix lands (in T-0259 itself, not a follow-up card), gait
+motion legibility is the one remaining open problem
+
+**The recommendation above turned out not to need its own card.** `crop_identity_reference` was
+extended with a keyword-only `background_correction` parameter (`"hard_fill"` default / `"none"`
+/ `"blend_<alpha>"`), landed with TDD
+(`tests/test_identity_reference_background_T0259.py`). Its default reproduces T-0319's exact
+existing behaviour byte-for-byte, proven by a test that asserts the no-kwarg call path is pixel-
+identical to explicitly passing `"hard_fill"` -- which is *why* this could land inside T-0259
+itself rather than needing a separately reviewed card touching shared code: `crop_identity_
+reference` is imported and called unchanged by `gen_hybrid_profile_T0272.py`, and that call site
+never passes the new keyword, so its own identity conditioning is provably unaffected. `run_
+attempt` now calls it with `background_correction="blend_0.5"` -- the evidence-backed choice from
+the prior session's own probes -- and records the choice in provenance
+(`identity_reference_background_correction`).
+
+**This is a real, load-bearing fix, not a documentation exercise.** Three full 8-frame attempts
+were run for real against ComfyUI this session (T-0266's chunked/resumable foreground path, ~180-
+205 GPU-seconds each, all four chunks per attempt run in the foreground, never backgrounded):
+
+| Attempt | Recipe (vs. attempt 5's baseline) | Frame-delta range | Mech. gate | Background floor (0.65) | Identity colour vs T-0252 anchor | Visible gait motion |
+|---|---|---|---|---|---|---|
+| 5 | denoise 0.35, ipadapter 0.6, blend_0.5 | 0.2080-0.3859 | PASS | 0.75-0.79 all 8 cells, PASS | mean_sat 0.236 vs anchor 0.230, green_frac 0.067 vs 0.056 -- matches/exceeds anchor | NOT legible -- raw per-step deltas uniformly ~44px/2304px across all 8 steps (max/min 1.00x) |
+| 6 | denoise 0.35->0.5 | 0.2986-0.5932 | **FAIL** (over 0.50 cap) | not measured (gate already failed) | not measured | still not legible -- the extra delta is visibly background/cutout noise instability on inspection, not clearer limb pose |
+| 7 | denoise 0.35, ipadapter 0.6->0.4 | 0.0753-0.3237 | PASS | 0.49-0.62 all 8 cells, **FAIL** (worse than attempt 5) | not compared (background regression makes this moot) | still not legible -- raw deltas barely change (42-44px, max/min 1.05x) |
+
+Attempt 5 is the best result any T-0259 session has produced: for the first time across 9+
+sessions, coherence, the background-fraction floor, and identity colour all pass simultaneously,
+with real margin (background 0.75-0.79 vs the 0.65 floor; colour matching the anchor, not washed
+out). **It was NOT promoted.** Viewed at native cell scale (48px, close to the ~40px the card's
+own acceptance criteria name as the judging scale) in a loop, the legs and arms do not read as
+walking -- the silhouette stays close to a static stance across all 8 frames. This is exactly the
+failure mode the card's own "Edge cases" section names: *"A sheet with a very low frame-delta
+because the legs barely move is a failure, not a win."* Passing every mechanical gate does not
+override that -- gait legibility is graded first, per the card's own instructions, and attempt 5
+does not clear it on visual inspection.
+
+**Root-caused, not just observed: the pose rig is not the problem.** Comparing frame 0's
+(`frame_0_pose_skeleton_384.png`, a contact pose) and frame 2's (`frame_2_pose_skeleton_384.png`,
+a passing/cross pose) actual ControlNet conditioning inputs from attempt 5 side by side, the
+skeletons themselves are clearly, unambiguously different -- frame 0 shows a wide stance with legs
+splayed to both feet, frame 2 shows a narrow crossing stance with one leg nearly vertical and the
+other angled forward. `pose_rig_walk_T0259.py` is emitting real, distinct per-frame skeletons
+exactly as its own unit tests already assert. **The bottleneck is downstream, in generation: the
+diffusion model is not faithfully translating that skeleton difference into the final rendered
+pixels under the current chained-img2img regime**, regardless of denoise (attempt 6) or
+IP-Adapter weight (attempt 7). Both of those levers, tested for real this session, changed *other*
+things (background noise, background cleanliness) without changing how much the character's own
+limbs visibly moved.
+
+**Working hypothesis for the next real experiment, not yet tried:** frames 1-7 are always
+initialized via img2img from frame 0's own previously-rendered pixels
+(`_generate_one_frame`/`build_graph`'s `VAEEncode` chain), at a denoise that this session confirmed
+cannot be raised without breaking the frame-delta cap or degrading background cleanliness first.
+Even at full ControlNet strength/end (1.0/1.0, already maxed, unchanged all session), that
+chaining plausibly biases the sampler toward reproducing the init image's own pixel arrangement
+over any degree of denoise this recipe can afford. Frame 0 is the one frame that is *not* chained
+(always sampled fresh, denoise 1.0) and is also the one frame whose own pose is closest to a
+"default" stance -- this may not be a coincidence. **The next real test is a fresh (denoise 1.0,
+no img2img chain) generation of a passing-pose frame (e.g. frame 2), conditioned identically
+otherwise (same blend_0.5 reference, same ControlNet skeleton, same seed), to see whether removing
+the chain alone unlocks visible pose fidelity to the skeleton.** If it does, the open design
+question becomes how to keep frame-to-frame colour/style consistency (chaining's actual job)
+without the chain also suppressing pose motion -- possibly a lower IP-Adapter/style-LoRA weight
+specifically on non-anchor frames, or a different consistency mechanism entirely (e.g. conditioning
+every frame on the SAME frame-0 reference rather than chaining sequentially). That is a genuine
+architecture question, not a calibration sweep, and deserves a session (or its own card) that can
+spend a full DL-21-scale attempt budget on it deliberately rather than a probe-sized slice of this
+one.
+
+**Also fixed this session, unrelated to generation:** `append_attempt_log` had a live
+documentation-destroying bug -- re-logging attempts 5-7 under their real numbers, before the fix,
+silently deleted the calibration table's own historical attempt-5/6 rows (a *different* table
+further down this document that happens to also have an "Attempt" column), reproducing the exact
+class of regression two prior sessions had to hand-repair without ever fixing the root cause. Now
+fixed and covered by a regression test
+(`tests/test_attempt_log_scoped_dedup_T0259.py`); this document's own diff for this session's three
+new rows is purely additive (3 insertions, 0 deletions) as a direct consequence.
+
+**DL-21 budget note:** slots 5, 6 and 7 were reused for real generation this session (not merely
+diagnostic probes -- these are numbered attempts, unlike `probe_reference_bypass_T0259.py`'s single
+frames). Per this card's own established precedent (`5 (reuse, ...)` rows above), a slot is a
+scratch directory, not a permanent identity; attempt 5's directory was cleared and regenerated
+fresh rather than reused stale (an early mistake this session that produced a provenance dict
+recording the new denoise/correction against the OLD frames -- caught before promotion, corrected
+by clearing the directory and regenerating).
