@@ -140,29 +140,34 @@ def build_positive_prompt(entity: EntitySpec) -> str:
     reviewer caught by opening the file: the whole-figure panels were
     headless (a blank white mannequin head, not a face) and the model drifted
     to a heavier armour-plated costume in the bottom row instead of holding
-    the single green-coat identity throughout. Round 3 adds an explicit
-    visible-face requirement on every whole-figure panel and repeats the one
-    intended costume by name to fight that drift, plus reframes the limb
-    pieces as an explicit rigging/sprite-sheet reference (a genre whose
-    convention is isolated *anatomical* segments, not garment product shots)
-    to push harder for literal single-limb-segment crops. See
-    `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md` for the attempts this was
-    compared against."""
+    the single green-coat identity throughout. Round 3 tried an explicit
+    visible-face requirement plus a "rigging reference sheet" framing for
+    the limb panels -- the "rigging" word itself turned out to be the
+    problem: it reads as mechanical rigging, not figure-drawing rigging, and
+    pulled the bottom-row legs toward robotic/mechanical armour instead of
+    the intended cloth-and-boot costume, while the hero figure's head still
+    came out cropped off the top of frame. Round 4 drops "rigging" entirely
+    in favour of "anatomy reference sheet" (an art-reference genre with no
+    mechanical connotation), explicitly asks for the head to stay fully
+    inside the frame, and names the limbs as a human figure's rather than a
+    machine's. See `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md` for the attempts
+    this was compared against."""
     return (
         f"{entity.trigger_token}, exploded parts diagram, disassembled equipment "
         f"breakdown sheet, {entity.costume_description}, same uniform and same equipment "
         "loadout, consistent identity, the exact same institutional green coat costume in "
         "every single panel, flat uniform neutral grey background, flat even lighting, no "
         "cast shadow, no perspective, clean readable outline, three whole-figure turnaround "
-        "views at the top -- front view, side view, back view -- each with a clearly visible "
-        "face with eyes nose and mouth under the hood, not a blank head, and below them a "
-        "character rigging reference sheet: individual anatomical body-part segments for "
-        "sprite animation, laid out flat side by side with empty space between each piece so "
-        "nothing overlaps or touches, like a paper doll's separate interchangeable limb "
-        "pieces, each segment its own single isolated silhouette: an upper arm segment by "
-        "itself, a lower arm and hand segment by itself, an upper leg segment by itself, a "
-        "lower leg and foot segment by itself, a head segment with a visible face by itself, "
-        "a torso and coat segment by itself, no text, no UI, no watermark"
+        "views at the top, head fully inside the frame, full body from head to boots visible "
+        "-- front view, side view, back view -- each with a clearly visible human face with "
+        "eyes nose and mouth under the hood, not a blank head, and below them a human figure "
+        "anatomy reference sheet: individual human body-part cutouts for sprite animation, "
+        "laid out flat side by side with empty space between each piece so nothing overlaps "
+        "or touches, each part its own single isolated silhouette, like a paper doll's "
+        "separate interchangeable limb pieces: a human upper arm piece by itself, a human "
+        "lower arm and hand piece by itself, a human upper leg piece by itself, a human lower "
+        "leg and boot piece by itself, a head piece with a visible face by itself, a torso "
+        "and coat piece by itself, no text, no UI, no watermark"
     )
 
 
@@ -179,8 +184,10 @@ def build_negative_prompt() -> str:
         + ", cropped limbs, cropped figure, overlapping panels, panels touching, "
         "different costume between panels, different colour between panels, blank head, "
         "faceless, featureless mannequin head, missing face, no face, headless, blank white "
-        "head, armor plating, plate armor, heavy armor, bulky armor, mecha armor, sci-fi "
-        "armor, helmet, different silhouette between panels"
+        "head, cropped head, head cut off, head out of frame, armor plating, plate armor, "
+        "heavy armor, bulky armor, mecha armor, sci-fi armor, helmet, robot legs, robotic "
+        "legs, mechanical legs, cyborg, exoskeleton, robot parts, machine parts, different "
+        "silhouette between panels"
     )
 
 

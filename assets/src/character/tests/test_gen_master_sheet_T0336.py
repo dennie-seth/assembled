@@ -215,6 +215,16 @@ def test_build_negative_prompt_forbids_blank_heads_and_armour_drift() -> None:
     assert "armor" in negative or "armour" in negative
 
 
+def test_build_negative_prompt_forbids_cropped_heads_and_robotic_legs() -> None:
+    """Round 3's own retry (a 'rigging reference sheet' framing) traded the
+    blank-head defect for a head cropped out of frame and traded garment
+    legs for robotic/mechanical ones -- lock both out explicitly rather than
+    relying on wording that happened to avoid them this time."""
+    negative = gen.build_negative_prompt().lower()
+    assert "head cut off" in negative or "cropped head" in negative
+    assert "robot" in negative or "mechanical legs" in negative
+
+
 def test_registering_a_new_entity_requires_no_generator_code_change() -> None:
     """The card's own reuse requirement: an enemy card adds a new EntitySpec
     to ENTITIES (data), it never edits build_graph/run_attempt."""
