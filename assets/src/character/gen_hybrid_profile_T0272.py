@@ -242,13 +242,20 @@ def invert_reference_for_conditioning(src_path: Path, dest_path: Path) -> None:
 def prepare_secondary_reference(src_path: Path, dest_path: Path, needs_invert: bool) -> None:
     """Round 4 defect-fix: `invert_reference_for_conditioning` was applied
     unconditionally to every secondary reference, which is correct for
-    T-0273's dark-silhouette-on-light-background photographs but wrong for
-    `derive_profile_style_reference_T0272.py`'s own output, whose background
-    is already forced to solid black -- inverting it a second time would flip
-    that correct tone back to near-white and reintroduce the exact bleed
-    round 3's Test D fixed (round-3 attempt 12: only 76 fg px survived
-    cutout). `needs_invert` makes that choice explicit per secondary source
-    instead of assuming every reference needs the same fix T-0273's did."""
+    T-0273's dark-silhouette-on-light-background photographs but was wrong
+    for `derive_profile_style_reference_T0272.py`'s own output when that
+    output's background was still forced to solid black (attempts 25/53/
+    61-66's own `--secondary-no-invert` choice) -- inverting a
+    near-black tone a second time would flip it back to near-white and
+    reintroduce the exact bleed round 3's Test D fixed (round-3 attempt 12:
+    only 76 fg px survived cutout). T-0347 stopped `extract_panel_reference`
+    forcing its background at all (recolouring an IP-Adapter reference
+    corrupts conditioning), so that source's own background is now whatever
+    the concept-sheet panel's real background tone is -- re-check it before
+    assuming `--secondary-no-invert` is still the right call for a fresh
+    derivation. `needs_invert` makes that choice explicit per secondary
+    source instead of assuming every reference needs the same fix T-0273's
+    did."""
     if needs_invert:
         invert_reference_for_conditioning(src_path, dest_path)
     else:
