@@ -37,7 +37,7 @@ from asset_gate.character import (
 )
 
 # The real, shipped provenance sidecar T-0340's positive control is measured
-# against -- docs/decision-log.md DL-30. Not a fixture: this is the actual
+# against -- docs/decision-log.md DL-31. Not a fixture: this is the actual
 # committed file, so a regression in the idle path (untouched by this card)
 # would be caught against the real artifact, not a copy of it.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -309,7 +309,7 @@ def test_check_frame_delta_cap_is_retired_for_locomotion_T0340():
     """T-0340 retires the whole-silhouette XOR/union cap for locomotion --
     it was measurably unpassable there (rendering the rig's own skeletons as
     capsules, perfect pose, zero drift, already consumed 0.23-0.49 of this
-    same 0.50 cap; docs/decision-log.md DL-30). `check_character_frame_delta_cap`
+    same 0.50 cap; docs/decision-log.md DL-31). `check_character_frame_delta_cap`
     now reports locomotion as not-applicable/skipped regardless of the
     measured range -- even a range this cap would previously have rejected
     passes, because this check no longer evaluates it at all;
@@ -498,7 +498,7 @@ def test_sweep_frame_delta_cap_of_empty_tree_returns_no_results(tmp_path):
 #
 # Replaces the whole-silhouette XOR/union cap (`check_character_frame_delta_cap`,
 # now retired above for locomotion/transition/loop) with two measures that
-# separate motion from drift, per docs/decision-log.md DL-30:
+# separate motion from drift, per docs/decision-log.md DL-31:
 #
 #   - pose_fidelity_range: IoU of the rendered silhouette against the
 #     rig-predicted (capsule) silhouette for that frame's own commanded
@@ -512,7 +512,7 @@ def test_sweep_frame_delta_cap_of_empty_tree_returns_no_results(tmp_path):
 
 # A synthetic reproduction of session 13's sequential-chained candidate
 # (real pixels live under a gitignored `assets/out/` path, never committed
-# -- see docs/decision-log.md DL-30). The identity-stability number below
+# -- see docs/decision-log.md DL-31). The identity-stability number below
 # is not invented: it is the exact `distance` measured by `test_art.py`'s
 # `test_identity_stability_catches_drift_that_frame_consistency_missed`,
 # which reproduces the qualitative failure the review described (colour
@@ -608,7 +608,7 @@ def test_motion_fidelity_passes_when_pose_matches_and_identity_is_stable():
 def test_motion_fidelity_fails_when_pose_fidelity_below_floor():
     """A render that doesn't match what the rig commanded -- a non-walk, or
     a walk so timid the model barely drew it (T-0259 attempt 4's own
-    measured range: docs/decision-log.md DL-30)."""
+    measured range: docs/decision-log.md DL-31)."""
     prov = {
         "pose_fidelity_range": [0.39, 0.63],  # T-0259 attempt 4's real measured range
         "identity_stability_range": [0.03, 0.09],

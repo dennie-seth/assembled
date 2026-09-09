@@ -223,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
             "recursively validate that every idle/unlabelled character-class "
             "*.provenance.json under a directory stays within the 0.30 frame-delta cap "
             "-- locomotion/transition/loop are retired from this sweep, see "
-            "character-motion-fidelity-sweep (docs/decision-log.md DL-26/DL-30, T-0271/T-0340)"
+            "character-motion-fidelity-sweep (docs/decision-log.md DL-26/DL-31, T-0271/T-0340)"
         ),
     )
     p.add_argument(
@@ -237,7 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
             "recursively validate that every locomotion/transition/loop character-class "
             "*.provenance.json under a directory clears the pose-fidelity IoU floor and "
             "stays within the identity-stability histogram cap -- the replacement for the "
-            "retired whole-silhouette frame-delta cap (docs/decision-log.md DL-30, T-0340)"
+            "retired whole-silhouette frame-delta cap (docs/decision-log.md DL-31, T-0340)"
         ),
     )
     p.add_argument(

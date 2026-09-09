@@ -32,7 +32,7 @@ already use. That list is expected to shrink to zero as each sheet is
 regenerated or has its CHR-1 fields genuinely backfilled by a dedicated card
 -- never by adding a new exemption for a new output.
 
-**T-0340 (docs/decision-log.md DL-30): the motion-class frame-delta gate is
+**T-0340 (docs/decision-log.md DL-31): the motion-class frame-delta gate is
 retired for locomotion/transition/loop.** T-0271/DL-26 gave those three
 classes a higher whole-silhouette XOR/union cap (``MOTION_FRAME_DELTA_CAP``,
 0.50) on the theory that a real gait legitimately moves more silhouette
@@ -114,17 +114,17 @@ MOTION_FRAME_DELTA_CAP = 0.50
 #: straight past both gates.
 _HIGHER_CAP_MOTION_CLASSES = frozenset({"locomotion", "transition", "loop"})
 
-#: T-0340 (docs/decision-log.md DL-30): floor for pose-fidelity IoU --
+#: T-0340 (docs/decision-log.md DL-31): floor for pose-fidelity IoU --
 #: rendered silhouette vs. the rig-predicted (capsule) silhouette for that
 #: frame's own commanded pose -- on locomotion/transition/loop sheets.
 #: Calibrated against the real, committed T-0259 attempt-4 walk (measured
-#: 0.393-0.630, DL-30's table): a floor of 0.70 correctly rejects that
+#: 0.393-0.630, DL-31's table): a floor of 0.70 correctly rejects that
 #: sheet, which DL-26 already documents as reading with "motion barely
 #: visible" -- exactly the failure this floor exists to catch, not a
 #: contradiction of it.
 POSE_FIDELITY_IOU_FLOOR = 0.7
 
-#: T-0340 (DL-30): cap for torso palette-histogram distance frame to frame,
+#: T-0340 (DL-31): cap for torso palette-histogram distance frame to frame,
 #: on the same three motion classes. Calibrated against the same real
 #: T-0259 attempt-4 walk: its interior frame pairs measured 0.047-0.070
 #: (ordinary per-frame cutout-mask noise, not drift), while the pairs
@@ -234,7 +234,7 @@ def check_character_frame_delta_cap(provenance: dict, sheet_name: str = "<sheet>
     character sheet's `frame_delta_range` exceeds DL-21's 0.30 cap
     (T-0271, docs/decision-log.md DL-26).
 
-    **T-0340 (DL-30): locomotion/transition/loop are retired from this
+    **T-0340 (DL-31): locomotion/transition/loop are retired from this
     check.** See this module's docstring for why the whole-silhouette
     XOR/union measure was unpassable for real motion. Those three classes
     now report not-applicable (`passed=True`, `details["skipped"]`)
@@ -265,7 +265,7 @@ def check_character_frame_delta_cap(provenance: dict, sheet_name: str = "<sheet>
             reason=(
                 f"{sheet_name}: motion_class={motion_class!r} -- the whole-silhouette "
                 "XOR/union frame-delta cap is retired for locomotion/transition/loop "
-                "(T-0340, docs/decision-log.md DL-30); see check_character_motion_fidelity"
+                "(T-0340, docs/decision-log.md DL-31); see check_character_motion_fidelity"
             ),
             details={"motion_class": motion_class, "skipped": True},
         )
@@ -467,7 +467,7 @@ def check_character_motion_fidelity(provenance: dict, sheet_name: str = "<sheet>
     """Fail if a locomotion/transition/loop character sheet's
     `pose_fidelity_range` lower bound is below `POSE_FIDELITY_IOU_FLOOR`, or
     its `identity_stability_range` upper bound is above
-    `IDENTITY_STABILITY_HISTOGRAM_CAP` (T-0340, docs/decision-log.md DL-30 --
+    `IDENTITY_STABILITY_HISTOGRAM_CAP` (T-0340, docs/decision-log.md DL-31 --
     the replacement for the retired whole-silhouette XOR/union cap; see this
     module's docstring).
 
