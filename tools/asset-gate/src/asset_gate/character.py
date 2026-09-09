@@ -38,8 +38,13 @@ from __future__ import annotations
 import json
 import numbers
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from asset_gate import art
 from asset_gate.result import CheckResult
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 _MISSING = object()
 _BASELINE_FILENAME = "character_arm_c_baseline.txt"
@@ -221,6 +226,117 @@ def check_character_frame_delta_cap(provenance: dict, sheet_name: str = "<sheet>
             "cap": cap,
         },
     )
+
+
+def build_character_gate_report(
+    sheet: Image.Image,
+    provenance: dict,
+    *,
+    cols: int,
+    rows: int,
+    cell_px: int,
+    background_index: int = 0,
+    sheet_name: str = "<sheet>",
+) -> dict:
+    """Assemble the machine-readable gate report for a character sheet
+    (T-0349, docs/board-invariants.md CHR-1).
+
+    Every T-0259 reviewer re-derived frame deltas from a sheet by hand and
+    disagreed -- one measurement on the wrong grid gave 1.29x where the true
+    value on the correct grid is 5.3077x. This function is the fix: it
+    records the grid *explicitly* (`cols`/`rows`/`cell_px` are required
+    keyword args, never inferred), the sheet's `motion_class`, the
+    threshold actually applied (`frame_delta_cap_for_motion_class`, not a
+    re-derived number), and, per adjacent frame pair (interior pairs plus
+    the explicit loop seam, last frame -> frame 0), two distinct per-frame
+    metrics:
+
+    - `pixel_delta_count` (`asset_gate.art.count_pixel_deltas`): ANY
+      palette-index change between the two frames -- the number a reviewer
+      eyeballing the sheet by hand actually sees.
+    - `silhouette_delta_ratio` (`asset_gate.art.check_frame_consistency`):
+      the foreground/background *state* delta ratio the gate's own
+      `frame_delta_cap` already thresholds on.
+
+    Changes no threshold or gate semantics: `checks` is exactly what
+    `check_character_arm_c_provenance` / `check_character_frame_delta_cap`
+    (the real enforcement predicates) already decide for *provenance*,
+    reused rather than re-derived.
+    """
+    frames = art.slice_sheet_frames(sheet, cell_px, cell_px, cols, rows)
+    if len(frames) != cols * rows:
+        raise ValueError(
+            f"expected {cols * rows} frames for a {cols}x{rows} grid, got {len(frames)}"
+        )
+
+    frame_cells = [[r, c] for r in range(rows) for c in range(cols)]
+    pairs = [(i, i + 1) for i in range(len(frames) - 1)] + [(len(frames) - 1, 0)]
+
+    motion_class = provenance.get("motion_class")
+    frame_delta_cap = frame_delta_cap_for_motion_class(motion_class)
+    arm_c_benchmark = provenance.get("arm_c_benchmark")
+
+    frame_pairs = []
+    for a, b in pairs:
+        pixel_delta_count = art.count_pixel_deltas(frames[a], frames[b])
+        consistency = art.check_frame_consistency(
+            frames[a],
+            frames[b],
+            background_index=background_index,
+            max_delta_ratio=frame_delta_cap,
+        )
+        frame_pairs.append(
+            {
+                "pair": [frame_cells[a], frame_cells[b]],
+                "pixel_delta_count": pixel_delta_count,
+                # check_frame_consistency's ratio/passed are numpy scalars
+                # (numpy.float64/numpy.bool_) -- cast to native types so the
+                # report is plain-json-serializable without touching that
+                # function's own (pre-existing, untouched) behaviour.
+                "silhouette_delta_ratio": float(consistency.details["ratio"]),
+                "within_frame_delta_cap": bool(consistency.passed),
+            }
+        )
+
+    pixel_delta_counts = [p["pixel_delta_count"] for p in frame_pairs]
+    silhouette_ratios = [p["silhouette_delta_ratio"] for p in frame_pairs]
+    min_count, max_count = min(pixel_delta_counts), max(pixel_delta_counts)
+
+    arm_c_result = check_character_arm_c_provenance(provenance, sheet_name=sheet_name)
+    cap_result = check_character_frame_delta_cap(provenance, sheet_name=sheet_name)
+
+    return {
+        "sheet": sheet_name,
+        "grid": {
+            "cols": cols,
+            "rows": rows,
+            "cell_px": cell_px,
+            "frame_cells": frame_cells,
+        },
+        "motion_class": motion_class,
+        "thresholds": {
+            "frame_delta_cap": frame_delta_cap,
+            "arm_c_benchmark": arm_c_benchmark,
+        },
+        "frame_pairs": frame_pairs,
+        "pixel_delta_summary": {
+            "counts": pixel_delta_counts,
+            "max": max_count,
+            "min": min_count,
+            "max_min_ratio": (max_count / min_count) if min_count else None,
+        },
+        "silhouette_delta_range": [min(silhouette_ratios), max(silhouette_ratios)],
+        "checks": {
+            "character_arm_c_provenance": {
+                "passed": arm_c_result.passed,
+                "reason": arm_c_result.reason,
+            },
+            "character_frame_delta_cap": {
+                "passed": cap_result.passed,
+                "reason": cap_result.reason,
+            },
+        },
+    }
 
 
 def _default_baseline_path() -> Path:
