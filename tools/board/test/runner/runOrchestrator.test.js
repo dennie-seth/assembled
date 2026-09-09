@@ -3171,9 +3171,9 @@ describe("RunOrchestrator timeout messages distinguish overrun from hang", () =>
     await vi.runAllTimersAsync();
     await runPromise;
 
-    const body = (await store.get("T-0001")).body;
-    expect(body).toMatch(/no new output|went silent/i);
-    expect(body).toMatch(/hang|hung/i);
+    const archived = archivedText(orchestrator, "T-0001");
+    expect(archived).toMatch(/no new output|went silent/i);
+    expect(archived).toMatch(/hang|hung/i);
   });
 });
 
