@@ -136,19 +136,33 @@ def build_positive_prompt(entity: EntitySpec) -> str:
     strong visual convention: a whole-figure view plus physically separated,
     non-overlapping component pieces) round-2 fixed that -- panels genuinely
     isolate the coat, the legs/trousers and the boots as distinct pieces, not
-    just repeated whole-figure poses. See `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md`
-    for the attempts this was compared against."""
+    just repeated whole-figure poses. Round 2 shipped with two defects the
+    reviewer caught by opening the file: the whole-figure panels were
+    headless (a blank white mannequin head, not a face) and the model drifted
+    to a heavier armour-plated costume in the bottom row instead of holding
+    the single green-coat identity throughout. Round 3 adds an explicit
+    visible-face requirement on every whole-figure panel and repeats the one
+    intended costume by name to fight that drift, plus reframes the limb
+    pieces as an explicit rigging/sprite-sheet reference (a genre whose
+    convention is isolated *anatomical* segments, not garment product shots)
+    to push harder for literal single-limb-segment crops. See
+    `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md` for the attempts this was
+    compared against."""
     return (
         f"{entity.trigger_token}, exploded parts diagram, disassembled equipment "
         f"breakdown sheet, {entity.costume_description}, same uniform and same equipment "
-        "loadout, consistent identity, flat uniform neutral grey background, flat even "
-        "lighting, no cast shadow, no perspective, clean readable outline, three "
-        "whole-figure turnaround views at the top -- front view, side view, back view -- "
-        "and below them separate disassembled equipment pieces laid flat side by side with "
-        "empty space between each piece so nothing overlaps or touches: a severed upper arm "
-        "sleeve piece by itself, a severed lower arm and glove piece by itself, a severed "
-        "upper leg piece by itself, a severed lower leg and boot piece by itself, a hood and "
-        "head piece by itself, a torso and coat piece by itself, no text, no UI, no watermark"
+        "loadout, consistent identity, the exact same institutional green coat costume in "
+        "every single panel, flat uniform neutral grey background, flat even lighting, no "
+        "cast shadow, no perspective, clean readable outline, three whole-figure turnaround "
+        "views at the top -- front view, side view, back view -- each with a clearly visible "
+        "face with eyes nose and mouth under the hood, not a blank head, and below them a "
+        "character rigging reference sheet: individual anatomical body-part segments for "
+        "sprite animation, laid out flat side by side with empty space between each piece so "
+        "nothing overlaps or touches, like a paper doll's separate interchangeable limb "
+        "pieces, each segment its own single isolated silhouette: an upper arm segment by "
+        "itself, a lower arm and hand segment by itself, an upper leg segment by itself, a "
+        "lower leg and foot segment by itself, a head segment with a visible face by itself, "
+        "a torso and coat segment by itself, no text, no UI, no watermark"
     )
 
 
@@ -156,11 +170,17 @@ def build_negative_prompt() -> str:
     """`MAIN_NEGATIVE` (T-0249) already forbids perspective and inconsistent
     identity; this adds the master-sheet-specific defects (a whole-figure
     view getting composited/cropped instead of laid out as its own clean
-    panel)."""
+    panel), plus two defects a promoted round-2 sheet actually shipped with
+    (see `build_positive_prompt`'s docstring): blank/faceless mannequin
+    heads on the whole-figure panels, and costume drift toward heavier
+    armour plating partway down the sheet instead of holding one identity."""
     return (
         MAIN_NEGATIVE
         + ", cropped limbs, cropped figure, overlapping panels, panels touching, "
-        "different costume between panels, different colour between panels"
+        "different costume between panels, different colour between panels, blank head, "
+        "faceless, featureless mannequin head, missing face, no face, headless, blank white "
+        "head, armor plating, plate armor, heavy armor, bulky armor, mecha armor, sci-fi "
+        "armor, helmet, different silhouette between panels"
     )
 
 

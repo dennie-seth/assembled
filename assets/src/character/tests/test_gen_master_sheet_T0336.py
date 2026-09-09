@@ -195,6 +195,26 @@ def test_build_negative_prompt_forbids_perspective_and_inconsistent_identity() -
     assert "inconsistent identity" in negative or "different costume" in negative
 
 
+def test_build_positive_prompt_requests_a_visible_face_on_whole_figure_views() -> None:
+    """T-0336 review round 2 shipped a promoted sheet with blank white
+    mannequin heads on every whole-figure panel -- 'a real character, not a
+    striped/circuit-board artefact' also means a head with an actual face,
+    not a featureless void where one belongs."""
+    player = gen.ENTITIES["player"]
+    prompt = gen.build_positive_prompt(player).lower()
+    assert "face" in prompt
+
+
+def test_build_negative_prompt_forbids_blank_heads_and_armour_drift() -> None:
+    """T-0336 review round 2's promoted sheet shipped headless mannequins in
+    the top half and drifted to heavier armour plating in the bottom half --
+    both defects a human reviewer caught by opening the file, neither one
+    forbidden by the prompt at the time."""
+    negative = gen.build_negative_prompt().lower()
+    assert "faceless" in negative or "blank head" in negative
+    assert "armor" in negative or "armour" in negative
+
+
 def test_registering_a_new_entity_requires_no_generator_code_change() -> None:
     """The card's own reuse requirement: an enemy card adds a new EntitySpec
     to ENTITIES (data), it never edits build_graph/run_attempt."""
