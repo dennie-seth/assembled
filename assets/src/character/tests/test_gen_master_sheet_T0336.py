@@ -316,12 +316,23 @@ def test_append_attempt_log_writes_header_then_row(tmp_path, monkeypatch) -> Non
     assert len(row_cols) == len(header_cols)
 
 
-def test_promote_attempt_copies_sheet_and_provenance_into_assets_src(tmp_path, monkeypatch) -> None:
+def test_promote_attempt_copies_sheet_raw_when_entity_has_no_limb_crop_boxes(
+    tmp_path, monkeypatch
+) -> None:
     """Master sheets are pipeline inputs, not game-scale finals -- committed
     under assets/src/, not assets/final/ (this card's own acceptance
-    criterion, a deliberate departure from earlier keyframe cards)."""
+    criterion, a deliberate departure from earlier keyframe cards). An
+    entity with no hand-tuned `limb_crop_boxes` yet (e.g. a brand-new enemy)
+    is promoted as a raw copy, unchanged from every attempt before round 5."""
     final_dir = tmp_path / "master_sheets"
     monkeypatch.setattr(gen, "MASTER_SHEETS_DIR", final_dir)
+    monkeypatch.setitem(
+        gen.ENTITIES,
+        "player",
+        gen.ENTITIES["player"].__class__(
+            **{**gen.ENTITIES["player"].__dict__, "limb_crop_boxes": None}
+        ),
+    )
 
     out_dir = tmp_path / "attempt_1"
     out_dir.mkdir()
@@ -333,3 +344,74 @@ def test_promote_attempt_copies_sheet_and_provenance_into_assets_src(tmp_path, m
     assert (final_dir / "player_master_sheet_T0336.png").read_bytes() == b"fake-png-bytes"
     written = (final_dir / "player_master_sheet_T0336.provenance.json").read_text()
     assert '"promoted": true' in written
+    assert '"limb_crop_boxes": null' in written
+
+
+def test_promote_attempt_composites_parts_when_entity_has_limb_crop_boxes(
+    tmp_path, monkeypatch
+) -> None:
+    """When the entity has hand-tuned `limb_crop_boxes` (player does, as of
+    round 5), promotion composites an extra row of isolated part crops onto
+    the sheet rather than copying it raw."""
+    from PIL import Image
+
+    final_dir = tmp_path / "master_sheets"
+    monkeypatch.setattr(gen, "MASTER_SHEETS_DIR", final_dir)
+    crop_boxes = {"a": (0, 0, 10, 10), "b": (10, 0, 20, 10)}
+    monkeypatch.setitem(
+        gen.ENTITIES,
+        "player",
+        gen.ENTITIES["player"].__class__(
+            **{**gen.ENTITIES["player"].__dict__, "limb_crop_boxes": crop_boxes}
+        ),
+    )
+
+    out_dir = tmp_path / "attempt_1"
+    out_dir.mkdir()
+    Image.new("RGB", (20, 10), (128, 128, 128)).save(out_dir / "master_sheet_1024.png")
+    provenance = {"attempt": 1, "entity": "player"}
+
+    gen.promote_attempt("player", out_dir, provenance)
+
+    composed = Image.open(final_dir / "player_master_sheet_T0336.png")
+    assert composed.size == (20, 10 + gen.PARTS_ROW_HEIGHT)
+    written = (final_dir / "player_master_sheet_T0336.provenance.json").read_text()
+    assert '"promoted": true' in written
+    assert '"a"' in written and '"b"' in written
+
+
+def test_compose_master_sheet_with_parts_crops_are_contained_and_not_stretched(
+    tmp_path,
+) -> None:
+    """Each part is cropped from real generated pixels and scaled to fit its
+    own slot preserving aspect ratio -- never stretched, since a distorted
+    crop would be useless as an actual sprite source downstream."""
+    from PIL import Image
+
+    sheet = Image.new("RGB", (100, 100), (200, 200, 200))
+    for x in range(50):
+        for y in range(100):
+            sheet.putpixel((x, y), (255, 0, 0))
+    for x in range(50, 100):
+        for y in range(100):
+            sheet.putpixel((x, y), (0, 255, 0))
+    sheet_path = tmp_path / "sheet.png"
+    sheet.save(sheet_path)
+    out_path = tmp_path / "composed.png"
+
+    gen.compose_master_sheet_with_parts(
+        sheet_path,
+        out_path,
+        crop_boxes={"red_part": (0, 0, 50, 100), "green_part": (50, 0, 100, 100)},
+        row_height=40,
+        padding=4,
+    )
+
+    composed = Image.open(out_path)
+    assert composed.size == (100, 140)
+    # original sheet is pasted unchanged at the top
+    assert composed.getpixel((10, 10)) == (255, 0, 0)
+    assert composed.getpixel((60, 10)) == (0, 255, 0)
+    # each crop is centred, contained, and not stretched into its slot
+    assert composed.getpixel((20, 120)) == (255, 0, 0)
+    assert composed.getpixel((70, 120)) == (0, 255, 0)

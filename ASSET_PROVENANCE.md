@@ -420,30 +420,51 @@ card's delivered asset.
 
 | Asset | Model | License | Prompt | Seed |
 |---|---|---|---|---|
-| `assets/src/character/master_sheets/player_master_sheet_T0336.png` (T-0336 — Tier-1 master sheet, promoted attempt 2) | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.70) + LoRA `player_identity_v2.safetensors` (identity, chained, weight 0.5) + IP-Adapter `ip-adapter-plus_sdxl_vit-h.safetensors` (weight 0.35), conditioned on `assets/src/concept/player_character_concept_sheet_v1.png` (concept_hash `4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b`). **No ControlNet** (DL-30 / this card's own scope) — txt2img, 1024x1024, the resolution the LoRAs were actually trained at, not the 384 every prior incoherent render in this repo used. ComfyUI HTTP API on the Windows host RTX 3070 Ti Laptop GPU (`172.18.192.1:8188`). prompt_id: `74d3bcd6-fd3e-42f7-8bd2-0626b63bcfa4`. model_hash: `31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b`. Full sidecar: `player_master_sheet_T0336.provenance.json`. Generator: `assets/src/character/gen_master_sheet_T0336.py` (attempt 2). Attempt log: `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md`. Evidence: `docs/assets/evidence/T-0336/README.md`. Committed under `assets/src/` — a pipeline input, not a game-scale final. | "sbrutalistplayer, exploded parts diagram, disassembled equipment breakdown sheet, institutional green coat, hooded, white gloves, same uniform and same equipment loadout, consistent identity, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline, three whole-figure turnaround views at the top -- front view, side view, back view -- and below them separate disassembled equipment pieces laid flat side by side with empty space between each piece so nothing overlaps or touches: a severed upper arm sleeve piece by itself, a severed lower arm and glove piece by itself, a severed upper leg piece by itself, a severed lower leg and boot piece by itself, a hood and head piece by itself, a torso and coat piece by itself, no text, no UI, no watermark" | 8675309 |
+| `assets/src/character/master_sheets/player_master_sheet_T0336.png` (T-0336 — Tier-1 master sheet, promoted attempt 5, review-round-2 fix) | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.70) + LoRA `player_identity_v2.safetensors` (identity, chained, weight 0.5) + IP-Adapter `ip-adapter-plus_sdxl_vit-h.safetensors` (weight 0.35), conditioned on the `(0, 0, 615, 615)` sub-region of `assets/src/concept/player_character_concept_sheet_v1.png` (concept_hash `4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b`) — see `concept_crop_box` below. **No ControlNet** (DL-30 / this card's own scope) — txt2img, 1024x1024, the resolution the LoRAs were actually trained at, not the 384 every prior incoherent render in this repo used. ComfyUI HTTP API on the Windows host RTX 3070 Ti Laptop GPU (`172.18.192.1:8188`). prompt_id: `be011c82-3b17-4e84-aacd-02e9916951c8`. model_hash: `31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b`. gpu_seconds: 30.1 (real wall-clock sample; cross-checked against the shell's own `date +%s` before/after — round 5's attempts 3-5 all measured 27-31s, unlike attempt 2's suspicious 3.1s the reviewer flagged as a likely cache hit). The promoted PNG is script-composited (`compose_master_sheet_with_parts`, DL-30): the raw 1024x1024 generation plus an appended row of five parts cropped straight out of that same coherent image (`head`, `upper_arm`, `lower_arm_hand`, `torso_coat`, `lower_leg_boot`) — see `limb_crop_boxes` in the sidecar for exact pixel boxes. Full sidecar: `player_master_sheet_T0336.provenance.json`. Generator: `assets/src/character/gen_master_sheet_T0336.py` (attempt 5). Attempt log: `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md`. Evidence: `docs/assets/evidence/T-0336/README.md`. Committed under `assets/src/` — a pipeline input, not a game-scale final. | "sbrutalistplayer, exploded parts diagram, disassembled equipment breakdown sheet, institutional green coat, hooded, white gloves, same uniform and same equipment loadout, consistent identity, the exact same institutional green coat costume in every single panel, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline, three whole-figure turnaround views at the top -- front view, side view, back view -- each figure's head fully visible in frame, wearing a hooded mask with two dark round visible eye lenses, not a blank void, and below them separate disassembled equipment pieces laid flat side by side with empty space between each piece so nothing overlaps or touches: a severed upper arm sleeve piece by itself, a severed lower arm and glove piece by itself, a severed upper leg piece by itself, a severed lower leg and boot piece by itself, a hood and mask head piece with visible eye lenses by itself, a torso and coat piece by itself, no text, no UI, no watermark" | 314159265 |
 
-**T-0336 finding, recorded not silently resolved:** attempt 1 (seed 31416,
-IP-Adapter weight 0.5, plainer "separated limb reference parts" prompt
-wording) was already fully coherent at 1024 — a real character, not a
-striped/circuit-board artefact, resolving this card's central risk that the
-384px resolution, not graph composition, was the root cause of prior
-incoherent renders (`asset-pipeline-review-2026-09-09.md`). It also answered
-this card's named costume question: the coat ends at the upper thigh and the
-legs are clearly separable in the whole-figure side views, so no costume
-escalation to @DennieSeth was needed. What attempt 1 did not do is separate
-individual limb parts into their own panels — IP-Adapter conditioning on the
-T-0209 concept sheet (itself only coat-only product shots and whole-figure
-turnarounds) pulled the panel vocabulary toward that same composition
-regardless of the prompt's explicit per-limb request. Reframing the request
-as an *exploded parts diagram* and lowering IP-Adapter weight to 0.35
-(attempt 2, promoted above) fixed the panel vocabulary — the coat, legs, and
-boots now appear as genuinely separated, non-overlapping pieces — but even
-this recipe never produced a literal isolated single-limb-only crop (just an
-arm, nothing else); only garment-level separation was achieved. See
-`docs/assets/evidence/T-0336/README.md` for both attempts' images and the
-full analysis. This is recorded as an open finding for whoever builds the
-Tier-2 compositor, not papered over: DL-30 explicitly allows script
-arrangement of diffusion-sampled pixels, so a scripted crop from this
-sheet's own coherent whole-figure panels is the likely path to literal
-per-limb parts, not a further Tier-1 prompt-engineering attempt against the
-same conditioning image.
+**T-0336 review-round-2 FAIL and how attempts 3-5 fixed it.** Attempt 1
+(seed 31416) was fully coherent at 1024 and resolved this card's central
+384-vs-1024 risk. Attempt 2 (seed 8675309, promoted at the time) reframed the
+request as an *exploded parts diagram*, fixing garment-level separation
+(coat/trousers/boots as distinct pieces) — but a reviewer FAIL opening the
+file found the whole-figure panels headless (blank white mannequin voids)
+and a drift to heavier armour plating in the bottom row, and noted the
+"separated parts" were garments, not the anatomical limb segments the card
+asks for. Attempts 3 (a "rigging reference sheet" framing) and 4 ("anatomy
+reference sheet" + literal face) both tried prompt-only fixes and both
+failed — 3 traded blank heads for a head cropped out of frame and traded
+garment legs for robotic ones ("rigging" reads as mechanical rigging), and 4
+made costume drift *worse* (most panels turned cream/white). Opening the
+concept sheet itself explained why: its own panel grid mixes the green
+costume with a heavier armour-plated variant across columns/rows and shows a
+blank white oval for every head with no eyes anywhere — IP-Adapter
+conditions on whatever pixels of that grid it's shown, so no prompt wording
+was ever going to out-compete the reference image. Attempt 5 (promoted,
+above) fixed the conditioning image itself: `concept_crop_box` restricts
+IP-Adapter to the concept sheet's own clean single-costume block, and the
+prompt asks for a hooded mask with visible eye lenses (consistent with the
+costume's own hood) instead of a literal face the source material never
+shows. Result: all three turnaround views hold one costume with no armour
+drift, and every head is legible. `compose_master_sheet_with_parts` then
+crops five genuinely-isolated regions (head/upper_arm/lower_arm_hand/
+torso_coat/lower_leg_boot) straight out of that one coherent image for the
+appended parts row — DL-30 explicitly allows script arrangement of
+diffusion-sampled pixels, and reusing pixels from a single generation (never
+blending across attempts/seeds) is what keeps every part's costume and
+lighting matching the whole-figure views above it.
+
+**Open finding, reported per this card's own instruction, not silently
+resolved:** the promoted sheet has no `upper_leg` part. Attempt 5's coat is
+longer than attempt 1's and fully conceals the thigh in all three views (the
+only front gap shows dark coat lining, not a leg or trouser fabric — see
+`docs/assets/evidence/T-0336/README.md`'s own crop proving this). This is
+exactly the scenario the card's acceptance criteria name ("if the legs are
+not separable, say so and stop"), with the caveat that attempt 1's shorter
+coat *did* expose separable legs, so it is coat-length variance between
+generations, not a fixed costume-design fact. The 5-attempt cap
+(`check_attempt_cap`, this card's own guardrail against T-0272/T-0317's
+84-attempt sweep failure) was fully spent reaching the best available
+combination of coherence, costume consistency, and a legible head, so a
+further attempt aimed at a shorter-coat seed specifically was not available
+this round. See `docs/assets/evidence/T-0336/README.md` for every attempt's
+image and the full round-by-round analysis.

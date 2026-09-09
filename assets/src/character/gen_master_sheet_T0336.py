@@ -113,7 +113,29 @@ class EntitySpec:
     # single-costume top-left block removes that source of drift instead of
     # just asking the model not to reproduce it.
     concept_crop_box: tuple[int, int, int, int] | None = None
+    # name -> (left, top, right, bottom) pixel box, tuned by hand against
+    # the entity's own promoted attempt, identifying genuinely-isolated
+    # anatomical/garment regions to crop straight out of that one coherent
+    # generation and composite onto an extra row below it (see
+    # `compose_master_sheet_with_parts`). None skips compositing (an entity
+    # with no hand-tuned boxes yet is promoted as a raw copy, unchanged from
+    # every attempt before round 5).
+    limb_crop_boxes: dict[str, tuple[int, int, int, int]] | None = None
 
+
+# Attempt 5's own layout (see docs/assets/evidence/T-0336/README.md for the
+# crop previews these were picked from): a front-view figure at x:[0,400)
+# with a model-drawn isolated head/hood panel at roughly x:[355,545). No
+# "upper_leg" key -- the promoted attempt's coat fully conceals the thigh in
+# all three views (front/side/back); see the README's own evidence crop
+# proving the only visible pixels there are coat lining, not a leg.
+PLAYER_LIMB_CROP_BOXES: dict[str, tuple[int, int, int, int]] = {
+    "head": (355, 0, 545, 230),
+    "upper_arm": (0, 220, 150, 440),
+    "lower_arm_hand": (0, 420, 150, 580),
+    "torso_coat": (100, 220, 300, 650),
+    "lower_leg_boot": (30, 760, 220, 1000),
+}
 
 ENTITIES: dict[str, EntitySpec] = {
     "player": EntitySpec(
@@ -127,6 +149,7 @@ ENTITIES: dict[str, EntitySpec] = {
         trigger_token=TRIGGER_TOKEN,
         costume_description="institutional green coat, hooded, white gloves",
         concept_crop_box=(0, 0, 615, 615),
+        limb_crop_boxes=PLAYER_LIMB_CROP_BOXES,
     ),
 }
 
@@ -418,16 +441,88 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
         f.write(row)
 
 
+PARTS_ROW_HEIGHT = 340
+PARTS_ROW_PADDING = 20
+
+
+def compose_master_sheet_with_parts(
+    sheet_path: Path,
+    out_path: Path,
+    crop_boxes: dict[str, tuple[int, int, int, int]],
+    row_height: int,
+    padding: int,
+) -> None:
+    """Crops genuinely-isolated anatomical/garment regions straight out of
+    a single coherent generation and pastes them into an extra row appended
+    below it -- DL-30 sanctions script arrangement of diffusion-sampled
+    pixels, and reusing real pixels from one internally-consistent image
+    (rather than blending crops across different attempts/seeds) is what
+    keeps every part's costume and lighting matching the whole-figure views
+    above it, unlike the mismatched-parts defect an earlier promoted sheet
+    shipped with.
+
+    Each crop is scaled to fit inside its own slot (the sheet's width
+    divided evenly among the parts) preserving its aspect ratio, then
+    centred there -- never stretched, since a distorted crop would be
+    useless as an actual sprite source for whatever consumes this sheet
+    next."""
+    from PIL import Image
+
+    sheet = Image.open(sheet_path).convert("RGB")
+    bg_color = sheet.getpixel((0, 0))
+    names = list(crop_boxes)
+    slot_width = sheet.width // len(names)
+    available_width = slot_width - 2 * padding
+    available_height = row_height - 2 * padding
+
+    canvas = Image.new("RGB", (sheet.width, sheet.height + row_height), bg_color)
+    canvas.paste(sheet, (0, 0))
+
+    for i, name in enumerate(names):
+        crop = sheet.crop(crop_boxes[name])
+        scale = min(available_width / crop.width, available_height / crop.height)
+        new_size = (max(1, round(crop.width * scale)), max(1, round(crop.height * scale)))
+        crop = crop.resize(new_size)
+        slot_x = i * slot_width
+        x = slot_x + (slot_width - crop.width) // 2
+        y = sheet.height + (row_height - crop.height) // 2
+        canvas.paste(crop, (x, y))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_path)
+
+
 def promote_attempt(entity_name: str, out_dir: Path, provenance: dict) -> None:
     """Copy this attempt's master sheet + provenance into
     assets/src/character/master_sheets/ -- master sheets are pipeline
     inputs, not game-scale finals, so they land under assets/src/, not
-    assets/final/ (this card's own acceptance criterion)."""
+    assets/final/ (this card's own acceptance criterion). When the entity
+    has hand-tuned `limb_crop_boxes`, the promoted sheet is composited with
+    an extra row of isolated part crops (`compose_master_sheet_with_parts`)
+    rather than a raw copy of the generation."""
     MASTER_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
     dest_png = MASTER_SHEETS_DIR / f"{entity_name}_master_sheet_T0336.png"
-    dest_png.write_bytes((out_dir / "master_sheet_1024.png").read_bytes())
+    src_png = out_dir / "master_sheet_1024.png"
 
+    limb_crop_boxes = ENTITIES[entity_name].limb_crop_boxes
     promoted = dict(provenance)
+    if limb_crop_boxes is not None:
+        compose_master_sheet_with_parts(
+            src_png, dest_png, limb_crop_boxes, PARTS_ROW_HEIGHT, PARTS_ROW_PADDING
+        )
+        promoted["limb_crop_boxes"] = limb_crop_boxes
+        if "method" in promoted:
+            promoted["method"] += (
+                " Promotion appends a script-composited row below the generation "
+                f"(compose_master_sheet_with_parts, {sorted(limb_crop_boxes)}), cropping "
+                "genuinely-isolated regions straight out of this same coherent image rather "
+                "than relying on the model to render isolated limbs (DL-30 sanctions script "
+                "arrangement of diffusion-sampled pixels)."
+            )
+    else:
+        dest_png.write_bytes(src_png.read_bytes())
+        promoted["limb_crop_boxes"] = None
+
     promoted["promoted"] = True
     dest_json = MASTER_SHEETS_DIR / f"{entity_name}_master_sheet_T0336.provenance.json"
     dest_json.write_text(json.dumps(promoted, indent=2) + "\n")
@@ -555,7 +650,9 @@ def run_attempt(
             + "-> IPAdapterUnifiedLoader + IPAdapterAdvanced (concept sheet) -> KSampler -> "
             "VAEDecode -> SaveImage. No ControlNet. The prompt itself requests front/side/"
             "back whole-figure views plus separated limb reference parts on a flat "
-            "background; layout is not script-composited at this tier."
+            "background; this generation step itself does no script compositing (see "
+            "promote_attempt/compose_master_sheet_with_parts for the separate, later step "
+            "that may append one)."
         ),
         "generator": "assets/src/character/gen_master_sheet_T0336.py",
         "card": "T-0336",
