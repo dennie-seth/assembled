@@ -1824,3 +1824,84 @@ implementation.
 `hostStatePreflight.test.js`, `runOrchestrator.hostStatePreflight.test.js`), plus the full
 existing `tools/board` suite to confirm the `_escalateIfGenuineBlocker` refactor changed no
 existing escalation behavior.
+
+---
+
+## DL-30 — Every shipped pixel originates from a diffusion sample; script arrangement is allowed (T-0335)
+
+**Date:** 2026-09-09
+**Raised by:** T-0335, actioned from the pipeline review at
+`asset-pipeline-review-2026-09-09.md` (Fable 5.1, 2026-09-09), approved by @DennieSeth
+2026-09-09.
+**Status:** DECIDED.
+**Applies to:** the Tier-2 compositor in the two-tier master-sheet pipeline (master sheets
+generated at 1024px; motion composited by script from parts, never re-scoped to 384px
+whole-figure per-frame generation), and every future card that arranges, transforms, cuts
+out, descends or composites already-sampled pixels by script.
+
+### The problem
+
+The two-tier pipeline depends on one rule being unambiguous, and it was not. There is no
+literal "NO SYNTHETIC ASSETS" heading anywhere in this repo (verified by grep). The rule
+that actually binds is **DL-23**, which overrode Arm C's mechanical bake-off win "on
+authorship grounds" and sent round 2 after Arms A/B "rather than shipping the script." Arm
+C was itself a script (band-translate). Read literally, DL-23 forbids exactly the Tier-2
+compositor the new pipeline is built on. But **DL-25** already shipped a hybrid arm that
+uses band-translate internally, and the **T-0239** incident (`docs/board-invariants.md`)
+forbids something narrower still: a sheet whose pixels were drawn by script over a
+background, with no diffusion sample behind them. Those three are not consistent as
+written, and an agent reading them cannot tell whether a compositor is allowed.
+
+### The rule
+
+> **Every shipped pixel originates from a diffusion sample. Arrangement, transformation,
+> cutout, descent and compositing by script are allowed.** What is forbidden is *inventing*
+> pixels procedurally — drawing a silhouette, a shape or a colour that no sampler produced.
+
+### Clarifies, not overturns, DL-23
+
+**DL-30 clarifies DL-23; it does not overturn it.** DL-23's override stands exactly as
+written: Arm C is not chosen as the primary generative arm, Arms A/B were pursued in round
+2, and cost stays demoted from a deciding criterion to a recorded one. DL-23's actual
+concern, read against the full bake-off record (DL-21/DL-22), was **shipping a figure no
+sampler drew** — a script standing in for generation entirely, producing every frame of a
+character sheet with zero diffusion calls behind it. DL-23 never said, and was never asked
+to decide, whether a script may *arrange* pixels a sampler already produced. That
+distinction is what DL-30 draws explicitly: authorship of the *pixels* must be a sampler's;
+authorship of their *arrangement* may be a script's. A Tier-2 compositor that assembles
+motion from a Tier-1 diffusion-sampled master sheet is the latter, not the former.
+
+### Reconciled
+
+- **DL-25** — the round-2 winner (§24-e, T-0252) is one diffusion-sampled frame with every
+  other frame in the sheet derived from that frame's own pixels by
+  `generate_player_idle_sheet_hybrid_T0252`, using band-translate internally. Every pixel in
+  the sheet traces back to the one sampled frame; only its arrangement across frames is
+  scripted. Consistent with DL-30 as worded — this is exactly the shipped precedent DL-30
+  generalizes into a standing rule.
+- **T-0239 incident** — the rejected sheet composited script-drawn labelled silhouettes over
+  an SDXL background: the silhouettes were invented, not sampled — no diffusion call
+  produced them at all. That is precisely what DL-30 forbids, so the rejection remains
+  correct and DL-30 does not weaken it.
+
+### Consequence for the two-tier pipeline
+
+The Tier-2 compositor arranges, transforms, cuts out, and composites pixels drawn from
+Tier-1's 1024px master-sheet diffusion samples; it never invents new pixels. This is
+permitted under DL-30. **Never re-scope any card in this set back to 384px whole-figure
+per-frame generation** — master sheets stay at 1024px, motion stays composited by script
+from parts.
+
+### Rule-text audit
+
+Grepped `.claude/rules/*.md`, `.claude/agents/*.md`, `docs/design/13-asset-pipeline.md` and
+`docs/board-invariants.md` for language that would contradict DL-30 (anything forbidding
+scripted arrangement/compositing of sampled pixels, or phrased as a blanket "no synthetic
+assets" / "no scripts" rule). **None found.** `.claude/rules/assets.md`'s "Never substitute
+a hand-made stand-in for a generated asset" and the T-0239 rejection both target *inventing*
+pixels with no sample behind them, not scripted arrangement of sampled pixels — already
+consistent with DL-30, no edit required.
+
+**Touched docs:**
+- `docs/decision-log.md` — this entry (DL-30)
+- `docs/design/13-asset-pipeline.md` — §1 cross-references DL-30 against P-1
