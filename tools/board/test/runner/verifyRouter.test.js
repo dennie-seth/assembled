@@ -219,6 +219,39 @@ describe("resolveVerifyRoutes -- reference-batch-summary-provenance (T-0282: ass
   });
 });
 
+describe("resolveVerifyRoutes -- gate-report-pointer (T-0349: point the reviewer at the machine-readable gate report instead of hand-deriving pixel counts)", () => {
+  it("routes a diff touching a committed *.gate_report.json to a pointer route naming that file", () => {
+    const routes = resolveVerifyRoutes(["assets/final/character/player_walk_sheet_hybrid.gate_report.json"]);
+    expect(routes.map((r) => r.id)).toEqual(["gate-report-pointer"]);
+    expect(routes[0].command).toBe("cat assets/final/character/player_walk_sheet_hybrid.gate_report.json");
+  });
+
+  it("names every matching gate report when a diff touches more than one", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/final/character/player_walk_sheet_hybrid.gate_report.json",
+      "assets/final/character/player_idle_sheet_v1.gate_report.json"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["gate-report-pointer"]);
+    expect(routes[0].command).toBe(
+      "cat assets/final/character/player_walk_sheet_hybrid.gate_report.json " +
+        "assets/final/character/player_idle_sheet_v1.gate_report.json"
+    );
+  });
+
+  it("does not route an unrelated file under assets/final/character/", () => {
+    const routes = resolveVerifyRoutes(["assets/final/character/player_walk_sheet_hybrid.png"]);
+    expect(routes.map((r) => r.id)).not.toContain("gate-report-pointer");
+  });
+
+  it("composes with an unrelated route on the same diff (a Python package diff + a committed gate report)", () => {
+    const routes = resolveVerifyRoutes([
+      "tools/asset-gate/src/asset_gate/character.py",
+      "assets/final/character/player_walk_sheet_hybrid.gate_report.json"
+    ]);
+    expect(routes.map((r) => r.id).sort()).toEqual(["gate-report-pointer", "python-verify:tools/asset-gate"]);
+  });
+});
+
 describe("resolveVerifyRoutes -- server-db-verify", () => {
   it("routes a server/** diff to server-db-verify", () => {
     const routes = resolveVerifyRoutes(["server/src/main.cpp"]);

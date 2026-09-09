@@ -263,6 +263,31 @@ describe("buildReviewerPrompt -- routed verification section", () => {
   });
 });
 
+describe("buildReviewerPrompt -- gate-report-pointer route (T-0349: stop re-deriving pixel counts by hand)", () => {
+  it("points the reviewer at a committed gate report and tells them to read it instead of re-deriving counts", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["assets/final/character/player_walk_sheet_hybrid.gate_report.json"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("cat assets/final/character/player_walk_sheet_hybrid.gate_report.json");
+    expect(prompt).toContain("do not re-derive");
+    expect(prompt).toMatch(/`grid`/);
+    expect(prompt).toContain("T-0259");
+  });
+
+  it("does not add gate-report enforcement language for a diff with no committed gate report", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["assets/final/character/player_walk_sheet_hybrid.png"]
+    });
+    expect(prompt).not.toContain("gate_report.json");
+    expect(prompt).not.toContain("do not re-derive");
+  });
+});
+
 describe("buildReviewerPrompt -- client-godot-verify route (T-0185: hung headless Godot tests)", () => {
   it("tells the reviewer to run the timeout-wrapped godot command for a changed client/tests/*.gd file, and treat a timeout-kill as FAIL", () => {
     const prompt = buildReviewerPrompt({
