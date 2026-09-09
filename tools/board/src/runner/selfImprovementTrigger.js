@@ -6,6 +6,7 @@ import {
   extractProposedAt
 } from "../lib/flowImprovementCard.js";
 import { createCard as createCardDefault } from "./cardCreation.js";
+import { readVerdictEntries, renderVerdictEntry } from "../lib/verdictArchive.js";
 
 const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 const OPEN_STATUSES = new Set(["backlog", "ready", "in-progress", "validation", "review", "blocked"]);
@@ -225,11 +226,36 @@ export function createSelfImprovementLoop({
     }
   }
 
+  /**
+   * computeFlowStats/evaluateTrigger only ever knew how to read `## Validation: FAIL/PASS (ts)`
+   * notes out of task.body -- but T-0345 moves that history into the per-card verdict archive
+   * (verdictArchive.js) once a card is migrated, or as soon as any card accumulates a new
+   * verdict going forward. Without this, the rework-rate signal and the self-improvement
+   * trigger would silently read 0 for all of that activity. Rather than teach every body-text
+   * regex scanner in this file (and flowStats.js) to also do archive I/O, splice each archived
+   * entry's rendered text back onto task.body before handing tasks to those pure functions --
+   * they keep reading exactly the format they always did. No-ops (and does no I/O) when
+   * tasksDir isn't configured, matching the loop's existing "quietly do nothing it can't do"
+   * posture for a missing dependency (see listTasksWithRetry).
+   */
+  async function augmentTasksWithArchivedVerdicts(tasks) {
+    if (!tasksDir) return tasks;
+    return Promise.all(
+      tasks.map(async (task) => {
+        const entries = await readVerdictEntries(tasksDir, task.id);
+        if (entries.length === 0) return task;
+        const archivedText = entries.map(renderVerdictEntry).join("\n");
+        return { ...task, body: `${task.body ?? ""}\n${archivedText}` };
+      })
+    );
+  }
+
   async function sweepOnce() {
     if (!enabled) return null;
 
-    const tasks = await listTasksWithRetry();
-    if (tasks === null) return null;
+    const listedTasks = await listTasksWithRetry();
+    if (listedTasks === null) return null;
+    const tasks = await augmentTasksWithArchivedVerdicts(listedTasks);
 
     const stats = computeFlowStats(tasks);
     const trigger = evaluateTrigger({
