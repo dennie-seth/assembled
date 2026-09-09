@@ -40,6 +40,15 @@ describe("buildReviewerPrompt", () => {
     expect(prompt.toLowerCase()).toContain("never move");
   });
 
+  it("documents the NEEDS_HUMAN_DECISION verdict and when to use it (T-0341)", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain('"verdict": "NEEDS_HUMAN_DECISION"');
+    // Scoped to a genuine scope/design question -- not a substitute for a FAIL, and not a way
+    // to skip work the reviewer could otherwise do itself.
+    expect(prompt.toLowerCase()).toContain("scope or design");
+    expect(prompt.toLowerCase()).toContain("halts");
+  });
+
   it("teaches the reviewer the fenced host-action-request format and to carry it into FAIL notes (T-0323)", () => {
     const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
     expect(prompt).toContain("```host-action-request");

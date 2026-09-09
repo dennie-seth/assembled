@@ -31,6 +31,14 @@ or
 {"verdict": "FAIL", "notes": "specific, actionable reasons -- cite file and line, name the rule violated"}
 \`\`\`
 
+or, in the narrow case below,
+
+\`\`\`verdict
+{"verdict": "NEEDS_HUMAN_DECISION", "notes": "state the specific scope or design question the card cannot resolve, and why you cannot decide it yourself"}
+\`\`\`
+
+**Use \`NEEDS_HUMAN_DECISION\` only when the card's own acceptance criteria have become a genuine scope or design question you cannot resolve** -- not a defect a retry could fix (that's a FAIL), not a check you didn't run (also a FAIL, see above), and never a shortcut around work you could still do yourself. This verdict halts the auto-retry loop immediately: the orchestrator does not launch another attempt, whether or not retries remain, and parks the card for a human to decide. Reserve it for exactly that case -- e.g. the card asks for two mutually exclusive things, or its acceptance criteria hinge on a choice nothing in \`docs/\` has made yet. Do not reach for it just because a card is hard, its prose is ambiguous in a way a normal FAIL with specific notes could still describe, or you'd rather not do the work.
+
 This fenced block is the only channel your verdict is recorded through. If it is missing or not valid JSON, the run is treated as a runner failure, not a FAIL verdict.`;
 
 function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
