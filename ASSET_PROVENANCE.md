@@ -417,3 +417,39 @@ sweeping for a coherent result; six of this round's eight budgeted
 attempts (55-60) are unspent. Nothing under `assets/final/character/` was
 promoted. The generated reference above is unaffected and remains this
 card's delivered asset.
+
+**Descended, [T-0339](tasks/T-0339.md) (2026-09-09):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/final/character/player_profile_keyframe_hybrid_T0272.png` | No new generation. `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.7) — the model that produced the source sample being descended, [T-0317](tasks/T-0317.md)'s own reference; inherited via provenance chain, not re-run | CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA) — inherited from the T-0317 source, unchanged | N/A — no new prompt. Deterministic descent of the committed `player_profile_costume_reference_T0317.png` (see that asset's own row above for its prompt/negative prompt) through the pipeline's existing `char_gen.cutout` primitives: border-flood background re-fix, foreground re-derivation (largest-component, no keypoints hint needed for a single figure), crop to bbox, aspect-preserving resize onto a 384px canvas (figure height = 40/48 of the canvas, matching every other keyframe's convention), BOX-filter descent to 48x48, nearest-Oklab palette quantization (dithering off), per-pixel cutout, 2px cell-margin clip, orphan cleanup. Generator: `assets/src/character/gen_profile_keyframe_descent_T0339.py`. Full sidecar: `player_profile_keyframe_hybrid_T0272.provenance.json`. | 31700 (T-0317's own seed, carried through unchanged — no new sampling, nothing to reseed) |
+
+Per the card's own framing ("Twelve rounds and 84 attempts chased a profile
+keyframe that has effectively existed since T-0317... excluded only because
+it didn't come from 'the hybrid stack'"), this card removes that exclusion
+rather than running a 13th round: `gen_hybrid_profile_T0272.py`'s dual-
+IPAdapter + ControlNet stack is explicitly **not** used (the card's own "Do
+not" list forbids it — that stack is what produced all 84 non-promotable
+attempts logged in `ARM_PROFILE_ATTEMPT_LOG_T0272.md`). Instead, the
+already-committed, already-provenanced T-0317 reference is descended
+directly. **No GPU call of any kind was needed or made** — this ran
+entirely against already-committed files, confirmed by the generator
+script's own `"gpu_call_required": false` provenance field.
+
+Measured result: 152 foreground px survive the 48x48 cutout (background
+fraction 93.4%), comfortably past the 50px floor every 384px whole-figure
+attempt kept failing. 95 of those 152 px (62.5%) quantize to the home
+palette's own green-family slots (indices 2, 3, 7) — a large, direct
+improvement over T-0272 round 4's own measurement of its best colour-
+bearing attempt (10% green-family, 90% neutral ramp), consistent with
+T-0317's reference carrying a genuinely stronger green signal (48,547 raw
+green px, 31.1%) than anything the dual-IPAdapter + ControlNet stack ever
+produced. Opened directly (not judged by the mechanical gate alone): a
+legible, unmistakably side-facing standing figure — head, a visible
+forward arm shape, coat body and legs — in the palette's own dark/olive
+green tones, taller than it is wide (no squash/shear/mirror). Before/after
+evidence: `docs/assets/evidence/T-0339/before_source_T0317_reference.png`
+(the untouched T-0317 source) and `docs/assets/evidence/T-0339/after_keyframe_48_zoomed.png`
+(the descended result, 10x nearest-neighbour zoom, composited over a mid-
+grey backdrop for visibility — the committed file itself is a real
+transparent-background indexed PNG).

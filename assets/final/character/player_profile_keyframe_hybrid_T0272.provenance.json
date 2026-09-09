@@ -1,0 +1,38 @@
+{
+  "card": "T-0339",
+  "route": "descended",
+  "gpu_call_required": false,
+  "generator": "assets/src/character/gen_profile_keyframe_descent_T0339.py",
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "model_license": "CreativeML Open RAIL++-M",
+  "concept_hash": "603c00f2cc7a5da0462f05232176131d06678776de4876800e7b27af343d7f19",
+  "source_reference": {
+    "path": "assets/src/concept/player_profile_costume_reference_T0317.png",
+    "provenance_path": "assets/src/concept/player_profile_costume_reference_T0317.provenance.json",
+    "card": "T-0317",
+    "sha256": "603c00f2cc7a5da0462f05232176131d06678776de4876800e7b27af343d7f19",
+    "seed": 31700,
+    "steps": 30,
+    "cfg": 7.0,
+    "sampler": "euler",
+    "scheduler": "normal",
+    "method": "Plain txt2img + LoraLoader(soviet_brutalism_style_v1) -> CLIPTextEncode -> KSampler -> VAEDecode -> SaveImage. No ControlNet, no IP-Adapter, no identity/pose LoRA -- deliberately the same stack as T-0209's own player_character_concept_sheet_v1.recipe.json, chosen because T-0272 round 3 found ControlNet's structural conditioning is what overrides camera-angle prompt steering under the \u00a724-e stack."
+  },
+  "cell_size": 48,
+  "palette_path": "assets/final/palette/home_palette.json",
+  "dithering": false,
+  "descent_method": "Deterministic descent of an already-committed, already-provenanced 1024px diffusion sample (T-0317) -- no new ComfyUI call, no ControlNet, no IP-Adapter. The reference's own background is re-forced dark (char_gen.cutout.force_border_background_to_fill, tolerance=0.03), its foreground is re-derived via the same border-connected Oklab flood every other keyframe in this pipeline uses (char_gen.cutout.extract_foreground_mask, no keypoints hint -- single-figure largest-component fallback), cropped to its own bbox, resized (LANCZOS) so its height fills 0.8333 of a 384px square canvas (matching every other keyframe's 40px-tall-in-a-48px-cell convention), centred, then descended to 48x48 via the same primitives a fresh generation's own raw frame would use (BOX-filter resize, char_gen.cutout.downscale_mask for the mask, asset_gate.palette-nearest-Oklab quantization with no dithering, char_gen.cutout.apply_cutout_masks, a 2px cell-margin clip, orphan-speck cleanup).",
+  "background_cutout_applied": true,
+  "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+  "cutout_oklab_tolerance": 0.03,
+  "cutout_bbox_margin_frac": 0.14,
+  "canvas_px": 384,
+  "figure_height_frac": 0.8333333333333334,
+  "source_bbox_on_reference": [
+    0,
+    4,
+    175,
+    887
+  ]
+}
