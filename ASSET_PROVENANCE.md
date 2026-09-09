@@ -417,3 +417,33 @@ sweeping for a coherent result; six of this round's eight budgeted
 attempts (55-60) are unspent. Nothing under `assets/final/character/` was
 promoted. The generated reference above is unaffected and remains this
 card's delivered asset.
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/src/character/master_sheets/player_master_sheet_T0336.png` (T-0336 — Tier-1 master sheet, promoted attempt 2) | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.70) + LoRA `player_identity_v2.safetensors` (identity, chained, weight 0.5) + IP-Adapter `ip-adapter-plus_sdxl_vit-h.safetensors` (weight 0.35), conditioned on `assets/src/concept/player_character_concept_sheet_v1.png` (concept_hash `4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b`). **No ControlNet** (DL-30 / this card's own scope) — txt2img, 1024x1024, the resolution the LoRAs were actually trained at, not the 384 every prior incoherent render in this repo used. ComfyUI HTTP API on the Windows host RTX 3070 Ti Laptop GPU (`172.18.192.1:8188`). prompt_id: `74d3bcd6-fd3e-42f7-8bd2-0626b63bcfa4`. model_hash: `31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b`. Full sidecar: `player_master_sheet_T0336.provenance.json`. Generator: `assets/src/character/gen_master_sheet_T0336.py` (attempt 2). Attempt log: `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md`. Evidence: `docs/assets/evidence/T-0336/README.md`. Committed under `assets/src/` — a pipeline input, not a game-scale final. | "sbrutalistplayer, exploded parts diagram, disassembled equipment breakdown sheet, institutional green coat, hooded, white gloves, same uniform and same equipment loadout, consistent identity, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline, three whole-figure turnaround views at the top -- front view, side view, back view -- and below them separate disassembled equipment pieces laid flat side by side with empty space between each piece so nothing overlaps or touches: a severed upper arm sleeve piece by itself, a severed lower arm and glove piece by itself, a severed upper leg piece by itself, a severed lower leg and boot piece by itself, a hood and head piece by itself, a torso and coat piece by itself, no text, no UI, no watermark" | 8675309 |
+
+**T-0336 finding, recorded not silently resolved:** attempt 1 (seed 31416,
+IP-Adapter weight 0.5, plainer "separated limb reference parts" prompt
+wording) was already fully coherent at 1024 — a real character, not a
+striped/circuit-board artefact, resolving this card's central risk that the
+384px resolution, not graph composition, was the root cause of prior
+incoherent renders (`asset-pipeline-review-2026-09-09.md`). It also answered
+this card's named costume question: the coat ends at the upper thigh and the
+legs are clearly separable in the whole-figure side views, so no costume
+escalation to @DennieSeth was needed. What attempt 1 did not do is separate
+individual limb parts into their own panels — IP-Adapter conditioning on the
+T-0209 concept sheet (itself only coat-only product shots and whole-figure
+turnarounds) pulled the panel vocabulary toward that same composition
+regardless of the prompt's explicit per-limb request. Reframing the request
+as an *exploded parts diagram* and lowering IP-Adapter weight to 0.35
+(attempt 2, promoted above) fixed the panel vocabulary — the coat, legs, and
+boots now appear as genuinely separated, non-overlapping pieces — but even
+this recipe never produced a literal isolated single-limb-only crop (just an
+arm, nothing else); only garment-level separation was achieved. See
+`docs/assets/evidence/T-0336/README.md` for both attempts' images and the
+full analysis. This is recorded as an open finding for whoever builds the
+Tier-2 compositor, not papered over: DL-30 explicitly allows script
+arrangement of diffusion-sampled pixels, so a scripted crop from this
+sheet's own coherent whole-figure panels is the likely path to literal
+per-limb parts, not a further Tier-1 prompt-engineering attempt against the
+same conditioning image.

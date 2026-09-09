@@ -124,17 +124,31 @@ def build_positive_prompt(entity: EntitySpec) -> str:
     """Requests the full Tier-1 sheet: three whole-figure turnaround views
     plus separated limb parts, on a flat background that cuts out cleanly.
     `entity.costume_description` carries the per-entity costume/identity
-    text verbatim -- the only thing an enemy card needs to vary."""
+    text verbatim -- the only thing an enemy card needs to vary.
+
+    Round 1 (a plain "character reference master sheet, ... separated limb
+    reference parts" phrasing) produced a coherent, identity-consistent
+    sheet but the panel layout stayed a coat-focused turnaround -- IP-Adapter
+    conditioning on the T-0209 concept sheet (itself only coat-only and
+    whole-figure panels) pulled the panel vocabulary toward that reference's
+    own composition regardless of the text's specific per-limb request.
+    Framing the ask as an **exploded parts diagram** (a genre with its own
+    strong visual convention: a whole-figure view plus physically separated,
+    non-overlapping component pieces) round-2 fixed that -- panels genuinely
+    isolate the coat, the legs/trousers and the boots as distinct pieces, not
+    just repeated whole-figure poses. See `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md`
+    for the attempts this was compared against."""
     return (
-        f"{entity.trigger_token}, pixel art character reference master sheet, single "
-        f"character, {entity.costume_description}, same uniform and same equipment "
-        "loadout in every panel, consistent identity in every panel, flat uniform neutral "
-        "grey background, flat even lighting, no cast shadow, no perspective, no vanishing "
-        "point, value-separated pixel art silhouette, clean readable outline, "
-        "three whole-figure turnaround views arranged left to right -- front view, side "
-        "view, back view -- and, laid out below them, separated limb reference parts each "
-        "isolated on its own flat background patch: head, torso, upper arm, lower arm, "
-        "upper leg, lower leg, no text, no UI, no watermark"
+        f"{entity.trigger_token}, exploded parts diagram, disassembled equipment "
+        f"breakdown sheet, {entity.costume_description}, same uniform and same equipment "
+        "loadout, consistent identity, flat uniform neutral grey background, flat even "
+        "lighting, no cast shadow, no perspective, clean readable outline, three "
+        "whole-figure turnaround views at the top -- front view, side view, back view -- "
+        "and below them separate disassembled equipment pieces laid flat side by side with "
+        "empty space between each piece so nothing overlaps or touches: a severed upper arm "
+        "sleeve piece by itself, a severed lower arm and glove piece by itself, a severed "
+        "upper leg piece by itself, a severed lower leg and boot piece by itself, a hood and "
+        "head piece by itself, a torso and coat piece by itself, no text, no UI, no watermark"
     )
 
 
@@ -353,7 +367,7 @@ def run_attempt(
     seed: int,
     style_lora_weight: float = 0.70,
     identity_lora_weight: float | None = None,
-    ipadapter_weight: float = 0.5,
+    ipadapter_weight: float = 0.35,
     width: int = DEFAULT_MASTER_SHEET_PX,
     height: int = DEFAULT_MASTER_SHEET_PX,
 ) -> dict:
@@ -484,7 +498,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int)
     parser.add_argument("--style-lora-weight", type=float, default=0.70)
     parser.add_argument("--identity-lora-weight", type=float, default=None)
-    parser.add_argument("--ipadapter-weight", type=float, default=0.5)
+    parser.add_argument("--ipadapter-weight", type=float, default=0.35)
     parser.add_argument("--width", type=int, default=DEFAULT_MASTER_SHEET_PX)
     parser.add_argument("--height", type=int, default=DEFAULT_MASTER_SHEET_PX)
     parser.add_argument("--notes", type=str, default="")
