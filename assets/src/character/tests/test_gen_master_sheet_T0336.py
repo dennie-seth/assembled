@@ -127,6 +127,37 @@ def test_ipadapter_conditions_on_the_concept_image() -> None:
     assert ipadapter["inputs"]["weight"] == 0.5
 
 
+def test_no_concept_crop_node_by_default() -> None:
+    """Attempts 1-4 conditioned on the whole concept sheet -- the crop is
+    opt-in via `concept_crop_box`, so a caller that doesn't pass it keeps
+    the old behaviour unchanged."""
+    graph = _graph()
+    assert gen.CONCEPT_CROP_NODE_ID not in graph
+
+
+def test_concept_crop_box_inserts_crop_node_between_load_and_ipadapter() -> None:
+    """T-0336 review round 5: the concept sheet itself mixes the intended
+    institutional-green costume with a heavier armour-plated variant across
+    its panel grid, and IP-Adapter conditions on whatever pixels it's given
+    -- restricting to a clean sub-region removes the drift at its source
+    instead of only forbidding the result in the negative prompt."""
+    graph = _graph(concept_crop_box=(0, 0, 615, 615))
+    crop = graph[gen.CONCEPT_CROP_NODE_ID]
+    assert crop["class_type"] == "ImageCrop"
+    assert crop["inputs"]["image"] == [gen.CONCEPT_IMAGE_NODE_ID, 0]
+    assert crop["inputs"]["x"] == 0
+    assert crop["inputs"]["y"] == 0
+    assert crop["inputs"]["width"] == 615
+    assert crop["inputs"]["height"] == 615
+    ipadapter = graph[gen.IPADAPTER_NODE_ID]
+    assert ipadapter["inputs"]["image"] == [gen.CONCEPT_CROP_NODE_ID, 0]
+
+
+def test_player_entity_conditions_on_a_clean_costume_crop_of_the_concept_sheet() -> None:
+    player = gen.ENTITIES["player"]
+    assert player.concept_crop_box == (0, 0, 615, 615)
+
+
 def test_sampler_draws_model_from_ipadapter_node_and_prompts_directly() -> None:
     """No ControlNet in this recipe -- the sampler's positive/negative come
     straight from the CLIPTextEncode nodes, not from a ControlNetApplyAdvanced
@@ -195,14 +226,17 @@ def test_build_negative_prompt_forbids_perspective_and_inconsistent_identity() -
     assert "inconsistent identity" in negative or "different costume" in negative
 
 
-def test_build_positive_prompt_requests_a_visible_face_on_whole_figure_views() -> None:
+def test_build_positive_prompt_requests_a_visible_head_marker_on_whole_figure_views() -> None:
     """T-0336 review round 2 shipped a promoted sheet with blank white
     mannequin heads on every whole-figure panel -- 'a real character, not a
-    striped/circuit-board artefact' also means a head with an actual face,
-    not a featureless void where one belongs."""
+    striped/circuit-board artefact' also means a head with some visible
+    feature, not a featureless void where one belongs. Round 4 asked for a
+    literal face and still shipped blank/cropped heads; round 5 asks for
+    visible eye lenses on the hood instead, a head marker consistent with
+    the concept sheet's own hooded-mask design rather than fighting it."""
     player = gen.ENTITIES["player"]
     prompt = gen.build_positive_prompt(player).lower()
-    assert "face" in prompt
+    assert "face" in prompt or "eye lenses" in prompt
 
 
 def test_build_negative_prompt_forbids_blank_heads_and_armour_drift() -> None:

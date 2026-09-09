@@ -103,6 +103,16 @@ class EntitySpec:
     identity_lora_weight: float
     trigger_token: str
     costume_description: str
+    # (x, y, width, height) sub-region of the concept sheet to feed IP-Adapter,
+    # or None to condition on the whole sheet. Attempts 2-4 (see
+    # `build_positive_prompt`'s docstring) drifted from the intended
+    # institutional-green costume to a heavier armour-plated one the model
+    # kept picking up from -- it turns out the concept sheet itself mixes
+    # both costume lines across its panel grid, and IP-Adapter conditions on
+    # whatever region it's given. Restricting to the sheet's own clean,
+    # single-costume top-left block removes that source of drift instead of
+    # just asking the model not to reproduce it.
+    concept_crop_box: tuple[int, int, int, int] | None = None
 
 
 ENTITIES: dict[str, EntitySpec] = {
@@ -116,6 +126,7 @@ ENTITIES: dict[str, EntitySpec] = {
         identity_lora_weight=0.5,
         trigger_token=TRIGGER_TOKEN,
         costume_description="institutional green coat, hooded, white gloves",
+        concept_crop_box=(0, 0, 615, 615),
     ),
 }
 
@@ -146,28 +157,41 @@ def build_positive_prompt(entity: EntitySpec) -> str:
     problem: it reads as mechanical rigging, not figure-drawing rigging, and
     pulled the bottom-row legs toward robotic/mechanical armour instead of
     the intended cloth-and-boot costume, while the hero figure's head still
-    came out cropped off the top of frame. Round 4 drops "rigging" entirely
-    in favour of "anatomy reference sheet" (an art-reference genre with no
-    mechanical connotation), explicitly asks for the head to stay fully
-    inside the frame, and names the limbs as a human figure's rather than a
-    machine's. See `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md` for the attempts
-    this was compared against."""
+    came out cropped off the top of frame. Round 4 dropped "rigging" for
+    "anatomy reference sheet" and asked for a literal human face -- still
+    headless or cropped, and costume drift got *worse* (most panels turned
+    cream/white, not green). Opening the concept sheet itself explains both
+    failures at once: the reference image's own panel grid mixes the clean
+    institutional-green costume (its left columns) with a heavier
+    armour-plated variant (its right columns and bottom rows), and shows a
+    blank white oval for every single head with no eyes anywhere -- IP-Adapter
+    conditions on whatever region of that grid it's given, so no amount of
+    positive-prompt wording was ever going to out-compete pixels the model is
+    being shown directly. Round 5 fixes the conditioning image itself
+    (`EntitySpec.concept_crop_box` in `run_attempt`/`build_graph` restricts
+    IP-Adapter to the sheet's own clean, single-costume block instead of the
+    whole mixed grid) and, rather than fighting the hood-covered-head design
+    with a literal face the source material never shows, asks for a hooded
+    mask with visible dark eye lenses -- a head marker consistent with the
+    institutional costume's own hood, not a blank void. Returns to round-2's
+    proven "exploded parts diagram" framing for the limb panels, since
+    rounds 3-4's reframings only made things worse. See
+    `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md` for the attempts this was
+    compared against."""
     return (
         f"{entity.trigger_token}, exploded parts diagram, disassembled equipment "
         f"breakdown sheet, {entity.costume_description}, same uniform and same equipment "
         "loadout, consistent identity, the exact same institutional green coat costume in "
         "every single panel, flat uniform neutral grey background, flat even lighting, no "
         "cast shadow, no perspective, clean readable outline, three whole-figure turnaround "
-        "views at the top, head fully inside the frame, full body from head to boots visible "
-        "-- front view, side view, back view -- each with a clearly visible human face with "
-        "eyes nose and mouth under the hood, not a blank head, and below them a human figure "
-        "anatomy reference sheet: individual human body-part cutouts for sprite animation, "
-        "laid out flat side by side with empty space between each piece so nothing overlaps "
-        "or touches, each part its own single isolated silhouette, like a paper doll's "
-        "separate interchangeable limb pieces: a human upper arm piece by itself, a human "
-        "lower arm and hand piece by itself, a human upper leg piece by itself, a human lower "
-        "leg and boot piece by itself, a head piece with a visible face by itself, a torso "
-        "and coat piece by itself, no text, no UI, no watermark"
+        "views at the top -- front view, side view, back view -- each figure's head fully "
+        "visible in frame, wearing a hooded mask with two dark round visible eye lenses, not "
+        "a blank void, and below them separate disassembled equipment pieces laid flat side "
+        "by side with empty space between each piece so nothing overlaps or touches: a "
+        "severed upper arm sleeve piece by itself, a severed lower arm and glove piece by "
+        "itself, a severed upper leg piece by itself, a severed lower leg and boot piece by "
+        "itself, a hood and mask head piece with visible eye lenses by itself, a torso and "
+        "coat piece by itself, no text, no UI, no watermark"
     )
 
 
@@ -198,6 +222,7 @@ IDENTITY_LORA_NODE_ID = "12"
 POSITIVE_PROMPT_NODE_ID = "13"
 NEGATIVE_PROMPT_NODE_ID = "14"
 CONCEPT_IMAGE_NODE_ID = "17"
+CONCEPT_CROP_NODE_ID = "24"
 IPADAPTER_LOADER_NODE_ID = "18"
 IPADAPTER_NODE_ID = "19"
 LATENT_NODE_ID = "20"
@@ -222,12 +247,21 @@ def build_graph(
     *,
     identity_lora_name: str | None = None,
     identity_lora_weight: float = 0.0,
+    concept_crop_box: tuple[int, int, int, int] | None = None,
 ) -> dict:
     """txt2img + style LoRA at 1024, IP-Adapter on the approved concept
     sheet, NO ControlNet (DL-30 / this card's own scope). The identity LoRA
     is optional and, when present, chains after the style LoRA -- an enemy
     entity with no trained identity LoRA yet (`identity_lora_name=None`)
-    still gets a graph, just without that node."""
+    still gets a graph, just without that node.
+
+    `concept_crop_box`, when given as `(x, y, width, height)`, inserts an
+    `ImageCrop` node between the concept-sheet `LoadImage` and IP-Adapter so
+    conditioning draws from only that sub-region of the sheet -- see
+    `EntitySpec.concept_crop_box`'s own docstring for why (the concept sheet
+    mixes two costume lines across its panel grid; IP-Adapter conditions on
+    whichever pixels it is shown). `None` (the default) conditions on the
+    whole sheet, unchanged from every attempt before round 5."""
     g: dict = {}
     g[CHECKPOINT_NODE_ID] = {
         "class_type": "CheckpointLoaderSimple",
@@ -273,6 +307,20 @@ def build_graph(
         "class_type": "LoadImage",
         "inputs": {"image": concept_filename},
     }
+    ipadapter_image_source = [CONCEPT_IMAGE_NODE_ID, 0]
+    if concept_crop_box is not None:
+        crop_x, crop_y, crop_width, crop_height = concept_crop_box
+        g[CONCEPT_CROP_NODE_ID] = {
+            "class_type": "ImageCrop",
+            "inputs": {
+                "image": [CONCEPT_IMAGE_NODE_ID, 0],
+                "width": crop_width,
+                "height": crop_height,
+                "x": crop_x,
+                "y": crop_y,
+            },
+        }
+        ipadapter_image_source = [CONCEPT_CROP_NODE_ID, 0]
     g[IPADAPTER_LOADER_NODE_ID] = {
         "class_type": "IPAdapterUnifiedLoader",
         "inputs": {"model": model_source, "preset": IPADAPTER_PRESET},
@@ -282,7 +330,7 @@ def build_graph(
         "inputs": {
             "model": [IPADAPTER_LOADER_NODE_ID, 0],
             "ipadapter": [IPADAPTER_LOADER_NODE_ID, 1],
-            "image": [CONCEPT_IMAGE_NODE_ID, 0],
+            "image": ipadapter_image_source,
             "weight": ipadapter_weight,
             "weight_type": "linear",
             "combine_embeds": "concat",
@@ -451,6 +499,7 @@ def run_attempt(
         height=height,
         identity_lora_name=identity_lora_name,
         identity_lora_weight=resolved_identity_weight,
+        concept_crop_box=entity.concept_crop_box,
     )
     prompt_id = submit_prompt(graph)
     info = wait_for_completion(prompt_id, timeout_s=300)
@@ -486,6 +535,7 @@ def run_attempt(
         ),
         "ip_adapter": IPADAPTER_NAME,
         "ip_adapter_weight": ipadapter_weight,
+        "concept_crop_box": entity.concept_crop_box,
         "controlnet": None,
         "controlnet_note": "deliberately omitted (DL-30 / this card's own scope)",
         "prompt": positive_text,
