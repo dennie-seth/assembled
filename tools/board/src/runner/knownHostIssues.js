@@ -9,16 +9,25 @@
  * Each entry names the host action a human/Dispatch must actually perform -- an agent never
  * applies these itself (docs/design/host-action-escalation.md's Option 2/3 were explicitly
  * deferred as their own privilege-boundary project). Flip `resolved: true` once a human confirms
- * the action was taken and verified per that entry's own `verify` field; never delete a closed
- * entry, so its history stays auditable.
+ * the action was taken and verified per that entry's own `verify` field. Ordinarily a closed entry
+ * is kept, not deleted, so its history stays auditable -- but that's only true when there is real
+ * history to keep: a real host state that was reached, or a claim that was actually disproven. An
+ * entry whose premise was never established in the first place (see `withdrawn` below) records no
+ * such history, and keeping it risks the opposite of the goal -- a stale entry that reads as a
+ * settled finding to the next person who skims this file. That entry can be deleted outright once
+ * withdrawn; its removal is itself recorded in git history (T-0346 deleted
+ * `comfyui-determinism-flags` this way).
  *
  * An entry can close two ways, and they mean different things:
  *
  *   `resolved: true`  -- a human performed `action` and confirmed it per `verify`.
- *   `withdrawn: true` -- the entry's premise was DISPROVEN. Nobody performed the action, and
- *                        nobody should; doing it is now known to make things worse. Record why in
- *                        `withdrawnReason`. Marking such an entry `resolved` would assert a host
- *                        change that never happened, and deleting it would lose the history.
+ *   `withdrawn: true` -- the entry's premise turned out to be unsupported. Nobody performed the
+ *                        action, and nobody should. Record why in `withdrawnReason`. Marking such
+ *                        an entry `resolved` would assert a host change that never happened. If the
+ *                        premise was actually disproven (the action was shown to make things
+ *                        worse), keep the entry for that history; if the premise was merely never
+ *                        established (indistinguishable from chance, as with
+ *                        `comfyui-determinism-flags` -- see T-0346), deleting it is correct.
  *
  * `hostStatePreflight.js` skips both, so either state stops an entry blocking runs.
  */
