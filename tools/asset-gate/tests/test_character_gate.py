@@ -513,8 +513,8 @@ def test_sweep_frame_delta_cap_of_empty_tree_returns_no_results(tmp_path):
 # A synthetic reproduction of session 13's sequential-chained candidate
 # (real pixels live under a gitignored `assets/out/` path, never committed
 # -- see docs/decision-log.md DL-30). The identity-stability number below
-# is not invented: it is the exact `distance` measured by
-# `tools/asset-gate/tests/test_art.py::test_identity_stability_catches_drift_that_frame_consistency_missed`,
+# is not invented: it is the exact `distance` measured by `test_art.py`'s
+# `test_identity_stability_catches_drift_that_frame_consistency_missed`,
 # which reproduces the qualitative failure the review described (colour
 # drift shrinking the silhouette, deceptively passing the old whole-frame
 # delta ratio) at pixel level and is quoted here as the calibration number.
@@ -689,7 +689,7 @@ def test_positive_control_shipped_T0252_idle_still_passes_unchanged():
     path this card must not touch would fail here against the real
     artifact."""
     provenance = json.loads(_T0252_IDLE_PROVENANCE_PATH.read_text())
-    result = check_character_frame_delta_cap(provenance, sheet_name="player_idle_sheet_hybrid_T0252")
+    result = check_character_frame_delta_cap(provenance, sheet_name="player_idle_sheet_hybrid")
     assert result.passed
     # T-0340 does not touch idle's evaluation path at all -- confirm it's
     # genuinely graded against the 0.30 cap, not accidentally skipped.
