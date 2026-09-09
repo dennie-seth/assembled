@@ -78,6 +78,18 @@ MIN_FOREGROUND_PIXELS = 50
 # a real figure can legitimately split into a few parts).
 MAX_FOREGROUND_COMPONENTS = 6
 
+# Reviewer FAIL on this card's first GREEN (2026-09-09): fitting the source
+# figure by height alone let a needle-thin 3px-wide body pass, because
+# height > width is satisfied by a 1px-wide sliver just as much as by a
+# legible figure. Measured directly against the already-promoted anchor
+# this pipeline's own front-facing keyframe uses
+# (`player_idle_sheet_hybrid_T0252.png`: every cell's foreground bbox is
+# 14-16px wide at 44px tall) -- a side profile is legitimately narrower than
+# a front-facing pose (no shoulder width to show), so the floor sits below
+# that band, not inside it, but must still clear it by a wide enough margin
+# that a degenerate 3px column cannot pass by accident.
+MIN_FOREGROUND_WIDTH_PX = 10
+
 # Animation-only fields that must NEVER appear on a static keyframe's
 # provenance -- unchanged from the superseded §24-e version of this gate.
 FORBIDDEN_ANIMATION_FIELDS = (
@@ -313,4 +325,22 @@ def test_figure_is_not_squashed_into_a_wide_aspect() -> None:
     assert height > width, (
         f"keyframe foreground bbox is {width}x{height} -- expected a standing side-profile "
         "figure to be taller than it is wide"
+    )
+
+
+def test_figure_clears_the_minimum_legible_width_floor() -> None:
+    """Two-sided companion to `test_figure_is_not_squashed_into_a_wide_aspect`:
+    height > width alone passes a 1px-wide sliver just as readily as a
+    legible figure. See MIN_FOREGROUND_WIDTH_PX's own comment -- this is the
+    mechanical gate for the exact defect the reviewer measured on this
+    card's first GREEN (a 3px-wide olive column with no recoverable facing
+    information at all)."""
+    arr = np.array(Image.open(KEYFRAME_PATH))
+    fg = arr != BACKGROUND_INDEX
+    ys, xs = np.where(fg)
+    width = int(xs.max() - xs.min() + 1)
+    assert width >= MIN_FOREGROUND_WIDTH_PX, (
+        f"keyframe foreground bbox is {width}px wide -- expected at least "
+        f"{MIN_FOREGROUND_WIDTH_PX}px, below which a side profile reads as a "
+        "featureless needle regardless of its height"
     )
