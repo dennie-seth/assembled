@@ -422,7 +422,7 @@ card's delivered asset.
 
 | Asset | Model | License | Prompt | Seed |
 |---|---|---|---|---|
-| `assets/final/character/player_profile_keyframe_hybrid_T0272.png` | No new generation. `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.7) — the model that produced the source sample being descended, [T-0317](tasks/T-0317.md)'s own reference; inherited via provenance chain, not re-run | CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA) — inherited from the T-0317 source, unchanged | N/A — no new prompt. Deterministic descent of the committed `player_profile_costume_reference_T0317.png` (see that asset's own row above for its prompt/negative prompt) through the pipeline's existing `char_gen.cutout` primitives: border-flood background re-fix, foreground re-derivation (largest-component, no keypoints hint needed for a single figure), crop to bbox, aspect-preserving resize onto a 384px canvas (figure height = 40/48 of the canvas, matching every other keyframe's convention), BOX-filter descent to 48x48, nearest-Oklab palette quantization (dithering off), per-pixel cutout, 2px cell-margin clip, orphan cleanup. Generator: `assets/src/character/gen_profile_keyframe_descent_T0339.py`. Full sidecar: `player_profile_keyframe_hybrid_T0272.provenance.json`. | 31700 (T-0317's own seed, carried through unchanged — no new sampling, nothing to reseed) |
+| `assets/final/character/player_profile_keyframe_hybrid_T0272.png` | No new generation. `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.7) — the model that produced the source sample being descended, [T-0317](tasks/T-0317.md)'s own reference; inherited via provenance chain, not re-run | CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA) — inherited from the T-0317 source, unchanged | N/A — no new prompt. Deterministic descent of the committed `player_profile_costume_reference_T0317.png` (see that asset's own row above for its prompt/negative prompt) through the pipeline's existing `char_gen.cutout` primitives: border-flood background re-fix, foreground re-derivation (largest-component, no keypoints hint needed for a single figure), crop to bbox, resized onto a 384px canvas with height and width fit **independently** (figure height = 40/48 of the canvas, matching every other keyframe's convention; figure width = 15/48 of the canvas, matching the footprint measured on the pipeline's own already-promoted front-facing anchor `player_idle_sheet_hybrid_T0252.png` — see round-2 note below for why), BOX-filter descent to 48x48, nearest-Oklab palette quantization (dithering off), per-pixel cutout, 2px cell-margin clip, orphan cleanup. Generator: `assets/src/character/gen_profile_keyframe_descent_T0339.py`. Full sidecar: `player_profile_keyframe_hybrid_T0272.provenance.json`. | 31700 (T-0317's own seed, carried through unchanged — no new sampling, nothing to reseed) |
 
 Per the card's own framing ("Twelve rounds and 84 attempts chased a profile
 keyframe that has effectively existed since T-0317... excluded only because
@@ -436,19 +436,36 @@ directly. **No GPU call of any kind was needed or made** — this ran
 entirely against already-committed files, confirmed by the generator
 script's own `"gpu_call_required": false` provenance field.
 
-Measured result: 152 foreground px survive the 48x48 cutout (background
-fraction 93.4%), comfortably past the 50px floor every 384px whole-figure
-attempt kept failing. 95 of those 152 px (62.5%) quantize to the home
-palette's own green-family slots (indices 2, 3, 7) — a large, direct
-improvement over T-0272 round 4's own measurement of its best colour-
-bearing attempt (10% green-family, 90% neutral ramp), consistent with
-T-0317's reference carrying a genuinely stronger green signal (48,547 raw
-green px, 31.1%) than anything the dual-IPAdapter + ControlNet stack ever
-produced. Opened directly (not judged by the mechanical gate alone): a
-legible, unmistakably side-facing standing figure — head, a visible
-forward arm shape, coat body and legs — in the palette's own dark/olive
-green tones, taller than it is wide (no squash/shear/mirror). Before/after
-evidence: `docs/assets/evidence/T-0339/before_source_T0317_reference.png`
+**Round 1 (FAIL, reviewer, 2026-09-09):** the first GREEN fit the figure's
+width from its height alone, via the source crop's own raw aspect ratio
+(175x883, ~1:5.05). That produced a foreground bbox only 7px wide at the
+48x48 cell — after the cell-margin clip and orphan cleanup, a 3px-wide
+olive column with no recoverable facing information at all (no nose, no
+arm, no leg separation). The claim originally recorded in this entry —
+"a visible forward arm shape, coat body and legs" — did not hold up against
+that artifact and is retracted here, not just in the image.
+
+**Round 2 (this entry):** width is now fit independently of height (a
+deliberate, bounded, uniform horizontal stretch, never a shear) to 15/48 of
+the 384px canvas — the midpoint of the width band this pipeline's own
+already-promoted front-facing anchor (`player_idle_sheet_hybrid_T0252.png`)
+measures at (14-16px wide at 44px tall). A true side profile has no
+shoulder width to show, so it is legitimately narrower than that
+front-facing anchor, but 3px is not "narrower," it is illegible — the fix
+targets the same legible-width footprint the rest of the pipeline already
+occupies. Measured result: 275 foreground px survive the 48x48 cutout
+(background fraction 88.1%), comfortably past the 50px floor every 384px
+whole-figure attempt kept failing, foreground bbox 14x40px (width now
+clears `MIN_FOREGROUND_WIDTH_PX` in the gate, added this round). 149 of
+those 275 px (54.2%) quantize to the home palette's own green-family slots
+(indices 2, 3, 7) — still a large improvement over T-0272 round 4's own
+measurement of its best colour-bearing attempt (10% green-family, 90%
+neutral ramp). Opened directly (not judged by the mechanical gate alone): a
+legible, side-facing standing figure — a head shape with a nose-like
+protrusion at the top, a dark hand/forearm patch at the torso, a coat body
+tapering to a slight flare at the base (feet) — in the palette's own
+dark/olive green tones, taller than it is wide (no squash/shear/mirror).
+Before/after evidence: `docs/assets/evidence/T-0339/before_source_T0317_reference.png`
 (the untouched T-0317 source) and `docs/assets/evidence/T-0339/after_keyframe_48_zoomed.png`
 (the descended result, 10x nearest-neighbour zoom, composited over a mid-
 grey backdrop for visibility — the committed file itself is a real

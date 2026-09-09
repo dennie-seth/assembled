@@ -25,10 +25,17 @@ not a square canvas: the reference's own foreground is re-derived (border
 flood + largest-component, no keypoints hint needed for a single figure),
 cropped to its own bbox, resized so its height fills the same 40/48 fraction
 of a 384px square canvas every other keyframe's 40px-tall-in-a-48px-cell
-convention targets, centred on that canvas, then descended to 48x48 exactly
-as a fresh generation's own raw frame would be (BOX-filter resize, nearest-
-Oklab palette quantization with no dithering, per-pixel cutout, a 2px cell-
-margin clip, orphan-speck cleanup).
+convention targets -- **and its width independently fills 15/48 of that same
+canvas** (see FIGURE_WIDTH_FRAC's own comment: fitting width from height
+alone via the source's own ~1:5.05 aspect produced an unreadable 3px-wide
+column at 48x48, a reviewer FAIL against this card's first GREEN; a true
+side profile has no shoulder width to show, so it is legitimately narrower
+than a front-facing pose, but must still land in the same legible-width
+footprint this pipeline's own promoted keyframes occupy) -- centred on that
+canvas, then descended to 48x48 exactly as a fresh generation's own raw
+frame would be (BOX-filter resize, nearest-Oklab palette quantization with
+no dithering, per-pixel cutout, a 2px cell-margin clip, orphan-speck
+cleanup).
 
 Usage (from the repo root, no ComfyUI host required):
     python3 assets/src/character/gen_profile_keyframe_descent_T0339.py
@@ -100,6 +107,24 @@ CELL_SIZE = 48
 CANVAS_PX = 384  # same x8 intermediate canvas this pipeline's other keyframes descend from
 FIGURE_HEIGHT_FRAC = 40 / 48  # matches every other keyframe's 40px-tall-in-a-48px-cell convention
 
+# Reviewer FAIL round 1: fitting width from height alone via the source's own
+# raw aspect ratio (T-0317's crop is 175x883, ~1:5.05 -- a true side profile,
+# with no shoulder width to show, is legitimately far narrower than a
+# front-facing pose) produced a 3px-wide olive column: faithful to the
+# source's own proportions, but with no recoverable facing information at
+# 40px tall. This pipeline's OTHER keyframes never hit this because they are
+# front/three-quarter poses generated directly at roughly the target cell
+# aspect; nothing here assumes a photographically faithful aspect is even
+# desirable at this resolution -- every keyframe in this pipeline already
+# widens its source to a canonical legible footprint, this is just the first
+# one whose source aspect was extreme enough to make that explicit. Target
+# width is fit independently of target height (a deliberate, bounded,
+# uniform horizontal stretch -- never a shear) to the same footprint the
+# pipeline's own already-promoted front-facing anchor measures at
+# (`player_idle_sheet_hybrid_T0252.png`: every cell's foreground bbox is
+# 14-16px wide at 44px tall -- midpoint 15 chosen here).
+FIGURE_WIDTH_FRAC = 15 / 48
+
 
 def sha256_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -132,10 +157,8 @@ def build_descended_cell(
     figure = corrected.crop((x0, y0, x1, y1))
     figure_mask = native_mask[y0:y1, x0:x1]
 
-    fig_w, fig_h = figure.size
     target_h = round(CANVAS_PX * FIGURE_HEIGHT_FRAC)
-    scale = target_h / fig_h
-    target_w = max(1, round(fig_w * scale))
+    target_w = round(CANVAS_PX * FIGURE_WIDTH_FRAC)
 
     figure_resized = figure.resize((target_w, target_h), Image.Resampling.LANCZOS)
     mask_resized = resize_mask_to(figure_mask, (target_w, target_h))
@@ -210,12 +233,19 @@ def descend() -> dict:
             "is re-derived via the same border-connected Oklab flood every other keyframe in this "
             "pipeline uses (char_gen.cutout.extract_foreground_mask, no keypoints hint -- single-"
             "figure largest-component fallback), cropped to its own bbox, resized (LANCZOS) so "
-            f"its height fills {FIGURE_HEIGHT_FRAC:.4f} of a {CANVAS_PX}px square canvas (matching "
-            "every other keyframe's 40px-tall-in-a-48px-cell convention), centred, then descended "
-            "to 48x48 via the same primitives a fresh generation's own raw frame would use "
-            "(BOX-filter resize, char_gen.cutout.downscale_mask for the mask, asset_gate.palette-"
-            "nearest-Oklab quantization with no dithering, char_gen.cutout.apply_cutout_masks, a "
-            "2px cell-margin clip, orphan-speck cleanup)."
+            f"its height fills {FIGURE_HEIGHT_FRAC:.4f} and its width fills "
+            f"{FIGURE_WIDTH_FRAC:.4f} of a {CANVAS_PX}px square canvas -- independently, a "
+            "deliberate, bounded, uniform horizontal stretch (never a shear) because the source "
+            "crop's own raw aspect (175x883, ~1:5.05 -- a true side profile has no shoulder width "
+            "to show) produced an unreadable 3px-wide column when width was derived from height "
+            "alone (reviewer FAIL, round 1); the width target instead matches the footprint this "
+            "pipeline's own already-promoted "
+            "front-facing anchor measures at (player_idle_sheet_hybrid_T0252.png: 14-16px wide at "
+            "44px tall, midpoint 15/48 used here), centred, then descended to 48x48 via the same "
+            "primitives a fresh generation's own raw frame would use (BOX-filter resize, "
+            "char_gen.cutout.downscale_mask for the mask, asset_gate.palette-nearest-Oklab "
+            "quantization with no dithering, char_gen.cutout.apply_cutout_masks, a 2px cell-margin "
+            "clip, orphan-speck cleanup)."
         ),
         "background_cutout_applied": True,
         "cutout_method": CUTOUT_METHOD_DESCRIPTION,
@@ -223,6 +253,7 @@ def descend() -> dict:
         "cutout_bbox_margin_frac": BACKGROUND_MASK_MARGIN_FRAC,
         "canvas_px": CANVAS_PX,
         "figure_height_frac": FIGURE_HEIGHT_FRAC,
+        "figure_width_frac": FIGURE_WIDTH_FRAC,
         "source_bbox_on_reference": descent_info["source_bbox_on_reference"],
     }
     FINAL_PROVENANCE_PATH.write_text(json.dumps(provenance, indent=2) + "\n")
