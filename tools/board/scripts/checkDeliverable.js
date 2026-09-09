@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { promises as fs } from "node:fs";
 import { parseTask } from "../src/lib/taskParser.js";
 import { checkDeliverable } from "../src/lib/deliverableCheck.js";
+import { readTaskBodyAtMergeBase } from "../src/lib/gitTaskHistory.js";
+import { FINDING_HEADING } from "../src/lib/preRegisteredFinding.js";
 import { openDb, resolveDbPath } from "../src/lib/db/connection.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 
@@ -61,16 +63,31 @@ async function main() {
     return;
   }
 
-  const report = await checkDeliverable(task, { attachmentsDir, requireArtifact });
+  // T-0342: the "before this run" snapshot the pre-registered-finding route is pinned to. Only
+  // meaningful in fs mode -- db-mode task history isn't stored in git, so this stays "" there and
+  // the finding-with-evidence route simply never applies (checkDeliverable's existing
+  // attachment-only behaviour is unchanged for db-mode cards).
+  const beforeBody =
+    (process.env.BOARD_TASK_STORE || "fs") === "db"
+      ? ""
+      : await readTaskBodyAtMergeBase({ cwd: REPO_ROOT, id, baseRef: "develop" });
+
+  const report = await checkDeliverable(task, { attachmentsDir, requireArtifact, beforeBody, repoRoot: REPO_ROOT });
 
   if (!report.applicable) {
     console.log(`${id}: deliverable_type is "${task.deliverable_type}", not "artifact" -- nothing to check.`);
     return;
   }
   if (report.ok) {
-    console.log(
-      `${id}: deliverable check passed -- ${task.attachments.length} attachment(s) recorded and present on disk.`
-    );
+    if (task.attachments.length > 0) {
+      console.log(
+        `${id}: deliverable check passed -- ${task.attachments.length} attachment(s) recorded and present on disk.`
+      );
+    } else {
+      console.log(
+        `${id}: deliverable check passed -- no promoted artifact, but a pre-registered experiment (checked against the card's body before this run) produced a decisive finding with committed evidence (see the card's "${FINDING_HEADING}" section).`
+      );
+    }
     return;
   }
 

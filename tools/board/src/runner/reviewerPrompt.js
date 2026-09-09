@@ -1,6 +1,7 @@
 import { TASK_BODY_START, TASK_BODY_END, escapeTaskBody } from "./promptBuilder.js";
 import { resolveVerifyRoutes, resolveDeliverableRoute } from "./verifyRouter.js";
 import { parseAcceptanceCriteria } from "../lib/acceptanceCriteria.js";
+import { PRE_REGISTRATION_HEADING, FINDING_HEADING } from "../lib/preRegisteredFinding.js";
 
 const VERDICT_FOOTER = `## Verdict output format — REQUIRED
 
@@ -68,6 +69,9 @@ function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
   }
   if (hasDeliverableRoute) {
     enforcement += ` This card requires a produced deliverable actually attached to the ticket -- either because its \`deliverable_type\` is "artifact", or because this diff adds/updates a file under a known artifact-producing path (\`assets/final/**\`, \`assets/src/concept/**\`, \`assets/src/keyart/**\`), which makes an attachment mandatory regardless of what \`deliverable_type\` says. A green test suite for an uploader/fetcher/generator script is not evidence the file exists; run the Deliverable artifact check and treat a nonzero exit as a FAIL, naming exactly which artifact is missing, in your notes. This is the T-0136 gap, generalized: an uploader CLI shipped with fully mocked tests, ruff+pytest green, and not a single image was ever actually fetched or attached -- and later, several art/audio cards (character/concept art sheets, an ambience bed) were committed straight to the repo tagged \`deliverable_type: "code"\` and never attached either, so the original deliverable_type-only gate never even fired for them.`;
+    if (task.deliverable_type === "artifact") {
+      enforcement += ` T-0342: a nonzero exit from that same command is not automatically a FAIL here -- read what it actually printed. A genuine \`deliverable_type: "artifact"\` card with no promoted attachment gets one more legitimate way to PASS: a pre-registered experiment (a "${PRE_REGISTRATION_HEADING}" section) that produced a decisive, evidenced finding instead of an artifact (T-0259 session 13 is the motivating case -- a real, pre-registered falsifying result was FAILed anyway for having no artifact, which punishes exactly the behaviour it should reward). Pre-registration is checked against the card's own body **before this run started**, never its current body, so a "${PRE_REGISTRATION_HEADING}" section added retroactively to rescue an empty run never counts -- \`checkDeliverable.js\` enforces this itself via a merge-base git snapshot, but do not take its word for it: read the card's commit history yourself and confirm the pre-registration predates the implementer's first commit. On top of that, the finding itself must be decisive (its "${FINDING_HEADING}" section literally says so) and cite committed evidence with backtick-quoted paths that actually exist on disk -- a narrative claim, an inconclusive result, or pre-registration with no cited evidence is still a FAIL, identical to an empty run with no artifact at all.`;
+    }
   }
   return `## Required verification for this diff\n\nRun exactly the following, in addition to (not instead of) the \`verify\` skill's own table for any other paths this diff touches:\n\n${lines.join("\n")}\n\n${enforcement}`;
 }
