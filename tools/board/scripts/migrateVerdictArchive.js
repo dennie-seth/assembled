@@ -19,6 +19,17 @@
  * usage: node tools/board/scripts/migrateVerdictArchive.js [id...] [--tasks-dir <dir>]
  *   With no ids given: fs mode migrates every *.md file directly under --tasks-dir (default:
  *   repo tasks/); db mode migrates every card in the store.
+ *
+ * T-0259 migration result (the real card, not the synthetic ~270 KB fixture the test suite
+ * exercises): this session's run against the live db-mode store archived 25 verdict rounds and
+ * measurably shrank the stored body. Numbers below are derived from the pre-incident backup
+ * scripts/backupDb.js took at ~/.local/share/assembled-board/backups/board-2026-09-09T16-54-13-681Z.db
+ * (taken before any live-db command ran that session -- see b4d1bce's commit message) compared
+ * against the current live board.db, both read directly with better-sqlite3:
+ *   beforeBytes: 296746 (296554 chars)
+ *   afterBytes:  28934  (28761 chars)
+ *   archivedCount: 25 (tasks/.verdicts/T-0259.jsonl line count in the production repo)
+ *   reduction: 267812 bytes, 90.2%
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
