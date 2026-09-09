@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import { parseTask } from "../src/lib/taskParser.js";
 import { checkDeliverable } from "../src/lib/deliverableCheck.js";
 import { readTaskBodyAtMergeBase } from "../src/lib/gitTaskHistory.js";
+import { readTaskBodyBeforeRun } from "../src/lib/db/dbTaskHistory.js";
 import { FINDING_HEADING } from "../src/lib/preRegisteredFinding.js";
 import { openDb, resolveDbPath } from "../src/lib/db/connection.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
@@ -20,18 +21,17 @@ const TASKS_DIR = path.join(REPO_ROOT, "tasks");
  * cards-to-database cutover -- almost every card created since then has no `tasks/<id>.md`
  * file at all) made this script ENOENT-crash outright, so the reviewer's own mandated
  * `checkDeliverable.js <id>` check could never actually run for those cards.
+ *
+ * `db` is passed in (rather than opened here) so the caller can reuse the same connection for
+ * `readTaskBodyBeforeRun` afterwards -- opening a second connection would work too (SQLite/WAL
+ * tolerates it) but there's no reason to.
  */
-async function loadTaskAndAttachmentsDir(id) {
-  if ((process.env.BOARD_TASK_STORE || "fs") === "db") {
-    const db = openDb();
-    try {
-      const store = new DbTaskStore(db);
-      const task = await store.get(id);
-      const attachmentsDir = path.join(path.dirname(resolveDbPath()), "attachments");
-      return { task, attachmentsDir };
-    } finally {
-      db.close();
-    }
+async function loadTaskAndAttachmentsDir(id, db) {
+  if (db) {
+    const store = new DbTaskStore(db);
+    const task = await store.get(id);
+    const attachmentsDir = path.join(path.dirname(resolveDbPath()), "attachments");
+    return { task, attachmentsDir };
   }
   let task;
   try {
@@ -56,46 +56,51 @@ async function main() {
     return;
   }
 
-  const { task, attachmentsDir } = await loadTaskAndAttachmentsDir(id);
-  if (!task) {
-    console.error(`${id}: no such task found.`);
-    process.exitCode = 1;
-    return;
-  }
+  const isDbMode = (process.env.BOARD_TASK_STORE || "fs") === "db";
+  const db = isDbMode ? openDb() : null;
+  try {
+    const { task, attachmentsDir } = await loadTaskAndAttachmentsDir(id, db);
+    if (!task) {
+      console.error(`${id}: no such task found.`);
+      process.exitCode = 1;
+      return;
+    }
 
-  // T-0342: the "before this run" snapshot the pre-registered-finding route is pinned to. Only
-  // meaningful in fs mode -- db-mode task history isn't stored in git, so this stays "" there and
-  // the finding-with-evidence route simply never applies (checkDeliverable's existing
-  // attachment-only behaviour is unchanged for db-mode cards).
-  const beforeBody =
-    (process.env.BOARD_TASK_STORE || "fs") === "db"
-      ? ""
+    // T-0342: the "before this run" snapshot the pre-registered-finding route is pinned to.
+    // fs-mode reads it from git (the merge-base with `develop`); db-mode has no git-committed
+    // task history, so it's reconstructed from card_events instead (see dbTaskHistory.js) --
+    // still bounded to strictly before the run, never the current live body.
+    const beforeBody = isDbMode
+      ? readTaskBodyBeforeRun(db, id)
       : await readTaskBodyAtMergeBase({ cwd: REPO_ROOT, id, baseRef: "develop" });
 
-  const report = await checkDeliverable(task, { attachmentsDir, requireArtifact, beforeBody, repoRoot: REPO_ROOT });
+    const report = await checkDeliverable(task, { attachmentsDir, requireArtifact, beforeBody, repoRoot: REPO_ROOT });
 
-  if (!report.applicable) {
-    console.log(`${id}: deliverable_type is "${task.deliverable_type}", not "artifact" -- nothing to check.`);
-    return;
-  }
-  if (report.ok) {
-    if (task.attachments.length > 0) {
-      console.log(
-        `${id}: deliverable check passed -- ${task.attachments.length} attachment(s) recorded and present on disk.`
-      );
-    } else {
-      console.log(
-        `${id}: deliverable check passed -- no promoted artifact, but a pre-registered experiment (checked against the card's body before this run) produced a decisive finding with committed evidence (see the card's "${FINDING_HEADING}" section).`
-      );
+    if (!report.applicable) {
+      console.log(`${id}: deliverable_type is "${task.deliverable_type}", not "artifact" -- nothing to check.`);
+      return;
     }
-    return;
-  }
+    if (report.ok) {
+      if (task.attachments.length > 0) {
+        console.log(
+          `${id}: deliverable check passed -- ${task.attachments.length} attachment(s) recorded and present on disk.`
+        );
+      } else {
+        console.log(
+          `${id}: deliverable check passed -- no promoted artifact, but a pre-registered experiment (checked against the card's body before this run) produced a decisive finding with committed evidence (see the card's "${FINDING_HEADING}" section).`
+        );
+      }
+      return;
+    }
 
-  console.error(`${id}: deliverable check FAILED.\n`);
-  for (const message of report.errors) {
-    console.error(`  ${message}`);
+    console.error(`${id}: deliverable check FAILED.\n`);
+    for (const message of report.errors) {
+      console.error(`  ${message}`);
+    }
+    process.exitCode = 1;
+  } finally {
+    if (db) db.close();
   }
-  process.exitCode = 1;
 }
 
 main().catch((err) => {

@@ -416,4 +416,12 @@ describe("buildReviewerPrompt -- finding-with-evidence PASS distinction (T-0342)
     const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
     expect(prompt).not.toContain("Pre-registered experiment");
   });
+
+  it("names card_events / readTaskBodyBeforeRun as the db-mode evidence source, since a db-mode card has no git history to read", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("BOARD_TASK_STORE=db");
+    expect(prompt).toContain("card_events");
+    expect(prompt).toContain("readTaskBodyBeforeRun");
+  });
 });

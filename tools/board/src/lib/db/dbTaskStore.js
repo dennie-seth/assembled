@@ -136,7 +136,7 @@ export class DbTaskStore extends TaskStore {
     this._insertDependsOn(task.id, task.depends_on ?? []);
     this._insertComments(task.id, task.comments ?? []);
     this._insertAttachments(task.id, task.attachments ?? []);
-    this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor);
+    this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor, task.body);
   }
 
   async update(id, updates, { actor = DEFAULT_ACTOR } = {}) {
@@ -193,7 +193,7 @@ export class DbTaskStore extends TaskStore {
         this._insertAttachments(id, merged.attachments ?? []);
       }
       if (changedFields.length > 0) {
-        this._recordEvent(id, "update", changedFields, actor);
+        this._recordEvent(id, "update", changedFields, actor, merged.body);
       }
     });
 
@@ -213,7 +213,7 @@ export class DbTaskStore extends TaskStore {
     const db = this.db;
     const run = db.transaction(() => {
       db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
-      this._recordEvent(id, "remove", [], actor);
+      this._recordEvent(id, "remove", [], actor, existing.body);
     });
     run();
   }
@@ -253,11 +253,16 @@ export class DbTaskStore extends TaskStore {
     }
   }
 
-  _recordEvent(taskId, action, changed, actor) {
+  /**
+   * `body` is the FULL resulting body value after this event (not a diff) -- T-0342's
+   * readTaskBodyBeforeRun (dbTaskHistory.js) reads a specific historical row's snapshot directly
+   * rather than replaying a diff chain, mirroring what git gives fs-mode cards for free.
+   */
+  _recordEvent(taskId, action, changed, actor, body = "") {
     this.db
       .prepare(
-        "INSERT INTO card_events (task_id, action, changed, actor, created_at) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO card_events (task_id, action, changed, actor, created_at, body) VALUES (?, ?, ?, ?, ?, ?)"
       )
-      .run(taskId, action, JSON.stringify(changed), actor, new Date().toISOString());
+      .run(taskId, action, JSON.stringify(changed), actor, new Date().toISOString(), body);
   }
 }
