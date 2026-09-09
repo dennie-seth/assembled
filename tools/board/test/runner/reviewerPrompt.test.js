@@ -395,3 +395,25 @@ describe("buildReviewerPrompt -- deliverable artifact check (deliverable_type: '
     expect(prompt).toMatch(/artifact-producing path/);
   });
 });
+
+describe("buildReviewerPrompt -- finding-with-evidence PASS distinction (T-0342)", () => {
+  it("explains that a pre-registered, decisive, evidenced finding can PASS an artifact card in place of a promoted artifact", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("Pre-registered experiment");
+    expect(prompt).toContain("Finding");
+    expect(prompt.toLowerCase()).toContain("decisive");
+  });
+
+  it("states pre-registration is checked against the card's body BEFORE this run, so it cannot be added retroactively", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toMatch(/before (this|the) run/);
+    expect(prompt.toLowerCase()).toMatch(/retroactiv|rescue an empty run|added afterwards/);
+  });
+
+  it("does not mention the finding-with-evidence distinction for a code-deliverable card (no deliverable route at all)", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).not.toContain("Pre-registered experiment");
+  });
+});

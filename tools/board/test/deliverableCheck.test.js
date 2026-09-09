@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkDeliverable } from "../src/lib/deliverableCheck.js";
+import { PRE_REGISTRATION_HEADING, FINDING_HEADING } from "../src/lib/preRegisteredFinding.js";
 
 function task(overrides = {}) {
   return {
@@ -131,6 +132,75 @@ describe("checkDeliverable", () => {
         { attachmentsDir: dir }
       );
       expect(report.errors).toHaveLength(2);
+    });
+  });
+
+  describe("finding-with-evidence route (T-0342) -- a pre-registered, decisive, evidenced finding can PASS in place of a promoted artifact", () => {
+    const evidencePath = "docs/assets/evidence/T-0136/attempt_8_main.png";
+    const preRegisteredBefore = `${PRE_REGISTRATION_HEADING}\nIf X, the arm is falsified.\n`;
+    const decisiveFindingBody = `${FINDING_HEADING}\nThe result is decisive: falsified. See \`${evidencePath}\`.\n`;
+
+    it("PASSes with no attachments when beforeBody pre-registered and the current body has a decisive, evidenced finding", async () => {
+      const report = await checkDeliverable(
+        task({ deliverable_type: "artifact", attachments: [], body: decisiveFindingBody }),
+        { beforeBody: preRegisteredBefore, repoRoot: "/repo", fileExists: async () => true }
+      );
+      expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+    });
+
+    it("still FAILs when no attachments and beforeBody did NOT pre-register (current body having it doesn't count -- cannot rescue an empty run retroactively)", async () => {
+      const report = await checkDeliverable(
+        task({
+          deliverable_type: "artifact",
+          attachments: [],
+          body: preRegisteredBefore + "\n" + decisiveFindingBody
+        }),
+        { beforeBody: "## Context\nnothing pre-registered\n", repoRoot: "/repo", fileExists: async () => true }
+      );
+      expect(report.ok).toBe(false);
+      expect(report.applicable).toBe(true);
+      expect(report.errors.join(" ")).toMatch(/no attachments recorded/i);
+    });
+
+    it("still FAILs with no attachments, no pre-registration at all, and no finding (baseline unchanged)", async () => {
+      const report = await checkDeliverable(
+        task({ deliverable_type: "artifact", attachments: [], body: "## Context\nnothing here\n" }),
+        { beforeBody: "## Context\nnothing pre-registered\n", repoRoot: "/repo", fileExists: async () => true }
+      );
+      expect(report.ok).toBe(false);
+      expect(report.applicable).toBe(true);
+    });
+
+    it("FAILs (with both the attachment error and the finding error) when pre-registered but the finding isn't decisive", async () => {
+      const report = await checkDeliverable(
+        task({
+          deliverable_type: "artifact",
+          attachments: [],
+          body: `${FINDING_HEADING}\nInconclusive, see \`${evidencePath}\`\n`
+        }),
+        { beforeBody: preRegisteredBefore, repoRoot: "/repo", fileExists: async () => true }
+      );
+      expect(report.ok).toBe(false);
+      const joined = report.errors.join(" ");
+      expect(joined).toMatch(/no attachments recorded/i);
+      expect(joined).toMatch(/decisive/i);
+    });
+
+    it("is not consulted when the plain artifact/attachment check already passes (beforeBody irrelevant)", async () => {
+      const report = await checkDeliverable(
+        task({ deliverable_type: "artifact", attachments: [{ filename: "a.png" }] }),
+        { beforeBody: "## Context\nno pre-registration\n", repoRoot: "/repo", fileExists: async () => true }
+      );
+      expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+    });
+
+    it("does not apply the finding-with-evidence route to a requireArtifact (diff-triggered) card whose deliverable_type is not 'artifact'", async () => {
+      const report = await checkDeliverable(
+        task({ deliverable_type: "code", attachments: [], body: decisiveFindingBody }),
+        { requireArtifact: true, beforeBody: preRegisteredBefore, repoRoot: "/repo", fileExists: async () => true }
+      );
+      expect(report.ok).toBe(false);
+      expect(report.errors.join(" ")).toMatch(/no attachments recorded/i);
     });
   });
 });
