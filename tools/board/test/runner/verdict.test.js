@@ -53,9 +53,21 @@ describe("extractVerdictFromEvents", () => {
     expect(extractVerdictFromEvents(events)).toBeNull();
   });
 
-  it('returns null when "verdict" is neither PASS nor FAIL', () => {
+  it('returns null when "verdict" is none of PASS, FAIL or NEEDS_HUMAN_DECISION', () => {
     const events = [assistantText('```verdict\n{"verdict": "MAYBE", "notes": "unsure"}\n```')];
     expect(extractVerdictFromEvents(events)).toBeNull();
+  });
+
+  it("extracts a NEEDS_HUMAN_DECISION verdict with the reviewer's stated reason (T-0341)", () => {
+    const events = [
+      assistantText(
+        '```verdict\n{"verdict": "NEEDS_HUMAN_DECISION", "notes": "the card asks for two mutually exclusive layouts; needs a human scope call"}\n```'
+      )
+    ];
+    expect(extractVerdictFromEvents(events)).toEqual({
+      verdict: "NEEDS_HUMAN_DECISION",
+      notes: "the card asks for two mutually exclusive layouts; needs a human scope call"
+    });
   });
 
   it("defaults notes to an empty string when omitted", () => {
