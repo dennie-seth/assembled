@@ -166,12 +166,16 @@ from gen_pose_authority_idle_T0249 import MAIN_NEGATIVE as IDLE_MAIN_NEGATIVE  #
 
 from char_gen import chunked_frames  # noqa: E402
 
-# T-0319: the IP-Adapter identity reference's own background bleeds into
-# every generated frame (see crop_identity_reference's docstring below) --
-# force_border_background_to_fill is the shared primitive that fixes both
-# the reference (here) and the preserved attempt 5/7 re-cut path
-# (WALK_BACKGROUND_FIX_T0319.md). Reuses the same border-flood detector the
-# per-frame cutout above already relies on -- no new segmentation logic.
+# T-0347: no longer applied to the IP-Adapter identity reference (T-0319's
+# own fix, reverted -- recolouring that *reference* image destroyed
+# generation coherence 100% in a probe; see crop_identity_reference's
+# docstring below). Still the shared primitive for this module's other,
+# legitimate use: reprocess_attempt_background_fix's post-hoc correction of
+# an already-sampled RENDER's own background before re-cutting it
+# (WALK_BACKGROUND_FIX_T0319.md) -- the same class of render cleanup
+# gen_hybrid_profile_T0272.build_indexed_cell applies to its own freshly-
+# sampled frame. Reuses the same border-flood detector the per-frame cutout
+# above already relies on -- no new segmentation logic.
 from char_gen.cutout import force_border_background_to_fill  # noqa: E402
 from char_gen.sprite_io import save_sprite_sheet  # noqa: E402
 
@@ -468,22 +472,19 @@ def crop_identity_reference(concept_sheet_path: Path, dest_path: Path) -> Path:
     ComfyUI and fed to IPAdapterAdvanced. See the T-0266 recipe finding
     above `IDENTITY_REFERENCE_CROP_BOX` for why the crop itself exists.
 
-    T-0319: the crop's OWN panel background is mid-grey (modal RGB measured
-    at ~144,143,145), not the black WALK_PROMPT asks for -- fed to
-    IPAdapterAdvanced as-is, IP-Adapter's image-level conditioning carries
-    that grey into every generated frame's own background regardless of
-    what the text prompt/negative prompt say (WALK_NEGATIVE already names
-    "grey background" explicitly, inherited unchanged from the idle recipe;
-    it made no difference, because IP-Adapter's conditioning pathway is
-    independent of CLIP text conditioning). Measured modal border RGB on the
-    frames this crop conditioned (142-153 range, attempts 5 and 7) matches
-    this panel's own modal background almost exactly -- the reference, not
-    the prompt weighting, is the root cause. `force_border_background_to_fill`
-    corrects the crop's own background to a genuinely dark fill before it is
-    ever uploaded, the same border-flood detector this pipeline's own
-    per-frame cutout already trusts, so the correction cannot drift from it."""
+    T-0319 diagnosed the crop's OWN panel background as mid-grey (modal RGB
+    measured at ~144,143,145), not the black WALK_PROMPT asks for, and had
+    this function force that background to a dark fill
+    (`force_border_background_to_fill`) before upload, on the theory that
+    IP-Adapter's image-level conditioning was carrying the grey into every
+    generated frame. T-0347 reverses that fix: probed against a live
+    ComfyUI run, recolouring the IP-Adapter *reference* image itself (as
+    opposed to a generated render, which `force_border_background_to_fill`
+    remains correct for -- see its own docstring) corrupted the
+    conditioning signal and destroyed generation coherence 100% of the
+    time. This function is a plain crop again, no correction applied."""
     crop = Image.open(concept_sheet_path).convert("RGB").crop(IDENTITY_REFERENCE_CROP_BOX)
-    force_border_background_to_fill(crop, CUTOUT_OKLAB_TOLERANCE).save(dest_path)
+    crop.save(dest_path)
     return dest_path
 
 

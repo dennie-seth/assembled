@@ -727,6 +727,17 @@ export class RunOrchestrator {
         return;
       }
 
+      // NEEDS_HUMAN_DECISION (T-0341, §23-b): the card's own acceptance criteria have become a
+      // scope or design question the reviewer cannot resolve -- not a fixable defect, so retrying
+      // cannot help. Halts unconditionally, before any signature/no-progress bookkeeping and
+      // regardless of attempts remaining -- this is the exact fix for the 2026-09-08 incident,
+      // where a reviewer's FAIL notes said outright "this must NOT be auto-retried" and the
+      // harness retried anyway because a FAIL verdict was a FAIL verdict.
+      if (verdict.verdict === "NEEDS_HUMAN_DECISION") {
+        await this._handleNeedsHumanDecision(taskId, verdict, attempt);
+        return;
+      }
+
       // Inactivity timeouts are excluded from signature comparison (see _inactivityVerdict's
       // `synthetic` docstring): their reason text is generic by construction, so two in a row
       // isn't evidence of a repeating, unfixable blocker the way a genuine reviewer FAIL is.
@@ -1338,6 +1349,29 @@ export class RunOrchestrator {
   async _blocked(taskId, reason) {
     const current = await this.store.get(taskId);
     await this._updateAndBroadcast(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
+  }
+
+  /**
+   * Records a NEEDS_HUMAN_DECISION verdict (T-0341): parks the card `blocked` -- the same status
+   * every other human-actionable stop uses -- under its own note heading, "Needs Human Decision",
+   * so a human scanning the card can tell this apart at a glance from "Validation: FAIL" (retries
+   * exhausted or no-progress-aborted, see `_failNoteText`) and from "Blocked"/"Run Failed" (a
+   * crash, see `_blocked`/`_crashReason`/`cardLaunch.js`). Never routes through
+   * `_escalateIfGenuineBlocker`: that machinery drafts a blocker report and remediation card for a
+   * genuine bug or environmental blocker, which this deliberately is not -- the reviewer already
+   * named the open question in `verdict.notes`, and a human reading the card is the entire
+   * resolution path, not another auto-retry attempt or an escalation card.
+   */
+  async _handleNeedsHumanDecision(taskId, verdict, attempt) {
+    const current = await this.store.get(taskId);
+    await this._updateAndBroadcast(taskId, {
+      status: "blocked",
+      body: appendNote(
+        current.body,
+        "Needs Human Decision",
+        `${verdict.notes}\n\n(run ${attempt} of ${MAX_AUTO_RETRY_ATTEMPTS}) Reviewer verdict: NEEDS_HUMAN_DECISION -- this is a scope or design question for a human, not a fixable FAIL. Auto-retry loop halted immediately; no further attempt was made.`
+      )
+    });
   }
 
   /**
