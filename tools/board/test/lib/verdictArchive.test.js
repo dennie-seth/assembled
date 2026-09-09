@@ -7,7 +7,8 @@ import {
   appendVerdictEntry,
   readVerdictEntries,
   buildVerdictDigest,
-  migrateBodyVerdicts
+  migrateBodyVerdicts,
+  renderVerdictEntry
 } from "../../src/lib/verdictArchive.js";
 import { rmTemp } from "../helpers/rmTemp.js";
 
@@ -68,6 +69,23 @@ describe("appendVerdictEntry / readVerdictEntries", () => {
     await appendVerdictEntry(tasksDir, "T-0001", { heading: "Validation: FAIL", timestamp: "t1", text });
     const entries = await readVerdictEntries(tasksDir, "T-0001");
     expect(entries[0].text).toBe(text);
+  });
+});
+
+describe("renderVerdictEntry", () => {
+  it("reconstructs the original body section format", () => {
+    const entry = { heading: "Validation: FAIL", timestamp: "2026-08-01T00:00:00.000Z", text: "missing test" };
+    expect(renderVerdictEntry(entry)).toBe("## Validation: FAIL (2026-08-01T00:00:00.000Z)\n\nmissing test\n");
+  });
+
+  it("round-trips through migrateBodyVerdicts: rendering every extracted entry back reproduces the original sections", () => {
+    const body =
+      "## Context\nSomething.\n\n" +
+      "## Validation: FAIL (t1)\n\nfirst failure\n\n" +
+      "## Validation: PASS (t2)\n\nfixed\n";
+    const { entries } = migrateBodyVerdicts(body);
+    const rendered = entries.map(renderVerdictEntry).join("\n");
+    expect(rendered).toBe("## Validation: FAIL (t1)\n\nfirst failure\n\n## Validation: PASS (t2)\n\nfixed\n");
   });
 });
 
