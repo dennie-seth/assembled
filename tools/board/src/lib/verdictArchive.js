@@ -30,6 +30,16 @@ export async function appendVerdictEntry(tasksDir, id, entry) {
   await fs.appendFile(verdictArchivePath(tasksDir, id), line, "utf8");
 }
 
+/**
+ * Reconstructs the original `## <heading> (<timestamp>)\n\n<text>\n` body section for one
+ * archived entry -- the exact inverse of migrateBodyVerdicts's extraction. Used to feed archived
+ * history back into text-scanning consumers (flowStats.js/selfImprovementTrigger.js) that only
+ * ever knew how to read it out of the body.
+ */
+export function renderVerdictEntry(entry) {
+  return `## ${entry.heading} (${entry.timestamp})\n\n${entry.text}\n`;
+}
+
 /** Reads a card's archived verdict entries, oldest first. Empty array if none exist yet. */
 export async function readVerdictEntries(tasksDir, id) {
   let raw;
