@@ -28,10 +28,12 @@ T-0273's real photographs are not.
 derivation: border-flood the panel's own background (identical detector to
 `char_gen.cutout`, at the pipeline's shared default tolerance), keep only the
 largest connected foreground component (the figure -- discarding the panel's
-own small text-label artifact, which is a separate component), force every
-other pixel to solid black (this card's own "solid flat black background"
-generation target), and crop tightly to that component's bbox plus a small
-margin, clamped to the source panel's own extent.
+own small text-label artifact, which is a separate component) to compute a
+tight bbox, and crop the panel plus a small margin to that bbox, clamped to
+the source panel's own extent. T-0347: the crop never recolours a pixel --
+this panel's output becomes a secondary IP-Adapter reference, and forcing
+non-figure pixels to a fill colour (this function's own original behaviour)
+is exactly the anti-pattern that card removes.
 
 Usage (from the repo root):
     python3 assets/src/character/derive_profile_style_reference_T0272.py
@@ -90,8 +92,16 @@ def extract_panel_reference(
     margin: int = PANEL_MARGIN,
 ) -> Image.Image:
     """Crop `img` tightly to its own largest foreground component (the
-    figure), forcing every other pixel -- background and any smaller
-    disconnected artifact, such as a text label -- to solid black."""
+    figure) plus `margin`. The largest-component selection only decides the
+    crop's own bounds -- discarding a smaller disconnected artifact (a text
+    label) that would otherwise widen the bbox unnecessarily -- it never
+    recolours a pixel. T-0347: this panel's output becomes a secondary
+    IP-Adapter reference (`gen_hybrid_profile_T0272.py --secondary-concept`),
+    and forcing any pixel -- background or artifact -- to a fill colour on a
+    reference image corrupts IP-Adapter's conditioning signal, exactly like
+    `force_border_background_to_fill` applied to a reference rather than a
+    render. The crop is therefore a plain, byte-preserving crop of `img`,
+    same as `gen_hybrid_walk_T0259.crop_identity_reference`'s own fix."""
     rgb = img.convert("RGB")
     arr = np.array(rgb)
     h, w = arr.shape[:2]
@@ -105,16 +115,13 @@ def extract_panel_reference(
     largest_label = max(areas, key=areas.get)
     keep = labels == largest_label
 
-    out = arr.copy()
-    out[~keep] = (0, 0, 0)
-
     ys, xs = np.where(keep)
     y0 = max(0, int(ys.min()) - margin)
     y1 = min(h, int(ys.max()) + 1 + margin)
     x0 = max(0, int(xs.min()) - margin)
     x1 = min(w, int(xs.max()) + 1 + margin)
 
-    return Image.fromarray(out[y0:y1, x0:x1])
+    return rgb.crop((x0, y0, x1, y1))
 
 
 def derive() -> dict:
@@ -142,9 +149,10 @@ def derive() -> dict:
         "extraction_method": (
             "border-connected tolerant Oklab flood (char_gen.cutout.border_flood_background_mask, "
             f"tolerance={CUTOUT_OKLAB_TOLERANCE}) to detect the panel's own background, largest-"
-            "connected-component selection to isolate the figure from the panel's own text-label "
-            "artifact, every non-figure pixel forced to solid black, cropped to the figure's own "
-            f"bbox + {PANEL_MARGIN}px margin (clamped to the source panel's extent)."
+            "connected-component selection to isolate the figure's own bbox from the panel's own "
+            "text-label artifact, plain byte-preserving crop (no pixel recoloured -- T-0347) to "
+            f"the figure's own bbox + {PANEL_MARGIN}px margin (clamped to the source panel's "
+            "extent)."
         ),
         "model_hash": "N/A -- deterministic crop/cleanup of an already-generated, already-"
         "provenanced source (see player_character_concept_sheet_v1.provenance.json for the "
