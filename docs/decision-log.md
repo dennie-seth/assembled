@@ -1929,6 +1929,9 @@ most of that change regardless of drift. Rendering the rig's own skeletons as ca
 (perfect pose, zero drift, nothing to catch) and measuring the same XOR/union ratio between
 adjacent frames measures 0.23–0.49 of the same 0.50 cap consumed by legitimate motion alone —
 a legible gait can spend nearly the entire budget before a single pixel of real drift exists.
+(That 0.23–0.49 figure is the review's own; re-measured here against this repo's actual
+`render_rig_silhouette` + `check_frame_consistency` for the same 8-frame walk cycle, it comes
+out to **0.202–0.352** — same phenomenon, same conclusion, see the calibration table below.)
 The only sheets that reliably passed were the ones that barely moved (T-0259 attempt 4,
 DL-26's own table: "motion barely visible", frame-delta 0.034–0.253).
 
@@ -1979,7 +1982,26 @@ committed artifacts (script output, not hand-entered):
 | same sheet | identity-stability distance (8 adjacent pairs incl. loop seam) | **0.047 – 0.320** | Interior pairs: 0.047–0.070 (ordinary per-frame cutout-mask noise). The two pairs touching frame 0 spike to 0.297/0.320 — a real cutout-boundary artifact at that frame, not colour drift, and exactly the kind of fault 0.15 is tight enough to catch. |
 | T-0252 idle (`player_idle_sheet_hybrid_T0252.png`, shipped) | — | frame_delta_range **0.158 – 0.182** (unchanged) | Idle is band-translated from one SDXL frame (`char_gen.synth_entities`), not rig-authored — no rig-predicted silhouette exists to measure pose-fidelity against, and it stays out of scope for this gate entirely (below). |
 | Arm C benchmark (T-0230, DL-25/CHR-1's quality reference) | frame_delta_range | 0.072 – 0.112 | Reference point only, unaffected by this card — `beats_arm_c_benchmark` remains recorded, not gating (CHR-2). |
-| Session 13 drift candidate | pose-fidelity IoU / identity-stability distance | **[0.58, 0.81] / [0.09, 0.50]** (synthetic reproduction) | Real pixels are a gitignored `assets/out/` artifact, never committed — nothing on this disk to load. Reproduced instead at pixel level in `tools/asset-gate/tests/test_art.py::test_identity_stability_catches_drift_that_frame_consistency_missed` (an 8px torso fade against a 280px silhouette, same shape as the review's description) and quoted here as-is: identity-stability 0.50 fails the 0.15 cap outright. |
+| Pure rig capsules (perfect pose, zero drift), old `check_frame_consistency` XOR/union | frame-delta ratio (8 adjacent pairs) | **0.202 – 0.352** | Reproduces "The problem" above's budget-consumption claim with this repo's own code instead of only quoting the review's 0.23–0.49 — same conclusion (a legible gait alone eats most of the 0.50 cap with zero drift to catch), a different number because capsule radius/render resolution differ from whatever the review used, not a contradiction of it. |
+| **Session 13 drift candidate** (`assets/out/hybrid_walk/attempt_5/` on `feature/T-0259`, real pixels — see below) | pose-fidelity IoU (8 frames) | **0.192 – 0.455** | Below the 0.70 floor on every frame — fails outright, independent of identity-stability. |
+| same real sheet | identity-stability distance (8 adjacent pairs incl. loop seam) | **0.141 – 0.836** | Every pair exceeds the 0.15 cap; the loop-seam pair (frame 7 → frame 0) spikes to 0.836 — the accumulated drift from 7 rounds of sequential img2img-chaining landing hardest exactly where the cycle must match itself back up. |
+
+Session 13's candidate lives under a gitignored `assets/out/` path in the *sibling*
+`feature/T-0259` worktree, never committed to any branch (`.claude/rules/assets.md`) — but that
+worktree was present on this machine, so `calibrate_motion_fidelity_T0340.py`'s
+`calibrate_session13_drift_candidate()` loaded and measured the real
+`sheet_192x96_indexed.png` (same rig keypoints as the T-0259 attempt-4 walk above — its own
+`provenance_candidate.json` records `pose_source` as the identical `pose_rig_walk_T0259.py`
+script) with the same `check_pose_fidelity` / `check_identity_stability` functions, not a
+synthetic stand-in. It is guarded to report `available: False` rather than fabricate numbers
+on a machine where that sibling worktree isn't present; `tools/asset-gate/tests/test_character_gate.py`
+records the numbers above as a fixture for the acceptance test (so that test does not itself
+depend on the worktree existing) and separately cross-checks them live against the real
+artifact when it is reachable. `tools/asset-gate/tests/test_art.py`'s
+`test_identity_stability_catches_drift_that_frame_consistency_missed` is a separate, smaller
+synthetic unit test of the same qualitative failure mode (an 8px torso fade against a 280px
+silhouette) — it is not, and was never meant to be, the acceptance control; the real sheet
+above is.
 
 **0.15 sits between the two real populations measured on the committed walk** — comfortably
 above ordinary per-frame noise (0.047–0.070), comfortably below the cropping/drift fault
@@ -1990,9 +2012,13 @@ which the same walk's own DL-26 characterisation already predicts it should.
 
 ### Required controls (both confirmed)
 
-- **Negative control:** the session-13 drift-candidate reproduction FAILS
-  `check_character_motion_fidelity` (identity-stability 0.50 > 0.15 cap) —
-  `test_negative_control_session13_drift_candidate_fails_motion_fidelity`.
+- **Negative control:** the real session-13 drift-candidate sheet FAILS
+  `check_character_motion_fidelity` on both measures (pose-fidelity IoU 0.192–0.455 < 0.70
+  floor; identity-stability 0.141–0.836 > 0.15 cap) —
+  `test_negative_control_session13_drift_candidate_fails_motion_fidelity` (fixture, always
+  runs) and `test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available`
+  (re-derives the fixture from the live artifact and cross-checks it, when the sibling
+  `feature/T-0259` worktree is present).
 - **Positive control:** the shipped T-0252 idle provenance sidecar still passes
   `check_character_frame_delta_cap` unchanged, loaded from the real committed file, not a copy
   of its numbers — `test_positive_control_shipped_T0252_idle_still_passes_unchanged`.

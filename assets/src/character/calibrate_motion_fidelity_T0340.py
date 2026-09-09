@@ -7,7 +7,7 @@ the numbers it prints, and keep the committed output
 (`docs/decision-log.md` DL-31's table) as the record; nothing here writes
 provenance or promotes anything.
 
-Measures two real, on-disk artifacts against the new
+Measures real, on-disk artifacts against the new
 `asset_gate.art.check_pose_fidelity` / `check_identity_stability`:
 
   - `assets/final/character/player_walk_sheet_hybrid.png` (T-0259 attempt 4,
@@ -22,16 +22,22 @@ Measures two real, on-disk artifacts against the new
     SDXL frame (`char_gen.synth_entities`), not by a keypoint rig, so there
     is no rig-predicted silhouette to compare it against; this script only
     reports its existing (unchanged) frame_delta_range under the idle cap.
-
-The session-13 sequential-chained negative control is NOT measured here --
-that candidate's pixels live under a gitignored `assets/out/` path and were
-never committed (assets/out/ is reproducible-not-committed by design; see
-`.claude/rules/assets.md`), so there is nothing on this disk to load. Its
-entry in DL-31's table is a synthetic reproduction of the review's own
-qualitative description (a torso colour fade that shrinks the silhouette
-without moving it), built and measured directly in
-`tools/asset-gate/tests/test_art.py::test_identity_stability_catches_drift_that_frame_consistency_missed`
--- that test's numbers are quoted in DL-31 as-is, not re-derived here.
+  - The pure rig capsules themselves, frame to frame, through the OLD
+    `check_frame_consistency` XOR/union measure -- reproduces the "perfect
+    pose, zero drift" budget-consumption figure DL-31 cites as the reason
+    the old gate was retired, instead of only quoting the review's number.
+  - Session 13's sequential-chained negative control
+    (`assets/out/hybrid_walk/attempt_5/` on `feature/T-0259`). That
+    candidate's pixels live under a gitignored `assets/out/` path in a
+    DIFFERENT worktree from this one (`assets/out/` is
+    reproducible-not-committed by design; see `.claude/rules/assets.md`),
+    so this is guarded to degrade to an "unavailable" report -- not
+    fabricated numbers -- when that sibling worktree isn't present on the
+    machine running this script. When it *is* present (as it was when this
+    was last run and DL-31's table was written), the real sheet is measured
+    the same way as the committed walk sheet above, using the same rig
+    keypoints (`pose_source` in its own `provenance_candidate.json` records
+    it was driven by the identical `pose_rig_walk_T0259.py` script).
 """
 
 from __future__ import annotations
@@ -51,6 +57,7 @@ for _extra in (
 
 import numpy as np  # noqa: E402
 from asset_gate.art import (  # noqa: E402
+    check_frame_consistency,
     check_identity_stability,
     check_pose_fidelity,
     render_rig_silhouette,
@@ -63,6 +70,19 @@ _CHARACTER_FINAL_DIR = _REPO_ROOT / "assets" / "final" / "character"
 WALK_SHEET = _CHARACTER_FINAL_DIR / "player_walk_sheet_hybrid.png"
 IDLE_SHEET = _CHARACTER_FINAL_DIR / "player_idle_sheet_hybrid_T0252.png"
 IDLE_PROVENANCE = _CHARACTER_FINAL_DIR / "player_idle_sheet_hybrid_T0252.provenance.json"
+
+# Session 13's sequential-chained negative control -- a sibling worktree of
+# THIS repo (`feature/T-0259`), not this checkout. Its `assets/out/` is
+# gitignored there just as it is here; the point of pointing at it directly
+# (rather than treating it as unreachable) is that a machine that ran both
+# T-0259 session 13 and this card still has it on disk. `_REPO_ROOT.parent`
+# is the shared `worktrees/` directory this checkout and that one both live
+# under -- see `git worktree list`.
+_SESSION13_ATTEMPT_DIR = (
+    _REPO_ROOT.parent / "T-0259" / "assets" / "out" / "hybrid_walk" / "attempt_5"
+)
+SESSION13_SHEET = _SESSION13_ATTEMPT_DIR / "sheet_192x96_indexed.png"
+SESSION13_PROVENANCE = _SESSION13_ATTEMPT_DIR / "provenance_candidate.json"
 
 CELL_PX = 48
 COLS, ROWS = 4, 2
@@ -149,6 +169,103 @@ def calibrate_walk_sheet() -> dict:
     }
 
 
+def _capsule_only_silhouette_image(
+    points_norm: dict[int, tuple[float, float]], cell_px: int
+) -> Image.Image:
+    """The rig-predicted silhouette itself, as a mode-'P' image, so the OLD
+    `check_frame_consistency` (which requires an indexed image) can grade
+    frame-to-frame delta between pure capsules -- perfect pose, zero drift,
+    nothing for the old measure to catch except the rig's own motion."""
+    silhouette = _predicted_silhouette(points_norm, cell_px)
+    image = Image.new("P", (cell_px, cell_px))
+    image.putdata(silhouette.astype("uint8").flatten().tolist())
+    return image
+
+
+def calibrate_capsule_budget() -> dict:
+    """Reproduce DL-31's "0.23-0.49 of the 0.50 cap" figure by actually
+    running the OLD `check_frame_consistency` XOR/union measure over pure
+    rig capsules (perfect pose, zero drift) for the same 8-frame walk
+    cycle, instead of only quoting the review's number unexamined."""
+    silhouettes = [
+        _capsule_only_silhouette_image(walk_keypoints_for_frame(i, FRAME_COUNT), CELL_PX)
+        for i in range(FRAME_COUNT)
+    ]
+    pairs = [(i, (i + 1) % FRAME_COUNT) for i in range(FRAME_COUNT)]
+    ratios = []
+    for a, b in pairs:
+        result = check_frame_consistency(
+            silhouettes[a], silhouettes[b], background_index=BACKGROUND_INDEX, max_delta_ratio=1.0
+        )
+        ratios.append(result.details["ratio"])
+    return {
+        "note": "pure rig capsules, zero drift by construction -- what the OLD "
+        "check_frame_consistency XOR/union measure charges for legitimate "
+        "motion alone, before any real render or drift enters the picture",
+        "old_frame_delta_ratio_per_pair": ratios,
+        "old_frame_delta_ratio_range": [min(ratios), max(ratios)],
+    }
+
+
+def calibrate_session13_drift_candidate() -> dict:
+    """Session 13's sequential-chained negative control (docs/decision-log.md
+    DL-31, T-0340 acceptance criterion 4). Its pixels live in a sibling
+    worktree's gitignored `assets/out/`, not this checkout -- degrades to an
+    'available: False' report instead of fabricating numbers when that
+    worktree isn't present on the machine running this script."""
+    if not SESSION13_SHEET.exists():
+        return {
+            "sheet": str(SESSION13_SHEET),
+            "available": False,
+            "note": "the feature/T-0259 worktree (or its gitignored "
+            "assets/out/hybrid_walk/attempt_5) is not present on this "
+            "machine -- see docs/decision-log.md DL-31 for the last "
+            "measured numbers, recorded when it was.",
+        }
+
+    sheet = Image.open(SESSION13_SHEET)
+    cells = _split_cells(sheet, COLS, ROWS, CELL_PX)
+    assert len(cells) == FRAME_COUNT, f"expected {FRAME_COUNT} frames, sheet has {len(cells)}"
+
+    pose_ious = []
+    for i, cell in enumerate(cells):
+        points = walk_keypoints_for_frame(i, FRAME_COUNT)
+        predicted = _predicted_silhouette(points, CELL_PX)
+        result = check_pose_fidelity(
+            cell, predicted, background_index=BACKGROUND_INDEX, min_iou=0.0
+        )
+        pose_ious.append(result.details["iou"])
+
+    torso_region = _torso_region(CELL_PX)
+    identity_distances = []
+    pairs = [(i, (i + 1) % FRAME_COUNT) for i in range(FRAME_COUNT)]
+    for a, b in pairs:
+        result = check_identity_stability(
+            cells[a],
+            cells[b],
+            background_index=BACKGROUND_INDEX,
+            region=torso_region,
+            max_histogram_distance=1.0,
+        )
+        identity_distances.append(result.details["distance"])
+
+    provenance = json.loads(SESSION13_PROVENANCE.read_text())
+    return {
+        "sheet": str(SESSION13_SHEET),
+        "available": True,
+        "attempt": provenance.get("attempt"),
+        "generation_mode": "sequential_chained (frame 0 sampled fresh, frames "
+        "1-7 each img2img-chained from the immediately preceding frame's "
+        "own decoded output, denoise 0.35)",
+        "mechanical_gate_passed": provenance.get("mechanical_gate_passed"),
+        "old_frame_delta_range": provenance.get("frame_delta_range"),
+        "pose_fidelity_iou_per_frame": pose_ious,
+        "pose_fidelity_range": [min(pose_ious), max(pose_ious)],
+        "identity_stability_distance_per_pair": identity_distances,
+        "identity_stability_range": [min(identity_distances), max(identity_distances)],
+    }
+
+
 def calibrate_idle_sheet_context() -> dict:
     provenance = json.loads(IDLE_PROVENANCE.read_text())
     return {
@@ -163,6 +280,8 @@ def calibrate_idle_sheet_context() -> dict:
 def main() -> None:
     report = {
         "walk_T0259_attempt4": calibrate_walk_sheet(),
+        "capsule_budget_context": calibrate_capsule_budget(),
+        "session13_drift_candidate_T0259_attempt5": calibrate_session13_drift_candidate(),
         "idle_T0252_context": calibrate_idle_sheet_context(),
     }
     print(json.dumps(report, indent=2))

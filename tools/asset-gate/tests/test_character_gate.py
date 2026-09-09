@@ -20,7 +20,10 @@ card's own edge-case note).
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 from asset_gate.character import (
     IDENTITY_STABILITY_HISTOGRAM_CAP,
@@ -510,17 +513,21 @@ def test_sweep_frame_delta_cap_of_empty_tree_returns_no_results(tmp_path):
 # 0.30 XOR/union cap exclusively (DL-26 is not contradicted); this check
 # reports idle (and any unrecognised/missing class) as not-applicable.
 
-# A synthetic reproduction of session 13's sequential-chained candidate
-# (real pixels live under a gitignored `assets/out/` path, never committed
-# -- see docs/decision-log.md DL-31). The identity-stability number below
-# is not invented: it is the exact `distance` measured by `test_art.py`'s
-# `test_identity_stability_catches_drift_that_frame_consistency_missed`,
-# which reproduces the qualitative failure the review described (colour
-# drift shrinking the silhouette, deceptively passing the old whole-frame
-# delta ratio) at pixel level and is quoted here as the calibration number.
+# Session 13's sequential-chained candidate, REAL measured numbers -- not a
+# synthetic stand-in. The pixels themselves live under a gitignored
+# `assets/out/` path in the sibling `feature/T-0259` worktree (never
+# committed to any branch -- see docs/decision-log.md DL-31), but that
+# worktree existed on the machine that ran
+# `assets/src/character/calibrate_motion_fidelity_T0340.py`, and its
+# `calibrate_session13_drift_candidate()` measured these exact numbers
+# against the real sheet with the real gate functions
+# (`check_pose_fidelity` / `check_identity_stability`). Recorded here so
+# this test is not itself dependent on that worktree still being present;
+# `test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available`
+# below re-derives them live and cross-checks against these when it is.
 _SESSION13_DRIFT_CANDIDATE = {
-    "pose_fidelity_range": [0.58, 0.81],
-    "identity_stability_range": [0.09, 0.5],
+    "pose_fidelity_range": [0.19249394673123488, 0.4546684709066306],
+    "identity_stability_range": [0.140625, 0.8359375],
 }
 
 
@@ -669,14 +676,46 @@ def test_motion_fidelity_does_not_affect_chr1_pass():
 def test_negative_control_session13_drift_candidate_fails_motion_fidelity():
     """T-0340's acceptance criterion: session 13's sequential-chained walk
     candidate must FAIL the new gate -- if it passed, the thresholds would
-    be wrong. It is not measured from the real asset (gitignored, never
-    committed, see the module-level comment above); the identity-stability
-    number is the real distance `test_art.py`'s pixel-level reproduction of
-    the same failure mode measured."""
+    be wrong. `_SESSION13_DRIFT_CANDIDATE` (see the module-level comment
+    above) is the REAL measured pose-fidelity/identity-stability range from
+    the real sheet, not a synthetic stand-in."""
     prov = {**_SESSION13_DRIFT_CANDIDATE, "motion_class": "locomotion"}
     result = check_character_motion_fidelity(prov, sheet_name="session13_drift_candidate")
     assert not result.passed
     assert not result.details["identity_ok"]
+
+
+def test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available():
+    """Cross-checks `_SESSION13_DRIFT_CANDIDATE` against a live re-measurement
+    of the actual sheet, when the sibling `feature/T-0259` worktree that
+    holds it (gitignored `assets/out/`, never committed to any branch) is
+    present on the machine running this suite. Skips rather than fabricates
+    or silently passes when it isn't -- this is a bonus regression check on
+    the recorded numbers above, not the acceptance test itself (that one,
+    above, does not depend on this worktree existing)."""
+    character_dir = _REPO_ROOT / "assets" / "src" / "character"
+    if str(character_dir) not in sys.path:
+        sys.path.insert(0, str(character_dir))
+    from calibrate_motion_fidelity_T0340 import calibrate_session13_drift_candidate
+
+    calibrated = calibrate_session13_drift_candidate()
+    if not calibrated["available"]:
+        pytest.skip(calibrated["note"])
+
+    assert calibrated["pose_fidelity_range"] == pytest.approx(
+        _SESSION13_DRIFT_CANDIDATE["pose_fidelity_range"]
+    )
+    assert calibrated["identity_stability_range"] == pytest.approx(
+        _SESSION13_DRIFT_CANDIDATE["identity_stability_range"]
+    )
+
+    prov = {
+        "pose_fidelity_range": calibrated["pose_fidelity_range"],
+        "identity_stability_range": calibrated["identity_stability_range"],
+        "motion_class": "locomotion",
+    }
+    result = check_character_motion_fidelity(prov, sheet_name="session13_drift_candidate")
+    assert not result.passed
 
 
 # ---- Positive control (T-0340 acceptance): the shipped T-0252 idle sheet ----
