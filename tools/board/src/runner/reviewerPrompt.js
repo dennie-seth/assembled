@@ -47,6 +47,7 @@ function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
   const hasServerRoute = routes.some((route) => route.id === "server-db-verify");
   const hasDeliverableRoute = routes.some((route) => route.id === "deliverable-check");
   const hasGodotRoute = routes.some((route) => route.id.startsWith("client-godot-verify:"));
+  const hasGateReportRoute = routes.some((route) => route.id === "gate-report-pointer");
 
   let enforcement = `Actually execute every command above yourself with Bash -- do not read the diff and infer whether tests would pass. A check you did not run is a FAIL, not an unverified pass.`;
   if (hasPythonRoute) {
@@ -57,6 +58,9 @@ function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
   }
   if (hasGodotRoute) {
     enforcement += ` Run each client-godot-verify command exactly as given, with the \`timeout\` wrapper intact -- never drop it and run \`godot --headless\` bare. A test script that never calls \`get_tree().quit()\` hangs the process indefinitely otherwise (T-0185); if \`timeout\` kills the run, that is itself a FAIL ("test hung / exceeded the timeout") and must be reported as such, not treated as an unverified pass.`;
+  }
+  if (hasGateReportRoute) {
+    enforcement += ` This diff commits a machine-readable gate report next to the sheet it was run on -- read its \`grid\` (cols/rows/cell_px/frame_cells) and per-frame \`pixel_delta_count\`/\`silhouette_delta_ratio\` values directly from the \`cat\`'d JSON above; do not re-derive pixel counts or a max/min delta ratio by hand from the sheet image. This is the T-0259 gap: reviewers re-computed frame deltas from the sheet by hand and did not always agree -- one measurement on the wrong grid gave 1.29x where the true value on the 4x2 grid is 5.3077x. Cite the report's own \`grid\` and per-frame numbers in your notes instead of re-measuring.`;
   }
   if (hasDeliverableRoute) {
     enforcement += ` This card requires a produced deliverable actually attached to the ticket -- either because its \`deliverable_type\` is "artifact", or because this diff adds/updates a file under a known artifact-producing path (\`assets/final/**\`, \`assets/src/concept/**\`, \`assets/src/keyart/**\`), which makes an attachment mandatory regardless of what \`deliverable_type\` says. A green test suite for an uploader/fetcher/generator script is not evidence the file exists; run the Deliverable artifact check and treat a nonzero exit as a FAIL, naming exactly which artifact is missing, in your notes. This is the T-0136 gap, generalized: an uploader CLI shipped with fully mocked tests, ruff+pytest green, and not a single image was ever actually fetched or attached -- and later, several art/audio cards (character/concept art sheets, an ambience bed) were committed straight to the repo tagged \`deliverable_type: "code"\` and never attached either, so the original deliverable_type-only gate never even fired for them.`;
