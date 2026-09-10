@@ -531,3 +531,48 @@ combination of coherence, costume consistency, and a legible head, so a
 further attempt aimed at a shorter-coat seed specifically was not available
 this round. See `docs/assets/evidence/T-0336/README.md` for every attempt's
 image and the full round-by-round analysis.
+
+**Regenerated + descended, [T-0339](tasks/T-0339.md) RE-SCOPE (2026-09-11):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/final/character/player_profile_keyframe_hybrid_T0272.png` | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.70) + LoRA `player_identity_v2.safetensors` (identity, chained, weight 0.5) + IP-Adapter `ip-adapter-plus_sdxl_vit-h.safetensors` (weight 0.35) + ControlNet `controlnet-openpose-sdxl-1.0_xinsir.safetensors` (pose conditioning only, strength 1.6/end 1.0), conditioned on `player_profile_costume_reference_T0317.png` (whole image, square-padded before upload, concept_hash `603c00f2cc7a5da0462f05232176131d06678776de4876800e7b27af343d7f19`). This is T-0351's own proven `side_neutral` recipe (attempts 19-21), reused completely unchanged for a single-panel regeneration -- no prompt tuning, no new pose. ComfyUI HTTP API, Windows host RTX 3070 Ti Laptop GPU (`172.18.192.1:8188`). model_hash: `31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b`. **A live GPU call was required** (this route regenerates the panel, unlike the superseded plain-descent route above). Generator: `assets/src/character/gen_profile_keyframe_side_neutral_T0339.py`. Attempt log: `ARM_MASTER_SHEET_ATTEMPT_LOG_T0339.md`. Full sidecar: `player_profile_keyframe_hybrid_T0272.provenance.json`. | CreativeML Open RAIL++-M (SDXL base) / CreativeML OpenRAIL++-M (style LoRA) — both on the approved allowlist; identity LoRA and IP-Adapter/ControlNet weights inherit the base checkpoint's license, no separate licensing terms | "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), head to toe fully visible, centred, (true 90-degree side profile view, not a three-quarter view:1.3), neutral standing pose, both arms hanging straight down at the sides, both legs together standing upright, both hands empty, open palm, nothing held, institutional green coat, hooded, white gloves, institutional green coat, full-length coat reaching past the knee, wearing a (hooded mask with two dark round visible eye lenses, not a blank void, hood fully up and forward, face completely covered by the mask, no visible hair, no visible face:1.3), boots, never high heels, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline" | 521365985 (attempt 3 of 3, accepted) |
+
+**Why this card was re-scoped a second time**, and why generation (not plain
+descent) was needed after all: the superseded entry above assumed
+`player_profile_costume_reference_T0317.png` was itself a genuine square
+1024 render needing only descent. It is a 175x891 crop. T-0351's own
+21-attempt master-sheet effort separately found that its `side_neutral`
+panel -- a true 90-degree standing side profile, arms down, the same pose
+T-0317's own reference shows -- converged cleanly on three consecutive
+attempts once each pose resolved its own per-panel IP-Adapter reference
+instead of a shared crop. This card regenerates ONLY that one panel, reusing
+T-0351's recipe verbatim, and descends the result.
+
+**Three attempts, one promoted -- all three converged on pose, only one on
+colour legibility.** Every attempt produced a genuine, uncropped, single-
+figure true side profile (confirming T-0351's own finding that this pose is
+reliably reproducible); what varied was whether the *specific render's*
+lighting/background survived this pipeline's cutout + 16-slot palette
+descent as a legible green figure, not whether the pose itself converged:
+
+- **Attempt 1** (seed 837462914): pose clean, but the coat's soft
+  low-saturation lighting gradient quantized almost entirely to the home
+  palette's neutral grey ramp (no bright/light green slot exists), leaving
+  only fragmented, illegible dark-green edge pixels after descent.
+- **Attempt 2** (seed 674839205): the most vivid, best-contrast raw panel of
+  the three, but its dark vignette background sat close enough in Oklab
+  space to the coat's own shadow folds that the border-connected flood
+  classifier ate through most of the figure, shredding the descended mask
+  into disconnected fragments (`char_gen.cutout`'s own wide-border-span
+  warning fired on this attempt).
+- **Attempt 3** (seed 521365985, **promoted**): a solid, saturated green
+  coat with no soft gradient to wash out, against a clean uniform near-black
+  background (no border-span warning) -- the mask stayed one coherent blob
+  and descended to a legible, taller-than-wide, unmistakably green 48x48
+  silhouette.
+
+See `assets/src/character/ARM_MASTER_SHEET_ATTEMPT_LOG_T0339.md` for the
+full per-attempt notes and `docs/assets/evidence/T-0339/` for every raw
+panel (`side_neutral_attempt_{1,2,3}_1024.png`) plus the promoted result
+zoomed for review (`after_keyframe_48_zoomed_v2.png`).
