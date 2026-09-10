@@ -492,13 +492,33 @@ def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> No
     1.8 -> 1.6, still above attempt 11's insufficient 1.5; isolation stays
     untouched at 1.3) and, for the first time, adds its own emphasis to the
     hood/mask clause itself (1.3) -- the identity element that just
-    regressed and has never before been given any weight of its own."""
+    regressed and has never before been given any weight of its own.
+
+    Attempt 13 (seed 411721095, 429.5 total GPU-seconds) confirms the
+    hood/mask emphasis genuinely works -- all 5 panels show a fully
+    covered, legible hood/mask with zero visible face or hair, a first for
+    this card. But it came at a cost: side_left_forward exploded to FOUR
+    figures (worse than any prior attempt), side_right_forward stayed at
+    three, side_neutral lost its true-profile framing entirely (rendered
+    near-front-facing), the reference-sheet/tech-pack diagram-panel defect
+    (last seen attempt 6/7) came back on front_tpose, high heels reappeared
+    despite an explicit ban, and coat length regressed to floor-length on
+    two panels. Adding a fourth emphasized clause evidently over-saturated
+    this prompt's attention budget entirely. Attempt 14 reverts coat and
+    multi-figure weight to attempt 11's baseline (coat 1.6 -> 1.5,
+    multi-figure 1.4 -> 1.3 in the negative prompt) -- the best-behaved
+    values so far -- keeps the hood/mask emphasis (1.3, proven), and moves
+    to an untried, non-prompt lever for the persistent side-panel
+    multi-figure defect: raising `CONTROLNET_STRENGTH` itself (1.3 -> 1.6),
+    since every previous fix attempt competed for the same CLIP attention
+    budget and each one that helped one defect worsened another."""
     pose = gen.POSE_SPECS[0]
     prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], pose)
     assert "exactly one pose" in prompt.lower()
     assert "exactly one" in prompt.lower() and "view" in prompt.lower()
     assert ":1.3)" in prompt, "isolation clause must stay at attempt 8's proven-safe 1.3"
-    assert ":1.6)" in prompt, "coat-length clause must be pulled back to 1.6 (attempt 13)"
+    assert ":1.5)" in prompt, "coat-length clause must revert to attempt 11's 1.5 (attempt 14)"
+    assert ":1.6)" not in prompt, "attempt 13's 1.6 coat weight must be fully replaced"
     assert ":1.8)" not in prompt, "attempt 12's 1.8 coat weight must be fully replaced"
     assert "jacket" not in prompt.lower(), (
         "attempt 9's 'jacket' reframing is implicated in its identity drift -- revert to 'coat'"
@@ -578,9 +598,21 @@ def test_build_single_pose_negative_prompt_emphasizes_single_figure_after_attemp
     docstring. Attempt 13 pulls the weight back partway, 1.6 -> 1.4 (still
     above attempt 11's insufficient 1.3), and adds explicit
     face/hair-visibility and legible-text terms to the negative prompt --
-    the two new defects this round surfaced, neither named before now."""
+    the two new defects this round surfaced, neither named before now.
+
+    Attempt 13 made the multi-figure defect WORSE, not better -- adding a
+    fourth emphasized positive-prompt clause (hood/mask) over-saturated the
+    prompt's attention budget and side_left_forward exploded to four
+    figures. Attempt 14 reverts this weight fully to attempt 11's original
+    1.3 (the best-behaved value on record: 3 of 5 panels clean) and moves
+    the actual fix attempt to a non-prompt lever, `CONTROLNET_STRENGTH`
+    (see `test_build_single_pose_positive_prompt_isolates_coat_weight_after_attempt_9`'s
+    docstring) -- every text-side lever tried so far has traded one
+    defect for another because they all draw from the same attention
+    budget."""
     negative = gen.build_single_pose_negative_prompt()
-    assert ":1.4)" in negative, "multi-figure ban must be pulled back to 1.4 (attempt 13)"
+    assert ":1.3)" in negative, "multi-figure ban must revert to attempt 11's 1.3 (attempt 14)"
+    assert ":1.4)" not in negative, "attempt 13's 1.4 multi-figure weight must be replaced"
     assert ":1.6)" not in negative, "attempt 12's 1.6 multi-figure weight must be replaced"
     assert "figures" in negative.lower()
     assert "ghost figure" in negative.lower() or "ghosting" in negative.lower()
@@ -589,6 +621,27 @@ def test_build_single_pose_negative_prompt_emphasizes_single_figure_after_attemp
     assert "visible face" in negative.lower() or "exposed face" in negative.lower()
     assert "visible hair" in negative.lower()
     assert "readable text" in negative.lower() or "legible words" in negative.lower()
+
+
+def test_controlnet_strength_raised_after_attempt_13() -> None:
+    """Every text-side lever tried on this card's persistent side-panel
+    multi-figure defect (attempts 8, 11, 12, 13 -- see
+    `test_build_single_pose_negative_prompt_emphasizes_single_figure_after_attempt_8`'s
+    docstring) traded one defect for another, because CLIP emphasis on any
+    one clause competes for the same finite attention budget as every
+    other clause in the same prompt. `CONTROLNET_STRENGTH` is a genuinely
+    different axis -- it governs how rigidly the sampler follows the
+    authored OpenPose skeleton, not text attention -- and has been left at
+    its original value (1.3, ARM_POSE_AUTHORITY_ATTEMPT_LOG_T0249.md
+    attempt 3's proven single-figure value) through every prompt-side
+    iteration on this card. Attempt 14 raises it to 1.6 to test whether
+    stronger structural conditioning suppresses the extraneous
+    figures/content a weaker skeleton pin leaves the sampler free to add
+    -- still pose-conditioning-only, per the 2026-09-10 amendment's own
+    scope (it does not touch the style/identity LoRA or IP-Adapter
+    chain)."""
+    assert gen.CONTROLNET_STRENGTH == 1.6
+    assert gen.CONTROLNET_END_PERCENT == 1.0
 
 
 def test_compose_pose_row_stitches_images_side_by_side(tmp_path) -> None:
