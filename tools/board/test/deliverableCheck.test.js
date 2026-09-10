@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { checkDeliverable } from "../src/lib/deliverableCheck.js";
@@ -223,7 +224,7 @@ describe("checkDeliverable", () => {
       }
     }
 
-    it("T-0351 regression: fails when six evidence PNGs are attached (and present on disk) but the declared deliverable was never committed", async () => {
+    it("declared-path route: fails when a card declares its deliverable's path but it was never committed", async () => {
       dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
       const attachmentsDir = path.join(dir, "attachments");
       const repoRoot = path.join(dir, "repo");
@@ -238,7 +239,7 @@ describe("checkDeliverable", () => {
 
       const report = await checkDeliverable(
         task({ id: "T-0351", deliverable_type: "artifact", attachments, body }),
-        { attachmentsDir, repoRoot }
+        { attachmentsDir, repoRoot, listCommittedFiles: async () => [] }
       );
 
       expect(report.applicable).toBe(true);
@@ -303,20 +304,113 @@ describe("checkDeliverable", () => {
       expect(passing).toEqual({ ok: true, applicable: true, errors: [] });
     });
 
-    it("is opt-in: a card with no '## Deliverable' section is unaffected even when repoRoot is given (legacy behaviour preserved)", async () => {
-      dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
-      const attachmentsDir = path.join(dir, "attachments");
-      const repoRoot = path.join(dir, "repo");
-      await fs.mkdir(repoRoot, { recursive: true });
+    describe("no '## Deliverable' section -- non-opt-in fallback: at least one attachment must correspond to a file actually committed on the branch", () => {
+      it("T-0351 regression (exact shape, no card-side opt-in): six evidence PNGs attached and present on disk, no '## Deliverable' section, none of them committed anywhere in the repo -> fails", async () => {
+        dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+        const attachmentsDir = path.join(dir, "attachments");
+        const repoRoot = path.join(dir, "repo");
+        await fs.mkdir(repoRoot, { recursive: true });
 
-      const attachments = [{ filename: "a.png" }];
-      await writeAttachments(attachmentsDir, "T-0136", attachments);
+        const attachments = evidenceAttachments(6);
+        await writeAttachments(attachmentsDir, "T-0351", attachments);
 
-      const report = await checkDeliverable(
-        task({ deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
-        { attachmentsDir, repoRoot }
-      );
-      expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+        const report = await checkDeliverable(
+          task({
+            id: "T-0351",
+            deliverable_type: "artifact",
+            attachments,
+            body: "## Context\nSix failed attempts, no sheet ever assembled.\n"
+          }),
+          { attachmentsDir, repoRoot, listCommittedFiles: async () => [] }
+        );
+
+        expect(report.applicable).toBe(true);
+        expect(report.ok).toBe(false);
+        expect(report.errors.join(" ")).toMatch(/committed/i);
+      });
+
+      it("passes once at least one recorded attachment corresponds to a file actually committed on the branch, even with no '## Deliverable' section", async () => {
+        dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+        const attachmentsDir = path.join(dir, "attachments");
+        const repoRoot = path.join(dir, "repo");
+        await fs.mkdir(repoRoot, { recursive: true });
+
+        const attachments = [...evidenceAttachments(2), { filename: "t0351_master_sheet.png" }];
+        await writeAttachments(attachmentsDir, "T-0351", attachments);
+
+        const report = await checkDeliverable(
+          task({ id: "T-0351", deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
+          {
+            attachmentsDir,
+            repoRoot,
+            listCommittedFiles: async () => [
+              "assets/final/character/t0351_master_sheet.png",
+              "README.md"
+            ]
+          }
+        );
+        expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+      });
+
+      it("still fails when attachments are present on disk but none of their filenames match any committed file, even with a non-empty committed file list", async () => {
+        dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+        const attachmentsDir = path.join(dir, "attachments");
+        const repoRoot = path.join(dir, "repo");
+        await fs.mkdir(repoRoot, { recursive: true });
+
+        const attachments = [{ filename: "a.png" }];
+        await writeAttachments(attachmentsDir, "T-0136", attachments);
+
+        const report = await checkDeliverable(
+          task({ deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
+          { attachmentsDir, repoRoot, listCommittedFiles: async () => ["docs/unrelated.md"] }
+        );
+        expect(report.ok).toBe(false);
+        expect(report.errors.join(" ")).toMatch(/committed/i);
+      });
+
+      it("default listCommittedFiles (real git): passes for a filename that's actually git-committed in repoRoot, fails for one that's only untracked/uncommitted", async () => {
+        dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+        const attachmentsDir = path.join(dir, "attachments");
+        const repoRoot = path.join(dir, "repo");
+        await fs.mkdir(repoRoot, { recursive: true });
+        execFileSync("git", ["init", "-q"], { cwd: repoRoot });
+        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+        execFileSync("git", ["config", "user.name", "Test"], { cwd: repoRoot });
+        const sheetDir = path.join(repoRoot, "assets", "final", "character");
+        await fs.mkdir(sheetDir, { recursive: true });
+        await fs.writeFile(path.join(sheetDir, "committed_sheet.png"), "real sheet bytes");
+        execFileSync("git", ["add", "-A"], { cwd: repoRoot });
+        execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: repoRoot });
+        await fs.writeFile(path.join(sheetDir, "untracked_sheet.png"), "never committed");
+
+        const committedAttachments = [{ filename: "committed_sheet.png" }];
+        await writeAttachments(attachmentsDir, "T-0500", committedAttachments);
+        const passing = await checkDeliverable(
+          task({
+            id: "T-0500",
+            deliverable_type: "artifact",
+            attachments: committedAttachments,
+            body: "## Context\nno deliverable section here\n"
+          }),
+          { attachmentsDir, repoRoot }
+        );
+        expect(passing).toEqual({ ok: true, applicable: true, errors: [] });
+
+        const untrackedAttachments = [{ filename: "untracked_sheet.png" }];
+        await writeAttachments(attachmentsDir, "T-0501", untrackedAttachments);
+        const failing = await checkDeliverable(
+          task({
+            id: "T-0501",
+            deliverable_type: "artifact",
+            attachments: untrackedAttachments,
+            body: "## Context\nno deliverable section here\n"
+          }),
+          { attachmentsDir, repoRoot }
+        );
+        expect(failing.ok).toBe(false);
+        expect(failing.errors.join(" ")).toMatch(/committed/i);
+      });
     });
 
     it("does not break the T-0342 finding-with-evidence route for a card with no '## Deliverable' section", async () => {
