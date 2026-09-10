@@ -459,13 +459,32 @@ def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> No
     clean single-figure results in 4/5 panels and no identity drift),
     keeps isolation at attempt 8's proven-safe 1.3 (reverting attempt 9's
     1.4), and changes only the coat-length weight, 1.3 -> 1.5 -- the one
-    axis not yet tested in isolation."""
+    axis not yet tested in isolation.
+
+    Attempt 11 is this card's first real execution of attempt 10's exact
+    recipe (seed 356237921, 444.7 total GPU-seconds, all 5 ComfyUI calls
+    succeeded, see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md and
+    docs/assets/evidence/T-0351/attempt_11_*). Opening the five panels
+    confirmed real progress -- front_tpose and back_tpose are genuine,
+    clean single-figure T-poses (arms horizontal, legs apart, no ghosting),
+    and side_neutral is a genuine clean true-90-degree profile with arms
+    down and zero ghosting -- ControlNet is reliably forcing the skeleton's
+    pose and single-figure count on 3 of 5 panels now, a first for this
+    card. But two defects persist on every panel: (1) the coat still runs
+    well past mid-hip (to the knee on front_tpose, past the knee on
+    back_tpose and side_neutral) even at 1.5 emphasis, worse than attempts
+    3/5's plain-1.3 prompt-only result; (2) side_left_forward and
+    side_right_forward both still regress to multiple overlapping/ghosted
+    figures despite 1.3-weighted multi-figure negative terms. Attempt 12
+    raises the coat-length weight again, 1.5 -> 1.8 (isolation stays at
+    1.3, unchanged -- it is not implicated in either persisting defect)."""
     pose = gen.POSE_SPECS[0]
     prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], pose)
     assert "exactly one pose" in prompt.lower()
     assert "exactly one" in prompt.lower() and "view" in prompt.lower()
     assert ":1.3)" in prompt, "isolation clause must stay at attempt 8's proven-safe 1.3"
-    assert ":1.5)" in prompt, "coat-length clause must be emphasized at 1.5"
+    assert ":1.8)" in prompt, "coat-length clause must be emphasized at 1.8 (attempt 12)"
+    assert ":1.5)" not in prompt, "attempt 11's 1.5 coat weight must be fully replaced, not added to"
     assert "jacket" not in prompt.lower(), (
         "attempt 9's 'jacket' reframing is implicated in its identity drift -- revert to 'coat'"
     )
@@ -504,10 +523,24 @@ def test_build_single_pose_negative_prompt_emphasizes_single_figure_after_attemp
     group of people" ban -- the same emphasis lever that fixed coat length
     in attempts 3/5 gets applied here too, on this card's own negative
     prompt (MAIN_NEGATIVE itself stays untouched, since it's shared across
-    every card in this pipeline)."""
+    every card in this pipeline).
+
+    Attempt 11 (this card's first real ControlNet execution, see
+    `test_build_single_pose_positive_prompt_isolates_coat_weight_after_attempt_9`'s
+    docstring) proved the 1.3-weighted ban still is not enough: opening
+    side_left_forward and side_right_forward showed a faded, translucent
+    second/third figure overlapping the main one -- a ghosting defect
+    distinct from attempt 8's opaque three-figure regression, and one none
+    of the existing terms name. Attempt 12 raises the weight 1.3 -> 1.6 and
+    adds terms for the specific defect observed (ghost figure, faded
+    duplicate, translucent overlay, afterimage, double exposure)."""
     negative = gen.build_single_pose_negative_prompt()
-    assert ":1.3)" in negative
+    assert ":1.6)" in negative, "multi-figure ban must be raised to 1.6 (attempt 12)"
+    assert ":1.3)" not in negative, "attempt 11's 1.3 multi-figure weight must be replaced, not kept"
     assert "figures" in negative.lower()
+    assert "ghost figure" in negative.lower() or "ghosting" in negative.lower()
+    assert "faded duplicate" in negative.lower() or "translucent" in negative.lower()
+    assert "double exposure" in negative.lower() or "afterimage" in negative.lower()
 
 
 def test_compose_pose_row_stitches_images_side_by_side(tmp_path) -> None:
