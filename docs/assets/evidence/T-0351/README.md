@@ -1,6 +1,64 @@
 # T-0351 evidence -- Tier-1 master sheet REGEN in limb-separating poses
 
-## Status: run 4 -- ControlNet amendment, attempt 11 (first real execution), attempt 12 in progress
+## Status (2026-09-10, run 5): attempts 15-16 -- first real six-panel executions since the
+## dedicated-legs-panel amendment; real progress, still not compliant, nothing promoted
+
+Three prior implementer/reviewer cycles ended with code committed, tests green, and **zero new
+generations** (the T-0136 gap) -- the six-panel spec and crop boxes were correctly implemented in
+code across those runs, but the generator was never actually invoked against ComfyUI. This run
+breaks that streak: the generator ran twice, both times to completion against the live host
+(172.18.192.1:8188), with no denial, no timeout, and no error.
+
+**Attempt 15** (seed 264575131, 474.6 total GPU-seconds, all 6 ComfyUI calls succeeded --
+`attempt_15_first_real_six_panel_execution_back_shows_front_mask_side_panels_noncompliant.png`,
+`assets/out/master_sheet_T0351/player/attempt_15/provenance_candidate.json`) is this card's first
+real execution of the six-panel/dedicated-legs-panel spec. Per-panel:
+
+| Panel | Result |
+|---|---|
+| front_tpose | **PASS** -- genuine T-pose, arms clear of torso, legs apart, hooded mask with visible eye lenses, canonical long coat |
+| back_tpose | **FAIL** -- rendered the mask facing the camera, not the back of the hood. Root cause found by opening `pose_back_tpose_skeleton.png` and `pose_front_tpose_skeleton.png` side by side: they are visually identical. `mirror_keypoints_lr` (`pose_rig_master_sheet_T0351.py`) is a left-right mirror, which is a no-op on a bilaterally symmetric T-pose -- the ControlNet skeleton carries no facing-direction signal at all for this pose, and `build_single_pose_positive_prompt` was interpolating the same emphasized visible-eye-lenses clause into every panel including this one, directly fighting its own "back view" text |
+| side_left_forward | **FAIL** -- rendered a dynamic kick with a pistol in hand, not a static side profile with the left arm/leg extended forward. Neither a weapon nor a kicking motion was ever named in the negative prompt |
+| side_right_forward | **FAIL** -- malformed/ghosted, coat flaring oddly, silhouette unclear |
+| side_neutral | **FAIL** -- front-facing, not a true 90-degree profile, on a non-flat wooden-platform background (perspective present) |
+| legs | **FAIL** -- still shows a short hooded cape covering both thighs; the existing "no cloak" ban does not cover a cape's distinct silhouette |
+
+**Attempt 16** (seed 282842712, 537.6 total GPU-seconds, all 6 calls succeeded --
+`attempt_16_back_view_fixed_side_neutral_true_profile_legs_regressed_to_armor_cape.png`) applied
+three targeted, test-first fixes for the attempt-15 defects (see
+`gen_master_sheet_T0336.py`'s `PoseSpec.head_clause`/`negative_extra`, and
+`ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md`'s attempt-16 row for the full diff). Per-panel:
+
+| Panel | Result |
+|---|---|
+| front_tpose | **PARTIAL** -- T-pose held, but the eye lenses rendered mismatched colours (one red, one green) -- a minor identity wobble, not present in attempt 15 |
+| back_tpose | **PARTIAL, new failure mode** -- no longer shows a front-facing mask (the head_clause fix worked), but the coat rendered short with bare legs visible, more like a skirt than the canonical full-length coat -- a different compliance failure, not the one that was fixed |
+| side_left_forward | **FAIL** -- ornate oversized coat with a feather collar, front-facing, not a side profile, no forward limb extension visible |
+| side_right_forward | **FAIL, regressed** -- two figures, one visibly wearing high heels despite the heel ban |
+| side_neutral | **PASS -- first genuine true-90-degree side profile this card has produced.** Hooded mask shown in profile, standing, canonical long coat. Minor identity wobble: visible hair strands under the hood and a white lower-face covering that reads more like a surgical mask than the hooded-mask/eye-lens design |
+| legs | **FAIL, regressed** -- an elaborate armoured cape now fully obscures the lower body; worse than attempt 15's partial cape leak. The 1.8 CLIP-emphasis bump on the no-coat clause is the suspected cause: this card's own history (attempts 4, 9, 12, 13 -- see `build_single_pose_positive_prompt`'s docstring) repeatedly shows higher emphasis destabilising rather than fixing. **Do not raise this weight further next attempt** -- try naming "cape" without raising weight past attempt 15's 1.5, or drop back to 1.5 and rely on the new explicit "cape" term alone |
+
+**Net effect across the two attempts**: two real defects fixed (back-facing mask, non-profile
+side_neutral), one new defect introduced (legs panel regression, likely the emphasis bump), and
+side_left_forward/side_right_forward remain unresolved across both attempts -- these two panels
+have never once produced a compliant true-profile single-figure result across 16 attempts on this
+card. **Nothing is promoted.** Both attempts' full sheets, panels, and skeletons are under
+`assets/out/master_sheet_T0351/player/attempt_{15,16}/` (gitignored, reproducible from the
+provenance JSON); the composited sheets are committed here as evidence.
+
+**Recommended next lever, in order**: (1) revert the legs panel's emphasis to 1.5 (keep the new
+"cape" term) and re-run just to confirm the regression was emphasis-driven, not seed noise; (2) for
+side_left_forward/side_right_forward, this card has now spent 16 attempts across three
+fundamentally different levers (prompt-only, per-pose single-shot, ControlNet-conditioned) without
+ever producing a compliant result on these two panels specifically, while front_tpose/back_tpose/
+side_neutral have each been achieved cleanly at least once -- the persistent, panel-specific nature
+of this failure (not a general instability) continues to point at the `concept_crop_box`
+multi-panel-grid finding (`root_cause_concept_crop_box_is_itself_a_multi_panel_grid.png`, this
+directory) as the more fundamental fix, still unauthorized pending a human decision on whether the
+card's "cropped clean concept block" wording covers the crop coordinates or only the numeric
+weights.
+
+## Status (superseded): run 4 -- ControlNet amendment, attempt 11 (first real execution), attempt 12 in progress
 
 **@DennieSeth's 2026-09-10 amendment lifted the no-ControlNet restriction, scoped narrowly to pose
 conditioning only** (see the amendment text appended to the card body) -- the "Root cause" section
