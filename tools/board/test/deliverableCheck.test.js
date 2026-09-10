@@ -208,7 +208,7 @@ describe("checkDeliverable", () => {
             repoRoot: "/repo",
             attachmentsDir,
             fileExists: async () => true,
-            listCommittedBlobHashes: async () => [gitBlobHashOf("fake bytes")]
+            listCommittedBlobs: async () => [{ hash: gitBlobHashOf("fake bytes"), path: "assets/final/a.png" }]
           }
         );
         expect(report).toEqual({ ok: true, applicable: true, errors: [] });
@@ -261,7 +261,7 @@ describe("checkDeliverable", () => {
 
       const report = await checkDeliverable(
         task({ id: "T-0351", deliverable_type: "artifact", attachments, body }),
-        { attachmentsDir, repoRoot, listCommittedBlobHashes: async () => [] }
+        { attachmentsDir, repoRoot, listCommittedBlobs: async () => [] }
       );
 
       expect(report.applicable).toBe(true);
@@ -326,7 +326,7 @@ describe("checkDeliverable", () => {
       expect(passing).toEqual({ ok: true, applicable: true, errors: [] });
     });
 
-    describe("no '## Deliverable' section -- non-opt-in fallback: at least one attachment's content must match a file actually committed on the branch", () => {
+    describe("no '## Deliverable' section -- non-opt-in fallback: at least one attachment's content must match a file actually committed on the branch, outside the evidence root", () => {
       it("T-0351 regression (exact shape, no card-side opt-in): six evidence PNGs attached and present on disk, no '## Deliverable' section, none of them committed anywhere in the repo -> fails", async () => {
         dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
         const attachmentsDir = path.join(dir, "attachments");
@@ -343,7 +343,45 @@ describe("checkDeliverable", () => {
             attachments,
             body: "## Context\nSix failed attempts, no sheet ever assembled.\n"
           }),
-          { attachmentsDir, repoRoot, listCommittedBlobHashes: async () => [] }
+          { attachmentsDir, repoRoot, listCommittedBlobs: async () => [] }
+        );
+
+        expect(report.applicable).toBe(true);
+        expect(report.ok).toBe(false);
+        expect(report.errors.join(" ")).toMatch(/committed/i);
+      });
+
+      it("T-0351 regression, the actual shape that fooled the fallback twice: evidence PNGs genuinely promoted/committed under docs/assets/evidence/T-0351/** (T-0314's own convention), no deliverable ever committed elsewhere -> still fails", async () => {
+        dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+        const attachmentsDir = path.join(dir, "attachments");
+        const repoRoot = path.join(dir, "repo");
+        await fs.mkdir(repoRoot, { recursive: true });
+        execFileSync("git", ["init", "-q"], { cwd: repoRoot });
+        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+        execFileSync("git", ["config", "user.name", "Test"], { cwd: repoRoot });
+
+        const attachments = evidenceAttachments(6);
+        await writeAttachments(attachmentsDir, "T-0351", attachments);
+
+        // The exact thing T-0314's evidence-promotion mechanism does: commit the same attempt
+        // PNGs the run attached, under the repo's own evidence root -- not as the deliverable,
+        // just so they survive worktree removal.
+        const evidenceDir = path.join(repoRoot, "docs", "assets", "evidence", "T-0351");
+        await fs.mkdir(evidenceDir, { recursive: true });
+        for (const a of attachments) {
+          await fs.writeFile(path.join(evidenceDir, a.filename), "fake bytes");
+        }
+        execFileSync("git", ["add", "-A"], { cwd: repoRoot });
+        execFileSync("git", ["commit", "-q", "-m", "evidence"], { cwd: repoRoot });
+
+        const report = await checkDeliverable(
+          task({
+            id: "T-0351",
+            deliverable_type: "artifact",
+            attachments,
+            body: "## Context\nSix failed attempts, no sheet ever assembled.\n"
+          }),
+          { attachmentsDir, repoRoot }
         );
 
         expect(report.applicable).toBe(true);
@@ -364,13 +402,17 @@ describe("checkDeliverable", () => {
 
         const report = await checkDeliverable(
           task({ id: "T-0351", deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
-          { attachmentsDir, repoRoot, listCommittedBlobHashes: async () => [gitBlobHashOf("totally different content")] }
+          {
+            attachmentsDir,
+            repoRoot,
+            listCommittedBlobs: async () => [{ hash: gitBlobHashOf("totally different content"), path: "README.md" }]
+          }
         );
         expect(report.ok).toBe(false);
         expect(report.errors.join(" ")).toMatch(/committed/i);
       });
 
-      it("passes once at least one recorded attachment's content matches a file actually committed on the branch, even with no '## Deliverable' section", async () => {
+      it("passes once at least one recorded attachment's content matches a file actually committed outside the evidence root, even with no '## Deliverable' section", async () => {
         dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
         const attachmentsDir = path.join(dir, "attachments");
         const repoRoot = path.join(dir, "repo");
@@ -387,13 +429,38 @@ describe("checkDeliverable", () => {
             // writeAttachments writes "fake bytes" for every attachment -- this is the blob hash
             // a real committed `assets/final/character/t0351_master_sheet.png` would have if its
             // content matched the promoted attachment.
-            listCommittedBlobHashes: async () => [gitBlobHashOf("fake bytes")]
+            listCommittedBlobs: async () => [
+              { hash: gitBlobHashOf("fake bytes"), path: "assets/final/character/t0351_master_sheet.png" }
+            ]
           }
         );
         expect(report).toEqual({ ok: true, applicable: true, errors: [] });
       });
 
-      it("default listCommittedBlobHashes (real git): passes for content that's actually git-committed in repoRoot, fails for content that's only untracked/uncommitted", async () => {
+      it("a committed match that lives ONLY under the evidence root does not count, even when its content also happens to match an attachment -- the fallback must look at path, not just hash", async () => {
+        dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+        const attachmentsDir = path.join(dir, "attachments");
+        const repoRoot = path.join(dir, "repo");
+        await fs.mkdir(repoRoot, { recursive: true });
+
+        const attachments = [{ filename: "attempt_1_main.png" }];
+        await writeAttachments(attachmentsDir, "T-0351", attachments);
+
+        const report = await checkDeliverable(
+          task({ id: "T-0351", deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
+          {
+            attachmentsDir,
+            repoRoot,
+            listCommittedBlobs: async () => [
+              { hash: gitBlobHashOf("fake bytes"), path: "docs/assets/evidence/T-0351/attempt_1_main.png" }
+            ]
+          }
+        );
+        expect(report.ok).toBe(false);
+        expect(report.errors.join(" ")).toMatch(/committed/i);
+      });
+
+      it("default listCommittedBlobs (real git): passes for content that's actually git-committed in repoRoot outside the evidence root, fails for content that's only untracked/uncommitted", async () => {
         dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
         const attachmentsDir = path.join(dir, "attachments");
         const repoRoot = path.join(dir, "repo");
@@ -440,6 +507,30 @@ describe("checkDeliverable", () => {
         );
         expect(failing.ok).toBe(false);
         expect(failing.errors.join(" ")).toMatch(/committed/i);
+
+        // Real git, real evidence-promotion path: content that IS committed, but only inside
+        // docs/assets/evidence/**, must not satisfy the fallback either.
+        const evidenceDir = path.join(repoRoot, "docs", "assets", "evidence", "T-0502");
+        await fs.mkdir(evidenceDir, { recursive: true });
+        await fs.writeFile(path.join(evidenceDir, "attempt_1.png"), "evidence-only bytes");
+        execFileSync("git", ["add", "-A"], { cwd: repoRoot });
+        execFileSync("git", ["commit", "-q", "-m", "evidence"], { cwd: repoRoot });
+
+        const evidenceOnlyAttachments = [{ filename: "attempt_1.png" }];
+        const evidenceOnlyCardDir = path.join(attachmentsDir, "T-0502");
+        await fs.mkdir(evidenceOnlyCardDir, { recursive: true });
+        await fs.writeFile(path.join(evidenceOnlyCardDir, "attempt_1.png"), "evidence-only bytes");
+        const evidenceOnlyReport = await checkDeliverable(
+          task({
+            id: "T-0502",
+            deliverable_type: "artifact",
+            attachments: evidenceOnlyAttachments,
+            body: "## Context\nno deliverable section here\n"
+          }),
+          { attachmentsDir, repoRoot }
+        );
+        expect(evidenceOnlyReport.ok).toBe(false);
+        expect(evidenceOnlyReport.errors.join(" ")).toMatch(/committed/i);
       });
     });
 
