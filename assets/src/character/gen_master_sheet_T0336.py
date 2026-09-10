@@ -266,37 +266,48 @@ def build_limb_pose_prompt(entity: EntitySpec) -> str:
     unrelated regions -- blank/cropped heads, high heels instead of boots,
     legs isolated into their own cropped row apart from the whole figure.
 
-    Attempt 4 keeps the front-loaded structure and the coat-length emphasis
-    unchanged (it worked), raises the pose-clause weight further (1.3 ->
-    1.5) since 1.3 measurably moved the coat but not the pose, and folds
+    Attempt 4 kept the front-loaded structure and the coat-length emphasis
+    unchanged (it worked), raised the pose-clause weight further (1.3 ->
+    1.5) since 1.3 measurably moved the coat but not the pose, and folded
     "head clearly visible" / eye-lens wording directly into each emphasised
-    panel clause so head legibility rides along with the same weight boost
-    instead of competing against it from outside the parentheses. Pose
-    stays a prompt-only lever throughout, per this card's own constraint."""
+    panel clause. Result: pose *still* didn't follow (three panels, arms
+    down, not five/T-pose/profile) -- and 1.5 caused outright costume
+    drift, the worse failure mode: no coat at all, orange goggles instead
+    of the hooded mask, robotic knee braces. Across attempts 1-4, more
+    aggressive intervention (chart framing, then emphasis, then higher
+    emphasis) tracked with *more* instability, not more pose compliance --
+    the coat-length clause is the one lever that ever reliably moved
+    anything, at moderate (1.3-1.4) weight.
+
+    Attempt 5 (this card's final attempt under its own 5-attempt cap)
+    dials pose-clause emphasis back down to 1.3 and shortens each clause to
+    just its core pose keywords (dropping the longer descriptive tail that
+    seemed to dilute rather than help), and compensates for attempt 4's
+    costume drift by repeating "institutional green coat" and the hooded
+    mask description outside the emphasised spans, unweighted, so costume
+    identity isn't competing against the pose weight boost. Still no
+    ControlNet, no LoRA/IP-Adapter weight change -- pose stays a
+    prompt-only lever, per this card's own constraint."""
     pose_clause = (
-        "(pose reference chart, five separate whole-figure panels, each a complete full-body "
-        "figure head to toe, arranged in a single horizontal row, wide gaps between panels so "
-        "nothing overlaps or touches:1.3), "
-        "(panel one is a front view T-pose, both arms held straight out horizontal to the "
-        "sides clear of the torso, legs spread apart, head clearly visible wearing a hooded "
-        "mask with two dark round eye lenses:1.5), "
-        "(panel two is a back view T-pose, both arms held straight out horizontal to the "
-        "sides clear of the torso, legs spread apart, hood clearly visible from behind:1.5), "
-        "(panel three is a true 90-degree side profile view, not a three-quarter view, only "
-        "the left arm and only the left leg extended forward at roughly a right angle clear "
-        "of the torso, the right arm and right leg held back close to the body, head clearly "
-        "visible with a single eye lens:1.5), "
-        "(panel four is a true 90-degree side profile view, not a three-quarter view, only "
-        "the right arm and only the right leg extended forward at roughly a right angle "
-        "clear of the torso, the left arm and left leg held back close to the body, head "
-        "clearly visible with a single eye lens:1.5), "
-        "(panel five is a true 90-degree side profile view, not a three-quarter view, a "
-        "neutral standing pose, both arms hanging straight down at the sides, both legs "
-        "together standing upright, head clearly visible with a single eye lens:1.5), "
-        "each figure wears boots, never high heels, "
+        "(five separate whole-figure panels in a single horizontal row, each a complete "
+        "full-body figure head to toe, wide gaps between panels so nothing overlaps or "
+        "touches:1.3), "
+        "panel one, (T-pose:1.3), front view, both arms held straight out horizontal to the "
+        "sides clear of the torso, legs spread apart, "
+        "panel two, (T-pose:1.3), back view, both arms held straight out horizontal to the "
+        "sides clear of the torso, legs spread apart, "
+        "panel three, (true 90-degree side profile, not a three-quarter view:1.3), only the "
+        "left arm and only the left leg extended forward at roughly a right angle clear of "
+        "the torso, the right arm and right leg held back close to the body, "
+        "panel four, (true 90-degree side profile, not a three-quarter view:1.3), only the "
+        "right arm and only the right leg extended forward at roughly a right angle clear of "
+        "the torso, the left arm and left leg held back close to the body, "
+        "panel five, (true 90-degree side profile, not a three-quarter view:1.3), a neutral "
+        "standing pose, both arms hanging straight down at the sides, both legs together "
+        "standing upright, "
     )
     coat_clause = (
-        f"{entity.costume_description}, "
+        f"{entity.costume_description}, institutional green coat, "
         "(the coat cut short and ending precisely at mid-hip in every single panel, bare "
         "thigh clearly visible below the coat hem:1.4), "
     )
@@ -306,7 +317,7 @@ def build_limb_pose_prompt(entity: EntitySpec) -> str:
         "institutional green coat costume in every single panel, flat uniform neutral grey "
         "background, flat even lighting, no cast shadow, no perspective, clean readable "
         "outline, wearing a hooded mask with two dark round visible eye lenses, not a blank "
-        "void, no text, no UI, no watermark"
+        "void, each figure wears boots, never high heels, no text, no UI, no watermark"
     )
 
 
