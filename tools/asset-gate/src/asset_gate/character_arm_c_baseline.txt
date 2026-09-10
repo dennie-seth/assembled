@@ -1,16 +1,21 @@
-# Documented pre-existing CHR-1 gaps for the character Arm-C provenance sweep
+# Documented CHR-1 exemptions for the character Arm-C provenance sweep
 # (docs/board-invariants.md CHR-1, DL-25/PR #287, T-0258 item 5 option (b)).
 #
 # Paths are relative to the assets/final/ root, forward slashes.
 #
 # CHR-1 requires every character-generation output to record both its own
 # frame_delta_range and its Arm-C benchmark comparison (arm_c_benchmark +
-# beats_arm_c_benchmark). These 15 sidecars were committed before CHR-1
+# beats_arm_c_benchmark). The 15 sidecars below were committed before CHR-1
 # existed and are NOT backfilled by T-0258 -- a frame-delta that was never
-# measured must not be invented. This list is expected to shrink to ZERO as
+# measured must not be invented. That block is expected to shrink to ZERO as
 # each sheet is regenerated (picking up the fields on merit through
 # comfy_client.provenance_sidecar.apply_arm_c_benchmark_fields) or has its
-# CHR-1 fields genuinely backfilled by a dedicated follow-up card.
+# CHR-1 fields genuinely backfilled by a dedicated follow-up card. A second,
+# smaller category -- single static-pose keyframes that are not an assembled
+# sheet at all, so there is no second frame to measure a delta against -- is
+# called out separately below (T-0339); it does not shrink toward zero the
+# same way because the fields are structurally inapplicable, not merely
+# unmeasured.
 #
 # Do NOT add a new entry here to silence a fresh violation, and do NOT add
 # any of the three round-2 arms below -- they record both fields on merit
@@ -48,3 +53,19 @@ character/player_idle_sheet_v2.provenance.json
 character/player_move_sheet_v1.provenance.json
 character/player_move_sheet_v2.provenance.json
 character/pose_grid_stage3_T0218.provenance.json
+
+# ---------------------------------------------------------------------------
+# T-0339's profile keyframe: a single static pose, not an assembled sheet --
+# structurally identical to the hybrid-source-frame case just above (T-0252),
+# not the "committed before CHR-1 existed" case the rest of this file
+# documents. There is no second frame to measure frame_delta_range against,
+# so it, arm_c_benchmark and beats_arm_c_benchmark are never computed for
+# this asset -- by design, not by omission. Both the generator
+# (gen_hybrid_profile_T0272.py's module docstring, reused by
+# gen_profile_keyframe_side_neutral_T0339.py) and this sidecar's own gate
+# test (test_player_profile_hybrid_T0272_gate.py::
+# test_no_animation_gate_fields_present) assert these three fields are
+# ABSENT, so this is not the "fresh violation" the header above warns
+# against silencing -- adding these fields here would fail that test.
+# ---------------------------------------------------------------------------
+character/player_profile_keyframe_hybrid_T0272.provenance.json
