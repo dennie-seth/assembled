@@ -96,6 +96,13 @@ from gen_pose_authority_idle_T0249 import (  # noqa: E402
 CONCEPT_SHEET_PATH = (
     REPO_ROOT / "assets" / "src" / "concept" / "player_character_concept_sheet_v1.png"
 )
+# T-0351 RE-SCOPE (2026-09-10, "PER-PANEL REFERENCE CONDITIONING"): the
+# side-profile reference T-0317 generated after its own 84 failed attempts --
+# a genuine green-costume 90-degree side view, the one thing the concept
+# sheet itself never had (see reference_image_for's docstring).
+PROFILE_REFERENCE_T0317_PATH = (
+    REPO_ROOT / "assets" / "src" / "concept" / "player_profile_costume_reference_T0317.png"
+)
 
 # ── Entity parameterisation -- enemy cards add a new EntitySpec here, and
 # nowhere else. ───────────────────────────────────────────────────────────
@@ -1431,12 +1438,19 @@ def run_five_pose_attempt(
     `build_single_pose_positive_prompt`'s docstring for why this replaces
     the single-shot five-panel-in-one-image approach `run_attempt`/
     `build_limb_pose_prompt` used for this card's first five attempts.
-    Reuses `build_graph` unchanged (still no ControlNet, still IP-Adapter
-    on `entity.concept_crop_box`, still the same style/identity LoRA
-    weights) -- the only change from `run_attempt` is that it is called
-    once per pose instead of once for the whole sheet. Each pose gets its
-    own seed (`base_seed + index`) so the five generations are distinct and
-    reproducible, not five identical draws.
+    Reuses `build_graph` unchanged -- style/identity LoRA weights and
+    IP-Adapter weight are still exactly #365's. What each panel's
+    IP-Adapter node actually conditions *on* is no longer a single shared
+    crop: RE-SCOPE (2026-09-10, "PER-PANEL REFERENCE CONDITIONING") has
+    each pose resolve its own (image, crop box) via `reference_image_for`
+    -- front_tpose/back_tpose/legs still use concept-sheet crops (a
+    different crop each, for front vs. back), but side_left_forward/
+    side_right_forward/side_neutral condition on the committed T-0317
+    green side-profile reference instead, since the concept sheet has no
+    green side view at all (see `PLAYER_POSE_REFERENCES_T0351`'s own
+    comment for how that was verified). Each pose gets its own seed
+    (`base_seed + index`) so the six generations are distinct and
+    reproducible, not six identical draws.
 
     Writes the same `master_sheet_1024.png` / `provenance_candidate.json`
     filenames `run_attempt` does, under the same `out_dir_for(card, ...)`
@@ -1477,8 +1491,16 @@ def run_five_pose_attempt(
     out_dir = out_dir_for(card, entity_name, attempt)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    concept_filename = upload_image(entity.concept_sheet_path)
-    resolved_concept_crop_box = concept_crop_box_for(card, entity_name)
+    # RE-SCOPE (2026-09-10): each pose resolves its own IP-Adapter reference
+    # image/crop via reference_image_for, not one shared upload for every
+    # panel -- but the same source file (e.g. the concept sheet, reused by
+    # front_tpose/back_tpose/legs) is only uploaded to ComfyUI once.
+    uploaded_by_path: dict[Path, str] = {}
+
+    def uploaded_filename(path: Path) -> str:
+        if path not in uploaded_by_path:
+            uploaded_by_path[path] = upload_image(path)
+        return uploaded_by_path[path]
 
     pose_records = []
     panel_paths = []
@@ -1501,6 +1523,9 @@ def run_five_pose_attempt(
         skeleton.save(skeleton_path)
         skeleton_filename = upload_image(skeleton_path)
 
+        reference_path, reference_crop_box = reference_image_for(card, entity_name, pose.key)
+        concept_filename = uploaded_filename(reference_path)
+
         graph = build_graph(
             seed=seed,
             concept_filename=concept_filename,
@@ -1512,7 +1537,7 @@ def run_five_pose_attempt(
             height=height,
             identity_lora_name=identity_lora_name,
             identity_lora_weight=resolved_identity_weight,
-            concept_crop_box=resolved_concept_crop_box,
+            concept_crop_box=reference_crop_box,
             pose_skeleton_filename=skeleton_filename,
             controlnet_strength=CONTROLNET_STRENGTH,
             controlnet_end=CONTROLNET_END_PERCENT,
@@ -1538,6 +1563,8 @@ def run_five_pose_attempt(
                 "comfyui_prompt_id": prompt_id,
                 "gpu_seconds": round(gpu_seconds, 1),
                 "pose_skeleton": str(skeleton_path.relative_to(REPO_ROOT)),
+                "reference_image": str(reference_path.relative_to(REPO_ROOT)),
+                "reference_crop_box": reference_crop_box,
             }
         )
 
@@ -1574,7 +1601,11 @@ def run_five_pose_attempt(
         ),
         "ip_adapter": IPADAPTER_NAME,
         "ip_adapter_weight": ipadapter_weight,
-        "concept_crop_box": resolved_concept_crop_box,
+        "concept_crop_box_note": (
+            "RE-SCOPE (2026-09-10): per-panel reference now, not one shared crop -- see "
+            "poses[].reference_image / poses[].reference_crop_box for what each panel "
+            "actually conditioned on"
+        ),
         "controlnet": CONTROLNET_NAME,
         "controlnet_strength": CONTROLNET_STRENGTH,
         "controlnet_end_percent": CONTROLNET_END_PERCENT,
@@ -1611,7 +1642,8 @@ def run_five_pose_attempt(
             "ControlNetApplyAdvanced (this pose's own OpenPose skeleton, "
             "pose_rig_master_sheet_T0351, strength "
             f"{CONTROLNET_STRENGTH}/end {CONTROLNET_END_PERCENT}) -> IPAdapterUnifiedLoader + "
-            "IPAdapterAdvanced (concept sheet, unchanged weight/crop) -> KSampler -> "
+            "IPAdapterAdvanced (unchanged weight, per-panel reference image/crop -- see "
+            "poses[].reference_image / poses[].reference_crop_box) -> KSampler -> "
             "VAEDecode -> SaveImage, once per pose. compose_pose_row then stitches the six "
             "resulting images side by side into one sheet by script (DL-30), replacing this "
             "card's first seven attempts (five single-shot five-panel-in-one-image, two "
@@ -1623,7 +1655,11 @@ def run_five_pose_attempt(
             "amendment adds the sixth 'legs' panel (no coat, trousers and boots -- the "
             "dedicated source for upper_leg/lower_leg) and removes the mid-hip coat clause "
             "from every whole-figure panel's prompt: the character's canonical long coat is "
-            "now correct on panels 1-5, not a defect to fight."
+            "now correct on panels 1-5, not a defect to fight. The 2026-09-10 RE-SCOPE "
+            "('PER-PANEL REFERENCE CONDITIONING') replaces the single shared IP-Adapter crop "
+            "every panel used through attempt 18 with reference_image_for's per-pose "
+            "resolution: side panels condition on the T-0317 green side-profile reference "
+            "instead of a front-view-only crop."
         ),
         "generator": "assets/src/character/gen_master_sheet_T0336.py",
         "card": card,
@@ -1737,6 +1773,72 @@ def concept_crop_box_for(
     if card in CONCEPT_CROP_BOX_BY_CARD:
         return CONCEPT_CROP_BOX_BY_CARD[card]
     return ENTITIES[entity_name].concept_crop_box
+
+
+# T-0351 RE-SCOPE (2026-09-10, "PER-PANEL REFERENCE CONDITIONING" -- this
+# section of the card supersedes every earlier conditioning instruction on
+# it). Eighteen attempts under one shared crop for all six panels never
+# converged: the concept sheet was opened and read panel by panel and found
+# to contain almost no green-costume SIDE material at all -- its side/
+# profile figures belong to a different, tan/tactical costume tier. Asking
+# IP-Adapter for a side view while showing it only a front-view crop is a
+# missing-reference problem, not a prompt-weight one (this card's own
+# closed axis). The fix is per-panel: match each panel's reference image to
+# its own view instead of reusing attempt 17's single front crop everywhere.
+#
+# front_tpose / legs: attempt 17's own front crop (25, 279, 153, 219),
+# verified clean -- a single isolated green-coated front figure. legs
+# reuses it because no dedicated legs-only reference exists on the concept
+# sheet (verified); the torso-free ControlNet skeleton
+# (pose_rig_master_sheet_T0351) is what suppresses the coat/torso here, not
+# the reference image.
+#
+# back_tpose: measured by opening the concept sheet directly (1024x1024) --
+# row 4, column 4 (x:[630,805), y:[512,752)) is a genuine, isolated green
+# BACK view: hood up, no face, long coat, arms and legs clear of the torso.
+# This is the "lower-middle band" back reference the card's own RE-SCOPE
+# text speculated might exist; it does.
+#
+# side_left_forward / side_right_forward / side_neutral: the concept sheet
+# has no green side view at all. `player_profile_costume_reference_T0317.png`
+# is the committed green 90-degree side-profile reference T-0317 produced
+# after its own 84 failed attempts -- the asset these three panels have
+# been missing. Used whole (no crop): it is already a single isolated
+# figure.
+PLAYER_POSE_REFERENCES_T0351: dict[str, tuple[Path, tuple[int, int, int, int] | None]] = {
+    "front_tpose": (CONCEPT_SHEET_PATH, (25, 279, 153, 219)),
+    "back_tpose": (CONCEPT_SHEET_PATH, (630, 512, 175, 240)),
+    "side_left_forward": (PROFILE_REFERENCE_T0317_PATH, None),
+    "side_right_forward": (PROFILE_REFERENCE_T0317_PATH, None),
+    "side_neutral": (PROFILE_REFERENCE_T0317_PATH, None),
+    "legs": (CONCEPT_SHEET_PATH, (25, 279, 153, 219)),
+}
+
+# A card with no entry here falls back to concept_crop_box_for's single
+# shared box for every pose -- only a card that actually needs per-panel
+# references (this one) registers itself.
+POSE_REFERENCES_BY_CARD: dict[str, dict[str, tuple[Path, tuple[int, int, int, int] | None]]] = {
+    "T-0351": PLAYER_POSE_REFERENCES_T0351,
+}
+
+
+def reference_image_for(
+    card: str, entity_name: str, pose_key: str
+) -> tuple[Path, tuple[int, int, int, int] | None]:
+    """Resolves the (image path, optional crop box) IP-Adapter should
+    condition a single pose panel on. A card registered in
+    `POSE_REFERENCES_BY_CARD` with an entry for `pose_key` gets that exact
+    (path, crop) pair -- e.g. T-0351's side panels resolve to the T-0317
+    profile reference, not the front-view concept-sheet crop every other
+    panel uses. Any other (card, pose_key) combination -- including every
+    T-0336 call site, which never calls this function at all -- falls back
+    to the entity's own concept sheet plus `concept_crop_box_for`, i.e. one
+    shared reference for every panel, T-0336/attempt-17's original
+    behaviour."""
+    by_pose = POSE_REFERENCES_BY_CARD.get(card)
+    if by_pose is not None and pose_key in by_pose:
+        return by_pose[pose_key]
+    return ENTITIES[entity_name].concept_sheet_path, concept_crop_box_for(card, entity_name)
 
 
 def main() -> None:
