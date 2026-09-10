@@ -516,13 +516,23 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     Attempt 14 reverts coat weight fully to attempt 11's baseline, 1.6 ->
     1.5, keeps the proven hood/mask emphasis unchanged, and moves the
     actual multi-figure fix attempt to `CONTROLNET_STRENGTH` -- a lever
-    that doesn't compete for text attention budget at all."""
+    that doesn't compete for text attention budget at all.
+
+    Attempt 14 (seed 445938201, 432.8 total GPU-seconds) confirmed
+    `CONTROLNET_STRENGTH` genuinely helps: 3 of 5 panels came back
+    single-figure and hood/mask held firm (zero visible face/hair) on all
+    5. But coat length still failed on every panel -- 1.5 has now been
+    shown insufficient both with and without the stronger ControlNet pin.
+    Since hood/mask is now independently anchored by its own emphasis
+    (unlike attempt 12, when the coat-weight increase to 1.8 coincided
+    with identity drift before that anchor existed), attempt 15 raises
+    coat weight again, 1.5 -> 1.7."""
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
         "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
         f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
         "institutional green coat, (the coat cut short, ending precisely at mid-hip, hem "
-        "well above the knee, bare thigh clearly visible below the coat hem:1.5), wearing a "
+        "well above the knee, bare thigh clearly visible below the coat hem:1.7), wearing a "
         "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
         "up and forward, face completely covered by the mask, no visible hair, no visible "
         "face:1.3), boots, never high heels, flat uniform neutral grey background, flat even "
@@ -857,7 +867,12 @@ DEFAULT_ATTEMPT_CAP = 20
 # does not compete with any positive/negative prompt clause -- to test
 # whether more rigid adherence to the single-figure skeleton suppresses
 # the extraneous content a weaker pin leaves the sampler free to add.
-CONTROLNET_STRENGTH = 1.6
+# Attempt 14 confirmed it: 3 of 5 panels came back single-figure at 1.6.
+# side_left_forward (still two figures) and side_neutral (lost its true-
+# profile framing) did not respond yet -- attempt 15 pushes the same
+# lever further, 1.6 -> 1.9, to test whether more of the same structural
+# pin resolves the two still-failing panels.
+CONTROLNET_STRENGTH = 1.9
 CONTROLNET_END_PERCENT = 1.0
 
 
