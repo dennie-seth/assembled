@@ -429,15 +429,41 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     of diffusion-sampled pixels) -- this is also this card's own standing
     guardrail: "motion composited by script." Same costume/mid-hip/
     hooded-mask wording as #365 and this card's own first five attempts;
-    pose framing is the only thing that changed."""
+    pose framing is the only thing that changed.
+
+    Attempt 6 (seed 223606797, see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md and
+    docs/assets/evidence/T-0351/README.md) ran exactly this prompt and
+    still failed, in a new way: all five generations came back as a
+    multi-inset fashion tech-pack/reference-sheet composition (a hero
+    figure plus several small callout panels), arms down in every panel,
+    coat past mid-hip in most, and stray illegible pseudo-text despite this
+    prompt's own "no text, no UI, no watermark" tail. Since this generation
+    had no panel/grid language anywhere in its prompt or a conflicting
+    negative clause to fight, this rules out the negative-prompt conflict
+    as the *sole* cause -- IP-Adapter conditioning on the concept crop
+    (unchanged, 0.35 weight, per this card's frozen recipe) appears to
+    assert compositional structure directly, and a plain, unemphasized
+    affirmative sentence did not outcompete it.
+
+    Attempt 7 makes two changes, still prompt-only (no ControlNet, no
+    LoRA/IP-Adapter weight change): (1) drops the redundant "no text, no
+    UI, no watermark" tail -- negating a concept in the *positive* prompt
+    is a known anti-pattern (CLIP has no real negation, so naming "text"
+    can reinforce rather than suppress it), and MAIN_NEGATIVE already bans
+    "text, watermark" where such a ban belongs; (2) applies ComfyUI's
+    native CLIPTextEncode `(text:weight)` emphasis -- the one technique
+    that reliably moved something across attempts 1-5 (the mid-hip coat
+    clause) -- to both the isolation clause and the pose clause itself,
+    neither of which was ever emphasized under lever 1 or attempt 6."""
     return (
-        f"{entity.trigger_token}, single full-body figure alone in frame, head to toe fully "
-        f"visible, centred, {pose.pose_clause}, {entity.costume_description}, institutional "
-        "green coat, (the coat cut short and ending precisely at mid-hip, bare thigh clearly "
-        "visible below the coat hem:1.3), wearing a hooded mask with two dark round visible "
-        "eye lenses, not a blank void, boots, never high heels, flat uniform neutral grey "
-        "background, flat even lighting, no cast shadow, no perspective, clean readable "
-        "outline, no text, no UI, no watermark"
+        f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
+        "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
+        f"visible, centred, ({pose.pose_clause}:1.3), {entity.costume_description}, "
+        "institutional green coat, (the coat cut short and ending precisely at mid-hip, bare "
+        "thigh clearly visible below the coat hem:1.3), wearing a hooded mask with two dark "
+        "round visible eye lenses, not a blank void, boots, never high heels, flat uniform "
+        "neutral grey background, flat even lighting, no cast shadow, no perspective, clean "
+        "readable outline"
     )
 
 
@@ -452,12 +478,26 @@ def build_single_pose_negative_prompt() -> str:
     deliberately drops that function's extra anti-panel/anti-duplicate-pose
     clauses (six figures, two rows, isolated leg row, ...), which existed
     only to fight the single-shot five-panel approach this lever replaces
-    and have no target to suppress in a single-pose generation."""
+    and have no target to suppress in a single-pose generation.
+
+    Attempt 6 (see `build_single_pose_positive_prompt`'s docstring)
+    revealed a failure mode MAIN_NEGATIVE's existing "grid, panels, contact
+    sheet, multiple frames" wording did not suppress: a multi-inset fashion
+    tech-pack/reference-sheet composition (a hero figure plus small callout
+    panels of garment pieces or alternate views), not the single isolated
+    figure requested. Attempt 7 adds terms naming that specific composition
+    genre, plus the stray-text defect attempt 6 also showed (now that "no
+    text/no UI/no watermark" has moved out of the positive prompt, see
+    `build_single_pose_positive_prompt`)."""
     return (
         build_negative_prompt()
         + ", long coat, trench coat, ankle-length coat, floor-length coat, knee-length coat, "
         "calf-length coat, coat past the knee, coat covering the thighs, coat below the hip, "
-        "high heels, stiletto heels, pumps, mismatched footwear"
+        "high heels, stiletto heels, pumps, mismatched footwear, reference sheet, tech pack, "
+        "technical flat, fashion flat, product sheet, spec sheet, multiple views, multiple "
+        "photos, multiple angles, comparison layout, inset panel, exploded view, contact "
+        "sheet, grid of images, clothing flat lay, flat lay, label, caption, illegible text, "
+        "gibberish text, UI mockup"
     )
 
 
