@@ -38,6 +38,7 @@ import { checkImpossibleAcceptancePreflight } from "./impossibleAcceptancePrefli
 import { checkHostStatePreflight } from "./hostStatePreflight.js";
 import { KNOWN_HOST_ISSUES } from "./knownHostIssues.js";
 import { assertRunnerMayApply, needsApproval, parkedForApprovalComment } from "../lib/approvalGate.js";
+import { roundsSinceDeliverable, roundCapParkedComment, ROUND_CAP } from "../lib/roundCap.js";
 
 /**
  * Default hard cap on total implementer/reviewer runs a card can consume across its bounded
@@ -1394,6 +1395,31 @@ export class RunOrchestrator {
         `${verdict.notes}\n\n(run ${attempt} of ${maxAttempts}) Reviewer verdict: NEEDS_HUMAN_DECISION -- this is a scope or design question for a human, not a fixable FAIL. Auto-retry loop halted immediately; no further attempt was made.`
       )
     });
+    await this._recordRoundWithoutDeliverable(taskId);
+  }
+
+  /**
+   * Records that this run's round -- the full re-launch that just settled `blocked`, not the
+   * intra-run `attempts` loop -- ended without a promoted deliverable (T-0344, roundCap.js).
+   * Called exactly once per settled run from the two places a run can end blocked with no
+   * deliverable: `_handleFailValidation`'s stopping branch (exhausted retries or a no-progress
+   * abort) and `_handleNeedsHumanDecision`. Deliberately NOT called from preflight refusals
+   * (`_blocked` for a capability/host-state preflight, a push failure, etc.) -- those never even
+   * started an attempt, so they are not a round in this sense; and NOT called from a retrying
+   * FAIL, which leaves the card `in-progress` for the loop's own next attempt, not settled.
+   *
+   * Composes with the intra-run attempts loop and NEEDS_HUMAN_DECISION without double-counting:
+   * each is a distinct, mutually exclusive way a single run can settle, so each fires this
+   * exactly once per run, and the `round` counter -- unlike `attempts` -- persists across
+   * separate re-launches until a PASS or a human re-scope resets it.
+   */
+  async _recordRoundWithoutDeliverable(taskId) {
+    const current = await this.store.get(taskId);
+    const round = roundsSinceDeliverable(current) + 1;
+    await this._updateAndBroadcast(taskId, { round });
+    if (round >= ROUND_CAP) {
+      await this._appendComment(taskId, "assembled-board", roundCapParkedComment(taskId, round));
+    }
   }
 
   /**
@@ -1434,6 +1460,9 @@ export class RunOrchestrator {
       text: this._failNoteText(verdict, attempt, !retrying, { noProgress, signature, maxAttempts })
     });
     await this._updateAndBroadcast(taskId, { status: retrying ? "in-progress" : "blocked" });
+    if (!retrying) {
+      await this._recordRoundWithoutDeliverable(taskId);
+    }
   }
 
   /**
@@ -1669,8 +1698,10 @@ export class RunOrchestrator {
       text: verdict.notes
     });
     // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
-    // not carrying over how many attempts a previous round of FAILs consumed.
-    const passPatch = { status: "review", branch, commit, body: preSync.body, attempts: 0 };
+    // not carrying over how many attempts a previous round of FAILs consumed. It also clears the
+    // round cap (T-0344): a promoted deliverable is exactly what the cap exists to force a human
+    // look-up before, so reaching one resets the count of rounds settled without one.
+    const passPatch = { status: "review", branch, commit, body: preSync.body, attempts: 0, round: 0 };
     if (prUrl) {
       passPatch.pr = prUrl;
       passPatch.body = appendNote(preSync.body, "PR", prUrl);
