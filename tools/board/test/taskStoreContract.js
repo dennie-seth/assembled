@@ -19,6 +19,7 @@ export function makeTask(overrides = {}) {
     approved_by: null,
     approved_at: null,
     attempts: 0,
+    max_attempts: null,
     comments: [],
     attachments: [],
     body: "## Context\n...\n## Acceptance\n- [ ] ...\n",
@@ -92,6 +93,12 @@ export function runTaskStoreContractTests(label, setup) {
       const task = makeTask();
       await store.create(task);
       await expect(store.update(task.id, { id: "T-9999" })).rejects.toThrow(/id/i);
+    });
+
+    it("persists a max_attempts override (T-0343) and reads it back", async () => {
+      const task = makeTask({ max_attempts: 2 });
+      await store.create(task);
+      expect(await store.get(task.id)).toEqual(task);
     });
 
     it("move updates only the status field", async () => {

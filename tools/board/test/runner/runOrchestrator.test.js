@@ -516,6 +516,65 @@ describe("RunOrchestrator.runCard — auto-retry loop on reviewer FAIL (bounded)
     expect(finalTask.body).toContain(`issue round ${MAX_AUTO_RETRY_ATTEMPTS}`);
   });
 
+  it("T-0343: a card with no max_attempts field behaves exactly like it did before the field existed -- the compatibility guarantee", async () => {
+    const store = makeStore([baseTask({ max_attempts: undefined })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= MAX_AUTO_RETRY_ATTEMPTS; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(MAX_AUTO_RETRY_ATTEMPTS * 2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.attempts).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+    expect(finalTask.body).toContain(`run ${MAX_AUTO_RETRY_ATTEMPTS} of ${MAX_AUTO_RETRY_ATTEMPTS}`);
+  });
+
+  it("T-0343: a card's own max_attempts overrides MAX_AUTO_RETRY_ATTEMPTS downward -- blocks after 2 runs, not 5", async () => {
+    const store = makeStore([baseTask({ max_attempts: 2 })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= 2; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(2 * 2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.attempts).toBe(2);
+    expect(finalTask.body).toContain("run 2 of 2");
+    expect(finalTask.body).toMatch(/auto-retry limit reached/i);
+  });
+
+  it("T-0343: a card's own max_attempts overrides MAX_AUTO_RETRY_ATTEMPTS upward -- keeps retrying past the old 5-run cap", async () => {
+    const store = makeStore([baseTask({ max_attempts: 6 })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= 6; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(6 * 2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.attempts).toBe(6);
+    expect(finalTask.body).toContain("run 6 of 6");
+    expect(finalTask.body).toMatch(/auto-retry limit reached/i);
+  });
+
   it("T-0299: a run that ends FAIL/blocked still pushes its committed work to origin, without opening a PR -- the case that used to strand it in the worktree", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
