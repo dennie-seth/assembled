@@ -22,6 +22,7 @@ function bashCall(id, command, { ok = true, text = "" } = {}) {
 
 const PASS = { verdict: "PASS", notes: "all green" };
 const FAIL = { verdict: "FAIL", notes: "found a real bug" };
+const NEEDS_HUMAN_DECISION = { verdict: "NEEDS_HUMAN_DECISION", notes: "scope question the card can't answer" };
 
 describe("crossCheckVerdict", () => {
   it("leaves a self-reported FAIL untouched, even with no Bash events at all -- never upgrades", () => {
@@ -32,6 +33,16 @@ describe("crossCheckVerdict", () => {
       task: { id: "T-0001" }
     });
     expect(result).toBe(FAIL);
+  });
+
+  it("leaves a self-reported NEEDS_HUMAN_DECISION untouched (T-0341) -- the cross-check only ever downgrades a self-reported PASS, so the new verdict can't use it to dodge required-verify enforcement the same way FAIL can't", () => {
+    const result = crossCheckVerdict({
+      verdict: NEEDS_HUMAN_DECISION,
+      events: [],
+      changedPaths: ["tools/board/src/thing.js"],
+      task: { id: "T-0001" }
+    });
+    expect(result).toBe(NEEDS_HUMAN_DECISION);
   });
 
   it("passes a null verdict through unchanged (the caller already treats null as a runner failure)", () => {

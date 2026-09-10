@@ -116,10 +116,12 @@ const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
 function attemptsBadgeFor(task) {
   if (!task.attempts) return null;
+  // T-0343: a card's own max_attempts overrides the default cap shown here.
+  const cap = Number.isInteger(task.max_attempts) ? task.max_attempts : MAX_AUTO_RETRY_ATTEMPTS;
   const badge = document.createElement("span");
   badge.className = "card-attempts-badge";
-  const label = `Auto-retry: run ${task.attempts} of ${MAX_AUTO_RETRY_ATTEMPTS}`;
-  badge.textContent = `↻ ${task.attempts}/${MAX_AUTO_RETRY_ATTEMPTS}`;
+  const label = `Auto-retry: run ${task.attempts} of ${cap}`;
+  badge.textContent = `↻ ${task.attempts}/${cap}`;
   badge.title = label;
   badge.setAttribute("aria-label", label);
   return badge;

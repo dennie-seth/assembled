@@ -13,6 +13,7 @@ import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { regenerateApprovalLedgerIfChanged } from "./approvalLedgerRegen.js";
 import { promoteEvidenceForCard } from "../lib/evidencePromotion.js";
+import { appendVerdictEntry, readVerdictEntries, buildVerdictDigest } from "../lib/verdictArchive.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
 import {
   materializePlannerFileView,
@@ -39,12 +40,18 @@ import { KNOWN_HOST_ISSUES } from "./knownHostIssues.js";
 import { assertRunnerMayApply, needsApproval, parkedForApprovalComment } from "../lib/approvalGate.js";
 
 /**
- * Hard cap on total implementer/reviewer runs a card can consume across its bounded
+ * Default hard cap on total implementer/reviewer runs a card can consume across its bounded
  * FAIL -> auto-retry -> FAIL -> ... loop before it's left `blocked` for a human. Persisted
  * per-card as the `attempts` frontmatter field (see taskParser.js); reset to 0 at the start
  * of every human/API-initiated runCard() call (see runCard's fresh-allowance reset) and on
- * PASS (see _handlePass), so a card that exhausts its 5 auto-retries and gets manually
- * re-run always gets a full new allowance rather than staying permanently capped.
+ * PASS (see _handlePass), so a card that exhausts its auto-retries and gets manually re-run
+ * always gets a full new allowance rather than staying permanently capped.
+ *
+ * T-0343: this is now only the DEFAULT, not the sole authority -- a card may carry its own
+ * `max_attempts` frontmatter field (taskParser.js, 1-20) that overrides it. See
+ * `_effectiveMaxAttempts`, the only place that reconciles the two: absent/non-integer
+ * `max_attempts` (every card that predates this field) falls back to this constant unchanged,
+ * which is the compatibility guarantee this field's acceptance criteria calls for.
  */
 export const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
@@ -334,6 +341,9 @@ export class RunOrchestrator {
     buildMergeConflictPromptFn = buildMergeConflictPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     crossCheckVerdictFn = crossCheckVerdict,
+    readVerdictEntriesFn = readVerdictEntries,
+    appendVerdictEntryFn = appendVerdictEntry,
+    buildVerdictDigestFn = buildVerdictDigest,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
     heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
@@ -377,6 +387,9 @@ export class RunOrchestrator {
     this.buildMergeConflictPromptFn = buildMergeConflictPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.crossCheckVerdictFn = crossCheckVerdictFn;
+    this.readVerdictEntriesFn = readVerdictEntriesFn;
+    this.appendVerdictEntryFn = appendVerdictEntryFn;
+    this.buildVerdictDigestFn = buildVerdictDigestFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
     this.heartbeatIntervalMs = heartbeatIntervalMs;
@@ -693,12 +706,15 @@ export class RunOrchestrator {
 
     let currentReused = reused;
     const attemptRecords = [];
+    // T-0343: this card's own attempt budget, falling back to MAX_AUTO_RETRY_ATTEMPTS when the
+    // card carries no explicit override -- see _effectiveMaxAttempts.
+    const maxAttempts = this._effectiveMaxAttempts(task);
     // Tracks the previous attempt's failure signature (§23-a) so two consecutive attempts that
     // fail for the identical, unfixable reason abort the loop immediately instead of burning the
-    // remaining MAX_AUTO_RETRY_ATTEMPTS slots on repeats -- see _handleFailValidation/
+    // remaining maxAttempts slots on repeats -- see _handleFailValidation/
     // _escalateIfGenuineBlocker below for how the abort is surfaced.
     let previousSignature = null;
-    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       // Re-fetch: a prior attempt in this same loop may have appended a FAIL note to the
       // body (read by the implementer's "continuing existing work" prompt on the retry).
       const liveTask = await this.store.get(taskId);
@@ -720,6 +736,17 @@ export class RunOrchestrator {
         return;
       }
 
+      // NEEDS_HUMAN_DECISION (T-0341, §23-b): the card's own acceptance criteria have become a
+      // scope or design question the reviewer cannot resolve -- not a fixable defect, so retrying
+      // cannot help. Halts unconditionally, before any signature/no-progress bookkeeping and
+      // regardless of attempts remaining -- this is the exact fix for the 2026-09-08 incident,
+      // where a reviewer's FAIL notes said outright "this must NOT be auto-retried" and the
+      // harness retried anyway because a FAIL verdict was a FAIL verdict.
+      if (verdict.verdict === "NEEDS_HUMAN_DECISION") {
+        await this._handleNeedsHumanDecision(taskId, verdict, attempt, maxAttempts);
+        return;
+      }
+
       // Inactivity timeouts are excluded from signature comparison (see _inactivityVerdict's
       // `synthetic` docstring): their reason text is generic by construction, so two in a row
       // isn't evidence of a repeating, unfixable blocker the way a genuine reviewer FAIL is.
@@ -736,9 +763,9 @@ export class RunOrchestrator {
       const noProgress = signature !== null && previousSignature !== null && signature === previousSignature;
       attemptRecords.push({ attempt, notes: verdict.notes, events, signature });
 
-      const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
+      const isFinalAttempt = attempt >= maxAttempts;
       const stopping = isFinalAttempt || noProgress;
-      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !stopping, { noProgress, signature });
+      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !stopping, { noProgress, signature, maxAttempts });
       if (stopping) {
         await this._escalateIfGenuineBlocker(taskId, attemptRecords, runLog, { noProgress, repeatedSignature: noProgress ? signature : null });
         return;
@@ -772,12 +799,14 @@ export class RunOrchestrator {
     const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
     const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const verdictEntries = await this.readVerdictEntriesFn(this.tasksDir, taskId);
     const prompt = this.buildPromptFn({
       task: { ...task, agent: effectiveAgent },
       agentDef,
       rules,
       continuing: reused,
-      comments: task.comments ?? []
+      comments: task.comments ?? [],
+      verdictDigest: this.buildVerdictDigestFn(verdictEntries)
     });
 
     const implementerResult = await this._runPhase({
@@ -1332,14 +1361,50 @@ export class RunOrchestrator {
   }
 
   /**
+   * T-0343: resolves a card's own attempt budget, falling back to MAX_AUTO_RETRY_ATTEMPTS for
+   * every card that carries no explicit override -- absent, null, or (defensively) anything not
+   * a positive integer. taskParser.js's validateTask already rejects a malformed or out-of-range
+   * value at the point a card is written, so this never needs to reject anything itself; it only
+   * has to tell "an explicit override is present" apart from "it isn't".
+   */
+  _effectiveMaxAttempts(task) {
+    return Number.isInteger(task.max_attempts) && task.max_attempts > 0
+      ? task.max_attempts
+      : MAX_AUTO_RETRY_ATTEMPTS;
+  }
+
+  /**
+   * Records a NEEDS_HUMAN_DECISION verdict (T-0341): parks the card `blocked` -- the same status
+   * every other human-actionable stop uses -- under its own note heading, "Needs Human Decision",
+   * so a human scanning the card can tell this apart at a glance from "Validation: FAIL" (retries
+   * exhausted or no-progress-aborted, see `_failNoteText`) and from "Blocked"/"Run Failed" (a
+   * crash, see `_blocked`/`_crashReason`/`cardLaunch.js`). Never routes through
+   * `_escalateIfGenuineBlocker`: that machinery drafts a blocker report and remediation card for a
+   * genuine bug or environmental blocker, which this deliberately is not -- the reviewer already
+   * named the open question in `verdict.notes`, and a human reading the card is the entire
+   * resolution path, not another auto-retry attempt or an escalation card.
+   */
+  async _handleNeedsHumanDecision(taskId, verdict, attempt, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS) {
+    const current = await this.store.get(taskId);
+    await this._updateAndBroadcast(taskId, {
+      status: "blocked",
+      body: appendNote(
+        current.body,
+        "Needs Human Decision",
+        `${verdict.notes}\n\n(run ${attempt} of ${maxAttempts}) Reviewer verdict: NEEDS_HUMAN_DECISION -- this is a scope or design question for a human, not a fixable FAIL. Auto-retry loop halted immediately; no further attempt was made.`
+      )
+    });
+  }
+
+  /**
    * `(run N of MAX)` suffix on every FAIL note -- the attempt-count visibility the auto-retry loop
    * needs on the card. `noProgress` (§23-a) takes priority over the plain cap-reached suffix: it
    * names the repeated failure signature and states outright that the loop stopped itself early,
    * not because attempts ran out -- distinct wording from the exhausted-cap case on purpose, so a
    * human reading the card never has to guess which one happened.
    */
-  _failNoteText(verdict, attempt, capped, { noProgress = false, signature } = {}) {
-    const progress = `(run ${attempt} of ${MAX_AUTO_RETRY_ATTEMPTS})`;
+  _failNoteText(verdict, attempt, capped, { noProgress = false, signature, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS } = {}) {
+    const progress = `(run ${attempt} of ${maxAttempts})`;
     let suffix = "";
     if (noProgress) {
       suffix =
@@ -1358,12 +1423,17 @@ export class RunOrchestrator {
    * implementer itself; a stopping attempt instead moves the card to `blocked` for a human, with
    * a note explaining why the loop stopped (cap reached, or no progress -- see `_failNoteText`).
    */
-  async _handleFailValidation(taskId, verdict, attempt, retrying, { noProgress = false, signature } = {}) {
-    const current = await this.store.get(taskId);
-    await this._updateAndBroadcast(taskId, {
-      status: retrying ? "in-progress" : "blocked",
-      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying, { noProgress, signature }))
+  async _handleFailValidation(taskId, verdict, attempt, retrying, { noProgress = false, signature, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS } = {}) {
+    // T-0345: the reviewer's FAIL notes are archived (see verdictArchive.js), not appended to
+    // the body -- appendNote's old unbounded-growth behavior is exactly what fed a monotonically
+    // growing prompt back into every subsequent run and once crashed a run outright (spawn
+    // E2BIG, T-0243).
+    await this.appendVerdictEntryFn(this.tasksDir, taskId, {
+      heading: "Validation: FAIL",
+      timestamp: this.now().toISOString(),
+      text: this._failNoteText(verdict, attempt, !retrying, { noProgress, signature, maxAttempts })
     });
+    await this._updateAndBroadcast(taskId, { status: retrying ? "in-progress" : "blocked" });
   }
 
   /**
@@ -1592,13 +1662,18 @@ export class RunOrchestrator {
     // further risk is taken; the develop-sync step below can only ever downgrade this, never
     // erase it.
     const preSync = await this.store.get(taskId);
-    const passBody = appendNote(preSync.body, "Validation: PASS", verdict.notes);
+    // T-0345: archived, not appended to the body -- see _handleFailValidation's note above.
+    await this.appendVerdictEntryFn(this.tasksDir, taskId, {
+      heading: "Validation: PASS",
+      timestamp: this.now().toISOString(),
+      text: verdict.notes
+    });
     // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
     // not carrying over how many attempts a previous round of FAILs consumed.
-    const passPatch = { status: "review", branch, commit, body: passBody, attempts: 0 };
+    const passPatch = { status: "review", branch, commit, body: preSync.body, attempts: 0 };
     if (prUrl) {
       passPatch.pr = prUrl;
-      passPatch.body = appendNote(passBody, "PR", prUrl);
+      passPatch.body = appendNote(preSync.body, "PR", prUrl);
     }
     await this._updateAndBroadcast(taskId, passPatch);
 

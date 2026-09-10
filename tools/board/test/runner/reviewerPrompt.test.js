@@ -40,6 +40,15 @@ describe("buildReviewerPrompt", () => {
     expect(prompt.toLowerCase()).toContain("never move");
   });
 
+  it("documents the NEEDS_HUMAN_DECISION verdict and when to use it (T-0341)", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain('"verdict": "NEEDS_HUMAN_DECISION"');
+    // Scoped to a genuine scope/design question -- not a substitute for a FAIL, and not a way
+    // to skip work the reviewer could otherwise do itself.
+    expect(prompt.toLowerCase()).toContain("scope or design");
+    expect(prompt.toLowerCase()).toContain("halts");
+  });
+
   it("teaches the reviewer the fenced host-action-request format and to carry it into FAIL notes (T-0323)", () => {
     const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
     expect(prompt).toContain("```host-action-request");
@@ -263,6 +272,31 @@ describe("buildReviewerPrompt -- routed verification section", () => {
   });
 });
 
+describe("buildReviewerPrompt -- gate-report-pointer route (T-0349: stop re-deriving pixel counts by hand)", () => {
+  it("points the reviewer at a committed gate report and tells them to read it instead of re-deriving counts", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["assets/final/character/player_walk_sheet_hybrid.gate_report.json"]
+    });
+    expect(prompt).toContain("Required verification for this diff");
+    expect(prompt).toContain("cat assets/final/character/player_walk_sheet_hybrid.gate_report.json");
+    expect(prompt).toContain("do not re-derive");
+    expect(prompt).toMatch(/`grid`/);
+    expect(prompt).toContain("T-0259");
+  });
+
+  it("does not add gate-report enforcement language for a diff with no committed gate report", () => {
+    const prompt = buildReviewerPrompt({
+      task: TASK,
+      agentDef: REVIEWER_AGENT_DEF,
+      changedPaths: ["assets/final/character/player_walk_sheet_hybrid.png"]
+    });
+    expect(prompt).not.toContain("gate_report.json");
+    expect(prompt).not.toContain("do not re-derive");
+  });
+});
+
 describe("buildReviewerPrompt -- client-godot-verify route (T-0185: hung headless Godot tests)", () => {
   it("tells the reviewer to run the timeout-wrapped godot command for a changed client/tests/*.gd file, and treat a timeout-kill as FAIL", () => {
     const prompt = buildReviewerPrompt({
@@ -384,5 +418,43 @@ describe("buildReviewerPrompt -- deliverable artifact check (deliverable_type: '
       changedPaths: ["assets/final/character/player_idle_sheet_v1.png"]
     });
     expect(prompt).toMatch(/artifact-producing path/);
+  });
+
+  it("T-0352: states the gate is necessary but not sufficient, and that the deliverable path must still be confirmed independently", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toMatch(/necessary( to run)?,? but not sufficient/i);
+    expect(prompt.toLowerCase()).toContain("confirm");
+    expect(prompt).toMatch(/T-0351/);
+  });
+});
+
+describe("buildReviewerPrompt -- finding-with-evidence PASS distinction (T-0342)", () => {
+  it("explains that a pre-registered, decisive, evidenced finding can PASS an artifact card in place of a promoted artifact", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("Pre-registered experiment");
+    expect(prompt).toContain("Finding");
+    expect(prompt.toLowerCase()).toContain("decisive");
+  });
+
+  it("states pre-registration is checked against the card's body BEFORE this run, so it cannot be added retroactively", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toMatch(/before (this|the) run/);
+    expect(prompt.toLowerCase()).toMatch(/retroactiv|rescue an empty run|added afterwards/);
+  });
+
+  it("does not mention the finding-with-evidence distinction for a code-deliverable card (no deliverable route at all)", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).not.toContain("Pre-registered experiment");
+  });
+
+  it("names card_events / readTaskBodyBeforeRun as the db-mode evidence source, since a db-mode card has no git history to read", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("BOARD_TASK_STORE=db");
+    expect(prompt).toContain("card_events");
+    expect(prompt).toContain("readTaskBodyBeforeRun");
   });
 });

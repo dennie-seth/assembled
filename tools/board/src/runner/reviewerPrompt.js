@@ -1,6 +1,8 @@
 import { TASK_BODY_START, TASK_BODY_END, escapeTaskBody } from "./promptBuilder.js";
 import { resolveVerifyRoutes, resolveDeliverableRoute } from "./verifyRouter.js";
 import { parseAcceptanceCriteria } from "../lib/acceptanceCriteria.js";
+import { PRE_REGISTRATION_HEADING, FINDING_HEADING } from "../lib/preRegisteredFinding.js";
+import { DELIVERABLE_HEADING } from "../lib/deliverableCheck.js";
 
 const VERDICT_FOOTER = `## Verdict output format — REQUIRED
 
@@ -31,6 +33,14 @@ or
 {"verdict": "FAIL", "notes": "specific, actionable reasons -- cite file and line, name the rule violated"}
 \`\`\`
 
+or, in the narrow case below,
+
+\`\`\`verdict
+{"verdict": "NEEDS_HUMAN_DECISION", "notes": "state the specific scope or design question the card cannot resolve, and why you cannot decide it yourself"}
+\`\`\`
+
+**Use \`NEEDS_HUMAN_DECISION\` only when the card's own acceptance criteria have become a genuine scope or design question you cannot resolve** -- not a defect a retry could fix (that's a FAIL), not a check you didn't run (also a FAIL, see above), and never a shortcut around work you could still do yourself. This verdict halts the auto-retry loop immediately: the orchestrator does not launch another attempt, whether or not retries remain, and parks the card for a human to decide. Reserve it for exactly that case -- e.g. the card asks for two mutually exclusive things, or its acceptance criteria hinge on a choice nothing in \`docs/\` has made yet. Do not reach for it just because a card is hard, its prose is ambiguous in a way a normal FAIL with specific notes could still describe, or you'd rather not do the work.
+
 This fenced block is the only channel your verdict is recorded through. If it is missing or not valid JSON, the run is treated as a runner failure, not a FAIL verdict.`;
 
 function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
@@ -47,6 +57,7 @@ function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
   const hasServerRoute = routes.some((route) => route.id === "server-db-verify");
   const hasDeliverableRoute = routes.some((route) => route.id === "deliverable-check");
   const hasGodotRoute = routes.some((route) => route.id.startsWith("client-godot-verify:"));
+  const hasGateReportRoute = routes.some((route) => route.id === "gate-report-pointer");
 
   let enforcement = `Actually execute every command above yourself with Bash -- do not read the diff and infer whether tests would pass. A check you did not run is a FAIL, not an unverified pass.`;
   if (hasPythonRoute) {
@@ -58,8 +69,15 @@ function buildRequiredVerificationSection(changedPaths, baseBranch, task) {
   if (hasGodotRoute) {
     enforcement += ` Run each client-godot-verify command exactly as given, with the \`timeout\` wrapper intact -- never drop it and run \`godot --headless\` bare. A test script that never calls \`get_tree().quit()\` hangs the process indefinitely otherwise (T-0185); if \`timeout\` kills the run, that is itself a FAIL ("test hung / exceeded the timeout") and must be reported as such, not treated as an unverified pass.`;
   }
+  if (hasGateReportRoute) {
+    enforcement += ` This diff commits a machine-readable gate report next to the sheet it was run on -- read its \`grid\` (cols/rows/cell_px/frame_cells) and per-frame \`pixel_delta_count\`/\`silhouette_delta_ratio\` values directly from the \`cat\`'d JSON above; do not re-derive pixel counts or a max/min delta ratio by hand from the sheet image. This is the T-0259 gap: reviewers re-computed frame deltas from the sheet by hand and did not always agree -- one measurement on the wrong grid gave 1.29x where the true value on the 4x2 grid is 5.3077x. Cite the report's own \`grid\` and per-frame numbers in your notes instead of re-measuring.`;
+  }
   if (hasDeliverableRoute) {
     enforcement += ` This card requires a produced deliverable actually attached to the ticket -- either because its \`deliverable_type\` is "artifact", or because this diff adds/updates a file under a known artifact-producing path (\`assets/final/**\`, \`assets/src/concept/**\`, \`assets/src/keyart/**\`), which makes an attachment mandatory regardless of what \`deliverable_type\` says. A green test suite for an uploader/fetcher/generator script is not evidence the file exists; run the Deliverable artifact check and treat a nonzero exit as a FAIL, naming exactly which artifact is missing, in your notes. This is the T-0136 gap, generalized: an uploader CLI shipped with fully mocked tests, ruff+pytest green, and not a single image was ever actually fetched or attached -- and later, several art/audio cards (character/concept art sheets, an ambience bed) were committed straight to the repo tagged \`deliverable_type: "code"\` and never attached either, so the original deliverable_type-only gate never even fired for them.`;
+    enforcement += ` **This gate is necessary but not sufficient -- a zero exit is not proof a real deliverable was produced.** T-0351 saw \`checkDeliverable.js\` exit 0 twice in one day on the same six failed-attempt evidence PNGs -- attachments recorded and present on disk, but no master sheet ever committed -- and it took a human reading the filesystem by hand to catch it both times. A card can name its expected deliverable's committed path under a \`"${DELIVERABLE_HEADING}"\` section (a backtick-quoted path, same citation shape as \`"${FINDING_HEADING}"\`'s evidence citations) and the check will confirm that path is a real file under the repo; when a card has no such section, the check falls back to requiring at least one recorded attachment's *content* to byte-match a file \`git\` actually has committed on the branch, at a path outside \`docs/assets/evidence/**\` -- so attachment presence alone (an evidence/failed-attempt upload included) is no longer sufficient either way, and neither is a same-named-but-different file, nor evidence that only ever landed under the evidence root via T-0314's own promotion mechanism (which is the routine, encouraged path for evidence and was the actual second false positive here -- the fallback used to count a promoted evidence commit as proof of a deliverable). Even with that exclusion the fallback is still coarser than the opt-in route -- it only proves *something* was committed outside the evidence root, not that the specific claimed deliverable exists -- so do not stop at the script's exit code: independently confirm the deliverable itself -- \`ls\`/read the actual committed file the card claims to have produced (\`assets/final/**\` or wherever this card's deliverable belongs, and confirm it is NOT merely a copy sitting under \`docs/assets/evidence/**\`) -- the same way the T-0351 reviewer ultimately had to.`;
+    if (task.deliverable_type === "artifact") {
+      enforcement += ` T-0342: a nonzero exit from that same command is not automatically a FAIL here -- read what it actually printed. A genuine \`deliverable_type: "artifact"\` card with no promoted attachment gets one more legitimate way to PASS: a pre-registered experiment (a "${PRE_REGISTRATION_HEADING}" section) that produced a decisive, evidenced finding instead of an artifact (T-0259 session 13 is the motivating case -- a real, pre-registered falsifying result was FAILed anyway for having no artifact, which punishes exactly the behaviour it should reward). Pre-registration is checked against the card's own body **before this run started**, never its current body, so a "${PRE_REGISTRATION_HEADING}" section added retroactively to rescue an empty run never counts -- \`checkDeliverable.js\` enforces this itself, but do not take its word for it: confirm the pre-registration predates this run using whichever evidence source matches how this card is stored. For an fs-mode card (a real \`tasks/<id>.md\` file), that means its commit history -- confirm the pre-registration predates the implementer's first commit on this branch. For a db-mode card (\`BOARD_TASK_STORE=db\`, the live board's normal mode -- most cards have no \`tasks/<id>.md\` file at all), there is no git history to read: the equivalent evidence is the card's \`card_events\` audit trail, where \`checkDeliverable.js\` itself reconstructs "before this run" as the body snapshot recorded at this attempt's most recent transition into \`in-progress\` (dbTaskHistory.js's \`readTaskBodyBeforeRun\`) -- confirm from that same trail, not from the card's current body, that pre-registration predates this run's in-progress transition. On top of that, the finding itself must be decisive (its "${FINDING_HEADING}" section literally says so) and cite committed evidence with backtick-quoted paths that actually exist on disk -- a narrative claim, an inconclusive result, or pre-registration with no cited evidence is still a FAIL, identical to an empty run with no artifact at all.`;
+    }
   }
   return `## Required verification for this diff\n\nRun exactly the following, in addition to (not instead of) the \`verify\` skill's own table for any other paths this diff touches:\n\n${lines.join("\n")}\n\n${enforcement}`;
 }

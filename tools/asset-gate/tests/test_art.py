@@ -1,14 +1,20 @@
 import numpy as np
+import pytest
 
 from asset_gate.art import (
     check_atlas_determinism,
     check_background_growth,
     check_cell_fit,
     check_frame_consistency,
+    check_identity_stability,
     check_indexed_preservation,
     check_orphan_pixels,
+    check_pose_fidelity,
     check_tile_seamlessness,
     check_transition_adjacency,
+    count_pixel_deltas,
+    render_rig_silhouette,
+    slice_sheet_frames,
 )
 from conftest import TEST_PALETTE_HEX, make_indexed_image
 
@@ -215,3 +221,204 @@ def test_indexed_preservation_fails_when_palette_drifted(test_palette):
     result = check_indexed_preservation(image, test_palette)
     assert not result.passed
     assert 1 in result.details["mismatched"]
+
+
+# ---- render_rig_silhouette / check_pose_fidelity / check_identity_stability (T-0340) ----
+#
+# Replaces whole-silhouette XOR/union (check_frame_consistency) for the
+# locomotion/transition/loop motion classes -- see asset_gate.character's
+# T-0340 module note for the full rationale. Two independent measures:
+# pose fidelity (does the render match what the rig actually commanded for
+# THIS frame, not how much the previous frame differed) and identity
+# stability (does the torso's own colour stay put frame to frame,
+# independent of how far the limbs swing).
+
+
+def test_render_rig_silhouette_covers_limb_and_leaves_far_corners_clear():
+    silhouette = render_rig_silhouette(size=20, limbs=[((2, 10), (17, 10))], radius=2)
+    assert silhouette.shape == (20, 20)
+    assert silhouette.dtype == np.bool_
+    assert silhouette[10, 10]  # midpoint of the limb
+    assert not silhouette[0, 0]  # far corner, well clear of the capsule
+    assert not silhouette[19, 19]
+
+
+def test_pose_fidelity_passes_when_render_matches_the_commanded_pose():
+    silhouette = render_rig_silhouette(size=20, limbs=[((2, 10), (17, 10))], radius=3)
+    frame = make_indexed_image(silhouette.astype(np.uint8), TEST_PALETTE_HEX)
+    result = check_pose_fidelity(frame, silhouette, background_index=0, min_iou=0.7)
+    assert result.passed
+    assert result.details["iou"] == 1.0
+
+
+def test_pose_fidelity_fails_when_render_barely_shows_the_commanded_motion():
+    """The pathology DL-26's calibration trail already measured (T-0259
+    attempt 4, `_T0259_ATTEMPT_4_IDLE_LIKE` in test_character_gate.py):
+    the rig commands a real stride but the render barely moves at all.
+    check_frame_consistency cannot see this (there's nothing to compare it
+    to except the previous frame's own equally-timid render); comparing
+    against the rig's own predicted silhouette can."""
+    predicted = render_rig_silhouette(size=20, limbs=[((2, 10), (17, 10))], radius=3)
+    barely_moved = np.zeros_like(predicted)
+    barely_moved[1:4, 1:4] = True  # a tiny stub nowhere near the commanded limb
+    frame = make_indexed_image(barely_moved.astype(np.uint8), TEST_PALETTE_HEX)
+    result = check_pose_fidelity(frame, predicted, background_index=0, min_iou=0.7)
+    assert not result.passed
+    assert result.details["iou"] < 0.7
+
+
+def test_pose_fidelity_reason_reports_the_measured_iou():
+    predicted = render_rig_silhouette(size=10, limbs=[((1, 5), (8, 5))], radius=1)
+    frame = make_indexed_image(predicted.astype(np.uint8), TEST_PALETTE_HEX)
+    result = check_pose_fidelity(frame, predicted, background_index=0, min_iou=0.7)
+    assert "1.0000" in result.reason
+
+
+def test_pose_fidelity_invariant_to_the_rigs_own_pose_change_between_frames():
+    """The property that actually justifies replacing check_frame_consistency
+    for locomotion (T-0340): two rig-predicted poses that differ hugely from
+    each other -- perfect pose, zero drift -- fail check_frame_consistency's
+    whole-silhouette delta almost by construction, even though nothing is
+    wrong (docs/decision-log.md's capsule measurement: 0.23-0.49 of the old
+    0.50 cap consumed by legitimate motion alone). check_pose_fidelity
+    compares each frame to ITS OWN commanded pose, so it is indifferent to
+    how far the pose itself swings between frames."""
+    limb_a = render_rig_silhouette(size=30, limbs=[((5, 15), (14, 15))], radius=3)
+    limb_b = render_rig_silhouette(size=30, limbs=[((16, 15), (25, 15))], radius=3)
+
+    old_gate = check_frame_consistency(
+        make_indexed_image(limb_a.astype(np.uint8), TEST_PALETTE_HEX),
+        make_indexed_image(limb_b.astype(np.uint8), TEST_PALETTE_HEX),
+        background_index=0,
+        max_delta_ratio=0.50,
+    )
+    assert not old_gate.passed  # the exact pathology: perfect pose, zero drift, still fails
+
+    frame_a = make_indexed_image(limb_a.astype(np.uint8), TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(limb_b.astype(np.uint8), TEST_PALETTE_HEX)
+    fidelity_a = check_pose_fidelity(frame_a, limb_a, background_index=0, min_iou=0.7)
+    fidelity_b = check_pose_fidelity(frame_b, limb_b, background_index=0, min_iou=0.7)
+    assert fidelity_a.passed
+    assert fidelity_b.passed
+
+
+def test_identity_stability_passes_when_torso_colour_is_stable():
+    a = np.zeros((20, 20), dtype=np.uint8)
+    a[8:12, 8:12] = 1
+    b = a.copy()
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+    result = check_identity_stability(
+        frame_a, frame_b, background_index=0, region=(8, 8, 12, 12), max_histogram_distance=0.15
+    )
+    assert result.passed
+    assert result.details["distance"] == 0.0
+
+
+def test_identity_stability_fails_when_torso_colour_drifts():
+    a = np.zeros((20, 20), dtype=np.uint8)
+    a[8:12, 8:12] = 1
+    b = a.copy()
+    b[8:10, 8:12] = 0  # half the torso box fades to background between frames
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+    result = check_identity_stability(
+        frame_a, frame_b, background_index=0, region=(8, 8, 12, 12), max_histogram_distance=0.15
+    )
+    assert not result.passed
+    assert result.details["distance"] > 0.15
+
+
+def test_identity_stability_catches_drift_that_frame_consistency_missed():
+    """T-0340's whole reason for existing: the review corroborated that
+    session 13's sequential-chained walk candidate scored a deceptively low
+    whole-silhouette delta ratio and passed the old gate outright, because
+    colour drift was shrinking the silhouette rather than a real gait
+    moving it. Reproduced here at small scale (the real attempt is a
+    gitignored `assets/out/` generation artifact, not present in this
+    checkout): an 8px torso fade is under 3% of a 280px whole-frame
+    silhouette -- comfortably inside even the old MOTION_FRAME_DELTA_CAP --
+    but it is exactly the failure this gate exists to catch."""
+    a = np.zeros((20, 20), dtype=np.uint8)
+    a[0:14, 0:20] = 1  # 280px silhouette -- most of the frame, as if striding
+    b = a.copy()
+    b[8:10, 8:12] = 0  # 8px of the torso box fades to background
+
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    old_gate = check_frame_consistency(frame_a, frame_b, background_index=0, max_delta_ratio=0.50)
+    assert old_gate.passed  # the exact deceptive pass this card retires the metric over
+
+    new_gate = check_identity_stability(
+        frame_a, frame_b, background_index=0, region=(8, 8, 12, 12), max_histogram_distance=0.15
+    )
+    assert not new_gate.passed
+
+
+# ---------------------------------------------------------------------------
+# slice_sheet_frames / count_pixel_deltas (T-0349) -- the grid-slicing and
+# raw per-pixel delta primitives the machine-readable gate report is built
+# from. `count_pixel_deltas` is deliberately a different metric than
+# `check_frame_consistency`'s silhouette (fg/bg *state*) delta: it counts
+# ANY palette-index change, including a foreground pixel changing to a
+# *different* foreground index -- the number a reviewer eyeballing the raw
+# sheet by hand actually sees, per T-0349's motivating T-0259 review
+# disagreement.
+# ---------------------------------------------------------------------------
+
+
+def test_slice_sheet_frames_row_major_order():
+    arr = np.array(
+        [
+            [0, 0, 1, 1],
+            [0, 0, 1, 1],
+            [2, 2, 3, 3],
+            [2, 2, 3, 3],
+        ],
+        dtype=np.uint8,
+    )
+    sheet = make_indexed_image(arr, TEST_PALETTE_HEX)
+    frames = slice_sheet_frames(sheet, cell_width=2, cell_height=2, cols=2, rows=2)
+    assert len(frames) == 4
+    assert np.array(frames[0]).tolist() == [[0, 0], [0, 0]]
+    assert np.array(frames[1]).tolist() == [[1, 1], [1, 1]]
+    assert np.array(frames[2]).tolist() == [[2, 2], [2, 2]]
+    assert np.array(frames[3]).tolist() == [[3, 3], [3, 3]]
+
+
+def test_slice_sheet_frames_rejects_size_mismatch():
+    sheet = make_indexed_image(np.zeros((4, 4), dtype=np.uint8), TEST_PALETTE_HEX)
+    with pytest.raises(ValueError):
+        slice_sheet_frames(sheet, cell_width=3, cell_height=3, cols=2, rows=2)
+
+
+def test_count_pixel_deltas_counts_any_index_change_not_just_silhouette_state():
+    a = np.array([[1, 1], [0, 0]], dtype=np.uint8)
+    b = np.array([[2, 1], [0, 3]], dtype=np.uint8)
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    # (0,0): 1 -> 2, still foreground but a DIFFERENT index -- must count.
+    # (1,1): 0 -> 3, a real silhouette flip -- must also count.
+    assert count_pixel_deltas(frame_a, frame_b) == 2
+
+    # check_frame_consistency's silhouette-only metric only sees the (1,1)
+    # fg/bg flip -- confirms this is genuinely a different measurement.
+    silhouette = check_frame_consistency(
+        frame_a, frame_b, background_index=0, max_delta_ratio=1.0
+    )
+    assert silhouette.details["delta_pixels"] == 1
+
+
+def test_count_pixel_deltas_zero_for_identical_frames():
+    a = make_indexed_image(np.array([[1, 2], [3, 0]], dtype=np.uint8), TEST_PALETTE_HEX)
+    b = make_indexed_image(np.array([[1, 2], [3, 0]], dtype=np.uint8), TEST_PALETTE_HEX)
+    assert count_pixel_deltas(a, b) == 0
+
+
+def test_count_pixel_deltas_rejects_shape_mismatch():
+    a = make_indexed_image(np.zeros((2, 2), dtype=np.uint8), TEST_PALETTE_HEX)
+    b = make_indexed_image(np.zeros((3, 3), dtype=np.uint8), TEST_PALETTE_HEX)
+    with pytest.raises(ValueError):
+        count_pixel_deltas(a, b)

@@ -112,14 +112,16 @@ function makeRunner() {
   return { start, kill, spawnedChildren };
 }
 
-function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], ...overrides } = {}) {
+function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], verdictArchives, ...overrides } = {}) {
   const createRunLogFn = vi.fn(async () => {
     const log = makeRunLog();
     runLogs.push(log);
     return log;
   });
 
-  return new RunOrchestrator({
+  const archives = verdictArchives ?? new Map();
+
+  const orchestrator = new RunOrchestrator({
     store,
     hub: hub ?? { broadcast: vi.fn() },
     runner,
@@ -135,8 +137,16 @@ function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], ...ov
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
     createRunLogFn,
     crossCheckVerdictFn: ({ verdict }) => verdict,
+    readVerdictEntriesFn: async (tasksDir, id) => archives.get(id) ?? [],
+    appendVerdictEntryFn: async (tasksDir, id, entry) => {
+      const list = archives.get(id) ?? [];
+      list.push(entry);
+      archives.set(id, list);
+    },
     ...overrides
   });
+  orchestrator.testVerdictArchives = archives;
+  return orchestrator;
 }
 
 /** Deterministic stand-in for probeLivenessMtimeFn: increments its reported mtime on every call until stopGrowing() is invoked, after which it plateaus (same shape as a training job that stops writing checkpoints). */
@@ -241,8 +251,9 @@ describe("RunOrchestrator — filesystem-progress liveness (T-0308: subagent-own
     expect(runner.start).toHaveBeenCalledTimes(2);
     const finalCheck = await store.get("T-0001");
     expect(finalCheck.status).toBe("in-progress");
-    expect(finalCheck.body).toMatch(/implementer run went silent/i);
-    expect(finalCheck.body).toMatch(/stdin-hang/i);
+    const archived = (orchestrator.testVerdictArchives.get("T-0001") ?? []).map((e) => e.text).join("\n");
+    expect(archived).toMatch(/implementer run went silent/i);
+    expect(archived).toMatch(/stdin-hang/i);
 
     const killEvents = runLogs[0].events.filter((e) => e.type === "liveness-kill");
     expect(killEvents).toHaveLength(1);

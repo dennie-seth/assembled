@@ -34,6 +34,14 @@ kanban card (agent: assets|audio)
 
 P-1 is the demanding one. It relocates all quality burden onto the validation gate, because there is no manual repair step.
 
+> **Authorship rule (DL-30, `docs/decision-log.md`).** P-1's "ships as-is, no hand editing"
+> is about editing pixels a sampler already produced — it is not a ban on scripted steps in
+> the pipeline itself. **Every shipped pixel originates from a diffusion sample.**
+> Arrangement, transformation, cutout, descent and compositing by script are allowed and are
+> exactly what the descent chain (§3.1) and the multi-frame character derivation (§3.5,
+> DL-25) already do. What is forbidden is a script *inventing* pixels no sampler produced —
+> the failure mode the T-0239 incident (`docs/board-invariants.md`) caught.
+
 ---
 
 ## 2. The Validation Gate
@@ -465,3 +473,4 @@ documented escalation path, not something v1 does.
 | 2026-08-02 | v5: §6.8–§6.11 added, synced from canonical Notion doc 13 — key art vs. concept sheet split (`assets/src/keyart/` vs. `assets/src/concept/`, only the latter feeds the pipeline/palette extraction); concept-sheet framing/legibility/value-separation requirements; palette extraction is interior-only (mask sky/veg on exteriors); round-1 assessment of the two 2026-08-02 Signal Tower sheets as key art, not concept sheets; stitching rules (stitch layout, never style, never LoRA training) | Claude, rev. pending |
 | 2026-08-08 | v5.1: §4.2 (AU-1) archetype-count corrected — a run assembles **exactly 3** archetypes (was “5–7”), matching `01` §7 and `12`; density-cap wording adjusted to “more than one” accordingly | Claude, rev. pending |
 | 2026-08-30 | v5.2: **§3.7 Transparency / P-6** — sprite output ships as mode `P` + tRNS on the background index, always; new **Background transparency** gate row in §2 and a CI sweep over `assets/final/`; enforcement moved out of individual `save()` calls into one save path per package; `generate_cutout` mattes its own output. Prompted by the §24-e sheet shipping cut-out but opaque | Claude, rev. pending |
+| 2026-09-09 | v5.3: **§1 cross-references DL-30** — P-1 ("ships as-is, no hand editing") clarified as targeting edits to already-sampled pixels, not the pipeline's own scripted steps; every shipped pixel must originate from a diffusion sample, but arrangement/transformation/cutout/descent/compositing by script are allowed | Claude, rev. pending |

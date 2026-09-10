@@ -74,4 +74,16 @@ describe("buildUpdateBody", () => {
     const patch = buildUpdateBody(orig, { ...orig, title: undefined });
     expect(patch).toEqual({});
   });
+
+  it("T-0343: includes max_attempts when changed", () => {
+    const orig = original({ max_attempts: null });
+    const patch = buildUpdateBody(orig, { ...orig, max_attempts: 3 });
+    expect(patch).toEqual({ max_attempts: 3 });
+  });
+
+  it("T-0343: does not include max_attempts when it is unchanged", () => {
+    const orig = original({ max_attempts: null });
+    const patch = buildUpdateBody(orig, { ...orig, max_attempts: null });
+    expect(patch).toEqual({});
+  });
 });

@@ -44,15 +44,23 @@ The live launcher passes **no determinism flags** — no `--deterministic`, no
 live server against; it fails loudly on drift in either direction, so **do not change the launcher
 without updating that file to match.**
 
-Baseline is a deliberate choice, not an oversight. T-0272/T-0317 rounds 10–12 found that forcing
-determinism on the §24-e dual-IPAdapter + ControlNet profile graph **reproducibly destroys
-coherence**:
+Baseline is a deliberate choice, not an oversight — but **not** because forcing determinism on the
+§24-e dual-IPAdapter + ControlNet profile graph was shown to break coherence. T-0272/T-0317 rounds
+10–12 measured coherence under three regimes, and none of them reliably produced one:
 
 | Regime | Reproducible? | Coherent output? |
 |---|---|---|
-| `--deterministic` + `CUBLAS_WORKSPACE_CONFIG` | yes (66/67/68 byte-identical) | **no** — 0/6 fresh seeds |
-| `CUBLAS_WORKSPACE_CONFIG` only | yes (69 == 70) | **no** — 0/6 fresh seeds |
-| **baseline** (neither) | see below | **no** — 0/8 fresh seeds |
+| `--deterministic` + `CUBLAS_WORKSPACE_CONFIG` | yes (66/67/68 byte-identical) | 0/6 fresh seeds |
+| `CUBLAS_WORKSPACE_CONFIG` only | yes (69 == 70) | 0/6 fresh seeds |
+| **baseline** (neither) | see below | 0/8 fresh seeds |
+
+Baseline scored the same 0 coherent frames as both flagged regimes on its own fresh reroll (round
+12), and this graph's baseline coherence rate across all earlier rounds is roughly 1 in 40 — a
+sample of 6 or 8 seeds landing on zero is indistinguishable from chance at that rate. **"Determinism
+flags broke coherence" is therefore not an established finding** (T-0346): the flags were not shown
+to help, and were not shown to hurt. Baseline is kept because it costs nothing and is the only
+regime that has ever produced a coherent frame at all (attempt 39, round 6), not because the flags
+were proven harmful.
 
 To switch regimes deliberately, add `set CUBLAS_WORKSPACE_CONFIG=:4096:8` before the python line
 and `--deterministic` after `--port 8188`, and set `comfyui-regime.json`'s `deterministic` field to

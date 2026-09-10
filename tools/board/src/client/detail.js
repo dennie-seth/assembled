@@ -1,4 +1,4 @@
-const EDITABLE_FIELDS = ["title", "priority", "status", "body", "agent", "phase", "depends_on"];
+const EDITABLE_FIELDS = ["title", "priority", "status", "body", "agent", "phase", "depends_on", "max_attempts"];
 
 function valuesEqual(a, b) {
   if (Array.isArray(a) && Array.isArray(b)) {

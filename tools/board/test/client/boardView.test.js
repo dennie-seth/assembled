@@ -565,6 +565,16 @@ describe("renderBoard auto-retry attempts badge", () => {
 
     expect(root.querySelector('.card[data-id="T-0001"] .card-attempts-badge')).toBeNull();
   });
+
+  it("T-0343: shows the card's own max_attempts override in the badge instead of the default of 5", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "in-progress", attempts: 2, max_attempts: 3 });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-attempts-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.title || badge.getAttribute("aria-label")).toMatch(/run 2 of 3/i);
+  });
 });
 
 describe("renderBoard backlog export button", () => {

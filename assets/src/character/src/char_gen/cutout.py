@@ -477,12 +477,19 @@ def apply_cutout_masks(
 
 #: T-0319: the promoted T-0252 idle keyframe's own achieved background --
 #: what a genuinely dark background looks like on this pipeline, not an
-#: arbitrary "any dark colour". Used as the default fill whenever a frame's
-#: own border-connected background region is forced dark rather than trusted
-#: to have sampled that way on its own (see `force_border_background_to_fill`
-#: below, and its two call sites: `gen_hybrid_walk_T0259.crop_identity_reference`
-#: -- the generation-time fix -- and the T-0319 re-cut path, which reprocesses
-#: already-sampled frames with no new GPU spend).
+#: arbitrary "any dark colour". Used as the default fill whenever a
+#: RENDER's own border-connected background region is forced dark rather
+#: than trusted to have sampled that way on its own (see
+#: `force_border_background_to_fill` below). T-0347: never apply this to an
+#: image that becomes an IP-Adapter *reference* -- doing so
+#: (`gen_hybrid_walk_T0259.crop_identity_reference`'s own T-0319 fix)
+#: destroyed generation coherence 100% in a probe, so that call site was
+#: removed. The two remaining call sites are both RENDER cleanup:
+#: `gen_hybrid_walk_T0259.reprocess_attempt_background_fix` (an
+#: already-sampled frame's own background, re-cut post-hoc, no new GPU
+#: spend) and `gen_hybrid_profile_T0272.build_indexed_cell` (a
+#: freshly-sampled frame's own background, corrected before its per-frame
+#: cutout).
 DARK_BACKGROUND_FILL = (18, 17, 14)
 
 
@@ -508,9 +515,20 @@ def force_border_background_to_fill(
     This function adds no new segmentation logic: it reuses the same
     border-connected Oklab-tolerant flood already proven out (T-0315) as the
     single shared "what is background" detector across this pipeline, so a
-    reference image and an already-sampled frame are corrected by the exact
-    same rule a fresh generation's own post-cutout step already applies --
-    never a second, independently-tuned heuristic that could drift from it.
+    corrected image is recoloured by the exact same rule a fresh
+    generation's own post-cutout step already applies -- never a second,
+    independently-tuned heuristic that could drift from it.
+
+    T-0347: apply this only to a generated RENDER's own background, before
+    that render's per-frame cutout. `crop_identity_reference`'s own use of
+    this function (applying it to the IP-Adapter *reference* image itself,
+    before upload) is where this docstring's original diagnosis pointed --
+    that call site is gone: probed against a live ComfyUI run, recolouring
+    the reference corrupted IP-Adapter's conditioning signal and destroyed
+    generation coherence 100% of the time. Nothing about that failure
+    implicates this function's contract (paint background pixels to
+    `fill_rgb`, leave everything else untouched) -- only its misuse on a
+    reference image was the defect.
     """
     mask = border_flood_background_mask(img, tolerance)
     arr = np.array(img.convert("RGB"), dtype=np.uint8)

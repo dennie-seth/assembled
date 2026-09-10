@@ -279,6 +279,32 @@ describe("buildPrompt — continuing an existing branch (re-run after review)", 
   });
 });
 
+describe("buildPrompt — prior validation history digest (T-0345)", () => {
+  const DIGEST = "2 prior validation verdict(s) archived: 1 FAIL, 1 PASS.\n\nMost recent 2 (oldest to newest):\n- [t1] Validation: FAIL: missing test\n- [t2] Validation: PASS: all green";
+
+  it("includes a digest section when verdictDigest is provided", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, verdictDigest: DIGEST });
+    expect(prompt).toContain("## Prior validation history (digest)");
+    expect(prompt).toContain(DIGEST);
+  });
+
+  it("omits the digest section entirely when no verdictDigest is given", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).not.toContain("## Prior validation history (digest)");
+  });
+
+  it("omits the digest section when verdictDigest is an empty string", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, verdictDigest: "" });
+    expect(prompt).not.toContain("## Prior validation history (digest)");
+  });
+
+  it("points the continuing workflow at the digest section instead of claiming prior verdict notes live in the task body", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, continuing: true, verdictDigest: DIGEST });
+    expect(prompt.toLowerCase()).toContain("prior validation history");
+    expect(prompt.toLowerCase()).not.toContain("verdict notes in the task card body");
+  });
+});
+
 const UNASSIGNED_TASK = { ...TASK, agent: null };
 const PLANNER_AGENT_DEF = {
   name: "planner",

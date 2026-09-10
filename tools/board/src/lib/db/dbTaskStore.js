@@ -37,6 +37,7 @@ function taskRowToTask(db, row) {
     approved_by: row.approved_by,
     approved_at: row.approved_at,
     attempts: row.attempts,
+    max_attempts: row.max_attempts,
     comments,
     attachments,
     body: row.body
@@ -109,10 +110,11 @@ export class DbTaskStore extends TaskStore {
       .prepare(
         `INSERT INTO tasks
            (id, title, status, priority, phase, agent, created, branch, commit_sha, pr,
-            deliverable_type, requires_approval, approved_by, approved_at, attempts, body)
+            deliverable_type, requires_approval, approved_by, approved_at, attempts,
+            max_attempts, body)
          VALUES (@id, @title, @status, @priority, @phase, @agent, @created, @branch, @commit_sha,
                  @pr, @deliverable_type, @requires_approval, @approved_by, @approved_at,
-                 @attempts, @body)`
+                 @attempts, @max_attempts, @body)`
       )
       .run({
         id: task.id,
@@ -130,13 +132,14 @@ export class DbTaskStore extends TaskStore {
         approved_by: task.approved_by ?? null,
         approved_at: task.approved_at ?? null,
         attempts: task.attempts ?? 0,
+        max_attempts: task.max_attempts ?? null,
         body: task.body
       });
 
     this._insertDependsOn(task.id, task.depends_on ?? []);
     this._insertComments(task.id, task.comments ?? []);
     this._insertAttachments(task.id, task.attachments ?? []);
-    this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor);
+    this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor, task.body);
   }
 
   async update(id, updates, { actor = DEFAULT_ACTOR } = {}) {
@@ -159,7 +162,8 @@ export class DbTaskStore extends TaskStore {
            agent = @agent, created = @created, branch = @branch, commit_sha = @commit_sha,
            pr = @pr, deliverable_type = @deliverable_type,
            requires_approval = @requires_approval, approved_by = @approved_by,
-           approved_at = @approved_at, attempts = @attempts, body = @body
+           approved_at = @approved_at, attempts = @attempts, max_attempts = @max_attempts,
+           body = @body
          WHERE id = @id`
       ).run({
         id,
@@ -177,6 +181,7 @@ export class DbTaskStore extends TaskStore {
         approved_by: merged.approved_by ?? null,
         approved_at: merged.approved_at ?? null,
         attempts: merged.attempts ?? 0,
+        max_attempts: merged.max_attempts ?? null,
         body: merged.body
       });
 
@@ -193,7 +198,7 @@ export class DbTaskStore extends TaskStore {
         this._insertAttachments(id, merged.attachments ?? []);
       }
       if (changedFields.length > 0) {
-        this._recordEvent(id, "update", changedFields, actor);
+        this._recordEvent(id, "update", changedFields, actor, merged.body);
       }
     });
 
@@ -213,7 +218,7 @@ export class DbTaskStore extends TaskStore {
     const db = this.db;
     const run = db.transaction(() => {
       db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
-      this._recordEvent(id, "remove", [], actor);
+      this._recordEvent(id, "remove", [], actor, existing.body);
     });
     run();
   }
@@ -253,11 +258,16 @@ export class DbTaskStore extends TaskStore {
     }
   }
 
-  _recordEvent(taskId, action, changed, actor) {
+  /**
+   * `body` is the FULL resulting body value after this event (not a diff) -- T-0342's
+   * readTaskBodyBeforeRun (dbTaskHistory.js) reads a specific historical row's snapshot directly
+   * rather than replaying a diff chain, mirroring what git gives fs-mode cards for free.
+   */
+  _recordEvent(taskId, action, changed, actor, body = "") {
     this.db
       .prepare(
-        "INSERT INTO card_events (task_id, action, changed, actor, created_at) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO card_events (task_id, action, changed, actor, created_at, body) VALUES (?, ?, ?, ?, ?, ?)"
       )
-      .run(taskId, action, JSON.stringify(changed), actor, new Date().toISOString());
+      .run(taskId, action, JSON.stringify(changed), actor, new Date().toISOString(), body);
   }
 }
