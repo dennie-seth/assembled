@@ -102,6 +102,13 @@ def _cmd_character_frame_delta_cap_sweep(args: argparse.Namespace) -> int:
     return _report_and_exit(results)
 
 
+def _cmd_character_motion_fidelity_sweep(args: argparse.Namespace) -> int:
+    results = character_mod.sweep_character_motion_fidelity(args.root)
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
 def _cmd_character_gate_report(args: argparse.Namespace) -> int:
     sheet = Image.open(args.image)
     provenance = json.loads(args.provenance.read())
@@ -235,16 +242,30 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "character-frame-delta-cap-sweep",
         help=(
-            "recursively validate that every character-class *.provenance.json under "
-            "a directory stays within the frame-delta cap for its recorded motion_class "
-            "-- idle/unlabelled 0.30, locomotion/transition/loop 0.50 "
-            "(docs/decision-log.md DL-26, T-0271)"
+            "recursively validate that every idle/unlabelled character-class "
+            "*.provenance.json under a directory stays within the 0.30 frame-delta cap "
+            "-- locomotion/transition/loop are retired from this sweep, see "
+            "character-motion-fidelity-sweep (docs/decision-log.md DL-26/DL-31, T-0271/T-0340)"
         ),
     )
     p.add_argument(
         "root", help="directory whose subdirectories are asset classes (e.g. assets/final)"
     )
     p.set_defaults(func=_cmd_character_frame_delta_cap_sweep)
+
+    p = sub.add_parser(
+        "character-motion-fidelity-sweep",
+        help=(
+            "recursively validate that every locomotion/transition/loop character-class "
+            "*.provenance.json under a directory clears the pose-fidelity IoU floor and "
+            "stays within the identity-stability histogram cap -- the replacement for the "
+            "retired whole-silhouette frame-delta cap (docs/decision-log.md DL-31, T-0340)"
+        ),
+    )
+    p.add_argument(
+        "root", help="directory whose subdirectories are asset classes (e.g. assets/final)"
+    )
+    p.set_defaults(func=_cmd_character_motion_fidelity_sweep)
 
     p = sub.add_parser(
         "character-gate-report",
