@@ -59,6 +59,14 @@ function captureDirtyFields(root, previousTask) {
     dirty.phase = phaseEl.value;
   }
 
+  const maxAttemptsEl = root.querySelector(".detail-max-attempts");
+  if (maxAttemptsEl) {
+    const previousValue = previousTask.max_attempts != null ? String(previousTask.max_attempts) : "";
+    if (maxAttemptsEl.value !== previousValue) {
+      dirty.maxAttempts = maxAttemptsEl.value;
+    }
+  }
+
   const chipIds = Array.from(root.querySelectorAll(".detail-deps-edit .deps-chip")).map(
     (chip) => chip.dataset.id
   );
@@ -200,9 +208,11 @@ const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
 function attemptsInfoFor(task) {
   if (!task.attempts) return null;
+  // T-0343: a card's own max_attempts overrides the default cap shown here.
+  const cap = Number.isInteger(task.max_attempts) ? task.max_attempts : MAX_AUTO_RETRY_ATTEMPTS;
   const info = document.createElement("div");
   info.className = "detail-attempts";
-  info.textContent = `Auto-retry: run ${task.attempts} of ${MAX_AUTO_RETRY_ATTEMPTS}`;
+  info.textContent = `Auto-retry: run ${task.attempts} of ${cap}`;
   return info;
 }
 
@@ -431,6 +441,22 @@ export function renderDetailPanel(
   phaseInput.value = dirty.phase !== undefined ? dirty.phase : String(task.phase);
   phaseInput.dataset.detailField = "phase";
 
+  // T-0343: per-card override of MAX_AUTO_RETRY_ATTEMPTS. Empty means "no override" -- the
+  // orchestrator's own default applies -- so this never forces a value onto a card that hasn't
+  // been given one.
+  const maxAttemptsInput = document.createElement("input");
+  maxAttemptsInput.type = "number";
+  maxAttemptsInput.className = "detail-max-attempts";
+  maxAttemptsInput.min = "1";
+  maxAttemptsInput.placeholder = String(MAX_AUTO_RETRY_ATTEMPTS);
+  maxAttemptsInput.value =
+    dirty.maxAttempts !== undefined
+      ? dirty.maxAttempts
+      : task.max_attempts != null
+        ? String(task.max_attempts)
+        : "";
+  maxAttemptsInput.dataset.detailField = "maxAttempts";
+
   const depsEl = document.createElement("div");
   depsEl.className = "detail-deps";
   depsEl.textContent =
@@ -466,7 +492,8 @@ export function renderDetailPanel(
       body: bodyTextarea.value,
       agent: agentSelect.value === UNASSIGNED_AGENT_VALUE ? null : agentSelect.value,
       phase: Number(phaseInput.value),
-      depends_on: depsPicker.getSelected()
+      depends_on: depsPicker.getSelected(),
+      max_attempts: maxAttemptsInput.value.trim() === "" ? null : Number(maxAttemptsInput.value)
     };
     const patch = buildUpdateBody(task, edited);
     if (Object.keys(patch).length > 0) {
@@ -481,6 +508,7 @@ export function renderDetailPanel(
     labeledField("Status", statusSelect),
     labeledField("Agent", agentSelect),
     labeledField("Phase", phaseInput),
+    labeledField("Max attempts", maxAttemptsInput),
     depsEl,
     labeledField("Depends on (edit)", depsPicker.element)
   );

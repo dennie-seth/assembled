@@ -13,6 +13,7 @@ function task(overrides = {}) {
     depends_on: [],
     created: "2026-07-31",
     body: "## Context\nsome context\n\n## Acceptance\n- [ ] do it",
+    max_attempts: null,
     ...overrides
   };
 }
@@ -223,6 +224,73 @@ describe("renderDetailPanel auto-retry attempt counter", () => {
     const root = document.createElement("div");
     renderDetailPanel(root, task({ attempts: 0 }), baseOpts());
     expect(root.querySelector(".detail-attempts")).toBeNull();
+  });
+
+  it("T-0343: shows the run count against the card's own max_attempts override, not the default", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ status: "in-progress", attempts: 2, max_attempts: 3 }), baseOpts());
+    const info = root.querySelector(".detail-attempts");
+    expect(info).not.toBeNull();
+    expect(info.textContent).toContain("2");
+    expect(info.textContent).toContain("3");
+    expect(info.textContent).not.toContain("5");
+  });
+});
+
+describe("renderDetailPanel editable max_attempts (T-0343)", () => {
+  it("renders the max attempts field empty when the card carries no override", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    expect(root.querySelector(".detail-max-attempts").value).toBe("");
+  });
+
+  it("renders the card's own max_attempts override in the field", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ max_attempts: 3 }), baseOpts());
+    expect(root.querySelector(".detail-max-attempts").value).toBe("3");
+  });
+
+  it("includes max_attempts in the Save patch when edited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts({ onSave }));
+
+    root.querySelector(".detail-max-attempts").value = "3";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { max_attempts: 3 });
+  });
+
+  it("maps a cleared max attempts field back to null on save -- back to the default", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001", max_attempts: 3 }), baseOpts({ onSave }));
+
+    root.querySelector(".detail-max-attempts").value = "";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { max_attempts: null });
+  });
+
+  it("does not call onSave when max_attempts is left unedited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts({ onSave }));
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unsaved max_attempts edit across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts());
+
+    root.querySelector(".detail-max-attempts").value = "4";
+
+    renderDetailPanel(root, task({ id: "T-0001", attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-max-attempts").value).toBe("4");
+    document.body.removeChild(root);
   });
 });
 

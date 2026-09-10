@@ -67,7 +67,8 @@ describe("runMigrations", () => {
       "0002_add_generic_agent.sql",
       "0003_add_approval_gate.sql",
       "0004_add_dispatch_agent.sql",
-      "0005_add_card_events_body_snapshot.sql"
+      "0005_add_card_events_body_snapshot.sql",
+      "0006_add_max_attempts.sql"
     ]);
   });
 });
