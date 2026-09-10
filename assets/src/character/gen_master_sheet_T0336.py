@@ -240,32 +240,66 @@ def build_limb_pose_prompt(entity: EntitySpec) -> str:
     exposed in every panel so `upper_leg` stays separable -- #365's own
     coat closed past the thigh and that is exactly the gap this card
     exists to fill. See T-0351's own card body for the full per-panel pose
-    table."""
+    table.
+
+    Attempt 1 (seed 314159265, see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md)
+    ignored almost all of this: the IP-Adapter conditioning crop itself
+    shows two similar standing figures plus small floating garment-callout
+    insets (the same crop `run_attempt`/`EntitySpec.concept_crop_box`
+    restricts IP-Adapter to), and that composition dominated over the text.
+    Attempt 2 strengthens the framing -- "pose reference chart" instead of
+    "character reference turnaround sheet", explicit "five independent
+    full-body poses ... in a single horizontal row", and repeated,
+    stronger mid-hip/bare-thigh wording -- without touching IP-Adapter
+    weight, style/identity LoRA weight, or adding ControlNet (all forbidden
+    by this card's own scope; pose is the only variable, and that has to
+    stay a prompt-only lever)."""
     return (
-        f"{entity.trigger_token}, character reference turnaround sheet, "
-        f"{entity.costume_description}, hip-length coat falling no lower than mid-hip in every "
-        "panel, thigh clearly exposed below the coat hem, same uniform and same equipment "
-        "loadout, consistent identity, the exact same institutional green coat costume in "
-        "every single panel, flat uniform neutral grey background, flat even lighting, no cast "
-        "shadow, no perspective, clean readable outline, wearing a hooded mask with two dark "
-        "round visible eye lenses, not a blank void, five separate whole-figure panels laid out "
-        "side by side with empty space between each panel so nothing overlaps or touches: panel "
-        "one is a front view T-pose, facing the camera directly, both arms held straight out "
-        "horizontal to the sides clear of the torso, legs spread apart; panel two is a back "
-        "view T-pose, facing directly away from the camera, both arms held straight out "
-        "horizontal to the sides clear of the torso, legs spread apart; panel three is a true "
-        "90-degree side profile view, camera exactly perpendicular to the figure, not a "
-        "three-quarter view, only the left arm and only the left leg extended forward at "
-        "roughly a right angle clear of the torso, the right arm and right leg held back close "
-        "to the body, only a single arm silhouette and a single eye lens visible; panel four is "
-        "a true 90-degree side profile view, camera exactly perpendicular to the figure, not a "
-        "three-quarter view, only the right arm and only the right leg extended forward at "
-        "roughly a right angle clear of the torso, the left arm and left leg held back close to "
-        "the body, only a single arm silhouette and a single eye lens visible; panel five is a "
-        "true 90-degree side profile view, camera exactly perpendicular to the figure, not a "
-        "three-quarter view, a neutral standing pose, both arms down at the sides, both legs "
-        "together standing upright, only a single arm silhouette and a single eye lens visible, "
-        "no text, no UI, no watermark"
+        f"{entity.trigger_token}, pose reference chart, five independent full-body poses of "
+        "the same character, each panel a complete head-to-toe figure, arranged in a single "
+        "horizontal row side by side, wide empty gutters between every panel so nothing "
+        f"overlaps or touches, not two similar standing figures with small accessory insets, "
+        f"{entity.costume_description}, the coat cut short and ending precisely at mid-hip in "
+        "every single panel, coat hem at the mid-hip line, bare thigh clearly visible below "
+        "the coat hem, same uniform and same equipment loadout, consistent identity, the exact "
+        "same institutional green coat costume in every single panel, flat uniform neutral "
+        "grey background, flat even lighting, no cast shadow, no perspective, clean readable "
+        "outline, wearing a hooded mask with two dark round visible eye lenses, not a blank "
+        "void, five separate whole-figure panels: panel one is a front view T-pose, facing the "
+        "camera directly, both arms held straight out horizontal to the sides clear of the "
+        "torso, legs spread apart; panel two is a back view T-pose, facing directly away from "
+        "the camera, both arms held straight out horizontal to the sides clear of the torso, "
+        "legs spread apart; panel three is a true 90-degree side profile view, camera exactly "
+        "perpendicular to the figure, not a three-quarter view, only the left arm and only the "
+        "left leg extended forward at roughly a right angle clear of the torso, the right arm "
+        "and right leg held back close to the body, only a single arm silhouette and a single "
+        "eye lens visible; panel four is a true 90-degree side profile view, camera exactly "
+        "perpendicular to the figure, not a three-quarter view, only the right arm and only "
+        "the right leg extended forward at roughly a right angle clear of the torso, the left "
+        "arm and left leg held back close to the body, only a single arm silhouette and a "
+        "single eye lens visible; panel five is a true 90-degree side profile view, camera "
+        "exactly perpendicular to the figure, not a three-quarter view, a neutral standing "
+        "pose, both arms hanging straight down at the sides, both legs together standing "
+        "upright, only a single arm silhouette and a single eye lens visible, no text, no UI, "
+        "no watermark"
+    )
+
+
+def build_limb_pose_negative_prompt() -> str:
+    """T-0351: builds on #365's own negative-prompt fixes
+    (`build_negative_prompt` -- blank heads, armour drift, cropped heads,
+    robotic legs) and adds this card's own attempt-1 failure mode (see
+    `ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md`): two near-duplicate standing
+    figures plus small floating accessory/equipment inset panels instead of
+    five distinct full-body poses, and a coat that fell well past mid-hip
+    despite the positive prompt's mid-hip wording."""
+    return (
+        build_negative_prompt()
+        + ", accessory inset, floating accessory panel, equipment close-up inset, small inset "
+        "panel, garment callout, two similar poses, duplicate pose, near-identical pose, "
+        "repeated pose, only two figures, long coat, trench coat, ankle-length coat, "
+        "floor-length coat, knee-length coat, calf-length coat, coat past the knee, coat "
+        "covering the thighs, coat below the hip"
     )
 
 
@@ -641,6 +675,7 @@ def run_attempt(
     *,
     card: str = "T-0336",
     prompt_builder: Callable[[EntitySpec], str] | None = None,
+    negative_prompt_builder: Callable[[], str] | None = None,
 ) -> dict:
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
@@ -678,7 +713,7 @@ def run_attempt(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     positive_text = (prompt_builder or build_positive_prompt)(entity)
-    negative_text = build_negative_prompt()
+    negative_text = (negative_prompt_builder or build_negative_prompt)()
 
     t0 = time.monotonic()
     concept_filename = upload_image(entity.concept_sheet_path)
@@ -775,6 +810,9 @@ def run_attempt(
 PROMPT_BUILDERS_BY_CARD: dict[str, Callable[[EntitySpec], str]] = {
     "T-0351": build_limb_pose_prompt,
 }
+NEGATIVE_PROMPT_BUILDERS_BY_CARD: dict[str, Callable[[], str]] = {
+    "T-0351": build_limb_pose_negative_prompt,
+}
 
 
 def main() -> None:
@@ -828,6 +866,7 @@ def main() -> None:
         height=args.height,
         card=args.card,
         prompt_builder=PROMPT_BUILDERS_BY_CARD.get(args.card),
+        negative_prompt_builder=NEGATIVE_PROMPT_BUILDERS_BY_CARD.get(args.card),
     )
     append_attempt_log(provenance, notes=args.notes, log_path=attempt_log_path_for(args.card))
     print(json.dumps(provenance, indent=2))

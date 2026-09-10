@@ -122,6 +122,45 @@ def test_build_limb_pose_prompt_keeps_the_hooded_mask_head_marker() -> None:
     assert "hooded mask" in prompt
 
 
+def test_build_limb_pose_prompt_requests_five_independent_full_body_poses() -> None:
+    """Attempt 1's own failure mode (see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md):
+    two near-duplicate standing figures plus small floating accessory insets
+    -- not five distinct full-body poses in a row. Strengthen the framing so
+    the model can't mistake this for a garment-callout sheet."""
+    prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"]).lower()
+    assert "single horizontal row" in prompt
+    assert "full-body" in prompt or "full body" in prompt
+
+
+# ── The T-0351 negative prompt: attempt-1 failure modes, on top of #365's ──
+
+
+def test_build_limb_pose_negative_prompt_includes_t0336_fixes() -> None:
+    """#365's own fixes (blank heads, armour drift, cropped heads, robotic
+    legs) must still apply -- this card only adds to that baseline."""
+    negative = gen.build_limb_pose_negative_prompt().lower()
+    assert "blank head" in negative
+    assert "armor plating" in negative
+    assert "robotic legs" in negative
+
+
+def test_build_limb_pose_negative_prompt_forbids_duplicate_poses_and_insets() -> None:
+    """Attempt 1's actual defect: two near-identical standing figures plus
+    small floating accessory/equipment inset panels instead of five
+    distinct full-body poses."""
+    negative = gen.build_limb_pose_negative_prompt().lower()
+    assert "duplicate pose" in negative
+    assert "inset" in negative
+
+
+def test_build_limb_pose_negative_prompt_forbids_long_coat() -> None:
+    """Attempt 1's coat fell well past mid-hip despite the positive
+    prompt's mid-hip wording -- reinforce from the negative side too."""
+    negative = gen.build_limb_pose_negative_prompt().lower()
+    assert "long coat" in negative or "floor-length coat" in negative
+    assert "coat" in negative and ("knee" in negative or "calf" in negative)
+
+
 def test_build_limb_pose_prompt_requests_no_text_no_ui_no_watermark() -> None:
     prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"]).lower()
     assert "no text" in prompt
