@@ -1,6 +1,103 @@
 # T-0351 evidence -- Tier-1 master sheet REGEN in limb-separating poses
 
-## Status (2026-09-10, run 5): attempts 15-16 -- first real six-panel executions since the
+## Status (2026-09-10, run 6): RE-SCOPE (PER-PANEL REFERENCE CONDITIONING), attempts 19-21 --
+## 3-attempt hard cap spent, STOP AND REPORT per the card's own pre-registered escape hatch
+
+The card's RE-SCOPE section (2026-09-10) replaced the single shared front-view concept-sheet crop
+every panel had conditioned on through attempt 18 with a per-panel reference: front_tpose/back_tpose/
+legs keep concept-sheet crops (back_tpose gets its own, a genuine back view measured off the sheet),
+and side_left_forward/side_right_forward/side_neutral condition on the committed T-0317 green
+side-profile reference instead. The section authorised exactly three internal attempts, then a
+mandatory stop-and-report -- not further grinding. All three ran to completion against live ComfyUI
+(172.18.192.1:8188), no denials, no timeouts. **Three attempts spent, still not a clean six-panel
+sheet. Per the card's own pre-registered escape hatch this is a valid PASS for the card, not a
+failure -- reported here with full evidence.**
+
+### What worked, and held across all three attempts
+
+- **side_neutral converged on attempt 19 and stayed clean on 20 and 21** -- a genuine true
+  90-degree side profile, single figure, hooded mask, canonical long coat, every time. This is the
+  first panel on this card to be reliably reproducible across multiple attempts, not a one-off.
+  The T-0317 reference's own pose (neutral, arms straight down) matches this panel's target pose
+  exactly, which is almost certainly why it is the one T-0317-conditioned panel that never needed
+  troubleshooting.
+- **front_tpose and back_tpose both converged cleanly on attempt 19** -- genuine T-poses, single
+  figure, back_tpose showing an actual back-of-hood view (no front-facing mask), canonical long
+  coat. (Both regressed on attempt 21, see below -- but the recipe and the new back-view concept
+  crop are proven to work; attempt 19's panels are the ones to build forward from.)
+
+### What did not converge, across all three attempts
+
+**side_left_forward and side_right_forward have now never once been compliant across 21 total
+attempts on this card**, under three fundamentally different architectures (prompt-only,
+single-shared-crop ControlNet-conditioned, and now per-panel-reference-conditioned):
+
+| Attempt | side_left_forward | side_right_forward |
+|---|---|---|
+| 19 | Malformed: split brown/green costume, dynamic kick pose, holding a strap-like object, teal background | Malformed: unrecognisable dark/melted shape, no clear silhouette |
+| 20 (ipadapter end_at narrowed to 0.5) | Worse: coat drifted white/grey, invented flowing green "hair"/tendrils, still reaching/grasping pose | Worse: unrecognisable green/tan blob, holding a dark object |
+| 21 (T-0317 reference square-padded) | Improved composition (single coherent green-coated figure, no more blob) but a visible face (violates the hood/mask-only requirement) and an odd draped cloth in the extended hand | Still broken: badly mis-framed as an extreme close-up crop, no assessable pose at all |
+
+**legs regressed across the three attempts, not improved**: attempt 19 exposed the thighs (the
+panel's entire purpose) with a coat flap still draped over them; attempt 20 held that same
+partial result (unaffected by that attempt's change); attempt 21 mis-framed the panel entirely,
+rendering the torso/upper body instead of the lower body.
+
+**front_tpose/back_tpose regressed from attempt 19 to attempt 21**: both held a clean T-pose
+throughout, but the coat length shortened to mid-thigh by attempt 21 (canonical is "reaching past
+the knee") -- a defect neither attempt 19 nor the card's own acceptance criteria show on the
+attempt-19 baseline. No code change between attempts 19 and 21 touched coat-length wording; this
+reads as seed/sampling variance on an unconstrained clause, not a regression this card's own
+changes caused.
+
+### Two levers tried against the side-panel defect, in order, with results
+
+1. **Narrow `IPAdapterAdvanced`'s own `end_at`** (attempt 20, `ipadapter_end_at=0.5` on the two
+   forward panels only, `weight` untouched at 0.35) on the theory that the T-0317 reference's own
+   neutral (arms-down) pose was fighting ControlNet's forward-extended-limb skeleton for the whole
+   sampling range. **Disproved**: reducing IP-Adapter's influence in the later steps made both
+   panels worse, not better -- less identity/structure guidance let the base model and style LoRA
+   invent more (the white/grey coat, the green tendrils, the blob), not less. Reverted for attempt
+   21.
+2. **Square-pad the T-0317 reference before upload** (attempt 21, `pad_image_to_square`/
+   `prepare_reference_for_upload`, 891x891 neutral-grey-padded from the native 175x891 file) on the
+   theory that the reference's extreme aspect ratio was losing the head and feet to IP-Adapter's own
+   CLIP-vision centre-crop preprocessing, leaving the model to invent whatever fell outside a
+   roughly-224px-tall middle band. **Partial improvement**: side_left_forward went from an
+   unrecognisable split-costume blob to a single coherent green-coated figure -- real progress -- but
+   introduced two new defects (a visible face, a draped cloth prop) neither attempt showed before.
+   side_right_forward did not improve at all -- a framing failure (extreme close-up crop) unrelated
+   to either lever tried.
+
+### What T-0351 still lacks: a genuine reference for a FORWARD-EXTENDED green-costume side pose
+
+Both T-0317 (this card's own side reference) and the concept sheet's own side/profile figures (the
+tan/tactical tier, per the earlier 18-attempt HELD finding) show **static, non-forward-extended**
+poses. **No committed reference anywhere in this repo shows the green institutional costume with a
+limb thrust forward at a walking/striding angle.** ControlNet supplies the skeleton geometry, but
+IP-Adapter's identity/structure guidance for that specific silhouette (an extended sleeve cuff, an
+extended trouser leg, a raised boot) has nothing real to draw from on these two panels specifically
+-- which is the most likely explanation for why they are the only two panels across 21 attempts, three
+architectures, and two additional levers this run tried, that have never once converged.
+
+### Recommended next step, for whoever picks this card up
+
+Generate (or source) a dedicated green-costume forward-stride reference -- the same kind of
+targeted-reference move that fixed side_neutral (T-0317) and #365's headless/armour-drift defect
+(`concept_crop_box`) before it -- rather than trying a third lever against the existing T-0317
+reference. The legs panel's mis-framing (attempt 21) and the coat-length drift on front_tpose/
+back_tpose look like ordinary seed variance rather than a structural defect, and do not need a new
+architecture -- re-running attempt 19's exact recipe with a new seed is the indicated next step for
+those two once the side-panel reference gap above is addressed.
+
+### Evidence committed alongside this README
+
+- `attempt_19_first_per_panel_reference_run_front_back_neutral_clean_sides_malformed.png` -- full six-panel sheet, RE-SCOPE attempt 1/3
+- `attempt_20_ipadapter_end_at_narrowed_forward_sides_regressed_reverted.png` -- full six-panel sheet, RE-SCOPE attempt 2/3
+- `attempt_21_square_padded_t0317_reference_side_neutral_holds_legs_framing_broken.png` -- full six-panel sheet, RE-SCOPE attempt 3/3 (final)
+- `t0317_reference_square_padded_for_ipadapter_upload.png` -- the actual 891x891 padded file IP-Adapter was given on attempt 21, for direct inspection
+
+## Status (superseded, 2026-09-10, run 5): attempts 15-16 -- first real six-panel executions since the
 ## dedicated-legs-panel amendment; real progress, still not compliant, nothing promoted
 
 Three prior implementer/reviewer cycles ended with code committed, tests green, and **zero new
