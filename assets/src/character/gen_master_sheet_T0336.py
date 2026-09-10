@@ -385,6 +385,23 @@ class PoseSpec:
     # only panel that needs the mask's own visible-eye-lenses/goggles
     # imagery actively suppressed, since every other panel wants it shown.
     negative_extra: str = ""
+    # Attempt 20 (RE-SCOPE, docs/assets/evidence/T-0351/README.md): the
+    # T-0317 side-profile reference (reference_image_for) shows a NEUTRAL
+    # pose -- arms straight down. Attempt 19 found that conditioning
+    # matches cleanly for side_neutral (whose own target pose is the same
+    # neutral stance) but fights side_left_forward/side_right_forward's
+    # forward-extended-limb ControlNet skeleton for the whole sampling
+    # range, producing a malformed split-costume/ragged-edge figure on
+    # both -- IP-Adapter's own structural pull (not its identity/style
+    # signal) is what conflicts. Narrowing IPAdapterAdvanced's own
+    # `end_at` (NOT its `weight`, which stays 0.35 per this card's own
+    # "do not change IP-Adapter weight" rule) lets IP-Adapter still
+    # establish identity/costume in the early denoising steps while
+    # leaving ControlNet's already-correct skeleton to resolve limb
+    # geometry alone in the later ones, instead of fighting it for all 30
+    # steps. 1.0 (every other panel, T-0336's own unchanged default) means
+    # "apply across the whole sampling range."
+    ipadapter_end_at: float = 1.0
 
 
 # T-0351 lever 2 (run-1 reviewer verdict): the five acceptance-criteria
@@ -429,6 +446,7 @@ POSE_SPECS: tuple[PoseSpec, ...] = (
             "and only the left leg extended forward at roughly a right angle clear of the "
             "torso, the right arm and right leg held back close to the body"
         ),
+        ipadapter_end_at=0.5,
     ),
     PoseSpec(
         key="side_right_forward",
@@ -438,6 +456,7 @@ POSE_SPECS: tuple[PoseSpec, ...] = (
             "and only the right leg extended forward at roughly a right angle clear of the "
             "torso, the left arm and left leg held back close to the body"
         ),
+        ipadapter_end_at=0.5,
     ),
     # Attempt 17 (docs/assets/evidence/T-0351/): side_neutral was the first
     # panel this card ever produced a genuine true-90-degree profile on
@@ -875,11 +894,20 @@ def build_graph(
     pose_skeleton_filename: str | None = None,
     controlnet_strength: float = 0.0,
     controlnet_end: float = 0.0,
+    ipadapter_end_at: float = 1.0,
 ) -> dict:
     """txt2img + style LoRA at 1024, IP-Adapter on the approved concept
     sheet. The identity LoRA is optional and, when present, chains after
     the style LoRA -- an enemy entity with no trained identity LoRA yet
     (`identity_lora_name=None`) still gets a graph, just without that node.
+
+    `ipadapter_end_at` (T-0351 attempt 20, `PoseSpec.ipadapter_end_at`'s own
+    docstring) narrows IPAdapterAdvanced's own `end_at` input -- the point
+    in the sampling range past which IP-Adapter conditioning stops
+    applying -- below the default 1.0 (apply across the whole range, every
+    call site before attempt 20). This is distinct from `ipadapter_weight`,
+    which is never touched by this parameter and stays exactly 0.35 per
+    this card's own recipe.
 
     `concept_crop_box`, when given as `(x, y, width, height)`, inserts an
     `ImageCrop` node between the concept-sheet `LoadImage` and IP-Adapter so
@@ -1001,7 +1029,7 @@ def build_graph(
             "weight_type": "linear",
             "combine_embeds": "concat",
             "start_at": 0.0,
-            "end_at": 1.0,
+            "end_at": ipadapter_end_at,
             "embeds_scaling": "V only",
         },
     }
@@ -1541,6 +1569,7 @@ def run_five_pose_attempt(
             pose_skeleton_filename=skeleton_filename,
             controlnet_strength=CONTROLNET_STRENGTH,
             controlnet_end=CONTROLNET_END_PERCENT,
+            ipadapter_end_at=pose.ipadapter_end_at,
         )
         t0 = time.monotonic()
         prompt_id = submit_prompt(graph)
@@ -1565,6 +1594,7 @@ def run_five_pose_attempt(
                 "pose_skeleton": str(skeleton_path.relative_to(REPO_ROOT)),
                 "reference_image": str(reference_path.relative_to(REPO_ROOT)),
                 "reference_crop_box": reference_crop_box,
+                "ipadapter_end_at": pose.ipadapter_end_at,
             }
         )
 
