@@ -19,6 +19,9 @@ const VALID_TASK = {
   approved_at: null,
   attempts: 0,
   max_attempts: null,
+  round: 0,
+  rescoped_by: null,
+  rescoped_at: null,
   comments: [],
   attachments: [],
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
@@ -280,6 +283,77 @@ describe("max_attempts (T-0343: per-card override of the auto-retry budget)", ()
 
   it("throws when max_attempts exceeds the upper bound", () => {
     expect(() => parseTask(frontmatter({ max_attempts: 21 }))).toThrow(/max_attempts/i);
+  });
+});
+
+describe("round (T-0344: experiment-round cap, distinct from the attempts/max_attempts intra-run retry loop)", () => {
+  it("round-trips a task with round set", () => {
+    const task = { ...VALID_TASK, round: 2 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults round to 0 when absent from the frontmatter -- never retroactive against pre-existing cards", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.round).toBe(0);
+  });
+
+  it("throws when round is not an integer", () => {
+    expect(() => parseTask(frontmatter({ round: "two" }))).toThrow(/round/i);
+  });
+
+  it("throws when round is negative", () => {
+    expect(() => parseTask(frontmatter({ round: -1 }))).toThrow(/round/i);
+  });
+
+  it("throws when round is a non-integer number", () => {
+    expect(() => parseTask(frontmatter({ round: 1.5 }))).toThrow(/round/i);
+  });
+});
+
+describe("rescoped_by / rescoped_at (T-0344: the human re-scope acknowledgment record)", () => {
+  it("round-trips a task with a rescope record set", () => {
+    const task = { ...VALID_TASK, rescoped_by: "@DennieSeth", rescoped_at: "2026-09-10T12:00:00.000Z" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults both fields to null when absent from the frontmatter", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.rescoped_by).toBeNull();
+    expect(parsed.rescoped_at).toBeNull();
+  });
+
+  it("throws when rescoped_by is not a string or null", () => {
+    expect(() => parseTask(frontmatter({ rescoped_by: 42 }))).toThrow(/rescoped_by/i);
+  });
+
+  it("throws when rescoped_at is not a string or null", () => {
+    expect(() => parseTask(frontmatter({ rescoped_at: 42 }))).toThrow(/rescoped_at/i);
   });
 });
 

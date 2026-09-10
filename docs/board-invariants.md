@@ -373,6 +373,38 @@ and `docs/card-authoring-agent-satisfiability.md` are the durable record in the 
 | UAC-5 | An AC item requiring **all** of two-or-more named external reference sources to succeed is flagged; "at least one succeeds" phrasing across the same sources is not. | Generalizes T-0273 — Wikimedia/Openverse/Met rate-limit and time out independently (`referenceSourcePolicy.js`'s `required: true/false` split, T-0283/T-0284). | ✅ Covered. |
 | UAC-6 | None of UAC-1..5 ever calls `_blocked` — the implementer still runs regardless of how many warnings fire. | A false positive over freeform English must never stop a legitimate card; that would trade one wasted-cycle failure mode for another. | ✅ Covered — `runOrchestrator.impossibleAcceptancePreflight.test.js` asserts the implementer is spawned and PASS is reached alongside the warning comment. |
 
+## 12. Experiment-round cap (T-0344)
+
+A **round** is one full re-launch of a card after a settled verdict — a fresh `runCard()`
+invocation, started by a human clicking Run (or the auto-launch poller), that ends either in
+`review` (a PASS, a promoted deliverable) or `blocked` (exhausted retries or a
+NEEDS_HUMAN_DECISION verdict, no deliverable). This is a **different unit than an attempt**: the
+bounded implementer/reviewer retry loop *inside* one round (`attempts`/`max_attempts`, T-0343,
+§RUN-4's own gate is unrelated to this). A round can burn many attempts before it settles; what
+this section caps is how many times a card may settle with nothing to show for it before a human
+has to look.
+
+Motivated by T-0272/T-0317 (twelve rounds, 84 attempts against a mechanism wrong from round one)
+and T-0259 (thirteen sessions) — nothing in the loop forced a human to look up until the cost was
+already spent.
+
+The mechanism (`src/lib/roundCap.js`) mirrors §10's approval gate almost exactly: a `round`
+counter (frontmatter field, defaults to 0 — never retroactive against a card's existing history)
+increments by exactly 1 each time `runOrchestrator.js` settles a run `blocked` with no
+deliverable, and resets to 0 on a PASS. Once `round` reaches `ROUND_CAP` (2), `cardLaunch.js`'s
+Run path and `httpApi.js`'s manual PATCH-to-`in-progress` path both refuse the next launch with a
+409 until a human comments a rescope marker ("RESCOPED" / "/rescope") on the card — the same
+comment-marker idiom §10 uses for "APPROVED" — which resets `round` to 0 and stamps
+`rescoped_by`/`rescoped_at`.
+
+| ID | Invariant | Why it matters | Status |
+|----|-----------|-----------------|--------|
+| RND-1 | `round` increments by exactly 1 when a run settles `blocked` without a promoted deliverable (exhausted-attempts FAIL or NEEDS_HUMAN_DECISION), and does NOT increment for a retrying FAIL mid-loop. | The whole point is counting *rounds*, not attempts — an intra-run retry loop must never inflate the cap. | ✅ Covered — `runOrchestrator.roundCap.test.js`. |
+| RND-2 | `round` resets to 0 on a PASS. | A promoted deliverable is exactly what the cap exists to force a look-up *before*; reaching one clears the count, the same as `attempts`. | ✅ Covered — `runOrchestrator.roundCap.test.js`. |
+| RND-3 | A card at or above `ROUND_CAP` cannot start another round via the Run button, the auto-launch poller, or a manual PATCH to `in-progress` — all three route through `assertRoundCapClear`. | Mirrors RUN-4: one guard, not two agreeing implementations that can drift. | ✅ Covered — `cardLaunch.test.js`, `httpApi.roundCap.test.js`. |
+| RND-4 | The refusal names the exact human action required (comment "RESCOPED" or "/rescope"), and that comment resets the counter and is recorded (`rescoped_by`/`rescoped_at`) — human actor only, never an agent. | "Cannot start a third round" is useless without a discoverable way to unblock it. | ✅ Covered — `roundCap.test.js`, `httpApi.roundCap.test.js`. |
+| RND-5 | The cap is never retroactive: `round` defaults to 0 for every pre-existing card (no migration backfill), so a card already past two rounds when this shipped is unaffected until its *next* no-deliverable settle. | Explicit "do not" in T-0344's own card — backfilling would mass-park the board. | ✅ Covered — `dbMigrate.test.js` (plain `DEFAULT 0` column add), `taskParser.test.js` (defaults to 0 when absent from frontmatter). |
+
 ---
 
 ## Summary
@@ -390,6 +422,7 @@ and `docs/card-authoring-agent-satisfiability.md` are the durable record in the 
 | Character-generation quality reference (§9, DL-25) | CHR-2 | CHR-1 | — | CHR-1 (see §9) |
 | Human direction approval | AP-9 | — | AP-1..AP-8 (new mechanism) | — |
 | Unsatisfiable acceptance criteria (§11) | — | — | UAC-1..UAC-6 (new mechanism) | — |
+| Experiment-round cap (§12) | — | — | RND-1..RND-5 (new mechanism) | — |
 
 **Deferred, not silently dropped:** LC-7 (no guard against a manual card edit
 racing an active orchestrator run) is a real, confirmed gap found while

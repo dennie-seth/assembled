@@ -27,7 +27,7 @@ export const ASSIGNABLE_AGENT_NAMES = ["infra", "server", "client", "assets", "a
 const AGENTS = [...ASSIGNABLE_AGENT_NAMES, null];
 const OPTIONAL_FIELDS = ["branch", "commit", "pr"];
 const DELIVERABLE_TYPES = ["code", "artifact"];
-const NUMERIC_FIELDS = ["attempts"];
+const NUMERIC_FIELDS = ["attempts", "round"];
 // Human direction-approval gate (src/lib/approvalGate.js). `requires_approval` is the explicit,
 // author-set signal that this card's deliverable is a *direction* a human must sign off on --
 // deliberately a field rather than a body-prose marker, so nothing has to guess which cards are
@@ -43,6 +43,11 @@ const APPROVAL_RECORD_FIELDS = ["approved_by", "approved_at"];
 const MAX_ATTEMPTS_FIELD = "max_attempts";
 const MAX_ATTEMPTS_MIN = 1;
 const MAX_ATTEMPTS_MAX = 20;
+// T-0344: the experiment-round cap (src/lib/roundCap.js). `round` counts how many rounds this
+// card has settled without a promoted deliverable since it was last reset (by a PASS or a human
+// re-scope acknowledgment); `rescoped_by`/`rescoped_at` record that acknowledgment, mirroring
+// `approved_by`/`approved_at`'s "written only by the server's own write paths" shape.
+const RESCOPE_RECORD_FIELDS = ["rescoped_by", "rescoped_at"];
 const ARRAY_FIELDS = ["comments", "attachments"];
 const COMMENT_FIELDS = ["author", "text", "timestamp"];
 const ATTACHMENT_STRING_FIELDS = ["filename", "mimetype", "uploaded_by", "uploaded_at"];
@@ -160,6 +165,11 @@ export function validateTask(data) {
       throw new Error(`Invalid ${field} "${data[field]}": expected a string or null`);
     }
   }
+  for (const field of RESCOPE_RECORD_FIELDS) {
+    if (field in data && data[field] !== null && typeof data[field] !== "string") {
+      throw new Error(`Invalid ${field} "${data[field]}": expected a string or null`);
+    }
+  }
   if ("comments" in data) {
     validateComments(data.comments);
   }
@@ -217,6 +227,9 @@ export function parseTask(raw) {
     approved_at: data.approved_at ?? null,
     attempts: data.attempts ?? 0,
     max_attempts: data.max_attempts ?? null,
+    round: data.round ?? 0,
+    rescoped_by: data.rescoped_by ?? null,
+    rescoped_at: data.rescoped_at ?? null,
     comments: Array.isArray(data.comments) ? data.comments : [],
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
     body
@@ -237,6 +250,7 @@ export function serializeTask(task) {
     ...APPROVAL_RECORD_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
     ...NUMERIC_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? 0)}`),
     `${MAX_ATTEMPTS_FIELD}: ${JSON.stringify(task[MAX_ATTEMPTS_FIELD] ?? null)}`,
+    ...RESCOPE_RECORD_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
     ...ARRAY_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? [])}`)
   ];
   return `---\n${lines.join("\n")}\n---\n${task.body}`;

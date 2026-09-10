@@ -1,4 +1,5 @@
 import { assertCanMoveToInProgress, UnmetDependencyError, DependencyCycleError } from "../lib/dependencyGuard.js";
+import { assertRoundCapClear, RoundCapExceededError } from "../lib/roundCap.js";
 import { appendNote } from "./runOrchestrator.js";
 
 /** The statuses the board's Run/Re-run button accepts. */
@@ -80,8 +81,11 @@ export async function launchCardRun({ orchestrator, id, logger = console }) {
 
   try {
     await assertCanMoveToInProgress(orchestrator.store, id);
+    // T-0344: a card that has settled ROUND_CAP rounds without a promoted deliverable cannot
+    // start another round until a human re-scopes it -- see roundCap.js.
+    await assertRoundCapClear(orchestrator.store, id);
   } catch (err) {
-    if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError) {
+    if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError || err instanceof RoundCapExceededError) {
       throw new CardLaunchError(err.message, 409);
     }
     throw err;
