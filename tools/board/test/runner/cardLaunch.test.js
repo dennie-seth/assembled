@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES } from "../../src/runner/cardLaunch.js";
+import { ROUND_CAP } from "../../src/lib/roundCap.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -104,6 +105,25 @@ describe("launchCardRun — guards", () => {
     expect(orchestrator.runCard).not.toHaveBeenCalled();
   });
 
+  it("throws 409 for a card that has settled two rounds without a promoted deliverable (T-0344)", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ status: "blocked", round: ROUND_CAP })]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("409's round-cap message names the required human action", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ status: "blocked", round: ROUND_CAP })]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({
+      message: expect.stringMatching(/RESCOPED/)
+    });
+  });
+
+  it("still refuses above the cap, not just exactly at it", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ status: "blocked", round: ROUND_CAP + 3 })]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
   it("rethrows a non-dependency store failure untouched rather than masking it as a 409", async () => {
     const orchestrator = makeOrchestrator([makeTask()]);
     orchestrator.store.get.mockImplementation(async (id) => {
@@ -120,6 +140,20 @@ describe("launchCardRun — launch", () => {
     const task = await launchCardRun({ orchestrator, id: "T-0001" });
     expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
     expect(task.id).toBe("T-0001");
+  });
+
+  it.each([0, 1])("launches a card below the round cap (round: %i)", async (round) => {
+    const orchestrator = makeOrchestrator([makeTask({ status: "blocked", round })]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("launches a card that was at the cap but has since been rescoped (round reset to 0)", async () => {
+    const orchestrator = makeOrchestrator([
+      makeTask({ status: "blocked", round: 0, rescoped_by: "@DennieSeth", rescoped_at: "2026-09-10T12:00:00.000Z" })
+    ]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
   });
 
   it("launches a card whose dependencies are all done or retired", async () => {
