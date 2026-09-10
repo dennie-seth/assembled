@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Descend the committed T-0317 side-profile reference to a 48x48 keyframe (T-0339).
+"""SUPERSEDED (2026-09-11) -- see gen_profile_keyframe_side_neutral_T0339.py.
+
+This script's own premise -- that `player_profile_costume_reference_T0317.png`
+is a genuine square 1024 render needing only descent -- was wrong: that file
+is a 175x891 CROP, not the square render its own sidecar claimed, and the
+descended result was illegible (a pale olive column, no recoverable facing
+information). Kept for the historical record (ASSET_PROVENANCE.md's own
+"Superseded" note references it); do not run this script or treat its output
+as current. `gen_profile_keyframe_side_neutral_T0339.py` is this card's
+current generator.
+
+Descend the committed T-0317 side-profile reference to a 48x48 keyframe (T-0339).
 
 T-0272's own dual-IPAdapter + ControlNet stack (`gen_hybrid_profile_T0272.py`)
 spent 84 attempts across 12 rounds and never produced a promotable frame at
