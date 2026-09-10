@@ -28,6 +28,14 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
+/**
+ * T-0352: checkDeliverable.js's default `listCommittedFiles` runs real `git ls-files` against
+ * this checkout's own repo root, so an attachment filename must actually correspond to a
+ * git-committed file for the deliverable check to pass -- `package.json` (real, committed,
+ * present at `tools/board/package.json`) stands in for a genuine deliverable here; these tests
+ * exercise DB-mode attachment/env resolution, not deliverable-correctness semantics, which
+ * `deliverableCheck.test.js` covers directly with an injected `listCommittedFiles`.
+ */
 async function seedArtifactTaskWithAttachment(id) {
   const store = new DbTaskStore(dbPath);
   await store.create(
@@ -35,7 +43,7 @@ async function seedArtifactTaskWithAttachment(id) {
       id,
       deliverable_type: "artifact",
       attachments: [
-        { filename: "sheet.png", size: 4, mimetype: "image/png", uploaded_by: "Dennie", uploaded_at: "2026-08-22T00:00:00.000Z" }
+        { filename: "package.json", size: 4, mimetype: "image/png", uploaded_by: "Dennie", uploaded_at: "2026-08-22T00:00:00.000Z" }
       ]
     })
   );
@@ -43,7 +51,7 @@ async function seedArtifactTaskWithAttachment(id) {
 
   const attachDir = path.join(tmpDir, "attachments", id);
   await fs.mkdir(attachDir, { recursive: true });
-  await fs.writeFile(path.join(attachDir, "sheet.png"), "fake");
+  await fs.writeFile(path.join(attachDir, "package.json"), "fake");
 }
 
 /**

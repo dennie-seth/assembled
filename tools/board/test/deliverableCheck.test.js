@@ -190,7 +190,12 @@ describe("checkDeliverable", () => {
     it("is not consulted when the plain artifact/attachment check already passes (beforeBody irrelevant)", async () => {
       const report = await checkDeliverable(
         task({ deliverable_type: "artifact", attachments: [{ filename: "a.png" }] }),
-        { beforeBody: "## Context\nno pre-registration\n", repoRoot: "/repo", fileExists: async () => true }
+        {
+          beforeBody: "## Context\nno pre-registration\n",
+          repoRoot: "/repo",
+          fileExists: async () => true,
+          listCommittedFiles: async () => ["a.png"]
+        }
       );
       expect(report).toEqual({ ok: true, applicable: true, errors: [] });
     });

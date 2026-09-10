@@ -1,6 +1,10 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { checkFindingWithEvidence, readSection, parseFindingEvidencePaths } from "./preRegisteredFinding.js";
+
+const execFileAsync = promisify(execFile);
 
 async function defaultFileExists(filePath) {
   try {
@@ -8,6 +12,22 @@ async function defaultFileExists(filePath) {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * T-0352 fix (a): every file `git` has actually committed under `repoRoot`, on the current
+ * branch. Failing/erroring (not a git repo, `git` unavailable) returns `[]` rather than
+ * throwing -- fail closed, since an empty committed-files list makes the non-opt-in fallback
+ * check below FAIL rather than silently skip, which is the safer default for a gate whose whole
+ * point is refusing to take "some attachment exists somewhere" as proof of a deliverable.
+ */
+async function defaultListCommittedFiles(repoRoot) {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", repoRoot, "ls-files"]);
+    return stdout.split("\n").filter(Boolean);
+  } catch {
+    return [];
   }
 }
 
@@ -20,18 +40,36 @@ async function defaultFileExists(filePath) {
  * the T-0351 regression -- the gate exited 0 on six evidence PNGs with no master sheet ever
  * committed, and it took a human reading the filesystem by hand to catch it twice in one day.
  *
- * `"## Deliverable"` reuses the exact citation convention T-0342's `"## Finding"` section
- * already established (`parseFindingEvidencePaths`: a backtick-quoted, extensioned path) -- a
- * card names the committed path(s) its deliverable is expected to land at, and this check
- * verifies each one is a real file under `repoRoot`, independent of how many attachments are
- * recorded. Deliberately opt-in: a card with no `"## Deliverable"` section is unaffected (see
- * `checkDeliverable`'s call site below) -- this is a necessary-but-not-sufficient mechanical
- * backstop, not a claim that every artifact card has adopted the convention yet.
+ * Two routes now distinguish the deliverable from evidence, in order of precision:
+ *
+ * 1. `"## Deliverable"` (opt-in, precise): reuses the exact citation convention T-0342's
+ *    `"## Finding"` section already established (`parseFindingEvidencePaths`: a backtick-quoted,
+ *    extensioned path) -- a card names the committed path(s) its deliverable is expected to land
+ *    at, and this check verifies each one is a real file under `repoRoot`, independent of how
+ *    many attachments are recorded.
+ * 2. The non-opt-in fallback below (`hasCommittedAttachment`), used whenever a card has no
+ *    parseable `"## Deliverable"` section: at least one recorded attachment's filename must also
+ *    correspond to a file `git` actually has committed somewhere under `repoRoot`. This is what
+ *    closes the hole for every card that never adopts the `"## Deliverable"` convention -- a
+ *    first attempt at this fix made the whole check opt-in, so the exact T-0351 card (which has
+ *    no `"## Deliverable"` section) still passed on attachment-count alone; see the T-0352
+ *    reviewer's FAIL for the empirical repro (`checkDeliverable.js T-0351 --require-artifact`
+ *    still exiting 0). Matching by filename rather than requiring a declared path is deliberately
+ *    coarser than route 1 -- it only proves *something* attached was actually committed, not
+ *    that a specific claimed path exists -- but that coarseness is exactly what makes it apply
+ *    with no card-side action required, which a "necessary but not sufficient" mechanical
+ *    backstop needs in order to actually backstop anything.
  */
 export const DELIVERABLE_HEADING = "## Deliverable";
 
 function parseDeclaredDeliverablePaths(body) {
   return parseFindingEvidencePaths(readSection(body, DELIVERABLE_HEADING));
+}
+
+/** Whether any recorded attachment's filename matches a file `git` has actually committed under `repoRoot`. */
+async function hasCommittedAttachment(attachments, repoRoot, listCommittedFiles) {
+  const committedBasenames = new Set((await listCommittedFiles(repoRoot)).map((f) => path.basename(f)));
+  return attachments.some((attachment) => committedBasenames.has(attachment.filename));
 }
 
 /**
@@ -74,7 +112,14 @@ function parseDeclaredDeliverablePaths(body) {
  */
 export async function checkDeliverable(
   task,
-  { attachmentsDir, requireArtifact = false, beforeBody, repoRoot, fileExists = defaultFileExists } = {}
+  {
+    attachmentsDir,
+    requireArtifact = false,
+    beforeBody,
+    repoRoot,
+    fileExists = defaultFileExists,
+    listCommittedFiles = defaultListCommittedFiles
+  } = {}
 ) {
   if (!task || (task.deliverable_type !== "artifact" && !requireArtifact)) {
     return { ok: true, applicable: false, errors: [] };
@@ -102,13 +147,24 @@ export async function checkDeliverable(
 
   if (repoRoot) {
     const declaredPaths = parseDeclaredDeliverablePaths(task.body ?? "");
-    for (const declaredPath of declaredPaths) {
-      if (!(await fileExists(path.join(repoRoot, declaredPath)))) {
-        errors.push(
-          `Card ${task.id} declares "${declaredPath}" under "${DELIVERABLE_HEADING}" but no committed file exists at that path -- attachments (including evidence/attempt uploads) are not a substitute for the deliverable actually existing at its stated, committed location.`
-        );
-        attachmentsOk = false;
+    if (declaredPaths.length > 0) {
+      for (const declaredPath of declaredPaths) {
+        if (!(await fileExists(path.join(repoRoot, declaredPath)))) {
+          errors.push(
+            `Card ${task.id} declares "${declaredPath}" under "${DELIVERABLE_HEADING}" but no committed file exists at that path -- attachments (including evidence/attempt uploads) are not a substitute for the deliverable actually existing at its stated, committed location.`
+          );
+          attachmentsOk = false;
+        }
       }
+    } else if (attachments.length > 0 && !(await hasCommittedAttachment(attachments, repoRoot, listCommittedFiles))) {
+      errors.push(
+        `Card ${task.id} has ${attachments.length} attachment(s) recorded, but none of their filenames correspond to a file ` +
+          `actually committed on the branch -- an attachment alone (including an evidence/failed-attempt upload, which the ` +
+          `board attachments API is also used for -- see T-0314's evidence-promotion mechanism) is not proof a deliverable ` +
+          `was produced. Either declare the deliverable's expected path under a "${DELIVERABLE_HEADING}" section, or commit ` +
+          `the actual deliverable file and record it as an attachment.`
+      );
+      attachmentsOk = false;
     }
   }
 
