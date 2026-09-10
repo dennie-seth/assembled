@@ -490,16 +490,29 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     mid-hip on every panel even at 1.5 emphasis, worse than attempts 3/5's
     plain-1.3-emphasis prompt-only result. Attempt 12 raises the
     coat-length weight again, 1.5 -> 1.8 -- isolation stays at 1.3,
-    unchanged, since it is not implicated in this defect."""
+    unchanged, since it is not implicated in this defect.
+
+    Attempt 12 (seed 382682312, 393.5 total GPU-seconds) was a mixed
+    result: front_tpose's coat did come back genuinely shorter, but 4 of 5
+    panels lost the hooded-mask identity entirely (a visible human face and
+    hair rendered instead of the hood/eye-lens mask), and front_tpose also
+    gained several patches of legible garment-label text. The coat clause
+    was never competing with anything that protected identity -- the
+    hood/mask wording had no emphasis of its own, unlike every other clause
+    in this prompt. Attempt 13 pulls the coat weight back partway (1.8 ->
+    1.6, still above attempt 11's insufficient 1.5) and, for the first
+    time, gives the hood/mask clause its own emphasis (1.3) plus explicit
+    face/hair-suppression wording."""
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
         "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
         f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
         "institutional green coat, (the coat cut short, ending precisely at mid-hip, hem "
-        "well above the knee, bare thigh clearly visible below the coat hem:1.8), wearing a "
-        "hooded mask with two dark round visible eye lenses, not a blank void, boots, never "
-        "high heels, flat uniform neutral grey background, flat even lighting, no cast "
-        "shadow, no perspective, clean readable outline"
+        "well above the knee, bare thigh clearly visible below the coat hem:1.6), wearing a "
+        "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
+        "up and forward, face completely covered by the mask, no visible hair, no visible "
+        "face:1.3), boots, never high heels, flat uniform neutral grey background, flat even "
+        "lighting, no cast shadow, no perspective, clean readable outline"
     )
 
 
@@ -539,7 +552,19 @@ def build_single_pose_negative_prompt() -> str:
     1.3 weight -- a faded, translucent second or third figure overlapping
     the main one, distinct from attempt 8's opaque multi-figure regression
     and not named by any existing term. Attempt 12 raises the weight to 1.6
-    and adds terms for this specific defect."""
+    and adds terms for this specific defect.
+
+    Attempt 12 fixed ghosting on 3 of 5 panels, but side_right_forward
+    still regressed to three opaque figures, and the higher weight is
+    implicated (with the coat-weight increase) in that attempt's new
+    identity-drift (visible face/hair in 4 of 5 panels) and stray legible
+    garment-label text. Attempt 13 pulls the multi-figure weight back
+    partway, 1.6 -> 1.4, and adds terms for both new defects: explicit
+    face/hair visibility bans (protecting the hood/mask, which also gets
+    its own positive-prompt emphasis this attempt -- see
+    `build_single_pose_positive_prompt`) and explicit readable-text bans
+    (existing "label, caption, illegible text, gibberish text" wording
+    evidently did not cover actually-legible rendered words)."""
     return (
         build_negative_prompt()
         + ", long coat, trench coat, ankle-length coat, floor-length coat, knee-length coat, "
@@ -548,10 +573,13 @@ def build_single_pose_negative_prompt() -> str:
         "technical flat, fashion flat, product sheet, spec sheet, multiple views, multiple "
         "photos, multiple angles, comparison layout, inset panel, exploded view, contact "
         "sheet, grid of images, clothing flat lay, flat lay, label, caption, illegible text, "
-        "gibberish text, UI mockup, (three figures, multiple figures, several figures, "
+        "gibberish text, UI mockup, readable text, legible words, real words, dictionary "
+        "words, brand label, product tag, price tag, signage, visible face, exposed face, "
+        "human face, bare face, visible hair, hair visible, hood down, hood back, bare head, "
+        "uncovered head, (three figures, multiple figures, several figures, "
         "ensemble of characters, ghost figure, ghosting, faded duplicate figure, translucent "
         "overlay, transparent duplicate, afterimage, double exposure, doppelganger, second "
-        "figure behind, overlapping figures:1.6)"
+        "figure behind, overlapping figures:1.4)"
     )
 
 
