@@ -235,8 +235,10 @@ func _test_player_visuals_are_greybox_only() -> Array[String]:
 	for child: Node in player.get_children():
 		if child is Sprite2D or child is AnimatedSprite2D or child is TextureRect:
 			failures.append(
-				"player_visuals: player must not use textured/sprite nodes (found %s) — "
-				"grey-box only, no character art dependency" % child.get_class()
+				(
+					"player_visuals: player must not use textured/sprite nodes (found %s) — "
+					+ "grey-box only, no character art dependency"
+				) % child.get_class()
 			)
 
 	inst.free()
@@ -258,7 +260,7 @@ func _test_no_character_art_reference_in_source() -> Array[String]:
 	if text.findn("player_walk_sheet") != -1:
 		failures.append(
 			"source_guard: signal_tower_overview.gd must not reference player_walk_sheet — "
-			"this card has no dependency on finished character art"
+			+ "this card has no dependency on finished character art"
 		)
 
 	return failures
