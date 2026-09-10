@@ -1,6 +1,38 @@
 # T-0351 evidence -- Tier-1 master sheet REGEN in limb-separating poses
 
-## Status: run 3 -- root cause identified, fix is out of this card's authorized scope, nothing promoted
+## Status: run 4 -- ControlNet amendment, attempt 11 (first real execution), attempt 12 in progress
+
+**@DennieSeth's 2026-09-10 amendment lifted the no-ControlNet restriction, scoped narrowly to pose
+conditioning only** (see the amendment text appended to the card body) -- the "Root cause" section
+below, which reported the `concept_crop_box` multi-panel-grid finding as an unresolvable blocker
+under the old prompt-only-pose constraint, is superseded by that amendment, not retracted: the
+finding itself (IP-Adapter conditions directly on the crop's pixel structure) still explains why
+prompt-only levers never worked, but ControlNet gives this card a way around it without touching
+the frozen crop box.
+
+**Attempt 11** (seed 356237921, 444.7 total GPU-seconds, all 5 ComfyUI calls succeeded -- see
+`attempt_11_controlnet_first_real_run_tpose_and_neutral_clean_sides_ghosted_coat_long.png` and
+`attempt_11_provenance.json`) is this card's first real execution of the ControlNet-conditioned
+recipe (attempts 8-10 changed the recipe in code across three commits but were never run to
+completion through the CLI's logged path -- see `ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md`, which has
+no rows for 8-10). Real progress: **front_tpose, back_tpose, and side_neutral are genuine, clean,
+single-figure, correctly-posed panels** -- ControlNet reliably forces the skeleton's pose and
+figure count on 3 of 5 panels, a first for this card. Two defects persist:
+
+1. **Coat still runs past mid-hip on every panel** (to the knee on front_tpose, past the knee on
+   back_tpose and side_neutral) even at 1.5 CLIP emphasis -- worse than attempts 3/5's plain-1.3
+   prompt-only result. `back_tpose` also shows a literal "COAT" text-glyph artifact on the head,
+   consistent with the root-cause finding that the IP-Adapter reference crop itself contains
+   garment-callout label text bleeding through as pixel content CLIP-emphasis cannot suppress.
+2. **side_left_forward and side_right_forward both show a faded, translucent ghost figure**
+   overlapping the main one -- a different defect from attempt 8's opaque three-figure regression,
+   and one no existing negative-prompt term named.
+
+**Attempt 12** (in progress) raises the coat-length weight 1.5 -> 1.8 and the multi-figure negative
+weight 1.3 -> 1.6, adding explicit ghosting/afterimage/double-exposure terms. See
+`ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md` for the full per-attempt table.
+
+## Status (superseded): run 3 -- root cause identified, fix is out of this card's authorized scope, nothing promoted
 
 **Root cause found and verified (see "Root cause" section below): the `concept_crop_box`
 `(0, 0, 615, 615)` this card is required to keep unchanged is itself a multi-panel grid, not an
