@@ -37,6 +37,7 @@ function taskRowToTask(db, row) {
     approved_by: row.approved_by,
     approved_at: row.approved_at,
     attempts: row.attempts,
+    max_attempts: row.max_attempts,
     comments,
     attachments,
     body: row.body
@@ -109,10 +110,11 @@ export class DbTaskStore extends TaskStore {
       .prepare(
         `INSERT INTO tasks
            (id, title, status, priority, phase, agent, created, branch, commit_sha, pr,
-            deliverable_type, requires_approval, approved_by, approved_at, attempts, body)
+            deliverable_type, requires_approval, approved_by, approved_at, attempts,
+            max_attempts, body)
          VALUES (@id, @title, @status, @priority, @phase, @agent, @created, @branch, @commit_sha,
                  @pr, @deliverable_type, @requires_approval, @approved_by, @approved_at,
-                 @attempts, @body)`
+                 @attempts, @max_attempts, @body)`
       )
       .run({
         id: task.id,
@@ -130,6 +132,7 @@ export class DbTaskStore extends TaskStore {
         approved_by: task.approved_by ?? null,
         approved_at: task.approved_at ?? null,
         attempts: task.attempts ?? 0,
+        max_attempts: task.max_attempts ?? null,
         body: task.body
       });
 
@@ -159,7 +162,8 @@ export class DbTaskStore extends TaskStore {
            agent = @agent, created = @created, branch = @branch, commit_sha = @commit_sha,
            pr = @pr, deliverable_type = @deliverable_type,
            requires_approval = @requires_approval, approved_by = @approved_by,
-           approved_at = @approved_at, attempts = @attempts, body = @body
+           approved_at = @approved_at, attempts = @attempts, max_attempts = @max_attempts,
+           body = @body
          WHERE id = @id`
       ).run({
         id,
@@ -177,6 +181,7 @@ export class DbTaskStore extends TaskStore {
         approved_by: merged.approved_by ?? null,
         approved_at: merged.approved_at ?? null,
         attempts: merged.attempts ?? 0,
+        max_attempts: merged.max_attempts ?? null,
         body: merged.body
       });
 

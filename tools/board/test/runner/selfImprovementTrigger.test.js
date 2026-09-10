@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   evaluateTrigger,
   createSelfImprovementLoop,
@@ -9,6 +12,8 @@ import {
   minRetryCapBlockedFromEnv,
   minRecoveredFromEnv
 } from "../../src/runner/selfImprovementTrigger.js";
+import { appendVerdictEntry } from "../../src/lib/verdictArchive.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 function makeStats(overrides = {}) {
   return {
@@ -418,6 +423,92 @@ describe("createSelfImprovementLoop / sweepOnce", () => {
     expect(result).toBeNull();
     expect(logger.error).toHaveBeenCalledTimes(1);
     expect(logger.error.mock.calls[0][0]).toMatch(/git commit failed/);
+  });
+
+  describe("with archived verdicts (T-0345: verdict history moves out of the card body)", () => {
+    let tmpDir;
+    let tasksDir;
+
+    beforeEach(async () => {
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-selfimprove-archive-"));
+      tasksDir = path.join(tmpDir, "tasks");
+      await fs.mkdir(tasksDir, { recursive: true });
+    });
+
+    afterEach(async () => {
+      await rmTemp(tmpDir);
+    });
+
+    it("still fires the rework-rate trigger when the FAIL history lives in the archive, not the body", async () => {
+      // Same shape as reworkTasks() (8 FAIL, 2 PASS -- 80% rework rate), but every card's body
+      // is already migrated (empty) and its verdict lives only in the on-disk archive. Before
+      // sweepOnce consulted the archive, this reproduced computeFlowStats/evaluateTrigger
+      // silently reading 0 rework activity forever once a card's history had been archived.
+      const tasks = [];
+      for (let i = 0; i < 8; i += 1) {
+        const id = `T-${2000 + i}`;
+        tasks.push({ id, status: "done", body: "" });
+        await appendVerdictEntry(tasksDir, id, {
+          heading: "Validation: FAIL",
+          timestamp: `2026-08-0${(i % 9) + 1}T00:00:00.000Z`,
+          text: "some failure"
+        });
+      }
+      for (let i = 0; i < 2; i += 1) {
+        const id = `T-${3000 + i}`;
+        tasks.push({ id, status: "done", body: "" });
+        await appendVerdictEntry(tasksDir, id, {
+          heading: "Validation: PASS",
+          timestamp: "2026-08-01T00:00:00.000Z",
+          text: "all green"
+        });
+      }
+      const store = makeFakeStore(tasks);
+      const created = { id: "T-9999", title: "proposal" };
+      const createCardFn = vi.fn(async () => created);
+      const loop = createSelfImprovementLoop({
+        store,
+        tasksDir,
+        enabled: true,
+        reworkThreshold: 0.3,
+        minReworkSample: 5,
+        createCardFn,
+        logger: makeLogger()
+      });
+
+      const result = await loop.sweepOnce();
+
+      expect(createCardFn).toHaveBeenCalledTimes(1);
+      expect(result).toBe(created);
+    });
+
+    it("does not fire when no tasksDir is configured and the archive can't be consulted (no crash, just no signal)", async () => {
+      const tasks = [];
+      for (let i = 0; i < 8; i += 1) {
+        const id = `T-${2000 + i}`;
+        tasks.push({ id, status: "done", body: "" });
+        await appendVerdictEntry(tasksDir, id, {
+          heading: "Validation: FAIL",
+          timestamp: `2026-08-0${(i % 9) + 1}T00:00:00.000Z`,
+          text: "some failure"
+        });
+      }
+      const store = makeFakeStore(tasks);
+      const createCardFn = vi.fn();
+      const loop = createSelfImprovementLoop({
+        store,
+        enabled: true,
+        reworkThreshold: 0.3,
+        minReworkSample: 5,
+        createCardFn,
+        logger: makeLogger()
+      });
+
+      const result = await loop.sweepOnce();
+
+      expect(result).toBeNull();
+      expect(createCardFn).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -29,6 +29,7 @@ import {
 } from "../lib/approvalGate.js";
 import { approvalProvenanceStaleNotice } from "../lib/approvalProvenanceNotice.js";
 import { refreshApprovalProvenanceFile } from "../lib/approvalProvenanceSync.js";
+import { readVerdictEntries } from "../lib/verdictArchive.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_APPROVAL_PATH_RE = /^\/api\/tasks\/([^/]+)\/approval$/;
@@ -37,6 +38,7 @@ const TASK_CANCEL_PATH_RE = /^\/api\/tasks\/([^/]+)\/cancel$/;
 const TASK_COMMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/comments$/;
 const TASK_ATTACHMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/attachments$/;
 const TASK_ATTACHMENT_FILE_PATH_RE = /^\/api\/tasks\/([^/]+)\/attachments\/([^/]+)$/;
+const TASK_VERDICTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/verdicts$/;
 const AGENTS_PATH = "/api/agents";
 const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const DONE_EXPORT_PATH = "/api/tasks/export/done";
@@ -361,6 +363,22 @@ async function handleGetApproval(store, id, res) {
     throw new HttpError(404, `Task ${id} not found`);
   }
   sendJson(res, 200, approvalVerdict(task));
+}
+
+/**
+ * Read-only view of a card's archived verdict history (T-0345, verdictArchive.js). The archive
+ * exists so validation rounds stop accumulating in the card body/agent prompt, but a human
+ * looking at the card in the board still needs a way to read the reviewer's past verdicts --
+ * this is that "and can still display" half of the Scope, otherwise the history is only ever
+ * visible to migrateVerdictArchive.js and runOrchestrator.js's own archive writes.
+ */
+async function handleGetVerdicts(store, id, tasksDir, res) {
+  const task = await store.get(id);
+  if (!task) {
+    throw new HttpError(404, `Task ${id} not found`);
+  }
+  const entries = await readVerdictEntries(tasksDir, id);
+  sendJson(res, 200, { entries });
 }
 
 /** Statuses a card never comes back from, and so never needs its preserved artifacts again. */
@@ -1135,6 +1153,7 @@ export function createRequestListener({
       const commentsMatch = TASK_COMMENTS_PATH_RE.exec(pathname);
       const attachmentsMatch = TASK_ATTACHMENTS_PATH_RE.exec(pathname);
       const attachmentFileMatch = TASK_ATTACHMENT_FILE_PATH_RE.exec(pathname);
+      const verdictsMatch = TASK_VERDICTS_PATH_RE.exec(pathname);
 
       // First route in the chain, deliberately: a liveness probe should do the least work of
       // anything the server serves, and should not sit behind any check that could itself be
@@ -1166,6 +1185,9 @@ export function createRequestListener({
       }
       if (approvalMatch && req.method === "GET") {
         return await handleGetApproval(store, approvalMatch[1], res);
+      }
+      if (verdictsMatch && req.method === "GET") {
+        return await handleGetVerdicts(store, verdictsMatch[1], tasksDir, res);
       }
       if (idMatch && req.method === "PATCH") {
         return await handlePatchTask(
@@ -1243,7 +1265,8 @@ export function createRequestListener({
         cancelMatch ||
         commentsMatch ||
         attachmentsMatch ||
-        attachmentFileMatch
+        attachmentFileMatch ||
+        verdictsMatch
       ) {
         throw new HttpError(405, `Method ${req.method} not allowed on ${pathname}`);
       }

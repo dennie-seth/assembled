@@ -22,7 +22,7 @@ export const PRE_REGISTRATION_HEADING = "## Pre-registered experiment";
 export const FINDING_HEADING = "## Finding";
 
 /** Text between `heading` and the next top-level `## ` heading (or end of body), trimmed. */
-function readSection(body, heading) {
+export function readSection(body, heading) {
   if (typeof body !== "string") return "";
   const start = body.indexOf(heading);
   if (start === -1) return "";

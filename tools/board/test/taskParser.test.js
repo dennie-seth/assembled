@@ -18,6 +18,7 @@ const VALID_TASK = {
   approved_by: null,
   approved_at: null,
   attempts: 0,
+  max_attempts: null,
   comments: [],
   attachments: [],
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
@@ -229,6 +230,56 @@ describe("attempts (auto-retry counter for the bounded FAIL->auto-retry loop)", 
 
   it("throws when attempts is a non-integer number", () => {
     expect(() => parseTask(frontmatter({ attempts: 1.5 }))).toThrow(/attempts/i);
+  });
+});
+
+describe("max_attempts (T-0343: per-card override of the auto-retry budget)", () => {
+  it("round-trips a task with max_attempts set", () => {
+    const task = { ...VALID_TASK, max_attempts: 3 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("accepts max_attempts at the upper bound", () => {
+    const task = { ...VALID_TASK, max_attempts: 20 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults max_attempts to null when absent from the frontmatter -- the compatibility guarantee: no explicit override means the orchestrator's own default applies, unchanged", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.max_attempts).toBeNull();
+  });
+
+  it("throws when max_attempts is not an integer", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: "three" }))).toThrow(/max_attempts/i);
+  });
+
+  it("throws when max_attempts is a non-integer number", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: 2.5 }))).toThrow(/max_attempts/i);
+  });
+
+  it("throws when max_attempts is zero", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: 0 }))).toThrow(/max_attempts/i);
+  });
+
+  it("throws when max_attempts is negative", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: -1 }))).toThrow(/max_attempts/i);
+  });
+
+  it("throws when max_attempts exceeds the upper bound", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: 21 }))).toThrow(/max_attempts/i);
   });
 });
 
