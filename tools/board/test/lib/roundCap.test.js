@@ -39,6 +39,10 @@ describe("roundCap constants", () => {
   it("names the rescope record fields", () => {
     expect(RESCOPE_RECORD_FIELDS).toEqual(["rescoped_by", "rescoped_at"]);
   });
+
+  it("names the rescope markers", () => {
+    expect(RESCOPE_MARKERS).toEqual(["rescoped", "/rescope"]);
+  });
 });
 
 describe("roundsSinceDeliverable", () => {
