@@ -49,6 +49,7 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -215,6 +216,42 @@ def build_positive_prompt(entity: EntitySpec) -> str:
         "itself, a severed upper leg piece by itself, a severed lower leg and boot piece by "
         "itself, a hood and mask head piece with visible eye lenses by itself, a torso and "
         "coat piece by itself, no text, no UI, no watermark"
+    )
+
+
+def build_limb_pose_prompt(entity: EntitySpec) -> str:
+    """T-0351: four generation panels, pose is the only variable versus #365
+    (T-0336) -- same costume/identity wording, same hooded-mask head marker,
+    same flat-background/no-perspective framing, no ControlNet. #365 used a
+    relaxed turnaround: arms hung against the torso and a mid-calf coat
+    closed over the thighs, so no cutout could separate `upper_leg` at all,
+    and its own "side view" panel came out three-quarter (both arms and both
+    goggle lenses visible), not a true profile. A T-pose holds arms and
+    hands clear of the body and spreads the legs; two true-side panels, one
+    per side, each hold only that side's arm and leg extended forward so a
+    single visible limb silhouette and a single visible eye lens identify a
+    genuine 90-degree profile instead of #365's three-quarter defect. See
+    T-0351's own card body for the full per-panel pose table."""
+    return (
+        f"{entity.trigger_token}, character reference turnaround sheet, "
+        f"{entity.costume_description}, same uniform and same equipment loadout, consistent "
+        "identity, the exact same institutional green coat costume in every single panel, flat "
+        "uniform neutral grey background, flat even lighting, no cast shadow, no perspective, "
+        "clean readable outline, wearing a hooded mask with two dark round visible eye lenses, "
+        "not a blank void, four separate whole-figure panels laid out side by side with empty "
+        "space between each panel so nothing overlaps or touches: panel one is a front view "
+        "T-pose, facing the camera directly, both arms held straight out horizontal to the "
+        "sides clear of the torso, legs spread apart; panel two is a back view T-pose, facing "
+        "directly away from the camera, both arms held straight out horizontal to the sides "
+        "clear of the torso, legs spread apart; panel three is a true 90-degree side profile "
+        "view, camera exactly perpendicular to the figure, not a three-quarter view, only the "
+        "left arm and only the left leg extended forward at roughly a right angle clear of the "
+        "torso, the right arm and right leg held back close to the body, only a single arm "
+        "silhouette and a single eye lens visible; panel four is a true 90-degree side profile "
+        "view, camera exactly perpendicular to the figure, not a three-quarter view, only the "
+        "right arm and only the right leg extended forward at roughly a right angle clear of "
+        "the torso, the left arm and left leg held back close to the body, only a single arm "
+        "silhouette and a single eye lens visible, no text, no UI, no watermark"
     )
 
 
@@ -410,9 +447,34 @@ def check_attempt_cap(attempt: int) -> None:
 
 # ── Attempt log + promotion bookkeeping ─────────────────────────────────
 
-ATTEMPT_LOG_PATH = (
-    REPO_ROOT / "assets" / "src" / "character" / "ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md"
-)
+def _card_slug(card: str) -> str:
+    """'T-0351' -> 'T0351' -- the filename convention this pipeline has used
+    since Arm A (T0228, T0229, ... T0336), unbroken by the dash."""
+    return card.replace("-", "")
+
+
+def attempt_log_path_for(card: str) -> Path:
+    return (
+        REPO_ROOT
+        / "assets"
+        / "src"
+        / "character"
+        / f"ARM_MASTER_SHEET_ATTEMPT_LOG_{_card_slug(card)}.md"
+    )
+
+
+def out_dir_for(card: str, entity_name: str, attempt: int) -> Path:
+    return (
+        REPO_ROOT
+        / "assets"
+        / "out"
+        / f"master_sheet_{_card_slug(card)}"
+        / entity_name
+        / f"attempt_{attempt}"
+    )
+
+
+ATTEMPT_LOG_PATH = attempt_log_path_for("T-0336")
 MASTER_SHEETS_DIR = REPO_ROOT / "assets" / "src" / "character" / "master_sheets"
 
 ATTEMPT_LOG_HEADER = (
@@ -427,9 +489,10 @@ ATTEMPT_LOG_HEADER = (
 )
 
 
-def append_attempt_log(provenance: dict, notes: str = "") -> None:
-    if not ATTEMPT_LOG_PATH.exists():
-        ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
+def append_attempt_log(provenance: dict, notes: str = "", log_path: Path | None = None) -> None:
+    path = log_path if log_path is not None else ATTEMPT_LOG_PATH
+    if not path.exists():
+        path.write_text(ATTEMPT_LOG_HEADER)
     row = (
         f"| {provenance['attempt']} | {provenance['entity']} | {provenance['seed']} "
         f"| {provenance['style_lora_weight']} | {provenance.get('identity_lora_weight')} "
@@ -437,7 +500,7 @@ def append_attempt_log(provenance: dict, notes: str = "") -> None:
         f"| {provenance['height']} | {provenance['gpu_seconds']} "
         f"| {'yes' if provenance.get('promoted') else 'no'} | {notes} |\n"
     )
-    with ATTEMPT_LOG_PATH.open("a") as f:
+    with path.open("a") as f:
         f.write(row)
 
 
@@ -492,29 +555,50 @@ def compose_master_sheet_with_parts(
     canvas.save(out_path)
 
 
-def promote_attempt(entity_name: str, out_dir: Path, provenance: dict) -> None:
+def promote_attempt(
+    entity_name: str,
+    out_dir: Path,
+    provenance: dict,
+    *,
+    dest_dir: Path | None = None,
+    dest_stem: str | None = None,
+    limb_crop_boxes: dict[str, tuple[int, int, int, int]] | None = None,
+) -> None:
     """Copy this attempt's master sheet + provenance into
     assets/src/character/master_sheets/ -- master sheets are pipeline
     inputs, not game-scale finals, so they land under assets/src/, not
-    assets/final/ (this card's own acceptance criterion). When the entity
-    has hand-tuned `limb_crop_boxes`, the promoted sheet is composited with
-    an extra row of isolated part crops (`compose_master_sheet_with_parts`)
-    rather than a raw copy of the generation."""
-    MASTER_SHEETS_DIR.mkdir(parents=True, exist_ok=True)
-    dest_png = MASTER_SHEETS_DIR / f"{entity_name}_master_sheet_T0336.png"
+    assets/final/ (this card's own acceptance criterion). When
+    `limb_crop_boxes` resolves to something (explicit, or the entity's own
+    hand-tuned default), the promoted sheet is composited with an extra row
+    of isolated part crops (`compose_master_sheet_with_parts`) rather than a
+    raw copy of the generation.
+
+    `dest_dir`/`dest_stem`/`limb_crop_boxes` default to T-0336's own
+    unchanged behaviour (`MASTER_SHEETS_DIR`, `<entity>_master_sheet_T0336`,
+    the entity's registered `limb_crop_boxes`) -- a card generating a
+    differently-posed sheet (T-0351) passes its own stem and crop boxes
+    explicitly rather than overloading `ENTITIES`, since the entity's
+    identity/costume/recipe are unchanged and only the pose (and therefore
+    the pixel layout the crop boxes target) differs."""
+    resolved_dest_dir = dest_dir if dest_dir is not None else MASTER_SHEETS_DIR
+    resolved_dest_dir.mkdir(parents=True, exist_ok=True)
+    stem = dest_stem if dest_stem is not None else f"{entity_name}_master_sheet_T0336"
+    dest_png = resolved_dest_dir / f"{stem}.png"
     src_png = out_dir / "master_sheet_1024.png"
 
-    limb_crop_boxes = ENTITIES[entity_name].limb_crop_boxes
+    resolved_crop_boxes = (
+        limb_crop_boxes if limb_crop_boxes is not None else ENTITIES[entity_name].limb_crop_boxes
+    )
     promoted = dict(provenance)
-    if limb_crop_boxes is not None:
+    if resolved_crop_boxes is not None:
         compose_master_sheet_with_parts(
-            src_png, dest_png, limb_crop_boxes, PARTS_ROW_HEIGHT, PARTS_ROW_PADDING
+            src_png, dest_png, resolved_crop_boxes, PARTS_ROW_HEIGHT, PARTS_ROW_PADDING
         )
-        promoted["limb_crop_boxes"] = limb_crop_boxes
+        promoted["limb_crop_boxes"] = resolved_crop_boxes
         if "method" in promoted:
             promoted["method"] += (
                 " Promotion appends a script-composited row below the generation "
-                f"(compose_master_sheet_with_parts, {sorted(limb_crop_boxes)}), cropping "
+                f"(compose_master_sheet_with_parts, {sorted(resolved_crop_boxes)}), cropping "
                 "genuinely-isolated regions straight out of this same coherent image rather "
                 "than relying on the model to render isolated limbs (DL-30 sanctions script "
                 "arrangement of diffusion-sampled pixels)."
@@ -524,7 +608,7 @@ def promote_attempt(entity_name: str, out_dir: Path, provenance: dict) -> None:
         promoted["limb_crop_boxes"] = None
 
     promoted["promoted"] = True
-    dest_json = MASTER_SHEETS_DIR / f"{entity_name}_master_sheet_T0336.provenance.json"
+    dest_json = resolved_dest_dir / f"{stem}.provenance.json"
     dest_json.write_text(json.dumps(promoted, indent=2) + "\n")
 
 
@@ -540,6 +624,9 @@ def run_attempt(
     ipadapter_weight: float = 0.35,
     width: int = DEFAULT_MASTER_SHEET_PX,
     height: int = DEFAULT_MASTER_SHEET_PX,
+    *,
+    card: str = "T-0336",
+    prompt_builder: Callable[[EntitySpec], str] | None = None,
 ) -> dict:
     if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
         raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
@@ -573,12 +660,10 @@ def run_attempt(
 
     style_lora_hash = sha256_of(LORA_PATH)
 
-    out_dir = (
-        REPO_ROOT / "assets" / "out" / "master_sheet_T0336" / entity_name / f"attempt_{attempt}"
-    )
+    out_dir = out_dir_for(card, entity_name, attempt)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    positive_text = build_positive_prompt(entity)
+    positive_text = (prompt_builder or build_positive_prompt)(entity)
     negative_text = build_negative_prompt()
 
     t0 = time.monotonic()
@@ -655,8 +740,13 @@ def run_attempt(
             "that may append one)."
         ),
         "generator": "assets/src/character/gen_master_sheet_T0336.py",
-        "card": "T-0336",
-        "spec": "docs/decision-log.md DL-30",
+        "card": card,
+        "spec": (
+            "docs/decision-log.md DL-30"
+            if card == "T-0336"
+            else "docs/decision-log.md DL-30, pose spec per T-0351 (successor to #365/T-0336; "
+            "recipe unchanged, pose is the only variable)"
+        ),
         "attempt": attempt,
         "gpu_seconds": round(gpu_seconds, 1),
         "promoted": False,
@@ -665,9 +755,18 @@ def run_attempt(
     return provenance
 
 
+# A card generating a differently-posed sheet registers its own prompt
+# builder here, keyed by card id -- the CLI's only per-card branch point.
+# T-0336's own default (build_positive_prompt) needs no entry.
+PROMPT_BUILDERS_BY_CARD: dict[str, Callable[[EntitySpec], str]] = {
+    "T-0351": build_limb_pose_prompt,
+}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--entity", type=str, default="player", choices=sorted(ENTITIES))
+    parser.add_argument("--card", type=str, default="T-0336")
     parser.add_argument("--attempt", type=int, help="attempt number, 1..5")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--style-lora-weight", type=float, default=0.70)
@@ -684,21 +783,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    dest_stem = f"{args.entity}_master_sheet_{_card_slug(args.card)}"
+
     if args.promote_attempt is not None:
-        out_dir = (
-            REPO_ROOT
-            / "assets"
-            / "out"
-            / "master_sheet_T0336"
-            / args.entity
-            / f"attempt_{args.promote_attempt}"
-        )
+        out_dir = out_dir_for(args.card, args.entity, args.promote_attempt)
         provenance = json.loads((out_dir / "provenance_candidate.json").read_text())
-        promote_attempt(args.entity, out_dir, provenance)
+        promote_attempt(args.entity, out_dir, provenance, dest_stem=dest_stem)
         promoted_record = json.loads(
-            (MASTER_SHEETS_DIR / f"{args.entity}_master_sheet_T0336.provenance.json").read_text()
+            (MASTER_SHEETS_DIR / f"{dest_stem}.provenance.json").read_text()
         )
-        append_attempt_log(promoted_record, notes=args.notes)
+        append_attempt_log(
+            promoted_record, notes=args.notes, log_path=attempt_log_path_for(args.card)
+        )
         print(f"promoted attempt {args.promote_attempt} -> {MASTER_SHEETS_DIR}")
         return
 
@@ -716,8 +812,10 @@ def main() -> None:
         ipadapter_weight=args.ipadapter_weight,
         width=args.width,
         height=args.height,
+        card=args.card,
+        prompt_builder=PROMPT_BUILDERS_BY_CARD.get(args.card),
     )
-    append_attempt_log(provenance, notes=args.notes)
+    append_attempt_log(provenance, notes=args.notes, log_path=attempt_log_path_for(args.card))
     print(json.dumps(provenance, indent=2))
 
 
