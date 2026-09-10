@@ -9,8 +9,11 @@ three-quarter view, not a true profile. Per the 2026-09-10 spec change
 (@DennieSeth), this card asks for FIVE panels: front T-pose, back T-pose,
 side-left-forward, side-right-forward, and side-neutral (a true 90-degree
 profile, arms down, standing -- the profile-keyframe anchor T-0339 now
-sources). The coat must fall no lower than mid-hip in every panel so
-`upper_leg` stays separable.
+sources). The 2026-09-10 dedicated-legs-panel amendment adds a SIXTH panel,
+"legs" (lower body only, trousers and boots, no coat) and REVOKES the
+mid-hip coat requirement on panels 1-5: the canonical long coat is now
+correct there, and `upper_leg`/`lower_leg` instead come from the dedicated
+sixth panel.
 
 Pure construction/string tests -- no ComfyUI/network dependency, same as
 `test_gen_master_sheet_T0336.py`. RED state: `build_limb_pose_prompt`,
@@ -313,7 +316,9 @@ def test_promote_attempt_default_stem_still_matches_t0336_unchanged(tmp_path, mo
 # script") and docs/assets/evidence/T-0351/README.md's own recommendation. ──
 
 
-def test_pose_specs_has_five_entries_in_acceptance_criteria_order() -> None:
+def test_pose_specs_has_six_entries_in_acceptance_criteria_order() -> None:
+    """2026-09-10 dedicated-legs-panel amendment: a sixth 'legs' panel
+    (lower body only, no coat) is now part of the acceptance spec."""
     keys = [pose.key for pose in gen.POSE_SPECS]
     assert keys == [
         "front_tpose",
@@ -321,6 +326,15 @@ def test_pose_specs_has_five_entries_in_acceptance_criteria_order() -> None:
         "side_left_forward",
         "side_right_forward",
         "side_neutral",
+        "legs",
+    ]
+    assert [pose.no_coat for pose in gen.POSE_SPECS] == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
     ]
 
 
@@ -334,7 +348,10 @@ def test_build_single_pose_positive_prompt_front_tpose() -> None:
     assert "horizontal" in prompt
     assert "legs spread" in prompt or "legs apart" in prompt
     assert "institutional green coat" in prompt
-    assert "mid-hip" in prompt and "thigh" in prompt
+    # 2026-09-10 dedicated-legs-panel amendment: the mid-hip coat clause is
+    # REVOKED for whole-figure panels -- the canonical long coat is now
+    # correct, not a defect to fight, so no coat-length instruction at all.
+    assert "mid-hip" not in prompt
     assert "hooded mask" in prompt and "eye lenses" in prompt
     # single-pose generation must not ask for a multi-panel layout -- that
     # is exactly the instruction that fought MAIN_NEGATIVE in attempts 1-5.
@@ -409,10 +426,53 @@ def test_build_single_pose_negative_prompt_includes_t0336_fixes() -> None:
     assert "robotic legs" in negative
 
 
-def test_build_single_pose_negative_prompt_forbids_long_coat_and_heels() -> None:
+def test_build_single_pose_negative_prompt_forbids_heels() -> None:
     negative = gen.build_single_pose_negative_prompt().lower()
-    assert "long coat" in negative or "floor-length coat" in negative
     assert "heel" in negative
+
+
+def test_build_single_pose_negative_prompt_no_longer_forbids_long_coat() -> None:
+    """2026-09-10 dedicated-legs-panel amendment: the long coat is now
+    canonical and correct on every whole-figure panel -- banning it here
+    would ask the model for the opposite of what this card wants. The
+    dedicated 'legs' panel is the only place a coat is actually banned
+    (build_legs_panel_negative_prompt)."""
+    negative = gen.build_single_pose_negative_prompt().lower()
+    assert "long coat" not in negative
+    assert "floor-length coat" not in negative
+    assert "coat below the hip" not in negative
+
+
+def test_build_legs_panel_positive_prompt_asks_for_no_coat_trousers_and_boots() -> None:
+    player = gen.ENTITIES["player"]
+    prompt = gen.build_legs_panel_positive_prompt(player).lower()
+    assert player.trigger_token in prompt
+    assert "trousers" in prompt
+    assert "boots" in prompt
+    assert "no coat" in prompt
+    assert "thigh" in prompt
+    # This panel exists specifically because the costume description
+    # names the coat this panel must omit -- it must not be interpolated.
+    assert "institutional green coat" not in prompt
+
+
+def test_build_legs_panel_positive_prompt_keeps_hooded_mask_identity() -> None:
+    prompt = gen.build_legs_panel_positive_prompt(gen.ENTITIES["player"]).lower()
+    assert "hooded mask" in prompt and "eye lenses" in prompt
+
+
+def test_build_legs_panel_negative_prompt_bans_coat_and_jacket() -> None:
+    negative = gen.build_legs_panel_negative_prompt().lower()
+    assert "coat" in negative
+    assert "jacket" in negative
+
+
+def test_build_legs_panel_negative_prompt_includes_single_pose_negative_baseline() -> None:
+    """Reuses build_single_pose_negative_prompt (footwear, ghosting,
+    reference-sheet, face/hair bans) rather than duplicating it."""
+    negative = gen.build_legs_panel_negative_prompt().lower()
+    assert "heel" in negative
+    assert "ghost" in negative or "ghosting" in negative
 
 
 def test_build_single_pose_positive_prompt_does_not_negate_text_in_positive() -> None:
@@ -511,15 +571,22 @@ def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> No
     to an untried, non-prompt lever for the persistent side-panel
     multi-figure defect: raising `CONTROLNET_STRENGTH` itself (1.3 -> 1.6),
     since every previous fix attempt competed for the same CLIP attention
-    budget and each one that helped one defect worsened another."""
+    budget and each one that helped one defect worsened another.
+
+    **2026-09-10 dedicated-legs-panel amendment**: the coat-length clause
+    this docstring's history spent attempts 8-14 tuning (1.3 -> 1.6 -> 1.8
+    -> 1.6 -> 1.5) is now gone entirely, not just re-tuned -- the canonical
+    long coat is correct on this panel, so there is nothing left to weight.
+    Only the isolation clause keeps its own emphasis now."""
     pose = gen.POSE_SPECS[0]
     prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], pose)
     assert "exactly one pose" in prompt.lower()
     assert "exactly one" in prompt.lower() and "view" in prompt.lower()
     assert ":1.3)" in prompt, "isolation clause must stay at attempt 8's proven-safe 1.3"
-    assert ":1.5)" in prompt, "coat-length clause must revert to attempt 11's 1.5 (attempt 14)"
+    assert ":1.5)" not in prompt, "the coat-length clause is revoked, not just re-tuned"
     assert ":1.6)" not in prompt, "attempt 13's 1.6 coat weight must be fully replaced"
     assert ":1.8)" not in prompt, "attempt 12's 1.8 coat weight must be fully replaced"
+    assert "mid-hip" not in prompt.lower(), "the mid-hip coat clause is revoked entirely"
     assert "jacket" not in prompt.lower(), (
         "attempt 9's 'jacket' reframing is implicated in its identity drift -- revert to 'coat'"
     )
@@ -752,15 +819,26 @@ def test_limb_crop_boxes_for_t0351_is_registered_and_includes_upper_leg() -> Non
     assert boxes != gen.PLAYER_LIMB_CROP_BOXES
 
 
-def test_limb_crop_boxes_for_t0351_boxes_fit_within_the_five_panel_row() -> None:
-    """Each box must resolve to real pixels inside a 5120x1024 row (five
-    1024x1024 panels side by side, in POSE_SPECS order) -- a box that
-    overruns the row would silently crop garbage or raise deep inside PIL
-    instead of failing this test with a clear message."""
+def test_limb_crop_boxes_for_t0351_boxes_fit_within_the_six_panel_row() -> None:
+    """Each box must resolve to real pixels inside a 6144x1024 row (six
+    1024x1024 panels side by side, in POSE_SPECS order, since the
+    2026-09-10 dedicated-legs-panel amendment added a sixth panel) -- a box
+    that overruns the row would silently crop garbage or raise deep inside
+    PIL instead of failing this test with a clear message."""
     boxes = gen.limb_crop_boxes_for("T-0351", "player")
     for name, (left, top, right, bottom) in boxes.items():
-        assert 0 <= left < right <= 5120, name
+        assert 0 <= left < right <= 6144, name
         assert 0 <= top < bottom <= 1024, name
+
+
+def test_limb_crop_boxes_for_t0351_upper_leg_sources_from_the_legs_panel() -> None:
+    """2026-09-10 dedicated-legs-panel amendment: upper_leg/lower_leg_boot
+    must crop from panel 5 (the dedicated 'legs' panel, x offset
+    5*1024=5120), not panel 0 -- panels 1-5 keep the canonical long coat
+    and no longer expose the thigh."""
+    boxes = gen.limb_crop_boxes_for("T-0351", "player")
+    assert boxes["upper_leg"][0] >= 5120
+    assert boxes["lower_leg_boot"][0] >= 5120
 
 
 # ── 2026-09-10 amendment: ControlNet/OpenPose permitted for pose ───────────
@@ -921,7 +999,7 @@ def test_run_five_pose_attempt_conditions_each_pose_with_its_own_skeleton(monkey
             entity_name="player", attempt=8, base_seed=1000, width=64, height=64
         )
 
-        assert len(captured_graphs) == 5
+        assert len(captured_graphs) == 6
         for graph, pose in zip(captured_graphs, gen.POSE_SPECS):
             assert graph[gen.CONTROLNET_LOADER_NODE_ID]["inputs"]["control_net_name"] == (
                 gen.CONTROLNET_NAME
@@ -934,5 +1012,13 @@ def test_run_five_pose_attempt_conditions_each_pose_with_its_own_skeleton(monkey
         assert provenance["controlnet_end_percent"] == gen.CONTROLNET_END_PERCENT
         for record in provenance["poses"]:
             assert "pose_skeleton" in record
+
+        # The legs panel must use its own no-coat prompt pair, not the
+        # whole-figure one every other panel uses.
+        legs_record = next(r for r in provenance["poses"] if r["key"] == "legs")
+        assert "no coat" in legs_record["prompt"].lower()
+        assert "coat" in legs_record["negative_prompt"].lower()
+        front_record = next(r for r in provenance["poses"] if r["key"] == "front_tpose")
+        assert "mid-hip" not in front_record["prompt"].lower()
     finally:
         shutil.rmtree(test_out_dir, ignore_errors=True)

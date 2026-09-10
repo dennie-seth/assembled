@@ -44,6 +44,7 @@ POSE_KEYS = (
     "side_left_forward",
     "side_right_forward",
     "side_neutral",
+    "legs",
 )
 
 
@@ -199,6 +200,35 @@ def test_side_panels_head_turned_toward_the_facing_direction() -> None:
     for key in ("side_left_forward", "side_right_forward", "side_neutral"):
         points = rig.keypoints_for(key)
         assert abs(points[_NOSE][0] - points[_NECK][0]) > 0.03, key
+
+
+def test_legs_pose_is_front_facing_with_wide_leg_spread() -> None:
+    """Dedicated-legs-panel amendment (2026-09-10): panel 6 sources
+    upper_leg/lower_leg, so it needs the same wide, unambiguous stance as
+    front_tpose -- a front-facing (not collapsed-profile) topology with
+    legs spread at least as wide as the T-pose."""
+    points = rig.keypoints_for("legs")
+    tpose = rig.keypoints_for("front_tpose")
+    front_idle_shoulder_spread = _spread(_FRONT_IDLE, _R_SHOULDER, _L_SHOULDER)
+    assert _spread(points, _R_SHOULDER, _L_SHOULDER) > front_idle_shoulder_spread / 2
+    assert _spread(points, _R_ANKLE, _L_ANKLE) >= _spread(tpose, _R_ANKLE, _L_ANKLE) - 1e-9
+
+
+def test_legs_pose_arms_hang_down_clear_of_the_outer_thighs() -> None:
+    """Arms must hang straight down (wrist below elbow below shoulder, same
+    check as side_neutral) and stay close to the torso centreline so
+    neither sleeve overlaps the outer thigh/knee/ankle region a crop needs
+    clean of anything but leg and boot."""
+    points = rig.keypoints_for("legs")
+    for shoulder, elbow, wrist in (
+        (_R_SHOULDER, _R_ELBOW, _R_WRIST),
+        (_L_SHOULDER, _L_ELBOW, _L_WRIST),
+    ):
+        assert points[wrist][1] > points[elbow][1] > points[shoulder][1], (
+            "each arm must hang downward: wrist below elbow below shoulder"
+        )
+    assert points[_R_WRIST][0] > points[_R_KNEE][0], "right wrist must stay inboard of the knee"
+    assert points[_L_WRIST][0] < points[_L_KNEE][0], "left wrist must stay inboard of the knee"
 
 
 def test_render_pose_skeleton_reuses_arm_a_renderer() -> None:
