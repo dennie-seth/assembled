@@ -5,8 +5,12 @@ identity LoRA 0.5, IP-Adapter 0.35 on the cropped clean concept block, no
 ControlNet) -- pose is the only variable. #365's relaxed turnaround left
 arms against the torso and a mid-calf coat closed over the thighs, so
 `upper_leg` could never be cropped and its own side panel was a
-three-quarter view, not a true profile. This card asks for four panels
-instead: front T-pose, back T-pose, side-left-forward, side-right-forward.
+three-quarter view, not a true profile. Per the 2026-09-10 spec change
+(@DennieSeth), this card asks for FIVE panels: front T-pose, back T-pose,
+side-left-forward, side-right-forward, and side-neutral (a true 90-degree
+profile, arms down, standing -- the profile-keyframe anchor T-0339 now
+sources). The coat must fall no lower than mid-hip in every panel so
+`upper_leg` stays separable.
 
 Pure construction/string tests -- no ComfyUI/network dependency, same as
 `test_gen_master_sheet_T0336.py`. RED state: `build_limb_pose_prompt`,
@@ -52,7 +56,7 @@ def test_attempt_log_path_for_t0351_is_its_own_file() -> None:
     assert path != gen.ATTEMPT_LOG_PATH
 
 
-# ── The T-0351 positive prompt: four named panels, pose is the only change ─
+# ── The T-0351 positive prompt: five named panels, pose is the only change ─
 
 
 def test_build_limb_pose_prompt_reuses_entity_trigger_token_and_costume() -> None:
@@ -83,6 +87,31 @@ def test_build_limb_pose_prompt_requests_two_distinct_true_side_panels() -> None
 def test_build_limb_pose_prompt_asks_limbs_clear_of_torso() -> None:
     prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"]).lower()
     assert "clear of the torso" in prompt
+
+
+def test_build_limb_pose_prompt_requests_five_panels() -> None:
+    prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"]).lower()
+    assert "five separate whole-figure panels" in prompt
+
+
+def test_build_limb_pose_prompt_requests_side_neutral_profile_panel() -> None:
+    """Panel 5 (2026-09-10 spec change): a true 90-degree side profile,
+    arms down, standing -- the profile-keyframe anchor T-0339 sources.
+    Distinct from panels 3/4, which are walking poses (forward-extended
+    limbs), not a neutral standing anchor."""
+    prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"]).lower()
+    assert "panel five" in prompt
+    assert "arms down" in prompt or "arms at the sides" in prompt or "arms hanging" in prompt
+    assert "standing" in prompt
+    assert prompt.count("90-degree side profile") >= 3
+
+
+def test_build_limb_pose_prompt_requests_mid_hip_coat_length() -> None:
+    """@DennieSeth settled the coat-length question 2026-09-10: mid-hip
+    maximum, so the thigh stays exposed and `upper_leg` is separable."""
+    prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"]).lower()
+    assert "mid-hip" in prompt
+    assert "thigh" in prompt
 
 
 def test_build_limb_pose_prompt_keeps_the_hooded_mask_head_marker() -> None:

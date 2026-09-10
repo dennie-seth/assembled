@@ -220,38 +220,52 @@ def build_positive_prompt(entity: EntitySpec) -> str:
 
 
 def build_limb_pose_prompt(entity: EntitySpec) -> str:
-    """T-0351: four generation panels, pose is the only variable versus #365
-    (T-0336) -- same costume/identity wording, same hooded-mask head marker,
-    same flat-background/no-perspective framing, no ControlNet. #365 used a
-    relaxed turnaround: arms hung against the torso and a mid-calf coat
-    closed over the thighs, so no cutout could separate `upper_leg` at all,
-    and its own "side view" panel came out three-quarter (both arms and both
-    goggle lenses visible), not a true profile. A T-pose holds arms and
-    hands clear of the body and spreads the legs; two true-side panels, one
-    per side, each hold only that side's arm and leg extended forward so a
+    """T-0351: five generation panels (2026-09-10 spec change, @DennieSeth),
+    pose is the only variable versus #365 (T-0336) -- same costume/identity
+    wording, same hooded-mask head marker, same flat-background/
+    no-perspective framing, no ControlNet. #365 used a relaxed turnaround:
+    arms hung against the torso and a mid-calf coat closed over the thighs,
+    so no cutout could separate `upper_leg` at all, and its own "side view"
+    panel came out three-quarter (both arms and both goggle lenses
+    visible), not a true profile. A T-pose holds arms and hands clear of
+    the body and spreads the legs; two true-side walking panels, one per
+    side, each hold only that side's arm and leg extended forward so a
     single visible limb silhouette and a single visible eye lens identify a
-    genuine 90-degree profile instead of #365's three-quarter defect. See
-    T-0351's own card body for the full per-panel pose table."""
+    genuine 90-degree profile instead of #365's three-quarter defect. A
+    fifth panel -- true side profile, arms down, standing -- is a distinct
+    neutral anchor: panels three/four are walking poses (forward-extended
+    limbs) and the wrong reference for a standing profile keyframe, which
+    is what T-0339 now sources from panel five. The mid-hip coat cap
+    (settled 2026-09-10, no longer an open question) keeps the thigh
+    exposed in every panel so `upper_leg` stays separable -- #365's own
+    coat closed past the thigh and that is exactly the gap this card
+    exists to fill. See T-0351's own card body for the full per-panel pose
+    table."""
     return (
         f"{entity.trigger_token}, character reference turnaround sheet, "
-        f"{entity.costume_description}, same uniform and same equipment loadout, consistent "
-        "identity, the exact same institutional green coat costume in every single panel, flat "
-        "uniform neutral grey background, flat even lighting, no cast shadow, no perspective, "
-        "clean readable outline, wearing a hooded mask with two dark round visible eye lenses, "
-        "not a blank void, four separate whole-figure panels laid out side by side with empty "
-        "space between each panel so nothing overlaps or touches: panel one is a front view "
-        "T-pose, facing the camera directly, both arms held straight out horizontal to the "
-        "sides clear of the torso, legs spread apart; panel two is a back view T-pose, facing "
-        "directly away from the camera, both arms held straight out horizontal to the sides "
-        "clear of the torso, legs spread apart; panel three is a true 90-degree side profile "
-        "view, camera exactly perpendicular to the figure, not a three-quarter view, only the "
-        "left arm and only the left leg extended forward at roughly a right angle clear of the "
-        "torso, the right arm and right leg held back close to the body, only a single arm "
-        "silhouette and a single eye lens visible; panel four is a true 90-degree side profile "
-        "view, camera exactly perpendicular to the figure, not a three-quarter view, only the "
-        "right arm and only the right leg extended forward at roughly a right angle clear of "
-        "the torso, the left arm and left leg held back close to the body, only a single arm "
-        "silhouette and a single eye lens visible, no text, no UI, no watermark"
+        f"{entity.costume_description}, hip-length coat falling no lower than mid-hip in every "
+        "panel, thigh clearly exposed below the coat hem, same uniform and same equipment "
+        "loadout, consistent identity, the exact same institutional green coat costume in "
+        "every single panel, flat uniform neutral grey background, flat even lighting, no cast "
+        "shadow, no perspective, clean readable outline, wearing a hooded mask with two dark "
+        "round visible eye lenses, not a blank void, five separate whole-figure panels laid out "
+        "side by side with empty space between each panel so nothing overlaps or touches: panel "
+        "one is a front view T-pose, facing the camera directly, both arms held straight out "
+        "horizontal to the sides clear of the torso, legs spread apart; panel two is a back "
+        "view T-pose, facing directly away from the camera, both arms held straight out "
+        "horizontal to the sides clear of the torso, legs spread apart; panel three is a true "
+        "90-degree side profile view, camera exactly perpendicular to the figure, not a "
+        "three-quarter view, only the left arm and only the left leg extended forward at "
+        "roughly a right angle clear of the torso, the right arm and right leg held back close "
+        "to the body, only a single arm silhouette and a single eye lens visible; panel four is "
+        "a true 90-degree side profile view, camera exactly perpendicular to the figure, not a "
+        "three-quarter view, only the right arm and only the right leg extended forward at "
+        "roughly a right angle clear of the torso, the left arm and left leg held back close to "
+        "the body, only a single arm silhouette and a single eye lens visible; panel five is a "
+        "true 90-degree side profile view, camera exactly perpendicular to the figure, not a "
+        "three-quarter view, a neutral standing pose, both arms down at the sides, both legs "
+        "together standing upright, only a single arm silhouette and a single eye lens visible, "
+        "no text, no UI, no watermark"
     )
 
 
