@@ -415,6 +415,50 @@ def test_build_single_pose_negative_prompt_forbids_long_coat_and_heels() -> None
     assert "heel" in negative
 
 
+def test_build_single_pose_positive_prompt_does_not_negate_text_in_positive() -> None:
+    """Attempt 6 (see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md,
+    docs/assets/evidence/T-0351/README.md) rendered stray pseudo-text/UI
+    labels despite the positive prompt's own "no text, no UI, no watermark"
+    tail -- negating a concept in the *positive* prompt is a known
+    anti-pattern (CLIP has no real negation), and MAIN_NEGATIVE already
+    forbids "text, watermark" in the negative prompt where such a ban
+    belongs. Attempt 7 drops the redundant positive-prompt negation."""
+    prompt = gen.build_single_pose_positive_prompt(
+        gen.ENTITIES["player"], gen.POSE_SPECS[0]
+    ).lower()
+    assert "no text" not in prompt
+    assert "no ui" not in prompt
+    assert "no watermark" not in prompt
+
+
+def test_build_single_pose_positive_prompt_emphasizes_isolation_and_pose() -> None:
+    """Attempt 6's five generations all reproduced a multi-inset fashion
+    tech-pack/reference-sheet composition despite an unemphasized "single
+    full-body figure alone in frame" instruction -- IP-Adapter conditioning
+    on the concept crop appears to assert composition structure directly,
+    not just style/identity, and a plain affirmative sentence did not
+    outcompete it. Attempt 7 applies the one technique that reliably moved
+    something across attempts 1-5 (ComfyUI's own CLIPTextEncode
+    `(text:weight)` emphasis syntax) to the isolation clause and the pose
+    clause itself -- still no ControlNet, no LoRA/IP-Adapter weight
+    change, prompt-only, per this card's own constraint."""
+    prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], gen.POSE_SPECS[0])
+    assert "exactly one pose" in prompt.lower()
+    assert "exactly one" in prompt.lower() and "view" in prompt.lower()
+    assert ":1.3)" in prompt
+
+
+def test_build_single_pose_negative_prompt_forbids_reference_sheet_composition() -> None:
+    """Attempt 6's own new failure mode (see README/attempt log): a
+    multi-inset fashion tech-pack/reference-sheet composition, not the
+    single isolated figure the prompt asked for -- MAIN_NEGATIVE's existing
+    "grid, panels, contact sheet, multiple frames" wording did not suppress
+    this variant."""
+    negative = gen.build_single_pose_negative_prompt().lower()
+    assert "reference sheet" in negative or "tech pack" in negative
+    assert "multiple views" in negative
+
+
 def test_build_single_pose_negative_prompt_does_not_re_add_panel_bans() -> None:
     """MAIN_NEGATIVE (via build_negative_prompt) already forbids grid/panel/
     multi-figure compositions -- exactly what a single-pose generation
