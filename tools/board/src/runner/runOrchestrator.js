@@ -39,12 +39,18 @@ import { KNOWN_HOST_ISSUES } from "./knownHostIssues.js";
 import { assertRunnerMayApply, needsApproval, parkedForApprovalComment } from "../lib/approvalGate.js";
 
 /**
- * Hard cap on total implementer/reviewer runs a card can consume across its bounded
+ * Default hard cap on total implementer/reviewer runs a card can consume across its bounded
  * FAIL -> auto-retry -> FAIL -> ... loop before it's left `blocked` for a human. Persisted
  * per-card as the `attempts` frontmatter field (see taskParser.js); reset to 0 at the start
  * of every human/API-initiated runCard() call (see runCard's fresh-allowance reset) and on
- * PASS (see _handlePass), so a card that exhausts its 5 auto-retries and gets manually
- * re-run always gets a full new allowance rather than staying permanently capped.
+ * PASS (see _handlePass), so a card that exhausts its auto-retries and gets manually re-run
+ * always gets a full new allowance rather than staying permanently capped.
+ *
+ * T-0343: this is now only the DEFAULT, not the sole authority -- a card may carry its own
+ * `max_attempts` frontmatter field (taskParser.js, 1-20) that overrides it. See
+ * `_effectiveMaxAttempts`, the only place that reconciles the two: absent/non-integer
+ * `max_attempts` (every card that predates this field) falls back to this constant unchanged,
+ * which is the compatibility guarantee this field's acceptance criteria calls for.
  */
 export const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
@@ -693,12 +699,15 @@ export class RunOrchestrator {
 
     let currentReused = reused;
     const attemptRecords = [];
+    // T-0343: this card's own attempt budget, falling back to MAX_AUTO_RETRY_ATTEMPTS when the
+    // card carries no explicit override -- see _effectiveMaxAttempts.
+    const maxAttempts = this._effectiveMaxAttempts(task);
     // Tracks the previous attempt's failure signature (§23-a) so two consecutive attempts that
     // fail for the identical, unfixable reason abort the loop immediately instead of burning the
-    // remaining MAX_AUTO_RETRY_ATTEMPTS slots on repeats -- see _handleFailValidation/
+    // remaining maxAttempts slots on repeats -- see _handleFailValidation/
     // _escalateIfGenuineBlocker below for how the abort is surfaced.
     let previousSignature = null;
-    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       // Re-fetch: a prior attempt in this same loop may have appended a FAIL note to the
       // body (read by the implementer's "continuing existing work" prompt on the retry).
       const liveTask = await this.store.get(taskId);
@@ -727,7 +736,7 @@ export class RunOrchestrator {
       // where a reviewer's FAIL notes said outright "this must NOT be auto-retried" and the
       // harness retried anyway because a FAIL verdict was a FAIL verdict.
       if (verdict.verdict === "NEEDS_HUMAN_DECISION") {
-        await this._handleNeedsHumanDecision(taskId, verdict, attempt);
+        await this._handleNeedsHumanDecision(taskId, verdict, attempt, maxAttempts);
         return;
       }
 
@@ -747,9 +756,9 @@ export class RunOrchestrator {
       const noProgress = signature !== null && previousSignature !== null && signature === previousSignature;
       attemptRecords.push({ attempt, notes: verdict.notes, events, signature });
 
-      const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
+      const isFinalAttempt = attempt >= maxAttempts;
       const stopping = isFinalAttempt || noProgress;
-      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !stopping, { noProgress, signature });
+      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !stopping, { noProgress, signature, maxAttempts });
       if (stopping) {
         await this._escalateIfGenuineBlocker(taskId, attemptRecords, runLog, { noProgress, repeatedSignature: noProgress ? signature : null });
         return;
@@ -1343,6 +1352,19 @@ export class RunOrchestrator {
   }
 
   /**
+   * T-0343: resolves a card's own attempt budget, falling back to MAX_AUTO_RETRY_ATTEMPTS for
+   * every card that carries no explicit override -- absent, null, or (defensively) anything not
+   * a positive integer. taskParser.js's validateTask already rejects a malformed or out-of-range
+   * value at the point a card is written, so this never needs to reject anything itself; it only
+   * has to tell "an explicit override is present" apart from "it isn't".
+   */
+  _effectiveMaxAttempts(task) {
+    return Number.isInteger(task.max_attempts) && task.max_attempts > 0
+      ? task.max_attempts
+      : MAX_AUTO_RETRY_ATTEMPTS;
+  }
+
+  /**
    * Records a NEEDS_HUMAN_DECISION verdict (T-0341): parks the card `blocked` -- the same status
    * every other human-actionable stop uses -- under its own note heading, "Needs Human Decision",
    * so a human scanning the card can tell this apart at a glance from "Validation: FAIL" (retries
@@ -1353,14 +1375,14 @@ export class RunOrchestrator {
    * named the open question in `verdict.notes`, and a human reading the card is the entire
    * resolution path, not another auto-retry attempt or an escalation card.
    */
-  async _handleNeedsHumanDecision(taskId, verdict, attempt) {
+  async _handleNeedsHumanDecision(taskId, verdict, attempt, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS) {
     const current = await this.store.get(taskId);
     await this._updateAndBroadcast(taskId, {
       status: "blocked",
       body: appendNote(
         current.body,
         "Needs Human Decision",
-        `${verdict.notes}\n\n(run ${attempt} of ${MAX_AUTO_RETRY_ATTEMPTS}) Reviewer verdict: NEEDS_HUMAN_DECISION -- this is a scope or design question for a human, not a fixable FAIL. Auto-retry loop halted immediately; no further attempt was made.`
+        `${verdict.notes}\n\n(run ${attempt} of ${maxAttempts}) Reviewer verdict: NEEDS_HUMAN_DECISION -- this is a scope or design question for a human, not a fixable FAIL. Auto-retry loop halted immediately; no further attempt was made.`
       )
     });
   }
@@ -1372,8 +1394,8 @@ export class RunOrchestrator {
    * not because attempts ran out -- distinct wording from the exhausted-cap case on purpose, so a
    * human reading the card never has to guess which one happened.
    */
-  _failNoteText(verdict, attempt, capped, { noProgress = false, signature } = {}) {
-    const progress = `(run ${attempt} of ${MAX_AUTO_RETRY_ATTEMPTS})`;
+  _failNoteText(verdict, attempt, capped, { noProgress = false, signature, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS } = {}) {
+    const progress = `(run ${attempt} of ${maxAttempts})`;
     let suffix = "";
     if (noProgress) {
       suffix =
@@ -1392,11 +1414,11 @@ export class RunOrchestrator {
    * implementer itself; a stopping attempt instead moves the card to `blocked` for a human, with
    * a note explaining why the loop stopped (cap reached, or no progress -- see `_failNoteText`).
    */
-  async _handleFailValidation(taskId, verdict, attempt, retrying, { noProgress = false, signature } = {}) {
+  async _handleFailValidation(taskId, verdict, attempt, retrying, { noProgress = false, signature, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS } = {}) {
     const current = await this.store.get(taskId);
     await this._updateAndBroadcast(taskId, {
       status: retrying ? "in-progress" : "blocked",
-      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying, { noProgress, signature }))
+      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying, { noProgress, signature, maxAttempts }))
     });
   }
 

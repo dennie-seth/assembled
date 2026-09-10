@@ -36,6 +36,13 @@ const NUMERIC_FIELDS = ["attempts"];
 // file round-trip like any other field.
 const APPROVAL_FLAG_FIELD = "requires_approval";
 const APPROVAL_RECORD_FIELDS = ["approved_by", "approved_at"];
+// T-0343: per-card override of runOrchestrator.js's MAX_AUTO_RETRY_ATTEMPTS. Nullable --
+// null means "no explicit override", which is what every pre-existing card has and must keep
+// behaving exactly as it did before this field existed. The 1-20 range keeps a malformed or
+// wildly out-of-range value from silently becoming an unbounded (or zero-attempt) retry loop.
+const MAX_ATTEMPTS_FIELD = "max_attempts";
+const MAX_ATTEMPTS_MIN = 1;
+const MAX_ATTEMPTS_MAX = 20;
 const ARRAY_FIELDS = ["comments", "attachments"];
 const COMMENT_FIELDS = ["author", "text", "timestamp"];
 const ATTACHMENT_STRING_FIELDS = ["filename", "mimetype", "uploaded_by", "uploaded_at"];
@@ -131,6 +138,14 @@ export function validateTask(data) {
       throw new Error(`Invalid ${field} "${data[field]}": expected a non-negative integer`);
     }
   }
+  if (MAX_ATTEMPTS_FIELD in data && data[MAX_ATTEMPTS_FIELD] !== null) {
+    const value = data[MAX_ATTEMPTS_FIELD];
+    if (!Number.isInteger(value) || value < MAX_ATTEMPTS_MIN || value > MAX_ATTEMPTS_MAX) {
+      throw new Error(
+        `Invalid max_attempts "${value}": expected an integer between ${MAX_ATTEMPTS_MIN} and ${MAX_ATTEMPTS_MAX}, or null to use the default`
+      );
+    }
+  }
   if (
     APPROVAL_FLAG_FIELD in data &&
     data[APPROVAL_FLAG_FIELD] !== null &&
@@ -201,6 +216,7 @@ export function parseTask(raw) {
     approved_by: data.approved_by ?? null,
     approved_at: data.approved_at ?? null,
     attempts: data.attempts ?? 0,
+    max_attempts: data.max_attempts ?? null,
     comments: Array.isArray(data.comments) ? data.comments : [],
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
     body
@@ -220,6 +236,7 @@ export function serializeTask(task) {
     `${APPROVAL_FLAG_FIELD}: ${JSON.stringify(task[APPROVAL_FLAG_FIELD] === true)}`,
     ...APPROVAL_RECORD_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
     ...NUMERIC_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? 0)}`),
+    `${MAX_ATTEMPTS_FIELD}: ${JSON.stringify(task[MAX_ATTEMPTS_FIELD] ?? null)}`,
     ...ARRAY_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? [])}`)
   ];
   return `---\n${lines.join("\n")}\n---\n${task.body}`;
