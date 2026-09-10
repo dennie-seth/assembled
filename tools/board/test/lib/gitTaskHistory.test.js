@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
-import { readTaskBodyAtMergeBase } from "../../src/lib/gitTaskHistory.js";
+import { readTaskBodyAtMergeBase, readRunStartTimestamp } from "../../src/lib/gitTaskHistory.js";
 import { serializeTask } from "../../src/lib/taskParser.js";
 import { PRE_REGISTRATION_HEADING } from "../../src/lib/preRegisteredFinding.js";
 
@@ -139,5 +139,72 @@ describe("readTaskBodyAtMergeBase", () => {
     await fs.mkdir(nonGitDir, { recursive: true });
     const beforeBody = await readTaskBodyAtMergeBase({ cwd: nonGitDir, id: "T-0999", baseRef: "develop" });
     expect(beforeBody).toBe("");
+  });
+});
+
+/**
+ * T-0354: the freshness gate's fs-mode "run start" boundary -- the earliest commit made on this
+ * branch beyond `baseRef`, i.e. the implementer's first commit of this run. Deliberately the same
+ * coarseness readTaskBodyAtMergeBase already accepts for fs-mode (a per-branch boundary, not a
+ * per-attempt one) -- fs-mode task files are the legacy path; db-mode (readRunStartTimestamp in
+ * dbTaskHistory.js) is the live board's normal mode and gets the precise per-attempt boundary via
+ * card_events.
+ */
+describe("readRunStartTimestamp", () => {
+  let tmpDir;
+  let repoRoot;
+
+  async function commitAt(args, cwd, isoDate) {
+    await execFileAsync("git", args, { cwd, env: { ...process.env, GIT_AUTHOR_DATE: isoDate, GIT_COMMITTER_DATE: isoDate } });
+  }
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-gittaskhistory-runstart-"));
+    repoRoot = path.join(tmpDir, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await git(["init", "-b", "main"], repoRoot);
+    await git(["config", "user.email", "test@example.com"], repoRoot);
+    await git(["config", "user.name", "Test"], repoRoot);
+    await fs.writeFile(path.join(repoRoot, "README.md"), "root\n", "utf8");
+    await commitAt(["add", "."], repoRoot);
+    await commitAt(["commit", "-m", "root"], repoRoot, "2026-01-01T00:00:00Z");
+    await git(["checkout", "-b", "develop"], repoRoot);
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns the date of the earliest commit on the branch beyond baseRef, not the latest", async () => {
+    await git(["checkout", "-b", "feature/T-0999"], repoRoot);
+    await fs.writeFile(path.join(repoRoot, "gen.py"), "print(1)", "utf8");
+    await commitAt(["add", "."], repoRoot);
+    await commitAt(["commit", "-m", "first commit of the run"], repoRoot, "2026-09-10T12:00:00Z");
+
+    await fs.writeFile(path.join(repoRoot, "gen.py"), "print(2)", "utf8");
+    await commitAt(["add", "."], repoRoot);
+    await commitAt(["commit", "-m", "second commit of the run"], repoRoot, "2026-09-10T12:00:09Z");
+
+    const runStartTime = await readRunStartTimestamp({ cwd: repoRoot, baseRef: "develop" });
+    expect(runStartTime).toContain("2026-09-10T12:00:00");
+  });
+
+  it("falls back to the merge-base's own commit date when the branch has no commits beyond base yet", async () => {
+    await git(["checkout", "-b", "feature/T-1000"], repoRoot);
+
+    const runStartTime = await readRunStartTimestamp({ cwd: repoRoot, baseRef: "develop" });
+    expect(runStartTime).toContain("2026-01-01T00:00:00");
+  });
+
+  it("returns an empty string (never throws) for an unresolvable baseRef", async () => {
+    const runStartTime = await readRunStartTimestamp({ cwd: repoRoot, baseRef: "no-such-branch" });
+    expect(runStartTime).toBe("");
+  });
+
+  it("returns an empty string (never throws) when cwd is not a git repository at all", async () => {
+    const nonGitDir = path.join(tmpDir, "not-a-repo");
+    await fs.mkdir(nonGitDir, { recursive: true });
+    const runStartTime = await readRunStartTimestamp({ cwd: nonGitDir, baseRef: "develop" });
+    expect(runStartTime).toBe("");
   });
 });

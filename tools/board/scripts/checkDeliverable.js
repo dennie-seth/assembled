@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { promises as fs } from "node:fs";
 import { parseTask } from "../src/lib/taskParser.js";
 import { checkDeliverable } from "../src/lib/deliverableCheck.js";
-import { readTaskBodyAtMergeBase } from "../src/lib/gitTaskHistory.js";
-import { readTaskBodyBeforeRun } from "../src/lib/db/dbTaskHistory.js";
+import { readTaskBodyAtMergeBase, readRunStartTimestamp as readGitRunStartTimestamp } from "../src/lib/gitTaskHistory.js";
+import { readTaskBodyBeforeRun, readRunStartTimestamp as readDbRunStartTimestamp } from "../src/lib/db/dbTaskHistory.js";
 import { FINDING_HEADING } from "../src/lib/preRegisteredFinding.js";
 import { openDb, resolveDbPath } from "../src/lib/db/connection.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
@@ -74,7 +74,20 @@ async function main() {
       ? readTaskBodyBeforeRun(db, id)
       : await readTaskBodyAtMergeBase({ cwd: REPO_ROOT, id, baseRef: "develop" });
 
-    const report = await checkDeliverable(task, { attachmentsDir, requireArtifact, beforeBody, repoRoot: REPO_ROOT });
+    // T-0354: the freshness gate's "this run started at" boundary -- same db-mode/fs-mode split as
+    // beforeBody above, and the same script-location-derived REPO_ROOT (not cwd/env) that every
+    // other repoRoot-gated check here already uses.
+    const runStartTime = isDbMode
+      ? readDbRunStartTimestamp(db, id)
+      : await readGitRunStartTimestamp({ cwd: REPO_ROOT, baseRef: "develop" });
+
+    const report = await checkDeliverable(task, {
+      attachmentsDir,
+      requireArtifact,
+      beforeBody,
+      repoRoot: REPO_ROOT,
+      runStartTime
+    });
 
     if (!report.applicable) {
       console.log(`${id}: deliverable_type is "${task.deliverable_type}", not "artifact" -- nothing to check.`);
