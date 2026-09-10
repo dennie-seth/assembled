@@ -62,7 +62,15 @@ single-figure true 90-degree side profile in the canonical hooded coat -- confir
    the coat's own shadow folds in Oklab space that `char_gen.cutout`'s border-connected flood
    classifier ate through large parts of the figure before palette quantization ever ran -- a
    different pipeline stage than (1), and the one place all three attempts is genuinely the "best
-   raw material, worst descent outcome" case.
+   raw material, worst descent outcome" case. Measured directly (running the existing, unmodified
+   `build_descended_cell` against the committed `attempt_2/side_neutral_1024.png`, output
+   discarded, not promoted -- a descent-only re-run of an already-generated panel, not a 4th
+   generation attempt): `char_gen.cutout` itself warns at runtime that this frame's border colours
+   span "32.10x the classification tolerance ... too wide to trust", and the result confirms it --
+   2228 of 2304 cells (the near-entirety of the 48x48 canvas) come back flagged foreground, i.e.
+   the flood classifier fails open into treating almost the whole frame, background included, as
+   figure. This is not a marginal edge fray, it is a nearly total mask inversion for this specific
+   frame's background.
 
 **Conclusion: the failure is in descent, not generation**, and it is not one bug but two
 independent descent-stage interactions -- palette-vs-continuous-gradient (attempts 1, 3) and
