@@ -954,13 +954,17 @@ def test_check_attempt_cap_t0351_allows_a_sixth_attempt() -> None:
     gen.check_attempt_cap(6, card="T-0351")  # must not raise
 
 
-def test_check_attempt_cap_t0351_still_has_a_runaway_backstop() -> None:
-    """No attempt cap of *this card's own* doesn't mean no cap at all --
-    conduct.md's "a small job, not a sweep" spirit still applies generically
-    to any card without its own stated budget."""
-    gen.check_attempt_cap(gen.DEFAULT_ATTEMPT_CAP, card="T-0351")  # must not raise
+def test_check_attempt_cap_t0351_allows_exactly_the_re_scope_budget() -> None:
+    """The RE-SCOPE section (2026-09-10, "PER-PANEL REFERENCE
+    CONDITIONING") authorises exactly three internal attempts under the new
+    per-panel-reference architecture -- attempts 19, 20 and 21 (attempts
+    1-18 were spent on the single-shared-crop architecture it replaces) --
+    and says to stop and report after that, not grind past it.
+    ATTEMPT_CAP_BY_CARD now enforces that boundary mechanically: 21 must
+    not raise, 22 must."""
+    gen.check_attempt_cap(21, card="T-0351")  # must not raise
     with pytest.raises(SystemExit):
-        gen.check_attempt_cap(gen.DEFAULT_ATTEMPT_CAP + 1, card="T-0351")
+        gen.check_attempt_cap(22, card="T-0351")
 
 
 def test_concept_crop_box_for_t0336_defaults_to_entity_registered_box() -> None:
