@@ -7,16 +7,14 @@
 //   withdrawn -- the entry's premise turned out to be wrong. Nobody performed the action, and
 //                nobody should: doing it is now known to make things worse.
 //
-// The ComfyUI determinism entry is the live case. It asks for `--deterministic` +
-// `CUBLAS_WORKSPACE_CONFIG`, and T-0317 rounds 10-12 measured that regime making the §24-e graph
-// reliably INCOHERENT -- 6/6 fresh seeds under full determinism, 6/6 again under CUBLAS-only,
-// against 8/8 under baseline. The host was deliberately restored to baseline on that evidence, and
-// T-0322's own card records the requirement as "wrong as written and must not be implemented as
-// stated". Marking it `resolved` would assert the action was taken and verified, which is false;
-// deleting it would lose the history the registry deliberately keeps.
+// These tests exercise the mechanism itself via fixture entries, not any specific registry entry
+// -- the comfyui-determinism-flags entry that originally motivated `withdrawn` (T-0323) was itself
+// removed from the registry outright in T-0346, once "determinism flags broke coherence" turned
+// out not to be an established finding (0/6 and 0/8 fresh-seed coherence under flags is
+// indistinguishable from this graph's ~1/40 baseline coherence rate). The mechanism this file
+// tests remains: it may be needed again by a future entry.
 import { describe, it, expect } from "vitest";
 import { checkHostStatePreflight } from "../../src/runner/hostStatePreflight.js";
-import { KNOWN_HOST_ISSUES } from "../../src/runner/knownHostIssues.js";
 
 const task = (body) => ({ id: "T-0001", body });
 
@@ -57,29 +55,5 @@ describe("hostStatePreflight: withdrawn entries", () => {
     const res = checkHostStatePreflight(task("anything"), "assets", { registry });
     expect(res.ok).toBe(false);
     expect(res.hostAction).toBeTruthy();
-  });
-});
-
-describe("the ComfyUI determinism entry is withdrawn on measured evidence", () => {
-  const entry = () => KNOWN_HOST_ISSUES.find((i) => i.id === "comfyui-determinism-flags");
-
-  it("is marked withdrawn, NOT resolved -- nobody performed the action", () => {
-    expect(entry().withdrawn).toBe(true);
-    expect(entry().resolved).toBe(false);
-  });
-
-  it("records why, citing the coherence finding", () => {
-    expect(entry().withdrawnReason).toMatch(/coheren|T-0317|baseline/i);
-  });
-
-  it("no longer preflight-blocks an assets card that mentions reproducibility", () => {
-    const body = "## Round plan\nthe figure that lands in the log has to be reproducible from the committed sheet";
-    expect(checkHostStatePreflight(task(body), "assets").ok).toBe(true);
-  });
-
-  it("is kept in the registry rather than deleted, so the history stays auditable", () => {
-    expect(entry()).toBeTruthy();
-    expect(entry().condition.length).toBeGreaterThan(0);
-    expect(entry().action.length).toBeGreaterThan(0);
   });
 });

@@ -133,6 +133,19 @@ function detectReferenceBatchSummaryPaths(changedPaths) {
   return changedPaths.filter((changedPath) => REFERENCE_BATCH_SUMMARY_RE.test(changedPath));
 }
 
+/**
+ * A committed machine-readable frame-delta gate report (T-0349) --
+ * `*.gate_report.json` anywhere in the diff. Deliberately not scoped to a
+ * single directory (unlike `REFERENCE_BATCH_SUMMARY_RE`): the gate is run
+ * against whichever sheet a card touches, and the report always sits next
+ * to that sheet under `assets/final/**`, so matching on the suffix alone is
+ * both sufficient and simpler than re-deriving the sheet's own path prefix
+ * rules here.
+ */
+function detectGateReportPaths(changedPaths) {
+  return changedPaths.filter((changedPath) => changedPath.endsWith(".gate_report.json"));
+}
+
 function detectPythonPackageRoots(changedPaths) {
   const touched = new Set();
   for (const path of changedPaths) {
@@ -184,7 +197,12 @@ function detectPythonPackageRoots(changedPaths) {
  * every such file in the diff -- the mechanical backstop for T-0281, where a committed summary
  * recorded sha256/licence/retrievedAt for each kept image but not the `assetId`/`sourceUrl` that
  * let a human re-verify the licence claim after the gitignored quarantine directory backing it was
- * reclaimed with the worktree. A diff touching several of these routes at once returns all of
+ * reclaimed with the worktree. A diff touching a committed `*.gate_report.json` (T-0349, the
+ * machine-readable frame-delta gate report) runs `gate-report-pointer`: `cat` every such file so the
+ * reviewer's own required-verification output already contains the gate's own `grid`/per-frame
+ * numbers, closing the T-0259 gap where reviewers hand-re-derived pixel-delta ratios from the sheet
+ * image and did not always agree (one measurement on the wrong grid gave 1.29x where the true value
+ * on the 4x2 grid is 5.3077x). A diff touching several of these routes at once returns all of
  * them, one route per package/test for a multi-match diff. Diffs outside all of these prefixes
  * (client/** godot-cpp, etc.) return no routes here -- their verification stays qualitatively
  * described by the `verify` skill's table, unchanged.
@@ -223,6 +241,14 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
       id: "reference-batch-summary-provenance",
       label: "Reference batch-fetch summary provenance check (assetId/sourceUrl per kept image)",
       command: `node tools/board/scripts/checkReferenceBatchSummary.js ${referenceBatchSummaries.join(" ")}`
+    });
+  }
+  const gateReportPaths = detectGateReportPaths(changedPaths);
+  if (gateReportPaths.length > 0) {
+    routes.push({
+      id: "gate-report-pointer",
+      label: "Committed gate report(s) -- read grid/per-frame numbers here, do not re-derive by hand",
+      command: `cat ${gateReportPaths.join(" ")}`
     });
   }
   if (touchesServerRoots(changedPaths)) {
