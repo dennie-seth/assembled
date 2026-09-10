@@ -1151,25 +1151,110 @@ def test_build_graph_ipadapter_and_style_identity_lora_unaffected_by_controlnet(
         assert no_cn[node_id] == with_cn[node_id], node_id
 
 
-def test_run_five_pose_attempt_uses_the_card_specific_concept_crop_box(monkeypatch) -> None:
-    """Attempt 17: run_five_pose_attempt must resolve
-    concept_crop_box_for(card, entity_name) -- not read
-    entity.concept_crop_box directly -- otherwise T-0351's own crop-box
-    override (docs/assets/evidence/T-0351/README.md 'DIRECTION' section) is
-    dead code and every panel keeps conditioning on the old multi-panel-
-    grid crop this card's own evidence identified as a root cause."""
+def test_concept_crop_box_for_t0351_still_resolves_as_the_generic_fallback() -> None:
+    """concept_crop_box_for keeps existing behaviour -- reference_image_for
+    (RE-SCOPE, below) falls back to it for any (card, pose_key) combination
+    that isn't explicitly registered in POSE_REFERENCES_BY_CARD."""
+    box = gen.concept_crop_box_for("T-0351", "player")
+    assert box == gen.CONCEPT_CROP_BOX_BY_CARD["T-0351"]
+
+
+# ── RE-SCOPE (2026-09-10, "PER-PANEL REFERENCE CONDITIONING") -- eighteen ──
+# attempts under one shared front-view crop for all six panels never
+# converged: the concept sheet was opened and read panel by panel and found
+# to carry almost no green-costume SIDE material at all (its side/profile
+# figures belong to a different, tan/tactical costume tier). Conditioning
+# every panel on one front crop asks IP-Adapter for a side view having shown
+# it only a front view -- a missing-reference problem, not a prompt-weight
+# one. reference_image_for resolves each pose's own (image, crop) pair
+# instead of reusing concept_crop_box_for's single shared box for every
+# panel.
+
+
+def test_reference_image_for_front_and_legs_use_the_concept_sheet_front_crop() -> None:
+    """front_tpose and legs both still condition on attempt 17's own clean
+    front-view crop -- no dedicated legs-only reference exists on the
+    concept sheet (verified), so legs relies on the torso-free ControlNet
+    skeleton, not a different reference image, to suppress the coat."""
+    front_path, front_box = gen.reference_image_for("T-0351", "player", "front_tpose")
+    legs_path, legs_box = gen.reference_image_for("T-0351", "player", "legs")
+    assert front_path == gen.CONCEPT_SHEET_PATH
+    assert legs_path == gen.CONCEPT_SHEET_PATH
+    assert front_box == legs_box == gen.CONCEPT_CROP_BOX_BY_CARD["T-0351"]
+
+
+def test_reference_image_for_back_tpose_uses_a_distinct_concept_sheet_crop() -> None:
+    """back_tpose gets its own crop -- a genuine green BACK view measured
+    off the concept sheet (row 4, column 4), not front_tpose's front crop.
+    Attempts 15-16 both rendered a front-facing mask on this panel because
+    nothing ever conditioned it on a back view at all."""
+    path, box = gen.reference_image_for("T-0351", "player", "back_tpose")
+    assert path == gen.CONCEPT_SHEET_PATH
+    front_box = gen.reference_image_for("T-0351", "player", "front_tpose")[1]
+    assert box != front_box
+    x, y, width, height = box
+    assert 0 <= x and 0 <= y
+    assert x + width <= 1024
+    assert y + height <= 1024
+
+
+def test_reference_image_for_side_panels_use_the_t0317_profile_reference() -> None:
+    """The three side panels (side_left_forward, side_right_forward,
+    side_neutral) condition on the committed T-0317 green side-profile
+    reference, not any concept-sheet crop -- the concept sheet has no green
+    side view at all, which is why these three panels never once produced
+    a compliant true-profile result across 18 attempts of prompt/ControlNet
+    tuning against a front-view-only reference."""
+    for pose_key in ("side_left_forward", "side_right_forward", "side_neutral"):
+        path, box = gen.reference_image_for("T-0351", "player", pose_key)
+        assert path == gen.PROFILE_REFERENCE_T0317_PATH, pose_key
+        assert box is None, pose_key
+
+
+def test_reference_image_for_t0317_reference_file_exists_and_is_a_raster_image() -> None:
+    """A reference the generator cannot produce is sourced, never faked
+    (.claude/rules/assets.md) -- this asserts the committed file this card
+    now depends on is actually present, not just referenced in code."""
+    path = gen.PROFILE_REFERENCE_T0317_PATH
+    assert path.exists(), path
+    from PIL import Image
+
+    with Image.open(path) as im:
+        assert im.size[0] > 0
+        assert im.size[1] > 0
+
+
+def test_reference_image_for_unregistered_pose_falls_back_to_concept_crop_box_for() -> None:
+    """Any (card, pose_key) combination with no explicit override -- e.g. a
+    T-0336 call, which never calls this function, or a made-up pose key on
+    T-0351 -- resolves to the old single-shared-crop behaviour, not a
+    KeyError."""
+    path, box = gen.reference_image_for("T-0336", "player", "front_tpose")
+    assert path == gen.ENTITIES["player"].concept_sheet_path
+    assert box == gen.concept_crop_box_for("T-0336", "player")
+
+
+def test_run_five_pose_attempt_uses_a_different_reference_per_panel(monkeypatch) -> None:
+    """The actual behaviour change under test: run_five_pose_attempt must
+    call reference_image_for per pose, not resolve one shared crop/image
+    for the whole run -- otherwise reference_image_for is dead code and
+    every panel keeps conditioning on the same front crop attempt 17 used,
+    exactly the defect RE-SCOPE exists to fix."""
     import shutil
 
     from PIL import Image
 
-    test_out_dir = gen.REPO_ROOT / "assets" / "out" / "_test_scratch_T0351_cropbox"
+    test_out_dir = gen.REPO_ROOT / "assets" / "out" / "_test_scratch_T0351_perpanel_ref"
     test_out_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(gen, "out_dir_for", lambda card, entity, attempt: test_out_dir)
 
-    captured_graphs = []
+    uploaded_paths = []
 
     def fake_upload_image(path):
+        uploaded_paths.append(path)
         return path.name
+
+    captured_graphs = []
 
     def fake_submit_prompt(graph):
         captured_graphs.append(graph)
@@ -1192,19 +1277,55 @@ def test_run_five_pose_attempt_uses_the_card_specific_concept_crop_box(monkeypat
 
     try:
         provenance = gen.run_five_pose_attempt(
-            entity_name="player", attempt=17, base_seed=2000, width=64, height=64, card="T-0351"
+            entity_name="player", attempt=19, base_seed=3000, width=64, height=64, card="T-0351"
         )
-        expected_box = gen.concept_crop_box_for("T-0351", "player")
-        assert expected_box != gen.ENTITIES["player"].concept_crop_box
-        for graph in captured_graphs:
-            crop_inputs = graph[gen.CONCEPT_CROP_NODE_ID]["inputs"]
-            assert (
-                crop_inputs["x"],
-                crop_inputs["y"],
-                crop_inputs["width"],
-                crop_inputs["height"],
-            ) == expected_box
-        assert provenance["concept_crop_box"] == expected_box
+
+        # The concept sheet is uploaded once (shared by front/back/legs, not
+        # re-uploaded per pose), and the T-0317 reference is uploaded once
+        # (shared by the three side panels) -- exactly two distinct source
+        # files across six panels, not six identical uploads and not six
+        # independent ones either.
+        assert set(uploaded_paths).issuperset(
+            {gen.CONCEPT_SHEET_PATH, gen.PROFILE_REFERENCE_T0317_PATH}
+        )
+        concept_sheet_uploads = [p for p in uploaded_paths if p == gen.CONCEPT_SHEET_PATH]
+        t0317_uploads = [p for p in uploaded_paths if p == gen.PROFILE_REFERENCE_T0317_PATH]
+        assert len(concept_sheet_uploads) == 1
+        assert len(t0317_uploads) == 1
+
+        # Each pose's graph carries its own resolved reference, not a
+        # single shared one.
+        for i, pose in enumerate(gen.POSE_SPECS):
+            expected_path, expected_box = gen.reference_image_for("T-0351", "player", pose.key)
+            graph = captured_graphs[i]
+            assert graph[gen.CONCEPT_IMAGE_NODE_ID]["inputs"]["image"] == expected_path.name
+            if expected_box is None:
+                assert gen.CONCEPT_CROP_NODE_ID not in graph
+            else:
+                crop_inputs = graph[gen.CONCEPT_CROP_NODE_ID]["inputs"]
+                assert (
+                    crop_inputs["x"],
+                    crop_inputs["y"],
+                    crop_inputs["width"],
+                    crop_inputs["height"],
+                ) == expected_box
+
+        # Side panels must not carry the front crop's node at all -- they
+        # condition on the whole T-0317 reference image, uncropped.
+        side_keys = {"side_left_forward", "side_right_forward", "side_neutral"}
+        for i, pose in enumerate(gen.POSE_SPECS):
+            if pose.key in side_keys:
+                assert gen.CONCEPT_CROP_NODE_ID not in captured_graphs[i]
+
+        # Provenance records each pose's own resolved reference.
+        for record in provenance["poses"]:
+            expected_path, expected_box = gen.reference_image_for(
+                "T-0351", "player", record["key"]
+            )
+            assert record["reference_image"] == str(expected_path.relative_to(gen.REPO_ROOT))
+            assert record["reference_crop_box"] == (
+                list(expected_box) if expected_box is not None else None
+            ) or record["reference_crop_box"] == expected_box
     finally:
         shutil.rmtree(test_out_dir, ignore_errors=True)
 
