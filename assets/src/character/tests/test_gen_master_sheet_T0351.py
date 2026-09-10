@@ -298,3 +298,175 @@ def test_promote_attempt_default_stem_still_matches_t0336_unchanged(tmp_path, mo
     gen.promote_attempt("player", out_dir, provenance)
 
     assert (final_dir / "player_master_sheet_T0336.png").exists()
+
+
+# ── Lever 2 (run-1 reviewer verdict): five separate single-pose generations
+# composited by script, replacing the single-shot five-panel-in-one-image
+# approach that failed all 5 of this card's first-round attempts. Root
+# cause per the reviewer: MAIN_NEGATIVE (imported from T-0249) forbids
+# "grid, panels, contact sheet, multiple frames" and "two figures, duplicate
+# figure" -- exactly what a five-panel-in-a-row image needs. Generating one
+# pose per KSampler call sidesteps that conflict entirely instead of fighting
+# it, and matches the card's own standing guardrail ("motion composited by
+# script") and docs/assets/evidence/T-0351/README.md's own recommendation. ──
+
+
+def test_pose_specs_has_five_entries_in_acceptance_criteria_order() -> None:
+    keys = [pose.key for pose in gen.POSE_SPECS]
+    assert keys == [
+        "front_tpose",
+        "back_tpose",
+        "side_left_forward",
+        "side_right_forward",
+        "side_neutral",
+    ]
+
+
+def test_build_single_pose_positive_prompt_front_tpose() -> None:
+    player = gen.ENTITIES["player"]
+    pose = gen.POSE_SPECS[0]
+    prompt = gen.build_single_pose_positive_prompt(player, pose).lower()
+    assert player.trigger_token in prompt
+    assert "t-pose" in prompt
+    assert "front" in prompt
+    assert "horizontal" in prompt
+    assert "legs spread" in prompt or "legs apart" in prompt
+    assert "institutional green coat" in prompt
+    assert "mid-hip" in prompt and "thigh" in prompt
+    assert "hooded mask" in prompt and "eye lenses" in prompt
+    # single-pose generation must not ask for a multi-panel layout -- that
+    # is exactly the instruction that fought MAIN_NEGATIVE in attempts 1-5.
+    assert "panel" not in prompt
+    assert "single full-body figure" in prompt
+
+
+def test_build_single_pose_positive_prompt_back_tpose() -> None:
+    player = gen.ENTITIES["player"]
+    pose = gen.POSE_SPECS[1]
+    prompt = gen.build_single_pose_positive_prompt(player, pose).lower()
+    assert "t-pose" in prompt
+    assert "back" in prompt
+    assert "horizontal" in prompt
+
+
+def test_build_single_pose_positive_prompt_side_left_forward() -> None:
+    player = gen.ENTITIES["player"]
+    pose = gen.POSE_SPECS[2]
+    prompt = gen.build_single_pose_positive_prompt(player, pose).lower()
+    assert "left arm" in prompt and "left leg" in prompt
+    assert "right arm" in prompt and "right leg" in prompt
+    assert "forward" in prompt
+    assert "90-degree" in prompt
+    assert "not a three-quarter view" in prompt
+
+
+def test_build_single_pose_positive_prompt_side_right_forward() -> None:
+    player = gen.ENTITIES["player"]
+    pose = gen.POSE_SPECS[3]
+    prompt = gen.build_single_pose_positive_prompt(player, pose).lower()
+    assert "right arm" in prompt and "right leg" in prompt
+    assert "left arm" in prompt and "left leg" in prompt
+    assert "forward" in prompt
+    assert "90-degree" in prompt
+    assert "not a three-quarter view" in prompt
+
+
+def test_build_single_pose_positive_prompt_side_neutral() -> None:
+    player = gen.ENTITIES["player"]
+    pose = gen.POSE_SPECS[4]
+    prompt = gen.build_single_pose_positive_prompt(player, pose).lower()
+    assert "90-degree" in prompt
+    assert "not a three-quarter view" in prompt
+    assert "arms down" in prompt or "arms hanging" in prompt or "hanging straight down" in prompt
+    assert "standing" in prompt
+
+
+def test_build_single_pose_positive_prompt_does_not_add_any_new_entity_field() -> None:
+    """Same scope guarantee as build_limb_pose_prompt: pose is the only
+    variable, no new EntitySpec field required."""
+    enemy = gen.EntitySpec(
+        name="test_enemy",
+        concept_sheet_path=Path("dummy.png"),
+        concept_hash="deadbeef",
+        identity_lora_name=None,
+        identity_lora_path=None,
+        identity_lora_provenance_path=None,
+        identity_lora_weight=0.0,
+        trigger_token="senemytoken",
+        costume_description="chitin plating",
+    )
+    prompt = gen.build_single_pose_positive_prompt(enemy, gen.POSE_SPECS[0])
+    assert "senemytoken" in prompt
+    assert "chitin plating" in prompt
+
+
+def test_build_single_pose_negative_prompt_includes_t0336_fixes() -> None:
+    negative = gen.build_single_pose_negative_prompt().lower()
+    assert "blank head" in negative
+    assert "armor plating" in negative
+    assert "robotic legs" in negative
+
+
+def test_build_single_pose_negative_prompt_forbids_long_coat_and_heels() -> None:
+    negative = gen.build_single_pose_negative_prompt().lower()
+    assert "long coat" in negative or "floor-length coat" in negative
+    assert "heel" in negative
+
+
+def test_build_single_pose_negative_prompt_does_not_re_add_panel_bans() -> None:
+    """MAIN_NEGATIVE (via build_negative_prompt) already forbids grid/panel/
+    multi-figure compositions -- exactly what a single-pose generation
+    wants, so this must not duplicate build_limb_pose_negative_prompt's own
+    extra anti-panel clauses (six figures, two rows, etc.), which belonged
+    to the single-shot five-panel approach this lever replaces."""
+    negative = gen.build_single_pose_negative_prompt().lower()
+    assert "six figures" not in negative
+    assert "six panels" not in negative
+
+
+def test_compose_pose_row_stitches_images_side_by_side(tmp_path) -> None:
+    from PIL import Image
+
+    paths = []
+    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+    for i, color in enumerate(colors):
+        im = Image.new("RGB", (40, 40), color)
+        p = tmp_path / f"pose_{i}.png"
+        im.save(p)
+        paths.append(p)
+    out_path = tmp_path / "row.png"
+
+    gen.compose_pose_row(paths, out_path)
+
+    composed = Image.open(out_path)
+    assert composed.size == (120, 40)
+    assert composed.getpixel((10, 10)) == (255, 0, 0)
+    assert composed.getpixel((50, 10)) == (0, 255, 0)
+    assert composed.getpixel((90, 10)) == (0, 0, 255)
+
+
+def test_compose_pose_row_scales_to_common_height_without_stretch(tmp_path) -> None:
+    from PIL import Image
+
+    tall = Image.new("RGB", (40, 80), (255, 0, 0))
+    short = Image.new("RGB", (40, 40), (0, 255, 0))
+    tall_path = tmp_path / "tall.png"
+    short_path = tmp_path / "short.png"
+    tall.save(tall_path)
+    short.save(short_path)
+    out_path = tmp_path / "row.png"
+
+    gen.compose_pose_row([tall_path, short_path], out_path)
+
+    composed = Image.open(out_path)
+    # common height is the smaller of the two; the tall image is scaled down
+    # preserving its aspect ratio (half as tall -> half as wide), never
+    # stretched to match the short image's width.
+    assert composed.height == 40
+    assert composed.width == 20 + 40
+
+
+def test_run_five_pose_attempt_is_registered_for_this_cards_generation_mode() -> None:
+    """`main()`'s --five-pose flag must resolve to this function for T-0351
+    -- a smoke check that the CLI wiring points at the right callable."""
+    assert callable(gen.run_five_pose_attempt)
