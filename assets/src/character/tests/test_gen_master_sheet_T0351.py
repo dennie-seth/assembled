@@ -421,6 +421,17 @@ def test_build_single_pose_negative_prompt_forbids_weapons_and_action_poses() ->
     assert "kick" in negative or "martial arts" in negative or "combat stance" in negative
 
 
+def test_build_single_pose_negative_prompt_forbids_held_tools_and_canisters() -> None:
+    """Attempt 17's side_left_forward still rendered a held cylindrical
+    tool/flashlight-like prop in the extended hand despite the existing
+    weapon ban -- a flashlight/torch/canister is not a weapon and was
+    never named. Adds an explicit empty-hands requirement rather than
+    trying to enumerate every possible prop."""
+    negative = gen.build_single_pose_negative_prompt().lower()
+    assert "flashlight" in negative or "torch" in negative or "canister" in negative
+    assert "empty hand" in negative or "open palm" in negative or "nothing in hand" in negative
+
+
 def test_build_single_pose_positive_prompt_side_left_forward() -> None:
     player = gen.ENTITIES["player"]
     pose = gen.POSE_SPECS[2]
@@ -451,6 +462,20 @@ def test_build_single_pose_positive_prompt_side_neutral() -> None:
     assert "not a three-quarter view" in prompt
     assert "arms down" in prompt or "arms hanging" in prompt or "hanging straight down" in prompt
     assert "standing" in prompt
+
+
+def test_side_neutral_pose_clause_emphasizes_true_profile() -> None:
+    """Attempt 17 (docs/assets/evidence/T-0351/): side_neutral had been the
+    first panel this card ever produced a genuine true-90-degree profile
+    on (attempt 16), but regressed to front-facing with a blown-out
+    head/mask once the concept_crop_box override (attempt-17's own fix,
+    a single front-view reference figure) removed whatever incidental
+    profile signal the old multi-panel-grid crop happened to carry.
+    side_neutral's own pose clause gets CLIP emphasis on the profile
+    framing -- a lever never tried on this specific clause before, and
+    distinct from the closed coat-length-weight axis -- to compensate."""
+    pose = next(p for p in gen.POSE_SPECS if p.key == "side_neutral")
+    assert ":1.3)" in pose.pose_clause or ":1.4)" in pose.pose_clause
 
 
 def test_build_single_pose_positive_prompt_does_not_add_any_new_entity_field() -> None:
@@ -530,6 +555,22 @@ def test_build_legs_panel_positive_prompt_states_waist_down_close_up_framing() -
     prompt = gen.build_legs_panel_positive_prompt(gen.ENTITIES["player"]).lower()
     assert "waist" in prompt
     assert "crop" in prompt
+
+
+def test_build_legs_panel_positive_prompt_framing_clause_emphasis_raised_after_attempt_17() -> (
+    None
+):
+    """Attempt 17 (docs/assets/evidence/T-0351/): the waist-down close-up
+    framing clause at 1.4 emphasis was not enough to stop the sampler
+    rendering a full coated torso down to the hips -- the legs panel came
+    back closer-cropped than any prior attempt (real progress) but still
+    showed shoulders, collar and a full coat. Raises the *framing* clause
+    specifically (not the no-coat clause, which stays at attempt 17's 1.5
+    -- coat-length emphasis is the closed axis, camera framing is not) to
+    1.6."""
+    prompt = gen.build_legs_panel_positive_prompt(gen.ENTITIES["player"])
+    assert "close-up crop from the waist down" in prompt
+    assert ":1.6)" in prompt
 
 
 def test_build_legs_panel_negative_prompt_bans_coat_and_jacket() -> None:
