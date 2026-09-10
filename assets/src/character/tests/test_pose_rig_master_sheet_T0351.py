@@ -171,7 +171,8 @@ def test_side_left_forward_is_the_mirror_of_side_right_forward() -> None:
 
 def test_side_neutral_arms_hang_down_not_forward() -> None:
     points = rig.keypoints_for("side_neutral")
-    for shoulder, elbow, wrist in ((_R_SHOULDER, _R_ELBOW, _R_WRIST), (_L_SHOULDER, _L_ELBOW, _L_WRIST)):
+    arm_triples = ((_R_SHOULDER, _R_ELBOW, _R_WRIST), (_L_SHOULDER, _L_ELBOW, _L_WRIST))
+    for shoulder, elbow, wrist in arm_triples:
         assert points[wrist][1] > points[elbow][1] > points[shoulder][1], (
             "each arm must hang downward: wrist below elbow below shoulder"
         )
