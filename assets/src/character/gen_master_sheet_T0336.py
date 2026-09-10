@@ -359,13 +359,22 @@ class PoseSpec:
     key: str
     label: str
     pose_clause: str
+    # Dedicated-legs-panel amendment (2026-09-10): True only for the sixth
+    # "legs" panel -- lower body only, trousers and boots, NO COAT. Every
+    # other panel keeps the character's canonical long coat unconstrained
+    # (see build_single_pose_positive_prompt's docstring for why the
+    # mid-hip coat clause that used to live there is gone, not just
+    # relaxed).
+    no_coat: bool = False
 
 
 # T-0351 lever 2 (run-1 reviewer verdict): the five acceptance-criteria
 # panels, one per single-pose generation -- see
 # `build_single_pose_positive_prompt`'s docstring for why this replaces the
 # single-shot five-panel-in-one-image approach `build_limb_pose_prompt`/
-# `run_attempt` used for this card's first five attempts.
+# `run_attempt` used for this card's first five attempts. A sixth "legs"
+# panel was added by the 2026-09-10 dedicated-legs-panel amendment (see
+# `build_legs_panel_positive_prompt`'s docstring).
 POSE_SPECS: tuple[PoseSpec, ...] = (
     PoseSpec(
         key="front_tpose",
@@ -409,6 +418,15 @@ POSE_SPECS: tuple[PoseSpec, ...] = (
             "pose, both arms hanging straight down at the sides, both legs together standing "
             "upright"
         ),
+    ),
+    PoseSpec(
+        key="legs",
+        label="legs (lower body only, no coat)",
+        pose_clause=(
+            "front view, standing pose, both arms hanging straight down at the sides, legs "
+            "apart, weight evenly balanced"
+        ),
+        no_coat=True,
     ),
 )
 
@@ -516,16 +534,61 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     Attempt 14 reverts coat weight fully to attempt 11's baseline, 1.6 ->
     1.5, keeps the proven hood/mask emphasis unchanged, and moves the
     actual multi-figure fix attempt to `CONTROLNET_STRENGTH` -- a lever
-    that doesn't compete for text attention budget at all."""
+    that doesn't compete for text attention budget at all.
+
+    **2026-09-10 dedicated-legs-panel amendment -- REVOKES the mid-hip coat
+    clause entirely, it does not just relax the weight.** Fourteen attempts
+    of evidence (this docstring's own history above) never got the coat
+    genuinely mid-hip without breaking something else -- identity drift,
+    multi-figure regressions, or both -- and every one of those failures
+    happened while this clause was competing with isolation/hood-mask for
+    the same finite CLIP attention budget. @DennieSeth's decision: stop
+    fighting it. The character's canonical long coat (what the identity
+    LoRA and concept sheet both actually want) is now *correct* on every
+    whole-figure panel, not a defect to suppress -- `upper_leg`/`lower_leg`
+    instead come from a dedicated sixth panel with no coat at all
+    (`build_legs_panel_positive_prompt`). Removing this clause also frees
+    the attention budget every prior attempt's docstring blamed for the
+    persistent side-panel multi-figure/profile-framing defects, without
+    touching `CONTROLNET_STRENGTH` (unchanged at attempt 14's 1.6) or the
+    multi-figure negative weight (unchanged at attempt 11's 1.3, per the
+    amendment's own "do not tune coat-length prompt weight, that axis is
+    closed" -- this is a removal, not a tune)."""
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
         "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
         f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
-        "institutional green coat, (the coat cut short, ending precisely at mid-hip, hem "
-        "well above the knee, bare thigh clearly visible below the coat hem:1.5), wearing a "
+        "institutional green coat, full-length coat reaching past the knee, wearing a "
         "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
         "up and forward, face completely covered by the mask, no visible hair, no visible "
         "face:1.3), boots, never high heels, flat uniform neutral grey background, flat even "
+        "lighting, no cast shadow, no perspective, clean readable outline"
+    )
+
+
+def build_legs_panel_positive_prompt(entity: EntitySpec) -> str:
+    """2026-09-10 dedicated-legs-panel amendment: the sixth panel, lower
+    body only -- trousers and boots, NO COAT -- the dedicated source for
+    `upper_leg`/`lower_leg` now that panels 1-5 keep the canonical long
+    coat unconstrained (see `build_single_pose_positive_prompt`'s
+    docstring). Deliberately does not interpolate
+    `entity.costume_description` (`"institutional green coat, hooded,
+    white gloves"`) -- it names the coat this panel exists specifically to
+    omit, so this prompt states the lower-body garment directly instead.
+    The hooded-mask head marker stays, for the same identity-continuity
+    reason every other panel keeps it, and the same isolation/hood
+    emphasis weights (1.3) as the whole-figure panels, unchanged."""
+    return (
+        f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
+        "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
+        "visible, centred, front view, standing pose, both arms hanging straight down at the "
+        "sides, legs apart, weight evenly balanced, "
+        "wearing military trousers and lace-up combat boots, trousers tucked into the boots, "
+        "(no coat, no jacket, no cloak, bare lower body garment only, both thighs and both "
+        "lower legs fully visible and unobstructed, nothing covering the legs:1.5), wearing a "
+        "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
+        "up and forward, face completely covered by the mask, no visible hair, no visible "
+        "face:1.3), never high heels, flat uniform neutral grey background, flat even "
         "lighting, no cast shadow, no perspective, clean readable outline"
     )
 
@@ -587,22 +650,44 @@ def build_single_pose_negative_prompt() -> str:
     actual fix attempt to `CONTROLNET_STRENGTH` (see
     `build_single_pose_positive_prompt`'s docstring) -- every text-side
     weight change tried on this defect across attempts 8/11/12/13 has
-    traded one problem for another."""
+    traded one problem for another.
+
+    **2026-09-10 dedicated-legs-panel amendment**: drops the coat-length
+    bans this function used to carry ("long coat, trench coat, ... coat
+    below the hip") -- those actively fought the long coat that is now
+    canonical and correct on every whole-figure panel. Keeping them would
+    mean asking the model for the exact opposite of what this card wants.
+    The dedicated "legs" panel (`build_legs_panel_negative_prompt`) is
+    where a coat actually needs to be banned, and it says so explicitly
+    rather than inheriting these now-backwards clauses."""
     return (
         build_negative_prompt()
-        + ", long coat, trench coat, ankle-length coat, floor-length coat, knee-length coat, "
-        "calf-length coat, coat past the knee, coat covering the thighs, coat below the hip, "
-        "high heels, stiletto heels, pumps, mismatched footwear, reference sheet, tech pack, "
-        "technical flat, fashion flat, product sheet, spec sheet, multiple views, multiple "
-        "photos, multiple angles, comparison layout, inset panel, exploded view, contact "
-        "sheet, grid of images, clothing flat lay, flat lay, label, caption, illegible text, "
-        "gibberish text, UI mockup, readable text, legible words, real words, dictionary "
+        + ", high heels, stiletto heels, pumps, mismatched footwear, reference sheet, tech "
+        "pack, technical flat, fashion flat, product sheet, spec sheet, multiple views, "
+        "multiple photos, multiple angles, comparison layout, inset panel, exploded view, "
+        "contact sheet, grid of images, clothing flat lay, flat lay, label, caption, illegible "
+        "text, gibberish text, UI mockup, readable text, legible words, real words, dictionary "
         "words, brand label, product tag, price tag, signage, visible face, exposed face, "
         "human face, bare face, visible hair, hair visible, hood down, hood back, bare head, "
         "uncovered head, (three figures, multiple figures, several figures, "
         "ensemble of characters, ghost figure, ghosting, faded duplicate figure, translucent "
         "overlay, transparent duplicate, afterimage, double exposure, doppelganger, second "
         "figure behind, overlapping figures:1.3)"
+    )
+
+
+def build_legs_panel_negative_prompt() -> str:
+    """2026-09-10 dedicated-legs-panel amendment: reuses
+    `build_single_pose_negative_prompt` unchanged (footwear, reference-
+    sheet, ghosting/multi-figure, face/hair bans all still apply to this
+    panel) and adds the one thing this panel specifically needs that no
+    other panel does -- an explicit ban on any garment covering the legs,
+    since this is the only panel where a coat is a defect rather than the
+    canonical, correct result."""
+    return (
+        build_single_pose_negative_prompt()
+        + ", coat, long coat, trench coat, jacket, cloak, robe, tunic, skirt, dress, apron, "
+        "garment covering the thighs, garment covering the legs"
     )
 
 
@@ -1278,14 +1363,22 @@ def run_five_pose_attempt(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     concept_filename = upload_image(entity.concept_sheet_path)
-    negative_text = build_single_pose_negative_prompt()
 
     pose_records = []
     panel_paths = []
     total_gpu_seconds = 0.0
     for i, pose in enumerate(POSE_SPECS):
         seed = base_seed + i
-        positive_text = build_single_pose_positive_prompt(entity, pose)
+        # Dedicated-legs-panel amendment: the "legs" panel is the one place
+        # a coat is a defect, not the canonical result -- it gets its own
+        # prompt pair rather than the whole-figure one every other panel
+        # uses (see build_legs_panel_positive_prompt's docstring).
+        if pose.no_coat:
+            positive_text = build_legs_panel_positive_prompt(entity)
+            negative_text = build_legs_panel_negative_prompt()
+        else:
+            positive_text = build_single_pose_positive_prompt(entity, pose)
+            negative_text = build_single_pose_negative_prompt()
 
         skeleton = pose_rig_master_sheet_T0351.render_pose_skeleton(pose.key, width)
         skeleton_path = out_dir / f"pose_{pose.key}_skeleton.png"
@@ -1325,6 +1418,7 @@ def run_five_pose_attempt(
                 "label": pose.label,
                 "seed": seed,
                 "prompt": positive_text,
+                "negative_prompt": negative_text,
                 "comfyui_prompt_id": prompt_id,
                 "gpu_seconds": round(gpu_seconds, 1),
                 "pose_skeleton": str(skeleton_path.relative_to(REPO_ROOT)),
@@ -1375,7 +1469,12 @@ def run_five_pose_attempt(
             "IP-Adapter model chain. Seven prompt-only attempts (see "
             "ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md) never achieved pose compliance."
         ),
-        "negative_prompt": negative_text,
+        "negative_prompt": (
+            "varies per pose -- see poses[].negative_prompt; every whole-figure panel uses "
+            "build_single_pose_negative_prompt (no coat-length ban, per the "
+            "dedicated-legs-panel amendment), the legs panel uses "
+            "build_legs_panel_negative_prompt (explicit coat ban)"
+        ),
         "poses": pose_records,
         "seed": base_seed,
         "steps": 30,
@@ -1388,23 +1487,27 @@ def run_five_pose_attempt(
         "concept_hash": concept_hash,
         "concept_source": str(entity.concept_sheet_path.relative_to(REPO_ROOT)),
         "method": (
-            "Five independent 1024x1024 txt2img generations, one per POSE_SPECS entry "
+            "Six independent 1024x1024 txt2img generations, one per POSE_SPECS entry "
             "(front T-pose, back T-pose, side-left-forward, side-right-forward, "
-            "side-neutral): LoraLoader(soviet_brutalism_style_v1) "
+            "side-neutral, legs): LoraLoader(soviet_brutalism_style_v1) "
             + ("-> LoraLoader(identity, chained) " if identity_lora_name is not None else "")
             + "-> CLIPTextEncode(positive/negative) -> ControlNetLoader + "
             "ControlNetApplyAdvanced (this pose's own OpenPose skeleton, "
             "pose_rig_master_sheet_T0351, strength "
             f"{CONTROLNET_STRENGTH}/end {CONTROLNET_END_PERCENT}) -> IPAdapterUnifiedLoader + "
             "IPAdapterAdvanced (concept sheet, unchanged weight/crop) -> KSampler -> "
-            "VAEDecode -> SaveImage, once per pose. compose_pose_row then stitches the five "
+            "VAEDecode -> SaveImage, once per pose. compose_pose_row then stitches the six "
             "resulting images side by side into one sheet by script (DL-30), replacing this "
             "card's first seven attempts (five single-shot five-panel-in-one-image, two "
             "prompt-only single-pose) -- see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md and "
             "docs/assets/evidence/T-0351/README.md. ControlNet is for pose conditioning only "
             "(2026-09-10 amendment): it conditions the CLIPTextEncode pair, never the "
             "style/identity LoRA or IP-Adapter model chain, which are byte-identical to "
-            "every prompt-only attempt before it."
+            "every prompt-only attempt before it. The 2026-09-10 dedicated-legs-panel "
+            "amendment adds the sixth 'legs' panel (no coat, trousers and boots -- the "
+            "dedicated source for upper_leg/lower_leg) and removes the mid-hip coat clause "
+            "from every whole-figure panel's prompt: the character's canonical long coat is "
+            "now correct on panels 1-5, not a defect to fight."
         ),
         "generator": "assets/src/character/gen_master_sheet_T0336.py",
         "card": card,
@@ -1412,7 +1515,9 @@ def run_five_pose_attempt(
             "docs/decision-log.md DL-30, pose spec per T-0351 (successor to #365/T-0336; "
             "recipe unchanged except ControlNet/OpenPose for pose conditioning only, per "
             "@DennieSeth's 2026-09-10 amendment after 7 prompt-only attempts failed to "
-            "achieve pose compliance)"
+            "achieve pose compliance; six-panel/dedicated-legs-panel spec per @DennieSeth's "
+            "2026-09-10 dedicated-legs-panel amendment, which revokes the earlier mid-hip "
+            "coat requirement)"
         ),
         "attempt": attempt,
         "gpu_seconds": round(total_gpu_seconds, 1),
@@ -1438,29 +1543,26 @@ FIVE_POSE_CARDS: frozenset[str] = frozenset({"T-0351"})
 
 
 # T-0351: STILL PLACEHOLDER COORDINATES, NOT YET MEASURED AGAINST A REAL
-# SHEET -- attempts 6-7 (the only executions of the lever-2 path so far)
-# never produced a pose-compliant generation to measure against (see
-# docs/assets/evidence/T-0351/README.md's "Root cause" section: IP-Adapter's
-# conditioning crop is itself a multi-panel grid, which no prompt-only
-# lever has overcome across 7 attempts). These coordinates describe the
-# INTENDED layout once a compliant sheet exists (compose_pose_row lays the
-# five POSE_SPECS panels side by side in order, each panel 1024x1024, so
-# panel N occupies x:[N*1024, (N+1)*1024); the front T-pose panel, panel 0
-# at x offset 0, is meant to be the source for every crop, since a genuine
-# T-pose holds every limb clear of the torso) but must be re-measured
-# against the real pixels of whatever sheet is eventually promoted -- do
-# not treat these as validated. Unlike #365's PLAYER_LIMB_CROP_BOXES (which
-# has "No upper_leg key" because no panel it generated ever separated the
-# thigh from the coat), this dict already reserves an upper_leg key, since
-# the whole point of this card's mid-hip coat cap is to make that
-# separable once a compliant generation exists to crop it from.
+# SHEET -- must be re-measured against the real pixels of whatever sheet is
+# eventually promoted; do not treat these as validated. compose_pose_row
+# lays the six POSE_SPECS panels side by side in order, each panel
+# 1024x1024, so panel N occupies x:[N*1024, (N+1)*1024). head/upper_arm/
+# lower_arm_hand/torso_coat are meant to come from panel 0 (front_tpose, x
+# offset 0), since a genuine T-pose holds every limb clear of the torso.
+#
+# 2026-09-10 dedicated-legs-panel amendment: upper_leg/lower_leg_boot now
+# come from panel 5 (the dedicated "legs" panel, x offset 5*1024 = 5120),
+# not panel 0 -- panels 1-5 keep the canonical long coat and no longer
+# expose the thigh at all, so the front_tpose panel that #365's own
+# PLAYER_LIMB_CROP_BOXES ("No upper_leg key") and this card's own
+# pre-amendment coordinates targeted is no longer a valid leg source.
 PLAYER_LIMB_CROP_BOXES_T0351: dict[str, tuple[int, int, int, int]] = {
     "head": (390, 40, 630, 270),
     "upper_arm": (0, 260, 260, 520),
     "lower_arm_hand": (0, 500, 260, 640),
     "torso_coat": (300, 260, 720, 680),
-    "upper_leg": (330, 640, 690, 840),
-    "lower_leg_boot": (330, 820, 690, 1010),
+    "upper_leg": (5450, 640, 5810, 840),
+    "lower_leg_boot": (5450, 820, 5810, 1010),
 }
 
 # A card with no entry here falls back to the entity's own registered

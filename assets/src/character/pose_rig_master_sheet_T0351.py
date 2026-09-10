@@ -53,6 +53,13 @@ Per-pose construction:
     both legs sit together on the fore-aft line (no forward/back stagger)
     -- the standing keyframe anchor, distinct from panels 3/4's walking
     stance.
+  - **legs** -- the dedicated-legs-panel amendment (2026-09-10): a sixth
+    panel, front-facing like the T-pose but with both arms hanging straight
+    down at the sides (so nothing overlaps the outer thigh/knee/ankle
+    region a crop needs) and the same wide leg spread as `front_tpose` --
+    this panel exists purely to source `upper_leg`/`lower_leg` from a
+    generation with no coat at all, so a wide, unambiguous stance matters
+    more here than for the whole-figure panels.
 
 `render_pose_skeleton` reuses `gen_arm_a_idle_T0228.draw_pose_skeleton_cell`
 directly, unchanged -- the existing OpenPose-format renderer this pipeline
@@ -185,6 +192,29 @@ SIDE_NEUTRAL_KEYPOINTS_NORM: dict[int, Point] = {
     _L_EAR: (0.495, 0.100),
 }
 
+# ── Panel 6: legs -- front-facing, arms down clear of the thighs, legs ────
+# spread as wide as the T-pose so upper_leg/lower_leg crop cleanly.
+LEGS_KEYPOINTS_NORM: dict[int, Point] = {
+    _NOSE: (0.500, 0.095),
+    _NECK: (0.500, 0.210),
+    _R_SHOULDER: (0.417, 0.225),
+    _R_ELBOW: (0.430, 0.400),
+    _R_WRIST: (0.425, 0.560),
+    _L_SHOULDER: (0.583, 0.225),
+    _L_ELBOW: (0.570, 0.400),
+    _L_WRIST: (0.575, 0.560),
+    _R_HIP: (0.446, 0.570),
+    _R_KNEE: (0.400, 0.750),
+    _R_ANKLE: (0.320, 0.930),
+    _L_HIP: (0.554, 0.570),
+    _L_KNEE: (0.600, 0.750),
+    _L_ANKLE: (0.680, 0.930),
+    _R_EYE: (0.476, 0.075),
+    _L_EYE: (0.524, 0.075),
+    _R_EAR: (0.452, 0.090),
+    _L_EAR: (0.548, 0.090),
+}
+
 # Keyed identically to gen_master_sheet_T0336.POSE_SPECS -- the CLI/attempt
 # driver looks up this module by pose.key, never by import-order position.
 POSE_KEYPOINTS_BY_KEY: dict[str, dict[int, Point]] = {
@@ -193,6 +223,7 @@ POSE_KEYPOINTS_BY_KEY: dict[str, dict[int, Point]] = {
     "side_left_forward": SIDE_LEFT_FORWARD_KEYPOINTS_NORM,
     "side_right_forward": SIDE_RIGHT_FORWARD_KEYPOINTS_NORM,
     "side_neutral": SIDE_NEUTRAL_KEYPOINTS_NORM,
+    "legs": LEGS_KEYPOINTS_NORM,
 }
 
 
