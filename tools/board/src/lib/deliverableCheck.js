@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { checkFindingWithEvidence } from "./preRegisteredFinding.js";
+import { checkFindingWithEvidence, readSection, parseFindingEvidencePaths } from "./preRegisteredFinding.js";
 
 async function defaultFileExists(filePath) {
   try {
@@ -9,6 +9,29 @@ async function defaultFileExists(filePath) {
   } catch {
     return false;
   }
+}
+
+/**
+ * T-0352: `checkDeliverable` used to treat "some attachments recorded and present on disk" as
+ * proof a card's deliverable existed -- but an attachment is board-side evidence storage, not a
+ * claim about what's actually committed. A run that attaches its failed-attempt/evidence PNGs
+ * (exactly what the board attachments API is *for* -- see .claude/rules/assets.md and T-0314's
+ * evidence-promotion mechanism) satisfies that check with no deliverable ever produced; this is
+ * the T-0351 regression -- the gate exited 0 on six evidence PNGs with no master sheet ever
+ * committed, and it took a human reading the filesystem by hand to catch it twice in one day.
+ *
+ * `"## Deliverable"` reuses the exact citation convention T-0342's `"## Finding"` section
+ * already established (`parseFindingEvidencePaths`: a backtick-quoted, extensioned path) -- a
+ * card names the committed path(s) its deliverable is expected to land at, and this check
+ * verifies each one is a real file under `repoRoot`, independent of how many attachments are
+ * recorded. Deliberately opt-in: a card with no `"## Deliverable"` section is unaffected (see
+ * `checkDeliverable`'s call site below) -- this is a necessary-but-not-sufficient mechanical
+ * backstop, not a claim that every artifact card has adopted the convention yet.
+ */
+export const DELIVERABLE_HEADING = "## Deliverable";
+
+function parseDeclaredDeliverablePaths(body) {
+  return parseFindingEvidencePaths(readSection(body, DELIVERABLE_HEADING));
 }
 
 /**
@@ -71,6 +94,18 @@ export async function checkDeliverable(
       if (!(await fileExists(filePath))) {
         errors.push(
           `Attachment "${attachment.filename}" is recorded in ${task.id}'s frontmatter but the file does not exist at ${filePath}.`
+        );
+        attachmentsOk = false;
+      }
+    }
+  }
+
+  if (repoRoot) {
+    const declaredPaths = parseDeclaredDeliverablePaths(task.body ?? "");
+    for (const declaredPath of declaredPaths) {
+      if (!(await fileExists(path.join(repoRoot, declaredPath)))) {
+        errors.push(
+          `Card ${task.id} declares "${declaredPath}" under "${DELIVERABLE_HEADING}" but no committed file exists at that path -- attachments (including evidence/attempt uploads) are not a substitute for the deliverable actually existing at its stated, committed location.`
         );
         attachmentsOk = false;
       }
