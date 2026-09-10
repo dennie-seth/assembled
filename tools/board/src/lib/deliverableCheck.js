@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
 import { checkFindingWithEvidence, readSection, parseFindingEvidencePaths } from "./preRegisteredFinding.js";
 
 const execFileAsync = promisify(execFile);
@@ -15,17 +16,35 @@ async function defaultFileExists(filePath) {
   }
 }
 
+/** `git`'s own blob content hash -- `sha1("blob " + byteLength + "\0" + content)`. */
+function gitBlobHash(bytes) {
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+}
+
 /**
- * T-0352 fix (a): every file `git` has actually committed under `repoRoot`, on the current
- * branch. Failing/erroring (not a git repo, `git` unavailable) returns `[]` rather than
- * throwing -- fail closed, since an empty committed-files list makes the non-opt-in fallback
- * check below FAIL rather than silently skip, which is the safer default for a gate whose whole
- * point is refusing to take "some attachment exists somewhere" as proof of a deliverable.
+ * T-0352 fix: the hash of every blob `git` has actually committed under `repoRoot`, on the
+ * current branch (`git ls-tree -r HEAD`, third column). Failing/erroring (not a git repo, `git`
+ * unavailable) returns `[]` rather than throwing -- fail closed, since an empty set makes the
+ * non-opt-in fallback check below FAIL rather than silently skip, which is the safer default for
+ * a gate whose whole point is refusing to take "some attachment exists somewhere" as proof of a
+ * deliverable.
+ *
+ * Content hashes, not filenames: an earlier version of this fallback matched by basename alone
+ * and was caught empirically on the real T-0351 card -- one of its evidence attachments happens
+ * to be named `README.md` (a generic evidence-summary name, uploaded from
+ * `docs/assets/evidence/T-0351/README.md`), which coincidentally collided with this repo's own
+ * committed root `README.md` and made the gate pass for the wrong reason. Matching by content
+ * closes that hole: a same-named-but-different file can never satisfy it, only a byte-identical
+ * one can.
  */
-async function defaultListCommittedFiles(repoRoot) {
+async function defaultListCommittedBlobHashes(repoRoot) {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", repoRoot, "ls-files"]);
-    return stdout.split("\n").filter(Boolean);
+    const { stdout } = await execFileAsync("git", ["-C", repoRoot, "ls-tree", "-r", "HEAD"]);
+    return stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split(/\s+/)[2])
+      .filter(Boolean);
   } catch {
     return [];
   }
@@ -48,17 +67,20 @@ async function defaultListCommittedFiles(repoRoot) {
  *    at, and this check verifies each one is a real file under `repoRoot`, independent of how
  *    many attachments are recorded.
  * 2. The non-opt-in fallback below (`hasCommittedAttachment`), used whenever a card has no
- *    parseable `"## Deliverable"` section: at least one recorded attachment's filename must also
- *    correspond to a file `git` actually has committed somewhere under `repoRoot`. This is what
- *    closes the hole for every card that never adopts the `"## Deliverable"` convention -- a
- *    first attempt at this fix made the whole check opt-in, so the exact T-0351 card (which has
- *    no `"## Deliverable"` section) still passed on attachment-count alone; see the T-0352
- *    reviewer's FAIL for the empirical repro (`checkDeliverable.js T-0351 --require-artifact`
- *    still exiting 0). Matching by filename rather than requiring a declared path is deliberately
- *    coarser than route 1 -- it only proves *something* attached was actually committed, not
- *    that a specific claimed path exists -- but that coarseness is exactly what makes it apply
- *    with no card-side action required, which a "necessary but not sufficient" mechanical
- *    backstop needs in order to actually backstop anything.
+ *    parseable `"## Deliverable"` section: at least one recorded attachment's *content* must
+ *    match a blob `git` actually has committed somewhere under `repoRoot` -- not merely its
+ *    filename (an earlier version of this fallback matched by basename and was caught
+ *    empirically colliding on the real T-0351 card, see `defaultListCommittedBlobHashes`'s own
+ *    docstring). This is what closes the hole for every card that never adopts the
+ *    `"## Deliverable"` convention -- a still-earlier version of this fix made the whole check
+ *    opt-in, so the exact T-0351 card (which has no `"## Deliverable"` section) still passed on
+ *    attachment-count alone; see the T-0352 reviewer's FAIL for that empirical repro
+ *    (`checkDeliverable.js T-0351 --require-artifact` still exiting 0). Content-matching rather
+ *    than requiring a declared path is deliberately coarser than route 1 -- it only proves
+ *    *something* attached was actually committed, not that a specific claimed path exists -- but
+ *    that coarseness is exactly what makes it apply with no card-side action required, which a
+ *    "necessary but not sufficient" mechanical backstop needs in order to actually backstop
+ *    anything.
  */
 export const DELIVERABLE_HEADING = "## Deliverable";
 
@@ -66,10 +88,20 @@ function parseDeclaredDeliverablePaths(body) {
   return parseFindingEvidencePaths(readSection(body, DELIVERABLE_HEADING));
 }
 
-/** Whether any recorded attachment's filename matches a file `git` has actually committed under `repoRoot`. */
-async function hasCommittedAttachment(attachments, repoRoot, listCommittedFiles) {
-  const committedBasenames = new Set((await listCommittedFiles(repoRoot)).map((f) => path.basename(f)));
-  return attachments.some((attachment) => committedBasenames.has(attachment.filename));
+/** Whether any recorded attachment's on-disk content matches a blob `git` has actually committed under `repoRoot`. */
+async function hasCommittedAttachment(task, attachments, attachmentsDir, repoRoot, listCommittedBlobHashes) {
+  if (!attachmentsDir) return false;
+  const committedHashes = new Set(await listCommittedBlobHashes(repoRoot));
+  if (committedHashes.size === 0) return false;
+  for (const attachment of attachments) {
+    try {
+      const bytes = await fs.readFile(path.join(attachmentsDir, task.id, attachment.filename));
+      if (committedHashes.has(gitBlobHash(bytes))) return true;
+    } catch {
+      // Unreadable attachment -- already reported by the attachmentsDir cross-check above; doesn't count as a match here.
+    }
+  }
+  return false;
 }
 
 /**
@@ -118,7 +150,7 @@ export async function checkDeliverable(
     beforeBody,
     repoRoot,
     fileExists = defaultFileExists,
-    listCommittedFiles = defaultListCommittedFiles
+    listCommittedBlobHashes = defaultListCommittedBlobHashes
   } = {}
 ) {
   if (!task || (task.deliverable_type !== "artifact" && !requireArtifact)) {
@@ -156,13 +188,17 @@ export async function checkDeliverable(
           attachmentsOk = false;
         }
       }
-    } else if (attachments.length > 0 && !(await hasCommittedAttachment(attachments, repoRoot, listCommittedFiles))) {
+    } else if (
+      attachments.length > 0 &&
+      !(await hasCommittedAttachment(task, attachments, attachmentsDir, repoRoot, listCommittedBlobHashes))
+    ) {
       errors.push(
-        `Card ${task.id} has ${attachments.length} attachment(s) recorded, but none of their filenames correspond to a file ` +
+        `Card ${task.id} has ${attachments.length} attachment(s) recorded, but none of their content matches a file ` +
           `actually committed on the branch -- an attachment alone (including an evidence/failed-attempt upload, which the ` +
           `board attachments API is also used for -- see T-0314's evidence-promotion mechanism) is not proof a deliverable ` +
-          `was produced. Either declare the deliverable's expected path under a "${DELIVERABLE_HEADING}" section, or commit ` +
-          `the actual deliverable file and record it as an attachment.`
+          `was produced, and a same-named-but-different file does not count either. Either declare the deliverable's ` +
+          `expected path under a "${DELIVERABLE_HEADING}" section, or commit the actual deliverable file and record it as ` +
+          `an attachment.`
       );
       attachmentsOk = false;
     }

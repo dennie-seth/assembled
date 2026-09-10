@@ -29,13 +29,16 @@ afterEach(async () => {
 });
 
 /**
- * T-0352: checkDeliverable.js's default `listCommittedFiles` runs real `git ls-files` against
- * this checkout's own repo root, so an attachment filename must actually correspond to a
- * git-committed file for the deliverable check to pass -- `package.json` (real, committed,
- * present at `tools/board/package.json`) stands in for a genuine deliverable here; these tests
- * exercise DB-mode attachment/env resolution, not deliverable-correctness semantics, which
- * `deliverableCheck.test.js` covers directly with an injected `listCommittedFiles`.
+ * T-0352: checkDeliverable.js's default `listCommittedBlobHashes` runs real `git ls-tree` against
+ * this checkout's own repo root, and matches attachments by content, not filename -- so the
+ * attachment's bytes here are a real, byte-identical copy of this checkout's own committed
+ * `tools/board/package.json`, standing in for a genuine promoted deliverable. Read from disk
+ * (rather than hardcoded) so this stays correct if package.json's content ever changes. These
+ * tests exercise DB-mode attachment/env resolution, not deliverable-correctness semantics, which
+ * `deliverableCheck.test.js` covers directly with an injected `listCommittedBlobHashes`.
  */
+const REAL_PACKAGE_JSON_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../package.json");
+
 async function seedArtifactTaskWithAttachment(id) {
   const store = new DbTaskStore(dbPath);
   await store.create(
@@ -43,7 +46,7 @@ async function seedArtifactTaskWithAttachment(id) {
       id,
       deliverable_type: "artifact",
       attachments: [
-        { filename: "package.json", size: 4, mimetype: "image/png", uploaded_by: "Dennie", uploaded_at: "2026-08-22T00:00:00.000Z" }
+        { filename: "package.json", size: 4, mimetype: "application/json", uploaded_by: "Dennie", uploaded_at: "2026-08-22T00:00:00.000Z" }
       ]
     })
   );
@@ -51,7 +54,7 @@ async function seedArtifactTaskWithAttachment(id) {
 
   const attachDir = path.join(tmpDir, "attachments", id);
   await fs.mkdir(attachDir, { recursive: true });
-  await fs.writeFile(path.join(attachDir, "package.json"), "fake");
+  await fs.copyFile(REAL_PACKAGE_JSON_PATH, path.join(attachDir, "package.json"));
 }
 
 /**
