@@ -587,3 +587,164 @@ def test_limb_crop_boxes_for_t0351_boxes_fit_within_the_five_panel_row() -> None
     for name, (left, top, right, bottom) in boxes.items():
         assert 0 <= left < right <= 5120, name
         assert 0 <= top < bottom <= 1024, name
+
+
+# ── 2026-09-10 amendment: ControlNet/OpenPose permitted for pose ───────────
+# conditioning only, after 7 prompt-only attempts never achieved pose
+# compliance (ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md,
+# docs/assets/evidence/T-0351/README.md's "Root cause" section). Narrow
+# scope: pose conditioning only, style/identity LoRA and IP-Adapter weights
+# stay exactly as #365 set them (build_graph's existing default-call
+# behaviour, pinned by test_gen_master_sheet_T0336.py's own
+# test_no_controlnet_node_anywhere, must not change).
+
+
+def _graph(**overrides) -> dict:
+    defaults = dict(
+        seed=31416,
+        concept_filename="concept.png",
+        positive_text="a prompt",
+        negative_text="a negative prompt",
+        style_lora_weight=0.70,
+        ipadapter_weight=0.35,
+        width=1024,
+        height=1024,
+    )
+    defaults.update(overrides)
+    return gen.build_graph(**defaults)
+
+
+def test_build_graph_without_pose_skeleton_has_no_controlnet_node() -> None:
+    """T-0336's own call sites (pose_skeleton_filename omitted) must keep
+    building exactly the graph they always have -- this is the same
+    guardrail test_gen_master_sheet_T0336.test_no_controlnet_node_anywhere
+    pins, restated here since this card is what could regress it."""
+    graph = _graph()
+    assert all("ControlNet" not in node["class_type"] for node in graph.values())
+
+
+def test_build_graph_with_pose_skeleton_adds_controlnet_loader_and_apply() -> None:
+    graph = _graph(
+        pose_skeleton_filename="skeleton.png",
+        controlnet_strength=1.3,
+        controlnet_end=1.0,
+    )
+    loader = graph[gen.CONTROLNET_LOADER_NODE_ID]
+    assert loader["class_type"] == "ControlNetLoader"
+    assert loader["inputs"]["control_net_name"] == gen.CONTROLNET_NAME
+
+    apply_node = graph[gen.CONTROLNET_NODE_ID]
+    assert apply_node["class_type"] == "ControlNetApplyAdvanced"
+    assert apply_node["inputs"]["control_net"] == [gen.CONTROLNET_LOADER_NODE_ID, 0]
+    assert apply_node["inputs"]["strength"] == 1.3
+    assert apply_node["inputs"]["end_percent"] == 1.0
+    assert apply_node["inputs"]["start_percent"] == 0.0
+
+
+def test_build_graph_controlnet_image_is_the_uploaded_skeleton() -> None:
+    graph = _graph(
+        pose_skeleton_filename="skeleton.png", controlnet_strength=1.3, controlnet_end=1.0
+    )
+    pose_image_node = graph[gen.POSE_IMAGE_NODE_ID]
+    assert pose_image_node == {"class_type": "LoadImage", "inputs": {"image": "skeleton.png"}}
+    apply_node = graph[gen.CONTROLNET_NODE_ID]
+    assert apply_node["inputs"]["image"] == [gen.POSE_IMAGE_NODE_ID, 0]
+
+
+def test_build_graph_ksampler_conditioning_is_sourced_from_controlnet_when_present() -> None:
+    graph = _graph(
+        pose_skeleton_filename="skeleton.png", controlnet_strength=1.3, controlnet_end=1.0
+    )
+    sampler = graph[gen.SAMPLER_NODE_ID]
+    assert sampler["inputs"]["positive"] == [gen.CONTROLNET_NODE_ID, 0]
+    assert sampler["inputs"]["negative"] == [gen.CONTROLNET_NODE_ID, 1]
+
+
+def test_build_graph_ksampler_conditioning_unchanged_without_pose_skeleton() -> None:
+    graph = _graph()
+    sampler = graph[gen.SAMPLER_NODE_ID]
+    assert sampler["inputs"]["positive"] == [gen.POSITIVE_PROMPT_NODE_ID, 0]
+    assert sampler["inputs"]["negative"] == [gen.NEGATIVE_PROMPT_NODE_ID, 0]
+
+
+def test_build_graph_ipadapter_and_style_identity_lora_unaffected_by_controlnet() -> None:
+    """Narrow scope: ControlNet conditions the prompt pair only -- it must
+    not touch the model chain IP-Adapter/LoRA build on, and IP-Adapter's own
+    weight/image source stay exactly as #365 set them."""
+    no_cn = _graph(identity_lora_name="player_identity_v2.safetensors", identity_lora_weight=0.5)
+    with_cn = _graph(
+        identity_lora_name="player_identity_v2.safetensors",
+        identity_lora_weight=0.5,
+        pose_skeleton_filename="skeleton.png",
+        controlnet_strength=1.3,
+        controlnet_end=1.0,
+    )
+    for node_id in (
+        gen.STYLE_LORA_NODE_ID,
+        gen.IDENTITY_LORA_NODE_ID,
+        gen.IPADAPTER_LOADER_NODE_ID,
+        gen.IPADAPTER_NODE_ID,
+    ):
+        assert no_cn[node_id] == with_cn[node_id], node_id
+
+
+def test_controlnet_name_matches_verified_host_inventory() -> None:
+    """@DennieSeth's 2026-09-10 amendment verified this exact model present
+    on the live ComfyUI host (860 nodes) -- an SDXL OpenPose ControlNet,
+    already used successfully by this pipeline's own single-figure cards
+    (T-0249, T-0272)."""
+    assert gen.CONTROLNET_NAME == "controlnet-openpose-sdxl-1.0_xinsir.safetensors"
+
+
+def test_run_five_pose_attempt_conditions_each_pose_with_its_own_skeleton(
+    tmp_path, monkeypatch
+) -> None:
+    """End-to-end (network stubbed): each of the five POSE_SPECS panels must
+    submit a graph carrying that pose's own OpenPose skeleton via ControlNet
+    -- not five identical prompt-only generations, which is exactly what
+    seven prior attempts already proved doesn't work."""
+    from PIL import Image
+
+    monkeypatch.setattr(gen, "out_dir_for", lambda card, entity, attempt: tmp_path)
+
+    captured_graphs = []
+
+    def fake_upload_image(path):
+        return path.name
+
+    def fake_submit_prompt(graph):
+        captured_graphs.append(graph)
+        return f"prompt-{len(captured_graphs)}"
+
+    def fake_wait_for_completion(prompt_id, timeout_s=300):
+        return {"outputs": {gen.MAIN_SAVE_NODE_ID: {"images": [{"filename": "x.png"}]}}}
+
+    def fake_fetch_save_image(info, node_id):
+        from io import BytesIO
+
+        buf = BytesIO()
+        Image.new("RGB", (16, 16), (10, 20, 30)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    monkeypatch.setattr(gen, "upload_image", fake_upload_image)
+    monkeypatch.setattr(gen, "submit_prompt", fake_submit_prompt)
+    monkeypatch.setattr(gen, "wait_for_completion", fake_wait_for_completion)
+    monkeypatch.setattr(gen, "fetch_save_image", fake_fetch_save_image)
+
+    provenance = gen.run_five_pose_attempt(
+        entity_name="player", attempt=8, base_seed=1000, width=64, height=64
+    )
+
+    assert len(captured_graphs) == 5
+    for graph, pose in zip(captured_graphs, gen.POSE_SPECS):
+        assert graph[gen.CONTROLNET_LOADER_NODE_ID]["inputs"]["control_net_name"] == (
+            gen.CONTROLNET_NAME
+        )
+        pose_image_filename = graph[gen.POSE_IMAGE_NODE_ID]["inputs"]["image"]
+        assert pose.key in pose_image_filename
+
+    assert provenance["controlnet"] == gen.CONTROLNET_NAME
+    assert provenance["controlnet_strength"] == gen.CONTROLNET_STRENGTH
+    assert provenance["controlnet_end_percent"] == gen.CONTROLNET_END_PERCENT
+    for record in provenance["poses"]:
+        assert "pose_skeleton" in record
