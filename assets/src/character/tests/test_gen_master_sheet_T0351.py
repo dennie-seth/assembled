@@ -170,6 +170,15 @@ def test_build_limb_pose_negative_prompt_forbids_grid_layout_and_six_figures() -
     assert "six" in negative
 
 
+def test_build_limb_pose_negative_prompt_forbids_heels_and_split_leg_row() -> None:
+    """Attempt 3's own defect (CLIP-emphasis-weighted panels): blank/
+    cropped heads, high heels instead of boots, and legs isolated into
+    their own cropped row instead of staying attached to a whole figure."""
+    negative = gen.build_limb_pose_negative_prompt().lower()
+    assert "heel" in negative
+    assert "leg" in negative and "row" in negative
+
+
 def test_build_limb_pose_prompt_frontloads_pose_before_costume() -> None:
     """Attempt 2's own defect: a ~300-word single-blob prompt buried the
     five-panel pose spec well after the costume text, and the model

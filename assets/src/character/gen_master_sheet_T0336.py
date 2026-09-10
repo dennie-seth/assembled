@@ -255,32 +255,45 @@ def build_limb_pose_prompt(entity: EntitySpec) -> str:
     (the part nearest the front of the prompt) and still ignored pose
     almost entirely, rendering six figures in a two-row grid.
 
-    Attempt 3 restructures rather than just re-wording: panel/pose
-    instructions move to the very front, ahead of costume text, since
-    position in the prompt carries real weight; each panel clause is also
-    wrapped in ComfyUI's native CLIPTextEncode emphasis syntax
-    (`(text:weight)`, applied by the stock node -- no custom node, no
-    ControlNet, no LoRA/IP-Adapter weight change) to push attention toward
-    the pose and mid-hip clauses specifically. Pose stays a prompt-only
-    lever throughout, per this card's own constraint."""
+    Attempt 3 restructured rather than just re-wording: panel/pose
+    instructions moved to the very front, ahead of costume text, and each
+    panel clause was wrapped in ComfyUI's native CLIPTextEncode emphasis
+    syntax (`(text:weight)`, the stock node's own built-in prompt
+    weighting -- no custom node, no ControlNet, no LoRA/IP-Adapter weight
+    change). Result: the mid-hip/bare-thigh clause worked (every panel's
+    coat came out short), a genuine partial win, but pose still didn't
+    follow at all, and the emphasis weighting appears to have destabilised
+    unrelated regions -- blank/cropped heads, high heels instead of boots,
+    legs isolated into their own cropped row apart from the whole figure.
+
+    Attempt 4 keeps the front-loaded structure and the coat-length emphasis
+    unchanged (it worked), raises the pose-clause weight further (1.3 ->
+    1.5) since 1.3 measurably moved the coat but not the pose, and folds
+    "head clearly visible" / eye-lens wording directly into each emphasised
+    panel clause so head legibility rides along with the same weight boost
+    instead of competing against it from outside the parentheses. Pose
+    stays a prompt-only lever throughout, per this card's own constraint."""
     pose_clause = (
         "(pose reference chart, five separate whole-figure panels, each a complete full-body "
-        "figure, arranged in a single horizontal row, wide gaps between panels so nothing "
-        "overlaps or touches:1.3), "
+        "figure head to toe, arranged in a single horizontal row, wide gaps between panels so "
+        "nothing overlaps or touches:1.3), "
         "(panel one is a front view T-pose, both arms held straight out horizontal to the "
-        "sides clear of the torso, legs spread apart:1.3), "
+        "sides clear of the torso, legs spread apart, head clearly visible wearing a hooded "
+        "mask with two dark round eye lenses:1.5), "
         "(panel two is a back view T-pose, both arms held straight out horizontal to the "
-        "sides clear of the torso, legs spread apart:1.3), "
+        "sides clear of the torso, legs spread apart, hood clearly visible from behind:1.5), "
         "(panel three is a true 90-degree side profile view, not a three-quarter view, only "
         "the left arm and only the left leg extended forward at roughly a right angle clear "
-        "of the torso, the right arm and right leg held back close to the body:1.3), "
+        "of the torso, the right arm and right leg held back close to the body, head clearly "
+        "visible with a single eye lens:1.5), "
         "(panel four is a true 90-degree side profile view, not a three-quarter view, only "
         "the right arm and only the right leg extended forward at roughly a right angle "
-        "clear of the torso, the left arm and left leg held back close to the body:1.3), "
+        "clear of the torso, the left arm and left leg held back close to the body, head "
+        "clearly visible with a single eye lens:1.5), "
         "(panel five is a true 90-degree side profile view, not a three-quarter view, a "
         "neutral standing pose, both arms hanging straight down at the sides, both legs "
-        "together standing upright:1.3), "
-        "only a single arm silhouette and a single eye lens visible per side panel, "
+        "together standing upright, head clearly visible with a single eye lens:1.5), "
+        "each figure wears boots, never high heels, "
     )
     coat_clause = (
         f"{entity.costume_description}, "
@@ -300,12 +313,15 @@ def build_limb_pose_prompt(entity: EntitySpec) -> str:
 def build_limb_pose_negative_prompt() -> str:
     """T-0351: builds on #365's own negative-prompt fixes
     (`build_negative_prompt` -- blank heads, armour drift, cropped heads,
-    robotic legs) and adds this card's own attempt-1/2 failure modes (see
+    robotic legs) and adds this card's own attempt-1/2/3 failure modes (see
     `ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md`): attempt 1 rendered two
     near-duplicate standing figures plus small floating accessory/equipment
-    inset panels; attempt 2 rendered six figures in a two-row grid. Both
-    kept a coat well past mid-hip despite the positive prompt's mid-hip
-    wording."""
+    inset panels; attempt 2 rendered six figures in a two-row grid; attempt
+    3 (CLIP-emphasis-weighted) rendered blank/cropped heads, high heels
+    instead of boots, and legs isolated into their own cropped row apart
+    from the whole figure. All three kept a coat well past mid-hip despite
+    the positive prompt's mid-hip wording (attempt 3's emphasised mid-hip
+    clause was the one thing that did work)."""
     return (
         build_negative_prompt()
         + ", accessory inset, floating accessory panel, equipment close-up inset, small inset "
@@ -313,7 +329,9 @@ def build_limb_pose_negative_prompt() -> str:
         "repeated pose, only two figures, six figures, six poses, six panels, grid layout, "
         "multiple rows, two rows, stacked panels, long coat, trench coat, ankle-length coat, "
         "floor-length coat, knee-length coat, calf-length coat, coat past the knee, coat "
-        "covering the thighs, coat below the hip"
+        "covering the thighs, coat below the hip, high heels, stiletto heels, pumps, "
+        "mismatched footwear, isolated leg row, cropped leg row, legs separated from figure, "
+        "split composite, legs-only panel"
     )
 
 

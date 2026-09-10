@@ -6,3 +6,4 @@ Every attempt is recorded here whether or not it is promoted. Tier-1 generates O
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | player | 314159265 | 0.7 | 0.5 | 0.35 | 1024 | 1024 | 27.1 | no | T-0351 attempt 1: five-panel pose spec (front/back T-pose, side-left-forward, side-right-forward, side-neutral), mid-hip coat cap |
 | 2 | player | 271828182 | 0.7 | 0.5 | 0.35 | 1024 | 1024 | 33.1 | no | T-0351 attempt 2: strengthened pose-reference-chart framing + mid-hip/bare-thigh reinforcement + card-specific negative prompt forbidding duplicate poses/accessory insets/long coat |
+| 3 | player | 161803398 | 0.7 | 0.5 | 0.35 | 1024 | 1024 | 27.1 | no | T-0351 attempt 3: pose-first restructure + CLIP emphasis syntax on panel/pose and mid-hip clauses, negative prompt extended to forbid six-figure grid layout |
