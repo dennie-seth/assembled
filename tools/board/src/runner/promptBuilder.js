@@ -13,7 +13,7 @@ const CONTINUE_WORKFLOW_SECTION = `## Workflow — continuing existing work (do 
 This card already has a branch with prior work committed to it. You are resuming and fixing, not starting over -- do not discard or rewrite the existing implementation from scratch.
 
 1. Inspect what's already on the branch -- read the diff against the base branch and the existing tests to understand the current state before changing anything.
-2. Read the reviewer's last verdict notes in the task card body below, and the "## Human comments on this card" section if present -- they describe what's still wrong or what changed.
+2. Read the "## Prior validation history (digest)" section below if present (a summary of prior verdicts -- the full text of each is archived, not repeated here), and the "## Human comments on this card" section if present -- they describe what's still wrong or what changed.
 3. Fix the specific issues raised. Add or adjust failing tests first for any new behavior the fix requires, then implement to green.
 4. **Commit the fix now, before you self-verify.** \`git add -A && git commit\` right after the fix is written — do not wait until after self-verification to do this. Self-verification (next step) can eat many turns chasing an unrelated tool/permission/environment issue; if that happens with the fix still uncommitted, the real, working code you wrote is at risk of being lost, and the reviewer will FAIL the card on "implementation not committed" even though the work is done. Commit first, then verify.
 5. Self-verify — run the verify skill for your subsystem (tests + lint + build). If self-verify surfaces a further fix, make it and commit that too.
@@ -229,8 +229,13 @@ function formatComments(comments) {
  * instead of the fresh-implementation one, and `comments` (human feedback
  * added via the board, e.g. "CI failed on X, please fix") are injected as
  * their own section so the implementer knows exactly what to address.
+ * `verdictDigest` (T-0345, see ../lib/verdictArchive.js's buildVerdictDigest)
+ * is a short summary of this card's prior VALIDATION rounds -- the full text
+ * of each is archived on disk, not carried in the body, so it doesn't grow
+ * the prompt (and eventually the argv/stdin payload, see claudeCliRunner.js's
+ * E2BIG history) on every retry. Omitted entirely when empty.
  */
-export function buildPrompt({ task, agentDef, rules = [], continuing = false, comments = [] }) {
+export function buildPrompt({ task, agentDef, rules = [], continuing = false, comments = [], verdictDigest = "" }) {
   if (!task || typeof task.body !== "string") {
     throw new Error("buildPrompt requires a task with a body");
   }
@@ -253,6 +258,10 @@ export function buildPrompt({ task, agentDef, rules = [], continuing = false, co
   sections.push(
     `## Task card ${task.id}\n\n${TASK_BODY_START}\n${escapeTaskBody(task.body)}\n${TASK_BODY_END}`
   );
+
+  if (verdictDigest) {
+    sections.push(`## Prior validation history (digest)\n\n${verdictDigest}`);
+  }
 
   if (comments.length > 0) {
     sections.push(`## Human comments on this card\n\n${formatComments(comments)}`);

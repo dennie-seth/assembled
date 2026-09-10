@@ -13,6 +13,7 @@ import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
 import { regenerateApprovalLedgerIfChanged } from "./approvalLedgerRegen.js";
 import { promoteEvidenceForCard } from "../lib/evidencePromotion.js";
+import { appendVerdictEntry, readVerdictEntries, buildVerdictDigest } from "../lib/verdictArchive.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
 import {
   materializePlannerFileView,
@@ -334,6 +335,9 @@ export class RunOrchestrator {
     buildMergeConflictPromptFn = buildMergeConflictPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     crossCheckVerdictFn = crossCheckVerdict,
+    readVerdictEntriesFn = readVerdictEntries,
+    appendVerdictEntryFn = appendVerdictEntry,
+    buildVerdictDigestFn = buildVerdictDigest,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
     heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
@@ -377,6 +381,9 @@ export class RunOrchestrator {
     this.buildMergeConflictPromptFn = buildMergeConflictPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.crossCheckVerdictFn = crossCheckVerdictFn;
+    this.readVerdictEntriesFn = readVerdictEntriesFn;
+    this.appendVerdictEntryFn = appendVerdictEntryFn;
+    this.buildVerdictDigestFn = buildVerdictDigestFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
     this.heartbeatIntervalMs = heartbeatIntervalMs;
@@ -783,12 +790,14 @@ export class RunOrchestrator {
     const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
     const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const verdictEntries = await this.readVerdictEntriesFn(this.tasksDir, taskId);
     const prompt = this.buildPromptFn({
       task: { ...task, agent: effectiveAgent },
       agentDef,
       rules,
       continuing: reused,
-      comments: task.comments ?? []
+      comments: task.comments ?? [],
+      verdictDigest: this.buildVerdictDigestFn(verdictEntries)
     });
 
     const implementerResult = await this._runPhase({
@@ -1393,11 +1402,16 @@ export class RunOrchestrator {
    * a note explaining why the loop stopped (cap reached, or no progress -- see `_failNoteText`).
    */
   async _handleFailValidation(taskId, verdict, attempt, retrying, { noProgress = false, signature } = {}) {
-    const current = await this.store.get(taskId);
-    await this._updateAndBroadcast(taskId, {
-      status: retrying ? "in-progress" : "blocked",
-      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying, { noProgress, signature }))
+    // T-0345: the reviewer's FAIL notes are archived (see verdictArchive.js), not appended to
+    // the body -- appendNote's old unbounded-growth behavior is exactly what fed a monotonically
+    // growing prompt back into every subsequent run and once crashed a run outright (spawn
+    // E2BIG, T-0243).
+    await this.appendVerdictEntryFn(this.tasksDir, taskId, {
+      heading: "Validation: FAIL",
+      timestamp: this.now().toISOString(),
+      text: this._failNoteText(verdict, attempt, !retrying, { noProgress, signature })
     });
+    await this._updateAndBroadcast(taskId, { status: retrying ? "in-progress" : "blocked" });
   }
 
   /**
@@ -1626,13 +1640,18 @@ export class RunOrchestrator {
     // further risk is taken; the develop-sync step below can only ever downgrade this, never
     // erase it.
     const preSync = await this.store.get(taskId);
-    const passBody = appendNote(preSync.body, "Validation: PASS", verdict.notes);
+    // T-0345: archived, not appended to the body -- see _handleFailValidation's note above.
+    await this.appendVerdictEntryFn(this.tasksDir, taskId, {
+      heading: "Validation: PASS",
+      timestamp: this.now().toISOString(),
+      text: verdict.notes
+    });
     // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
     // not carrying over how many attempts a previous round of FAILs consumed.
-    const passPatch = { status: "review", branch, commit, body: passBody, attempts: 0 };
+    const passPatch = { status: "review", branch, commit, body: preSync.body, attempts: 0 };
     if (prUrl) {
       passPatch.pr = prUrl;
-      passPatch.body = appendNote(passBody, "PR", prUrl);
+      passPatch.body = appendNote(preSync.body, "PR", prUrl);
     }
     await this._updateAndBroadcast(taskId, passPatch);
 

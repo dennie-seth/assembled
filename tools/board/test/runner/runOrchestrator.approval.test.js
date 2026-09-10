@@ -134,7 +134,9 @@ function makeOrchestrator({ store, git, runner, hub } = {}) {
     loadRulesFn: () => [{ name: "conduct", paths: ["**"], body: "TDD." }],
     resolveAllowedToolsFn: () => ["Read", "Write"],
     createRunLogFn: vi.fn(async () => makeRunLog()),
-    crossCheckVerdictFn: ({ verdict }) => verdict
+    crossCheckVerdictFn: ({ verdict }) => verdict,
+    readVerdictEntriesFn: async () => [],
+    appendVerdictEntryFn: async () => {}
   });
 }
 
