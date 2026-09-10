@@ -462,16 +462,30 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     native CLIPTextEncode `(text:weight)` emphasis -- the one technique
     that reliably moved something across attempts 1-5 (the mid-hip coat
     clause) -- to both the isolation clause and the pose clause itself,
-    neither of which was ever emphasized under lever 1 or attempt 6."""
+    neither of which was ever emphasized under lever 1 or attempt 6.
+
+    Attempt 8 (first ControlNet execution, 2026-09-10 amendment; see
+    ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md) proved the skeleton forces real
+    T-pose/profile geometry in 4 of 5 panels with zero pose-text help --
+    but every coat came back mid-calf-or-longer, worse than attempts 3/5's
+    plain-1.3-coat-only *prompt-only* result, and side_right_forward
+    regressed to a three-figure composition. The pose clause's own CLIP
+    emphasis is dropped entirely here (ControlNet is the pose lever now;
+    emphasizing text the skeleton already forces only spends "attention
+    budget" competing against the clauses that still need it), and that
+    budget is reallocated: isolation 1.3->1.4, coat-length 1.3->1.6 -- the
+    two things ControlNet's pose conditioning does not touch, and the only
+    prompt-only levers this card still owns."""
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
-        "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
-        f"visible, centred, ({pose.pose_clause}:1.3), {entity.costume_description}, "
-        "institutional green coat, (the coat cut short and ending precisely at mid-hip, bare "
-        "thigh clearly visible below the coat hem:1.3), wearing a hooded mask with two dark "
-        "round visible eye lenses, not a blank void, boots, never high heels, flat uniform "
-        "neutral grey background, flat even lighting, no cast shadow, no perspective, clean "
-        "readable outline"
+        "camera view, isolated portrait alone on a plain background:1.4), head to toe fully "
+        f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
+        "institutional green coat cropped to a short waist-length jacket silhouette, "
+        "(the coat hem ending well above the knee at mid-hip height, bare thigh clearly "
+        "exposed below the short coat hem, cropped jacket length, not a long coat:1.6), "
+        "wearing a hooded mask with two dark round visible eye lenses, not a blank void, "
+        "boots, never high heels, flat uniform neutral grey background, flat even lighting, "
+        "no cast shadow, no perspective, clean readable outline"
     )
 
 
@@ -496,7 +510,15 @@ def build_single_pose_negative_prompt() -> str:
     figure requested. Attempt 7 adds terms naming that specific composition
     genre, plus the stray-text defect attempt 6 also showed (now that "no
     text/no UI/no watermark" has moved out of the positive prompt, see
-    `build_single_pose_positive_prompt`)."""
+    `build_single_pose_positive_prompt`).
+
+    Attempt 8 (first ControlNet execution) still regressed to a
+    three-figure composition on side_right_forward despite every one of
+    these unemphasized bans -- the same emphasis lever that fixed coat
+    length in attempts 3/5 is applied here too, on this card's own
+    anti-multi-figure clause (`MAIN_NEGATIVE`'s shared "two figures, ...
+    group of people" wording is left unweighted/untouched, since it's
+    reused across every card in this pipeline)."""
     return (
         build_negative_prompt()
         + ", long coat, trench coat, ankle-length coat, floor-length coat, knee-length coat, "
@@ -505,7 +527,8 @@ def build_single_pose_negative_prompt() -> str:
         "technical flat, fashion flat, product sheet, spec sheet, multiple views, multiple "
         "photos, multiple angles, comparison layout, inset panel, exploded view, contact "
         "sheet, grid of images, clothing flat lay, flat lay, label, caption, illegible text, "
-        "gibberish text, UI mockup"
+        "gibberish text, UI mockup, (three figures, multiple figures, several figures, "
+        "ensemble of characters:1.3)"
     )
 
 
