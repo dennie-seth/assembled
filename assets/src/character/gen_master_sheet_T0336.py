@@ -438,6 +438,18 @@ POSE_SPECS: tuple[PoseSpec, ...] = (
             "face markings, front of hood opening, face, eyes"
         ),
     ),
+    # Attempt 20 tried ipadapter_end_at=0.5 on these two panels (narrowing
+    # IP-Adapter's own sampling window, not its weight) on the theory that
+    # the T-0317 reference's neutral pose was fighting ControlNet's
+    # forward-extended-limb skeleton. It made both panels WORSE, not
+    # better -- side_left_forward's coat drifted from green to white/grey
+    # with invented flowing green "hair", side_right_forward became an
+    # unrecognisable green/tan blob -- so less IP-Adapter influence in the
+    # later steps let the base model/style LoRA invent MORE, not less.
+    # Reverted to the unchanged full range; see reference_image_for's
+    # square-padding fix (attempt 21) for the lever that actually explains
+    # the defect (the 175x891 T-0317 file's own extreme aspect ratio loses
+    # the head and feet to IP-Adapter's CLIP-vision center-crop).
     PoseSpec(
         key="side_left_forward",
         label="side, left-forward",
@@ -446,7 +458,6 @@ POSE_SPECS: tuple[PoseSpec, ...] = (
             "and only the left leg extended forward at roughly a right angle clear of the "
             "torso, the right arm and right leg held back close to the body"
         ),
-        ipadapter_end_at=0.5,
     ),
     PoseSpec(
         key="side_right_forward",
@@ -456,7 +467,6 @@ POSE_SPECS: tuple[PoseSpec, ...] = (
             "and only the right leg extended forward at roughly a right angle clear of the "
             "torso, the left arm and left leg held back close to the body"
         ),
-        ipadapter_end_at=0.5,
     ),
     # Attempt 17 (docs/assets/evidence/T-0351/): side_neutral was the first
     # panel this card ever produced a genuine true-90-degree profile on
@@ -1552,7 +1562,8 @@ def run_five_pose_attempt(
         skeleton_filename = upload_image(skeleton_path)
 
         reference_path, reference_crop_box = reference_image_for(card, entity_name, pose.key)
-        concept_filename = uploaded_filename(reference_path)
+        reference_upload_path = prepare_reference_for_upload(reference_path, out_dir)
+        concept_filename = uploaded_filename(reference_upload_path)
 
         graph = build_graph(
             seed=seed,
@@ -1594,6 +1605,7 @@ def run_five_pose_attempt(
                 "pose_skeleton": str(skeleton_path.relative_to(REPO_ROOT)),
                 "reference_image": str(reference_path.relative_to(REPO_ROOT)),
                 "reference_crop_box": reference_crop_box,
+                "reference_square_padded": reference_upload_path != reference_path,
                 "ipadapter_end_at": pose.ipadapter_end_at,
             }
         )
@@ -1869,6 +1881,66 @@ def reference_image_for(
     if by_pose is not None and pose_key in by_pose:
         return by_pose[pose_key]
     return ENTITIES[entity_name].concept_sheet_path, concept_crop_box_for(card, entity_name)
+
+
+# Attempt 21 (RE-SCOPE follow-up): attempt 20 disproved the pose-conflict
+# theory (narrowing IPAdapterAdvanced's end_at on side_left_forward/
+# side_right_forward made both panels WORSE -- see POSE_SPECS's own
+# comment). Opening attempt 19/20's malformed side panels again with this
+# in mind shows a different, more specific pattern: the actual green coat
+# is faithfully reproduced wherever it appears, but heads, hands and the
+# far side of the silhouette are freely invented (a feathered crest, green
+# "hair" tendrils, a held object no prompt or reference ever showed) --
+# consistent with IP-Adapter's own CLIP-vision preprocessing (resize the
+# shorter side, then centre-crop to a square) being handed
+# PROFILE_REFERENCE_T0317_PATH's actual 175x891 dimensions: resizing width
+# 175 up to the encoder's square input and centre-cropping discards
+# everything outside a roughly-224px-tall band around the image's
+# vertical middle, i.e. the head and feet never reach the encoder at all.
+# Every other reference this card uses (the concept-sheet crops) is
+# already close to square and passes through whole.
+PROFILE_REFERENCE_T0317_BACKGROUND: tuple[int, int, int] = (128, 128, 128)
+
+
+def pad_image_to_square(
+    image, background: tuple[int, int, int] = PROFILE_REFERENCE_T0317_BACKGROUND
+):
+    """Pads `image` onto a square canvas (side = max(width, height)),
+    background-filled, with the original centred -- so a centre-crop-to-
+    square preprocessing step (IP-Adapter's own CLIP vision encoder) sees
+    the whole original image instead of losing whatever fell outside a
+    square window. `background` defaults to a neutral mid-grey, matching
+    this card's own 'flat uniform neutral grey background' prompt wording
+    rather than introducing a new colour never asked for."""
+    from PIL import Image
+
+    side = max(image.width, image.height)
+    canvas = Image.new("RGB", (side, side), background)
+    offset = ((side - image.width) // 2, (side - image.height) // 2)
+    canvas.paste(image, offset)
+    return canvas
+
+
+def prepare_reference_for_upload(reference_path: Path, out_dir: Path) -> Path:
+    """Returns the path IP-Adapter should actually be given for
+    `reference_path` -- `PROFILE_REFERENCE_T0317_PATH` gets square-padded
+    first (`pad_image_to_square`, attempt 21) since its native 175x891 is
+    extreme enough to lose the head/feet to CLIP-vision's centre-crop;
+    every other reference this card uses is already close to square and is
+    returned unchanged. The padded copy is cached under `out_dir` (this
+    attempt's own scratch directory under assets/out/, gitignored), not
+    under assets/src/ -- it is derived and reproducible from the committed
+    source file plus this function, not itself a new source asset."""
+    if reference_path != PROFILE_REFERENCE_T0317_PATH:
+        return reference_path
+
+    from PIL import Image
+
+    padded_path = out_dir / f"{reference_path.stem}_padded_square.png"
+    if not padded_path.exists():
+        with Image.open(reference_path) as im:
+            pad_image_to_square(im.convert("RGB")).save(padded_path)
+    return padded_path
 
 
 def main() -> None:
