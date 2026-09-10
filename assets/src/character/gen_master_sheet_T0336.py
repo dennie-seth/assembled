@@ -346,6 +346,121 @@ def build_limb_pose_negative_prompt() -> str:
     )
 
 
+@dataclass(frozen=True)
+class PoseSpec:
+    key: str
+    label: str
+    pose_clause: str
+
+
+# T-0351 lever 2 (run-1 reviewer verdict): the five acceptance-criteria
+# panels, one per single-pose generation -- see
+# `build_single_pose_positive_prompt`'s docstring for why this replaces the
+# single-shot five-panel-in-one-image approach `build_limb_pose_prompt`/
+# `run_attempt` used for this card's first five attempts.
+POSE_SPECS: tuple[PoseSpec, ...] = (
+    PoseSpec(
+        key="front_tpose",
+        label="front T-pose",
+        pose_clause=(
+            "front view, T-pose, both arms held straight out horizontal to the sides clear "
+            "of the torso, legs spread apart"
+        ),
+    ),
+    PoseSpec(
+        key="back_tpose",
+        label="back T-pose",
+        pose_clause=(
+            "back view, T-pose, both arms held straight out horizontal to the sides clear of "
+            "the torso, legs spread apart"
+        ),
+    ),
+    PoseSpec(
+        key="side_left_forward",
+        label="side, left-forward",
+        pose_clause=(
+            "true 90-degree side profile view, not a three-quarter view, only the left arm "
+            "and only the left leg extended forward at roughly a right angle clear of the "
+            "torso, the right arm and right leg held back close to the body"
+        ),
+    ),
+    PoseSpec(
+        key="side_right_forward",
+        label="side, right-forward",
+        pose_clause=(
+            "true 90-degree side profile view, not a three-quarter view, only the right arm "
+            "and only the right leg extended forward at roughly a right angle clear of the "
+            "torso, the left arm and left leg held back close to the body"
+        ),
+    ),
+    PoseSpec(
+        key="side_neutral",
+        label="side, neutral",
+        pose_clause=(
+            "true 90-degree side profile view, not a three-quarter view, neutral standing "
+            "pose, both arms hanging straight down at the sides, both legs together standing "
+            "upright"
+        ),
+    ),
+)
+
+
+def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str:
+    """T-0351 lever 2 (reviewer verdict, run 1): five attempts asking one
+    1024 generation for five distinct whole-figure panels in a single row
+    never achieved pose compliance (see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md,
+    docs/assets/evidence/T-0351/README.md). The reviewer traced the actual
+    root cause: `build_limb_pose_negative_prompt` builds on
+    `build_negative_prompt`, which builds on `MAIN_NEGATIVE` (T-0249) --
+    and MAIN_NEGATIVE forbids "grid, panels, contact sheet, multiple
+    frames" and "two figures, duplicate figure, ... group of people", the
+    exact thing "five separate whole-figure panels in a single horizontal
+    row" asks for. No amount of positive-prompt weighting was ever going to
+    out-compete the negative prompt fighting it on every sampling step.
+
+    Rather than hand-carving MAIN_NEGATIVE down to keep only the clauses
+    this card wants (fragile -- a future change to MAIN_NEGATIVE could
+    silently reintroduce the conflict), this generates ONE pose per
+    KSampler call instead: a single full-body figure, no panel/grid
+    language at all, so MAIN_NEGATIVE's anti-multi-figure/anti-panel
+    clauses are exactly what this generation wants, not something fighting
+    it. `compose_pose_row` stitches the five resulting 1024x1024 images
+    into one sheet afterward, by script (DL-30 sanctions script arrangement
+    of diffusion-sampled pixels) -- this is also this card's own standing
+    guardrail: "motion composited by script." Same costume/mid-hip/
+    hooded-mask wording as #365 and this card's own first five attempts;
+    pose framing is the only thing that changed."""
+    return (
+        f"{entity.trigger_token}, single full-body figure alone in frame, head to toe fully "
+        f"visible, centred, {pose.pose_clause}, {entity.costume_description}, institutional "
+        "green coat, (the coat cut short and ending precisely at mid-hip, bare thigh clearly "
+        "visible below the coat hem:1.3), wearing a hooded mask with two dark round visible "
+        "eye lenses, not a blank void, boots, never high heels, flat uniform neutral grey "
+        "background, flat even lighting, no cast shadow, no perspective, clean readable "
+        "outline, no text, no UI, no watermark"
+    )
+
+
+def build_single_pose_negative_prompt() -> str:
+    """Reuses #365's own `build_negative_prompt` (blank heads, armour
+    drift, cropped heads/limbs, robotic legs) unchanged -- MAIN_NEGATIVE
+    already forbids multi-figure/grid/panel/turnaround compositions, which
+    is exactly what a single-pose-per-generation request wants, not
+    something to fight (see `build_single_pose_positive_prompt`'s
+    docstring). Adds only this card's own coat-length and footwear
+    reinforcement, reused from `build_limb_pose_negative_prompt` -- but
+    deliberately drops that function's extra anti-panel/anti-duplicate-pose
+    clauses (six figures, two rows, isolated leg row, ...), which existed
+    only to fight the single-shot five-panel approach this lever replaces
+    and have no target to suppress in a single-pose generation."""
+    return (
+        build_negative_prompt()
+        + ", long coat, trench coat, ankle-length coat, floor-length coat, knee-length coat, "
+        "calf-length coat, coat past the knee, coat covering the thighs, coat below the hip, "
+        "high heels, stiletto heels, pumps, mismatched footwear"
+    )
+
+
 def build_negative_prompt() -> str:
     """`MAIN_NEGATIVE` (T-0249) already forbids perspective and inconsistent
     identity; this adds the master-sheet-specific defects (a whole-figure
@@ -593,6 +708,38 @@ def append_attempt_log(provenance: dict, notes: str = "", log_path: Path | None 
     )
     with path.open("a") as f:
         f.write(row)
+
+
+def compose_pose_row(image_paths: list[Path], out_path: Path) -> None:
+    """T-0351 lever 2: stitches N independently-generated single-pose
+    images side by side into one row, left to right in the order given --
+    the script-owned layout step `build_single_pose_positive_prompt`'s
+    docstring describes, replacing a single KSampler call being asked to
+    lay out five panels itself. Every image is scaled to the smallest
+    height among them, preserving aspect ratio (never stretched, same
+    principle as `compose_master_sheet_with_parts`) before being pasted --
+    the five generations all come out of the same 1024x1024 graph so this
+    is a no-op in practice, but stays correct if a future caller mixes
+    sizes."""
+    from PIL import Image
+
+    images = [Image.open(p).convert("RGB") for p in image_paths]
+    target_height = min(im.height for im in images)
+    scaled = []
+    for im in images:
+        scale = target_height / im.height
+        new_size = (max(1, round(im.width * scale)), target_height)
+        scaled.append(im.resize(new_size))
+
+    total_width = sum(im.width for im in scaled)
+    canvas = Image.new("RGB", (total_width, target_height), scaled[0].getpixel((0, 0)))
+    x = 0
+    for im in scaled:
+        canvas.paste(im, (x, 0))
+        x += im.width
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_path)
 
 
 PARTS_ROW_HEIGHT = 340
@@ -847,6 +994,191 @@ def run_attempt(
     return provenance
 
 
+def run_five_pose_attempt(
+    entity_name: str,
+    attempt: int,
+    base_seed: int,
+    style_lora_weight: float = 0.70,
+    identity_lora_weight: float | None = None,
+    ipadapter_weight: float = 0.35,
+    width: int = DEFAULT_MASTER_SHEET_PX,
+    height: int = DEFAULT_MASTER_SHEET_PX,
+    *,
+    card: str = "T-0351",
+) -> dict:
+    """T-0351 lever 2 (run-1 reviewer verdict): five independent 1024x1024
+    IP-Adapter-conditioned txt2img calls, one per `POSE_SPECS` entry,
+    composited into one row by `compose_pose_row` -- see
+    `build_single_pose_positive_prompt`'s docstring for why this replaces
+    the single-shot five-panel-in-one-image approach `run_attempt`/
+    `build_limb_pose_prompt` used for this card's first five attempts.
+    Reuses `build_graph` unchanged (still no ControlNet, still IP-Adapter
+    on `entity.concept_crop_box`, still the same style/identity LoRA
+    weights) -- the only change from `run_attempt` is that it is called
+    once per pose instead of once for the whole sheet. Each pose gets its
+    own seed (`base_seed + index`) so the five generations are distinct and
+    reproducible, not five identical draws.
+
+    Writes the same `master_sheet_1024.png` / `provenance_candidate.json`
+    filenames `run_attempt` does, under the same `out_dir_for(card, ...)`
+    layout, so `promote_attempt`/the CLI's `--promote-attempt` path needs
+    no changes to consume this function's output."""
+    if CHECKPOINT_LICENSE not in CHECKPOINT_LICENSE_ALLOWLIST:
+        raise RuntimeError(f"checkpoint license {CHECKPOINT_LICENSE!r} is not on the allowlist")
+
+    entity = ENTITIES[entity_name]
+    concept_hash = sha256_of(entity.concept_sheet_path)
+    if concept_hash != entity.concept_hash:
+        raise RuntimeError(
+            f"concept sheet hash mismatch for {entity_name!r}: got {concept_hash}, "
+            f"expected {entity.concept_hash}"
+        )
+
+    identity_lora_name = None
+    identity_lora_hash = None
+    resolved_identity_weight = 0.0
+    if entity.identity_lora_name is not None:
+        if not entity.identity_lora_path.exists():
+            raise RuntimeError(f"trained identity LoRA not found: {entity.identity_lora_path}")
+        if not entity.identity_lora_provenance_path.exists():
+            raise RuntimeError(
+                f"identity LoRA provenance sidecar not found: "
+                f"{entity.identity_lora_provenance_path}"
+            )
+        identity_lora_name = entity.identity_lora_name
+        identity_lora_hash = sha256_of(entity.identity_lora_path)
+        resolved_identity_weight = (
+            identity_lora_weight
+            if identity_lora_weight is not None
+            else entity.identity_lora_weight
+        )
+
+    style_lora_hash = sha256_of(LORA_PATH)
+
+    out_dir = out_dir_for(card, entity_name, attempt)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    concept_filename = upload_image(entity.concept_sheet_path)
+    negative_text = build_single_pose_negative_prompt()
+
+    pose_records = []
+    panel_paths = []
+    total_gpu_seconds = 0.0
+    for i, pose in enumerate(POSE_SPECS):
+        seed = base_seed + i
+        positive_text = build_single_pose_positive_prompt(entity, pose)
+        graph = build_graph(
+            seed=seed,
+            concept_filename=concept_filename,
+            positive_text=positive_text,
+            negative_text=negative_text,
+            style_lora_weight=style_lora_weight,
+            ipadapter_weight=ipadapter_weight,
+            width=width,
+            height=height,
+            identity_lora_name=identity_lora_name,
+            identity_lora_weight=resolved_identity_weight,
+            concept_crop_box=entity.concept_crop_box,
+        )
+        t0 = time.monotonic()
+        prompt_id = submit_prompt(graph)
+        info = wait_for_completion(prompt_id, timeout_s=300)
+        gpu_seconds = time.monotonic() - t0
+        total_gpu_seconds += gpu_seconds
+
+        panel_bytes = fetch_save_image(info, MAIN_SAVE_NODE_ID)
+        panel_path = out_dir / f"pose_{pose.key}_1024.png"
+        panel_path.write_bytes(panel_bytes)
+        panel_paths.append(panel_path)
+
+        pose_records.append(
+            {
+                "key": pose.key,
+                "label": pose.label,
+                "seed": seed,
+                "prompt": positive_text,
+                "comfyui_prompt_id": prompt_id,
+                "gpu_seconds": round(gpu_seconds, 1),
+            }
+        )
+
+    sheet_path = out_dir / "master_sheet_1024.png"
+    compose_pose_row(panel_paths, sheet_path)
+    from PIL import Image
+
+    with Image.open(sheet_path) as sheet:
+        sheet_width, sheet_height = sheet.size
+
+    model_summary = f"{CHECKPOINT} + LoRA {LORA_NAME} (style, weight {style_lora_weight})"
+    if identity_lora_name is not None:
+        model_summary += (
+            f" + LoRA {identity_lora_name} (identity, chained, weight "
+            f"{resolved_identity_weight})"
+        )
+    model_summary += f" + IP-Adapter {IPADAPTER_NAME} (weight {ipadapter_weight})"
+
+    provenance = {
+        "model": model_summary,
+        "model_license": CHECKPOINT_LICENSE,
+        "model_hash": CHECKPOINT_HASH,
+        "style_lora_name": LORA_NAME,
+        "style_lora_hash": style_lora_hash,
+        "style_lora_weight": style_lora_weight,
+        "style_lora_license": LORA_LICENSE,
+        "identity_lora_name": identity_lora_name,
+        "identity_lora_hash": identity_lora_hash,
+        "identity_lora_weight": resolved_identity_weight if identity_lora_name else None,
+        "identity_lora_provenance": (
+            str(entity.identity_lora_provenance_path.relative_to(REPO_ROOT))
+            if identity_lora_name is not None
+            else None
+        ),
+        "ip_adapter": IPADAPTER_NAME,
+        "ip_adapter_weight": ipadapter_weight,
+        "concept_crop_box": entity.concept_crop_box,
+        "controlnet": None,
+        "controlnet_note": "deliberately omitted (DL-30 / this card's own scope)",
+        "negative_prompt": negative_text,
+        "poses": pose_records,
+        "seed": base_seed,
+        "steps": 30,
+        "cfg": 7.0,
+        "width": sheet_width,
+        "height": sheet_height,
+        "panel_width": width,
+        "panel_height": height,
+        "entity": entity_name,
+        "concept_hash": concept_hash,
+        "concept_source": str(entity.concept_sheet_path.relative_to(REPO_ROOT)),
+        "method": (
+            "Five independent 1024x1024 txt2img generations, one per POSE_SPECS entry "
+            "(front T-pose, back T-pose, side-left-forward, side-right-forward, "
+            "side-neutral): LoraLoader(soviet_brutalism_style_v1) "
+            + ("-> LoraLoader(identity, chained) " if identity_lora_name is not None else "")
+            + "-> IPAdapterUnifiedLoader + IPAdapterAdvanced (concept sheet) -> KSampler -> "
+            "VAEDecode -> SaveImage, once per pose -- no ControlNet. compose_pose_row then "
+            "stitches the five resulting images side by side into one sheet by script "
+            "(DL-30), replacing this card's first five attempts' single-shot "
+            "five-panel-in-one-image approach (build_limb_pose_prompt/run_attempt), which "
+            "never achieved pose compliance -- see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md and "
+            "docs/assets/evidence/T-0351/README.md."
+        ),
+        "generator": "assets/src/character/gen_master_sheet_T0336.py",
+        "card": card,
+        "spec": (
+            "docs/decision-log.md DL-30, pose spec per T-0351 (successor to #365/T-0336; "
+            "recipe unchanged, pose is the only variable; lever 2 -- five separate "
+            "single-pose generations composited by script, per this card's own standing "
+            "guardrail 'motion composited by script' and the run-1 reviewer verdict)"
+        ),
+        "attempt": attempt,
+        "gpu_seconds": round(total_gpu_seconds, 1),
+        "promoted": False,
+    }
+    (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    return provenance
+
+
 # A card generating a differently-posed sheet registers its own prompt
 # builder here, keyed by card id -- the CLI's only per-card branch point.
 # T-0336's own default (build_positive_prompt) needs no entry.
@@ -856,6 +1188,10 @@ PROMPT_BUILDERS_BY_CARD: dict[str, Callable[[EntitySpec], str]] = {
 NEGATIVE_PROMPT_BUILDERS_BY_CARD: dict[str, Callable[[], str]] = {
     "T-0351": build_limb_pose_negative_prompt,
 }
+
+# Cards using the lever-2 five-separate-generations-composited-by-script
+# path (run_five_pose_attempt) instead of the single-shot run_attempt.
+FIVE_POSE_CARDS: frozenset[str] = frozenset({"T-0351"})
 
 
 def main() -> None:
@@ -898,19 +1234,32 @@ def main() -> None:
 
     check_attempt_cap(args.attempt)
 
-    provenance = run_attempt(
-        entity_name=args.entity,
-        attempt=args.attempt,
-        seed=args.seed,
-        style_lora_weight=args.style_lora_weight,
-        identity_lora_weight=args.identity_lora_weight,
-        ipadapter_weight=args.ipadapter_weight,
-        width=args.width,
-        height=args.height,
-        card=args.card,
-        prompt_builder=PROMPT_BUILDERS_BY_CARD.get(args.card),
-        negative_prompt_builder=NEGATIVE_PROMPT_BUILDERS_BY_CARD.get(args.card),
-    )
+    if args.card in FIVE_POSE_CARDS:
+        provenance = run_five_pose_attempt(
+            entity_name=args.entity,
+            attempt=args.attempt,
+            base_seed=args.seed,
+            style_lora_weight=args.style_lora_weight,
+            identity_lora_weight=args.identity_lora_weight,
+            ipadapter_weight=args.ipadapter_weight,
+            width=args.width,
+            height=args.height,
+            card=args.card,
+        )
+    else:
+        provenance = run_attempt(
+            entity_name=args.entity,
+            attempt=args.attempt,
+            seed=args.seed,
+            style_lora_weight=args.style_lora_weight,
+            identity_lora_weight=args.identity_lora_weight,
+            ipadapter_weight=args.ipadapter_weight,
+            width=args.width,
+            height=args.height,
+            card=args.card,
+            prompt_builder=PROMPT_BUILDERS_BY_CARD.get(args.card),
+            negative_prompt_builder=NEGATIVE_PROMPT_BUILDERS_BY_CARD.get(args.card),
+        )
     append_attempt_log(provenance, notes=args.notes, log_path=attempt_log_path_for(args.card))
     print(json.dumps(provenance, indent=2))
 
