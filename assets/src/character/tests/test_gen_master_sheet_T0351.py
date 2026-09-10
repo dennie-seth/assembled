@@ -447,14 +447,28 @@ def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> No
     than attempts 3/5's plain-1.3-coat-only prompt-only result). Attempt 9
     drops pose-clause emphasis entirely (ControlNet -- build_graph's
     pose_skeleton_filename -- is the pose lever now) and raises isolation
-    to 1.4 and coat-length to 1.6: the two clauses ControlNet does not
-    condition, and the only prompt-only levers this card still owns."""
+    to 1.4 and coat-length to 1.6.
+
+    Attempt 9 ran exactly that and regressed badly: "cropped ... jacket"
+    wording (replacing "coat") pulled the whole generation toward an
+    unrelated fashion-lookbook archetype -- lost hooded-mask identity in 4
+    of 5 panels, and panels 3/4 got WORSE (two and three figures,
+    respectively, versus attempt 8's single multi-figure regression).
+    Attempt 10 isolates the variables attempt 9 conflated: reverts the
+    coat clause to attempt 8's own "coat"-not-"jacket" wording (which had
+    clean single-figure results in 4/5 panels and no identity drift),
+    keeps isolation at attempt 8's proven-safe 1.3 (reverting attempt 9's
+    1.4), and changes only the coat-length weight, 1.3 -> 1.5 -- the one
+    axis not yet tested in isolation."""
     pose = gen.POSE_SPECS[0]
     prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], pose)
     assert "exactly one pose" in prompt.lower()
     assert "exactly one" in prompt.lower() and "view" in prompt.lower()
-    assert ":1.4)" in prompt, "isolation clause must be emphasized at 1.4"
-    assert ":1.6)" in prompt, "coat-length clause must be emphasized at 1.6"
+    assert ":1.3)" in prompt, "isolation clause must stay at attempt 8's proven-safe 1.3"
+    assert ":1.5)" in prompt, "coat-length clause must be emphasized at 1.5"
+    assert "jacket" not in prompt.lower(), (
+        "attempt 9's 'jacket' reframing is implicated in its identity drift -- revert to 'coat'"
+    )
     assert pose.pose_clause in prompt, "pose text itself must still be present"
     assert f"({pose.pose_clause}:1.3)" not in prompt, (
         "pose clause must no longer be CLIP-emphasized -- ControlNet forces it now"
