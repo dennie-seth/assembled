@@ -39,15 +39,19 @@ export function resolveComfyUiBaseUrl(env = process.env, execFileSyncFn = execFi
  * `--deterministic` is absent.
  *
  * The original card acceptance criterion ("fail if argv lacks --deterministic") assumed forcing
- * that flag was a straightforward win. T-0272/T-0317 rounds 10-12 disproved that for at least one
- * real graph (dual-IPAdapter + ControlNet profile render): `--deterministic` and/or
- * `CUBLAS_WORKSPACE_CONFIG` reproducibly destroyed coherence (0/6 and 0/8 fresh seeds), while
- * baseline (neither flag) is the only regime that has ever produced a coherent frame. Hardcoding
- * "--deterministic must be present" would therefore make this check actively wrong whenever
- * baseline is the deliberately-chosen live regime -- so the check instead treats the *declared*
- * regime (whichever one a human most recently decided on, recorded with its own reasoning) as the
- * source of truth, and only fails when the live server has silently drifted away from it, in
- * either direction.
+ * that flag was a straightforward win. T-0272/T-0317 rounds 10-12 tried it against at least one
+ * real graph (dual-IPAdapter + ControlNet profile render) and found no coherence benefit:
+ * `--deterministic` and/or `CUBLAS_WORKSPACE_CONFIG` scored 0/6 and 0/8 fresh seeds, but baseline
+ * scored 0/8 on its own fresh reroll too -- against this graph's roughly 1-in-40 baseline
+ * coherence rate, samples that small landing on zero are indistinguishable from chance.
+ * "Determinism flags broke coherence" is therefore not an established finding (T-0346): the flags
+ * were not shown to help, and were not shown to hurt. Baseline is kept because it costs nothing and
+ * is the only regime that has ever produced a coherent frame at all, not because the flags were
+ * proven harmful. Hardcoding "--deterministic must be present" would therefore make this check
+ * actively wrong whenever baseline is the deliberately-chosen live regime -- so the check instead
+ * treats the *declared* regime (whichever one a human most recently decided on, recorded with its
+ * own reasoning) as the source of truth, and only fails when the live server has silently drifted
+ * away from it, in either direction.
  *
  * `CUBLAS_WORKSPACE_CONFIG` cannot be checked here at all -- it is a launch-time environment
  * variable, not a CLI arg, and does not appear anywhere in `/system_stats`'s `argv`. See

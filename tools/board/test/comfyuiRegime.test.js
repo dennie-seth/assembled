@@ -26,7 +26,7 @@ describe("resolveComfyUiBaseUrl", () => {
   });
 });
 
-describe("evaluateRegime -- T-0322: checks the LIVE server's argv against the DECLARED expected regime, in either direction, rather than hardcoding --deterministic as always-required (T-0272/T-0317 rounds 10-12 found forcing it destroys coherence on at least one real graph)", () => {
+describe("evaluateRegime -- T-0322: checks the LIVE server's argv against the DECLARED expected regime, in either direction, rather than hardcoding --deterministic as always-required (T-0272/T-0317 rounds 10-12 found no coherence benefit from forcing it on at least one real graph, but baseline scored zero on its own fresh reroll too -- not an established finding that it destroys coherence, T-0346)", () => {
   const baselineExpected = {
     deterministic: false,
     decidedBy: "@DennieSeth",
