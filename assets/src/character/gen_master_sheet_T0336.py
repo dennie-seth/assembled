@@ -470,22 +470,27 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     but every coat came back mid-calf-or-longer, worse than attempts 3/5's
     plain-1.3-coat-only *prompt-only* result, and side_right_forward
     regressed to a three-figure composition. The pose clause's own CLIP
-    emphasis is dropped entirely here (ControlNet is the pose lever now;
-    emphasizing text the skeleton already forces only spends "attention
-    budget" competing against the clauses that still need it), and that
-    budget is reallocated: isolation 1.3->1.4, coat-length 1.3->1.6 -- the
-    two things ControlNet's pose conditioning does not touch, and the only
-    prompt-only levers this card still owns."""
+    emphasis is dropped here (ControlNet is the pose lever now).
+
+    Attempt 9 raised isolation to 1.4 and coat-length to 1.6, reframed as
+    a "cropped ... jacket" -- and regressed badly: identity drift away
+    from the hooded-mask costume in 4 of 5 panels, and the multi-figure
+    defect got WORSE (two and three figures on panels 3/4). "Jacket"
+    wording plausibly pulled toward an unrelated fashion-lookbook
+    archetype, a genre that is itself multi-view-prone -- a coherent
+    explanation for both regressions landing together. Attempt 10 isolates
+    the variables attempt 9 conflated: reverts to "coat" wording and
+    attempt 8's own isolation weight (1.3, proven safe), and changes only
+    the coat-length weight, 1.3 -> 1.5."""
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
-        "camera view, isolated portrait alone on a plain background:1.4), head to toe fully "
+        "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
         f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
-        "institutional green coat cropped to a short waist-length jacket silhouette, "
-        "(the coat hem ending well above the knee at mid-hip height, bare thigh clearly "
-        "exposed below the short coat hem, cropped jacket length, not a long coat:1.6), "
-        "wearing a hooded mask with two dark round visible eye lenses, not a blank void, "
-        "boots, never high heels, flat uniform neutral grey background, flat even lighting, "
-        "no cast shadow, no perspective, clean readable outline"
+        "institutional green coat, (the coat cut short, ending precisely at mid-hip, hem "
+        "well above the knee, bare thigh clearly visible below the coat hem:1.5), wearing a "
+        "hooded mask with two dark round visible eye lenses, not a blank void, boots, never "
+        "high heels, flat uniform neutral grey background, flat even lighting, no cast "
+        "shadow, no perspective, clean readable outline"
     )
 
 
