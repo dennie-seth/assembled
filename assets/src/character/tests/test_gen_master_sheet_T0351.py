@@ -382,7 +382,8 @@ def test_build_single_pose_positive_prompt_back_tpose_does_not_ask_for_visible_f
     player = gen.ENTITIES["player"]
     pose = gen.POSE_SPECS[1]
     prompt = gen.build_single_pose_positive_prompt(player, pose).lower()
-    assert "eye lenses" not in prompt
+    assert "visible eye lenses" not in prompt
+    assert "no eye lenses" in prompt
     assert "back of the hood" in prompt or "back of hood" in prompt
     assert "no face" in prompt
 
@@ -398,7 +399,6 @@ def test_build_single_pose_positive_prompt_front_tpose_still_asks_for_visible_fa
 
 
 def test_build_single_pose_negative_prompt_back_tpose_bans_visible_face_markers() -> None:
-    player = gen.ENTITIES["player"]
     pose = gen.POSE_SPECS[1]
     negative = gen.build_single_pose_negative_prompt(pose).lower()
     assert "eye lenses" in negative or "goggles" in negative

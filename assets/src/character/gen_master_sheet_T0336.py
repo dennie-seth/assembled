@@ -366,6 +366,18 @@ class PoseSpec:
     # mid-hip coat clause that used to live there is gone, not just
     # relaxed).
     no_coat: bool = False
+    # Attempt-16 fix (docs/assets/evidence/T-0351/): back_tpose is the one
+    # panel where the standard visible-eye-lenses head clause is wrong --
+    # it describes the FRONT of the mask, which directly fights this
+    # panel's own "back view" pose clause. None means "use the standard
+    # front-facing hooded-mask-with-visible-eye-lenses clause every other
+    # panel wants"; only back_tpose overrides it.
+    head_clause: str | None = None
+    # Attempt-16 fix: per-pose negative-prompt terms appended on top of
+    # build_single_pose_negative_prompt's shared bans -- back_tpose is the
+    # only panel that needs the mask's own visible-eye-lenses/goggles
+    # imagery actively suppressed, since every other panel wants it shown.
+    negative_extra: str = ""
 
 
 # T-0351 lever 2 (run-1 reviewer verdict): the five acceptance-criteria
@@ -388,8 +400,18 @@ POSE_SPECS: tuple[PoseSpec, ...] = (
         key="back_tpose",
         label="back T-pose",
         pose_clause=(
-            "back view, T-pose, both arms held straight out horizontal to the sides clear of "
-            "the torso, legs spread apart"
+            "back view, viewed from directly behind, T-pose, both arms held straight out "
+            "horizontal to the sides clear of the torso, legs spread apart"
+        ),
+        head_clause=(
+            "(the back of the hood, back of a hooded mask, hood fabric covering the entire "
+            "head from behind, hood drawstrings and back seam visible, no face, no eyes, no "
+            "eye lenses, no goggles, nothing of the mask front visible, back of the head "
+            "only, viewed from directly behind:1.3)"
+        ),
+        negative_extra=(
+            ", eye lenses, goggles, mask front, mask eyes, visible eyes, front of mask, "
+            "face markings, front of hood opening, face, eyes"
         ),
     ),
     PoseSpec(
@@ -553,16 +575,28 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     touching `CONTROLNET_STRENGTH` (unchanged at attempt 14's 1.6) or the
     multi-figure negative weight (unchanged at attempt 11's 1.3, per the
     amendment's own "do not tune coat-length prompt weight, that axis is
-    closed" -- this is a removal, not a tune)."""
+    closed" -- this is a removal, not a tune).
+
+    Attempt 16 (docs/assets/evidence/T-0351/): attempt 15 (seed 264575131,
+    this card's first real six-panel execution) showed the standard head
+    clause below -- which names the mask's visible eye lenses -- was being
+    interpolated unchanged into back_tpose too, directly fighting that
+    panel's own "back view" pose clause; the render showed the mask facing
+    the camera, not the back of the hood. `PoseSpec.head_clause` now lets
+    back_tpose override this with wording that describes the back of the
+    hood instead (see POSE_SPECS)."""
+    head_clause = pose.head_clause or (
+        "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
+        "up and forward, face completely covered by the mask, no visible hair, no visible "
+        "face:1.3)"
+    )
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
         "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
         f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
-        "institutional green coat, full-length coat reaching past the knee, wearing a "
-        "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
-        "up and forward, face completely covered by the mask, no visible hair, no visible "
-        "face:1.3), boots, never high heels, flat uniform neutral grey background, flat even "
-        "lighting, no cast shadow, no perspective, clean readable outline"
+        f"institutional green coat, full-length coat reaching past the knee, wearing a "
+        f"{head_clause}, boots, never high heels, flat uniform neutral grey background, flat "
+        "even lighting, no cast shadow, no perspective, clean readable outline"
     )
 
 
@@ -577,15 +611,25 @@ def build_legs_panel_positive_prompt(entity: EntitySpec) -> str:
     omit, so this prompt states the lower-body garment directly instead.
     The hooded-mask head marker stays, for the same identity-continuity
     reason every other panel keeps it, and the same isolation/hood
-    emphasis weights (1.3) as the whole-figure panels, unchanged."""
+    emphasis weights (1.3) as the whole-figure panels, unchanged.
+
+    Attempt 16 (docs/assets/evidence/T-0351/): attempt 15's legs panel
+    rendered a short hooded cape/poncho covering both thighs despite an
+    explicit 'no cloak' ban -- a cape is a materially different garment
+    silhouette that was never named, and the no-coat clause's 1.5 emphasis
+    evidently lost to it. Names 'cape' explicitly and raises the clause's
+    emphasis 1.5 -> 1.8, past every whole-figure panel's own 1.3 clauses, so
+    it reliably wins on the one panel where any upper-body garment is a
+    defect."""
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
         "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
         "visible, centred, front view, standing pose, both arms hanging straight down at the "
         "sides, legs apart, weight evenly balanced, "
         "wearing military trousers and lace-up combat boots, trousers tucked into the boots, "
-        "(no coat, no jacket, no cloak, bare lower body garment only, both thighs and both "
-        "lower legs fully visible and unobstructed, nothing covering the legs:1.5), wearing a "
+        "(no coat, no jacket, no cloak, no cape, no poncho, bare lower body garment only, both "
+        "thighs and both lower legs fully visible and unobstructed, nothing covering the legs, "
+        "nothing draped over the shoulders or hips:1.8), wearing a "
         "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
         "up and forward, face completely covered by the mask, no visible hair, no visible "
         "face:1.3), never high heels, flat uniform neutral grey background, flat even "
@@ -593,7 +637,7 @@ def build_legs_panel_positive_prompt(entity: EntitySpec) -> str:
     )
 
 
-def build_single_pose_negative_prompt() -> str:
+def build_single_pose_negative_prompt(pose: PoseSpec | None = None) -> str:
     """Reuses #365's own `build_negative_prompt` (blank heads, armour
     drift, cropped heads/limbs, robotic legs) unchanged -- MAIN_NEGATIVE
     already forbids multi-figure/grid/panel/turnaround compositions, which
@@ -659,7 +703,17 @@ def build_single_pose_negative_prompt() -> str:
     mean asking the model for the exact opposite of what this card wants.
     The dedicated "legs" panel (`build_legs_panel_negative_prompt`) is
     where a coat actually needs to be banned, and it says so explicitly
-    rather than inheriting these now-backwards clauses."""
+    rather than inheriting these now-backwards clauses.
+
+    Attempt 16 (docs/assets/evidence/T-0351/): attempt 15's side_left_forward
+    rendered a pistol clenched in the extended hand and a mid-kick action
+    pose -- neither a weapon nor a kicking/running/combat motion was ever
+    named here, so this adds both, unconditionally (every panel wants a
+    static standing/reaching pose, never a weapon). Also takes an optional
+    `pose` so a panel can append its own extra bans (`PoseSpec.negative_extra`)
+    -- currently only back_tpose uses this, to suppress the mask's own
+    visible-eye-lenses imagery that every other panel wants shown."""
+    extra = pose.negative_extra if pose is not None else ""
     return (
         build_negative_prompt()
         + ", high heels, stiletto heels, pumps, mismatched footwear, reference sheet, tech "
@@ -672,7 +726,10 @@ def build_single_pose_negative_prompt() -> str:
         "uncovered head, (three figures, multiple figures, several figures, "
         "ensemble of characters, ghost figure, ghosting, faded duplicate figure, translucent "
         "overlay, transparent duplicate, afterimage, double exposure, doppelganger, second "
-        "figure behind, overlapping figures:1.3)"
+        "figure behind, overlapping figures:1.3), weapon, gun, pistol, firearm, rifle, "
+        "holding object, kicking, mid-kick, running, jumping, martial arts stance, combat "
+        "stance, dynamic action shot"
+        + extra
     )
 
 
@@ -683,11 +740,14 @@ def build_legs_panel_negative_prompt() -> str:
     panel) and adds the one thing this panel specifically needs that no
     other panel does -- an explicit ban on any garment covering the legs,
     since this is the only panel where a coat is a defect rather than the
-    canonical, correct result."""
+    canonical, correct result. Attempt 16 (docs/assets/evidence/T-0351/)
+    adds 'cape'/'poncho'/'mantle'/'shawl' -- attempt 15 rendered a short
+    hooded cape covering both thighs, a garment silhouette the original
+    'cloak' ban evidently did not cover."""
     return (
         build_single_pose_negative_prompt()
-        + ", coat, long coat, trench coat, jacket, cloak, robe, tunic, skirt, dress, apron, "
-        "garment covering the thighs, garment covering the legs"
+        + ", coat, long coat, trench coat, jacket, cloak, cape, poncho, mantle, shawl, robe, "
+        "tunic, skirt, dress, apron, garment covering the thighs, garment covering the legs"
     )
 
 
@@ -1378,7 +1438,7 @@ def run_five_pose_attempt(
             negative_text = build_legs_panel_negative_prompt()
         else:
             positive_text = build_single_pose_positive_prompt(entity, pose)
-            negative_text = build_single_pose_negative_prompt()
+            negative_text = build_single_pose_negative_prompt(pose)
 
         skeleton = pose_rig_master_sheet_T0351.render_pose_skeleton(pose.key, width)
         skeleton_path = out_dir / f"pose_{pose.key}_skeleton.png"
