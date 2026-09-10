@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { checkFindingWithEvidence } from "./preRegisteredFinding.js";
 
-async function fileExists(filePath) {
+async function defaultFileExists(filePath) {
   try {
     await fs.access(filePath);
     return true;
@@ -38,14 +39,27 @@ async function fileExists(filePath) {
  * were committed straight to the repo tagged `deliverable_type: "code"`
  * and never attached, so the plain `deliverable_type`-gated check above
  * never even ran for them.
+ *
+ * T-0342: when a genuine `deliverable_type: "artifact"` card (never a
+ * `requireArtifact`-only diff-triggered one) has no valid attachment, it gets one more
+ * chance before failing -- `checkFindingWithEvidence` (preRegisteredFinding.js), which PASSes
+ * a card that pre-registered an experiment (checked against `beforeBody`, the task's body
+ * *before* this run -- never the current body, so pre-registration can't be added retroactively
+ * to rescue an empty run) and whose current body records a decisive, evidenced finding instead of
+ * a promoted artifact. `beforeBody`/`repoRoot` are optional: omitting either simply skips this
+ * route and preserves the exact pre-T-0342 failure behaviour.
  */
-export async function checkDeliverable(task, { attachmentsDir, requireArtifact = false } = {}) {
+export async function checkDeliverable(
+  task,
+  { attachmentsDir, requireArtifact = false, beforeBody, repoRoot, fileExists = defaultFileExists } = {}
+) {
   if (!task || (task.deliverable_type !== "artifact" && !requireArtifact)) {
     return { ok: true, applicable: false, errors: [] };
   }
 
   const errors = [];
   const attachments = Array.isArray(task.attachments) ? task.attachments : [];
+  let attachmentsOk = attachments.length > 0;
 
   if (attachments.length === 0) {
     errors.push(
@@ -58,9 +72,21 @@ export async function checkDeliverable(task, { attachmentsDir, requireArtifact =
         errors.push(
           `Attachment "${attachment.filename}" is recorded in ${task.id}'s frontmatter but the file does not exist at ${filePath}.`
         );
+        attachmentsOk = false;
       }
     }
   }
 
-  return { ok: errors.length === 0, applicable: true, errors };
+  if (attachmentsOk) {
+    return { ok: true, applicable: true, errors: [] };
+  }
+
+  if (task.deliverable_type === "artifact" && typeof beforeBody === "string") {
+    const finding = await checkFindingWithEvidence({ task, beforeBody, repoRoot, fileExists });
+    if (finding.applicable) {
+      return { ok: finding.ok, applicable: true, errors: finding.ok ? [] : [...errors, ...finding.errors] };
+    }
+  }
+
+  return { ok: false, applicable: true, errors };
 }

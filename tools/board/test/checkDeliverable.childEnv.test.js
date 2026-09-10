@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { ClaudeCliRunner } from "../src/runner/claudeCliRunner.js";
 import { makeTask } from "./taskStoreContract.js";
+import { PRE_REGISTRATION_HEADING } from "../src/lib/preRegisteredFinding.js";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_PATH = path.resolve(
@@ -82,6 +83,93 @@ describe("checkDeliverable.js in a child process spawned with only the ClaudeCli
     await expect(execFileAsync(process.execPath, [SCRIPT_PATH, "T-9002"], { env: childEnv })).rejects.toMatchObject({
       code: 1,
       stderr: expect.stringMatching(/no such task found/)
+    });
+  });
+});
+
+/**
+ * T-0342: db-mode end-to-end exercise of the finding-with-evidence route -- the exact gap the
+ * reviewer's FAIL flagged. checkDeliverable.js used to hardcode beforeBody = "" whenever
+ * BOARD_TASK_STORE=db, which is production (boardServer.js), so this route was dead code for
+ * every real card. These tests drive a DbTaskStore through the real runOrchestrator status
+ * sequence (in-progress -> validation, the moment the reviewer -- and this script -- actually
+ * runs) via the same env-restricted child process the tests above use, then assert on the
+ * script's real exit code/stdout/stderr, not on internal function calls.
+ */
+describe("checkDeliverable.js in db mode: finding-with-evidence route (T-0342)", () => {
+  async function runScript(id, env) {
+    return execFileAsync(process.execPath, [SCRIPT_PATH, id], { env });
+  }
+
+  function dbEnv() {
+    const runner = new ClaudeCliRunner({
+      hostEnv: { PATH: process.env.PATH, BOARD_TASK_STORE: "db", BOARD_DB_PATH: dbPath }
+    });
+    return runner.buildEnv();
+  }
+
+  it("PASSes on a decisive, evidenced finding when pre-registration predates the current run's in-progress transition", async () => {
+    const preRegisteredBody = `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`;
+    // checkDeliverable.js resolves repoRoot from its own script location, not from the
+    // env/cwd -- so cited evidence must actually exist under this checkout's real repo root for
+    // the finding-with-evidence route to PASS, exactly as it would for a real reviewer run.
+    // Written under os.tmpdir()-namespaced subpaths of a real (gitignored-by-pattern) directory
+    // and removed in the `finally` below regardless of outcome.
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+    const evidenceRelPath = path.join(
+      "docs", "assets", "evidence", `t0342-childenv-test-${process.pid}`, "attempt_1.png"
+    );
+    const evidenceAbsPath = path.join(repoRoot, evidenceRelPath);
+
+    const store = new DbTaskStore(dbPath);
+    await store.create(
+      makeTask({ id: "T-9201", deliverable_type: "artifact", status: "ready", attachments: [], body: preRegisteredBody })
+    );
+    await store.update("T-9201", { status: "in-progress" });
+    await store.update("T-9201", {
+      body: `${preRegisteredBody}\n## Finding\nThe result is decisive: falsified. See \`${evidenceRelPath.split(path.sep).join("/")}\`.\n`
+    });
+    await store.update("T-9201", { status: "validation" });
+    store.close();
+
+    await fs.mkdir(path.dirname(evidenceAbsPath), { recursive: true });
+    await fs.writeFile(evidenceAbsPath, "fake evidence bytes");
+
+    try {
+      const { stdout } = await runScript("T-9201", dbEnv());
+      expect(stdout).toMatch(/deliverable check passed/);
+      expect(stdout).toMatch(/pre-registered experiment/);
+    } finally {
+      await fs.rm(path.dirname(evidenceAbsPath), { recursive: true, force: true });
+    }
+  });
+
+  it("still FAILs (no attachments, no reachable pre-registration) when the pre-registered-experiment section is added only during the current run", async () => {
+    const store = new DbTaskStore(dbPath);
+    await store.create(makeTask({ id: "T-9202", deliverable_type: "artifact", status: "ready", attachments: [], body: "## Context\nnothing yet\n" }));
+    await store.update("T-9202", { status: "in-progress" });
+    await store.update("T-9202", {
+      body: `${PRE_REGISTRATION_HEADING}\nadded retroactively\n\n## Finding\ndecisive, see \`evidence.png\`\n`
+    });
+    await store.update("T-9202", { status: "validation" });
+    store.close();
+
+    await expect(runScript("T-9202", dbEnv())).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringMatching(/no attachments recorded/)
+    });
+  });
+
+  it("still FAILs when there is no artifact and no pre-registered finding at all (baseline db-mode behaviour unchanged)", async () => {
+    const store = new DbTaskStore(dbPath);
+    await store.create(makeTask({ id: "T-9203", deliverable_type: "artifact", status: "ready", attachments: [], body: "## Context\nplain card\n" }));
+    await store.update("T-9203", { status: "in-progress" });
+    await store.update("T-9203", { status: "validation" });
+    store.close();
+
+    await expect(runScript("T-9203", dbEnv())).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringMatching(/no attachments recorded/)
     });
   });
 });
