@@ -202,33 +202,70 @@ def test_side_panels_head_turned_toward_the_facing_direction() -> None:
         assert abs(points[_NOSE][0] - points[_NECK][0]) > 0.03, key
 
 
-def test_legs_pose_is_front_facing_with_wide_leg_spread() -> None:
-    """Dedicated-legs-panel amendment (2026-09-10): panel 6 sources
-    upper_leg/lower_leg, so it needs the same wide, unambiguous stance as
-    front_tpose -- a front-facing (not collapsed-profile) topology with
-    legs spread at least as wide as the T-pose."""
+def test_legs_pose_hip_and_ankle_spread_wider_than_tpose_for_close_up_crop() -> None:
+    """Attempt-17 redesign (docs/assets/evidence/T-0351/README.md
+    'DIRECTION' section): attempts 15-16 kept a front-facing *whole-figure*
+    topology for this panel, and both real executions still rendered a
+    complete coated, hooded figure despite an explicit, increasingly
+    emphasized 'no coat' prompt clause -- text was fighting a skeleton that
+    gave the sampler a full torso/arm/head to draw over. The legs panel is
+    now a waist-down close-up crop: hip and ankle joints fill the frame,
+    spread at least as wide as the T-pose's own ankle spread, so there is
+    room for a genuinely close-up leg silhouette rather than a distant
+    whole-figure one."""
     points = rig.keypoints_for("legs")
     tpose = rig.keypoints_for("front_tpose")
-    front_idle_shoulder_spread = _spread(_FRONT_IDLE, _R_SHOULDER, _L_SHOULDER)
-    assert _spread(points, _R_SHOULDER, _L_SHOULDER) > front_idle_shoulder_spread / 2
+    assert _spread(points, _R_HIP, _L_HIP) >= _spread(tpose, _R_HIP, _L_HIP) - 1e-9
     assert _spread(points, _R_ANKLE, _L_ANKLE) >= _spread(tpose, _R_ANKLE, _L_ANKLE) - 1e-9
 
 
-def test_legs_pose_arms_hang_down_clear_of_the_outer_thighs() -> None:
-    """Arms must hang straight down (wrist below elbow below shoulder, same
-    check as side_neutral) and stay close to the torso centreline so
-    neither sleeve overlaps the outer thigh/knee/ankle region a crop needs
-    clean of anything but leg and boot."""
+def test_legs_pose_hips_sit_near_the_top_edge_for_a_waist_down_crop() -> None:
+    """Hips near the very top of the frame (not mid-frame like the
+    whole-figure poses) is the structural signal for 'cropped at the
+    waist' framing -- the entire purpose of this redesign is to source
+    upper_leg/lower_leg from a close-up crop instead of a distant
+    whole-figure stance ControlNet alone could not stop the sampler from
+    dressing in a coat."""
     points = rig.keypoints_for("legs")
-    for shoulder, elbow, wrist in (
-        (_R_SHOULDER, _R_ELBOW, _R_WRIST),
-        (_L_SHOULDER, _L_ELBOW, _L_WRIST),
-    ):
-        assert points[wrist][1] > points[elbow][1] > points[shoulder][1], (
-            "each arm must hang downward: wrist below elbow below shoulder"
-        )
-    assert points[_R_WRIST][0] > points[_R_KNEE][0], "right wrist must stay inboard of the knee"
-    assert points[_L_WRIST][0] < points[_L_KNEE][0], "left wrist must stay inboard of the knee"
+    assert points[_R_HIP][1] < 0.2
+    assert points[_L_HIP][1] < 0.2
+
+
+def test_legs_pose_ankles_sit_near_the_bottom_edge() -> None:
+    points = rig.keypoints_for("legs")
+    assert points[_R_ANKLE][1] > 0.9
+    assert points[_L_ANKLE][1] > 0.9
+
+
+def test_legs_pose_upper_body_joints_collapse_to_a_single_point_near_the_top_edge() -> None:
+    """Attempt-17 redesign: every upper-body joint (head, eyes, ears,
+    shoulders, elbows, wrists) collapses to the exact same point at the
+    very top edge of the frame, so ControlNet's skeleton gives the sampler
+    no torso/arm geometry to render at all -- only hip/knee/ankle geometry
+    exists in this skeleton. This is the structural fix the README's
+    'DIRECTION' section asked for ('a legs-only ControlNet skeleton, no
+    arms/head joints') in place of yet another prompt-weight escalation on
+    the no-coat clause, which attempt 16 already showed regresses (to an
+    elaborate armoured cape) rather than helps."""
+    points = rig.keypoints_for("legs")
+    upper_body = (
+        _NOSE,
+        _NECK,
+        _R_SHOULDER,
+        _R_ELBOW,
+        _R_WRIST,
+        _L_SHOULDER,
+        _L_ELBOW,
+        _L_WRIST,
+        _R_EYE,
+        _L_EYE,
+        _R_EAR,
+        _L_EAR,
+    )
+    collapse_point = points[_NOSE]
+    for joint in upper_body:
+        assert points[joint] == collapse_point, joint
+    assert collapse_point[1] < 0.1
 
 
 def test_render_pose_skeleton_reuses_arm_a_renderer() -> None:

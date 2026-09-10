@@ -509,9 +509,27 @@ def test_build_legs_panel_positive_prompt_asks_for_no_coat_trousers_and_boots() 
     assert "institutional green coat" not in prompt
 
 
-def test_build_legs_panel_positive_prompt_keeps_hooded_mask_identity() -> None:
+def test_build_legs_panel_positive_prompt_has_no_head_or_hood_wording() -> None:
+    """Attempt-17 redesign (docs/assets/evidence/T-0351/README.md
+    'DIRECTION' section): the old legs-panel prompt kept the same
+    hooded-mask head clause every whole-figure panel uses, for identity
+    continuity -- but that is a full-figure framing clause competing
+    directly against this panel's own no-coat instruction, and both real
+    executions of it (attempts 15-16) rendered a complete hooded, coated
+    figure instead of a legs-only crop. The legs panel is now a waist-down
+    close-up crop with no head in frame at all (see
+    pose_rig_master_sheet_T0351's matching skeleton redesign), so its
+    prompt must not ask for a head, hood or mask."""
     prompt = gen.build_legs_panel_positive_prompt(gen.ENTITIES["player"]).lower()
-    assert "hooded mask" in prompt and "eye lenses" in prompt
+    assert "hood" not in prompt
+    assert "mask" not in prompt
+    assert "head" not in prompt
+
+
+def test_build_legs_panel_positive_prompt_states_waist_down_close_up_framing() -> None:
+    prompt = gen.build_legs_panel_positive_prompt(gen.ENTITIES["player"]).lower()
+    assert "waist" in prompt
+    assert "crop" in prompt
 
 
 def test_build_legs_panel_negative_prompt_bans_coat_and_jacket() -> None:
@@ -529,13 +547,33 @@ def test_build_legs_panel_negative_prompt_bans_cape() -> None:
     assert "cape" in negative
 
 
-def test_build_legs_panel_positive_prompt_emphasizes_no_coat_more_strongly() -> None:
-    """Attempt 15's no-coat clause sat at 1.5 emphasis and still lost to a
-    cape. Raise it past every whole-figure panel's own clause weight (1.3)
-    so it reliably wins on the one panel where a coat is a defect."""
+def test_build_legs_panel_positive_prompt_no_coat_emphasis_reverted_after_regression() -> None:
+    """Attempt 16 raised this clause to 1.8 and the legs panel regressed to
+    a full elaborate armoured cape -- worse than attempt 15's partial cape
+    leak (docs/assets/evidence/T-0351/README.md: 'Do not raise this weight
+    further next attempt'). Attempt 17 does not escalate the weight again;
+    the new waist-down close-up framing plus the matching legs-only
+    ControlNet skeleton (pose_rig_master_sheet_T0351) are the structural
+    fix, and this clause reverts to a moderate 1.5 -- the README's own
+    recommended next lever ('revert the legs panel's emphasis to 1.5, keep
+    the cape term')."""
     prompt = gen.build_legs_panel_positive_prompt(gen.ENTITIES["player"])
     assert "no cape" in prompt.lower() or ", cape" in prompt.lower()
-    assert ":1.7)" in prompt or ":1.8)" in prompt or ":1.9)" in prompt
+    assert ":1.5)" in prompt
+    assert ":1.8)" not in prompt
+    assert ":1.9)" not in prompt
+
+
+def test_build_legs_panel_negative_prompt_bans_head_and_torso_content() -> None:
+    """The waist-down close-up redesign (attempt 17) needs the negative
+    prompt to actively suppress any head/hood/torso content bleeding into
+    frame, not rely on the framing instruction alone -- attempts 15-16
+    both rendered a full head/hood despite no such content being asked for
+    in the (then whole-figure) positive prompt."""
+    negative = gen.build_legs_panel_negative_prompt().lower()
+    assert "head" in negative
+    assert "hood" in negative
+    assert "torso" in negative
 
 
 def test_build_legs_panel_negative_prompt_includes_single_pose_negative_baseline() -> None:
@@ -872,6 +910,55 @@ def test_check_attempt_cap_t0351_still_has_a_runaway_backstop() -> None:
         gen.check_attempt_cap(gen.DEFAULT_ATTEMPT_CAP + 1, card="T-0351")
 
 
+def test_concept_crop_box_for_t0336_defaults_to_entity_registered_box() -> None:
+    """Unchanged from #365: no card-specific override registered for
+    T-0336, so generation falls back to the entity's own crop box."""
+    assert (
+        gen.concept_crop_box_for("T-0336", "player") == gen.ENTITIES["player"].concept_crop_box
+    )
+
+
+def test_concept_crop_box_for_t0351_is_registered_and_differs_from_entity_default() -> None:
+    """Attempt 17 (docs/assets/evidence/T-0351/README.md 'DIRECTION'
+    section): #365's own concept_crop_box (0, 0, 615, 615) is itself a
+    multi-panel grid, not an isolated single figure -- the root cause this
+    card's own evidence identified
+    (root_cause_concept_crop_box_is_itself_a_multi_panel_grid.png) for 16
+    attempts of persistent multi-figure/wrong-facing/inconsistent-
+    background output, worst on exactly the two panels (side_left_forward,
+    side_right_forward) ControlNet's skeleton alone never fully overrode.
+    This card gets its own narrower, genuinely single-figure crop box, the
+    same CROP_BOXES_BY_CARD pattern limb_crop_boxes_for already
+    establishes."""
+    box = gen.concept_crop_box_for("T-0351", "player")
+    assert box is not None
+    assert box != gen.ENTITIES["player"].concept_crop_box
+
+
+def test_concept_crop_box_for_t0351_box_is_within_the_concept_sheet_bounds() -> None:
+    """The concept sheet is 1024x1024 -- a box that overruns it would crop
+    garbage or raise deep inside ComfyUI's ImageCrop node instead of
+    failing this test with a clear message."""
+    x, y, width, height = gen.concept_crop_box_for("T-0351", "player")
+    assert 0 <= x
+    assert 0 <= y
+    assert x + width <= 1024
+    assert y + height <= 1024
+
+
+def test_concept_crop_box_for_t0351_box_is_meaningfully_smaller_than_the_old_multi_panel_grid() -> (
+    None
+):
+    """The old (0, 0, 615, 615) box is 615x615px and is itself a
+    multi-panel grid (docs/assets/evidence/T-0351/
+    root_cause_concept_crop_box_is_itself_a_multi_panel_grid.png) -- a
+    genuinely isolated single figure on this concept sheet is necessarily
+    much smaller than a 615x615 block containing three garment panels, a
+    swatch row, and part of a whole-figure row."""
+    _x, _y, width, height = gen.concept_crop_box_for("T-0351", "player")
+    assert width * height < (615 * 615) / 4
+
+
 def test_limb_crop_boxes_for_t0336_defaults_to_entity_registered_boxes() -> None:
     """Unchanged from #365: no card-specific override registered for
     T-0336, so promotion falls back to the entity's own hand-tuned boxes."""
@@ -1009,6 +1096,64 @@ def test_build_graph_ipadapter_and_style_identity_lora_unaffected_by_controlnet(
         gen.IPADAPTER_NODE_ID,
     ):
         assert no_cn[node_id] == with_cn[node_id], node_id
+
+
+def test_run_five_pose_attempt_uses_the_card_specific_concept_crop_box(monkeypatch) -> None:
+    """Attempt 17: run_five_pose_attempt must resolve
+    concept_crop_box_for(card, entity_name) -- not read
+    entity.concept_crop_box directly -- otherwise T-0351's own crop-box
+    override (docs/assets/evidence/T-0351/README.md 'DIRECTION' section) is
+    dead code and every panel keeps conditioning on the old multi-panel-
+    grid crop this card's own evidence identified as a root cause."""
+    import shutil
+
+    from PIL import Image
+
+    test_out_dir = gen.REPO_ROOT / "assets" / "out" / "_test_scratch_T0351_cropbox"
+    test_out_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(gen, "out_dir_for", lambda card, entity, attempt: test_out_dir)
+
+    captured_graphs = []
+
+    def fake_upload_image(path):
+        return path.name
+
+    def fake_submit_prompt(graph):
+        captured_graphs.append(graph)
+        return f"prompt-{len(captured_graphs)}"
+
+    def fake_wait_for_completion(prompt_id, timeout_s=300):
+        return {"outputs": {gen.MAIN_SAVE_NODE_ID: {"images": [{"filename": "x.png"}]}}}
+
+    def fake_fetch_save_image(info, node_id):
+        from io import BytesIO
+
+        buf = BytesIO()
+        Image.new("RGB", (16, 16), (10, 20, 30)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    monkeypatch.setattr(gen, "upload_image", fake_upload_image)
+    monkeypatch.setattr(gen, "submit_prompt", fake_submit_prompt)
+    monkeypatch.setattr(gen, "wait_for_completion", fake_wait_for_completion)
+    monkeypatch.setattr(gen, "fetch_save_image", fake_fetch_save_image)
+
+    try:
+        provenance = gen.run_five_pose_attempt(
+            entity_name="player", attempt=17, base_seed=2000, width=64, height=64, card="T-0351"
+        )
+        expected_box = gen.concept_crop_box_for("T-0351", "player")
+        assert expected_box != gen.ENTITIES["player"].concept_crop_box
+        for graph in captured_graphs:
+            crop_inputs = graph[gen.CONCEPT_CROP_NODE_ID]["inputs"]
+            assert (
+                crop_inputs["x"],
+                crop_inputs["y"],
+                crop_inputs["width"],
+                crop_inputs["height"],
+            ) == expected_box
+        assert provenance["concept_crop_box"] == expected_box
+    finally:
+        shutil.rmtree(test_out_dir, ignore_errors=True)
 
 
 def test_controlnet_name_matches_verified_host_inventory() -> None:
