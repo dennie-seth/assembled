@@ -1,6 +1,17 @@
 # T-0351 evidence -- Tier-1 master sheet REGEN in limb-separating poses
 
-## Status: run 3 in progress -- lever 2 executed (attempt 6), still non-compliant, iterating
+## Status: run 3 -- root cause identified, fix is out of this card's authorized scope, nothing promoted
+
+**Root cause found and verified (see "Root cause" section below): the `concept_crop_box`
+`(0, 0, 615, 615)` this card is required to keep unchanged is itself a multi-panel grid, not an
+isolated single figure -- IP-Adapter conditions on that pixel structure directly, and no
+prompt-only intervention (two different generation strategies, 7 attempts, CLIP emphasis,
+front-loading, per-pose isolation, targeted negative-prompt bans) ever overcame it.** The fix
+this points to -- narrowing `concept_crop_box` to a genuinely isolated single-figure region --
+conflicts with this card's own acceptance criterion ("IP-Adapter 0.35 on the cropped clean
+concept block" listed as an unchanged recipe element) and its "Do not... pose is the only
+variable" instruction. This is reported as a blocker for a human decision, not promoted, and not
+silently stopped.
 
 **Correction to this file's earlier wording** (flagged by the run-2 reviewer verdict):
 attempts 1-5 below stopped at 5 not because of a cap this card imposes -- `check_attempt_cap`
@@ -47,6 +58,70 @@ negating a concept in the positive prompt is a known anti-pattern that can reinf
 suppress it), replaced with affirmative "reference sheet / multi-view" bans moved into the
 negative prompt where they belong. Attempt 7 tries both. See `ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md`
 for the full attempt-6 provenance row.
+
+## Attempt 7 (lever 2 + CLIP emphasis + negation fix) -- still non-compliant, but with a genuine
+## partial win that pointed at the real root cause
+
+Attempt 7 (seed 244948974, 231.3 total GPU-seconds) applied both attempt-6 fixes: CLIP emphasis
+on the isolation and pose clauses (`build_single_pose_positive_prompt`), and moved the
+"no text/no UI/no watermark" negation out of the positive prompt into targeted negative-prompt
+terms naming the exact "reference sheet / tech pack" composition genre attempt 6 produced. See
+`attempt_7_still_non_compliant_multi_figure_reference_sheet.png` and
+`attempt_7_provenance.json` alongside this README.
+
+**Still non-compliant** -- every one of the five panels again shows multiple figures/views per
+image, arms down (no T-pose or forward-extended limb achieved in any of the 35 individual
+generations across attempts 1-7), and most coats still run past mid-hip. **But the `side_neutral`
+panel showed the clearest partial win of this entire card**: three figures, side profile,
+genuinely bare thigh visible below a coat hem sitting well above mid-hip -- the CLIP-emphasized
+mid-hip clause is, again, the one thing that reliably moves. Pose and single-figure isolation
+did not move at all, in either lever, across 7 systematically varied attempts.
+
+## Root cause (verified by opening the file, not inferred): `concept_crop_box` is itself a
+## multi-panel grid, not an isolated figure
+
+Seven attempts across two fundamentally different generation strategies (one KSampler call asked
+for five panels; five independent KSampler calls each asked for exactly one isolated figure) never
+achieved pose compliance or single-figure isolation even once. That pattern -- the *identical*
+failure mode surviving a complete change of generation strategy -- is what prompted checking the
+one shared input neither lever ever touched: the **conditioning image itself**.
+
+`assets/src/concept/player_character_concept_sheet_v1.png` is a large multi-row grid sheet (jacket
+panels, colour swatches, whole-figure turnarounds, armoured-variant studies). #365 restricted
+`EntitySpec.concept_crop_box` to `(0, 0, 615, 615)` -- the sheet's own clean, single-costume
+top-left block -- specifically to stop IP-Adapter picking up the sheet's *other* costume line
+(see `build_positive_prompt`'s own docstring, round 5). **That crop was never checked for whether
+it is itself a single isolated view.** Cropping and opening it directly
+(`root_cause_concept_crop_box_is_itself_a_multi_panel_grid.png` alongside this README, at the
+exact `(0, 0, 615, 615)` box `build_graph`'s `ImageCrop` node uses) shows it is not: it contains
+**three jacket panels in its top row, colour/material swatches in its second row, and the start of
+a row of whole-figure panels in its third row** -- a multi-panel grid in miniature, the same
+composition genre every one of this card's 35 generations reproduced regardless of what the
+prompt asked for.
+
+This fully explains why no prompt-only lever ever worked: IP-Adapter's `IPAdapterAdvanced` node
+conditions on the actual pixel content of whatever image it is given (`weight_type="linear"`,
+`embeds_scaling="V only"`, applied across the *entire* sampling range `start_at=0.0`/`end_at=1.0`)
+-- and the pixel content it is given is structurally a grid. A CLIP text encoding fighting that
+structural signal for all 30 sampling steps was never going to reliably win, which is exactly
+what the coat-length clause's partial, inconsistent success (moves *something* under emphasis,
+never moves pose) versus pose's total non-response across every attempt shows.
+
+**Why this is reported as a blocker rather than fixed directly:** the obvious next step -- crop a
+*different, genuinely single-figure* region of the concept sheet (e.g. one whole-figure panel from
+its own third/fourth row) for `concept_crop_box` -- is outside this card's stated scope. This
+card's own acceptance criteria list "IP-Adapter 0.35 on the cropped clean concept block" as an
+unchanged recipe element alongside the style/identity LoRA weights, and its "Do not" section says
+"pose is the only variable." Changing which pixels IP-Adapter conditions on is a conditioning
+change, not a pose change, even though the crop box is not literally a "weight." Whether that
+guardrail is meant to cover the crop box's coordinates too, or only the numeric LoRA/IP-Adapter
+weight scalars, is a genuine open question this card's text does not resolve -- unlike the
+mid-hip coat question, which @DennieSeth explicitly closed on 2026-09-10, this one has not been
+asked yet. A human decision is needed: either authorize a new, narrower `concept_crop_box` scoped
+to this card only (T-0336's own promoted sheet is unaffected, since `ENTITIES["player"]`'s default
+crop box is untouched -- only a card-specific override, the same pattern `CROP_BOXES_BY_CARD`
+already establishes for limb crop boxes, would change), or decide the pose spec itself needs to
+relax given this constraint.
 
 ## Attempts 1-5 (lever 1: single-shot five-panel-in-one-image, superseded by lever 2 above)
 
@@ -115,15 +190,10 @@ coat-length instruction (attempts 3 and 5) -- garment silhouette detail is
 evidently far more prompt-steerable than whole-body pose is, under this
 specific IP-Adapter-heavy recipe.
 
-## Recommendation
+## Recommendation (superseded -- see "Root cause" section above)
 
-Achieving five distinct, individually named whole-figure poses in a single
-image, under a fixed IP-Adapter weight and no ControlNet, does not look
-achievable through further prompt engineering alone within this card's own
-5-attempt budget -- the failure mode did not trend toward compliance as
-wording was iterated, it traded one defect for another. A human decision is
-needed on how to proceed: e.g. raise the attempt budget for a fresh prompt
-strategy, permit a lightweight OpenPose ControlNet pass scoped to this card
-only, or split the five poses across five separate single-pose generations
-(one IP-Adapter-conditioned txt2img call per pose) composited by script
-rather than asked for as one five-panel image.
+This section originally recommended trying five separate single-pose generations composited by
+script (lever 2) as the next untried step. That was tried, twice (attempts 6-7, above), and
+failed identically -- which is what led to actually opening the IP-Adapter conditioning crop
+directly and finding it is itself a multi-panel grid. See "Status" and "Root cause" at the top of
+this file for the current, decisive finding and the specific human decision it needs.

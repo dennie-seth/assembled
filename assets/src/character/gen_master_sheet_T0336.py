@@ -1244,17 +1244,23 @@ NEGATIVE_PROMPT_BUILDERS_BY_CARD: dict[str, Callable[[], str]] = {
 FIVE_POSE_CARDS: frozenset[str] = frozenset({"T-0351"})
 
 
-# T-0351: measured against the actual 5120x1024 composited pose row
-# (compose_pose_row lays the five POSE_SPECS panels side by side in order,
-# each panel 1024x1024, so panel N occupies x:[N*1024, (N+1)*1024)). The
-# front T-pose panel (panel 0, x offset 0) is the source for every crop:
-# arms held horizontal and legs spread apart hold every limb clear of the
-# torso in one internally-coherent generation -- unlike #365's relaxed
-# turnaround, whose PLAYER_LIMB_CROP_BOXES has "No upper_leg key" because no
-# panel it generated ever separated the thigh from the coat. Placeholder
-# coordinates below are widened, then replaced with values measured by
-# opening the real generated sheet (see the promotion step in
-# ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md / docs/assets/evidence/T-0351/).
+# T-0351: STILL PLACEHOLDER COORDINATES, NOT YET MEASURED AGAINST A REAL
+# SHEET -- attempts 6-7 (the only executions of the lever-2 path so far)
+# never produced a pose-compliant generation to measure against (see
+# docs/assets/evidence/T-0351/README.md's "Root cause" section: IP-Adapter's
+# conditioning crop is itself a multi-panel grid, which no prompt-only
+# lever has overcome across 7 attempts). These coordinates describe the
+# INTENDED layout once a compliant sheet exists (compose_pose_row lays the
+# five POSE_SPECS panels side by side in order, each panel 1024x1024, so
+# panel N occupies x:[N*1024, (N+1)*1024); the front T-pose panel, panel 0
+# at x offset 0, is meant to be the source for every crop, since a genuine
+# T-pose holds every limb clear of the torso) but must be re-measured
+# against the real pixels of whatever sheet is eventually promoted -- do
+# not treat these as validated. Unlike #365's PLAYER_LIMB_CROP_BOXES (which
+# has "No upper_leg key" because no panel it generated ever separated the
+# thigh from the coat), this dict already reserves an upper_leg key, since
+# the whole point of this card's mid-hip coat cap is to make that
+# separable once a compliant generation exists to crop it from.
 PLAYER_LIMB_CROP_BOXES_T0351: dict[str, tuple[int, int, int, int]] = {
     "head": (390, 40, 630, 270),
     "upper_arm": (0, 260, 260, 520),
