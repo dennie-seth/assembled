@@ -9,3 +9,4 @@ Every attempt is recorded here whether or not it is promoted. Tier-1 generates O
 | 3 | player | 161803398 | 0.7 | 0.5 | 0.35 | 1024 | 1024 | 27.1 | no | T-0351 attempt 3: pose-first restructure + CLIP emphasis syntax on panel/pose and mid-hip clauses, negative prompt extended to forbid six-figure grid layout |
 | 4 | player | 141421356 | 0.7 | 0.5 | 0.35 | 1024 | 1024 | 30.1 | no | T-0351 attempt 4: pose-clause emphasis raised 1.3->1.5, head/footwear wording folded into emphasised clauses, negative prompt extended against heels/split-leg-row |
 | 5 | player | 173205080 | 0.7 | 0.5 | 0.35 | 1024 | 1024 | 27.1 | no | T-0351 attempt 5 (final, 5-attempt cap): pose emphasis dialed back to 1.3, shortened keyword-only pose clauses, costume repeated unweighted to fight attempt-4 drift |
+| 6 | player | 223606797 | 0.7 | 0.5 | 0.35 | 5120 | 1024 | 174.2 | no | T-0351 attempt 6: lever 2, five separate single-pose generations composited by script |

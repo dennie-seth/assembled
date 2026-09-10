@@ -1,9 +1,57 @@
 # T-0351 evidence -- Tier-1 master sheet REGEN in limb-separating poses
 
-## Status: blocked at the card's own 5-attempt cap, nothing promoted
+## Status: run 3 in progress -- lever 2 executed (attempt 6), still non-compliant, iterating
 
-All 5 attempts permitted by `check_attempt_cap` (the same ~25-50 GPU-second,
-5-attempt budget T-0336 used) were spent. None met the acceptance criteria --
+**Correction to this file's earlier wording** (flagged by the run-2 reviewer verdict):
+attempts 1-5 below stopped at 5 not because of a cap this card imposes -- `check_attempt_cap`
+inherited T-0336's own ~25-50 GPU-second, 5-attempt budget unmodified, and this card's own text
+states no attempt cap of its own. That inherited cap is now scoped per-card
+(`ATTEMPT_CAP_BY_CARD`); T-0351 falls back to a generic `DEFAULT_ATTEMPT_CAP=20` runaway
+backstop, not a 5-attempt limit.
+
+## Attempt 6 (lever 2 first execution) -- new finding: IP-Adapter dominates composition even
+## with a single-pose-per-generation prompt
+
+Run 2's reviewer traced attempts 1-5's failure to `MAIN_NEGATIVE` forbidding
+"grid, panels, contact sheet, multiple frames" and "two figures, duplicate figure" -- the exact
+thing a five-panels-in-one-image prompt needs -- and proposed lever 2: generate each pose as its
+own independent 1024x1024 IP-Adapter-conditioned txt2img call (no panel/grid language in the
+prompt at all), then composite the five results into one row by script. `run_five_pose_attempt` /
+`build_single_pose_positive_prompt` implement exactly that (see
+`gen_master_sheet_T0336.py`'s own docstrings), and attempt 6 (seed 223606797, 174.2 total
+GPU-seconds across the five calls) is the first time it actually ran against ComfyUI.
+
+**Result: still non-compliant, in a new way.** All five panels -- see
+`attempt_6_five_generations_all_reproduce_reference_sheet_composition.png` and
+`attempt_6_provenance.json` alongside this README -- came back as a multi-inset **fashion
+tech-pack / reference-sheet composition** (a hero figure plus several small callout panels
+showing garment pieces, alternate views, or accessories), not the single isolated full-body
+figure the prompt explicitly asked for ("single full-body figure alone in frame ... centred").
+Arms are down in every panel (no T-pose, no forward-extended limb), the coat runs
+knee-length-or-longer in most panels (well past mid-hip), and several panels render illegible
+pseudo-text/UI-style labels despite the positive prompt's own "no text, no UI, no watermark"
+clause.
+
+This is a materially different, and more informative, failure than attempts 1-5: it rules out
+the reviewer's diagnosed negative-prompt conflict as the *sole* cause, since this generation had
+no panel/grid words anywhere in its prompt and still produced a paneled composition. The
+remaining, still-untried explanation is that IP-Adapter conditioning on the concept-sheet crop
+(unchanged, 0.35 weight, per this card's frozen recipe) is asserting compositional structure
+directly, not just style/identity -- and that a purely affirmative, unemphasized "single figure"
+instruction does not outcompete it. Two prompt-only levers remain untried within this card's own
+constraints (no ControlNet, no LoRA/IP-Adapter weight change): (1) CLIP-emphasis-weighting the
+isolation and pose clauses, the one technique that reliably moved *something* across attempts 1-5
+(the mid-hip coat clause); and (2) removing the redundant "no text/no UI/no watermark" negation
+from the *positive* prompt (already covered by `MAIN_NEGATIVE`'s own "text, watermark" terms, and
+negating a concept in the positive prompt is a known anti-pattern that can reinforce rather than
+suppress it), replaced with affirmative "reference sheet / multi-view" bans moved into the
+negative prompt where they belong. Attempt 7 tries both. See `ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md`
+for the full attempt-6 provenance row.
+
+## Attempts 1-5 (lever 1: single-shot five-panel-in-one-image, superseded by lever 2 above)
+
+All 5 attempts permitted by the (since-corrected) inherited T-0336 cap were spent. None met the
+acceptance criteria --
 no attempt produced five panels in the specified poses (front T-pose, back
 T-pose, side-left-forward, side-right-forward, side-neutral) with a
 mid-hip-or-shorter coat and a legible hooded-mask head in every panel. Per
