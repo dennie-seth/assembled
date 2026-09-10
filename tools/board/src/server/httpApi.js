@@ -29,6 +29,14 @@ import {
 } from "../lib/approvalGate.js";
 import { approvalProvenanceStaleNotice } from "../lib/approvalProvenanceNotice.js";
 import { refreshApprovalProvenanceFile } from "../lib/approvalProvenanceSync.js";
+import {
+  assertRoundCapClear,
+  isRescopeMarker,
+  rescopeRecord,
+  rescopeRecordedComment,
+  roundCapReached,
+  RoundCapExceededError
+} from "../lib/roundCap.js";
 import { readVerdictEntries } from "../lib/verdictArchive.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
@@ -531,8 +539,11 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
   if (body.status === "in-progress") {
     try {
       await assertCanMoveToInProgress(store, id);
+      // T-0344: the same round-cap guard cardLaunch.js's Run path enforces -- a manual drag to
+      // in-progress must not be a way to route around a card parked at the cap.
+      await assertRoundCapClear(store, id);
     } catch (err) {
-      if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError) {
+      if (err instanceof UnmetDependencyError || err instanceof DependencyCycleError || err instanceof RoundCapExceededError) {
         throw new HttpError(409, err.message);
       }
       throw err;
@@ -640,6 +651,28 @@ function approvalPatchForComment({ task, text, author, actor }) {
 }
 
 /**
+ * Decides whether an incoming comment is a human re-scope acknowledgment (T-0344,
+ * src/lib/roundCap.js) of a card parked at the experiment-round cap, mirroring
+ * `approvalPatchForComment`'s shape:
+ *
+ * - the card has actually reached the round cap (`roundCapReached`) -- otherwise there is
+ *   nothing to acknowledge and the marker is just a word someone typed;
+ * - the comment's first non-empty line is exactly the marker (`isRescopeMarker`);
+ * - both the request actor and the comment's author are human -- same double-check the
+ *   approval gate uses, for the same reason (an agent posting under a human's name, or the
+ *   board's own comments, must never complete this).
+ *
+ * Unlike approval, this has no "must be parked in a specific status" condition: a card at the
+ * round cap is `blocked`, and that is the only status the cap ever parks it in.
+ */
+function rescopePatchForComment({ task, text, author, actor }) {
+  if (!roundCapReached(task)) return null;
+  if (!isRescopeMarker(text)) return null;
+  if (isAgentActor(actor) || isAgentActor(author)) return null;
+  return rescopeRecord({ actor: author });
+}
+
+/**
  * Fires the side effects that follow a card reaching a terminal status, shared by the two
  * routes that can put it there: a `PATCH {status: "done"}` and a comment that approves an
  * approval-gated card. Extracted when the second route appeared -- an approval that skipped
@@ -744,9 +777,29 @@ async function handleAddComment(
     }
   }
 
+  // T-0344: the rescope-by-comment path. Independent of `approval` above -- a comment's first
+  // line can match at most one of the two distinct marker sets, so the two never fire together.
+  const rescope = rescopePatchForComment({
+    task,
+    text,
+    author,
+    actor: actorFromHeaders(req.headers)
+  });
+  if (rescope) {
+    // Same reasoning as the approval confirmation above: written in the SAME update as the
+    // comment that granted it, so the card can never read as rescoped with no record of who.
+    comments.push({
+      author: "assembled-board",
+      text: rescopeRecordedComment({ actor: author, rescopedAt: rescope.rescoped_at }),
+      timestamp: rescope.rescoped_at
+    });
+  }
+
+  const statePatch = { comments, ...(approval ? { status: "done", ...approval } : {}), ...(rescope ?? {}) };
+
   let updated;
   try {
-    updated = await store.update(id, approval ? { comments, status: "done", ...approval } : { comments });
+    updated = await store.update(id, statePatch);
   } catch (err) {
     throw new HttpError(400, err.message);
   }
