@@ -432,13 +432,20 @@ POSE_SPECS: tuple[PoseSpec, ...] = (
             "torso, the left arm and left leg held back close to the body"
         ),
     ),
+    # Attempt 17 (docs/assets/evidence/T-0351/): side_neutral was the first
+    # panel this card ever produced a genuine true-90-degree profile on
+    # (attempt 16), but regressed to front-facing with a blown-out head
+    # once the attempt-17 concept_crop_box fix (a single front-view
+    # reference figure) removed whatever incidental profile signal the old
+    # multi-panel-grid crop happened to carry. This clause's own CLIP
+    # emphasis (a lever never tried on it before) compensates.
     PoseSpec(
         key="side_neutral",
         label="side, neutral",
         pose_clause=(
-            "true 90-degree side profile view, not a three-quarter view, neutral standing "
-            "pose, both arms hanging straight down at the sides, both legs together standing "
-            "upright"
+            "(true 90-degree side profile view, not a three-quarter view:1.3), neutral "
+            "standing pose, both arms hanging straight down at the sides, both legs together "
+            "standing upright"
         ),
     ),
     PoseSpec(
@@ -584,7 +591,17 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     panel's own "back view" pose clause; the render showed the mask facing
     the camera, not the back of the hood. `PoseSpec.head_clause` now lets
     back_tpose override this with wording that describes the back of the
-    hood instead (see POSE_SPECS)."""
+    hood instead (see POSE_SPECS).
+
+    Attempt 17 (docs/assets/evidence/T-0351/): the concept_crop_box fix
+    (see `concept_crop_box_for`) resolved this card's long-standing
+    multi-figure/composition defect across all six panels for the first
+    time -- but side_left_forward still rendered a held cylindrical
+    tool/flashlight-like prop in the extended hand despite the shared
+    negative prompt's weapon ban (`build_single_pose_negative_prompt`).
+    Adds an affirmative "both hands empty, open palm, nothing held" clause
+    here rather than only trying to enumerate every possible prop by name
+    in the negative prompt."""
     head_clause = pose.head_clause or (
         "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
         "up and forward, face completely covered by the mask, no visible hair, no visible "
@@ -593,7 +610,8 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
         "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
-        f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
+        f"visible, centred, {pose.pose_clause}, both hands empty, open palm, nothing held, "
+        f"{entity.costume_description}, "
         f"institutional green coat, full-length coat reaching past the knee, wearing a "
         f"{head_clause}, boots, never high heels, flat uniform neutral grey background, flat "
         "even lighting, no cast shadow, no perspective, clean readable outline"
@@ -633,10 +651,19 @@ def build_legs_panel_positive_prompt(entity: EntitySpec) -> str:
     head despite the panel's own 'no coat' instruction. The no-coat
     clause's own emphasis reverts to a moderate 1.5, per the README's own
     recommended next lever ('revert the legs panel's emphasis to 1.5, keep
-    the cape term')."""
+    the cape term').
+
+    Attempt 17 ran this framing at 1.4 emphasis: real progress (a
+    genuinely closer, tighter crop than any prior attempt) but the render
+    still showed shoulders, a collar and a full coat down to the hips --
+    the framing instruction itself, not the no-coat ban, was the one still
+    losing. Attempt 18 raises the *framing* clause specifically, 1.4 ->
+    1.6, leaving the no-coat clause at 1.5 unchanged -- these are two
+    different clauses, and coat-length emphasis (not camera framing) is
+    the axis @DennieSeth closed."""
     return (
         f"{entity.trigger_token}, (close-up crop from the waist down, cropped at the waist, "
-        "only the lower body visible in frame, nothing above the waist in frame:1.4), "
+        "only the lower body visible in frame, nothing above the waist in frame:1.6), "
         "both legs clearly visible, weight evenly balanced, legs apart, "
         "wearing military trousers and lace-up combat boots, trousers tucked into the boots, "
         "(no coat, no jacket, no cloak, no cape, no poncho, bare lower body garment only, both "
@@ -721,7 +748,14 @@ def build_single_pose_negative_prompt(pose: PoseSpec | None = None) -> str:
     static standing/reaching pose, never a weapon). Also takes an optional
     `pose` so a panel can append its own extra bans (`PoseSpec.negative_extra`)
     -- currently only back_tpose uses this, to suppress the mask's own
-    visible-eye-lenses imagery that every other panel wants shown."""
+    visible-eye-lenses imagery that every other panel wants shown.
+
+    Attempt 17: side_left_forward still rendered a held cylindrical
+    tool/flashlight-like prop in the extended hand despite the existing
+    weapon ban -- a flashlight/torch/canister is not a weapon and was
+    never named. Rather than continuing to enumerate every possible prop
+    by name, this adds an explicit positive requirement (empty hands, open
+    palm) alongside a few of the most common concrete misses."""
     extra = pose.negative_extra if pose is not None else ""
     return (
         build_negative_prompt()
@@ -737,7 +771,8 @@ def build_single_pose_negative_prompt(pose: PoseSpec | None = None) -> str:
         "overlay, transparent duplicate, afterimage, double exposure, doppelganger, second "
         "figure behind, overlapping figures:1.3), weapon, gun, pistol, firearm, rifle, "
         "holding object, kicking, mid-kick, running, jumping, martial arts stance, combat "
-        "stance, dynamic action shot"
+        "stance, dynamic action shot, flashlight, torch, canister, tool, cylinder, held item, "
+        "carried object, prop"
         + extra
     )
 

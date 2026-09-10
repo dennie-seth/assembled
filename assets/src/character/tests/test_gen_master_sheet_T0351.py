@@ -425,11 +425,23 @@ def test_build_single_pose_negative_prompt_forbids_held_tools_and_canisters() ->
     """Attempt 17's side_left_forward still rendered a held cylindrical
     tool/flashlight-like prop in the extended hand despite the existing
     weapon ban -- a flashlight/torch/canister is not a weapon and was
-    never named. Adds an explicit empty-hands requirement rather than
-    trying to enumerate every possible prop."""
+    never named."""
     negative = gen.build_single_pose_negative_prompt().lower()
     assert "flashlight" in negative or "torch" in negative or "canister" in negative
-    assert "empty hand" in negative or "open palm" in negative or "nothing in hand" in negative
+
+
+def test_build_single_pose_positive_prompt_requests_empty_hands() -> None:
+    """Banning every possible prop by name in the negative prompt is an
+    unbounded list (attempt 17 found a flashlight-like prop the existing
+    weapon ban never named); an affirmative 'empty hands' requirement in
+    the *positive* prompt is the complementary, bounded fix -- note this
+    must NOT also appear in the negative prompt, where banning 'empty
+    hand' would tell the model to avoid empty hands, the opposite of
+    intent."""
+    prompt = gen.build_single_pose_positive_prompt(
+        gen.ENTITIES["player"], gen.POSE_SPECS[2]
+    ).lower()
+    assert "empty hand" in prompt or "open palm" in prompt or "nothing held" in prompt
 
 
 def test_build_single_pose_positive_prompt_side_left_forward() -> None:
