@@ -368,6 +368,59 @@ def test_build_single_pose_positive_prompt_back_tpose() -> None:
     assert "horizontal" in prompt
 
 
+def test_build_single_pose_positive_prompt_back_tpose_does_not_ask_for_visible_face() -> None:
+    """Attempt 15 (seed 264575131, docs/assets/evidence/T-0351/) proved the
+    shared hooded-mask-with-visible-eye-lenses clause every other panel
+    uses actively fights 'back view' when interpolated unchanged into the
+    back_tpose prompt: the panel rendered the mask facing the camera, not
+    the back of the hood, because the emphasized eye-lenses clause
+    out-competed the pose clause's 'back view' wording, and the mirrored
+    ControlNet skeleton is bilaterally symmetric for a T-pose so it carries
+    no facing-direction signal either (see pose_rig_master_sheet_T0351.py's
+    own docstring). back_tpose needs its own head wording that describes
+    the back of the hood instead of the eye lenses."""
+    player = gen.ENTITIES["player"]
+    pose = gen.POSE_SPECS[1]
+    prompt = gen.build_single_pose_positive_prompt(player, pose).lower()
+    assert "eye lenses" not in prompt
+    assert "back of the hood" in prompt or "back of hood" in prompt
+    assert "no face" in prompt
+
+
+def test_build_single_pose_positive_prompt_front_tpose_still_asks_for_visible_face() -> None:
+    """The back_tpose head-wording fix must be scoped to back_tpose only --
+    every other panel still needs the visible hooded-mask/eye-lenses
+    identity marker."""
+    player = gen.ENTITIES["player"]
+    pose = gen.POSE_SPECS[0]
+    prompt = gen.build_single_pose_positive_prompt(player, pose).lower()
+    assert "eye lenses" in prompt
+
+
+def test_build_single_pose_negative_prompt_back_tpose_bans_visible_face_markers() -> None:
+    player = gen.ENTITIES["player"]
+    pose = gen.POSE_SPECS[1]
+    negative = gen.build_single_pose_negative_prompt(pose).lower()
+    assert "eye lenses" in negative or "goggles" in negative
+
+
+def test_build_single_pose_negative_prompt_no_pose_arg_still_works() -> None:
+    """Backward-compat: existing callers with no pose argument (and the
+    front/side panels, which have no negative_extra) must not regress."""
+    negative = gen.build_single_pose_negative_prompt()
+    assert "blank head" in negative.lower()
+
+
+def test_build_single_pose_negative_prompt_forbids_weapons_and_action_poses() -> None:
+    """Attempt 15's side_left_forward rendered a pistol and a mid-kick
+    action pose despite the spec's plain forward-limb-extension wording --
+    neither a weapon nor a kicking/running/combat motion was ever named in
+    this shared negative prompt."""
+    negative = gen.build_single_pose_negative_prompt().lower()
+    assert "weapon" in negative or "gun" in negative or "pistol" in negative
+    assert "kick" in negative or "martial arts" in negative or "combat stance" in negative
+
+
 def test_build_single_pose_positive_prompt_side_left_forward() -> None:
     player = gen.ENTITIES["player"]
     pose = gen.POSE_SPECS[2]
@@ -465,6 +518,24 @@ def test_build_legs_panel_negative_prompt_bans_coat_and_jacket() -> None:
     negative = gen.build_legs_panel_negative_prompt().lower()
     assert "coat" in negative
     assert "jacket" in negative
+
+
+def test_build_legs_panel_negative_prompt_bans_cape() -> None:
+    """Attempt 15 (docs/assets/evidence/T-0351/) rendered a short hooded
+    cape/poncho covering both thighs on the legs panel despite an explicit
+    'no cloak' ban -- a cape is a materially different garment silhouette
+    from a cloak and was never named."""
+    negative = gen.build_legs_panel_negative_prompt().lower()
+    assert "cape" in negative
+
+
+def test_build_legs_panel_positive_prompt_emphasizes_no_coat_more_strongly() -> None:
+    """Attempt 15's no-coat clause sat at 1.5 emphasis and still lost to a
+    cape. Raise it past every whole-figure panel's own clause weight (1.3)
+    so it reliably wins on the one panel where a coat is a defect."""
+    prompt = gen.build_legs_panel_positive_prompt(gen.ENTITIES["player"])
+    assert "no cape" in prompt.lower() or ", cape" in prompt.lower()
+    assert ":1.7)" in prompt or ":1.8)" in prompt or ":1.9)" in prompt
 
 
 def test_build_legs_panel_negative_prompt_includes_single_pose_negative_baseline() -> None:
