@@ -511,13 +511,32 @@ def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> No
     to an untried, non-prompt lever for the persistent side-panel
     multi-figure defect: raising `CONTROLNET_STRENGTH` itself (1.3 -> 1.6),
     since every previous fix attempt competed for the same CLIP attention
-    budget and each one that helped one defect worsened another."""
+    budget and each one that helped one defect worsened another.
+
+    Attempt 14 (seed 445938201, 432.8 total GPU-seconds) confirms the
+    `CONTROLNET_STRENGTH` hypothesis: 3 of 5 panels (front_tpose,
+    back_tpose, side_right_forward) are single-figure with zero ghosting --
+    a structural, non-text lever genuinely helped a defect that four
+    rounds of CLIP-emphasis tuning could not fix without breaking something
+    else. Hood/mask held firm (fully covered, zero visible face/hair) on
+    all 5 panels, confirming its own emphasis is stable across this
+    change. But coat length still fails on every single panel, from
+    mid-thigh (front_tpose, the best case) to floor-length (back_tpose,
+    the worst) -- 1.5 has now been shown insufficient both with and without
+    ControlNet's stronger structural pin. Since the hood/mask clause is
+    now independently anchored by its own emphasis rather than sharing
+    unweighted budget with the coat clause, attempt 15 raises coat weight
+    again, 1.5 -> 1.7 -- lower than attempt 12's 1.8 (which coincided with
+    identity drift before the hood clause had its own protection), testing
+    whether the same push is now safe now that identity has its own
+    anchor."""
     pose = gen.POSE_SPECS[0]
     prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], pose)
     assert "exactly one pose" in prompt.lower()
     assert "exactly one" in prompt.lower() and "view" in prompt.lower()
     assert ":1.3)" in prompt, "isolation clause must stay at attempt 8's proven-safe 1.3"
-    assert ":1.5)" in prompt, "coat-length clause must revert to attempt 11's 1.5 (attempt 14)"
+    assert ":1.7)" in prompt, "coat-length clause must be raised to 1.7 (attempt 15)"
+    assert ":1.5)" not in prompt, "attempt 14's 1.5 coat weight must be fully replaced"
     assert ":1.6)" not in prompt, "attempt 13's 1.6 coat weight must be fully replaced"
     assert ":1.8)" not in prompt, "attempt 12's 1.8 coat weight must be fully replaced"
     assert "jacket" not in prompt.lower(), (
@@ -639,8 +658,17 @@ def test_controlnet_strength_raised_after_attempt_13() -> None:
     figures/content a weaker skeleton pin leaves the sampler free to add
     -- still pose-conditioning-only, per the 2026-09-10 amendment's own
     scope (it does not touch the style/identity LoRA or IP-Adapter
-    chain)."""
-    assert gen.CONTROLNET_STRENGTH == 1.6
+    chain).
+
+    Attempt 14 (seed 445938201) confirmed the hypothesis on 3 of 5 panels
+    (front_tpose, back_tpose, side_right_forward all came back single-
+    figure) -- but side_left_forward still rendered two figures in an
+    embrace, and side_neutral lost its true-90-degree-profile framing
+    (rendered near-front-facing instead). Attempt 15 pushes the same lever
+    further, 1.6 -> 1.9, to test whether the two still-failing panels
+    respond to more of the same structural pin rather than needing a
+    different fix."""
+    assert gen.CONTROLNET_STRENGTH == 1.9
     assert gen.CONTROLNET_END_PERCENT == 1.0
 
 
