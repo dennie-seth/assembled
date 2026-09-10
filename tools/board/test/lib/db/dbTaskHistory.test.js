@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { openDb } from "../../../src/lib/db/connection.js";
 import { DbTaskStore } from "../../../src/lib/db/dbTaskStore.js";
-import { readTaskBodyBeforeRun } from "../../../src/lib/db/dbTaskHistory.js";
+import { readTaskBodyBeforeRun, readRunStartTimestamp } from "../../../src/lib/db/dbTaskHistory.js";
 import { makeTask } from "../../taskStoreContract.js";
 import { PRE_REGISTRATION_HEADING } from "../../../src/lib/preRegisteredFinding.js";
 
@@ -99,5 +99,50 @@ describe("readTaskBodyBeforeRun", () => {
     await setup();
     const beforeBody = readTaskBodyBeforeRun(db, "T-NOPE");
     expect(beforeBody).toBe("");
+  });
+});
+
+/**
+ * T-0354: the freshness gate needs a wall-clock boundary for "this run started", not just a body
+ * snapshot -- readRunStartTimestamp shares readTaskBodyBeforeRun's exact same run-boundary event
+ * (the second-most-recent status transition, i.e. the entry into in-progress that began the
+ * attempt currently in validation) and returns its `created_at` instead of its `body`.
+ */
+describe("readRunStartTimestamp", () => {
+  it("returns the timestamp of the in-progress transition that began the current attempt", async () => {
+    await setup();
+    await store.create(makeTask({ id: "T-9201", status: "ready" }));
+    await store.update("T-9201", { status: "in-progress" });
+    const midRunRow = db.prepare("SELECT created_at FROM card_events WHERE task_id = ? ORDER BY id DESC LIMIT 1").get("T-9201");
+    await store.update("T-9201", { status: "validation" });
+
+    const runStartTime = readRunStartTimestamp(db, "T-9201");
+    expect(runStartTime).toBe(midRunRow.created_at);
+  });
+
+  it("scopes to the current (latest) attempt only, matching readTaskBodyBeforeRun's own boundary", async () => {
+    await setup();
+    await store.create(makeTask({ id: "T-9202", status: "ready" }));
+    await store.update("T-9202", { status: "in-progress" });
+    await store.update("T-9202", { status: "validation" });
+    // First attempt FAILed; orchestrator sends it back for a retry.
+    await store.update("T-9202", { status: "in-progress" });
+    const retryStartRow = db.prepare("SELECT created_at FROM card_events WHERE task_id = ? ORDER BY id DESC LIMIT 1").get("T-9202");
+    await store.update("T-9202", { status: "validation" });
+
+    const runStartTime = readRunStartTimestamp(db, "T-9202");
+    expect(runStartTime).toBe(retryStartRow.created_at);
+  });
+
+  it("returns an empty string when fewer than two status transitions exist (unknown run start -- safe default, never throws)", async () => {
+    await setup();
+    await store.create(makeTask({ id: "T-9203", status: "validation" }));
+
+    expect(readRunStartTimestamp(db, "T-9203")).toBe("");
+  });
+
+  it("returns an empty string for a task with no card_events at all", async () => {
+    await setup();
+    expect(readRunStartTimestamp(db, "T-NOPE")).toBe("");
   });
 });

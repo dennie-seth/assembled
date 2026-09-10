@@ -427,6 +427,17 @@ describe("buildReviewerPrompt -- deliverable artifact check (deliverable_type: '
     expect(prompt.toLowerCase()).toContain("confirm");
     expect(prompt).toMatch(/T-0351/);
   });
+
+  it("T-0354: points the reviewer at the mechanical freshness assertion instead of requiring a manual ls/mtime audit, and names both non-punished exemptions", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toMatch(/T-0354/);
+    expect(prompt).toMatch(/freshness/i);
+    expect(prompt).not.toMatch(/manual `?ls`?\/mtime/i);
+    // The two cases a freshness FAIL must not be confused with "never tried".
+    expect(prompt).toMatch(/host-action-request/);
+    expect(prompt).toMatch(/pre-registered/i);
+  });
 });
 
 describe("buildReviewerPrompt -- finding-with-evidence PASS distinction (T-0342)", () => {
