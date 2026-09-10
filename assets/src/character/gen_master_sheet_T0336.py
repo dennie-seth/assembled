@@ -1086,7 +1086,12 @@ def build_graph(
 # T-0351 itself imposes -- lever 2 needs a 6th+ attempt, since it spends five
 # separate generations per attempt instead of one) -- it falls back to
 # DEFAULT_ATTEMPT_CAP, a generic runaway backstop, not a per-card budget.
-ATTEMPT_CAP_BY_CARD: dict[str, int] = {"T-0336": 5}
+# T-0351's RE-SCOPE section (2026-09-10, "PER-PANEL REFERENCE CONDITIONING")
+# authorises exactly three internal attempts under the new architecture --
+# 19, 20, 21 -- then a mandatory stop-and-report, not open-ended grinding.
+# 21 pins that boundary mechanically instead of relying on DEFAULT_ATTEMPT_CAP
+# (20), which this card would otherwise hit one attempt early.
+ATTEMPT_CAP_BY_CARD: dict[str, int] = {"T-0336": 5, "T-0351": 21}
 DEFAULT_ATTEMPT_CAP = 20
 
 # T-0351 (2026-09-10 amendment): pose-conditioning-only ControlNet strength/
