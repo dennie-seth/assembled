@@ -247,57 +247,71 @@ def build_limb_pose_prompt(entity: EntitySpec) -> str:
     shows two similar standing figures plus small floating garment-callout
     insets (the same crop `run_attempt`/`EntitySpec.concept_crop_box`
     restricts IP-Adapter to), and that composition dominated over the text.
-    Attempt 2 strengthens the framing -- "pose reference chart" instead of
-    "character reference turnaround sheet", explicit "five independent
-    full-body poses ... in a single horizontal row", and repeated,
-    stronger mid-hip/bare-thigh wording -- without touching IP-Adapter
-    weight, style/identity LoRA weight, or adding ControlNet (all forbidden
-    by this card's own scope; pose is the only variable, and that has to
-    stay a prompt-only lever)."""
+    Attempt 2 strengthened the wording ("pose reference chart", explicit
+    "five independent full-body poses ... in a single horizontal row",
+    repeated mid-hip/bare-thigh phrasing) but kept the panel/pose
+    instructions after ~120 words of costume/framing text in a single long
+    paragraph -- the model reproduced the costume and silhouette faithfully
+    (the part nearest the front of the prompt) and still ignored pose
+    almost entirely, rendering six figures in a two-row grid.
+
+    Attempt 3 restructures rather than just re-wording: panel/pose
+    instructions move to the very front, ahead of costume text, since
+    position in the prompt carries real weight; each panel clause is also
+    wrapped in ComfyUI's native CLIPTextEncode emphasis syntax
+    (`(text:weight)`, applied by the stock node -- no custom node, no
+    ControlNet, no LoRA/IP-Adapter weight change) to push attention toward
+    the pose and mid-hip clauses specifically. Pose stays a prompt-only
+    lever throughout, per this card's own constraint."""
+    pose_clause = (
+        "(pose reference chart, five separate whole-figure panels, each a complete full-body "
+        "figure, arranged in a single horizontal row, wide gaps between panels so nothing "
+        "overlaps or touches:1.3), "
+        "(panel one is a front view T-pose, both arms held straight out horizontal to the "
+        "sides clear of the torso, legs spread apart:1.3), "
+        "(panel two is a back view T-pose, both arms held straight out horizontal to the "
+        "sides clear of the torso, legs spread apart:1.3), "
+        "(panel three is a true 90-degree side profile view, not a three-quarter view, only "
+        "the left arm and only the left leg extended forward at roughly a right angle clear "
+        "of the torso, the right arm and right leg held back close to the body:1.3), "
+        "(panel four is a true 90-degree side profile view, not a three-quarter view, only "
+        "the right arm and only the right leg extended forward at roughly a right angle "
+        "clear of the torso, the left arm and left leg held back close to the body:1.3), "
+        "(panel five is a true 90-degree side profile view, not a three-quarter view, a "
+        "neutral standing pose, both arms hanging straight down at the sides, both legs "
+        "together standing upright:1.3), "
+        "only a single arm silhouette and a single eye lens visible per side panel, "
+    )
+    coat_clause = (
+        f"{entity.costume_description}, "
+        "(the coat cut short and ending precisely at mid-hip in every single panel, bare "
+        "thigh clearly visible below the coat hem:1.4), "
+    )
     return (
-        f"{entity.trigger_token}, pose reference chart, five independent full-body poses of "
-        "the same character, each panel a complete head-to-toe figure, arranged in a single "
-        "horizontal row side by side, wide empty gutters between every panel so nothing "
-        f"overlaps or touches, not two similar standing figures with small accessory insets, "
-        f"{entity.costume_description}, the coat cut short and ending precisely at mid-hip in "
-        "every single panel, coat hem at the mid-hip line, bare thigh clearly visible below "
-        "the coat hem, same uniform and same equipment loadout, consistent identity, the exact "
-        "same institutional green coat costume in every single panel, flat uniform neutral "
-        "grey background, flat even lighting, no cast shadow, no perspective, clean readable "
+        f"{entity.trigger_token}, {pose_clause}{coat_clause}"
+        "same uniform and same equipment loadout, consistent identity, the exact same "
+        "institutional green coat costume in every single panel, flat uniform neutral grey "
+        "background, flat even lighting, no cast shadow, no perspective, clean readable "
         "outline, wearing a hooded mask with two dark round visible eye lenses, not a blank "
-        "void, five separate whole-figure panels: panel one is a front view T-pose, facing the "
-        "camera directly, both arms held straight out horizontal to the sides clear of the "
-        "torso, legs spread apart; panel two is a back view T-pose, facing directly away from "
-        "the camera, both arms held straight out horizontal to the sides clear of the torso, "
-        "legs spread apart; panel three is a true 90-degree side profile view, camera exactly "
-        "perpendicular to the figure, not a three-quarter view, only the left arm and only the "
-        "left leg extended forward at roughly a right angle clear of the torso, the right arm "
-        "and right leg held back close to the body, only a single arm silhouette and a single "
-        "eye lens visible; panel four is a true 90-degree side profile view, camera exactly "
-        "perpendicular to the figure, not a three-quarter view, only the right arm and only "
-        "the right leg extended forward at roughly a right angle clear of the torso, the left "
-        "arm and left leg held back close to the body, only a single arm silhouette and a "
-        "single eye lens visible; panel five is a true 90-degree side profile view, camera "
-        "exactly perpendicular to the figure, not a three-quarter view, a neutral standing "
-        "pose, both arms hanging straight down at the sides, both legs together standing "
-        "upright, only a single arm silhouette and a single eye lens visible, no text, no UI, "
-        "no watermark"
+        "void, no text, no UI, no watermark"
     )
 
 
 def build_limb_pose_negative_prompt() -> str:
     """T-0351: builds on #365's own negative-prompt fixes
     (`build_negative_prompt` -- blank heads, armour drift, cropped heads,
-    robotic legs) and adds this card's own attempt-1 failure mode (see
-    `ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md`): two near-duplicate standing
-    figures plus small floating accessory/equipment inset panels instead of
-    five distinct full-body poses, and a coat that fell well past mid-hip
-    despite the positive prompt's mid-hip wording."""
+    robotic legs) and adds this card's own attempt-1/2 failure modes (see
+    `ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md`): attempt 1 rendered two
+    near-duplicate standing figures plus small floating accessory/equipment
+    inset panels; attempt 2 rendered six figures in a two-row grid. Both
+    kept a coat well past mid-hip despite the positive prompt's mid-hip
+    wording."""
     return (
         build_negative_prompt()
         + ", accessory inset, floating accessory panel, equipment close-up inset, small inset "
         "panel, garment callout, two similar poses, duplicate pose, near-identical pose, "
-        "repeated pose, only two figures, long coat, trench coat, ankle-length coat, "
+        "repeated pose, only two figures, six figures, six poses, six panels, grid layout, "
+        "multiple rows, two rows, stacked panels, long coat, trench coat, ankle-length coat, "
         "floor-length coat, knee-length coat, calf-length coat, coat past the knee, coat "
         "covering the thighs, coat below the hip"
     )

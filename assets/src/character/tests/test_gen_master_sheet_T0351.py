@@ -161,6 +161,35 @@ def test_build_limb_pose_negative_prompt_forbids_long_coat() -> None:
     assert "coat" in negative and ("knee" in negative or "calf" in negative)
 
 
+def test_build_limb_pose_negative_prompt_forbids_grid_layout_and_six_figures() -> None:
+    """Attempt 2's own defect (strengthened wording, still wrong): six
+    figures in a two-row grid, none in the requested pose, instead of five
+    in a single row."""
+    negative = gen.build_limb_pose_negative_prompt().lower()
+    assert "grid" in negative
+    assert "six" in negative
+
+
+def test_build_limb_pose_prompt_frontloads_pose_before_costume() -> None:
+    """Attempt 2's own defect: a ~300-word single-blob prompt buried the
+    five-panel pose spec well after the costume text, and the model
+    reproduced costume/silhouette faithfully while ignoring pose almost
+    entirely. Put the panel/pose instructions ahead of the costume
+    description so they carry more positional weight."""
+    prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"])
+    assert prompt.index("panel one") < prompt.index(gen.ENTITIES["player"].costume_description)
+
+
+def test_build_limb_pose_prompt_emphasises_pose_and_coat_clauses() -> None:
+    """Uses ComfyUI's native CLIPTextEncode emphasis syntax (`(text:weight)`)
+    to push weight toward the panel/pose and mid-hip clauses without
+    touching IP-Adapter/LoRA node weights -- pose stays a prompt-only
+    lever, per this card's own constraint."""
+    prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"])
+    assert ":1." in prompt
+    assert prompt.count("(") == prompt.count(")")
+
+
 def test_build_limb_pose_prompt_requests_no_text_no_ui_no_watermark() -> None:
     prompt = gen.build_limb_pose_prompt(gen.ENTITIES["player"]).lower()
     assert "no text" in prompt

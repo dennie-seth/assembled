@@ -5,3 +5,4 @@ Every attempt is recorded here whether or not it is promoted. Tier-1 generates O
 | Attempt | Entity | Seed | Style LoRA weight | Identity LoRA weight | IP-Adapter weight | Width | Height | GPU seconds | Promoted | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | player | 314159265 | 0.7 | 0.5 | 0.35 | 1024 | 1024 | 27.1 | no | T-0351 attempt 1: five-panel pose spec (front/back T-pose, side-left-forward, side-right-forward, side-neutral), mid-hip coat cap |
+| 2 | player | 271828182 | 0.7 | 0.5 | 0.35 | 1024 | 1024 | 33.1 | no | T-0351 attempt 2: strengthened pose-reference-chart framing + mid-hip/bare-thigh reinforcement + card-specific negative prompt forbidding duplicate poses/accessory insets/long coat |
