@@ -1151,6 +1151,96 @@ def test_build_graph_ipadapter_and_style_identity_lora_unaffected_by_controlnet(
         assert no_cn[node_id] == with_cn[node_id], node_id
 
 
+# ── Attempt 20 (RE-SCOPE follow-up): attempt 19 (the first real run under ──
+# per-panel reference conditioning) showed side_neutral converging cleanly
+# against the T-0317 reference (whose own pose -- arms straight down --
+# matches side_neutral's target pose) while side_left_forward/
+# side_right_forward, whose ControlNet skeleton demands a forward-extended
+# limb the reference doesn't show, came back malformed (split costume
+# colours, ragged torn edges, a held prop). Narrowing IPAdapterAdvanced's
+# `end_at` for just those two panels lets IP-Adapter establish identity
+# early and ControlNet's own already-correct skeleton resolve limb geometry
+# alone in the later steps, without changing the `weight` this card's Do
+# Not section protects.
+
+
+def test_build_graph_ipadapter_end_at_defaults_to_the_whole_sampling_range() -> None:
+    """Every call site before attempt 20 -- and every pose but the two
+    forward-extended side panels -- must keep IP-Adapter applied across the
+    entire 0.0-1.0 range, unchanged."""
+    graph = _graph()
+    assert graph[gen.IPADAPTER_NODE_ID]["inputs"]["end_at"] == 1.0
+    assert graph[gen.IPADAPTER_NODE_ID]["inputs"]["start_at"] == 0.0
+
+
+def test_build_graph_ipadapter_end_at_is_configurable_without_touching_weight() -> None:
+    """The new parameter narrows *when* IP-Adapter conditioning applies,
+    never its `weight` -- this card's own 'do not change the IP-Adapter
+    weight' rule is about the weight value, not the sampling window."""
+    graph = _graph(ipadapter_weight=0.35, ipadapter_end_at=0.5)
+    assert graph[gen.IPADAPTER_NODE_ID]["inputs"]["end_at"] == 0.5
+    assert graph[gen.IPADAPTER_NODE_ID]["inputs"]["weight"] == 0.35
+
+
+def test_pose_specs_forward_side_panels_narrow_ipadapter_end_at() -> None:
+    """Only the two panels whose ControlNet skeleton actually conflicts
+    with the T-0317 reference's neutral pose get a narrower window -- every
+    other panel (including side_neutral, whose target pose matches the
+    reference) keeps the full range."""
+    by_key = {pose.key: pose for pose in gen.POSE_SPECS}
+    assert by_key["side_left_forward"].ipadapter_end_at == 0.5
+    assert by_key["side_right_forward"].ipadapter_end_at == 0.5
+    for key in ("front_tpose", "back_tpose", "side_neutral", "legs"):
+        assert by_key[key].ipadapter_end_at == 1.0, key
+
+
+def test_run_five_pose_attempt_wires_each_poses_own_ipadapter_end_at(monkeypatch) -> None:
+    import shutil
+
+    from PIL import Image
+
+    test_out_dir = gen.REPO_ROOT / "assets" / "out" / "_test_scratch_T0351_ipadapter_end_at"
+    test_out_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(gen, "out_dir_for", lambda card, entity, attempt: test_out_dir)
+
+    captured_graphs = []
+
+    def fake_upload_image(path):
+        return path.name
+
+    def fake_submit_prompt(graph):
+        captured_graphs.append(graph)
+        return f"prompt-{len(captured_graphs)}"
+
+    def fake_wait_for_completion(prompt_id, timeout_s=300):
+        return {"outputs": {gen.MAIN_SAVE_NODE_ID: {"images": [{"filename": "x.png"}]}}}
+
+    def fake_fetch_save_image(info, node_id):
+        from io import BytesIO
+
+        buf = BytesIO()
+        Image.new("RGB", (16, 16), (10, 20, 30)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    monkeypatch.setattr(gen, "upload_image", fake_upload_image)
+    monkeypatch.setattr(gen, "submit_prompt", fake_submit_prompt)
+    monkeypatch.setattr(gen, "wait_for_completion", fake_wait_for_completion)
+    monkeypatch.setattr(gen, "fetch_save_image", fake_fetch_save_image)
+
+    try:
+        provenance = gen.run_five_pose_attempt(
+            entity_name="player", attempt=20, base_seed=4000, width=64, height=64, card="T-0351"
+        )
+        for i, pose in enumerate(gen.POSE_SPECS):
+            graph = captured_graphs[i]
+            assert graph[gen.IPADAPTER_NODE_ID]["inputs"]["end_at"] == pose.ipadapter_end_at
+        for record in provenance["poses"]:
+            by_key = {pose.key: pose for pose in gen.POSE_SPECS}
+            assert record["ipadapter_end_at"] == by_key[record["key"]].ipadapter_end_at
+    finally:
+        shutil.rmtree(test_out_dir, ignore_errors=True)
+
+
 def test_concept_crop_box_for_t0351_still_resolves_as_the_generic_fallback() -> None:
     """concept_crop_box_for keeps existing behaviour -- reference_image_for
     (RE-SCOPE, below) falls back to it for any (card, pose_key) combination
