@@ -56,13 +56,21 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# Reused directly from Arm A (T-0228) -- checkpoint/LoRA/IP-Adapter
-# identifiers and the HTTP client helpers are unchanged.
+# Reused directly from Arm A (T-0228) -- checkpoint/LoRA/IP-Adapter/
+# ControlNet identifiers and the HTTP client helpers are unchanged.
+# CONTROLNET_NAME (T-0228's own `controlnet-openpose-sdxl-1.0_xinsir.
+# safetensors`) is unused by T-0336's own default call path (no ControlNet,
+# DL-30) -- only T-0351's run_five_pose_attempt (2026-09-10 amendment)
+# passes it into build_graph.
+# T-0351 (2026-09-10 amendment): the authored per-pose OpenPose skeleton
+# rig, one keypoint layout per POSE_SPECS entry.
+import pose_rig_master_sheet_T0351  # noqa: E402
 from gen_arm_a_idle_T0228 import (  # noqa: E402
     CHECKPOINT,
     CHECKPOINT_HASH,
     CHECKPOINT_LICENSE,
     CHECKPOINT_LICENSE_ALLOWLIST,
+    CONTROLNET_NAME,
     IPADAPTER_NAME,
     IPADAPTER_PRESET,
     LORA_LICENSE,
@@ -535,6 +543,12 @@ LATENT_NODE_ID = "20"
 SAMPLER_NODE_ID = "21"
 VAE_DECODE_NODE_ID = "22"
 MAIN_SAVE_NODE_ID = "23"
+# T-0351 (2026-09-10 amendment): pose-conditioning-only ControlNet nodes,
+# wired only when build_graph is given a pose_skeleton_filename -- T-0336's
+# own default call path never touches these ids.
+POSE_IMAGE_NODE_ID = "25"
+CONTROLNET_LOADER_NODE_ID = "26"
+CONTROLNET_NODE_ID = "27"
 
 # The review's own finding, pinned mechanically (test_latent_dimensions_never_default_to_384):
 # every incoherent render in the repo was sampled at 384; the LoRAs were trained at 1024.
@@ -554,12 +568,14 @@ def build_graph(
     identity_lora_name: str | None = None,
     identity_lora_weight: float = 0.0,
     concept_crop_box: tuple[int, int, int, int] | None = None,
+    pose_skeleton_filename: str | None = None,
+    controlnet_strength: float = 0.0,
+    controlnet_end: float = 0.0,
 ) -> dict:
     """txt2img + style LoRA at 1024, IP-Adapter on the approved concept
-    sheet, NO ControlNet (DL-30 / this card's own scope). The identity LoRA
-    is optional and, when present, chains after the style LoRA -- an enemy
-    entity with no trained identity LoRA yet (`identity_lora_name=None`)
-    still gets a graph, just without that node.
+    sheet. The identity LoRA is optional and, when present, chains after
+    the style LoRA -- an enemy entity with no trained identity LoRA yet
+    (`identity_lora_name=None`) still gets a graph, just without that node.
 
     `concept_crop_box`, when given as `(x, y, width, height)`, inserts an
     `ImageCrop` node between the concept-sheet `LoadImage` and IP-Adapter so
@@ -567,7 +583,21 @@ def build_graph(
     `EntitySpec.concept_crop_box`'s own docstring for why (the concept sheet
     mixes two costume lines across its panel grid; IP-Adapter conditions on
     whichever pixels it is shown). `None` (the default) conditions on the
-    whole sheet, unchanged from every attempt before round 5."""
+    whole sheet, unchanged from every attempt before round 5.
+
+    `pose_skeleton_filename`, when given, inserts ControlNetLoader +
+    ControlNetApplyAdvanced (T-0351, 2026-09-10 amendment) between the
+    CLIPTextEncode pair and KSampler: a `LoadImage` of an already-uploaded
+    OpenPose skeleton (`pose_rig_master_sheet_T0351.render_pose_skeleton`)
+    conditions the positive/negative prompt pair via
+    `control_net`/`strength`/`end_percent`, and KSampler consumes the
+    ControlNet node's own conditioning outputs instead of the raw
+    CLIPTextEncode ones. `None` (the default, every T-0336 call site) omits
+    ControlNet entirely -- DL-30's own scope, and this card's own
+    acceptance criterion that ControlNet is for pose conditioning only: it
+    never touches the model chain LoRA/IP-Adapter build on, only the
+    positive/negative conditioning pair KSampler ultimately samples
+    against."""
     g: dict = {}
     g[CHECKPOINT_NODE_ID] = {
         "class_type": "CheckpointLoaderSimple",
@@ -608,6 +638,32 @@ def build_graph(
         "class_type": "CLIPTextEncode",
         "inputs": {"text": negative_text, "clip": clip_source},
     }
+
+    positive_source = [POSITIVE_PROMPT_NODE_ID, 0]
+    negative_source = [NEGATIVE_PROMPT_NODE_ID, 0]
+    if pose_skeleton_filename is not None:
+        g[POSE_IMAGE_NODE_ID] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": pose_skeleton_filename},
+        }
+        g[CONTROLNET_LOADER_NODE_ID] = {
+            "class_type": "ControlNetLoader",
+            "inputs": {"control_net_name": CONTROLNET_NAME},
+        }
+        g[CONTROLNET_NODE_ID] = {
+            "class_type": "ControlNetApplyAdvanced",
+            "inputs": {
+                "positive": positive_source,
+                "negative": negative_source,
+                "control_net": [CONTROLNET_LOADER_NODE_ID, 0],
+                "image": [POSE_IMAGE_NODE_ID, 0],
+                "strength": controlnet_strength,
+                "start_percent": 0.0,
+                "end_percent": controlnet_end,
+            },
+        }
+        positive_source = [CONTROLNET_NODE_ID, 0]
+        negative_source = [CONTROLNET_NODE_ID, 1]
 
     g[CONCEPT_IMAGE_NODE_ID] = {
         "class_type": "LoadImage",
@@ -654,8 +710,8 @@ def build_graph(
         "class_type": "KSampler",
         "inputs": {
             "model": [IPADAPTER_NODE_ID, 0],
-            "positive": [POSITIVE_PROMPT_NODE_ID, 0],
-            "negative": [NEGATIVE_PROMPT_NODE_ID, 0],
+            "positive": positive_source,
+            "negative": negative_source,
             "latent_image": [LATENT_NODE_ID, 0],
             "seed": seed,
             "steps": 30,
@@ -690,6 +746,14 @@ def build_graph(
 # DEFAULT_ATTEMPT_CAP, a generic runaway backstop, not a per-card budget.
 ATTEMPT_CAP_BY_CARD: dict[str, int] = {"T-0336": 5}
 DEFAULT_ATTEMPT_CAP = 20
+
+# T-0351 (2026-09-10 amendment): pose-conditioning-only ControlNet strength/
+# end-percent for run_five_pose_attempt. 1.3/1.0 is this pipeline's own
+# proven-effective value for single-figure OpenPose pose pinning against
+# this exact checkpoint+ControlNet pair (ARM_POSE_AUTHORITY_ATTEMPT_LOG_T0249.md
+# attempt 3, promoted) -- not a fresh guess.
+CONTROLNET_STRENGTH = 1.3
+CONTROLNET_END_PERCENT = 1.0
 
 
 def check_attempt_cap(attempt: int, card: str = "T-0336") -> None:
@@ -1117,6 +1181,12 @@ def run_five_pose_attempt(
     for i, pose in enumerate(POSE_SPECS):
         seed = base_seed + i
         positive_text = build_single_pose_positive_prompt(entity, pose)
+
+        skeleton = pose_rig_master_sheet_T0351.render_pose_skeleton(pose.key, width)
+        skeleton_path = out_dir / f"pose_{pose.key}_skeleton.png"
+        skeleton.save(skeleton_path)
+        skeleton_filename = upload_image(skeleton_path)
+
         graph = build_graph(
             seed=seed,
             concept_filename=concept_filename,
@@ -1129,6 +1199,9 @@ def run_five_pose_attempt(
             identity_lora_name=identity_lora_name,
             identity_lora_weight=resolved_identity_weight,
             concept_crop_box=entity.concept_crop_box,
+            pose_skeleton_filename=skeleton_filename,
+            controlnet_strength=CONTROLNET_STRENGTH,
+            controlnet_end=CONTROLNET_END_PERCENT,
         )
         t0 = time.monotonic()
         prompt_id = submit_prompt(graph)
@@ -1149,6 +1222,7 @@ def run_five_pose_attempt(
                 "prompt": positive_text,
                 "comfyui_prompt_id": prompt_id,
                 "gpu_seconds": round(gpu_seconds, 1),
+                "pose_skeleton": str(skeleton_path.relative_to(REPO_ROOT)),
             }
         )
 
@@ -1186,8 +1260,16 @@ def run_five_pose_attempt(
         "ip_adapter": IPADAPTER_NAME,
         "ip_adapter_weight": ipadapter_weight,
         "concept_crop_box": entity.concept_crop_box,
-        "controlnet": None,
-        "controlnet_note": "deliberately omitted (DL-30 / this card's own scope)",
+        "controlnet": CONTROLNET_NAME,
+        "controlnet_strength": CONTROLNET_STRENGTH,
+        "controlnet_end_percent": CONTROLNET_END_PERCENT,
+        "controlnet_note": (
+            "T-0351 2026-09-10 amendment: OpenPose skeleton per pose "
+            "(pose_rig_master_sheet_T0351.render_pose_skeleton), pose conditioning only -- "
+            "conditions the positive/negative prompt pair, never the style/identity LoRA or "
+            "IP-Adapter model chain. Seven prompt-only attempts (see "
+            "ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md) never achieved pose compliance."
+        ),
         "negative_prompt": negative_text,
         "poses": pose_records,
         "seed": base_seed,
@@ -1205,21 +1287,27 @@ def run_five_pose_attempt(
             "(front T-pose, back T-pose, side-left-forward, side-right-forward, "
             "side-neutral): LoraLoader(soviet_brutalism_style_v1) "
             + ("-> LoraLoader(identity, chained) " if identity_lora_name is not None else "")
-            + "-> IPAdapterUnifiedLoader + IPAdapterAdvanced (concept sheet) -> KSampler -> "
-            "VAEDecode -> SaveImage, once per pose -- no ControlNet. compose_pose_row then "
-            "stitches the five resulting images side by side into one sheet by script "
-            "(DL-30), replacing this card's first five attempts' single-shot "
-            "five-panel-in-one-image approach (build_limb_pose_prompt/run_attempt), which "
-            "never achieved pose compliance -- see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md and "
-            "docs/assets/evidence/T-0351/README.md."
+            + "-> CLIPTextEncode(positive/negative) -> ControlNetLoader + "
+            "ControlNetApplyAdvanced (this pose's own OpenPose skeleton, "
+            "pose_rig_master_sheet_T0351, strength "
+            f"{CONTROLNET_STRENGTH}/end {CONTROLNET_END_PERCENT}) -> IPAdapterUnifiedLoader + "
+            "IPAdapterAdvanced (concept sheet, unchanged weight/crop) -> KSampler -> "
+            "VAEDecode -> SaveImage, once per pose. compose_pose_row then stitches the five "
+            "resulting images side by side into one sheet by script (DL-30), replacing this "
+            "card's first seven attempts (five single-shot five-panel-in-one-image, two "
+            "prompt-only single-pose) -- see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md and "
+            "docs/assets/evidence/T-0351/README.md. ControlNet is for pose conditioning only "
+            "(2026-09-10 amendment): it conditions the CLIPTextEncode pair, never the "
+            "style/identity LoRA or IP-Adapter model chain, which are byte-identical to "
+            "every prompt-only attempt before it."
         ),
         "generator": "assets/src/character/gen_master_sheet_T0336.py",
         "card": card,
         "spec": (
             "docs/decision-log.md DL-30, pose spec per T-0351 (successor to #365/T-0336; "
-            "recipe unchanged, pose is the only variable; lever 2 -- five separate "
-            "single-pose generations composited by script, per this card's own standing "
-            "guardrail 'motion composited by script' and the run-1 reviewer verdict)"
+            "recipe unchanged except ControlNet/OpenPose for pose conditioning only, per "
+            "@DennieSeth's 2026-09-10 amendment after 7 prompt-only attempts failed to "
+            "achieve pose compliance)"
         ),
         "attempt": attempt,
         "gpu_seconds": round(total_gpu_seconds, 1),

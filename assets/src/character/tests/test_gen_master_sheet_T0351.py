@@ -696,16 +696,27 @@ def test_controlnet_name_matches_verified_host_inventory() -> None:
     assert gen.CONTROLNET_NAME == "controlnet-openpose-sdxl-1.0_xinsir.safetensors"
 
 
-def test_run_five_pose_attempt_conditions_each_pose_with_its_own_skeleton(
-    tmp_path, monkeypatch
-) -> None:
+def test_run_five_pose_attempt_conditions_each_pose_with_its_own_skeleton(monkeypatch) -> None:
     """End-to-end (network stubbed): each of the five POSE_SPECS panels must
     submit a graph carrying that pose's own OpenPose skeleton via ControlNet
     -- not five identical prompt-only generations, which is exactly what
-    seven prior attempts already proved doesn't work."""
+    seven prior attempts already proved doesn't work.
+
+    `out_dir_for` is deliberately NOT monkeypatched to a bare pytest
+    `tmp_path`: `run_five_pose_attempt` records each skeleton's path
+    relative to `REPO_ROOT` in its provenance (same convention every other
+    path in this provenance dict already uses), which requires the
+    directory to genuinely live under the repo. `assets/out/` is gitignored
+    scratch space (CLAUDE.md), so a real subdirectory there is the correct
+    stand-in, not a workaround -- cleaned up in `finally` regardless of
+    pass/fail."""
+    import shutil
+
     from PIL import Image
 
-    monkeypatch.setattr(gen, "out_dir_for", lambda card, entity, attempt: tmp_path)
+    test_out_dir = gen.REPO_ROOT / "assets" / "out" / "_test_scratch_T0351_controlnet"
+    test_out_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(gen, "out_dir_for", lambda card, entity, attempt: test_out_dir)
 
     captured_graphs = []
 
@@ -731,20 +742,23 @@ def test_run_five_pose_attempt_conditions_each_pose_with_its_own_skeleton(
     monkeypatch.setattr(gen, "wait_for_completion", fake_wait_for_completion)
     monkeypatch.setattr(gen, "fetch_save_image", fake_fetch_save_image)
 
-    provenance = gen.run_five_pose_attempt(
-        entity_name="player", attempt=8, base_seed=1000, width=64, height=64
-    )
-
-    assert len(captured_graphs) == 5
-    for graph, pose in zip(captured_graphs, gen.POSE_SPECS):
-        assert graph[gen.CONTROLNET_LOADER_NODE_ID]["inputs"]["control_net_name"] == (
-            gen.CONTROLNET_NAME
+    try:
+        provenance = gen.run_five_pose_attempt(
+            entity_name="player", attempt=8, base_seed=1000, width=64, height=64
         )
-        pose_image_filename = graph[gen.POSE_IMAGE_NODE_ID]["inputs"]["image"]
-        assert pose.key in pose_image_filename
 
-    assert provenance["controlnet"] == gen.CONTROLNET_NAME
-    assert provenance["controlnet_strength"] == gen.CONTROLNET_STRENGTH
-    assert provenance["controlnet_end_percent"] == gen.CONTROLNET_END_PERCENT
-    for record in provenance["poses"]:
-        assert "pose_skeleton" in record
+        assert len(captured_graphs) == 5
+        for graph, pose in zip(captured_graphs, gen.POSE_SPECS):
+            assert graph[gen.CONTROLNET_LOADER_NODE_ID]["inputs"]["control_net_name"] == (
+                gen.CONTROLNET_NAME
+            )
+            pose_image_filename = graph[gen.POSE_IMAGE_NODE_ID]["inputs"]["image"]
+            assert pose.key in pose_image_filename
+
+        assert provenance["controlnet"] == gen.CONTROLNET_NAME
+        assert provenance["controlnet_strength"] == gen.CONTROLNET_STRENGTH
+        assert provenance["controlnet_end_percent"] == gen.CONTROLNET_END_PERCENT
+        for record in provenance["poses"]:
+            assert "pose_skeleton" in record
+    finally:
+        shutil.rmtree(test_out_dir, ignore_errors=True)
