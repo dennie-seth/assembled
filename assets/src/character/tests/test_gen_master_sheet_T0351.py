@@ -431,21 +431,34 @@ def test_build_single_pose_positive_prompt_does_not_negate_text_in_positive() ->
     assert "no watermark" not in prompt
 
 
-def test_build_single_pose_positive_prompt_emphasizes_isolation_and_pose() -> None:
+def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> None:
     """Attempt 6's five generations all reproduced a multi-inset fashion
     tech-pack/reference-sheet composition despite an unemphasized "single
-    full-body figure alone in frame" instruction -- IP-Adapter conditioning
-    on the concept crop appears to assert composition structure directly,
-    not just style/identity, and a plain affirmative sentence did not
-    outcompete it. Attempt 7 applies the one technique that reliably moved
-    something across attempts 1-5 (ComfyUI's own CLIPTextEncode
-    `(text:weight)` emphasis syntax) to the isolation clause and the pose
-    clause itself -- still no ControlNet, no LoRA/IP-Adapter weight
-    change, prompt-only, per this card's own constraint."""
-    prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], gen.POSE_SPECS[0])
+    full-body figure alone in frame" instruction; attempt 7 emphasized both
+    isolation and pose at 1.3 (still prompt-only, pre-ControlNet).
+
+    Attempt 8 (first ControlNet execution, see
+    ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md) proved the skeleton forces real
+    T-pose/profile geometry in 4 of 5 panels without any text help -- CLIP
+    emphasis on the pose clause is no longer pulling weight the skeleton
+    doesn't already supply, and it was competing for prompt "attention
+    budget" against coat-length emphasis, which is the plausible reason
+    attempt 8's coats came back mid-calf-or-longer in every panel (worse
+    than attempts 3/5's plain-1.3-coat-only prompt-only result). Attempt 9
+    drops pose-clause emphasis entirely (ControlNet -- build_graph's
+    pose_skeleton_filename -- is the pose lever now) and raises isolation
+    to 1.4 and coat-length to 1.6: the two clauses ControlNet does not
+    condition, and the only prompt-only levers this card still owns."""
+    pose = gen.POSE_SPECS[0]
+    prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], pose)
     assert "exactly one pose" in prompt.lower()
     assert "exactly one" in prompt.lower() and "view" in prompt.lower()
-    assert ":1.3)" in prompt
+    assert ":1.4)" in prompt, "isolation clause must be emphasized at 1.4"
+    assert ":1.6)" in prompt, "coat-length clause must be emphasized at 1.6"
+    assert pose.pose_clause in prompt, "pose text itself must still be present"
+    assert f"({pose.pose_clause}:1.3)" not in prompt, (
+        "pose clause must no longer be CLIP-emphasized -- ControlNet forces it now"
+    )
 
 
 def test_build_single_pose_negative_prompt_forbids_reference_sheet_composition() -> None:
@@ -468,6 +481,19 @@ def test_build_single_pose_negative_prompt_does_not_re_add_panel_bans() -> None:
     negative = gen.build_single_pose_negative_prompt().lower()
     assert "six figures" not in negative
     assert "six panels" not in negative
+
+
+def test_build_single_pose_negative_prompt_emphasizes_single_figure_after_attempt_8() -> None:
+    """Attempt 8 (first ControlNet execution) still regressed to a
+    three-figure composition on the side_right_forward panel despite
+    MAIN_NEGATIVE's own unemphasized "two figures, duplicate figure, ...
+    group of people" ban -- the same emphasis lever that fixed coat length
+    in attempts 3/5 gets applied here too, on this card's own negative
+    prompt (MAIN_NEGATIVE itself stays untouched, since it's shared across
+    every card in this pipeline)."""
+    negative = gen.build_single_pose_negative_prompt()
+    assert ":1.3)" in negative
+    assert "figures" in negative.lower()
 
 
 def test_compose_pose_row_stitches_images_side_by_side(tmp_path) -> None:
