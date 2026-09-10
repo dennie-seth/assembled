@@ -576,3 +576,25 @@ See `assets/src/character/ARM_MASTER_SHEET_ATTEMPT_LOG_T0339.md` for the
 full per-attempt notes and `docs/assets/evidence/T-0339/` for every raw
 panel (`side_neutral_attempt_{1,2,3}_1024.png`) plus the promoted result
 zoomed for review (`after_keyframe_48_zoomed_v2.png`).
+
+**Correction and stop-and-report, same pass (2026-09-11):** the "attempt 3" entry above was
+written up as fully accepted ("unmistakably green 48x48 silhouette"); re-opened directly, the
+descended result reads as a mottled olive/khaki column, not vivid green -- it clears every
+mechanical floor (foreground px count, green-family palette-index membership) but does not clear
+this card's own "vivid green legible at 40px, judged by opening it" acceptance bar, the same
+"numbers passing while the image does not" failure this pipeline effort exists to end. Diagnosed
+root cause: a **descent-stage** interaction, not generation -- all three attempts produced genuine,
+correctly-posed, uncropped single-figure side profiles, but (a) attempts 1 and 3 render the coat
+with a continuous painterly lighting gradient that `home_palette.json`'s green family (only two
+saturated slots, both dark; the rest read as muddy olive) scatters across multiple neighbours
+instead of one coherent block, and (b) attempt 2 -- the most vivid, highest-contrast raw panel of
+the three -- has its mask shredded before quantization ever runs, by a dark background vignette
+close enough to the coat's own shadow folds in Oklab space to fool the cutout's border-connected
+flood classifier. The hard cap of 3 generation attempts is spent, and prompt tuning / palette
+changes / shared cutout-primitive changes are all out of this card's scope, so this is filed as a
+stop-and-report (a valid PASS per this card's own pre-registered escape hatch) rather than a further
+attempt. `player_profile_keyframe_hybrid_T0272.png` is left in place as the best real,
+non-synthetic result available -- a genuine improvement over the superseded crop-descent artifact,
+but not a criterion-clearing one. Full analysis, palette-histogram data, and a side-by-side
+calibration against the already-promoted `player_idle_sheet_hybrid_T0252.png`:
+`docs/assets/evidence/T-0339/README.md`.
