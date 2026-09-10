@@ -532,6 +532,104 @@ describe("checkDeliverable", () => {
         expect(evidenceOnlyReport.ok).toBe(false);
         expect(evidenceOnlyReport.errors.join(" ")).toMatch(/committed/i);
       });
+
+      describe("Git-LFS-tracked deliverables (T-0352 iter-3 reviewer FAIL): the fallback must not false-positive-fail a genuinely committed LFS asset", () => {
+        it("an attachment whose sha256 matches a committed LFS pointer's oid counts as committed, even though the pointer blob's own git hash never equals gitBlobHash(realBytes)", async () => {
+          dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+          const attachmentsDir = path.join(dir, "attachments");
+          const repoRoot = path.join(dir, "repo");
+          await fs.mkdir(repoRoot, { recursive: true });
+
+          const realBytes = Buffer.from("real audio bytes, standing in for an LFS-tracked .wav");
+          const oid = createHash("sha256").update(realBytes).digest("hex");
+          const pointerContent = `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${realBytes.length}\n`;
+
+          const attachments = [{ filename: "door.wav" }];
+          await writeAttachments(attachmentsDir, "T-0500", attachments);
+          await fs.writeFile(path.join(attachmentsDir, "T-0500", "door.wav"), realBytes);
+
+          const report = await checkDeliverable(
+            task({ id: "T-0500", deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
+            {
+              attachmentsDir,
+              repoRoot,
+              // The blob git actually committed is the LFS *pointer* text, not realBytes -- its
+              // git blob hash never equals gitBlobHash(realBytes). Only its sha256 oid does.
+              listCommittedBlobs: async () => [
+                { hash: gitBlobHashOf(pointerContent), path: "assets/final/audio/door.wav", lfsOid: oid }
+              ]
+            }
+          );
+          expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+        });
+
+        it("a committed LFS pointer whose oid does NOT match the attachment's content still fails -- an lfsOid field alone isn't proof", async () => {
+          dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+          const attachmentsDir = path.join(dir, "attachments");
+          const repoRoot = path.join(dir, "repo");
+          await fs.mkdir(repoRoot, { recursive: true });
+
+          const attachments = [{ filename: "door.wav" }];
+          await writeAttachments(attachmentsDir, "T-0501", attachments);
+          await fs.writeFile(path.join(attachmentsDir, "T-0501", "door.wav"), "never actually committed bytes");
+
+          const report = await checkDeliverable(
+            task({ id: "T-0501", deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
+            {
+              attachmentsDir,
+              repoRoot,
+              listCommittedBlobs: async () => [
+                {
+                  hash: gitBlobHashOf("irrelevant pointer text"),
+                  path: "assets/final/audio/door.wav",
+                  lfsOid: createHash("sha256").update("completely different content").digest("hex")
+                }
+              ]
+            }
+          );
+          expect(report.ok).toBe(false);
+          expect(report.errors.join(" ")).toMatch(/committed/i);
+        });
+
+        it("default listCommittedBlobs (real git + git-lfs): passes for a genuinely LFS-tracked deliverable -- the exact T-0352 iter-3 reviewer false-negative, reproduced against real git-lfs", async () => {
+          dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+          const attachmentsDir = path.join(dir, "attachments");
+          const repoRoot = path.join(dir, "repo");
+          await fs.mkdir(repoRoot, { recursive: true });
+          execFileSync("git", ["init", "-q"], { cwd: repoRoot });
+          execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+          execFileSync("git", ["config", "user.name", "Test"], { cwd: repoRoot });
+          execFileSync("git", ["lfs", "install", "--local"], { cwd: repoRoot });
+          await fs.writeFile(
+            path.join(repoRoot, ".gitattributes"),
+            "assets/final/audio/*.wav filter=lfs diff=lfs merge=lfs -text\n"
+          );
+
+          const audioDir = path.join(repoRoot, "assets", "final", "audio");
+          await fs.mkdir(audioDir, { recursive: true });
+          const realBytes = Buffer.from("a".repeat(4096));
+          await fs.writeFile(path.join(audioDir, "door.wav"), realBytes);
+          execFileSync("git", ["add", "-A"], { cwd: repoRoot });
+          execFileSync("git", ["commit", "-q", "-m", "lfs asset"], { cwd: repoRoot });
+
+          // Sanity: the committed blob really is a pointer, not the real bytes -- otherwise this
+          // test isn't exercising LFS at all.
+          const committedContent = execFileSync("git", ["show", "HEAD:assets/final/audio/door.wav"], {
+            cwd: repoRoot
+          }).toString();
+          expect(committedContent).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1/);
+
+          const attachments = [{ filename: "door.wav" }];
+          await writeAttachments(attachmentsDir, "T-0503", attachments);
+          await fs.writeFile(path.join(attachmentsDir, "T-0503", "door.wav"), realBytes);
+
+          const report = await checkDeliverable(
+            task({ id: "T-0503", deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
+            { attachmentsDir, repoRoot }
+          );
+          expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+        });
+      });
     });
 
     it("does not break the T-0342 finding-with-evidence route for a card with no '## Deliverable' section", async () => {
