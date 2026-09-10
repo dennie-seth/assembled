@@ -138,11 +138,15 @@ report shape `_escalateIfGenuineBlocker` would have built after five wasted atte
 it through the same `_recordBlockerReport` comment/remediation-card/dependency-wiring path.
 Zero implementer attempts are spent on a wall already named.
 
-The registry is seeded with the T-0272/T-0317 ComfyUI determinism entry as the worked example
-(`appliesToAgents: ["assets", "audio"]`, `resolved: false`). A human flips `resolved: true` once
-the sibling card ("ComfyUI determinism flags as permanent launch config") lands the fix and it's
-verified per the entry's own `verify` field -- entries are never deleted, so a closed issue's
-history stays auditable.
+The registry's original worked example was the T-0272/T-0317 ComfyUI determinism entry
+(`appliesToAgents: ["assets", "audio"]`, `resolved: false`). A human flips `resolved: true` once a
+host action is taken and verified per the entry's own `verify` field -- a closed entry is normally
+kept rather than deleted, so a settled issue's history stays auditable. That entry instead ended up
+`withdrawn` (T-0345, PR #355): the coherence regression it named was never established as real,
+0/6 and 0/8 fresh-seed samples under the flag regimes being indistinguishable from chance against
+this graph's own ~1-in-40 baseline rate. A withdrawn entry with no real history to preserve -- as
+opposed to one whose premise was actually disproven -- can be deleted outright, and T-0346 did so;
+the registry (`KNOWN_HOST_ISSUES` in `knownHostIssues.js`) is currently empty.
 
 ## What this does not do
 

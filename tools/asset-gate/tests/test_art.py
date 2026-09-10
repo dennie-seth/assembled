@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from asset_gate.art import (
     check_atlas_determinism,
@@ -11,7 +12,9 @@ from asset_gate.art import (
     check_pose_fidelity,
     check_tile_seamlessness,
     check_transition_adjacency,
+    count_pixel_deltas,
     render_rig_silhouette,
+    slice_sheet_frames,
 )
 from conftest import TEST_PALETTE_HEX, make_indexed_image
 
@@ -351,3 +354,71 @@ def test_identity_stability_catches_drift_that_frame_consistency_missed():
         frame_a, frame_b, background_index=0, region=(8, 8, 12, 12), max_histogram_distance=0.15
     )
     assert not new_gate.passed
+
+
+# ---------------------------------------------------------------------------
+# slice_sheet_frames / count_pixel_deltas (T-0349) -- the grid-slicing and
+# raw per-pixel delta primitives the machine-readable gate report is built
+# from. `count_pixel_deltas` is deliberately a different metric than
+# `check_frame_consistency`'s silhouette (fg/bg *state*) delta: it counts
+# ANY palette-index change, including a foreground pixel changing to a
+# *different* foreground index -- the number a reviewer eyeballing the raw
+# sheet by hand actually sees, per T-0349's motivating T-0259 review
+# disagreement.
+# ---------------------------------------------------------------------------
+
+
+def test_slice_sheet_frames_row_major_order():
+    arr = np.array(
+        [
+            [0, 0, 1, 1],
+            [0, 0, 1, 1],
+            [2, 2, 3, 3],
+            [2, 2, 3, 3],
+        ],
+        dtype=np.uint8,
+    )
+    sheet = make_indexed_image(arr, TEST_PALETTE_HEX)
+    frames = slice_sheet_frames(sheet, cell_width=2, cell_height=2, cols=2, rows=2)
+    assert len(frames) == 4
+    assert np.array(frames[0]).tolist() == [[0, 0], [0, 0]]
+    assert np.array(frames[1]).tolist() == [[1, 1], [1, 1]]
+    assert np.array(frames[2]).tolist() == [[2, 2], [2, 2]]
+    assert np.array(frames[3]).tolist() == [[3, 3], [3, 3]]
+
+
+def test_slice_sheet_frames_rejects_size_mismatch():
+    sheet = make_indexed_image(np.zeros((4, 4), dtype=np.uint8), TEST_PALETTE_HEX)
+    with pytest.raises(ValueError):
+        slice_sheet_frames(sheet, cell_width=3, cell_height=3, cols=2, rows=2)
+
+
+def test_count_pixel_deltas_counts_any_index_change_not_just_silhouette_state():
+    a = np.array([[1, 1], [0, 0]], dtype=np.uint8)
+    b = np.array([[2, 1], [0, 3]], dtype=np.uint8)
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    # (0,0): 1 -> 2, still foreground but a DIFFERENT index -- must count.
+    # (1,1): 0 -> 3, a real silhouette flip -- must also count.
+    assert count_pixel_deltas(frame_a, frame_b) == 2
+
+    # check_frame_consistency's silhouette-only metric only sees the (1,1)
+    # fg/bg flip -- confirms this is genuinely a different measurement.
+    silhouette = check_frame_consistency(
+        frame_a, frame_b, background_index=0, max_delta_ratio=1.0
+    )
+    assert silhouette.details["delta_pixels"] == 1
+
+
+def test_count_pixel_deltas_zero_for_identical_frames():
+    a = make_indexed_image(np.array([[1, 2], [3, 0]], dtype=np.uint8), TEST_PALETTE_HEX)
+    b = make_indexed_image(np.array([[1, 2], [3, 0]], dtype=np.uint8), TEST_PALETTE_HEX)
+    assert count_pixel_deltas(a, b) == 0
+
+
+def test_count_pixel_deltas_rejects_shape_mismatch():
+    a = make_indexed_image(np.zeros((2, 2), dtype=np.uint8), TEST_PALETTE_HEX)
+    b = make_indexed_image(np.zeros((3, 3), dtype=np.uint8), TEST_PALETTE_HEX)
+    with pytest.raises(ValueError):
+        count_pixel_deltas(a, b)

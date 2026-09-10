@@ -149,9 +149,9 @@ reproduced, because the server session that produced it was gone.
 ### The fix is not "always turn determinism on"
 
 The obvious fix — launch ComfyUI with `--deterministic` and
-`CUBLAS_WORKSPACE_CONFIG=:4096:8` permanently — was tried and **made things
-worse for the one real graph it was tested against**
-(`docs/assets/evidence/T-0272/README.md` rounds 10-12):
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` permanently — was tried against the one
+real graph it was tested on, and **did not demonstrate any coherence
+benefit** (`docs/assets/evidence/T-0272/README.md` rounds 10-12):
 
 | Regime | Reproducible across a restart? | Ever produced a coherent §24-e frame? |
 |---|---|---|
@@ -163,8 +163,13 @@ Round 12's conclusion: four regimes sampled, and none of them reliably
 reproduces a coherent frame from this particular graph — attempt 39 reads
 as a rare draw from an inherently fragile graph (dual IP-Adapter +
 ControlNet + two stacked LoRAs), not evidence that any one regime is
-"correct." Forcing determinism did not just fail to help; it actively
-destroyed the only regime that has ever produced a usable frame at all.
+"correct." **"Determinism flags broke coherence" is not an established
+finding** (T-0346): this graph's baseline coherence rate across earlier
+rounds is roughly 1 in 40, and baseline itself scored 0/8 on round 12's
+own fresh reroll — the same zero as both flagged regimes. A sample that
+small landing on zero is indistinguishable from chance at that rate.
+Forcing determinism did not help, but the evidence does not show it
+actively hurt either; it just never produced anything to evaluate.
 
 **The live regime is therefore not fixed** — it is whatever a human most
 recently, deliberately decided, recorded in
@@ -276,12 +281,14 @@ process lifetimes:
 **Baseline ComfyUI is byte-reproducible across a restart, with no flags
 set.** This falsifies the premise this card was originally written on:
 determinism flags were never needed to buy cross-restart reproducibility
-for an ordinary graph — baseline already had it. What the flags actually
-did (see the regime table above) was flatten the sampler until the §24-e
-graph became reproducibly *incoherent*. The instability T-0272/T-0317 spent
-twelve rounds chasing is therefore **a property of that graph, not of the
-server** — which is why the remaining problem belongs to **T-0327**, not
-this card. Full provenance:
+for an ordinary graph — baseline already had it. The regime table above
+shows the flags bought byte-reproducibility on the §24-e graph, but not
+coherence — and baseline itself did no better on a fresh reroll (0/8), so
+that is not evidence the flags *caused* the incoherence; this graph's
+coherence rate is simply low (roughly 1/40) under every regime measured.
+The instability T-0272/T-0317 spent twelve rounds chasing is therefore
+**a property of that graph, not of the server** — which is why the
+remaining problem belongs to **T-0327**, not this card. Full provenance:
 [`tools/board/ops/comfyui/README.md`](../tools/board/ops/comfyui/README.md).
 
 The probe is deliberately not committed as an automated test: it needs a

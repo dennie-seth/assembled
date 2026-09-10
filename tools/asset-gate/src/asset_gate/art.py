@@ -193,6 +193,48 @@ def check_orphan_pixels(
     )
 
 
+def slice_sheet_frames(
+    sheet: Image.Image,
+    cell_width: int,
+    cell_height: int,
+    cols: int,
+    rows: int,
+) -> list[Image.Image]:
+    """Crop a sprite sheet into its per-cell frames, row-major order (row 0
+    left-to-right, then row 1, ...) -- the canonical frame order every
+    per-frame gate check and report in this package assumes."""
+    expected_w, expected_h = cell_width * cols, cell_height * rows
+    if sheet.size != (expected_w, expected_h):
+        raise ValueError(
+            f"sheet is {sheet.size[0]}x{sheet.size[1]}, expected {expected_w}x{expected_h} "
+            f"for a {cols}x{rows} grid of {cell_width}x{cell_height} cells"
+        )
+    frames = []
+    for row in range(rows):
+        for col in range(cols):
+            x0, y0 = col * cell_width, row * cell_height
+            frames.append(sheet.crop((x0, y0, x0 + cell_width, y0 + cell_height)))
+    return frames
+
+
+def count_pixel_deltas(frame_a: Image.Image, frame_b: Image.Image) -> int:
+    """Count of pixels whose palette index differs between two same-shaped
+    indexed frames -- ANY change, not just a foreground/background
+    silhouette *state* flip.
+
+    Distinct from `check_frame_consistency`, which only counts a pixel if
+    its fg/bg state changed (a foreground pixel changing to a *different*
+    foreground index is invisible to it). This is the metric a reviewer
+    eyeballing a sheet by hand actually sees, and the one
+    `asset_gate.character.build_character_gate_report` (T-0349) reports per
+    adjacent frame pair.
+    """
+    a, b = _to_array(frame_a), _to_array(frame_b)
+    if a.shape != b.shape:
+        raise ValueError(f"frame shapes differ: {a.shape} vs {b.shape}")
+    return int(np.count_nonzero(a != b))
+
+
 def check_frame_consistency(
     frame_a: Image.Image,
     frame_b: Image.Image,

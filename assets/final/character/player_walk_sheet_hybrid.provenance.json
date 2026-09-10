@@ -365,5 +365,6 @@
     "loop": true
   },
   "palette_source": "assets/final/palette/home_palette.json",
-  "promoted": true
+  "promoted": true,
+  "gate_report": "assets/final/character/player_walk_sheet_hybrid.gate_report.json"
 }
