@@ -22,6 +22,22 @@ function gitBlobHash(bytes) {
   return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 }
 
+const LFS_POINTER_SIGNATURE = "version https://git-lfs.github.com/spec/v1";
+/** Real Git LFS pointer files are ~130 bytes; this is a generous ceiling before bothering to read blob content. */
+const LFS_POINTER_MAX_BYTES = 1024;
+
+/**
+ * Extracts the `oid sha256:<hex>` a Git LFS pointer file declares, or `null` if `content` isn't
+ * one. `git`'s own committed blob for an LFS-tracked path is this pointer text, not the real
+ * asset bytes (those live in LFS storage) -- see `defaultListCommittedBlobs`'s docstring for why
+ * that makes plain blob-hash matching miss every genuine LFS deliverable.
+ */
+function parseLfsPointerOid(content) {
+  if (!content.startsWith(LFS_POINTER_SIGNATURE)) return null;
+  const match = content.match(/^oid sha256:([0-9a-f]{64})$/m);
+  return match ? match[1] : null;
+}
+
 /**
  * T-0352 fix: every blob `git` has actually committed under `repoRoot`, on the current branch
  * (`git ls-tree -r HEAD`), as `{ hash, path }` pairs -- path is load-bearing, not incidental, see
@@ -37,21 +53,50 @@ function gitBlobHash(bytes) {
  * committed root `README.md` and made the gate pass for the wrong reason. Matching by content
  * closes that hole: a same-named-but-different file can never satisfy it, only a byte-identical
  * one can.
+ *
+ * Git-LFS-tracked paths get an extra `lfsOid` field. This repo puts several genuine deliverable
+ * kinds under LFS (`assets/final/audio/**`, `assets/final/lora/*.safetensors`, see
+ * `.gitattributes`), and for those, the blob `git` actually committed is the LFS *pointer* text
+ * (`version https://git-lfs.github.com/spec/v1\noid sha256:...\nsize ...`), never the real asset
+ * bytes -- those live in LFS storage, not the git object database. A plain blob-hash comparison
+ * against an attachment holding the real bytes can never match a pointer blob, so a genuinely
+ * produced, genuinely committed LFS deliverable would FAIL this gate for the same reason it's
+ * supposed to catch a *missing* one -- the T-0352 iter-3 reviewer's false positive. Entries under
+ * `LFS_POINTER_MAX_BYTES` get their content read and sniffed for the pointer signature so
+ * `hasCommittedAttachment` can additionally match an attachment by sha256 against the oid the
+ * pointer declares, which is the real asset's actual content hash.
  */
 async function defaultListCommittedBlobs(repoRoot) {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", repoRoot, "ls-tree", "-r", "HEAD"]);
-    return stdout
+    const { stdout } = await execFileAsync("git", ["-C", repoRoot, "ls-tree", "-r", "-l", "HEAD"]);
+    const entries = stdout
       .split("\n")
       .filter(Boolean)
       .map((line) => {
         const tabIndex = line.indexOf("\t");
         if (tabIndex === -1) return null;
-        const hash = line.slice(0, tabIndex).trim().split(/\s+/)[2];
+        const fields = line.slice(0, tabIndex).trim().split(/\s+/);
+        const hash = fields[2];
+        const size = Number(fields[3]);
         const filePath = line.slice(tabIndex + 1);
-        return hash && filePath ? { hash, path: filePath } : null;
+        return hash && filePath ? { hash, path: filePath, size } : null;
       })
       .filter(Boolean);
+
+    return await Promise.all(
+      entries.map(async ({ hash, path: filePath, size }) => {
+        if (!Number.isFinite(size) || size > LFS_POINTER_MAX_BYTES) {
+          return { hash, path: filePath };
+        }
+        try {
+          const { stdout: content } = await execFileAsync("git", ["-C", repoRoot, "cat-file", "-p", hash]);
+          const lfsOid = parseLfsPointerOid(content);
+          return lfsOid ? { hash, path: filePath, lfsOid } : { hash, path: filePath };
+        } catch {
+          return { hash, path: filePath };
+        }
+      })
+    );
   } catch {
     return [];
   }
@@ -121,18 +166,26 @@ function parseDeclaredDeliverablePaths(body) {
  * Whether any recorded attachment's on-disk content matches a blob `git` has actually committed
  * under `repoRoot`, at a path outside `evidenceRoot` -- see `isUnderEvidenceRoot`'s docstring for
  * why a match confined to the evidence root doesn't count.
+ *
+ * Two ways to match: the attachment's own git blob hash against a committed blob's hash, or (for
+ * a committed path that's a Git LFS pointer, see `defaultListCommittedBlobs`'s docstring) the
+ * attachment's sha256 against the oid the pointer declares -- the pointer blob's git hash can
+ * never equal the real asset bytes' git hash, since git only ever committed the pointer text.
  */
 async function hasCommittedAttachment(task, attachments, attachmentsDir, repoRoot, listCommittedBlobs, evidenceRoot) {
   if (!attachmentsDir) return false;
   const committedBlobs = await listCommittedBlobs(repoRoot);
-  const nonEvidenceHashes = new Set(
-    committedBlobs.filter((blob) => !isUnderEvidenceRoot(blob.path, evidenceRoot)).map((blob) => blob.hash)
-  );
-  if (nonEvidenceHashes.size === 0) return false;
+  const nonEvidenceBlobs = committedBlobs.filter((blob) => !isUnderEvidenceRoot(blob.path, evidenceRoot));
+  const nonEvidenceHashes = new Set(nonEvidenceBlobs.map((blob) => blob.hash));
+  const nonEvidenceLfsOids = new Set(nonEvidenceBlobs.filter((blob) => blob.lfsOid).map((blob) => blob.lfsOid));
+  if (nonEvidenceHashes.size === 0 && nonEvidenceLfsOids.size === 0) return false;
   for (const attachment of attachments) {
     try {
       const bytes = await fs.readFile(path.join(attachmentsDir, task.id, attachment.filename));
       if (nonEvidenceHashes.has(gitBlobHash(bytes))) return true;
+      if (nonEvidenceLfsOids.size > 0 && nonEvidenceLfsOids.has(createHash("sha256").update(bytes).digest("hex"))) {
+        return true;
+      }
     } catch {
       // Unreadable attachment -- already reported by the attachmentsDir cross-check above; doesn't count as a match here.
     }
