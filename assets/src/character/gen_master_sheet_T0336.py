@@ -502,13 +502,27 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     in this prompt. Attempt 13 pulls the coat weight back partway (1.8 ->
     1.6, still above attempt 11's insufficient 1.5) and, for the first
     time, gives the hood/mask clause its own emphasis (1.3) plus explicit
-    face/hair-suppression wording."""
+    face/hair-suppression wording.
+
+    Attempt 13 (seed 411721095, 429.5 total GPU-seconds) confirmed the
+    hood/mask emphasis genuinely works (clean on all 5 panels, a first) --
+    but adding a fourth emphasized clause over-saturated the prompt's
+    attention budget elsewhere: side_left_forward exploded to four figures,
+    side_neutral lost its true-profile framing, the reference-sheet/
+    tech-pack diagram defect (last seen attempts 6/7) came back, high heels
+    reappeared despite an explicit ban, and coat length regressed to
+    floor-length on two panels. Every text-side lever tried on this card's
+    persistent multi-figure defect has traded one problem for another.
+    Attempt 14 reverts coat weight fully to attempt 11's baseline, 1.6 ->
+    1.5, keeps the proven hood/mask emphasis unchanged, and moves the
+    actual multi-figure fix attempt to `CONTROLNET_STRENGTH` -- a lever
+    that doesn't compete for text attention budget at all."""
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
         "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
         f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
         "institutional green coat, (the coat cut short, ending precisely at mid-hip, hem "
-        "well above the knee, bare thigh clearly visible below the coat hem:1.6), wearing a "
+        "well above the knee, bare thigh clearly visible below the coat hem:1.5), wearing a "
         "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
         "up and forward, face completely covered by the mask, no visible hair, no visible "
         "face:1.3), boots, never high heels, flat uniform neutral grey background, flat even "
@@ -564,7 +578,16 @@ def build_single_pose_negative_prompt() -> str:
     its own positive-prompt emphasis this attempt -- see
     `build_single_pose_positive_prompt`) and explicit readable-text bans
     (existing "label, caption, illegible text, gibberish text" wording
-    evidently did not cover actually-legible rendered words)."""
+    evidently did not cover actually-legible rendered words).
+
+    Attempt 13 made the multi-figure defect WORSE, not better --
+    side_left_forward exploded to four figures once a fourth clause
+    (hood/mask) started competing for the same attention budget. Attempt
+    14 reverts this weight fully to attempt 11's original 1.3 and moves the
+    actual fix attempt to `CONTROLNET_STRENGTH` (see
+    `build_single_pose_positive_prompt`'s docstring) -- every text-side
+    weight change tried on this defect across attempts 8/11/12/13 has
+    traded one problem for another."""
     return (
         build_negative_prompt()
         + ", long coat, trench coat, ankle-length coat, floor-length coat, knee-length coat, "
@@ -579,7 +602,7 @@ def build_single_pose_negative_prompt() -> str:
         "uncovered head, (three figures, multiple figures, several figures, "
         "ensemble of characters, ghost figure, ghosting, faded duplicate figure, translucent "
         "overlay, transparent duplicate, afterimage, double exposure, doppelganger, second "
-        "figure behind, overlapping figures:1.4)"
+        "figure behind, overlapping figures:1.3)"
     )
 
 
@@ -822,11 +845,19 @@ ATTEMPT_CAP_BY_CARD: dict[str, int] = {"T-0336": 5}
 DEFAULT_ATTEMPT_CAP = 20
 
 # T-0351 (2026-09-10 amendment): pose-conditioning-only ControlNet strength/
-# end-percent for run_five_pose_attempt. 1.3/1.0 is this pipeline's own
+# end-percent for run_five_pose_attempt. 1.3/1.0 was this pipeline's own
 # proven-effective value for single-figure OpenPose pose pinning against
 # this exact checkpoint+ControlNet pair (ARM_POSE_AUTHORITY_ATTEMPT_LOG_T0249.md
-# attempt 3, promoted) -- not a fresh guess.
-CONTROLNET_STRENGTH = 1.3
+# attempt 3, promoted) -- not a fresh guess, but attempts 8/11/12/13 all
+# showed a persistent multi-figure defect on the two forward-lean side
+# panels that every text-side (CLIP emphasis) fix attempt only traded for
+# a different regression elsewhere, since every clause in the prompt
+# competes for the same attention budget. Attempt 14 raises strength to
+# 1.6 -- a lever that conditions structure, not text attention, and so
+# does not compete with any positive/negative prompt clause -- to test
+# whether more rigid adherence to the single-figure skeleton suppresses
+# the extraneous content a weaker pin leaves the sampler free to add.
+CONTROLNET_STRENGTH = 1.6
 CONTROLNET_END_PERCENT = 1.0
 
 
