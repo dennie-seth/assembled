@@ -158,6 +158,7 @@ function makeOrchestrator({ store, git, runner, hub, github, idAllocator, taskSt
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
     createRunLogFn,
     crossCheckVerdictFn: ({ verdict }) => verdict,
+    appendVerdictEntryFn: async () => {},
     ...overrides
   });
 }

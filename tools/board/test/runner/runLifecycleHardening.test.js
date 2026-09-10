@@ -97,6 +97,8 @@ function makeOrchestrator({ store, git, runner, ...overrides } = {}) {
     resolveAllowedToolsFn: () => ["Read"],
     createRunLogFn: vi.fn(async () => makeRunLog()),
     crossCheckVerdictFn: ({ verdict }) => verdict,
+    readVerdictEntriesFn: async () => [],
+    appendVerdictEntryFn: async () => {},
     writeRunStateFn: vi.fn(async () => {}),
     clearRunStateFn: vi.fn(async () => {}),
     ...overrides

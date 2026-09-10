@@ -133,14 +133,16 @@ async function nthChild(runner, n) {
   return runner.spawnedChildren[n - 1];
 }
 
-function makeOrchestrator({ store, git, runner, hub, github, idAllocator, taskStoreKind = "db", runLogs = [], ...overrides } = {}) {
+function makeOrchestrator({ store, git, runner, hub, github, idAllocator, taskStoreKind = "db", runLogs = [], verdictArchives, ...overrides } = {}) {
   const createRunLogFn = vi.fn(async () => {
     const log = makeRunLog();
     runLogs.push(log);
     return log;
   });
 
-  return new RunOrchestrator({
+  const archives = verdictArchives ?? new Map();
+
+  const orchestrator = new RunOrchestrator({
     store,
     hub: hub ?? { broadcast: vi.fn() },
     runner,
@@ -158,8 +160,16 @@ function makeOrchestrator({ store, git, runner, hub, github, idAllocator, taskSt
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
     createRunLogFn,
     crossCheckVerdictFn: ({ verdict }) => verdict,
+    readVerdictEntriesFn: async (tasksDir, id) => archives.get(id) ?? [],
+    appendVerdictEntryFn: async (tasksDir, id, entry) => {
+      const list = archives.get(id) ?? [];
+      list.push(entry);
+      archives.set(id, list);
+    },
     ...overrides
   });
+  orchestrator.testVerdictArchives = archives;
+  return orchestrator;
 }
 
 /** Drives the nth implementer+reviewer cycle to a FAIL verdict with the given reviewer notes. */
@@ -234,7 +244,8 @@ describe("RunOrchestrator -- no-progress abort on identical failure signature", 
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.attempts).toBe(MAX_AUTO_RETRY_ATTEMPTS);
-    expect(finalTask.body).toMatch(/auto-retry limit reached/i);
+    const archived = (orchestrator.testVerdictArchives.get("T-0001") ?? []).map((e) => e.text).join("\n");
+    expect(archived).toMatch(/auto-retry limit reached/i);
 
     const comment = finalTask.comments.find((c) => c.text.includes("Blocker report"));
     expect(comment).toBeTruthy();

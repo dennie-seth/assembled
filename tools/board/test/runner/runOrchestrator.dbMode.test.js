@@ -141,6 +141,8 @@ function makeOrchestrator({ store, git, runner, hub, github, taskStoreKind, runL
     // Not exercising the harness-side verdict cross-check here (see verdictCrossCheck.test.js
     // and runOrchestrator.test.js's dedicated describe block) -- default to a passthrough.
     crossCheckVerdictFn: ({ verdict }) => verdict,
+    readVerdictEntriesFn: async () => [],
+    appendVerdictEntryFn: async () => {},
     ...overrides
   });
 }

@@ -138,7 +138,9 @@ describe("RunOrchestrator escalation in real db mode -- reproduces the tasks.age
         loadRulesFn: () => [{ name: "conduct", paths: ["**"], body: "TDD." }],
         resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
         createRunLogFn: async () => makeRunLog(),
-        crossCheckVerdictFn: ({ verdict }) => verdict
+        crossCheckVerdictFn: ({ verdict }) => verdict,
+        readVerdictEntriesFn: async () => [],
+        appendVerdictEntryFn: async () => {}
       });
 
       const runPromise = orchestrator.runCard("T-0001");
