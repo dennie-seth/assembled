@@ -609,31 +609,40 @@ def build_legs_panel_positive_prompt(entity: EntitySpec) -> str:
     `entity.costume_description` (`"institutional green coat, hooded,
     white gloves"`) -- it names the coat this panel exists specifically to
     omit, so this prompt states the lower-body garment directly instead.
-    The hooded-mask head marker stays, for the same identity-continuity
-    reason every other panel keeps it, and the same isolation/hood
-    emphasis weights (1.3) as the whole-figure panels, unchanged.
 
     Attempt 16 (docs/assets/evidence/T-0351/): attempt 15's legs panel
     rendered a short hooded cape/poncho covering both thighs despite an
     explicit 'no cloak' ban -- a cape is a materially different garment
     silhouette that was never named, and the no-coat clause's 1.5 emphasis
-    evidently lost to it. Names 'cape' explicitly and raises the clause's
-    emphasis 1.5 -> 1.8, past every whole-figure panel's own 1.3 clauses, so
-    it reliably wins on the one panel where any upper-body garment is a
-    defect."""
+    evidently lost to it. That attempt raised the clause's emphasis 1.5 ->
+    1.8 and named 'cape' explicitly -- but the legs panel then regressed
+    *worse*, to a full elaborate armoured cape, confirming this card's own
+    established pattern (attempts 4/9/12/13) that higher emphasis
+    destabilises rather than fixes.
+
+    Attempt 17 (docs/assets/evidence/T-0351/README.md 'DIRECTION' section)
+    stops escalating this axis and changes the actual lever: the panel is
+    reframed as a **waist-down close-up crop** ('cropped at the waist,
+    nothing above the waist in frame') matched by a legs-only ControlNet
+    skeleton (`pose_rig_master_sheet_T0351.LEGS_KEYPOINTS_NORM`, no
+    arms/head joints) -- removing the torso/arm/head geometry the sampler
+    had been clothing, rather than continuing to out-weight it in text.
+    The hooded-mask head clause every other panel keeps is dropped
+    entirely here: asking for a head this framing structurally excludes
+    was fighting itself, part of why attempts 15-16 both rendered a full
+    head despite the panel's own 'no coat' instruction. The no-coat
+    clause's own emphasis reverts to a moderate 1.5, per the README's own
+    recommended next lever ('revert the legs panel's emphasis to 1.5, keep
+    the cape term')."""
     return (
-        f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
-        "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
-        "visible, centred, front view, standing pose, both arms hanging straight down at the "
-        "sides, legs apart, weight evenly balanced, "
+        f"{entity.trigger_token}, (close-up crop from the waist down, cropped at the waist, "
+        "only the lower body visible in frame, nothing above the waist in frame:1.4), "
+        "both legs clearly visible, weight evenly balanced, legs apart, "
         "wearing military trousers and lace-up combat boots, trousers tucked into the boots, "
         "(no coat, no jacket, no cloak, no cape, no poncho, bare lower body garment only, both "
         "thighs and both lower legs fully visible and unobstructed, nothing covering the legs, "
-        "nothing draped over the shoulders or hips:1.8), wearing a "
-        "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
-        "up and forward, face completely covered by the mask, no visible hair, no visible "
-        "face:1.3), never high heels, flat uniform neutral grey background, flat even "
-        "lighting, no cast shadow, no perspective, clean readable outline"
+        "nothing draped over the hips:1.5), never high heels, flat uniform neutral grey "
+        "background, flat even lighting, no cast shadow, no perspective, clean readable outline"
     )
 
 
@@ -743,11 +752,22 @@ def build_legs_panel_negative_prompt() -> str:
     canonical, correct result. Attempt 16 (docs/assets/evidence/T-0351/)
     adds 'cape'/'poncho'/'mantle'/'shawl' -- attempt 15 rendered a short
     hooded cape covering both thighs, a garment silhouette the original
-    'cloak' ban evidently did not cover."""
+    'cloak' ban evidently did not cover.
+
+    Attempt 17: the panel's positive prompt (`build_legs_panel_positive_prompt`)
+    is redesigned to a waist-down close-up crop with no head/hood clause at
+    all, matched by a legs-only ControlNet skeleton -- but attempts 15-16
+    both rendered a complete head/hood/torso despite no such content ever
+    being asked for in the (then whole-figure) positive prompt, so the
+    framing instruction alone is not trusted to suppress it. Adds explicit
+    bans on any head, face, hood, mask or torso/upper-body content bleeding
+    into frame."""
     return (
         build_single_pose_negative_prompt()
         + ", coat, long coat, trench coat, jacket, cloak, cape, poncho, mantle, shawl, robe, "
-        "tunic, skirt, dress, apron, garment covering the thighs, garment covering the legs"
+        "tunic, skirt, dress, apron, garment covering the thighs, garment covering the legs, "
+        "head, face, hood, hooded mask, mask, eye lenses, goggles, torso, upper body, chest, "
+        "shoulders, arms, hands, gloves, full body shot, head to toe, whole figure"
     )
 
 
@@ -1423,6 +1443,7 @@ def run_five_pose_attempt(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     concept_filename = upload_image(entity.concept_sheet_path)
+    resolved_concept_crop_box = concept_crop_box_for(card, entity_name)
 
     pose_records = []
     panel_paths = []
@@ -1456,7 +1477,7 @@ def run_five_pose_attempt(
             height=height,
             identity_lora_name=identity_lora_name,
             identity_lora_weight=resolved_identity_weight,
-            concept_crop_box=entity.concept_crop_box,
+            concept_crop_box=resolved_concept_crop_box,
             pose_skeleton_filename=skeleton_filename,
             controlnet_strength=CONTROLNET_STRENGTH,
             controlnet_end=CONTROLNET_END_PERCENT,
@@ -1518,7 +1539,7 @@ def run_five_pose_attempt(
         ),
         "ip_adapter": IPADAPTER_NAME,
         "ip_adapter_weight": ipadapter_weight,
-        "concept_crop_box": entity.concept_crop_box,
+        "concept_crop_box": resolved_concept_crop_box,
         "controlnet": CONTROLNET_NAME,
         "controlnet_strength": CONTROLNET_STRENGTH,
         "controlnet_end_percent": CONTROLNET_END_PERCENT,
@@ -1643,6 +1664,44 @@ def limb_crop_boxes_for(
     if card in CROP_BOXES_BY_CARD:
         return CROP_BOXES_BY_CARD[card]
     return ENTITIES[entity_name].limb_crop_boxes
+
+
+# T-0351 attempt 17 (docs/assets/evidence/T-0351/README.md "DIRECTION"
+# section, and root_cause_concept_crop_box_is_itself_a_multi_panel_grid.png
+# committed alongside it): #365's own concept_crop_box (0, 0, 615, 615) is
+# itself a multi-panel grid -- three jacket-detail panels, a swatch row, and
+# the start of a whole-figure row -- not an isolated single figure.
+# IP-Adapter's IPAdapterAdvanced node conditions on that pixel content
+# directly (weight_type="linear", applied across the full 0.0-1.0 sampling
+# range), which is the mechanical explanation this card's own evidence gives
+# for 16 attempts of persistent multi-figure/wrong-facing/inconsistent-
+# background output, worst specifically on the two panels
+# (side_left_forward, side_right_forward) ControlNet's skeleton alone never
+# fully overrode.
+#
+# Measured by opening assets/src/concept/player_character_concept_sheet_v1.png
+# directly (1024x1024): the sheet's third row, first whole-figure column --
+# x:[0,190), y:[245,510) roughly -- is a single, genuinely isolated
+# green-coated figure with no neighbouring figure, no caption text, and no
+# accessory inset bleeding into frame. (x, y, width, height) = (25, 279,
+# 153, 219) is a tight crop of exactly that figure (margins verified by
+# rendering the crop and inspecting it directly, not by measurement alone).
+CONCEPT_CROP_BOX_BY_CARD: dict[str, tuple[int, int, int, int]] = {
+    "T-0351": (25, 279, 153, 219),
+}
+
+
+def concept_crop_box_for(
+    card: str, entity_name: str
+) -> tuple[int, int, int, int] | None:
+    """Resolves which region of the concept sheet IP-Adapter conditions on
+    -- a card-specific override (same CROP_BOXES_BY_CARD pattern
+    `limb_crop_boxes_for` already establishes) if one is registered, else
+    the entity's own default (`EntitySpec.concept_crop_box`, T-0336's
+    unchanged behaviour)."""
+    if card in CONCEPT_CROP_BOX_BY_CARD:
+        return CONCEPT_CROP_BOX_BY_CARD[card]
+    return ENTITIES[entity_name].concept_crop_box
 
 
 def main() -> None:

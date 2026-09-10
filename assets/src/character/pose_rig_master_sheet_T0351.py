@@ -53,13 +53,18 @@ Per-pose construction:
     both legs sit together on the fore-aft line (no forward/back stagger)
     -- the standing keyframe anchor, distinct from panels 3/4's walking
     stance.
-  - **legs** -- the dedicated-legs-panel amendment (2026-09-10): a sixth
-    panel, front-facing like the T-pose but with both arms hanging straight
-    down at the sides (so nothing overlaps the outer thigh/knee/ankle
-    region a crop needs) and the same wide leg spread as `front_tpose` --
-    this panel exists purely to source `upper_leg`/`lower_leg` from a
-    generation with no coat at all, so a wide, unambiguous stance matters
-    more here than for the whole-figure panels.
+  - **legs** -- the dedicated-legs-panel amendment (2026-09-10), redesigned
+    at attempt 17 (docs/assets/evidence/T-0351/README.md "DIRECTION"
+    section) from a front-facing whole-figure topology to a waist-down
+    close-up crop: every upper-body joint collapses to one point at the
+    top edge of the frame (no torso/arm geometry at all), while hip/knee/
+    ankle joints fill the rest of it, spread at least as wide as
+    `front_tpose`'s own ankle spread. This panel exists purely to source
+    `upper_leg`/`lower_leg` from a generation with no coat at all --
+    attempts 15-16 proved a whole-figure topology plus prompt-only "no
+    coat" wording (even escalated to 1.8 emphasis) could not stop the
+    sampler from dressing the figure anyway; removing the torso/arm
+    geometry the sampler would otherwise clothe is the structural fix.
 
 `render_pose_skeleton` reuses `gen_arm_a_idle_T0228.draw_pose_skeleton_cell`
 directly, unchanged -- the existing OpenPose-format renderer this pipeline
@@ -192,27 +197,45 @@ SIDE_NEUTRAL_KEYPOINTS_NORM: dict[int, Point] = {
     _L_EAR: (0.495, 0.100),
 }
 
-# ── Panel 6: legs -- front-facing, arms down clear of the thighs, legs ────
-# spread as wide as the T-pose so upper_leg/lower_leg crop cleanly.
+# ── Panel 6: legs -- attempt-17 redesign, a waist-down close-up crop. ─────
+# Attempts 15-16 kept this panel as a front-facing *whole-figure* topology
+# (arms down, head up top, same stance as front_tpose) and both real
+# executions still rendered a complete coated, hooded figure despite an
+# explicit, increasingly emphasized "no coat" prompt clause (1.5 -> 1.8,
+# see gen_master_sheet_T0336.build_legs_panel_positive_prompt's docstring)
+# -- text was fighting a skeleton that gave the sampler a full torso/arm/
+# head to draw over, and the 1.8 escalation regressed to an elaborate
+# armoured cape, worse than attempt 15's partial cape leak
+# (docs/assets/evidence/T-0351/README.md). The README's own "DIRECTION"
+# section named the fix directly: "a legs-only ControlNet skeleton (no
+# arms/head joints)" rather than another emphasis escalation on a closed
+# axis. Every upper-body joint (nose, neck, both shoulders/elbows/wrists,
+# both eyes/ears) collapses to the exact same point at the very top edge of
+# the frame -- a zero-length, effectively invisible mark, not a torso/arm
+# shape ControlNet could give the sampler a reason to clothe. Hip, knee and
+# ankle joints fill the rest of the frame, spread at least as wide as
+# front_tpose's own ankle spread, with hips sitting close to the top edge
+# so the skeleton itself reads as "cropped at the waist".
+_LEGS_UPPER_BODY_COLLAPSE_POINT: Point = (0.500, 0.025)
 LEGS_KEYPOINTS_NORM: dict[int, Point] = {
-    _NOSE: (0.500, 0.095),
-    _NECK: (0.500, 0.210),
-    _R_SHOULDER: (0.417, 0.225),
-    _R_ELBOW: (0.430, 0.400),
-    _R_WRIST: (0.425, 0.560),
-    _L_SHOULDER: (0.583, 0.225),
-    _L_ELBOW: (0.570, 0.400),
-    _L_WRIST: (0.575, 0.560),
-    _R_HIP: (0.446, 0.570),
-    _R_KNEE: (0.400, 0.750),
-    _R_ANKLE: (0.320, 0.930),
-    _L_HIP: (0.554, 0.570),
-    _L_KNEE: (0.600, 0.750),
-    _L_ANKLE: (0.680, 0.930),
-    _R_EYE: (0.476, 0.075),
-    _L_EYE: (0.524, 0.075),
-    _R_EAR: (0.452, 0.090),
-    _L_EAR: (0.548, 0.090),
+    _NOSE: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _NECK: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _R_SHOULDER: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _R_ELBOW: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _R_WRIST: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _L_SHOULDER: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _L_ELBOW: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _L_WRIST: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _R_HIP: (0.380, 0.090),
+    _R_KNEE: (0.320, 0.520),
+    _R_ANKLE: (0.220, 0.960),
+    _L_HIP: (0.620, 0.090),
+    _L_KNEE: (0.680, 0.520),
+    _L_ANKLE: (0.780, 0.960),
+    _R_EYE: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _L_EYE: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _R_EAR: _LEGS_UPPER_BODY_COLLAPSE_POINT,
+    _L_EAR: _LEGS_UPPER_BODY_COLLAPSE_POINT,
 }
 
 # Keyed identically to gen_master_sheet_T0336.POSE_SPECS -- the CLI/attempt
