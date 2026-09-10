@@ -19,9 +19,17 @@
  * always lands in a LATER event and is invisible here, giving db mode the same anti-retroactive
  * guarantee readTaskBodyAtMergeBase gives fs mode.
  */
-export function readTaskBodyBeforeRun(db, id) {
+/**
+ * The card_events row marking the start of the current attempt -- the second-most-recent status
+ * transition, i.e. the entry into `in-progress` that immediately preceded the entry into
+ * `validation` that always precedes a `checkDeliverable.js` invocation (see this file's own
+ * top-of-file docstring for why that ordering is guaranteed). `null` when fewer than two status
+ * transitions exist, so both `readTaskBodyBeforeRun` and `readRunStartTimestamp` share one safe
+ * "unknown run start" default rather than two copies of the same query and filter.
+ */
+function findRunStartTransition(db, id) {
   const rows = db
-    .prepare("SELECT action, changed, body FROM card_events WHERE task_id = ? ORDER BY id DESC")
+    .prepare("SELECT action, changed, body, created_at FROM card_events WHERE task_id = ? ORDER BY id DESC")
     .all(id);
 
   const statusTransitions = rows.filter((row) => {
@@ -37,9 +45,21 @@ export function readTaskBodyBeforeRun(db, id) {
   // the same safe default readTaskBodyAtMergeBase uses for an unresolvable git ref: the caller
   // (checkDeliverable.js) falls through to the plain artifact-required check rather than ever
   // treating "unknown" as "pre-registered".
-  if (statusTransitions.length < 2) {
-    return "";
-  }
+  return statusTransitions.length < 2 ? null : statusTransitions[1];
+}
 
-  return statusTransitions[1].body;
+export function readTaskBodyBeforeRun(db, id) {
+  return findRunStartTransition(db, id)?.body ?? "";
+}
+
+/**
+ * T-0354: the freshness gate's db-mode "run start" boundary -- the wall-clock counterpart to
+ * `readTaskBodyBeforeRun`'s body snapshot, from the exact same event (`card_events.created_at` is
+ * stamped by `dbTaskStore.js` with `new Date().toISOString()` on every transition). Precise per
+ * *attempt*, not per card: a retry's own `in-progress` re-entry is a later, distinct event, so a
+ * stale artifact from an earlier, already-failed attempt can never be mistaken for evidence this
+ * attempt invoked the model.
+ */
+export function readRunStartTimestamp(db, id) {
+  return findRunStartTransition(db, id)?.created_at ?? "";
 }

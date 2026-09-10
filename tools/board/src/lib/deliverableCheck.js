@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { checkFindingWithEvidence, readSection, parseFindingEvidencePaths } from "./preRegisteredFinding.js";
 import { DEFAULT_EVIDENCE_ROOT } from "./evidencePromotion.js";
+import { checkArtifactFreshness, defaultListCommitsSince } from "./artifactFreshness.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -172,25 +173,40 @@ function parseDeclaredDeliverablePaths(body) {
  * attachment's sha256 against the oid the pointer declares -- the pointer blob's git hash can
  * never equal the real asset bytes' git hash, since git only ever committed the pointer text.
  */
-async function hasCommittedAttachment(task, attachments, attachmentsDir, repoRoot, listCommittedBlobs, evidenceRoot) {
-  if (!attachmentsDir) return false;
+/**
+ * T-0354: returns the actual matched committed path(s), not just a boolean -- the freshness check
+ * needs to know exactly which path(s) the existence check just verified, so it can ask "was one of
+ * *these* touched since this run started" instead of re-deriving the match itself. Empty array
+ * means no match, preserving `hasCommittedAttachment`'s original boolean semantics via `.length > 0`.
+ */
+async function findCommittedAttachmentMatches(task, attachments, attachmentsDir, repoRoot, listCommittedBlobs, evidenceRoot) {
+  if (!attachmentsDir) return [];
   const committedBlobs = await listCommittedBlobs(repoRoot);
   const nonEvidenceBlobs = committedBlobs.filter((blob) => !isUnderEvidenceRoot(blob.path, evidenceRoot));
-  const nonEvidenceHashes = new Set(nonEvidenceBlobs.map((blob) => blob.hash));
-  const nonEvidenceLfsOids = new Set(nonEvidenceBlobs.filter((blob) => blob.lfsOid).map((blob) => blob.lfsOid));
-  if (nonEvidenceHashes.size === 0 && nonEvidenceLfsOids.size === 0) return false;
+  const pathsByHash = new Map();
+  const pathsByLfsOid = new Map();
+  for (const blob of nonEvidenceBlobs) {
+    if (!pathsByHash.has(blob.hash)) pathsByHash.set(blob.hash, []);
+    pathsByHash.get(blob.hash).push(blob.path);
+    if (blob.lfsOid) {
+      if (!pathsByLfsOid.has(blob.lfsOid)) pathsByLfsOid.set(blob.lfsOid, []);
+      pathsByLfsOid.get(blob.lfsOid).push(blob.path);
+    }
+  }
+  if (pathsByHash.size === 0 && pathsByLfsOid.size === 0) return [];
+
+  const matched = new Set();
   for (const attachment of attachments) {
     try {
       const bytes = await fs.readFile(path.join(attachmentsDir, task.id, attachment.filename));
-      if (nonEvidenceHashes.has(gitBlobHash(bytes))) return true;
-      if (nonEvidenceLfsOids.size > 0 && nonEvidenceLfsOids.has(createHash("sha256").update(bytes).digest("hex"))) {
-        return true;
-      }
+      for (const matchedPath of pathsByHash.get(gitBlobHash(bytes)) ?? []) matched.add(matchedPath);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      for (const matchedPath of pathsByLfsOid.get(sha256) ?? []) matched.add(matchedPath);
     } catch {
       // Unreadable attachment -- already reported by the attachmentsDir cross-check above; doesn't count as a match here.
     }
   }
-  return false;
+  return [...matched];
 }
 
 /**
@@ -240,7 +256,9 @@ export async function checkDeliverable(
     repoRoot,
     fileExists = defaultFileExists,
     listCommittedBlobs = defaultListCommittedBlobs,
-    evidenceRoot = DEFAULT_EVIDENCE_ROOT
+    evidenceRoot = DEFAULT_EVIDENCE_ROOT,
+    runStartTime,
+    listCommitsSince = defaultListCommitsSince
   } = {}
 ) {
   if (!task || (task.deliverable_type !== "artifact" && !requireArtifact)) {
@@ -250,6 +268,7 @@ export async function checkDeliverable(
   const errors = [];
   const attachments = Array.isArray(task.attachments) ? task.attachments : [];
   let attachmentsOk = attachments.length > 0;
+  let verifiedPaths = [];
 
   if (attachments.length === 0) {
     errors.push(
@@ -278,20 +297,46 @@ export async function checkDeliverable(
           attachmentsOk = false;
         }
       }
-    } else if (
-      attachments.length > 0 &&
-      !(await hasCommittedAttachment(task, attachments, attachmentsDir, repoRoot, listCommittedBlobs, evidenceRoot))
-    ) {
-      errors.push(
-        `Card ${task.id} has ${attachments.length} attachment(s) recorded, but none of their content matches a file ` +
-          `actually committed on the branch outside "${evidenceRoot}" -- an attachment alone (including an ` +
-          `evidence/failed-attempt upload, which the board attachments API is also used for, and which T-0314's ` +
-          `evidence-promotion mechanism routinely commits under "${evidenceRoot}" itself) is not proof a deliverable ` +
-          `was produced, and neither is a same-named-but-different file or evidence that only ever landed in the ` +
-          `evidence root. Either declare the deliverable's expected path under a "${DELIVERABLE_HEADING}" section, or ` +
-          `commit the actual deliverable file (outside "${evidenceRoot}") and record it as an attachment.`
+      if (attachmentsOk) {
+        verifiedPaths = declaredPaths;
+      }
+    } else if (attachments.length > 0) {
+      const matchedPaths = await findCommittedAttachmentMatches(
+        task,
+        attachments,
+        attachmentsDir,
+        repoRoot,
+        listCommittedBlobs,
+        evidenceRoot
       );
+      if (matchedPaths.length === 0) {
+        errors.push(
+          `Card ${task.id} has ${attachments.length} attachment(s) recorded, but none of their content matches a file ` +
+            `actually committed on the branch outside "${evidenceRoot}" -- an attachment alone (including an ` +
+            `evidence/failed-attempt upload, which the board attachments API is also used for, and which T-0314's ` +
+            `evidence-promotion mechanism routinely commits under "${evidenceRoot}" itself) is not proof a deliverable ` +
+            `was produced, and neither is a same-named-but-different file or evidence that only ever landed in the ` +
+            `evidence root. Either declare the deliverable's expected path under a "${DELIVERABLE_HEADING}" section, or ` +
+            `commit the actual deliverable file (outside "${evidenceRoot}") and record it as an attachment.`
+        );
+        attachmentsOk = false;
+      } else {
+        verifiedPaths = matchedPaths;
+      }
+    }
+  }
+
+  // T-0354: existence is necessary but not sufficient -- the verified path(s) above must also
+  // have been touched by a commit made since *this* run started, or a deliverable promoted by an
+  // earlier run (or never regenerated at all) can rescue a run that never invoked the model. Only
+  // reached once the existence check already passed, and only fires when the caller supplied a
+  // run-start boundary -- every pre-T-0354 call site (no runStartTime) keeps its exact prior
+  // behaviour.
+  if (attachmentsOk && verifiedPaths.length > 0) {
+    const freshness = await checkArtifactFreshness({ task, verifiedPaths, runStartTime, repoRoot, listCommitsSince });
+    if (freshness.applicable && !freshness.ok) {
       attachmentsOk = false;
+      errors.push(...freshness.errors);
     }
   }
 
