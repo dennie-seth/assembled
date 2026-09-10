@@ -481,13 +481,22 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     explanation for both regressions landing together. Attempt 10 isolates
     the variables attempt 9 conflated: reverts to "coat" wording and
     attempt 8's own isolation weight (1.3, proven safe), and changes only
-    the coat-length weight, 1.3 -> 1.5."""
+    the coat-length weight, 1.3 -> 1.5.
+
+    Attempt 11 (this card's first real execution of the above, seed
+    356237921, 444.7 total GPU-seconds) proved ControlNet reliably forces
+    pose/single-figure count on 3 of 5 panels (front_tpose, back_tpose,
+    side_neutral all came back clean) -- but the coat still ran well past
+    mid-hip on every panel even at 1.5 emphasis, worse than attempts 3/5's
+    plain-1.3-emphasis prompt-only result. Attempt 12 raises the
+    coat-length weight again, 1.5 -> 1.8 -- isolation stays at 1.3,
+    unchanged, since it is not implicated in this defect."""
     return (
         f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
         "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
         f"visible, centred, {pose.pose_clause}, {entity.costume_description}, "
         "institutional green coat, (the coat cut short, ending precisely at mid-hip, hem "
-        "well above the knee, bare thigh clearly visible below the coat hem:1.5), wearing a "
+        "well above the knee, bare thigh clearly visible below the coat hem:1.8), wearing a "
         "hooded mask with two dark round visible eye lenses, not a blank void, boots, never "
         "high heels, flat uniform neutral grey background, flat even lighting, no cast "
         "shadow, no perspective, clean readable outline"
@@ -523,7 +532,14 @@ def build_single_pose_negative_prompt() -> str:
     length in attempts 3/5 is applied here too, on this card's own
     anti-multi-figure clause (`MAIN_NEGATIVE`'s shared "two figures, ...
     group of people" wording is left unweighted/untouched, since it's
-    reused across every card in this pipeline)."""
+    reused across every card in this pipeline).
+
+    Attempt 11 (see `build_single_pose_positive_prompt`'s docstring) still
+    showed a ghosting defect on side_left_forward and side_right_forward at
+    1.3 weight -- a faded, translucent second or third figure overlapping
+    the main one, distinct from attempt 8's opaque multi-figure regression
+    and not named by any existing term. Attempt 12 raises the weight to 1.6
+    and adds terms for this specific defect."""
     return (
         build_negative_prompt()
         + ", long coat, trench coat, ankle-length coat, floor-length coat, knee-length coat, "
@@ -533,7 +549,9 @@ def build_single_pose_negative_prompt() -> str:
         "photos, multiple angles, comparison layout, inset panel, exploded view, contact "
         "sheet, grid of images, clothing flat lay, flat lay, label, caption, illegible text, "
         "gibberish text, UI mockup, (three figures, multiple figures, several figures, "
-        "ensemble of characters:1.3)"
+        "ensemble of characters, ghost figure, ghosting, faded duplicate figure, translucent "
+        "overlay, transparent duplicate, afterimage, double exposure, doppelganger, second "
+        "figure behind, overlapping figures:1.6)"
     )
 
 

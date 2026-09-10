@@ -484,7 +484,7 @@ def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> No
     assert "exactly one" in prompt.lower() and "view" in prompt.lower()
     assert ":1.3)" in prompt, "isolation clause must stay at attempt 8's proven-safe 1.3"
     assert ":1.8)" in prompt, "coat-length clause must be emphasized at 1.8 (attempt 12)"
-    assert ":1.5)" not in prompt, "attempt 11's 1.5 coat weight must be fully replaced, not added to"
+    assert ":1.5)" not in prompt, "attempt 11's 1.5 coat weight must be fully replaced"
     assert "jacket" not in prompt.lower(), (
         "attempt 9's 'jacket' reframing is implicated in its identity drift -- revert to 'coat'"
     )
@@ -536,7 +536,7 @@ def test_build_single_pose_negative_prompt_emphasizes_single_figure_after_attemp
     duplicate, translucent overlay, afterimage, double exposure)."""
     negative = gen.build_single_pose_negative_prompt()
     assert ":1.6)" in negative, "multi-figure ban must be raised to 1.6 (attempt 12)"
-    assert ":1.3)" not in negative, "attempt 11's 1.3 multi-figure weight must be replaced, not kept"
+    assert ":1.3)" not in negative, "attempt 11's 1.3 multi-figure weight must be replaced"
     assert "figures" in negative.lower()
     assert "ghost figure" in negative.lower() or "ghosting" in negative.lower()
     assert "faded duplicate" in negative.lower() or "translucent" in negative.lower()
