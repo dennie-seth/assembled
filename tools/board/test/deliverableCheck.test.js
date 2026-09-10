@@ -203,4 +203,138 @@ describe("checkDeliverable", () => {
       expect(report.errors.join(" ")).toMatch(/no attachments recorded/i);
     });
   });
+
+  describe("'## Deliverable' section (T-0352) -- a declared, committed path distinguishes the deliverable from evidence attachments", () => {
+    let dir;
+
+    afterEach(async () => {
+      if (dir) await fs.rm(dir, { recursive: true, force: true });
+    });
+
+    function evidenceAttachments(count) {
+      return Array.from({ length: count }, (_, i) => ({ filename: `attempt_${i + 1}_main.png` }));
+    }
+
+    async function writeAttachments(attachmentsDir, id, attachments) {
+      const cardDir = path.join(attachmentsDir, id);
+      await fs.mkdir(cardDir, { recursive: true });
+      for (const a of attachments) {
+        await fs.writeFile(path.join(cardDir, a.filename), "fake bytes");
+      }
+    }
+
+    it("T-0351 regression: fails when six evidence PNGs are attached (and present on disk) but the declared deliverable was never committed", async () => {
+      dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+      const attachmentsDir = path.join(dir, "attachments");
+      const repoRoot = path.join(dir, "repo");
+      await fs.mkdir(repoRoot, { recursive: true });
+
+      const attachments = evidenceAttachments(6);
+      await writeAttachments(attachmentsDir, "T-0351", attachments);
+
+      const body =
+        "## Deliverable\n`assets/final/character/t0351_master_sheet.png`\n\n" +
+        "## Context\nSix failed attempts, no sheet ever assembled.\n";
+
+      const report = await checkDeliverable(
+        task({ id: "T-0351", deliverable_type: "artifact", attachments, body }),
+        { attachmentsDir, repoRoot }
+      );
+
+      expect(report.applicable).toBe(true);
+      expect(report.ok).toBe(false);
+      expect(report.errors.join(" ")).toMatch(/assets\/final\/character\/t0351_master_sheet\.png/);
+      expect(report.errors.join(" ")).toMatch(/Deliverable/);
+    });
+
+    it("passes a genuine artifact card once the declared deliverable is actually committed, even alongside extra evidence attachments", async () => {
+      dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+      const attachmentsDir = path.join(dir, "attachments");
+      const repoRoot = path.join(dir, "repo");
+      const sheetDir = path.join(repoRoot, "assets", "final", "character");
+      await fs.mkdir(sheetDir, { recursive: true });
+      await fs.writeFile(path.join(sheetDir, "t0351_master_sheet.png"), "real sheet bytes");
+
+      const attachments = [...evidenceAttachments(2), { filename: "t0351_master_sheet.png" }];
+      await writeAttachments(attachmentsDir, "T-0351", attachments);
+
+      const body = "## Deliverable\n`assets/final/character/t0351_master_sheet.png`\n";
+
+      const report = await checkDeliverable(
+        task({ id: "T-0351", deliverable_type: "artifact", attachments, body }),
+        { attachmentsDir, repoRoot }
+      );
+
+      expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+    });
+
+    it("multi-artifact cards: fails naming exactly the one declared path still missing, passes once every declared path is committed", async () => {
+      dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+      const attachmentsDir = path.join(dir, "attachments");
+      const repoRoot = path.join(dir, "repo");
+      const finalDir = path.join(repoRoot, "assets", "final", "pose-set");
+      await fs.mkdir(finalDir, { recursive: true });
+      await fs.writeFile(path.join(finalDir, "idle.png"), "idle bytes");
+      await fs.writeFile(path.join(finalDir, "walk.png"), "walk bytes");
+
+      const attachments = [{ filename: "idle.png" }, { filename: "walk.png" }, { filename: "run.png" }];
+      await writeAttachments(attachmentsDir, "T-0400", attachments);
+
+      const body =
+        "## Deliverable\n" +
+        "`assets/final/pose-set/idle.png`\n" +
+        "`assets/final/pose-set/walk.png`\n" +
+        "`assets/final/pose-set/run.png`\n";
+
+      const failing = await checkDeliverable(
+        task({ id: "T-0400", deliverable_type: "artifact", attachments, body }),
+        { attachmentsDir, repoRoot }
+      );
+      expect(failing.ok).toBe(false);
+      expect(failing.errors.join(" ")).toMatch(/pose-set\/run\.png/);
+      expect(failing.errors.join(" ")).not.toMatch(/pose-set\/idle\.png/);
+
+      await fs.writeFile(path.join(finalDir, "run.png"), "run bytes");
+
+      const passing = await checkDeliverable(
+        task({ id: "T-0400", deliverable_type: "artifact", attachments, body }),
+        { attachmentsDir, repoRoot }
+      );
+      expect(passing).toEqual({ ok: true, applicable: true, errors: [] });
+    });
+
+    it("is opt-in: a card with no '## Deliverable' section is unaffected even when repoRoot is given (legacy behaviour preserved)", async () => {
+      dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+      const attachmentsDir = path.join(dir, "attachments");
+      const repoRoot = path.join(dir, "repo");
+      await fs.mkdir(repoRoot, { recursive: true });
+
+      const attachments = [{ filename: "a.png" }];
+      await writeAttachments(attachmentsDir, "T-0136", attachments);
+
+      const report = await checkDeliverable(
+        task({ deliverable_type: "artifact", attachments, body: "## Context\nno deliverable section here\n" }),
+        { attachmentsDir, repoRoot }
+      );
+      expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+    });
+
+    it("does not break the T-0342 finding-with-evidence route for a card with no '## Deliverable' section", async () => {
+      dir = await fs.mkdtemp(path.join(os.tmpdir(), "deliverable-check-"));
+      const repoRoot = path.join(dir, "repo");
+      const evidenceDir = path.join(repoRoot, "docs", "assets", "evidence", "T-0259");
+      await fs.mkdir(evidenceDir, { recursive: true });
+      await fs.writeFile(path.join(evidenceDir, "attempt_8_main.png"), "evidence bytes");
+
+      const preRegisteredBefore = `${PRE_REGISTRATION_HEADING}\nIf X, the arm is falsified.\n`;
+      const decisiveFindingBody = `${FINDING_HEADING}\nThe result is decisive: falsified. See \`docs/assets/evidence/T-0259/attempt_8_main.png\`.\n`;
+
+      const report = await checkDeliverable(
+        task({ id: "T-0259", deliverable_type: "artifact", attachments: [], body: decisiveFindingBody }),
+        { beforeBody: preRegisteredBefore, repoRoot }
+      );
+
+      expect(report).toEqual({ ok: true, applicable: true, errors: [] });
+    });
+  });
 });

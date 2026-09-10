@@ -419,6 +419,14 @@ describe("buildReviewerPrompt -- deliverable artifact check (deliverable_type: '
     });
     expect(prompt).toMatch(/artifact-producing path/);
   });
+
+  it("T-0352: states the gate is necessary but not sufficient, and that the deliverable path must still be confirmed independently", () => {
+    const task = { ...TASK, deliverable_type: "artifact" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toMatch(/necessary( to run)?,? but not sufficient/i);
+    expect(prompt.toLowerCase()).toContain("confirm");
+    expect(prompt).toMatch(/T-0351/);
+  });
 });
 
 describe("buildReviewerPrompt -- finding-with-evidence PASS distinction (T-0342)", () => {
