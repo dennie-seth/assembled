@@ -470,3 +470,74 @@ def test_run_five_pose_attempt_is_registered_for_this_cards_generation_mode() ->
     """`main()`'s --five-pose flag must resolve to this function for T-0351
     -- a smoke check that the CLI wiring points at the right callable."""
     assert callable(gen.run_five_pose_attempt)
+
+
+# ── Run-2 reviewer verdict: two concrete blockers, both fixed here ─────────
+# (1) check_attempt_cap was still hard-capped at 5 for every card, inherited
+# unmodified from T-0336's own ~25-50 GPU-second budget -- lever 2 needs a
+# 6th+ attempt (five separate generations per attempt, not one), and this
+# card's own text imposes no attempt cap of its own. (2) main()'s
+# --promote-attempt branch threaded no limb_crop_boxes, so promotion always
+# fell back to PLAYER_LIMB_CROP_BOXES -- #365's hand-tuned single-frame boxes,
+# which have "No upper_leg key" by their own comment and are measured against
+# a single 1024x1024 image, not this card's 5120x1024 five-panel row.
+
+
+def test_check_attempt_cap_default_card_still_caps_at_five() -> None:
+    """Backward compatibility: an un-carded call (T-0336's own call sites)
+    keeps its original ~25-50 GPU-second, 5-attempt budget unchanged."""
+    gen.check_attempt_cap(1)
+    gen.check_attempt_cap(5)  # must not raise
+    with pytest.raises(SystemExit):
+        gen.check_attempt_cap(6)
+
+
+def test_check_attempt_cap_t0336_explicit_card_still_caps_at_five() -> None:
+    gen.check_attempt_cap(5, card="T-0336")
+    with pytest.raises(SystemExit):
+        gen.check_attempt_cap(6, card="T-0336")
+
+
+def test_check_attempt_cap_t0351_allows_a_sixth_attempt() -> None:
+    """T-0351's own card text states this card imposes no attempt cap of its
+    own (run-2 reviewer verdict) -- lever 2 (five separate generations per
+    attempt) needs to keep going past the T-0336-inherited cap of 5."""
+    gen.check_attempt_cap(6, card="T-0351")  # must not raise
+
+
+def test_check_attempt_cap_t0351_still_has_a_runaway_backstop() -> None:
+    """No attempt cap of *this card's own* doesn't mean no cap at all --
+    conduct.md's "a small job, not a sweep" spirit still applies generically
+    to any card without its own stated budget."""
+    gen.check_attempt_cap(gen.DEFAULT_ATTEMPT_CAP, card="T-0351")  # must not raise
+    with pytest.raises(SystemExit):
+        gen.check_attempt_cap(gen.DEFAULT_ATTEMPT_CAP + 1, card="T-0351")
+
+
+def test_limb_crop_boxes_for_t0336_defaults_to_entity_registered_boxes() -> None:
+    """Unchanged from #365: no card-specific override registered for
+    T-0336, so promotion falls back to the entity's own hand-tuned boxes."""
+    assert gen.limb_crop_boxes_for("T-0336", "player") == gen.PLAYER_LIMB_CROP_BOXES
+
+
+def test_limb_crop_boxes_for_t0351_is_registered_and_includes_upper_leg() -> None:
+    """The specific gap #365 could not fill -- see PLAYER_LIMB_CROP_BOXES's
+    own comment, "No upper_leg key". This card's mid-hip coat cap exists to
+    make upper_leg separable, so its own crop-box registry must include it,
+    measured against the actual 5120x1024 five-panel composited row (not
+    #365's single 1024x1024 frame)."""
+    boxes = gen.limb_crop_boxes_for("T-0351", "player")
+    assert boxes is not None
+    assert "upper_leg" in boxes
+    assert boxes != gen.PLAYER_LIMB_CROP_BOXES
+
+
+def test_limb_crop_boxes_for_t0351_boxes_fit_within_the_five_panel_row() -> None:
+    """Each box must resolve to real pixels inside a 5120x1024 row (five
+    1024x1024 panels side by side, in POSE_SPECS order) -- a box that
+    overruns the row would silently crop garbage or raise deep inside PIL
+    instead of failing this test with a clear message."""
+    boxes = gen.limb_crop_boxes_for("T-0351", "player")
+    for name, (left, top, right, bottom) in boxes.items():
+        assert 0 <= left < right <= 5120, name
+        assert 0 <= top < bottom <= 1024, name
