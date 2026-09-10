@@ -639,15 +639,25 @@ def build_graph(
     return g
 
 
-def check_attempt_cap(attempt: int) -> None:
-    """~25-50 GPU-second budget: a small job, not a sweep -- T-0272/T-0317's
-    own 84-attempt failure mode is exactly what this card's own scope
-    section warns against repeating. Cap stays at 5."""
-    if not (1 <= attempt <= 5):
+# Per-card attempt budget. T-0336's own ~25-50 GPU-second budget (a small
+# job, not a sweep -- T-0272/T-0317's own 84-attempt failure mode is exactly
+# what that card's scope section warns against repeating) stays at 5,
+# unchanged. A card with no entry here imposes no budget of its own (T-0351's
+# own card text says exactly this, per the run-2 reviewer verdict: the
+# 5-attempt stop after run 1 was this inherited T-0336 cap, not a constraint
+# T-0351 itself imposes -- lever 2 needs a 6th+ attempt, since it spends five
+# separate generations per attempt instead of one) -- it falls back to
+# DEFAULT_ATTEMPT_CAP, a generic runaway backstop, not a per-card budget.
+ATTEMPT_CAP_BY_CARD: dict[str, int] = {"T-0336": 5}
+DEFAULT_ATTEMPT_CAP = 20
+
+
+def check_attempt_cap(attempt: int, card: str = "T-0336") -> None:
+    cap = ATTEMPT_CAP_BY_CARD.get(card, DEFAULT_ATTEMPT_CAP)
+    if not (1 <= attempt <= cap):
         raise SystemExit(
-            "attempt cap is 5 -- this card's own budget is ~25-50 GPU-seconds, a small "
-            "job, not a sweep (see T-0272/T-0317's 84-attempt failure mode); refusing to "
-            "run further attempts"
+            f"attempt cap is {cap} for card {card!r} -- refusing to run further attempts "
+            "(see conduct.md: a small job, not a sweep)"
         )
 
 
@@ -1194,6 +1204,46 @@ NEGATIVE_PROMPT_BUILDERS_BY_CARD: dict[str, Callable[[], str]] = {
 FIVE_POSE_CARDS: frozenset[str] = frozenset({"T-0351"})
 
 
+# T-0351: measured against the actual 5120x1024 composited pose row
+# (compose_pose_row lays the five POSE_SPECS panels side by side in order,
+# each panel 1024x1024, so panel N occupies x:[N*1024, (N+1)*1024)). The
+# front T-pose panel (panel 0, x offset 0) is the source for every crop:
+# arms held horizontal and legs spread apart hold every limb clear of the
+# torso in one internally-coherent generation -- unlike #365's relaxed
+# turnaround, whose PLAYER_LIMB_CROP_BOXES has "No upper_leg key" because no
+# panel it generated ever separated the thigh from the coat. Placeholder
+# coordinates below are widened, then replaced with values measured by
+# opening the real generated sheet (see the promotion step in
+# ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md / docs/assets/evidence/T-0351/).
+PLAYER_LIMB_CROP_BOXES_T0351: dict[str, tuple[int, int, int, int]] = {
+    "head": (390, 40, 630, 270),
+    "upper_arm": (0, 260, 260, 520),
+    "lower_arm_hand": (0, 500, 260, 640),
+    "torso_coat": (300, 260, 720, 680),
+    "upper_leg": (330, 640, 690, 840),
+    "lower_leg_boot": (330, 820, 690, 1010),
+}
+
+# A card with no entry here falls back to the entity's own registered
+# `limb_crop_boxes` (T-0336's unchanged default) -- only a card whose pose
+# geometry actually differs from #365's needs its own override.
+CROP_BOXES_BY_CARD: dict[str, dict[str, tuple[int, int, int, int]]] = {
+    "T-0351": PLAYER_LIMB_CROP_BOXES_T0351,
+}
+
+
+def limb_crop_boxes_for(
+    card: str, entity_name: str
+) -> dict[str, tuple[int, int, int, int]] | None:
+    """Resolves which crop-box set `promote_attempt` should composite in --
+    a card-specific override (a differently-posed sheet has a different
+    pixel layout to crop from) if one is registered, else the entity's own
+    default (`EntitySpec.limb_crop_boxes`, T-0336's unchanged behaviour)."""
+    if card in CROP_BOXES_BY_CARD:
+        return CROP_BOXES_BY_CARD[card]
+    return ENTITIES[entity_name].limb_crop_boxes
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--entity", type=str, default="player", choices=sorted(ENTITIES))
@@ -1219,7 +1269,13 @@ def main() -> None:
     if args.promote_attempt is not None:
         out_dir = out_dir_for(args.card, args.entity, args.promote_attempt)
         provenance = json.loads((out_dir / "provenance_candidate.json").read_text())
-        promote_attempt(args.entity, out_dir, provenance, dest_stem=dest_stem)
+        promote_attempt(
+            args.entity,
+            out_dir,
+            provenance,
+            dest_stem=dest_stem,
+            limb_crop_boxes=limb_crop_boxes_for(args.card, args.entity),
+        )
         promoted_record = json.loads(
             (MASTER_SHEETS_DIR / f"{dest_stem}.provenance.json").read_text()
         )
@@ -1232,7 +1288,7 @@ def main() -> None:
     if args.attempt is None or args.seed is None:
         parser.error("--attempt and --seed are required unless --promote-attempt is passed")
 
-    check_attempt_cap(args.attempt)
+    check_attempt_cap(args.attempt, card=args.card)
 
     if args.card in FIVE_POSE_CARDS:
         provenance = run_five_pose_attempt(
