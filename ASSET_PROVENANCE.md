@@ -418,6 +418,69 @@ attempts (55-60) are unspent. Nothing under `assets/final/character/` was
 promoted. The generated reference above is unaffected and remains this
 card's delivered asset.
 
+**Descended, [T-0339](tasks/T-0339.md) (2026-09-09):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/final/character/player_profile_keyframe_hybrid_T0272.png` | No new generation. `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.7) — the model that produced the source sample being descended, [T-0317](tasks/T-0317.md)'s own reference; inherited via provenance chain, not re-run | CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA) — inherited from the T-0317 source, unchanged | N/A — no new prompt. Deterministic descent of the committed `player_profile_costume_reference_T0317.png` (see that asset's own row above for its prompt/negative prompt) through the pipeline's existing `char_gen.cutout` primitives: border-flood background re-fix, foreground re-derivation (largest-component, no keypoints hint needed for a single figure), crop to bbox, resized onto a 384px canvas with height and width fit **independently** (figure height = 40/48 of the canvas, matching every other keyframe's convention; figure width = 15/48 of the canvas, matching the footprint measured on the pipeline's own already-promoted front-facing anchor `player_idle_sheet_hybrid_T0252.png` — see round-2 note below for why), BOX-filter descent to 48x48, nearest-Oklab palette quantization (dithering off), per-pixel cutout, 2px cell-margin clip, orphan cleanup. Generator: `assets/src/character/gen_profile_keyframe_descent_T0339.py`. Full sidecar: `player_profile_keyframe_hybrid_T0272.provenance.json`. | 31700 (T-0317's own seed, carried through unchanged — no new sampling, nothing to reseed) |
+
+Per the card's own framing ("Twelve rounds and 84 attempts chased a profile
+keyframe that has effectively existed since T-0317... excluded only because
+it didn't come from 'the hybrid stack'"), this card removes that exclusion
+rather than running a 13th round: `gen_hybrid_profile_T0272.py`'s dual-
+IPAdapter + ControlNet stack is explicitly **not** used (the card's own "Do
+not" list forbids it — that stack is what produced all 84 non-promotable
+attempts logged in `ARM_PROFILE_ATTEMPT_LOG_T0272.md`). Instead, the
+already-committed, already-provenanced T-0317 reference is descended
+directly. **No GPU call of any kind was needed or made** — this ran
+entirely against already-committed files, confirmed by the generator
+script's own `"gpu_call_required": false` provenance field.
+
+**Round 1 (FAIL, reviewer, 2026-09-09):** the first GREEN fit the figure's
+width from its height alone, via the source crop's own raw aspect ratio
+(175x883, ~1:5.05). That produced a foreground bbox only 7px wide at the
+48x48 cell — after the cell-margin clip and orphan cleanup, a 3px-wide
+olive column with no recoverable facing information at all (no nose, no
+arm, no leg separation). The claim originally recorded in this entry —
+"a visible forward arm shape, coat body and legs" — did not hold up against
+that artifact and is retracted here, not just in the image.
+
+**Round 2 (this entry):** width is now fit independently of height (a
+deliberate, bounded, uniform horizontal stretch, never a shear) to 15/48 of
+the 384px canvas — the midpoint of the width band this pipeline's own
+already-promoted front-facing anchor (`player_idle_sheet_hybrid_T0252.png`)
+measures at (14-16px wide at 44px tall). A true side profile has no
+shoulder width to show, so it is legitimately narrower than that
+front-facing anchor, but 3px is not "narrower," it is illegible — the fix
+targets the same legible-width footprint the rest of the pipeline already
+occupies. Measured result: 275 foreground px survive the 48x48 cutout
+(background fraction 88.1%), comfortably past the 50px floor every 384px
+whole-figure attempt kept failing, foreground bbox 14x40px (width now
+clears `MIN_FOREGROUND_WIDTH_PX` in the gate, added this round). 149 of
+those 275 px (54.2%) quantize to the home palette's own green-family slots
+(indices 2, 3, 7) — still a large improvement over T-0272 round 4's own
+measurement of its best colour-bearing attempt (10% green-family, 90%
+neutral ramp). Opened directly (not judged by the mechanical gate alone): a
+legible, side-facing standing figure — a head shape with a nose-like
+protrusion at the top, a dark hand/forearm patch at the torso, a coat body
+tapering to a slight flare at the base (feet) — in the palette's own
+dark/olive green tones, taller than it is wide (no squash/shear/mirror).
+Before/after evidence: `docs/assets/evidence/T-0339/before_source_T0317_reference.png`
+(the untouched T-0317 source) and `docs/assets/evidence/T-0339/after_keyframe_48_zoomed.png`
+(the descended result, 10x nearest-neighbour zoom, composited over a mid-
+grey backdrop for visibility — the committed file itself is a real
+transparent-background indexed PNG).
+
+**Superseded, see the T-0339 entry further below ("Regenerated + descended,
+[T-0339](tasks/T-0339.md)")** — the card was HELD after this entry when a
+reviewer determined the descent's actual input,
+`player_profile_costume_reference_T0317.png`, is a 175x891 crop rather than
+the square 1024 render its own sidecar described, so no genuine full-size
+source existed to descend. This entry is retained for the historical record
+of that round's measurements; it does not describe the promoted asset.
+
+**T-0336 (Tier-1 master sheet):**
+
 | Asset | Model | License | Prompt | Seed |
 |---|---|---|---|---|
 | `assets/src/character/master_sheets/player_master_sheet_T0336.png` (T-0336 — Tier-1 master sheet, promoted attempt 5, review-round-2 fix) | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.70) + LoRA `player_identity_v2.safetensors` (identity, chained, weight 0.5) + IP-Adapter `ip-adapter-plus_sdxl_vit-h.safetensors` (weight 0.35), conditioned on the `(0, 0, 615, 615)` sub-region of `assets/src/concept/player_character_concept_sheet_v1.png` (concept_hash `4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b`) — see `concept_crop_box` below. **No ControlNet** (DL-30 / this card's own scope) — txt2img, 1024x1024, the resolution the LoRAs were actually trained at, not the 384 every prior incoherent render in this repo used. ComfyUI HTTP API on the Windows host RTX 3070 Ti Laptop GPU (`172.18.192.1:8188`). prompt_id: `be011c82-3b17-4e84-aacd-02e9916951c8`. model_hash: `31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b`. gpu_seconds: 30.1 (real wall-clock sample; cross-checked against the shell's own `date +%s` before/after — round 5's attempts 3-5 all measured 27-31s, unlike attempt 2's suspicious 3.1s the reviewer flagged as a likely cache hit). The promoted PNG is script-composited (`compose_master_sheet_with_parts`, DL-30): the raw 1024x1024 generation plus an appended row of five parts cropped straight out of that same coherent image (`head`, `upper_arm`, `lower_arm_hand`, `torso_coat`, `lower_leg_boot`) — see `limb_crop_boxes` in the sidecar for exact pixel boxes. Full sidecar: `player_master_sheet_T0336.provenance.json`. Generator: `assets/src/character/gen_master_sheet_T0336.py` (attempt 5). Attempt log: `ARM_MASTER_SHEET_ATTEMPT_LOG_T0336.md`. Evidence: `docs/assets/evidence/T-0336/README.md`. Committed under `assets/src/` — a pipeline input, not a game-scale final. | "sbrutalistplayer, exploded parts diagram, disassembled equipment breakdown sheet, institutional green coat, hooded, white gloves, same uniform and same equipment loadout, consistent identity, the exact same institutional green coat costume in every single panel, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline, three whole-figure turnaround views at the top -- front view, side view, back view -- each figure's head fully visible in frame, wearing a hooded mask with two dark round visible eye lenses, not a blank void, and below them separate disassembled equipment pieces laid flat side by side with empty space between each piece so nothing overlaps or touches: a severed upper arm sleeve piece by itself, a severed lower arm and glove piece by itself, a severed upper leg piece by itself, a severed lower leg and boot piece by itself, a hood and mask head piece with visible eye lenses by itself, a torso and coat piece by itself, no text, no UI, no watermark" | 314159265 |
@@ -468,3 +531,70 @@ combination of coherence, costume consistency, and a legible head, so a
 further attempt aimed at a shorter-coat seed specifically was not available
 this round. See `docs/assets/evidence/T-0336/README.md` for every attempt's
 image and the full round-by-round analysis.
+
+**Regenerated + descended, [T-0339](tasks/T-0339.md) RE-SCOPE (2026-09-11):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/final/character/player_profile_keyframe_hybrid_T0272.png` | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.70) + LoRA `player_identity_v2.safetensors` (identity, chained, weight 0.5) + IP-Adapter `ip-adapter-plus_sdxl_vit-h.safetensors` (weight 0.35) + ControlNet `controlnet-openpose-sdxl-1.0_xinsir.safetensors` (pose conditioning only, strength 1.6/end 1.0), conditioned on `player_profile_costume_reference_T0317.png` (whole image, square-padded before upload, concept_hash `603c00f2cc7a5da0462f05232176131d06678776de4876800e7b27af343d7f19`). This is T-0351's own proven `side_neutral` recipe (attempts 19-21), reused completely unchanged for a single-panel regeneration -- no prompt tuning, no new pose. ComfyUI HTTP API, Windows host RTX 3070 Ti Laptop GPU (`172.18.192.1:8188`). model_hash: `31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b`. **A live GPU call was required** (this route regenerates the panel, unlike the superseded plain-descent route above). Generator: `assets/src/character/gen_profile_keyframe_side_neutral_T0339.py`. Attempt log: `ARM_MASTER_SHEET_ATTEMPT_LOG_T0339.md`. Full sidecar: `player_profile_keyframe_hybrid_T0272.provenance.json`. | CreativeML Open RAIL++-M (SDXL base) / CreativeML OpenRAIL++-M (style LoRA) — both on the approved allowlist; identity LoRA and IP-Adapter/ControlNet weights inherit the base checkpoint's license, no separate licensing terms | "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), head to toe fully visible, centred, (true 90-degree side profile view, not a three-quarter view:1.3), neutral standing pose, both arms hanging straight down at the sides, both legs together standing upright, both hands empty, open palm, nothing held, institutional green coat, hooded, white gloves, institutional green coat, full-length coat reaching past the knee, wearing a (hooded mask with two dark round visible eye lenses, not a blank void, hood fully up and forward, face completely covered by the mask, no visible hair, no visible face:1.3), boots, never high heels, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline" | 521365985 (attempt 3 of 3, accepted) |
+
+**Why this card was re-scoped a second time**, and why generation (not plain
+descent) was needed after all: the superseded entry above assumed
+`player_profile_costume_reference_T0317.png` was itself a genuine square
+1024 render needing only descent. It is a 175x891 crop. T-0351's own
+21-attempt master-sheet effort separately found that its `side_neutral`
+panel -- a true 90-degree standing side profile, arms down, the same pose
+T-0317's own reference shows -- converged cleanly on three consecutive
+attempts once each pose resolved its own per-panel IP-Adapter reference
+instead of a shared crop. This card regenerates ONLY that one panel, reusing
+T-0351's recipe verbatim, and descends the result.
+
+**Three attempts, one promoted -- all three converged on pose, only one on
+colour legibility.** Every attempt produced a genuine, uncropped, single-
+figure true side profile (confirming T-0351's own finding that this pose is
+reliably reproducible); what varied was whether the *specific render's*
+lighting/background survived this pipeline's cutout + 16-slot palette
+descent as a legible green figure, not whether the pose itself converged:
+
+- **Attempt 1** (seed 837462914): pose clean, but the coat's soft
+  low-saturation lighting gradient quantized almost entirely to the home
+  palette's neutral grey ramp (no bright/light green slot exists), leaving
+  only fragmented, illegible dark-green edge pixels after descent.
+- **Attempt 2** (seed 674839205): the most vivid, best-contrast raw panel of
+  the three, but its dark vignette background sat close enough in Oklab
+  space to the coat's own shadow folds that the border-connected flood
+  classifier ate through most of the figure, shredding the descended mask
+  into disconnected fragments (`char_gen.cutout`'s own wide-border-span
+  warning fired on this attempt).
+- **Attempt 3** (seed 521365985, **promoted**): a solid, saturated green
+  coat with no soft gradient to wash out, against a clean uniform near-black
+  background (no border-span warning) -- the mask stayed one coherent blob
+  and descended to a legible, taller-than-wide, unmistakably green 48x48
+  silhouette.
+
+See `assets/src/character/ARM_MASTER_SHEET_ATTEMPT_LOG_T0339.md` for the
+full per-attempt notes and `docs/assets/evidence/T-0339/` for every raw
+panel (`side_neutral_attempt_{1,2,3}_1024.png`) plus the promoted result
+zoomed for review (`after_keyframe_48_zoomed_v2.png`).
+
+**Correction and stop-and-report, same pass (2026-09-11):** the "attempt 3" entry above was
+written up as fully accepted ("unmistakably green 48x48 silhouette"); re-opened directly, the
+descended result reads as a mottled olive/khaki column, not vivid green -- it clears every
+mechanical floor (foreground px count, green-family palette-index membership) but does not clear
+this card's own "vivid green legible at 40px, judged by opening it" acceptance bar, the same
+"numbers passing while the image does not" failure this pipeline effort exists to end. Diagnosed
+root cause: a **descent-stage** interaction, not generation -- all three attempts produced genuine,
+correctly-posed, uncropped single-figure side profiles, but (a) attempts 1 and 3 render the coat
+with a continuous painterly lighting gradient that `home_palette.json`'s green family (only two
+saturated slots, both dark; the rest read as muddy olive) scatters across multiple neighbours
+instead of one coherent block, and (b) attempt 2 -- the most vivid, highest-contrast raw panel of
+the three -- has its mask shredded before quantization ever runs, by a dark background vignette
+close enough to the coat's own shadow folds in Oklab space to fool the cutout's border-connected
+flood classifier. The hard cap of 3 generation attempts is spent, and prompt tuning / palette
+changes / shared cutout-primitive changes are all out of this card's scope, so this is filed as a
+stop-and-report (a valid PASS per this card's own pre-registered escape hatch) rather than a further
+attempt. `player_profile_keyframe_hybrid_T0272.png` is left in place as the best real,
+non-synthetic result available -- a genuine improvement over the superseded crop-descent artifact,
+but not a criterion-clearing one. Full analysis, palette-histogram data, and a side-by-side
+calibration against the already-promoted `player_idle_sheet_hybrid_T0252.png`:
+`docs/assets/evidence/T-0339/README.md`.
