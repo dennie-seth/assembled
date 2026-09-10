@@ -1,0 +1,90 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (identity, chained, weight 0.5) + IP-Adapter ip-adapter-plus_sdxl_vit-h.safetensors (weight 0.35)",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "style_lora_name": "soviet_brutalism_style_v1.safetensors",
+  "style_lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "style_lora_weight": 0.7,
+  "style_lora_license": "CreativeML OpenRAIL++-M",
+  "identity_lora_name": "player_identity_v2.safetensors",
+  "identity_lora_hash": "fc447cfb886cb6a694c52ae21c9d172bae696ebc175f8daa7d6ecfd22eac36b4",
+  "identity_lora_weight": 0.5,
+  "identity_lora_provenance": "assets/final/lora/player_identity_v2.provenance.json",
+  "ip_adapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
+  "ip_adapter_weight": 0.35,
+  "concept_crop_box": [
+    0,
+    0,
+    615,
+    615
+  ],
+  "controlnet": "controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+  "controlnet_strength": 1.3,
+  "controlnet_end_percent": 1.0,
+  "controlnet_note": "T-0351 2026-09-10 amendment: OpenPose skeleton per pose (pose_rig_master_sheet_T0351.render_pose_skeleton), pose conditioning only -- conditions the positive/negative prompt pair, never the style/identity LoRA or IP-Adapter model chain. Seven prompt-only attempts (see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md) never achieved pose compliance.",
+  "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe, cropped limbs, cropped figure, overlapping panels, panels touching, different costume between panels, different colour between panels, blank head, faceless, featureless mannequin head, missing face, no face, headless, blank white head, cropped head, head cut off, head out of frame, armor plating, plate armor, heavy armor, bulky armor, mecha armor, sci-fi armor, helmet, robot legs, robotic legs, mechanical legs, cyborg, exoskeleton, robot parts, machine parts, different silhouette between panels, long coat, trench coat, ankle-length coat, floor-length coat, knee-length coat, calf-length coat, coat past the knee, coat covering the thighs, coat below the hip, high heels, stiletto heels, pumps, mismatched footwear, reference sheet, tech pack, technical flat, fashion flat, product sheet, spec sheet, multiple views, multiple photos, multiple angles, comparison layout, inset panel, exploded view, contact sheet, grid of images, clothing flat lay, flat lay, label, caption, illegible text, gibberish text, UI mockup, (three figures, multiple figures, several figures, ensemble of characters, ghost figure, ghosting, faded duplicate figure, translucent overlay, transparent duplicate, afterimage, double exposure, doppelganger, second figure behind, overlapping figures:1.6)",
+  "poses": [
+    {
+      "key": "front_tpose",
+      "label": "front T-pose",
+      "seed": 382682312,
+      "prompt": "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), head to toe fully visible, centred, front view, T-pose, both arms held straight out horizontal to the sides clear of the torso, legs spread apart, institutional green coat, hooded, white gloves, institutional green coat, (the coat cut short, ending precisely at mid-hip, hem well above the knee, bare thigh clearly visible below the coat hem:1.8), wearing a hooded mask with two dark round visible eye lenses, not a blank void, boots, never high heels, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline",
+      "comfyui_prompt_id": "e8807ac7-39d7-4525-8491-d5171dc72754",
+      "gpu_seconds": 57.1,
+      "pose_skeleton": "assets/out/master_sheet_T0351/player/attempt_12/pose_front_tpose_skeleton.png"
+    },
+    {
+      "key": "back_tpose",
+      "label": "back T-pose",
+      "seed": 382682313,
+      "prompt": "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), head to toe fully visible, centred, back view, T-pose, both arms held straight out horizontal to the sides clear of the torso, legs spread apart, institutional green coat, hooded, white gloves, institutional green coat, (the coat cut short, ending precisely at mid-hip, hem well above the knee, bare thigh clearly visible below the coat hem:1.8), wearing a hooded mask with two dark round visible eye lenses, not a blank void, boots, never high heels, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline",
+      "comfyui_prompt_id": "f0fd2602-21ea-427f-8e1f-1c95d3c5c677",
+      "gpu_seconds": 60.1,
+      "pose_skeleton": "assets/out/master_sheet_T0351/player/attempt_12/pose_back_tpose_skeleton.png"
+    },
+    {
+      "key": "side_left_forward",
+      "label": "side, left-forward",
+      "seed": 382682314,
+      "prompt": "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), head to toe fully visible, centred, true 90-degree side profile view, not a three-quarter view, only the left arm and only the left leg extended forward at roughly a right angle clear of the torso, the right arm and right leg held back close to the body, institutional green coat, hooded, white gloves, institutional green coat, (the coat cut short, ending precisely at mid-hip, hem well above the knee, bare thigh clearly visible below the coat hem:1.8), wearing a hooded mask with two dark round visible eye lenses, not a blank void, boots, never high heels, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline",
+      "comfyui_prompt_id": "a2eb0be1-d399-4fcc-be1c-566c25e4b60e",
+      "gpu_seconds": 78.1,
+      "pose_skeleton": "assets/out/master_sheet_T0351/player/attempt_12/pose_side_left_forward_skeleton.png"
+    },
+    {
+      "key": "side_right_forward",
+      "label": "side, right-forward",
+      "seed": 382682315,
+      "prompt": "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), head to toe fully visible, centred, true 90-degree side profile view, not a three-quarter view, only the right arm and only the right leg extended forward at roughly a right angle clear of the torso, the left arm and left leg held back close to the body, institutional green coat, hooded, white gloves, institutional green coat, (the coat cut short, ending precisely at mid-hip, hem well above the knee, bare thigh clearly visible below the coat hem:1.8), wearing a hooded mask with two dark round visible eye lenses, not a blank void, boots, never high heels, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline",
+      "comfyui_prompt_id": "a01f1e25-da5c-41bc-988d-03577ef5c9dc",
+      "gpu_seconds": 99.2,
+      "pose_skeleton": "assets/out/master_sheet_T0351/player/attempt_12/pose_side_right_forward_skeleton.png"
+    },
+    {
+      "key": "side_neutral",
+      "label": "side, neutral",
+      "seed": 382682316,
+      "prompt": "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), head to toe fully visible, centred, true 90-degree side profile view, not a three-quarter view, neutral standing pose, both arms hanging straight down at the sides, both legs together standing upright, institutional green coat, hooded, white gloves, institutional green coat, (the coat cut short, ending precisely at mid-hip, hem well above the knee, bare thigh clearly visible below the coat hem:1.8), wearing a hooded mask with two dark round visible eye lenses, not a blank void, boots, never high heels, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline",
+      "comfyui_prompt_id": "027f598c-6e0c-4579-ae73-51e4fe342f0f",
+      "gpu_seconds": 99.1,
+      "pose_skeleton": "assets/out/master_sheet_T0351/player/attempt_12/pose_side_neutral_skeleton.png"
+    }
+  ],
+  "seed": 382682312,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 5120,
+  "height": 1024,
+  "panel_width": 1024,
+  "panel_height": 1024,
+  "entity": "player",
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "method": "Five independent 1024x1024 txt2img generations, one per POSE_SPECS entry (front T-pose, back T-pose, side-left-forward, side-right-forward, side-neutral): LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(identity, chained) -> CLIPTextEncode(positive/negative) -> ControlNetLoader + ControlNetApplyAdvanced (this pose's own OpenPose skeleton, pose_rig_master_sheet_T0351, strength 1.3/end 1.0) -> IPAdapterUnifiedLoader + IPAdapterAdvanced (concept sheet, unchanged weight/crop) -> KSampler -> VAEDecode -> SaveImage, once per pose. compose_pose_row then stitches the five resulting images side by side into one sheet by script (DL-30), replacing this card's first seven attempts (five single-shot five-panel-in-one-image, two prompt-only single-pose) -- see ARM_MASTER_SHEET_ATTEMPT_LOG_T0351.md and docs/assets/evidence/T-0351/README.md. ControlNet is for pose conditioning only (2026-09-10 amendment): it conditions the CLIPTextEncode pair, never the style/identity LoRA or IP-Adapter model chain, which are byte-identical to every prompt-only attempt before it.",
+  "generator": "assets/src/character/gen_master_sheet_T0336.py",
+  "card": "T-0351",
+  "spec": "docs/decision-log.md DL-30, pose spec per T-0351 (successor to #365/T-0336; recipe unchanged except ControlNet/OpenPose for pose conditioning only, per @DennieSeth's 2026-09-10 amendment after 7 prompt-only attempts failed to achieve pose compliance)",
+  "attempt": 12,
+  "gpu_seconds": 393.5,
+  "promoted": false
+}

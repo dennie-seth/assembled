@@ -477,14 +477,29 @@ def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> No
     side_right_forward both still regress to multiple overlapping/ghosted
     figures despite 1.3-weighted multi-figure negative terms. Attempt 12
     raises the coat-length weight again, 1.5 -> 1.8 (isolation stays at
-    1.3, unchanged -- it is not implicated in either persisting defect)."""
+    1.3, unchanged -- it is not implicated in either persisting defect).
+
+    Attempt 12 (seed 382682312, 393.5 total GPU-seconds) is a mixed result:
+    front_tpose's coat is genuinely shorter, and 3 of 5 panels (front_tpose,
+    back_tpose, side_neutral) show zero ghosting -- but 4 of 5 panels lost
+    the hooded-mask identity entirely (visible human face and hair instead
+    of the hood/eye-lens mask), front_tpose gained several patches of
+    legible garment-label text ("THE HIP", "COAT TRIST"), and
+    side_right_forward still regressed to three figures. This matches the
+    pattern already on record from attempts 3/4/9: pushing CLIP emphasis
+    higher destabilises whatever clause is NOT being emphasized, not just
+    the one that is. Attempt 13 pulls back both weights partway (coat
+    1.8 -> 1.6, still above attempt 11's insufficient 1.5; isolation stays
+    untouched at 1.3) and, for the first time, adds its own emphasis to the
+    hood/mask clause itself (1.3) -- the identity element that just
+    regressed and has never before been given any weight of its own."""
     pose = gen.POSE_SPECS[0]
     prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], pose)
     assert "exactly one pose" in prompt.lower()
     assert "exactly one" in prompt.lower() and "view" in prompt.lower()
     assert ":1.3)" in prompt, "isolation clause must stay at attempt 8's proven-safe 1.3"
-    assert ":1.8)" in prompt, "coat-length clause must be emphasized at 1.8 (attempt 12)"
-    assert ":1.5)" not in prompt, "attempt 11's 1.5 coat weight must be fully replaced"
+    assert ":1.6)" in prompt, "coat-length clause must be pulled back to 1.6 (attempt 13)"
+    assert ":1.8)" not in prompt, "attempt 12's 1.8 coat weight must be fully replaced"
     assert "jacket" not in prompt.lower(), (
         "attempt 9's 'jacket' reframing is implicated in its identity drift -- revert to 'coat'"
     )
@@ -492,6 +507,26 @@ def test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat() -> No
     assert f"({pose.pose_clause}:1.3)" not in prompt, (
         "pose clause must no longer be CLIP-emphasized -- ControlNet forces it now"
     )
+
+
+def test_build_single_pose_positive_prompt_emphasizes_hood_mask_after_attempt_12() -> None:
+    """Attempt 12 lost the hooded-mask identity entirely in 4 of 5 panels
+    (visible human face and hair rendered instead) -- the coat-length and
+    multi-figure-ban weight increases evidently pulled attention budget
+    away from the hood/mask clause, which had never itself been given any
+    emphasis. Attempt 13 gives it its own weight (1.3, this pipeline's
+    established safe starting point) plus explicit face/hair-suppression
+    wording, rather than just hoping a plain unweighted mention holds up
+    against two other emphasized clauses."""
+    pose = gen.POSE_SPECS[0]
+    prompt = gen.build_single_pose_positive_prompt(gen.ENTITIES["player"], pose)
+    assert "hooded mask" in prompt.lower()
+    assert ":1.3)" in prompt
+    hood_start = prompt.lower().index("hooded mask")
+    preceding_open_paren = prompt.rfind("(", 0, hood_start)
+    assert preceding_open_paren != -1, "hood/mask clause must be wrapped in its own emphasis"
+    clause = prompt[preceding_open_paren:]
+    assert "no visible hair" in clause.lower() or "no visible face" in clause.lower()
 
 
 def test_build_single_pose_negative_prompt_forbids_reference_sheet_composition() -> None:
@@ -533,14 +568,27 @@ def test_build_single_pose_negative_prompt_emphasizes_single_figure_after_attemp
     distinct from attempt 8's opaque three-figure regression, and one none
     of the existing terms name. Attempt 12 raises the weight 1.3 -> 1.6 and
     adds terms for the specific defect observed (ghost figure, faded
-    duplicate, translucent overlay, afterimage, double exposure)."""
+    duplicate, translucent overlay, afterimage, double exposure).
+
+    Attempt 12 fixed ghosting on 3 of 5 panels but side_right_forward still
+    regressed to three opaque (not translucent) figures, and the higher
+    weight is implicated (alongside the coat-weight increase) in that
+    attempt's new identity-drift and stray-text regressions -- see
+    `test_build_single_pose_positive_prompt_emphasizes_isolation_and_coat`'s
+    docstring. Attempt 13 pulls the weight back partway, 1.6 -> 1.4 (still
+    above attempt 11's insufficient 1.3), and adds explicit
+    face/hair-visibility and legible-text terms to the negative prompt --
+    the two new defects this round surfaced, neither named before now."""
     negative = gen.build_single_pose_negative_prompt()
-    assert ":1.6)" in negative, "multi-figure ban must be raised to 1.6 (attempt 12)"
-    assert ":1.3)" not in negative, "attempt 11's 1.3 multi-figure weight must be replaced"
+    assert ":1.4)" in negative, "multi-figure ban must be pulled back to 1.4 (attempt 13)"
+    assert ":1.6)" not in negative, "attempt 12's 1.6 multi-figure weight must be replaced"
     assert "figures" in negative.lower()
     assert "ghost figure" in negative.lower() or "ghosting" in negative.lower()
     assert "faded duplicate" in negative.lower() or "translucent" in negative.lower()
     assert "double exposure" in negative.lower() or "afterimage" in negative.lower()
+    assert "visible face" in negative.lower() or "exposed face" in negative.lower()
+    assert "visible hair" in negative.lower()
+    assert "readable text" in negative.lower() or "legible words" in negative.lower()
 
 
 def test_compose_pose_row_stitches_images_side_by_side(tmp_path) -> None:

@@ -12,3 +12,4 @@ Every attempt is recorded here whether or not it is promoted. Tier-1 generates O
 | 6 | player | 223606797 | 0.7 | 0.5 | 0.35 | 5120 | 1024 | 174.2 | no | T-0351 attempt 6: lever 2, five separate single-pose generations composited by script |
 | 7 | player | 244948974 | 0.7 | 0.5 | 0.35 | 5120 | 1024 | 231.3 | no | T-0351 attempt 7: lever 2 + CLIP-emphasized isolation/pose clauses, dropped positive-prompt text negation, negative prompt bans reference-sheet composition |
 | 11 | player | 356237921 | 0.7 | 0.5 | 0.35 | 5120 | 1024 | 444.7 | no | T-0351 attempt 11: real execution of attempt-10 prompt rebalance (coat-length weight isolated 1.3->1.5) |
+| 12 | player | 382682312 | 0.7 | 0.5 | 0.35 | 5120 | 1024 | 393.5 | no | T-0351 attempt 12: coat weight 1.5->1.8, multi-figure ban 1.3->1.6 + ghosting terms |
