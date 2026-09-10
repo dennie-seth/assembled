@@ -1182,16 +1182,13 @@ def test_build_graph_ipadapter_end_at_is_configurable_without_touching_weight() 
     assert graph[gen.IPADAPTER_NODE_ID]["inputs"]["weight"] == 0.35
 
 
-def test_pose_specs_forward_side_panels_narrow_ipadapter_end_at() -> None:
-    """Only the two panels whose ControlNet skeleton actually conflicts
-    with the T-0317 reference's neutral pose get a narrower window -- every
-    other panel (including side_neutral, whose target pose matches the
-    reference) keeps the full range."""
-    by_key = {pose.key: pose for pose in gen.POSE_SPECS}
-    assert by_key["side_left_forward"].ipadapter_end_at == 0.5
-    assert by_key["side_right_forward"].ipadapter_end_at == 0.5
-    for key in ("front_tpose", "back_tpose", "side_neutral", "legs"):
-        assert by_key[key].ipadapter_end_at == 1.0, key
+def test_pose_specs_no_longer_narrow_ipadapter_end_at_on_side_panels() -> None:
+    """Attempt 20 tried ipadapter_end_at=0.5 on side_left_forward/
+    side_right_forward and it made both panels WORSE (coat identity drift,
+    invented anatomy) -- see POSE_SPECS's own comment. Reverted: every pose
+    keeps the full 0.0-1.0 IP-Adapter sampling range."""
+    for pose in gen.POSE_SPECS:
+        assert pose.ipadapter_end_at == 1.0, pose.key
 
 
 def test_run_five_pose_attempt_wires_each_poses_own_ipadapter_end_at(monkeypatch) -> None:
@@ -1371,24 +1368,29 @@ def test_run_five_pose_attempt_uses_a_different_reference_per_panel(monkeypatch)
         )
 
         # The concept sheet is uploaded once (shared by front/back/legs, not
-        # re-uploaded per pose), and the T-0317 reference is uploaded once
-        # (shared by the three side panels) -- exactly two distinct source
-        # files across six panels, not six identical uploads and not six
+        # re-uploaded per pose), and the T-0317 reference's square-padded
+        # copy (attempt 21's prepare_reference_for_upload) is uploaded once
+        # (shared by the three side panels) -- exactly two distinct upload
+        # targets across six panels, not six identical uploads and not six
         # independent ones either.
-        assert set(uploaded_paths).issuperset(
-            {gen.CONCEPT_SHEET_PATH, gen.PROFILE_REFERENCE_T0317_PATH}
+        expected_side_upload = gen.prepare_reference_for_upload(
+            gen.PROFILE_REFERENCE_T0317_PATH, test_out_dir
         )
+        assert set(uploaded_paths).issuperset({gen.CONCEPT_SHEET_PATH, expected_side_upload})
         concept_sheet_uploads = [p for p in uploaded_paths if p == gen.CONCEPT_SHEET_PATH]
-        t0317_uploads = [p for p in uploaded_paths if p == gen.PROFILE_REFERENCE_T0317_PATH]
+        side_uploads = [p for p in uploaded_paths if p == expected_side_upload]
         assert len(concept_sheet_uploads) == 1
-        assert len(t0317_uploads) == 1
+        assert len(side_uploads) == 1
 
         # Each pose's graph carries its own resolved reference, not a
         # single shared one.
         for i, pose in enumerate(gen.POSE_SPECS):
             expected_path, expected_box = gen.reference_image_for("T-0351", "player", pose.key)
+            expected_upload_path = gen.prepare_reference_for_upload(expected_path, test_out_dir)
             graph = captured_graphs[i]
-            assert graph[gen.CONCEPT_IMAGE_NODE_ID]["inputs"]["image"] == expected_path.name
+            assert graph[gen.CONCEPT_IMAGE_NODE_ID]["inputs"]["image"] == (
+                expected_upload_path.name
+            )
             if expected_box is None:
                 assert gen.CONCEPT_CROP_NODE_ID not in graph
             else:
@@ -1407,7 +1409,9 @@ def test_run_five_pose_attempt_uses_a_different_reference_per_panel(monkeypatch)
             if pose.key in side_keys:
                 assert gen.CONCEPT_CROP_NODE_ID not in captured_graphs[i]
 
-        # Provenance records each pose's own resolved reference.
+        # Provenance records each pose's own resolved reference (the true
+        # source, e.g. the T-0317 file -- not the padded upload copy) plus
+        # whether square-padding was applied for that upload.
         for record in provenance["poses"]:
             expected_path, expected_box = gen.reference_image_for(
                 "T-0351", "player", record["key"]
@@ -1416,8 +1420,82 @@ def test_run_five_pose_attempt_uses_a_different_reference_per_panel(monkeypatch)
             assert record["reference_crop_box"] == (
                 list(expected_box) if expected_box is not None else None
             ) or record["reference_crop_box"] == expected_box
+            assert record["reference_square_padded"] == (
+                expected_path == gen.PROFILE_REFERENCE_T0317_PATH
+            )
     finally:
         shutil.rmtree(test_out_dir, ignore_errors=True)
+
+
+# ── Attempt 21 (RE-SCOPE follow-up): square-padding the T-0317 reference ──
+# before upload, per pad_image_to_square/prepare_reference_for_upload's own
+# docstrings above.
+
+
+def test_pad_image_to_square_pads_a_tall_narrow_image_to_a_square() -> None:
+    from PIL import Image
+
+    im = Image.new("RGB", (175, 891), (10, 120, 60))
+    padded = gen.pad_image_to_square(im)
+    assert padded.size == (891, 891)
+
+
+def test_pad_image_to_square_pads_a_wide_short_image_to_a_square() -> None:
+    from PIL import Image
+
+    im = Image.new("RGB", (400, 100), (10, 120, 60))
+    padded = gen.pad_image_to_square(im)
+    assert padded.size == (400, 400)
+
+
+def test_pad_image_to_square_centres_the_original_and_fills_background() -> None:
+    from PIL import Image
+
+    im = Image.new("RGB", (10, 40), (255, 0, 0))
+    padded = gen.pad_image_to_square(im, background=(1, 2, 3))
+    assert padded.size == (40, 40)
+    # Corner pixels are background-filled padding, not the original image.
+    assert padded.getpixel((0, 0)) == (1, 2, 3)
+    assert padded.getpixel((39, 0)) == (1, 2, 3)
+    # A pixel in the centre column, within the original's vertical extent,
+    # is the original image, not padding.
+    assert padded.getpixel((20, 20)) == (255, 0, 0)
+
+
+def test_pad_image_to_square_leaves_an_already_square_image_unchanged_in_size() -> None:
+    from PIL import Image
+
+    im = Image.new("RGB", (50, 50), (10, 120, 60))
+    padded = gen.pad_image_to_square(im)
+    assert padded.size == (50, 50)
+
+
+def test_prepare_reference_for_upload_leaves_non_t0317_references_unchanged(tmp_path) -> None:
+    """The concept-sheet crops are already close to square -- no reason to
+    pad them, and no reason to write a new file to disk for them either."""
+    result = gen.prepare_reference_for_upload(gen.CONCEPT_SHEET_PATH, tmp_path)
+    assert result == gen.CONCEPT_SHEET_PATH
+
+
+def test_prepare_reference_for_upload_pads_the_t0317_reference(tmp_path) -> None:
+    result = gen.prepare_reference_for_upload(gen.PROFILE_REFERENCE_T0317_PATH, tmp_path)
+    assert result != gen.PROFILE_REFERENCE_T0317_PATH
+    assert result.exists()
+
+    from PIL import Image
+
+    with Image.open(result) as im:
+        assert im.width == im.height
+
+
+def test_prepare_reference_for_upload_caches_the_padded_file(tmp_path) -> None:
+    """Called once per side panel (three times a run) -- must not
+    regenerate the padded file each time."""
+    first = gen.prepare_reference_for_upload(gen.PROFILE_REFERENCE_T0317_PATH, tmp_path)
+    mtime_after_first = first.stat().st_mtime
+    second = gen.prepare_reference_for_upload(gen.PROFILE_REFERENCE_T0317_PATH, tmp_path)
+    assert second == first
+    assert second.stat().st_mtime == mtime_after_first
 
 
 def test_controlnet_name_matches_verified_host_inventory() -> None:
