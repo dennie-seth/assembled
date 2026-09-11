@@ -14,11 +14,19 @@ extends SceneTree
 ##     note that AC8 "can only be verified once a real input layer exists."
 ##     A window-close request is defeated the same way (auto_accept_quit).
 ##   - OfflineIndicator: visible exactly while offline (AC5).
+##   - TransientNotice: a non-blocking, dismiss-on-any-input note — backs the
+##     chroma explanation (AC7) and the session-end-still-offline recap (AC6).
+##     Unlike BlockingNoticeScreen these don't gate anything and don't defeat
+##     ui_cancel/window-close; a signal firing with nothing rendered from it
+##     is the exact class of bug this card exists to close (see AC5's history
+##     above), and chroma_explanation_ready/session_end_offline_recap had zero
+##     consumers until this pass.
 ##   - FirstRunController: actually constructs FirstRunSequence and wires it
 ##     to the screens above end-to-end, reachable from something other than
 ##     the state machine's own test file (AC1-AC5, AC8), including the exact
 ##     regression the reviewer flagged: launch offline -> acknowledge_offline
-##     -> indicator visible.
+##     -> indicator visible; and now also wires chroma_explanation_ready and
+##     session_end_offline_recap to a TransientNotice (AC6, AC7).
 ##
 ## Run headless:
 ##   godot --headless --script tests/test_first_run_presentation.gd
@@ -26,6 +34,7 @@ extends SceneTree
 
 const BlockingNoticeScreen := preload("res://scripts/blocking_notice_screen.gd")
 const OfflineIndicator := preload("res://scripts/offline_indicator.gd")
+const TransientNotice := preload("res://scripts/transient_notice.gd")
 const FirstRunController := preload("res://scripts/first_run_controller.gd")
 const FirstRunSequence := preload("res://first_run_sequence.gd")
 
@@ -99,6 +108,8 @@ func _init() -> void:
 	failures += _test_acknowledge_paths()
 	failures += _test_blocks_window_close()
 	failures += _test_offline_indicator_visibility()
+	failures += _test_transient_notice_show_hide()
+	failures += _test_transient_notice_dismiss_on_input()
 
 	var mock := MockHttpServer.new()
 	if not mock.listen(MOCK_PORT):
@@ -108,6 +119,8 @@ func _init() -> void:
 
 	failures += _test_controller_shows_phrase_screen_and_relays_entry(mock)
 	failures += _test_controller_offline_launch_shows_indicator(mock)
+	failures += _test_controller_chroma_notice_after_baseline(mock)
+	failures += _test_controller_offline_session_end_recap()
 
 	mock.stop()
 
@@ -335,6 +348,118 @@ func _test_controller_offline_launch_shows_indicator(mock: MockHttpServer) -> Ar
 		failures.append(
 			"controller_offline: offline indicator must be visible on room entry while offline (AC5)"
 		)
+
+	controller.free()
+	return failures
+
+
+## ── TransientNotice: shows on demand, hides on demand ─────────────────────────
+
+func _test_transient_notice_show_hide() -> Array[String]:
+	var failures: Array[String] = []
+	var notice := TransientNotice.new()
+	notice.build_ui()
+
+	if notice.visible:
+		failures.append("transient_notice: must start hidden")
+
+	notice.show_text("hello")
+	if not notice.visible:
+		failures.append("transient_notice: show_text() must make it visible")
+
+	notice.hide_notice()
+	if notice.visible:
+		failures.append("transient_notice: hide_notice() must hide it")
+
+	notice.free()
+	return failures
+
+
+## ── TransientNotice: any key/click input dismisses it, but it doesn't defeat ──
+## anything the way BlockingNoticeScreen does — it is a note, not a rite.
+
+func _test_transient_notice_dismiss_on_input() -> Array[String]:
+	var failures: Array[String] = []
+	var notice := TransientNotice.new()
+	notice.build_ui()
+	notice.show_text("watch the color")
+
+	var key_event := InputEventKey.new()
+	key_event.keycode = KEY_SPACE
+	key_event.pressed = true
+	notice._unhandled_input(key_event)
+
+	if notice.visible:
+		failures.append("transient_notice: any key press must dismiss it")
+
+	notice.free()
+	return failures
+
+
+## ── FirstRunController: chroma explanation renders after the baseline ────────
+## window elapses (AC7) — chroma_explanation_ready had zero consumers before
+## this pass, so the explanation fired but nothing was ever shown.
+
+func _test_controller_chroma_notice_after_baseline(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % MOCK_PORT)
+
+	mock.queue(201, '{"phrase":"alpha beta gamma delta epsilon zeta eta theta"}')
+	controller.start_new_game()
+	var completed := _drive_controller(
+		controller, mock, 5000.0, func(): return controller.get_phrase_screen() != null
+	)
+	if not completed:
+		failures.append("controller_chroma: phrase screen never appeared within 5 s")
+		controller.free()
+		return failures
+
+	controller.get_phrase_screen().acknowledged.emit()
+
+	if controller.get_chroma_notice() != null:
+		failures.append("controller_chroma: must not appear before the baseline window elapses")
+
+	# Drive the sequence's own timer directly rather than waiting 180 s of
+	# wall-clock — tick() only cares about accumulated delta, not real time.
+	controller.get_sequence().tick(200.0)
+
+	if controller.get_chroma_notice() == null or not controller.get_chroma_notice().visible:
+		failures.append("controller_chroma: chroma explanation must be shown once the baseline window elapses")
+
+	controller.free()
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── FirstRunController: session-end recap renders when ending offline (AC6) ──
+## session_end_offline_recap had zero consumers before this pass, so the
+## recap fired but nothing was ever shown to the player.
+
+func _test_controller_offline_session_end_recap() -> Array[String]:
+	var failures: Array[String] = []
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % DEAD_PORT, SHORT_TIMEOUT_MS)
+
+	controller.start_new_game()
+	var completed := _drive_controller(
+		controller, null, 3000.0, func(): return controller.get_offline_screen() != null
+	)
+	if not completed:
+		failures.append("controller_recap: offline screen never appeared within 3 s")
+		controller.free()
+		return failures
+
+	controller.get_offline_screen().acknowledged.emit()
+
+	if controller.get_recap_notice() != null:
+		failures.append("controller_recap: must not appear before the session actually ends")
+
+	controller.end_session()
+
+	if controller.get_recap_notice() == null or not controller.get_recap_notice().visible:
+		failures.append("controller_recap: session-end recap must be shown when ending while offline")
 
 	controller.free()
 	return failures
