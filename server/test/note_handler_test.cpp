@@ -9,6 +9,12 @@
 ///   2003 SLOT_CATEGORY_MISMATCH — slot word wrong category      -> 400
 ///   4002 VOCAB_TIER_LOCKED     — word not in caller's vocab     -> 403
 ///   valid request              — all checks pass                -> 201 {id}
+///
+/// T-0049: per-token rate limiting on the note-creation route group.
+///   5001 RATE_LIMITED          — burst above the configured per-token
+///                                ceiling is rejected; steady-state usage
+///                                under the ceiling is unaffected
+///                                (03-net-protocol.md §7).
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
@@ -24,6 +30,8 @@
 
 #include "assembled_server/Database.h"
 #include "assembled_server/MigrationRunner.h"
+#include "assembled_server/NoteController.h"
+#include "assembled_server/RateLimiter.h"
 
 #ifndef ASSEMBLED_MIGRATIONS_DIR
 #error "ASSEMBLED_MIGRATIONS_DIR must be defined by CMake"
@@ -183,4 +191,37 @@ TEST_CASE("POST /v1/notes HTTP integration") {
     // ── Teardown ──────────────────────────────────────────────────────────
     drogon::app().getLoop()->queueInLoop([]() { drogon::app().quit(); });
     serverThread.join();
+}
+
+// ── Note-creation rate limit: per-token, configurable per route group ─────────
+//
+// drogon::app() is a process-global singleton already exercised by the HTTP
+// integration suite above (same rationale as PetitionController's rate-limit
+// test in petition_test.cpp), so the T-0049 acceptance criteria are verified
+// white-box against NoteController::noteRateLimiter() directly instead of via
+// a second HTTP run in this binary.
+
+TEST_CASE("Note-creation rate limiter allows steady-state usage under the limit") {
+    assembled_server::NoteController::setNoteRateLimiterForTesting(3, std::chrono::seconds(60));
+    assembled_server::RateLimiter &limiter =
+        assembled_server::NoteController::noteRateLimiterForTesting();
+
+    const std::string key = "note-create-tok-steady";
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+}
+
+TEST_CASE("Note-creation rate limiter rejects a burst above the configured limit") {
+    assembled_server::NoteController::setNoteRateLimiterForTesting(2, std::chrono::seconds(60));
+    assembled_server::RateLimiter &limiter =
+        assembled_server::NoteController::noteRateLimiterForTesting();
+
+    const std::string key = "note-create-tok-burst";
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == false); // third request in the same window is rejected
+
+    // A different token's bucket is independent of tok-burst's usage.
+    CHECK(limiter.allow("note-create-tok-other") == true);
 }
