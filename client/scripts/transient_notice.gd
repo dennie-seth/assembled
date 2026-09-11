@@ -10,6 +10,12 @@ extends CanvasLayer
 ## Placeholder visuals only — 18-first-run.md §10 FR-4 leaves final styling
 ## open for first-run UI in general.
 
+## Emitted whenever the notice transitions from visible to hidden, whether
+## dismissed by player input or hidden programmatically. FirstRunController's
+## close-request handling (AC6) uses this to know when it is safe to
+## complete a pending OS quit that was held open to show the recap.
+signal dismissed()
+
 var _label: Label
 var _built: bool = false
 
@@ -49,10 +55,14 @@ func show_text(text: String) -> void:
 	visible = true
 
 
-## Hide immediately.
+## Hide immediately. Emits dismissed() only on an actual visible -> hidden
+## transition, never redundantly on an already-hidden notice.
 func hide_notice() -> void:
 	build_ui()
+	if not visible:
+		return
 	visible = false
+	dismissed.emit()
 
 
 ## Dismiss on any key or mouse-button press — a note the player can clear by

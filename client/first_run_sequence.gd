@@ -18,15 +18,21 @@ extends RefCounted
 ##   var seq := FirstRunSequence.new()
 ##   seq.setup(note_client)
 ##   seq.phrase_reveal_ready.connect(_on_phrase_reveal_ready)
+##   seq.identity_failed.connect(_on_identity_failed)
+##   seq.phrase_save_failed.connect(_on_phrase_save_failed)
 ##   seq.offline_notice_required.connect(_on_offline_notice_required)
 ##   seq.entry_room_ready.connect(_on_entry_room_ready)
 ##   seq.chroma_explanation_ready.connect(_on_chroma_explanation_ready)
 ##   seq.session_end_offline_recap.connect(_on_session_end_offline_recap)
 ##   seq.offline_indicator_changed.connect(_on_offline_indicator_changed)
 ##   seq.start_new_game()
+##   # A returning player (phrase already on disk) drops straight into the
+##   # room here with no further signal — see start_new_game()'s docs.
 ##   # ... player acknowledges the phrase screen (and offline notice, if shown) ...
 ##   seq.acknowledge_phrase()
 ##   seq.acknowledge_offline()
+##   # ... or, on identity_failed/phrase_save_failed, the only way forward ...
+##   seq.acknowledge_error()
 ##   # ... every frame in the entry room ...
 ##   seq.tick(delta)
 ##   # ... on session teardown ...
@@ -65,6 +71,7 @@ enum State {
 	PHRASE_REVEAL,     ## Phrase saved; screen unskippable until acknowledge_phrase().
 	OFFLINE_NOTICE,    ## Identity request found the server unreachable.
 	SAVE_FAILED,       ## Identity minted but the phrase could not be written to disk.
+	IDENTITY_FAILED,   ## Server reached but identity creation itself failed (4xx/5xx).
 	IN_ENTRY_ROOM,     ## Dropped into the calm entry room; baseline window running.
 	ENDED,             ## Session has ended.
 }
@@ -149,11 +156,24 @@ func is_server_reachable() -> bool:
 	return _reachable
 
 
-## Begin the first-run sequence: request a new identity from the server.
+## Begin the first-run sequence: request a new identity from the server, or
+## drop straight into the entry room if a phrase is already saved locally.
 ## No-op (with a push_error) if not in AWAITING_IDENTITY.
 func start_new_game() -> void:
 	if _state != State.AWAITING_IDENTITY:
 		push_error("FirstRunSequence.start_new_game: called in state %d — ignoring" % _state)
+		return
+	if IdentityStore.has_phrase(_phrase_path):
+		# Returning player. Never re-request an identity here: the server
+		# discards the phrase the instant it returns it (03-net-protocol.md
+		# §5), and save_phrase() opens FileAccess.WRITE, which truncates — a
+		# second POST /v1/identity on every launch would silently overwrite
+		# the existing phrase and make that universe permanently
+		# unreachable. identity_store.gd's own docstring already describes
+		# this branch ("Returning run: re-derive identity using the saved
+		# phrase"); there is no re-derive call to make yet, so this just
+		# proceeds straight to the calm entry room.
+		_enter_room()
 		return
 	_note_client.request_identity()
 
@@ -171,6 +191,21 @@ func acknowledge_phrase() -> void:
 func acknowledge_offline() -> void:
 	if _state != State.OFFLINE_NOTICE:
 		return
+	_enter_room()
+
+
+## Acknowledge an identity/save failure notice. The only way to leave
+## SAVE_FAILED or IDENTITY_FAILED — both are otherwise dead ends, since no
+## other method advances past them and blockout_room.gd gates the entire
+## room on entry_room_ready. No-op outside those two states. Enters the room
+## in a not-reachable posture: no valid phrase/identity exists for this
+## session either way, so nothing can be saved regardless of whether the
+## server itself is up (IDENTITY_FAILED) or down (SAVE_FAILED never even
+## involved a server problem, but the outcome for the player is identical).
+func acknowledge_error() -> void:
+	if _state != State.SAVE_FAILED and _state != State.IDENTITY_FAILED:
+		return
+	_reachable = false
 	_enter_room()
 
 
@@ -263,6 +298,9 @@ func _on_identity_received(state: int, http_status: int, phrase: String) -> void
 			offline_notice_required.emit(OFFLINE_NOTICE_TEXT)
 		_:
 			# HTTP 4xx/5xx: the server responded, so it is reachable, but
-			# identity creation itself failed.
+			# identity creation itself failed. IDENTITY_FAILED gives the
+			# player a real way forward (acknowledge_error()) instead of
+			# leaving the sequence stuck in AWAITING_IDENTITY forever.
 			_reachable = true
+			_state = State.IDENTITY_FAILED
 			identity_failed.emit(state, http_status)

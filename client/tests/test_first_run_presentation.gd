@@ -37,9 +37,14 @@ const OfflineIndicator := preload("res://scripts/offline_indicator.gd")
 const TransientNotice := preload("res://scripts/transient_notice.gd")
 const FirstRunController := preload("res://scripts/first_run_controller.gd")
 const FirstRunSequence := preload("res://first_run_sequence.gd")
+const IdentityStore := preload("res://identity_store.gd")
 
 const MOCK_PORT: int = 19996
 const DEAD_PORT: int = 19995
+## Dedicated port for the heartbeat-drop test, which deliberately stops its
+## server mid-test to simulate an outage — kept separate from MOCK_PORT so
+## that doesn't affect any test running after it.
+const HEARTBEAT_MOCK_PORT: int = 19994
 const SHORT_TIMEOUT_MS: int = 200
 const TEST_PATH := "user://test_T0120_presentation.phrase"
 
@@ -110,6 +115,7 @@ func _init() -> void:
 	failures += _test_offline_indicator_visibility()
 	failures += _test_transient_notice_show_hide()
 	failures += _test_transient_notice_dismiss_on_input()
+	failures += _test_transient_notice_dismissed_signal()
 
 	var mock := MockHttpServer.new()
 	if not mock.listen(MOCK_PORT):
@@ -121,6 +127,12 @@ func _init() -> void:
 	failures += _test_controller_offline_launch_shows_indicator(mock)
 	failures += _test_controller_chroma_notice_after_baseline(mock)
 	failures += _test_controller_offline_session_end_recap()
+	failures += _test_controller_returning_player_skips_identity_request(mock)
+	failures += _test_controller_identity_error_shows_screen_and_continues(mock)
+	failures += _test_controller_save_failure_shows_screen_and_continues(mock)
+	failures += _test_controller_indicator_follows_midsession_heartbeat_drop()
+	failures += _test_controller_close_request_recap_then_completes()
+	failures += _test_controller_close_request_online_completes_immediately(mock)
 
 	mock.stop()
 
@@ -398,6 +410,31 @@ func _test_transient_notice_dismiss_on_input() -> Array[String]:
 	return failures
 
 
+## ── TransientNotice: emits `dismissed` — the hook FirstRunController's ───────
+## close-request handling (AC6) needs to know when it is safe to complete a
+## pending OS quit that was held open to show the session-end recap.
+
+func _test_transient_notice_dismissed_signal() -> Array[String]:
+	var failures: Array[String] = []
+	var notice := TransientNotice.new()
+	notice.build_ui()
+	notice.show_text("watch the color")
+
+	var dismiss_count := [0]
+	notice.dismissed.connect(func(): dismiss_count[0] += 1)
+
+	notice.hide_notice()
+	if dismiss_count[0] != 1:
+		failures.append("transient_notice_dismissed: hide_notice() must emit dismissed exactly once, got %d" % dismiss_count[0])
+
+	notice.hide_notice()
+	if dismiss_count[0] != 1:
+		failures.append("transient_notice_dismissed: hiding an already-hidden notice must not re-emit dismissed")
+
+	notice.free()
+	return failures
+
+
 ## ── FirstRunController: chroma explanation renders after the baseline ────────
 ## window elapses (AC7) — chroma_explanation_ready had zero consumers before
 ## this pass, so the explanation fired but nothing was ever shown.
@@ -464,4 +501,249 @@ func _test_controller_offline_session_end_recap() -> Array[String]:
 		failures.append("controller_recap: session-end recap must be shown when ending while offline")
 
 	controller.free()
+	return failures
+
+
+## ── FirstRunController: a returning player (phrase already saved) must ───────
+## reach the room with no network round trip and without disturbing the file
+## a first controller instance already wrote — the exact AC1 regression the
+## reviewer found (save_phrase() truncates on every write).
+
+func _test_controller_returning_player_skips_identity_request(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	# First "launch": mints and saves a phrase.
+	var first := FirstRunController.new()
+	first.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % MOCK_PORT)
+	mock.queue(201, '{"phrase":"return alpha return beta return gamma return delta"}')
+	first.start_new_game()
+	var minted := _drive_controller(
+		first, mock, 5000.0, func(): return first.get_phrase_screen() != null
+	)
+	if not minted:
+		failures.append("controller_returning: first launch never reached the phrase screen within 5 s")
+		first.free()
+		return failures
+	first.get_phrase_screen().acknowledged.emit()
+	first.free()
+
+	var saved := IdentityStore.load_phrase(TEST_PATH)
+
+	# "Second launch": a fresh controller, same phrase path, same mock (which
+	# has nothing queued) — if this issues a request at all, this test can't
+	# tell it apart from a slow server, so the real assertion is synchronous.
+	var second := FirstRunController.new()
+	second.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % MOCK_PORT)
+	second.start_new_game()
+
+	if second.get_sequence().get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append(
+			"controller_returning: second launch expected IN_ENTRY_ROOM synchronously, got %d"
+			% second.get_sequence().get_state()
+		)
+	if second.get_phrase_screen() != null:
+		failures.append("controller_returning: second launch must not show the phrase screen again")
+	if IdentityStore.load_phrase(TEST_PATH) != saved:
+		failures.append("controller_returning: second launch must not modify the already-saved phrase")
+
+	second.free()
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── FirstRunController: identity_failed (4xx/5xx) must not blank-screen ──────
+## the player forever. Before this fix, nothing consumed identity_failed, and
+## blockout_room.gd's own entry_room_ready gate meant that was a permanent
+## blank screen with no way forward.
+
+func _test_controller_identity_error_shows_screen_and_continues(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % MOCK_PORT)
+
+	mock.queue(500, '{"error":0}')
+	controller.start_new_game()
+	var completed := _drive_controller(
+		controller, mock, 5000.0, func(): return controller.get_error_screen() != null
+	)
+	if not completed:
+		failures.append("controller_identity_error: error screen never appeared within 5 s")
+		controller.free()
+		return failures
+
+	var relayed := [false]
+	controller.entry_room_ready.connect(func(): relayed[0] = true)
+	controller.get_error_screen().acknowledged.emit()
+
+	if not relayed[0]:
+		failures.append("controller_identity_error: acknowledging the error screen must relay entry_room_ready")
+	if controller.get_error_screen() != null:
+		failures.append("controller_identity_error: error screen must be torn down after acknowledgment")
+	if controller.get_sequence().get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("controller_identity_error: sequence must reach IN_ENTRY_ROOM after acknowledgment")
+
+	controller.free()
+	return failures
+
+
+## ── FirstRunController: phrase_save_failed must likewise not blank-screen ────
+
+func _test_controller_save_failure_shows_screen_and_continues(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	const BAD_PATH := "user://T0120_presentation_missing_dir/phrase.txt"
+
+	var controller := FirstRunController.new()
+	controller.configure_for_test(BAD_PATH, "http://127.0.0.1:%d" % MOCK_PORT)
+
+	mock.queue(201, '{"phrase":"return five return six return seven return eight"}')
+	controller.start_new_game()
+	var completed := _drive_controller(
+		controller, mock, 5000.0, func(): return controller.get_error_screen() != null
+	)
+	if not completed:
+		failures.append("controller_save_error: error screen never appeared within 5 s")
+		controller.free()
+		return failures
+
+	controller.get_error_screen().acknowledged.emit()
+
+	if controller.get_sequence().get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("controller_save_error: sequence must reach IN_ENTRY_ROOM after acknowledgment")
+
+	controller.free()
+	return failures
+
+
+## ── FirstRunController: the offline indicator must follow a REAL mid-session ──
+## reachability drop, detected through a periodic heartbeat probe on the
+## controller's own NoteClient — not a direct notify_reachability() call.
+## Before this fix, OfflineModeController's server_reachable_changed had no
+## production emitter at all (it only fires from NoteClient.notes_fetched,
+## and nothing ever called fetch_notes() in production), so the indicator was
+## frozen at whatever it read on room entry for the entire rest of the
+## session.
+
+func _test_controller_indicator_follows_midsession_heartbeat_drop() -> Array[String]:
+	var failures: Array[String] = []
+
+	# Its own dedicated mock/port: this test deliberately stops its server
+	# mid-test to simulate an outage, which must not affect any test that
+	# runs after it and shares the module-level `mock`.
+	var heartbeat_mock := MockHttpServer.new()
+	if not heartbeat_mock.listen(HEARTBEAT_MOCK_PORT):
+		failures.append("controller_heartbeat: could not start dedicated mock HTTP server on port %d" % HEARTBEAT_MOCK_PORT)
+		return failures
+
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % HEARTBEAT_MOCK_PORT, SHORT_TIMEOUT_MS)
+
+	heartbeat_mock.queue(201, '{"phrase":"heartbeat one heartbeat two heartbeat three heartbeat four"}')
+	controller.start_new_game()
+	var reached_phrase := _drive_controller(
+		controller, heartbeat_mock, 5000.0, func(): return controller.get_phrase_screen() != null
+	)
+	if not reached_phrase:
+		failures.append("controller_heartbeat: phrase screen never appeared within 5 s")
+		controller.free()
+		heartbeat_mock.stop()
+		return failures
+
+	controller.get_phrase_screen().acknowledged.emit()
+
+	var indicator := controller.get_offline_indicator()
+	if indicator == null or indicator.visible:
+		failures.append("controller_heartbeat: indicator must not be visible while the server is reachable")
+
+	# Take the mock server down to simulate a mid-session outage, then fire
+	# the heartbeat exactly like _process() would once HEARTBEAT_INTERVAL_SECS
+	# has elapsed. No direct notify_reachability() call anywhere in this test.
+	heartbeat_mock.stop()
+	controller._process(FirstRunController.HEARTBEAT_INTERVAL_SECS)
+	var went_offline := _drive_controller(
+		controller, null, 3000.0, func(): return indicator.visible
+	)
+
+	if not went_offline:
+		failures.append(
+			"controller_heartbeat: offline indicator must follow a mid-session reachability drop detected by the periodic heartbeat (AC5)"
+		)
+
+	controller.free()
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── FirstRunController: an OS close request while ending offline shows the ───
+## recap (AC6) and holds the quit open until it is dismissed. Before this
+## fix, end_session() had no production caller anywhere — the only call
+## sites in the whole branch were tests — so a real player could never
+## trigger the recap at all.
+
+func _test_controller_close_request_recap_then_completes() -> Array[String]:
+	var failures: Array[String] = []
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % DEAD_PORT, SHORT_TIMEOUT_MS)
+
+	controller.start_new_game()
+	var completed := _drive_controller(
+		controller, null, 3000.0, func(): return controller.get_offline_screen() != null
+	)
+	if not completed:
+		failures.append("controller_close_recap: offline screen never appeared within 3 s")
+		controller.free()
+		return failures
+
+	controller.get_offline_screen().acknowledged.emit()
+
+	if controller.get_recap_notice() != null:
+		failures.append("controller_close_recap: must not appear before an actual OS close request")
+
+	controller._notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+
+	if controller.get_recap_notice() == null or not controller.get_recap_notice().visible:
+		failures.append(
+			"controller_close_recap: an OS close request while ending offline must show the session-end recap (AC6) before quitting"
+		)
+	elif not controller.is_close_request_pending():
+		failures.append("controller_close_recap: the close request must stay pending until the recap is dismissed")
+	else:
+		controller.get_recap_notice().dismissed.emit()
+		if controller.is_close_request_pending():
+			failures.append("controller_close_recap: dismissing the recap must complete the pending close request")
+
+	controller.free()
+	return failures
+
+
+## ── FirstRunController: an online close request completes immediately ───────
+## (no recap to show — nothing about this session was ever unsaved).
+
+func _test_controller_close_request_online_completes_immediately(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % MOCK_PORT)
+
+	mock.queue(201, '{"phrase":"river stone moth ember quiet drift north gate"}')
+	controller.start_new_game()
+	var completed := _drive_controller(
+		controller, mock, 5000.0, func(): return controller.get_phrase_screen() != null
+	)
+	if not completed:
+		failures.append("controller_close_online: phrase screen never appeared within 5 s")
+		controller.free()
+		return failures
+
+	controller.get_phrase_screen().acknowledged.emit()
+	controller._notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+
+	if controller.get_recap_notice() != null:
+		failures.append("controller_close_online: no recap is shown for a session that was never offline")
+	if controller.is_close_request_pending():
+		failures.append("controller_close_online: an online close request must complete immediately, not stay pending")
+
+	controller.free()
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
 	return failures
