@@ -194,6 +194,18 @@ func start_new_game() -> void:
 		# between FileAccess.open(WRITE) and store_string() would otherwise
 		# route a genuinely brand-new player down the "returning" branch
 		# forever, with no phrase, no warning, and no recovery.
+		#
+		# Known scope gap: this skips AC4's pre-play reachability check for a
+		# returning player specifically — there is no request to observe the
+		# result of, unlike the first-run path, which learns reachability as
+		# a side effect of POST /v1/identity. A returning player launching
+		# into a dead server currently sees no OFFLINE_NOTICE at all and
+		# reads as reachable until the first in-room heartbeat corrects it
+		# (within HEARTBEAT_INTERVAL_SECS). Closing this fully would mean
+		# giving the returning-player path its own one-shot reachability
+		# probe and a new transient state to await it in — deliberately not
+		# done here to avoid stacking another not-yet-proven state-machine
+		# change on top of this same pass; flagged for a follow-up instead.
 		_enter_room()
 		return
 	_note_client.request_identity()
