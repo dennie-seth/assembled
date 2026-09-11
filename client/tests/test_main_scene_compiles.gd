@@ -31,7 +31,7 @@ func _initialize() -> void:
 func _run() -> void:
 	var failures: Array[String] = []
 
-	var main_scene_path: String = ProjectSettings.get_setting("run/main_scene", "")
+	var main_scene_path: String = ProjectSettings.get_setting("application/run/main_scene", "")
 	if main_scene_path.is_empty():
 		failures.append("project.godot: run/main_scene is not set")
 		_finish(failures)
