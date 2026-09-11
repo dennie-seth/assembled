@@ -51,6 +51,12 @@ signal entry_room_ready()
 ## state matters here, never the response body.
 const HEARTBEAT_INTERVAL_SECS: float = 10.0
 
+## Default chroma-marker path used by configure_for_test() when the caller
+## doesn't supply one. Exposed so tests can clean it up between runs — see
+## configure_for_test()'s docs for why every test-built controller must
+## avoid the real FirstRunSequence.CHROMA_SHOWN_FILE default.
+const DEFAULT_TEST_CHROMA_MARKER_PATH := "user://test_T0120_default_chroma_marker.marker"
+
 var _sequence: FirstRunSequence
 var _note_client: NoteClient
 var _offline_mode: OfflineModeController
@@ -61,6 +67,7 @@ var _indicator: OfflineIndicator
 var _chroma_notice: TransientNotice
 var _recap_notice: TransientNotice
 var _phrase_path: String = IdentityStore.PHRASE_FILE
+var _chroma_marker_path: String = FirstRunSequence.CHROMA_SHOWN_FILE
 var _heartbeat_elapsed: float = 0.0
 var _pending_quit: bool = false
 var _was_auto_accept_quit: bool = true
@@ -87,6 +94,7 @@ func initialize() -> void:
 
 	_sequence = FirstRunSequence.new()
 	_sequence.set_phrase_path(_phrase_path)
+	_sequence.set_chroma_marker_path(_chroma_marker_path)
 	_sequence.setup(_note_client)
 	_sequence.phrase_reveal_ready.connect(_on_phrase_reveal_ready)
 	_sequence.identity_failed.connect(_on_identity_failed)
@@ -103,11 +111,22 @@ func initialize() -> void:
 	_sequence.offline_indicator_changed.connect(_indicator.set_visible_offline)
 
 
-## Override the phrase save path before initialize() runs, and the
-## NoteClient's base URL/timeout once it exists. Test-only hook — production
-## callers never need it (defaults apply).
-func configure_for_test(phrase_path: String, base_url: String, timeout_ms: int = 0) -> void:
+## Override the phrase save path and chroma-marker path before initialize()
+## runs, and the NoteClient's base URL/timeout once it exists. Test-only
+## hook — production callers never need it (defaults apply). An explicit
+## per-test chroma_marker_path matters even for tests that don't care about
+## the chroma explanation: user:// files persist on disk between separate
+## `godot --headless` invocations, so leaving this at its production default
+## would let one test run's baseline-window crossing leak into every other
+## test (and every other test *file*) that also leaves it at the default.
+func configure_for_test(
+		phrase_path: String,
+		base_url: String,
+		timeout_ms: int = 0,
+		chroma_marker_path: String = DEFAULT_TEST_CHROMA_MARKER_PATH
+) -> void:
 	_phrase_path = phrase_path
+	_chroma_marker_path = chroma_marker_path
 	initialize()
 	_note_client.set_base_url(base_url)
 	if timeout_ms > 0:
@@ -252,6 +271,17 @@ func _on_offline_acknowledged() -> void:
 
 
 func _on_entry_room_ready() -> void:
+	# Seed OfflineModeController with what the sequence already knows about
+	# reachability (from the launch-time identity request outcome, which
+	# OfflineModeController never observes on its own — it only listens to
+	# NoteClient.notes_fetched, driven by the heartbeat below). Without this,
+	# the two would start out of sync whenever the launch was offline, and
+	# the first successful heartbeat would look like "no change" from
+	# OfflineModeController's point of view and never emit
+	# server_reachable_changed at all — pinning the indicator (and a false
+	# session-end recap) for the rest of the session even once genuinely
+	# back online (AC5/AC6).
+	_offline_mode.seed_reachable(_sequence.is_server_reachable())
 	entry_room_ready.emit()
 
 
@@ -276,7 +306,15 @@ func _on_session_end_offline_recap(text: String) -> void:
 ## acknowledge_error()'s docs. Reuses BlockingNoticeScreen at the same
 ## "warning, continue anyway" weight class as the offline notice, since
 ## there is nothing more specific to offer the player and no retry path.
-func _on_identity_failed(_state: int, http_status: int) -> void:
+func _on_identity_failed(state: int, http_status: int) -> void:
+	if state == NoteClient.STATE_OK:
+		# Reached the server, got a 2xx, but the body had no parseable
+		# phrase — a malformed response, not a rejected request. HTTP status
+		# would just be a misleading "201" here, so don't quote it.
+		_show_error_screen(
+			"The server's response didn't include an identity. Nothing has been saved for this session — you can continue, but this session's progress won't be recorded."
+		)
+		return
 	_show_error_screen(
 		"The server couldn't create your identity (HTTP %d). Nothing has been saved for this session — you can continue, but this session's progress won't be recorded."
 		% http_status

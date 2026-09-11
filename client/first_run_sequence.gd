@@ -65,6 +65,15 @@ const CHROMA_EXPLANATION_TEXT: String = (
 	+ "— that's your only clock, and it never lies."
 )
 
+## Marker file recording that the chroma explanation has already been shown
+## on this device. "Exactly once" (AC7, 18-first-run.md §3: "One-time...
+## note") means once ever, not once per FirstRunSequence instance — without
+## this, the returning-player path (start_new_game() dropping straight into
+## _enter_room()) would re-run the baseline window and re-show the
+## explanation on every single launch, since _chroma_shown is otherwise a
+## plain in-memory field reset by every _enter_room().
+const CHROMA_SHOWN_FILE := "user://first_run_chroma_shown.marker"
+
 ## States of the first-run sequence.
 enum State {
 	AWAITING_IDENTITY, ## Waiting on POST /v1/identity to complete.
@@ -127,6 +136,7 @@ signal offline_indicator_changed(visible: bool)
 var _state: State = State.AWAITING_IDENTITY
 var _reachable: bool = true
 var _phrase_path: String = IdentityStore.PHRASE_FILE
+var _chroma_marker_path: String = CHROMA_SHOWN_FILE
 var _note_client: NoteClient = null
 var _baseline_elapsed: float = 0.0
 var _chroma_shown: bool = false
@@ -143,6 +153,12 @@ func setup(client: NoteClient) -> void:
 ## tests use this to avoid touching the production save file.
 func set_phrase_path(path: String) -> void:
 	_phrase_path = path
+
+
+## Override the chroma-shown marker path. Defaults to CHROMA_SHOWN_FILE;
+## tests use this to avoid touching the production marker file.
+func set_chroma_marker_path(path: String) -> void:
+	_chroma_marker_path = path
 
 
 ## Current state of the sequence.
@@ -163,7 +179,7 @@ func start_new_game() -> void:
 	if _state != State.AWAITING_IDENTITY:
 		push_error("FirstRunSequence.start_new_game: called in state %d — ignoring" % _state)
 		return
-	if IdentityStore.has_phrase(_phrase_path):
+	if not IdentityStore.load_phrase(_phrase_path).is_empty():
 		# Returning player. Never re-request an identity here: the server
 		# discards the phrase the instant it returns it (03-net-protocol.md
 		# §5), and save_phrase() opens FileAccess.WRITE, which truncates — a
@@ -172,7 +188,12 @@ func start_new_game() -> void:
 		# unreachable. identity_store.gd's own docstring already describes
 		# this branch ("Returning run: re-derive identity using the saved
 		# phrase"); there is no re-derive call to make yet, so this just
-		# proceeds straight to the calm entry room.
+		# proceeds straight to the calm entry room. Checking load_phrase()
+		# rather than has_phrase() matters: has_phrase() is only
+		# FileAccess.file_exists(), so a 0-byte file left behind by a crash
+		# between FileAccess.open(WRITE) and store_string() would otherwise
+		# route a genuinely brand-new player down the "returning" branch
+		# forever, with no phrase, no warning, and no recovery.
 		_enter_room()
 		return
 	_note_client.request_identity()
@@ -219,6 +240,7 @@ func tick(delta: float) -> void:
 	_baseline_elapsed += delta
 	if _baseline_elapsed >= BASELINE_EXPLORATION_SECS:
 		_chroma_shown = true
+		_mark_chroma_shown()
 		chroma_explanation_ready.emit(CHROMA_EXPLANATION_TEXT)
 
 
@@ -250,7 +272,9 @@ func end_session() -> void:
 func _enter_room() -> void:
 	_state = State.IN_ENTRY_ROOM
 	_baseline_elapsed = 0.0
-	_chroma_shown = false
+	# Persisted, not a bare reset: a returning player re-entering the room on
+	# a later launch must not re-trigger the "one-time" explanation (AC7).
+	_chroma_shown = FileAccess.file_exists(_chroma_marker_path)
 	entry_room_ready.emit()
 	# Emit the indicator's initial state on the first observation available to
 	# any listener that connected in response to entry_room_ready (i.e. a
@@ -266,6 +290,18 @@ func _build_phrase_notice_text() -> String:
 	return IdentityStore.FIRST_RUN_NOTICE.replace("[path]", IdentityStore.resolve_path(_phrase_path))
 
 
+## Persist that the chroma explanation has been shown, so it never re-fires
+## on a later launch (AC7). Content is irrelevant — only the file's
+## existence is checked (_enter_room()) — so a write failure here is not
+## routed anywhere: worst case the explanation shows one extra time on the
+## next launch, which is a far smaller failure than the SAVE_FAILED path's
+## "the phrase itself didn't save."
+func _mark_chroma_shown() -> void:
+	var f := FileAccess.open(_chroma_marker_path, FileAccess.WRITE)
+	if f != null:
+		f.store_string("1")
+
+
 func _on_identity_received(state: int, http_status: int, phrase: String) -> void:
 	# Ignore a stale/duplicate response after the sequence has already moved on.
 	if _state != State.AWAITING_IDENTITY:
@@ -274,6 +310,15 @@ func _on_identity_received(state: int, http_status: int, phrase: String) -> void
 	match state:
 		NoteClient.STATE_OK:
 			if phrase.is_empty():
+				# A 2xx with no parseable phrase — a malformed body, an empty
+				# JSON object, or a proxy/captive-portal interstitial could
+				# all land here. Must still transition to IDENTITY_FAILED:
+				# leaving _state at AWAITING_IDENTITY would make
+				# acknowledge_error() a silent no-op (its guard checks
+				# SAVE_FAILED/IDENTITY_FAILED), so the error screen would be
+				# dismissed and nothing would ever open the room.
+				_reachable = true
+				_state = State.IDENTITY_FAILED
 				identity_failed.emit(state, http_status)
 				return
 			_reachable = true
