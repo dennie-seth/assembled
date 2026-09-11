@@ -3,7 +3,9 @@
 #include <drogon/HttpResponse.h>
 #include <json/value.h>
 
+#include <chrono>
 #include <cstdlib>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -13,6 +15,7 @@
 
 #include "assembled_server/Database.h"
 #include "assembled_server/NoteRepo.h"
+#include "assembled_server/RateLimiter.h"
 #include "shared/note_templates.hpp"
 
 namespace assembled_server {
@@ -32,6 +35,64 @@ static drogon::HttpResponsePtr makeError(drogon::HttpStatusCode status, int code
 /// Default limit when the caller omits the ?limit= parameter.
 constexpr int kDefaultLimit = 20;
 
+/// Default per-token note-creation rate limit: 20 per minute. Generous
+/// relative to steady-state play (a handful of notes per session) while
+/// still bounding a scripted burst. Override via NOTE_CREATE_RATE_LIMIT_MAX
+/// and NOTE_CREATE_RATE_LIMIT_WINDOW_SEC (03-net-protocol.md §7).
+constexpr size_t kDefaultNoteCreateMax = 20;
+constexpr long kDefaultNoteCreateWindowSec = 60;
+
+/// Default per-token note-rating rate limit: 60 per minute. Rating is a
+/// lighter-weight action than composing a note (players plausibly rate
+/// several notes in quick succession while browsing a list), so its
+/// steady-state ceiling is higher. Override via NOTE_RATING_RATE_LIMIT_MAX
+/// and NOTE_RATING_RATE_LIMIT_WINDOW_SEC (03-net-protocol.md §7).
+constexpr size_t kDefaultNoteRatingMax = 60;
+constexpr long kDefaultNoteRatingWindowSec = 60;
+
+/// Builds a RateLimiter from a pair of env vars, falling back to the given
+/// defaults when unset or unparseable.
+std::unique_ptr<RateLimiter> makeRateLimiterFromEnv(const char *maxEnvName,
+                                                    const char *windowEnvName, size_t defaultMax,
+                                                    long defaultWindowSec) {
+    size_t maxReq = defaultMax;
+    long windowSec = defaultWindowSec;
+
+    const char *maxEnv = std::getenv(maxEnvName);
+    if (maxEnv && *maxEnv) {
+        try {
+            maxReq = static_cast<size_t>(std::stoul(maxEnv));
+        } catch (...) {
+        }
+    }
+    const char *winEnv = std::getenv(windowEnvName);
+    if (winEnv && *winEnv) {
+        try {
+            windowSec = std::stol(winEnv);
+        } catch (...) {
+        }
+    }
+    return std::make_unique<RateLimiter>(maxReq, std::chrono::seconds(windowSec));
+}
+
+/// Thread-safe get-or-create for a lazily-constructed rate limiter (T-0049
+/// fix round). Locks @p mu for the whole check-and-construct so concurrent
+/// first requests on separate HTTP worker threads cannot race on @p slot
+/// itself -- the mutex inside RateLimiter::allow() only protects bucket
+/// data, not construction/replacement of the limiter object.
+RateLimiter &getOrCreateRateLimiter(std::mutex &mu, std::unique_ptr<RateLimiter> &slot,
+                                    const char *maxEnvName, const char *windowEnvName,
+                                    size_t defaultMax, long defaultWindowSec) {
+    std::lock_guard<std::mutex> lock(mu);
+    if (!slot) {
+        slot = makeRateLimiterFromEnv(maxEnvName, windowEnvName, defaultMax, defaultWindowSec);
+    }
+    return *slot;
+}
+
+std::mutex noteRateLimiterMu;
+std::mutex ratingRateLimiterMu;
+
 /// Parse a required SMALLINT query parameter.
 /// @returns the parsed value, or std::nullopt if missing/invalid.
 std::optional<int16_t> parseSmallInt(const drogon::HttpRequestPtr &req, const std::string &name) {
@@ -47,6 +108,48 @@ std::optional<int16_t> parseSmallInt(const drogon::HttpRequestPtr &req, const st
 }
 
 } // namespace
+
+// ── Static rate limiters (T-0049) ─────────────────────────────────────────────
+
+std::unique_ptr<RateLimiter> NoteController::noteRateLimiter_;
+std::unique_ptr<RateLimiter> NoteController::ratingRateLimiter_;
+
+RateLimiter &NoteController::noteRateLimiter() {
+    return getOrCreateRateLimiter(noteRateLimiterMu, noteRateLimiter_, "NOTE_CREATE_RATE_LIMIT_MAX",
+                                  "NOTE_CREATE_RATE_LIMIT_WINDOW_SEC", kDefaultNoteCreateMax,
+                                  kDefaultNoteCreateWindowSec);
+}
+
+RateLimiter &NoteController::ratingRateLimiter() {
+    return getOrCreateRateLimiter(ratingRateLimiterMu, ratingRateLimiter_,
+                                  "NOTE_RATING_RATE_LIMIT_MAX", "NOTE_RATING_RATE_LIMIT_WINDOW_SEC",
+                                  kDefaultNoteRatingMax, kDefaultNoteRatingWindowSec);
+}
+
+void NoteController::setNoteRateLimiterForTesting(size_t maxRequests, std::chrono::seconds window) {
+    std::lock_guard<std::mutex> lock(noteRateLimiterMu);
+    noteRateLimiter_ = std::make_unique<RateLimiter>(maxRequests, window);
+}
+
+void NoteController::setRatingRateLimiterForTesting(size_t maxRequests,
+                                                    std::chrono::seconds window) {
+    std::lock_guard<std::mutex> lock(ratingRateLimiterMu);
+    ratingRateLimiter_ = std::make_unique<RateLimiter>(maxRequests, window);
+}
+
+void NoteController::resetNoteRateLimiterForTesting() {
+    std::lock_guard<std::mutex> lock(noteRateLimiterMu);
+    noteRateLimiter_.reset();
+}
+
+void NoteController::resetRatingRateLimiterForTesting() {
+    std::lock_guard<std::mutex> lock(ratingRateLimiterMu);
+    ratingRateLimiter_.reset();
+}
+
+RateLimiter &NoteController::noteRateLimiterForTesting() { return noteRateLimiter(); }
+
+RateLimiter &NoteController::ratingRateLimiterForTesting() { return ratingRateLimiter(); }
 
 void NoteController::createNote(const drogon::HttpRequestPtr &req,
                                 std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
@@ -121,6 +224,12 @@ void NoteController::createNote(const drogon::HttpRequestPtr &req,
         return;
     }
     const std::string token = auth.substr(7);
+
+    // ── 6b. Per-token rate limit (note-creation route group, T-0049) ──────
+    if (!noteRateLimiter().allow(token)) {
+        cb(makeError(drogon::k429TooManyRequests, 5001)); // RATE_LIMITED
+        return;
+    }
 
     // ── 7. Get DB client (lazy init, shared across requests) ──────────────
     static std::once_flag createDbFlag;
@@ -288,6 +397,12 @@ void NoteController::rateNote(const drogon::HttpRequestPtr &req,
         return;
     }
     const std::string token = auth.substr(7);
+
+    // ── 1b. Per-token rate limit (note-rating route group, T-0049) ────────────
+    if (!ratingRateLimiter().allow(token)) {
+        cb(makeError(drogon::k429TooManyRequests, 5001)); // RATE_LIMITED
+        return;
+    }
 
     // ── 2. Parse JSON body ────────────────────────────────────────────────────
     auto body = req->getJsonObject();
