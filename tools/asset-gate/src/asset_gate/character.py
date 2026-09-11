@@ -77,16 +77,15 @@ from __future__ import annotations
 import json
 import numbers
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+from PIL import Image
 
 from asset_gate import art
 from asset_gate.result import CheckResult
 
-if TYPE_CHECKING:
-    from PIL import Image
-
 _MISSING = object()
 _BASELINE_FILENAME = "character_arm_c_baseline.txt"
+_MOTION_CLASS_BASELINE_FILENAME = "character_motion_class_baseline.txt"
 
 #: The asset class this gate applies to -- see the module docstring's Scope
 #: section. Everything else is reported as passing, skipped.
@@ -137,6 +136,71 @@ POSE_FIDELITY_IOU_FLOOR = 0.7
 #: between those two populations -- comfortably above ordinary noise,
 #: comfortably below a real drift/cropping fault.
 IDENTITY_STABILITY_HISTOGRAM_CAP = 0.15
+
+#: T-0357: every motion_class value any check in this module treats as
+#: meaningful -- `idle` plus the three T-0340 higher-cap classes. A missing
+#: or unrecognised value is NOT a member of this set; see
+#: `check_character_motion_class_declared`, the new requirement that a
+#: sheet actually be one of these rather than silently riding whichever
+#: check's own fail-closed default happens to treat an absent class like
+#: `idle`.
+KNOWN_MOTION_CLASSES = frozenset({"idle"}) | _HIGHER_CAP_MOTION_CLASSES
+
+#: T-0357 finding 3: versioned rig config for recomputing pose-fidelity/
+#: identity-stability live from a sheet's own pixels instead of trusting
+#: whatever range its sidecar records. Mirrors
+#: `assets/src/character/gen_arm_a_idle_T0228.py`'s `_POSE_LIMBS` joint
+#: topology (colour is irrelevant to a silhouette, so only the joint pairs
+#: are kept) and the capsule radius
+#: `assets/src/character/calibrate_motion_fidelity_T0340.py` established
+#: (docs/decision-log.md DL-31) -- duplicated rather than imported for the
+#: same import-isolation reason `asset_class()` gives for its own mirrored
+#: constant, one path scope further out: `asset_gate` (tools/**) must not
+#: depend on `assets/src/character/**` (a different agent's path scope
+#: entirely, not just an unrelated module in this package). Bump
+#: RIG_CONFIG_VERSION if either the joint pairs or the radius ever changes,
+#: so a cache keyed on it (if a future caller adds one) invalidates itself.
+RIG_CONFIG_VERSION = "gen_arm_a_idle_T0228:_POSE_LIMBS+capsule_radius:v1"
+
+#: (joint_a, joint_b) pairs only -- see RIG_CONFIG_VERSION's docstring.
+RIG_LIMB_JOINT_PAIRS: tuple[tuple[int, int], ...] = (
+    (1, 2),
+    (1, 5),
+    (2, 3),
+    (3, 4),
+    (5, 6),
+    (6, 7),
+    (1, 8),
+    (8, 9),
+    (9, 10),
+    (1, 11),
+    (11, 12),
+    (12, 13),
+    (1, 0),
+    (0, 14),
+    (14, 16),
+    (0, 15),
+    (15, 17),
+)
+
+#: Capsule half-width in the same cell-pixel space the sheet is indexed in
+#: -- see RIG_CONFIG_VERSION's docstring.
+MOTION_FIDELITY_CAPSULE_RADIUS_PX = 2.5
+
+#: Right shoulder, left shoulder, right hip, left hip -- the static base
+#: pose's own normalised coordinates (mirrors the relevant subset of
+#: `gen_arm_a_idle_T0228._POSE_KEYPOINTS_NORM`), used to derive a torso
+#: region that is FIXED across every frame of a sheet: the torso does not
+#: stride, so identity-stability must compare the same box in every frame
+#: regardless of which frame's own keypoints happen to be recorded (see
+#: `calibrate_motion_fidelity_T0340.py`'s own `_torso_region`, which this
+#: mirrors exactly so recomputation reproduces its calibrated numbers).
+TORSO_ANCHOR_POINTS_NORM: dict[int, tuple[float, float]] = {
+    2: (0.417, 0.225),
+    5: (0.583, 0.225),
+    8: (0.446, 0.570),
+    11: (0.554, 0.570),
+}
 
 
 def frame_delta_cap_for_motion_class(motion_class: object) -> float:
@@ -320,6 +384,7 @@ def build_character_gate_report(
     cell_px: int,
     background_index: int = 0,
     sheet_name: str = "<sheet>",
+    repo_root: Path | str = ".",
 ) -> dict:
     """Assemble the machine-readable gate report for a character sheet
     (T-0349, docs/board-invariants.md CHR-1).
@@ -345,6 +410,23 @@ def build_character_gate_report(
     `check_character_arm_c_provenance` / `check_character_frame_delta_cap`
     (the real enforcement predicates) already decide for *provenance*,
     reused rather than re-derived.
+
+    T-0357: `checks` also includes `character_motion_fidelity` --
+    `determine_character_motion_fidelity`'s own result, recomputed live from
+    this sheet's pixels when the provenance records enough rig evidence to
+    do so (`repo_root` resolves each frame's `pose_keypoints_file`), FAILING
+    outright for a locomotion/transition/loop asset that does not (2026-09-11
+    PR review, P1) -- it never falls back to the sidecar-trusting predicate
+    for one of those three classes. Before this card a
+    failing motion result never appeared here at all, so a CLI caller doing
+    `all(check["passed"] for check in report["checks"].values())` (exactly
+    what `cli.py`'s `character-gate-report` subcommand does) could not see
+    it. `thresholds["frame_delta_cap_diagnostic_only"]` marks whether the
+    reported `frame_delta_cap` is the real, enforced idle cap or the
+    retired 0.50 motion-class cap (T-0340/DL-31) that
+    `check_character_frame_delta_cap` no longer evaluates for locomotion/
+    transition/loop -- present in the report for visibility only, never an
+    acceptance criterion in its own right.
     """
     frames = art.slice_sheet_frames(sheet, cell_px, cell_px, cols, rows)
     if len(frames) != cols * rows:
@@ -387,6 +469,14 @@ def build_character_gate_report(
 
     arm_c_result = check_character_arm_c_provenance(provenance, sheet_name=sheet_name)
     cap_result = check_character_frame_delta_cap(provenance, sheet_name=sheet_name)
+    motion_result = determine_character_motion_fidelity(
+        provenance,
+        frames=frames,
+        cell_px=cell_px,
+        repo_root=repo_root,
+        background_index=background_index,
+        sheet_name=sheet_name,
+    )
 
     return {
         "sheet": sheet_name,
@@ -399,6 +489,12 @@ def build_character_gate_report(
         "motion_class": motion_class,
         "thresholds": {
             "frame_delta_cap": frame_delta_cap,
+            # T-0357: the 0.50 motion-class cap is retired (T-0340/DL-31) --
+            # check_character_frame_delta_cap already skips it entirely for
+            # locomotion/transition/loop, so the value reported above is
+            # informational only for those classes, never an acceptance
+            # criterion. character_motion_fidelity is the real gate.
+            "frame_delta_cap_diagnostic_only": motion_class in _HIGHER_CAP_MOTION_CLASSES,
             "arm_c_benchmark": arm_c_benchmark,
         },
         "frame_pairs": frame_pairs,
@@ -417,6 +513,10 @@ def build_character_gate_report(
             "character_frame_delta_cap": {
                 "passed": cap_result.passed,
                 "reason": cap_result.reason,
+            },
+            "character_motion_fidelity": {
+                "passed": motion_result.passed,
+                "reason": motion_result.reason,
             },
         },
     }
@@ -730,4 +830,542 @@ def sweep_character_motion_fidelity(
                 details={**single.details, "path": rel_str},
             )
         )
+    return results
+
+
+# ---- T-0357: motion_class must be a validated declaration, not an absence ----
+
+
+def check_character_motion_class_declared(
+    provenance: dict, sheet_name: str = "<sheet>"
+) -> CheckResult:
+    """Fail unless `motion_class` is present and one of `KNOWN_MOTION_CLASSES`
+    (T-0357, Codex review 2026-09-11 finding 2).
+
+    Before this check, a missing or unrecognised `motion_class` silently
+    rode the same skip/pass path `idle` legitimately uses in both
+    `check_character_frame_delta_cap` and `check_character_motion_fidelity`
+    -- correct fail-closed defaults for THOSE two checks (an unlabelled
+    sheet must keep the strict cap, never the permissive one), but it meant
+    nothing anywhere ever required a new asset to actually declare what it
+    is. This is that requirement, kept as its own check rather than folded
+    into either of the above, so a sheet can fail it while still legitimately
+    being skipped by (or passing) the frame-delta or motion-fidelity checks.
+    """
+    motion_class = provenance.get("motion_class")
+    if motion_class in KNOWN_MOTION_CLASSES:
+        return CheckResult(
+            check="character_motion_class_declared",
+            passed=True,
+            reason=f"{sheet_name}: motion_class={motion_class!r} is a recognised classification",
+            details={"motion_class": motion_class},
+        )
+
+    if motion_class is None:
+        reason = (
+            f"{sheet_name} has no motion_class recorded -- every character-generation "
+            "output must declare one (T-0357)"
+        )
+    else:
+        reason = (
+            f"{sheet_name}: motion_class={motion_class!r} is not a recognised classification "
+            f"(expected one of {sorted(KNOWN_MOTION_CLASSES)}) (T-0357)"
+        )
+    return CheckResult(
+        check="character_motion_class_declared",
+        passed=False,
+        reason=reason,
+        details={"motion_class": motion_class},
+    )
+
+
+def sweep_character_motion_class_declared(
+    root: Path | str, baseline: frozenset[str] = frozenset()
+) -> list[CheckResult]:
+    """Run `check_character_motion_class_declared` against every
+    `*.provenance.json` under *root*, scoped to the `character` asset class
+    -- same shape/scope/baseline idiom as the other sweeps in this module.
+
+    Args:
+        root: directory to search recursively (e.g. `assets/final`).
+        baseline: paths (relative to *root*, forward-slashed) allowed to
+            keep failing -- documented pre-T-0357 gaps, see
+            `load_character_motion_class_baseline`. Anything not in
+            *baseline* must declare a known motion_class.
+    """
+    root_path = Path(root)
+    results = []
+    for path in sorted(root_path.rglob("*.provenance.json")):
+        rel = path.relative_to(root_path)
+        rel_str = rel.as_posix()
+        cls = asset_class(rel)
+
+        if cls != CHARACTER_CLASS:
+            results.append(
+                CheckResult(
+                    check="character_motion_class_declared",
+                    passed=True,
+                    reason=(
+                        f"{rel_str}: asset class {cls!r} is not character -- "
+                        "motion_class declaration is not required"
+                    ),
+                    details={"path": rel_str, "asset_class": cls, "skipped": True},
+                )
+            )
+            continue
+
+        provenance = json.loads(path.read_text())
+        single = check_character_motion_class_declared(provenance, sheet_name=rel_str)
+
+        if not single.passed and rel_str in baseline:
+            results.append(
+                CheckResult(
+                    check="character_motion_class_declared",
+                    passed=True,
+                    reason=(
+                        f"{single.reason} "
+                        "[baseline-exempt: predates T-0357 motion-class enforcement]"
+                    ),
+                    details={**single.details, "path": rel_str, "baseline_exempt": True},
+                )
+            )
+            continue
+
+        results.append(
+            CheckResult(
+                check="character_motion_class_declared",
+                passed=single.passed,
+                reason=single.reason,
+                details={**single.details, "path": rel_str},
+            )
+        )
+    return results
+
+
+def _default_motion_class_baseline_path() -> Path:
+    return Path(__file__).parent / _MOTION_CLASS_BASELINE_FILENAME
+
+
+def load_character_motion_class_baseline(path: Path | str | None = None) -> frozenset[str]:
+    """Load the set of documented pre-T-0357 motion-class gaps -- character
+    sidecars committed before this card's enforcement existed, with no
+    motion_class opinion recorded at all. `sweep_character_motion_class_declared`
+    exempts exactly these paths; anything not listed here (including
+    `player_walk_sheet_hybrid.provenance.json`, deliberately excluded) must
+    declare a known motion_class.
+    """
+    baseline_path = Path(path) if path is not None else _default_motion_class_baseline_path()
+    if not baseline_path.is_file():
+        return frozenset()
+    return frozenset(
+        line.strip()
+        for line in baseline_path.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    )
+
+
+# ---- T-0357: recompute pose-fidelity/identity-stability live from pixels ----
+
+
+def _load_rig_keypoints(path: Path) -> dict[int, tuple[float, float]]:
+    """Parse a committed per-frame rig-keypoints JSON file (the same shape
+    `keypoints_to_coco_list` in `assets/src/character/pose_rig_walk_T0259.py`
+    writes: a list of `{"joint": i, "x": ..., "y": ...}` objects) into the
+    `{joint: (x, y)}` mapping `render_rig_silhouette`'s caller needs."""
+    data = json.loads(path.read_text())
+    return {int(item["joint"]): (float(item["x"]), float(item["y"])) for item in data}
+
+
+def _rig_limbs_px(
+    points_norm: dict[int, tuple[float, float]], cell_px: int
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    return [
+        (
+            (points_norm[a][0] * cell_px, points_norm[a][1] * cell_px),
+            (points_norm[b][0] * cell_px, points_norm[b][1] * cell_px),
+        )
+        for a, b in RIG_LIMB_JOINT_PAIRS
+    ]
+
+
+def _torso_region_px(cell_px: int) -> tuple[int, int, int, int]:
+    xs = [pt[0] for pt in TORSO_ANCHOR_POINTS_NORM.values()]
+    ys = [pt[1] for pt in TORSO_ANCHOR_POINTS_NORM.values()]
+    return (
+        round(min(xs) * cell_px),
+        round(min(ys) * cell_px),
+        round(max(xs) * cell_px),
+        round(max(ys) * cell_px),
+    )
+
+
+def _missing_rig_evidence_reason(provenance: dict) -> str | None:
+    """None iff `provenance` records enough to recompute pose-fidelity/
+    identity-stability from pixels: a declared `layout` (cols/rows/cell_px,
+    all ints) and one `frame_generation` entry per frame. Otherwise, a
+    human-readable reason naming exactly what is missing or malformed, for
+    use in a failing `CheckResult.reason` (T-0357 Codex PR review 2026-09-11,
+    P1: missing/malformed rig evidence on a locomotion/transition/loop asset
+    must FAIL naming the gap, never silently fall back to trusting the
+    sidecar's own self-reported scores). Does not check that each
+    `frame_generation` entry actually names a resolvable
+    `pose_keypoints_file` -- that failure is reported per-frame, with a
+    specific reason, by `_recompute_motion_fidelity_from_frames`."""
+    layout = provenance.get("layout")
+    if not isinstance(layout, dict):
+        return "no 'layout' is declared"
+    cols, rows, cell_px = layout.get("cols"), layout.get("rows"), layout.get("cell_px")
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (cols, rows, cell_px)):
+        return "'layout' is missing or has non-integer cols/rows/cell_px"
+    frame_generation = provenance.get("frame_generation")
+    if not isinstance(frame_generation, list):
+        return "no 'frame_generation' is declared"
+    expected = cols * rows
+    if len(frame_generation) != expected:
+        return (
+            f"'frame_generation' has {len(frame_generation)} entries but 'layout' declares "
+            f"{cols}x{rows} = {expected} frames"
+        )
+    return None
+
+
+def _recompute_motion_fidelity_from_frames(
+    frames: list[Image.Image],
+    provenance: dict,
+    *,
+    cell_px: int,
+    repo_root: Path | str,
+    background_index: int,
+    sheet_name: str,
+) -> CheckResult:
+    """The actual recomputation: render each frame's rig-predicted
+    silhouette from its own versioned keypoints file, compare against that
+    frame's real pixels, then run `check_character_motion_fidelity` against
+    the values just measured -- never whatever the sidecar itself recorded.
+    Caller (`determine_character_motion_fidelity`) has already established
+    `motion_class` is one of the higher-cap classes and rig evidence exists.
+    """
+    motion_class = provenance["motion_class"]
+    repo_root_path = Path(repo_root)
+    frame_generation = provenance["frame_generation"]
+
+    if len(frame_generation) != len(frames):
+        return CheckResult(
+            check="character_motion_fidelity",
+            passed=False,
+            reason=(
+                f"{sheet_name}: 'frame_generation' has {len(frame_generation)} entries but the "
+                f"sheet was sliced into {len(frames)} frames -- cannot pair each frame with its "
+                "versioned rig keypoints"
+            ),
+            details={
+                "frame_generation_count": len(frame_generation),
+                "frame_count": len(frames),
+            },
+        )
+
+    pose_ious: list[float] = []
+    for i, (frame, frame_info) in enumerate(zip(frames, frame_generation, strict=True)):
+        rel_keypoints = (
+            frame_info.get("pose_keypoints_file") if isinstance(frame_info, dict) else None
+        )
+        if not rel_keypoints:
+            return CheckResult(
+                check="character_motion_fidelity",
+                passed=False,
+                reason=(
+                    f"{sheet_name}: frame {i} has no 'pose_keypoints_file' -- cannot resolve "
+                    "its versioned rig input to recompute pose-fidelity"
+                ),
+                details={"frame_index": i},
+            )
+        keypoints_path = repo_root_path / rel_keypoints
+        if not keypoints_path.is_file():
+            return CheckResult(
+                check="character_motion_fidelity",
+                passed=False,
+                reason=(
+                    f"{sheet_name}: frame {i}'s rig keypoints file {rel_keypoints!r} does not "
+                    f"exist under repo_root {repo_root_path}"
+                ),
+                details={"frame_index": i, "pose_keypoints_file": rel_keypoints},
+            )
+        points = _load_rig_keypoints(keypoints_path)
+        predicted = art.render_rig_silhouette(
+            size=cell_px,
+            limbs=_rig_limbs_px(points, cell_px),
+            radius=MOTION_FIDELITY_CAPSULE_RADIUS_PX,
+        )
+        # min_iou=0.0: only the per-frame IoU itself is used (aggregated into
+        # pose_fidelity_range below); the real floor is applied once, on the
+        # aggregate range, by check_character_motion_fidelity -- mirrors
+        # calibrate_motion_fidelity_T0340.py's own calibration usage.
+        result = art.check_pose_fidelity(
+            frame, predicted, background_index=background_index, min_iou=0.0
+        )
+        pose_ious.append(result.details["iou"])
+
+    torso_region = _torso_region_px(cell_px)
+    identity_distances: list[float] = []
+    pairs = [(i, i + 1) for i in range(len(frames) - 1)] + [(len(frames) - 1, 0)]
+    for a, b in pairs:
+        # max_histogram_distance=1.0: only the per-pair distance itself is
+        # used (aggregated into identity_stability_range below); the real
+        # cap is applied once, on the aggregate range, by
+        # check_character_motion_fidelity.
+        result = art.check_identity_stability(
+            frames[a],
+            frames[b],
+            background_index=background_index,
+            region=torso_region,
+            max_histogram_distance=1.0,
+        )
+        identity_distances.append(result.details["distance"])
+
+    recomputed = {
+        "motion_class": motion_class,
+        "pose_fidelity_range": [min(pose_ious), max(pose_ious)],
+        "identity_stability_range": [min(identity_distances), max(identity_distances)],
+    }
+    verdict = check_character_motion_fidelity(recomputed, sheet_name=sheet_name)
+    return CheckResult(
+        check=verdict.check,
+        passed=verdict.passed,
+        reason=(
+            f"{verdict.reason} [recomputed live from the sheet's own pixels + versioned rig "
+            "keypoints, not the sidecar's recorded range]"
+        ),
+        details={
+            **verdict.details,
+            "recomputed_from_pixels": True,
+            "rig_config_version": RIG_CONFIG_VERSION,
+        },
+    )
+
+
+def determine_character_motion_fidelity(
+    provenance: dict,
+    *,
+    frames: list[Image.Image] | None = None,
+    cell_px: int | None = None,
+    sheet: Image.Image | None = None,
+    sheet_path: Path | str | None = None,
+    repo_root: Path | str = ".",
+    background_index: int = 0,
+    sheet_name: str = "<sheet>",
+) -> CheckResult:
+    """The authoritative T-0357 motion-fidelity determination (Codex review
+    2026-09-11 finding 3, and the 2026-09-11 PR review's P1 fix): recompute
+    pose-fidelity/identity-stability LIVE from the sheet's own pixels and its
+    versioned rig keypoints whenever `motion_class` is locomotion/transition/
+    loop -- a recomputed result always overrides whatever range the sidecar
+    itself records, so a stale sidecar score cannot survive the sheet's own
+    PNG changing underneath it.
+
+    A locomotion/transition/loop asset that does not record enough to
+    recompute from (missing `layout`, missing `frame_generation`, or a frame
+    count that does not match the declared layout) FAILS, with a reason
+    naming exactly what evidence is missing -- it never falls back to
+    trusting the sidecar's own self-reported `pose_fidelity_range`/
+    `identity_stability_range`. (The PR review's P1 finding: that fallback
+    let a brand-new, fully transparent sheet with self-reported perfect
+    scores pass every check.)
+
+    `idle` (and missing/unrecognised motion_class) is unaffected -- see
+    `check_character_motion_fidelity`'s own docstring; a validated
+    classification is `check_character_motion_class_declared`'s job, not
+    this function's.
+
+    Args:
+        frames: already-sliced per-cell frames, if the caller has them
+            (`build_character_gate_report` does) -- skips re-opening/
+            re-slicing the sheet. `cell_px` must be supplied alongside it.
+        sheet / sheet_path: how to obtain the sheet when `frames` is not
+            already available (a whole-tree sweep only has a path). `sheet`
+            takes priority if both are given.
+    """
+    motion_class = provenance.get("motion_class")
+    if motion_class not in _HIGHER_CAP_MOTION_CLASSES:
+        return check_character_motion_fidelity(provenance, sheet_name=sheet_name)
+
+    missing_reason = _missing_rig_evidence_reason(provenance)
+    if missing_reason is not None:
+        return CheckResult(
+            check="character_motion_fidelity",
+            passed=False,
+            reason=(
+                f"{sheet_name}: motion_class={motion_class!r} requires recomputing "
+                "pose-fidelity/identity-stability from the sheet's own pixels + versioned rig "
+                f"evidence, but {missing_reason} -- a locomotion/transition/loop asset must never "
+                "fall back to trusting the sidecar's own self-reported scores (T-0357 Codex PR "
+                "review 2026-09-11, P1)"
+            ),
+            details={"motion_class": motion_class, "missing_rig_evidence": missing_reason},
+        )
+
+    layout = provenance["layout"]
+    resolved_cell_px = cell_px if cell_px is not None else layout["cell_px"]
+
+    if frames is None:
+        cols, rows = layout["cols"], layout["rows"]
+        if sheet is None:
+            if sheet_path is None or not Path(sheet_path).is_file():
+                return CheckResult(
+                    check="character_motion_fidelity",
+                    passed=False,
+                    reason=(
+                        f"{sheet_name}: motion_class={motion_class!r} declares a recomputable "
+                        f"rig but the sheet image ({sheet_path or '<no path given>'}) does not "
+                        "exist -- cannot recompute pose-fidelity/identity-stability from pixels"
+                    ),
+                    details={"missing_image": str(sheet_path) if sheet_path else None},
+                )
+            sheet = Image.open(sheet_path)
+        try:
+            frames = art.slice_sheet_frames(sheet, resolved_cell_px, resolved_cell_px, cols, rows)
+        except ValueError as exc:
+            return CheckResult(
+                check="character_motion_fidelity",
+                passed=False,
+                reason=(
+                    f"{sheet_name}: cannot slice the sheet into its declared "
+                    f"{cols}x{rows} grid: {exc}"
+                ),
+                details={"layout": layout},
+            )
+
+    return _recompute_motion_fidelity_from_frames(
+        frames,
+        provenance,
+        cell_px=resolved_cell_px,
+        repo_root=repo_root,
+        background_index=background_index,
+        sheet_name=sheet_name,
+    )
+
+
+def sweep_character_gate(
+    root: Path | str,
+    *,
+    repo_root: Path | str = ".",
+    baseline: frozenset[str] = frozenset(),
+    motion_class_baseline: frozenset[str] = frozenset(),
+) -> list[CheckResult]:
+    """The single authoritative character validator (T-0357, Codex review
+    2026-09-11 finding 1): every character-class `*.provenance.json` under
+    *root* must pass CHR-1 presence, the idle-class frame-delta cap, a
+    validated `motion_class` declaration, and -- recomputed live from the
+    sheet's own PNG whenever rig evidence permits it -- pose-fidelity/
+    identity-stability.
+
+    This is the union of `sweep_character_arm_c_provenance`,
+    `sweep_character_frame_delta_cap`, `sweep_character_motion_class_declared`
+    and `determine_character_motion_fidelity` -- the one function the
+    `character-gate` CLI subcommand exposes, and the one both
+    `ci-asset-gate.yml` and the board's reviewer route invoke, so there is
+    exactly one enforcement path instead of two that can silently drift
+    apart (this card's own motivating gap: T-0340's motion-fidelity sweep
+    existed and was unit-tested, but no workflow anywhere ever called it).
+
+    Args:
+        root: directory whose subdirectories are asset classes (e.g.
+            `assets/final`).
+        repo_root: repository root used to resolve each frame's versioned
+            rig-keypoints file (`frame_generation[i].pose_keypoints_file`).
+        baseline: paths (relative to *root*) exempt from CHR-1 presence and
+            the idle frame-delta cap -- see `load_character_arm_c_baseline`.
+        motion_class_baseline: paths (relative to *root*) exempt from the
+            motion_class declaration requirement -- see
+            `load_character_motion_class_baseline`.
+    """
+    root_path = Path(root)
+    results: list[CheckResult] = []
+
+    for path in sorted(root_path.rglob("*.provenance.json")):
+        rel = path.relative_to(root_path)
+        rel_str = rel.as_posix()
+        cls = asset_class(rel)
+
+        if cls != CHARACTER_CLASS:
+            results.append(
+                CheckResult(
+                    check="character_gate",
+                    passed=True,
+                    reason=(
+                        f"{rel_str}: asset class {cls!r} is not character -- "
+                        "the character gate does not apply"
+                    ),
+                    details={"path": rel_str, "asset_class": cls, "skipped": True},
+                )
+            )
+            continue
+
+        provenance = json.loads(path.read_text())
+
+        arm_c = check_character_arm_c_provenance(provenance, sheet_name=rel_str)
+        if not arm_c.passed and rel_str in baseline:
+            arm_c = CheckResult(
+                check=arm_c.check,
+                passed=True,
+                reason=f"{arm_c.reason} [baseline-exempt: predates CHR-1, T-0258]",
+                details={**arm_c.details, "baseline_exempt": True},
+            )
+        results.append(
+            CheckResult(
+                check=arm_c.check,
+                passed=arm_c.passed,
+                reason=arm_c.reason,
+                details={**arm_c.details, "path": rel_str},
+            )
+        )
+
+        cap = check_character_frame_delta_cap(provenance, sheet_name=rel_str)
+        if not cap.passed and rel_str in baseline:
+            cap = CheckResult(
+                check=cap.check,
+                passed=True,
+                reason=f"{cap.reason} [baseline-exempt: predates CHR-1, T-0258]",
+                details={**cap.details, "baseline_exempt": True},
+            )
+        results.append(
+            CheckResult(
+                check=cap.check,
+                passed=cap.passed,
+                reason=cap.reason,
+                details={**cap.details, "path": rel_str},
+            )
+        )
+
+        declared = check_character_motion_class_declared(provenance, sheet_name=rel_str)
+        if not declared.passed and rel_str in motion_class_baseline:
+            declared = CheckResult(
+                check=declared.check,
+                passed=True,
+                reason=(
+                    f"{declared.reason} [baseline-exempt: predates T-0357 motion-class enforcement]"
+                ),
+                details={**declared.details, "baseline_exempt": True},
+            )
+        results.append(
+            CheckResult(
+                check=declared.check,
+                passed=declared.passed,
+                reason=declared.reason,
+                details={**declared.details, "path": rel_str},
+            )
+        )
+
+        image_path = path.with_name(path.name[: -len(".provenance.json")] + ".png")
+        fidelity = determine_character_motion_fidelity(
+            provenance, sheet_path=image_path, repo_root=repo_root, sheet_name=rel_str
+        )
+        results.append(
+            CheckResult(
+                check=fidelity.check,
+                passed=fidelity.passed,
+                reason=fidelity.reason,
+                details={**fidelity.details, "path": rel_str},
+            )
+        )
+
     return results
