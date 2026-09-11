@@ -19,7 +19,11 @@ class HealthzController : public drogon::HttpController<HealthzController> {
     /// @param req incoming request (unused; the route takes no parameters).
     /// @param callback invoked with 200 `{"status":"ok"}` when the database
     ///        connection is live, or 503 `{"status":"error"}` when
-    ///        `DATABASE_URL` is unset or the database is unreachable.
+    ///        `DATABASE_URL` is unset or the database is unreachable. Always
+    ///        invoked exactly once, and always within `HEALTHZ_TIMEOUT_MS`
+    ///        (default 2000ms) of the call -- a configured-but-unreachable
+    ///        database, or one that stops responding mid-request, resolves
+    ///        as 503 at the timeout bound rather than hanging.
     void getHealthz(const drogon::HttpRequestPtr &req,
                     std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
 };

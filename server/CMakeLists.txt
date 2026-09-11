@@ -330,6 +330,19 @@ add_executable(healthz_live_tests
 target_link_libraries(healthz_live_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(healthz_live_tests)
 
+# T-0050 FIX ROUND (Codex PR review 2026-09-11, P1): GET /healthz bounded
+# timeout when DATABASE_URL is configured but unreachable (closed port) --
+# a third, distinct DB-health state from healthz_tests (DATABASE_URL unset)
+# and healthz_live_tests (DB genuinely reachable); needs no live Postgres,
+# so it always runs. Separate binary: same call_once/DbClientPtr-caching
+# singleton rationale as the other two.
+# healthz_timeout_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(healthz_timeout_tests
+  test/healthz_timeout_test.cpp
+)
+target_link_libraries(healthz_timeout_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(healthz_timeout_tests)
+
 # T-0050: structured request logging — RequestLogger::install() emits one
 # JSON log line per request (request_id, method, route, status,
 # duration_ms) via an injectable sink. Separate binary: spins up its own

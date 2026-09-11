@@ -59,7 +59,7 @@ constexpr auto kResponseBound = std::chrono::seconds(5);
 } // namespace
 
 TEST_CASE("GET /healthz returns 503 within the configured bound, repeatedly, "
-        "when the configured database is unreachable") {
+          "when the configured database is unreachable") {
     setenv("HEALTHZ_TIMEOUT_MS", kTestHealthzTimeoutMs, 1);
     setenv("DATABASE_URL", kClosedPortDatabaseUrl, 1);
 
@@ -72,8 +72,8 @@ TEST_CASE("GET /healthz returns 503 within the configured bound, repeatedly, "
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    auto client = drogon::HttpClient::newHttpClient(
-        "http://127.0.0.1:" + std::to_string(kHealthzTimeoutTestPort));
+    auto client = drogon::HttpClient::newHttpClient("http://127.0.0.1:" +
+                                                    std::to_string(kHealthzTimeoutTestPort));
 
     // Poll several times in a row -- a load balancer's steady state during
     // an outage. Every poll must land its own bounded response; none may
@@ -84,13 +84,13 @@ TEST_CASE("GET /healthz returns 503 within the configured bound, repeatedly, "
         req->setPath("/healthz");
 
         std::promise<void> done;
-        client->sendRequest(
-            req, [&done](drogon::ReqResult result, const drogon::HttpResponsePtr &resp) {
-                REQUIRE(result == drogon::ReqResult::Ok);
-                REQUIRE(resp != nullptr);
-                CHECK(resp->statusCode() == drogon::k503ServiceUnavailable);
-                done.set_value();
-            });
+        client->sendRequest(req,
+                            [&done](drogon::ReqResult result, const drogon::HttpResponsePtr &resp) {
+                                REQUIRE(result == drogon::ReqResult::Ok);
+                                REQUIRE(resp != nullptr);
+                                CHECK(resp->statusCode() == drogon::k503ServiceUnavailable);
+                                done.set_value();
+                            });
 
         CAPTURE(i);
         REQUIRE(done.get_future().wait_for(kResponseBound) == std::future_status::ready);
