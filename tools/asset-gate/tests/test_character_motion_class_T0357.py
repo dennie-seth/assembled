@@ -200,29 +200,100 @@ def test_load_character_motion_class_baseline_parses_lines_and_skips_comments_an
     )
 
 
-def test_load_character_motion_class_baseline_default_excludes_the_shipped_walk():
-    """The card's own explicit instruction: the shipped locomotion sheet with
-    a real, measured motion-fidelity failure must NOT be exempted -- only
-    pre-T-0357 sheets with no motion_class opinion at all belong here."""
-    baseline = load_character_motion_class_baseline()
-
-    assert "character/player_walk_sheet_hybrid.provenance.json" not in baseline
+_WALK = "character/player_walk_sheet_hybrid.provenance.json"
 
 
-def test_load_character_motion_class_baseline_default_matches_committed_sidecars_except_walk():
+def test_load_character_motion_class_baseline_default_includes_the_shipped_walk():
+    """@DennieSeth's 2026-09-11 decision, superseding this card's original
+    exclusion: the shipped walk is a known interim placeholder, tracked for
+    replacement by T-0338, and is exempted EXPLICITLY so PR #375 can merge.
+    This is the reviewed legacy-placeholder exemption the Codex review
+    sanctions, not a silent one -- see the next test for the justification
+    that has to accompany it."""
+    assert _WALK in load_character_motion_class_baseline()
+
+
+def test_the_walk_exemption_is_explicitly_justified_in_the_baseline_file():
+    """An exemption with no recorded reason is exactly the silent exempt this
+    card was written to forbid. The walk's entry must sit under a comment that
+    names it as an interim placeholder, cites its real measured failure, and
+    names the card that replaces it -- so a reader of the baseline can see why
+    it is there and when it is expected to leave."""
+    from asset_gate.character import _MOTION_CLASS_BASELINE_FILENAME
+
+    text = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "asset_gate"
+        / _MOTION_CLASS_BASELINE_FILENAME
+    ).read_text()
+    lines = text.splitlines()
+    idx = next(i for i, ln in enumerate(lines) if ln.strip() == _WALK)
+    justification = "\n".join(lines[max(0, idx - 25) : idx])
+
+    assert "T-0338" in justification, "the walk entry must name the card that replaces it"
+    assert "interim" in justification.lower(), "the walk entry must say it is an interim placeholder"
+    assert "0.70" in justification and "0.15" in justification, (
+        "the walk entry must record the real metric floors it fails"
+    )
+
+
+def test_the_walk_exemption_is_path_exact_and_does_not_rescue_a_near_name(tmp_path):
+    """The exemption covers ONE file. A new sidecar with a near-identical name
+    and the same defect (no motion_class) must still fail against the real,
+    committed default baseline -- otherwise a future walk could ride this
+    exemption without anyone deciding it should."""
+    near = tmp_path / "character" / "player_walk_sheet_hybrid_v2.provenance.json"
+    _write_prov(near, frame_delta_range=[0.03, 0.25])
+
+    results = sweep_character_motion_class_declared(
+        tmp_path, baseline=load_character_motion_class_baseline()
+    )
+    by_path = {r.details.get("path", ""): r for r in results}
+    entry = next(r for p, r in by_path.items() if p.endswith("player_walk_sheet_hybrid_v2.provenance.json"))
+
+    assert entry.passed is False
+    assert "baseline_exempt" not in entry.details
+
+
+def test_the_ci_command_still_exits_nonzero_on_a_fresh_failing_artifact(tmp_path):
+    """The command CI actually runs -- `python -m asset_gate.cli character-gate
+    <root> --repo-root <root>` -- must still exit non-zero for a fresh
+    character sidecar that declares no motion_class, WITH the walk exemption
+    present in the default baseline. Exempting one legacy placeholder must not
+    loosen enforcement for anything new."""
+    import os
+    import subprocess
+    import sys
+
+    fresh = tmp_path / "character" / "player_new_state_sheet.provenance.json"
+    _write_prov(fresh, frame_delta_range=[0.03, 0.25])
+
+    src = Path(__file__).resolve().parents[1] / "src"
+    env = {**os.environ, "PYTHONPATH": str(src), "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run(
+        [sys.executable, "-m", "asset_gate.cli", "character-gate", str(tmp_path), "--repo-root", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "character_motion_class_declared" in proc.stdout
+    assert "player_new_state_sheet.provenance.json" in proc.stdout
+
+
+def test_load_character_motion_class_baseline_default_matches_committed_sidecars():
     """Every committed character provenance file that has no motion_class of
     its own must be covered by the default baseline, so this sweep doesn't
-    red the whole pre-existing asset tree the moment it starts running in
-    CI -- EXCEPT `player_walk_sheet_hybrid.provenance.json`, which the card
-    explicitly forbids exempting (see the baseline file's own comment)."""
+    red the whole pre-existing asset tree the moment it runs in CI. As of
+    @DennieSeth's 2026-09-11 decision that now includes the shipped walk,
+    exempted explicitly as a tracked interim placeholder (T-0338)."""
     character_dir = _REPO_ROOT / "assets" / "final" / "character"
     baseline = load_character_motion_class_baseline()
 
     for path in character_dir.glob("*.provenance.json"):
         rel = f"character/{path.name}"
-        if path.name == "player_walk_sheet_hybrid.provenance.json":
-            assert rel not in baseline
-            continue
         provenance = json.loads(path.read_text())
         if provenance.get("motion_class") in KNOWN_MOTION_CLASSES:
             continue
