@@ -229,7 +229,11 @@ func _build_room(tag: String, openings: Dictionary) -> void:
 		_add_collider(room_node, Vector2i(size.x - 1, seg[0]), Vector2i(1, seg[1] - seg[0]))
 
 	# Floor strip along the bottom interior row, minus ladder openings below.
+	# Collision uses the full kept segment (same as the top/left/right wall
+	# runs) so the bottom boundary is closed everywhere except the declared
+	# openings — the floor sprite alone is not a collider.
 	for seg: Array in _kept_segments(size.x, openings["bottom"]):
+		_add_collider(room_node, Vector2i(seg[0], size.y - 1), Vector2i(seg[1] - seg[0], 1))
 		var start: int = maxi(seg[0], 1)
 		var end: int = mini(seg[1], size.x - 1)
 		if end > start:
