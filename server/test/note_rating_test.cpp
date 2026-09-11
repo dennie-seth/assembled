@@ -22,11 +22,14 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <atomic>
+#include <barrier>
 #include <chrono>
 #include <cstdlib>
 #include <future>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <drogon/HttpAppFramework.h>
 #include <drogon/HttpClient.h>
@@ -398,4 +401,90 @@ TEST_CASE("Note-rating rate limiter rejects a burst above the configured limit")
 
     // A different token's bucket is independent of tok-burst's usage.
     CHECK(limiter.allow("note-rate-tok-other") == true);
+}
+
+// ── T-0049 fix round: concurrent first-access construction race ──────────────
+//
+// Codex PR review (2026-09-11, #373 P2): NoteController::ratingRateLimiter()
+// checked its shared static unique_ptr and assigned it with no
+// synchronization -- the mutex inside RateLimiter::allow() protects bucket
+// data only, not construction/replacement of the limiter object itself.
+// Concurrent first requests on separate HTTP worker threads could race on
+// the pointer. This fires kThreads genuinely concurrent "first" requests at
+// a deliberately-reset (uninitialized, never pre-constructed) limiter and
+// asserts exactly the configured ceiling is admitted and the remainder are
+// rejected with 429, which only holds if construction is synchronized.
+TEST_CASE("Rating rate limiter: concurrent first requests race safely on construction") {
+    // resetRatingRateLimiterForTesting() forces the pointer back to nullptr.
+    // setRatingRateLimiterForTesting() (used elsewhere in this file) instead
+    // pre-constructs a RateLimiter directly, which would defeat the point of
+    // this test -- there would be nothing left to race on.
+    assembled_server::NoteController::resetRatingRateLimiterForTesting();
+
+    // Configure the lazy-construction path via env vars, the same way
+    // production does. Save/restore so this doesn't leak into other
+    // TEST_CASEs sharing this binary.
+    const char *prevMaxRaw = std::getenv("NOTE_RATING_RATE_LIMIT_MAX");
+    const bool hadPrevMax = prevMaxRaw != nullptr;
+    const std::string prevMax = hadPrevMax ? prevMaxRaw : "";
+    const char *prevWinRaw = std::getenv("NOTE_RATING_RATE_LIMIT_WINDOW_SEC");
+    const bool hadPrevWin = prevWinRaw != nullptr;
+    const std::string prevWin = hadPrevWin ? prevWinRaw : "";
+    const char *prevDbRaw = std::getenv("DATABASE_URL");
+    const bool hadPrevDb = prevDbRaw != nullptr;
+    const std::string prevDb = hadPrevDb ? prevDbRaw : "";
+
+    constexpr int kLimit = 1;
+    constexpr int kThreads = 16;
+    setenv("NOTE_RATING_RATE_LIMIT_MAX", "1", 1);
+    setenv("NOTE_RATING_RATE_LIMIT_WINDOW_SEC", "60", 1);
+    // Rejected (429) requests never reach the DB client lookup (the rate
+    // check runs first in rateNote()); the one admitted request would, but
+    // with DATABASE_URL unset it short-circuits to 503 instead of racing a
+    // detached worker thread against this TEST_CASE's teardown.
+    unsetenv("DATABASE_URL");
+
+    assembled_server::NoteController controller;
+    std::barrier start(kThreads);
+    std::atomic<int> admitted{0};
+    std::atomic<int> rejected{0};
+
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        threads.emplace_back([&]() {
+            Json::Value body;
+            body["val"] = 1;
+            auto req = drogon::HttpRequest::newHttpJsonRequest(body);
+            req->addHeader("Authorization", "Bearer rate-limiter-race-token");
+            start.arrive_and_wait();
+            controller.rateNote(
+                req,
+                [&](const drogon::HttpResponsePtr &resp) {
+                    if (resp->statusCode() == drogon::k429TooManyRequests)
+                        ++rejected;
+                    else
+                        ++admitted;
+                },
+                "00000000-0000-0000-0000-000000000001");
+        });
+    }
+    for (auto &t : threads)
+        t.join();
+
+    if (hadPrevMax)
+        setenv("NOTE_RATING_RATE_LIMIT_MAX", prevMax.c_str(), 1);
+    else
+        unsetenv("NOTE_RATING_RATE_LIMIT_MAX");
+    if (hadPrevWin)
+        setenv("NOTE_RATING_RATE_LIMIT_WINDOW_SEC", prevWin.c_str(), 1);
+    else
+        unsetenv("NOTE_RATING_RATE_LIMIT_WINDOW_SEC");
+    if (hadPrevDb)
+        setenv("DATABASE_URL", prevDb.c_str(), 1);
+    else
+        unsetenv("DATABASE_URL");
+
+    CHECK(admitted.load() == kLimit);
+    CHECK(rejected.load() == kThreads - kLimit);
 }
