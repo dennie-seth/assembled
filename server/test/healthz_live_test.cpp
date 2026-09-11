@@ -38,7 +38,7 @@ TEST_CASE("GET /healthz returns 200 when the database is reachable") {
     }
 
     auto client = drogon::HttpClient::newHttpClient("http://127.0.0.1:" +
-                                                     std::to_string(kHealthzLiveTestPort));
+                                                    std::to_string(kHealthzLiveTestPort));
     auto req = drogon::HttpRequest::newHttpRequest();
     req->setMethod(drogon::Get);
     req->setPath("/healthz");

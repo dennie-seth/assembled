@@ -54,8 +54,8 @@ TEST_CASE("structured request logging emits request id, route, status, and "
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    auto client = drogon::HttpClient::newHttpClient(
-        "http://127.0.0.1:" + std::to_string(kRequestLoggingTestPort));
+    auto client = drogon::HttpClient::newHttpClient("http://127.0.0.1:" +
+                                                    std::to_string(kRequestLoggingTestPort));
     auto req = drogon::HttpRequest::newHttpRequest();
     req->setMethod(drogon::Get);
     req->setPath("/health");

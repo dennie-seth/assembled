@@ -61,6 +61,8 @@ add_library(assembled_server_lib OBJECT
   src/SweepWorker.cpp
   src/PetitionController.cpp
   src/UniqueCustodyLog.cpp
+  src/HealthzController.cpp
+  src/RequestLogger.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -303,3 +305,38 @@ add_executable(note_proof_of_play_tests
 )
 target_link_libraries(note_proof_of_play_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(note_proof_of_play_tests)
+
+# T-0050: GET /healthz — DB-unreachable path (DATABASE_URL forcibly cleared,
+# so it needs no live Postgres and always runs). Separate binary: spins up
+# its own drogon::app() instance, and HealthzController's DbClientPtr is
+# cached via call_once for the process lifetime (same singleton rationale
+# as every other drogon::app() integration test above).
+# healthz_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(healthz_tests
+  test/healthz_test.cpp
+)
+target_link_libraries(healthz_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(healthz_tests)
+
+# T-0050: GET /healthz — DB-reachable happy path. DATABASE_URL-gated
+# (early-return guard, same convention as note_repo_test.cpp), exercised by
+# `ctest --preset db`. Separate binary from healthz_tests -- see that
+# file's header comment for why the two DB-health paths can't share a
+# process.
+# healthz_live_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(healthz_live_tests
+  test/healthz_live_test.cpp
+)
+target_link_libraries(healthz_live_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(healthz_live_tests)
+
+# T-0050: structured request logging — RequestLogger::install() emits one
+# JSON log line per request (request_id, method, route, status,
+# duration_ms) via an injectable sink. Separate binary: spins up its own
+# drogon::app() instance (singleton run-once-per-process constraint).
+# request_logging_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(request_logging_tests
+  test/request_logging_test.cpp
+)
+target_link_libraries(request_logging_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(request_logging_tests)
