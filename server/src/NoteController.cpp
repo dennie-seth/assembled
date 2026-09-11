@@ -53,8 +53,8 @@ constexpr long kDefaultNoteRatingWindowSec = 60;
 /// Builds a RateLimiter from a pair of env vars, falling back to the given
 /// defaults when unset or unparseable.
 std::unique_ptr<RateLimiter> makeRateLimiterFromEnv(const char *maxEnvName,
-                                                    const char *windowEnvName,
-                                                    size_t defaultMax, long defaultWindowSec) {
+                                                    const char *windowEnvName, size_t defaultMax,
+                                                    long defaultWindowSec) {
     size_t maxReq = defaultMax;
     long windowSec = defaultWindowSec;
 
@@ -98,9 +98,9 @@ std::unique_ptr<RateLimiter> NoteController::ratingRateLimiter_;
 
 RateLimiter &NoteController::noteRateLimiter() {
     if (!noteRateLimiter_) {
-        noteRateLimiter_ =
-            makeRateLimiterFromEnv("NOTE_CREATE_RATE_LIMIT_MAX", "NOTE_CREATE_RATE_LIMIT_WINDOW_SEC",
-                                   kDefaultNoteCreateMax, kDefaultNoteCreateWindowSec);
+        noteRateLimiter_ = makeRateLimiterFromEnv(
+            "NOTE_CREATE_RATE_LIMIT_MAX", "NOTE_CREATE_RATE_LIMIT_WINDOW_SEC",
+            kDefaultNoteCreateMax, kDefaultNoteCreateWindowSec);
     }
     return *noteRateLimiter_;
 }
@@ -119,7 +119,7 @@ void NoteController::setNoteRateLimiterForTesting(size_t maxRequests, std::chron
 }
 
 void NoteController::setRatingRateLimiterForTesting(size_t maxRequests,
-                                                     std::chrono::seconds window) {
+                                                    std::chrono::seconds window) {
     ratingRateLimiter_ = std::make_unique<RateLimiter>(maxRequests, window);
 }
 
