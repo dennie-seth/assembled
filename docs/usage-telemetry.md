@@ -74,7 +74,7 @@ A terminal quota stop instead ends the run's final `result` event with:
 | Units | Utilization, 0..1 fraction of the window's cap. Not a token count or dollar figure — the CLI does not publish the underlying cap or a raw usage number, only this normalized fraction (when present) or the coarse `status` enum (always present). | Same unit, same caveat. |
 | Observation timestamp | No event carries its own wall-clock field. The reader uses the *run log's mtime* as the observation instant — sound when the matching event is the newest line in the log (the common case, `status:allowed`/`allowed_warning` roughly every turn); an underestimate of true age when the matching event was only found via the head-of-file fallback in a still-growing log (see `usageWindow.js`'s existing head-read rationale) — the tail was written more recently by *other* events, so mtime looks newer than the specific matching event actually is. This is the reader's one open imprecision; see `foundVia` on each reading. | Same mechanism. Weekly events are much sparser (once per ~week's worth of runs vs. once per turn), so the head-fallback path is the *normal* path here, not the exception — the imprecision above applies more often to this window than to the 5-hour one. |
 | Reset semantics | `resetsAt` (unix seconds) is the instant this specific window's cap frees up. Verified (not inferred from the phrase "5-hour window"): `usageWindow.js`'s `utilizationFromRateLimitInfo` already treats `now >= resetsAt*1000` as an elapsed window reading as fresh, and that behavior is unchanged here. Each window's `resetsAt` is read from its *own* matching event only — a `five_hour` reading never inherits or is reset by a `seven_day` event's `resetsAt` or vice versa (see "read independently" below). | Same semantics, own `resetsAt`. |
-| Maximum acceptable staleness | 15 minutes (`DEFAULT_MAX_STALENESS_MS.five_hour`) — measured, not asserted: `tasks/.runs/T-0366-2026-09-11T18-15-10-554Z.jsonl` records seven consecutive `five_hour` readings in one continuous session at lines 1/21/61/158/164/200/235. Using the nearest neighbouring `assistant`/`user` event's own `timestamp` field as each reading's observation instant (lines 5/22/62/159/165/199/234 respectively), the gaps between consecutive readings run ~9s, ~33s, ~1m42s, ~4s, ~2m20s, ~1m58s — the worst observed gap is ~2m20s. 15 minutes is >6x that worst observed gap, not a placeholder. | 2 hours (`DEFAULT_MAX_STALENESS_MS.seven_day`) — also measured: the one within-session repeat observed, `tasks/.runs/T-0367-2026-09-11T23-06-33-652Z.jsonl` lines 1 and 287 (same session `c3cf5aa3-...`), are ~5m8s apart (23:06:41 → 23:11:49, using the neighbouring `assistant` timestamp at line 6 as the session-start anchor and the tool-result timestamp at line 288 for the second reading); across separate orchestrator runs of this same card the gap widens to about an hour (that file's companion log, `T-0367-2026-09-11T22-06-33-812Z.jsonl`, created exactly one hour earlier, also opens with its own `seven_day` reading at line 1). 2 hours sits above both observed gaps. Both constants are exported and overridable per call; tightening them is a config change, not a code change. |
+| Maximum acceptable staleness | 15 minutes (`DEFAULT_MAX_STALENESS_MS.five_hour`) — measured, not asserted: `tasks/.runs/T-0366-2026-09-11T18-15-10-554Z.jsonl` records seven consecutive `five_hour` readings in one continuous session at lines 1/21/61/158/164/200/235. Using the nearest neighbouring `assistant`/`user` event's own `timestamp` field as each reading's observation instant (lines 5/22/62/159/165/199/234 respectively), the gaps between consecutive readings run ~9s, ~33s, ~1m42s, ~4s, ~2m20s, ~1m58s — the worst observed gap is ~2m20s. 15 minutes is >6x that worst observed gap, not a placeholder. | 2 hours (`DEFAULT_MAX_STALENESS_MS.seven_day`) — also measured, corrected from an earlier reviewer round that (correctly) flagged this file as having grown since first cited: `tasks/.runs/T-0367-2026-09-11T23-06-33-652Z.jsonl` accumulates `seven_day` readings across every implementer/reviewer session run against this same card, at lines 1/287/411/619/1029/1190/1434. Only lines 1 and 287 share one session (`c3cf5aa3-...`, the only true same-session repeat in the file) — ~5m8s apart (23:06:41 → 23:11:49, using the neighbouring `assistant` timestamp at line 6 as the session-start anchor and the tool-result timestamp at line 288 for the second reading). The rest (lines 411/619/1029/1190/1434) are each a *different* session's own opening reading, not a repeat, so they don't tighten the within-session bound; they do confirm the window's utilization holds steady (0.59–0.61) across many separate orchestrator runs, never misread as reset. Cross-session, the gap between a card's separate runs widens to roughly an hour (`tasks/.runs/T-0367-2026-09-11T22-06-33-812Z.jsonl`, created exactly one hour before the 23:06 file, also opens with its own `seven_day` reading at line 1). 2 hours sits above every observed gap, same-session or cross-session. Both constants are exported and overridable per call; tightening them is a config change, not a code change. |
 
 ### Reading independently, not "newest wins"
 
@@ -143,21 +143,57 @@ Attempt totals sum every phase/retry recorded for one `(card, attempt)` pair; ca
 every attempt recorded for a card. Both are computed on read (`attemptTotal`/`cardCycleTotal` over
 `listCardUsageEntries`), not stored redundantly, so there is nothing to keep in sync.
 
-## Out of scope for this card
+## `recordAttemptUsage` wiring into `runOrchestrator.js`
 
-`recordAttemptUsage` has no caller yet — a deliberate module-boundary cut, not an oversight.
-Recording usage would not itself violate "no launch, admission, or poller behaviour changes"
-(writing a derived sidecar file is not a launch/admission/poller decision); the reason to defer is
-narrower than that. Wiring it in correctly means finding every one of `runOrchestrator.js`'s
-termination paths — PASS, FAIL-with-retry, FAIL-exhausted, `cancelled`, `crashed`, `_blocked`
-timeout, the inactivity-timeout-treated-as-retryable-FAIL case, and the planner's own
-success/failure — and threading the right `{cardId, attempt, phase, retry}` plus `outcome`/
-`complete` pair through each one. `runOrchestrator.js` has no existing test seam for asserting "a
-usage sidecar was written here" at each of those points; adding one under TDD, per
-`.claude/rules/conduct.md`, for every termination path is realistically its own card's worth of
-work, and touches the same retry/preservation logic (`_runAttempt`, `_handlePass`, `_blocked`)
-this evidence-only ticket promises not to perturb. A follow-up card — after T-C's cost estimator
-exists as the first real consumer of recorded attempt usage — should wire `recordAttemptUsage`
-into each termination path with dedicated tests per outcome. Until then, this module is correct
-and tested in isolation but inert in the live run; that narrowing is stated here explicitly so a
-human reviewer can accept it rather than discover it.
+A prior reviewer round FAILed this card on exactly the gap the section above used to describe:
+`recordAttemptUsage` had no caller anywhere, so nothing was ever recorded for a real run, at any
+termination. That gap is now closed. `RunOrchestrator` takes an injectable `recordAttemptUsageFn`
+(default: `recordAttemptUsage` itself) and a private `_recordUsage` chokepoint
+(`runOrchestrator.js`'s own docstring on that method) that every call site below goes through:
+
+- **`_runPhase`** (shared by the implementer, reviewer, planner, and merge-conflict phases alike)
+  records the three outcomes it alone can classify without any caller-side verdict —
+  `cancelled`, `phase_timeout` (covers both the phase-timeout ceiling and the inactivity watchdog,
+  since both set `result.timedOut`), and `crashed` — each `complete: false`, a lower bound. It
+  also fires one **incremental** record per `assistant` event mid-phase (`outcome: "in_progress"`,
+  `complete: false`) — the "recorded incrementally, not only at termination" half of the
+  acceptance criterion, and the only protection against a kill this orchestrator never observes
+  (a board-process crash, an OOM-kill) recording as zero rather than a real partial figure. A
+  clean exit (`exitCode === 0`) is deliberately **not** recorded inside `_runPhase` itself — that
+  case still needs the caller's own classification below, so each phase key ends up with exactly
+  one terminal entry, never two disagreeing ones.
+- **The implementer phase's caller** (`_runAttempt`), on a clean exit, records `quota_stop` (a 429
+  session-limit signature found via `usageLimitDetector.js`'s `eventsContainUsageLimitSignature`)
+  or `success` — both `complete: true`, since a quota-stop's `result` event still carries a real
+  cumulative total, not a lower bound.
+- **The reviewer phase's caller**, after `crossCheckVerdictFn` produces the final verdict, records
+  `quota_stop` (same detection, checked first — a 429 alongside a self-reported PASS/FAIL is still
+  a quota stop, not a graded verdict), `success` (verdict `PASS`), or `reviewer_fail` (every other
+  verdict, `FAIL` and `NEEDS_HUMAN_DECISION` alike — both are a completed, real reviewer verdict,
+  not a truncation). This one code path covers FAIL-with-retry and FAIL-exhausted identically:
+  the ledger records per real attempt number regardless of whether the loop goes on to retry or
+  stop, so it never needs to know which.
+- **The planner's own success/failure** (`_planUnassignedCard`), on a clean exit, records
+  `success`/`quota_stop` at `attempt: 0` — planning runs once, before the implementer/reviewer
+  attempt loop even starts, so it never carries a loop attempt number.
+
+Every `_recordUsage` call is fire-and-forget (`void`, never `await`ed by its caller): this is
+instrumentation, and a disk-I/O hiccup (or, in tests, a call to a filesystem path that doesn't
+exist) must never add latency to — or ever be capable of failing — the run it's describing. The
+underlying `recordAttemptUsageFn` call itself still happens synchronously at that point in the
+control flow (calling a function evaluates its arguments and invokes it immediately, before any
+`await` on its result), so nothing about this weakens "recorded... at every termination": the
+write is *dispatched* at the exact moment of termination, it just isn't blocked on.
+
+`retry` is always `0` in every call site above: this orchestrator has no sub-retry loop within a
+single phase execution today (only the outer attempt loop, which maps onto `attempt`), so there is
+nothing yet for a nonzero `retry` to distinguish. The ledger's key schema already supports it for
+whenever that changes.
+
+See `runOrchestrator.usageLedger.test.js` for the dedicated spec covering every case above:
+PASS records `success` for both phases; a retryable reviewer FAIL records `reviewer_fail` then a
+fresh `success` pair on the next attempt; an implementer crash records `crashed`; `cancelRun`
+records `cancelled`; an inactivity-timed-out phase records `phase_timeout`; a clean-exit phase
+whose events carry a 429 session-limit result event classifies as `quota_stop` rather than
+`success`; the planner phase records at attempt 0; and an incremental (`complete: false`) record
+lands mid-phase, before any terminal outcome.

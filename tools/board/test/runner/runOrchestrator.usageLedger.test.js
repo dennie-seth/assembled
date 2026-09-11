@@ -155,6 +155,7 @@ function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], recor
     resolveAllowedToolsFn: (name) => (name === "reviewer" ? ["Read", "Grep"] : ["Read", "Write", "Bash(git:*)"]),
     createRunLogFn,
     crossCheckVerdictFn: ({ verdict }) => verdict,
+    readVerdictEntriesFn: async () => [],
     appendVerdictEntryFn: async () => {},
     recordAttemptUsageFn: recordAttemptUsageFn ?? vi.fn(async () => {}),
     ...overrides
@@ -341,7 +342,7 @@ describe("RunOrchestrator — usage ledger wiring (T-0367 T-A)", () => {
 
     await runPromise;
 
-    expect(lastUsageCallFor(recordAttemptUsageFn, 0, "planner")).toMatchObject({ outcome: "success", complete: true });
+    expect(lastUsageCallFor(recordAttemptUsageFn, 0, "planning")).toMatchObject({ outcome: "success", complete: true });
   });
 
   it("records usage incrementally mid-phase, not only at termination", async () => {
