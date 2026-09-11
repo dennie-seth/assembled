@@ -1,15 +1,17 @@
 class_name ChromaSprite
 extends Sprite2D
-## Sprite2D subclass that applies the chroma palette-swap shader (T-0121).
+## Sprite2D subclass that applies the chroma palette-swap shader (T-0121) and
+## the bleed-alpha ramp that shares its shader family (T-0122).
 ##
-## Exposes origin_palette and collapse_proximity as typed, exported properties.
-## The ShaderMaterial is created lazily on first property write so that setting
-## either property works correctly even before the node enters the scene tree
-## (allowing headless tests to inspect the material without add_child()).
+## Exposes origin_palette, collapse_proximity, and bleed_proximity as typed,
+## exported properties. The ShaderMaterial is created lazily on first property
+## write so that setting any of them works correctly even before the node
+## enters the scene tree (allowing headless tests to inspect the material
+## without add_child()).
 ##
-## The static intensity_for_proximity() function mirrors the GLSL ramp in
-## chroma_palette_swap.gdshader so GDScript code (and headless tests) can
-## reason about the intensity curve without a GPU.
+## The static intensity_for_proximity() and interior_alpha_for_proximity()
+## functions mirror the GLSL ramps in chroma_palette_swap.gdshader so GDScript
+## code (and headless tests) can reason about the curves without a GPU.
 
 const _SHADER_PATH: String = "res://shaders/chroma_palette_swap.gdshader"
 
@@ -34,6 +36,15 @@ const _RAMP_EXPONENT: float = 2.0
 		collapse_proximity = clampf(v, 0.0, 1.0)
 		_apply_params()
 
+## Bleed-clock proximity driving the bleed-alpha ramp (T-0122).
+## 0.0 = bleed_at far away (item fully visible).
+## 1.0 = imminent bleed (interior faded out, contour/outline only).
+## Values outside [0, 1] are clamped before forwarding to the shader.
+@export_range(0.0, 1.0) var bleed_proximity: float = 0.0:
+	set(v):
+		bleed_proximity = clampf(v, 0.0, 1.0)
+		_apply_params()
+
 
 func _ready() -> void:
 	_apply_params()
@@ -51,6 +62,7 @@ func _apply_params() -> void:
 	var mat: ShaderMaterial = material as ShaderMaterial
 	mat.set_shader_parameter("origin_palette", origin_palette)
 	mat.set_shader_parameter("collapse_proximity", collapse_proximity)
+	mat.set_shader_parameter("bleed_proximity", bleed_proximity)
 
 
 ## Compute the chroma-intensity value the shader will apply for a given
@@ -62,3 +74,15 @@ func _apply_params() -> void:
 ## @return  Chroma intensity in [0.0, 1.0], monotonically non-decreasing.
 static func intensity_for_proximity(p: float) -> float:
 	return pow(clampf(p, 0.0, 1.0), _RAMP_EXPONENT)
+
+
+## Compute the interior-alpha ramp factor the shader will apply for a given
+## bleed_proximity.  Mirrors the GLSL interior_factor in
+## chroma_palette_swap.gdshader: 1.0 at proximity 0.0 (interior fully visible)
+## ramping linearly down to 0.0 at proximity 1.0 (interior fully transparent —
+## only contour/edge texels remain, per the fragment shader's edge detection).
+##
+## @param p Bleed-clock proximity in [0.0, 1.0].
+## @return  Interior alpha factor in [0.0, 1.0], monotonically non-increasing.
+static func interior_alpha_for_proximity(p: float) -> float:
+	return 1.0 - clampf(p, 0.0, 1.0)
