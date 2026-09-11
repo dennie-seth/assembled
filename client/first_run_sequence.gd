@@ -188,9 +188,13 @@ func notify_reachability(reachable: bool) -> void:
 
 
 ## Conclude the session. Emits session_end_offline_recap if the session ends
-## while still offline (18-first-run.md §4). No-op if already ENDED.
+## while still offline (18-first-run.md §4). No-op outside IN_ENTRY_ROOM —
+## in particular, this must never be a way to escape PHRASE_REVEAL or
+## OFFLINE_NOTICE ahead of their acknowledgment (AC8); calling it again after
+## it has already run is likewise a no-op since the state is no longer
+## IN_ENTRY_ROOM.
 func end_session() -> void:
-	if _state == State.ENDED:
+	if _state != State.IN_ENTRY_ROOM:
 		return
 	if not _reachable:
 		session_end_offline_recap.emit(SESSION_END_OFFLINE_RECAP_TEXT)
