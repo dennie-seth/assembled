@@ -23,10 +23,24 @@
 ///     200  JSON array of note objects ordered by rating (score) DESC.
 ///     400  if archetype_id or anchor_tag is missing or unparseable.
 ///     503  if no DATABASE_URL is configured.
+///
+/// Rate limiting (T-0049, 03-net-protocol.md §7): createNote and rateNote are
+/// each rate-limited per identity token, with independently configurable
+/// ceilings per route group (note creation vs. rating). Exceeding a ceiling
+/// returns 429 / error 5001 RATE_LIMITED. Configurable via
+/// NOTE_CREATE_RATE_LIMIT_MAX / NOTE_CREATE_RATE_LIMIT_WINDOW_SEC and
+/// NOTE_RATING_RATE_LIMIT_MAX / NOTE_RATING_RATE_LIMIT_WINDOW_SEC. Petitions
+/// have their own, much tighter, per-token limiter (PetitionController).
+
+#include <chrono>
+#include <cstddef>
+#include <memory>
 
 #include <drogon/HttpController.h>
 
 namespace assembled_server {
+
+class RateLimiter;
 
 /// /v1/notes — note composition (POST, T-0045), retrieval (GET, T-0046),
 /// and rating (POST /v1/notes/{id}/rate, T-0047).
@@ -45,6 +59,8 @@ class NoteController : public drogon::HttpController<NoteController> {
     ///                 - 400 JSON {"error":2003} if a slot word's category is wrong.
     ///                 - 401 if the Authorization: Bearer header is missing or malformed.
     ///                 - 403 JSON {"error":4002} if any slot word is above the caller's tier.
+    ///                 - 429 JSON {"error":5001} if the per-token note-creation rate
+    ///                   limit is exceeded (T-0049).
     ///                 - 201 JSON {"id":"<uuid>"} on success.
     ///                 - 503 if no database is configured (DATABASE_URL unset).
     void createNote(const drogon::HttpRequestPtr &req,
@@ -71,11 +87,49 @@ class NoteController : public drogon::HttpController<NoteController> {
     ///                 - 401 JSON {"error":1001} if Authorization is absent/malformed.
     ///                 - 403 JSON {"error":4001} if the caller hasn't proven play of
     ///                   the note's archetype (T-0207 proof-of-play).
+    ///                 - 429 JSON {"error":5001} if the per-token rating rate limit
+    ///                   is exceeded (T-0049).
     ///                 - 503 if no DATABASE_URL is configured.
     /// @param id       Note UUID from the path segment.
     void rateNote(const drogon::HttpRequestPtr &req,
                   std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                   const std::string &id);
+
+    /// Replaces the per-token note-creation rate limiter with a test-configured
+    /// instance. Must be called BEFORE drogon::app().run() to avoid data races.
+    /// Production code should never call this.
+    static void setNoteRateLimiterForTesting(size_t maxRequests, std::chrono::seconds window);
+
+    /// Replaces the per-token note-rating rate limiter with a test-configured
+    /// instance. Must be called BEFORE drogon::app().run() to avoid data races.
+    /// Production code should never call this.
+    static void setRatingRateLimiterForTesting(size_t maxRequests, std::chrono::seconds window);
+
+    /// Returns a reference to the active note-creation rate limiter for
+    /// white-box unit testing. Must only be called after
+    /// setNoteRateLimiterForTesting() has been called.
+    static RateLimiter &noteRateLimiterForTesting();
+
+    /// Returns a reference to the active note-rating rate limiter for
+    /// white-box unit testing. Must only be called after
+    /// setRatingRateLimiterForTesting() has been called.
+    static RateLimiter &ratingRateLimiterForTesting();
+
+  private:
+    /// Returns the active note-creation rate limiter, creating the default
+    /// (configurable via NOTE_CREATE_RATE_LIMIT_MAX /
+    /// NOTE_CREATE_RATE_LIMIT_WINDOW_SEC, defaulting to 20 per 60 s) on first
+    /// access.
+    static RateLimiter &noteRateLimiter();
+
+    /// Returns the active note-rating rate limiter, creating the default
+    /// (configurable via NOTE_RATING_RATE_LIMIT_MAX /
+    /// NOTE_RATING_RATE_LIMIT_WINDOW_SEC, defaulting to 60 per 60 s) on first
+    /// access.
+    static RateLimiter &ratingRateLimiter();
+
+    static std::unique_ptr<RateLimiter> noteRateLimiter_;
+    static std::unique_ptr<RateLimiter> ratingRateLimiter_;
 };
 
 } // namespace assembled_server
