@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 
 import numpy as np
+
 from asset_gate import art
 from asset_gate.character import (
     MOTION_FIDELITY_CAPSULE_RADIUS_PX,
