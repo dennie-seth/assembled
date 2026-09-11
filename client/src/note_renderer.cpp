@@ -3,115 +3,23 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
+#include "note_localization.h"
+
 // shared/ is the single source of truth for word/template IDs.
 #include "../../shared/note_templates.hpp"
-
-#include <unordered_map>
 
 namespace godot {
 
 // ─── English localization tables ─────────────────────────────────────────────
 //
-// Word strings are derived from the comments in shared/note_templates.hpp and
-// must stay in sync with kWords.  Template format strings use {A} for slot_a,
-// {B} for slot_b, and {I} for item_ref.
-//
-// OBJECT and HAZARD words include the definite article "the" as part of the
-// word string (matching kWords comments); template patterns that use these
-// categories do not add an extra "the".
+// kWordStrings / kTemplatePatterns live in note_localization.h, shared with
+// NoteCatalog (T-0065) so the two never carry independent copies of the same
+// table.
 
 namespace {
 
-/// English display strings for all 56 shipped word IDs.
-const std::unordered_map<int, const char *> kWordStrings = {
-    // DIRECTION (ids 1–8)
-    {1, "ahead"},
-    {2, "behind"},
-    {3, "below"},
-    {4, "above"},
-    {5, "left"},
-    {6, "right"},
-    {7, "within"},
-    {8, "beyond"},
-    // HAZARD (ids 9–20)  — "the" is part of the word
-    {9, "the drop"},
-    {10, "the watcher"},
-    {11, "the sound"},
-    {12, "the cold"},
-    {13, "the still air"},
-    {14, "the dark"},
-    {15, "the heat"},
-    {16, "the trap"},
-    {17, "the gap"},
-    {18, "the edge"},
-    {19, "the beast"},
-    {20, "the current"},
-    // ACTION (ids 21–32)
-    {21, "wait"},
-    {22, "run"},
-    {23, "hide"},
-    {24, "cross"},
-    {25, "turn back"},
-    {26, "listen"},
-    {27, "do not"},
-    {28, "proceed"},
-    {29, "stop"},
-    {30, "search"},
-    {31, "climb"},
-    {32, "descend"},
-    // OBJECT (ids 33–48)  — "the" is part of the word
-    {33, "the door"},
-    {34, "the lamp"},
-    {35, "the bones"},
-    {36, "the machine"},
-    {37, "the seam"},
-    {38, "the switch"},
-    {39, "the lever"},
-    {40, "the passage"},
-    {41, "the key"},
-    {42, "the lock"},
-    {43, "the window"},
-    {44, "the floor"},
-    {45, "the wall"},
-    {46, "the ceiling"},
-    {47, "the pipe"},
-    {48, "the hatch"},
-    // QUALIFIER (ids 49–56)
-    {49, "slowly"},
-    {50, "twice"},
-    {51, "never"},
-    {52, "only once"},
-    {53, "if alone"},
-    {54, "carefully"},
-    {55, "quietly"},
-    {56, "quickly"},
-};
-
-/// Format strings for all 20 shipped template IDs.
-/// Placeholders: {A} = slot_a word, {B} = slot_b word, {I} = item_ref string.
-/// Fixed-phrase templates have no placeholders.
-const std::unordered_map<int, const char *> kTemplatePatterns = {
-    {1, "{A} {B}"},
-    {2, "{A} {B}"},
-    {3, "{A} {B}"},
-    {4, "{A} {B}"},
-    {5, "{A}"},
-    {6, "{A}"},
-    {7, "{A}"},
-    {8, "{A} here"},
-    {9, "try {A} {B}"},
-    {10, "beware {A} {B}"},
-    {11, "{A}, {B}"},
-    {12, "I need help {A}"},
-    {13, "I need {I}"},
-    {14, "something is wrong"},
-    {15, "{A} opens with {I}"},
-    {16, "go {A}"},
-    {17, "{A} {B}"},
-    {18, "{A} {B}"},
-    {19, "watch for {A}"},
-    {20, "safe passage"},
-};
+using assembled_client::kTemplatePatterns;
+using assembled_client::kWordStrings;
 
 /// Substitute all occurrences of @p token in @p src with @p value.
 String substitute(const String &src, const String &token, const String &value) {

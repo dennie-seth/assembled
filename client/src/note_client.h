@@ -180,11 +180,35 @@ class NoteClient : public Node {
      */
     int fetch_anchor_snapshot(int archetype_id, int tag);
 
+    /**
+     * @brief Fetch the caller's currently-unlocked vocabulary.
+     *
+     * Sends `GET /v1/vocabulary` (03-net-protocol.md §5, Progression). The
+     * server-authoritative response is the only source of truth for which
+     * words a player may currently compose with — the note composer UI
+     * (T-0065) filters its slot dropdowns to this set.
+     *
+     * Emits `vocabulary_fetched(request_id, state, http_status, body)` on
+     * completion. On any non-OK state, callers should treat vocabulary as
+     * empty rather than inspecting body.
+     *
+     * @return Request ID (positive) for correlation, or -1 on immediate
+     *         failure (multi-handle not initialised).
+     */
+    int fetch_vocabulary();
+
   protected:
     static void _bind_methods();
 
   private:
-    enum class RequestKind { FETCH_NOTES, POST_NOTE, RATE_NOTE, IDENTITY, FETCH_ANCHOR_SNAPSHOT };
+    enum class RequestKind {
+        FETCH_NOTES,
+        POST_NOTE,
+        RATE_NOTE,
+        IDENTITY,
+        FETCH_ANCHOR_SNAPSHOT,
+        FETCH_VOCABULARY
+    };
 
     /// Heap-allocated per-transfer state.  Address is stable (never moves after
     /// push_back) so write-callback userdata pointers remain valid.
