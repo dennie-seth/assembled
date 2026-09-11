@@ -414,8 +414,10 @@ def build_character_gate_report(
     T-0357: `checks` also includes `character_motion_fidelity` --
     `determine_character_motion_fidelity`'s own result, recomputed live from
     this sheet's pixels when the provenance records enough rig evidence to
-    do so (`repo_root` resolves each frame's `pose_keypoints_file`), falling
-    back to the sidecar-trusting predicate otherwise. Before this card a
+    do so (`repo_root` resolves each frame's `pose_keypoints_file`), FAILING
+    outright for a locomotion/transition/loop asset that does not (2026-09-11
+    PR review, P1) -- it never falls back to the sidecar-trusting predicate
+    for one of those three classes. Before this card a
     failing motion result never appeared here at all, so a CLI caller doing
     `all(check["passed"] for check in report["checks"].values())` (exactly
     what `cli.py`'s `character-gate-report` subcommand does) could not see
@@ -997,21 +999,34 @@ def _torso_region_px(cell_px: int) -> tuple[int, int, int, int]:
     )
 
 
-def _has_recomputable_rig_evidence(provenance: dict) -> bool:
-    """True iff `provenance` records enough to recompute pose-fidelity/
+def _missing_rig_evidence_reason(provenance: dict) -> str | None:
+    """None iff `provenance` records enough to recompute pose-fidelity/
     identity-stability from pixels: a declared `layout` (cols/rows/cell_px,
-    all ints) and one `frame_generation` entry per frame. Does not check
-    that each entry actually names a resolvable `pose_keypoints_file` --
-    that failure is reported per-frame, with a specific reason, by
-    `_recompute_motion_fidelity_from_frames`."""
+    all ints) and one `frame_generation` entry per frame. Otherwise, a
+    human-readable reason naming exactly what is missing or malformed, for
+    use in a failing `CheckResult.reason` (T-0357 Codex PR review 2026-09-11,
+    P1: missing/malformed rig evidence on a locomotion/transition/loop asset
+    must FAIL naming the gap, never silently fall back to trusting the
+    sidecar's own self-reported scores). Does not check that each
+    `frame_generation` entry actually names a resolvable
+    `pose_keypoints_file` -- that failure is reported per-frame, with a
+    specific reason, by `_recompute_motion_fidelity_from_frames`."""
     layout = provenance.get("layout")
     if not isinstance(layout, dict):
-        return False
+        return "no 'layout' is declared"
     cols, rows, cell_px = layout.get("cols"), layout.get("rows"), layout.get("cell_px")
     if not all(isinstance(v, int) and not isinstance(v, bool) for v in (cols, rows, cell_px)):
-        return False
+        return "'layout' is missing or has non-integer cols/rows/cell_px"
     frame_generation = provenance.get("frame_generation")
-    return isinstance(frame_generation, list) and len(frame_generation) == cols * rows
+    if not isinstance(frame_generation, list):
+        return "no 'frame_generation' is declared"
+    expected = cols * rows
+    if len(frame_generation) != expected:
+        return (
+            f"'frame_generation' has {len(frame_generation)} entries but 'layout' declares "
+            f"{cols}x{rows} = {expected} frames"
+        )
+    return None
 
 
 def _recompute_motion_fidelity_from_frames(
@@ -1140,21 +1155,24 @@ def determine_character_motion_fidelity(
     sheet_name: str = "<sheet>",
 ) -> CheckResult:
     """The authoritative T-0357 motion-fidelity determination (Codex review
-    2026-09-11 finding 3): recompute pose-fidelity/identity-stability LIVE
-    from the sheet's own pixels and its versioned rig keypoints whenever the
-    provenance records enough to do so (`layout` + one `frame_generation`
-    entry per frame) -- a recomputed result always overrides whatever range
-    the sidecar itself records, so a stale sidecar score cannot survive the
-    sheet's own PNG changing underneath it.
+    2026-09-11 finding 3, and the 2026-09-11 PR review's P1 fix): recompute
+    pose-fidelity/identity-stability LIVE from the sheet's own pixels and its
+    versioned rig keypoints whenever `motion_class` is locomotion/transition/
+    loop -- a recomputed result always overrides whatever range the sidecar
+    itself records, so a stale sidecar score cannot survive the sheet's own
+    PNG changing underneath it.
 
-    Falls back to `check_character_motion_fidelity`'s existing sidecar-
-    trusting predicate only when there is no rig evidence to recompute from
-    at all (older provenance shapes, or a fixture that supplies
-    `pose_fidelity_range`/`identity_stability_range` directly) -- same
-    threshold, same predicate, just a different source for the range.
+    A locomotion/transition/loop asset that does not record enough to
+    recompute from (missing `layout`, missing `frame_generation`, or a frame
+    count that does not match the declared layout) FAILS, with a reason
+    naming exactly what evidence is missing -- it never falls back to
+    trusting the sidecar's own self-reported `pose_fidelity_range`/
+    `identity_stability_range`. (The PR review's P1 finding: that fallback
+    let a brand-new, fully transparent sheet with self-reported perfect
+    scores pass every check.)
 
-    `idle` (and missing/unrecognised motion_class) is unaffected either way
-    -- see `check_character_motion_fidelity`'s own docstring; a validated
+    `idle` (and missing/unrecognised motion_class) is unaffected -- see
+    `check_character_motion_fidelity`'s own docstring; a validated
     classification is `check_character_motion_class_declared`'s job, not
     this function's.
 
@@ -1167,10 +1185,23 @@ def determine_character_motion_fidelity(
             takes priority if both are given.
     """
     motion_class = provenance.get("motion_class")
-    if motion_class not in _HIGHER_CAP_MOTION_CLASSES or not _has_recomputable_rig_evidence(
-        provenance
-    ):
+    if motion_class not in _HIGHER_CAP_MOTION_CLASSES:
         return check_character_motion_fidelity(provenance, sheet_name=sheet_name)
+
+    missing_reason = _missing_rig_evidence_reason(provenance)
+    if missing_reason is not None:
+        return CheckResult(
+            check="character_motion_fidelity",
+            passed=False,
+            reason=(
+                f"{sheet_name}: motion_class={motion_class!r} requires recomputing "
+                "pose-fidelity/identity-stability from the sheet's own pixels + versioned rig "
+                f"evidence, but {missing_reason} -- a locomotion/transition/loop asset must never "
+                "fall back to trusting the sidecar's own self-reported scores (T-0357 Codex PR "
+                "review 2026-09-11, P1)"
+            ),
+            details={"motion_class": motion_class, "missing_rig_evidence": missing_reason},
+        )
 
     layout = provenance["layout"]
     resolved_cell_px = cell_px if cell_px is not None else layout["cell_px"]
