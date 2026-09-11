@@ -75,6 +75,24 @@ std::unique_ptr<RateLimiter> makeRateLimiterFromEnv(const char *maxEnvName,
     return std::make_unique<RateLimiter>(maxReq, std::chrono::seconds(windowSec));
 }
 
+/// Thread-safe get-or-create for a lazily-constructed rate limiter (T-0049
+/// fix round). Locks @p mu for the whole check-and-construct so concurrent
+/// first requests on separate HTTP worker threads cannot race on @p slot
+/// itself -- the mutex inside RateLimiter::allow() only protects bucket
+/// data, not construction/replacement of the limiter object.
+RateLimiter &getOrCreateRateLimiter(std::mutex &mu, std::unique_ptr<RateLimiter> &slot,
+                                    const char *maxEnvName, const char *windowEnvName,
+                                    size_t defaultMax, long defaultWindowSec) {
+    std::lock_guard<std::mutex> lock(mu);
+    if (!slot) {
+        slot = makeRateLimiterFromEnv(maxEnvName, windowEnvName, defaultMax, defaultWindowSec);
+    }
+    return *slot;
+}
+
+std::mutex noteRateLimiterMu;
+std::mutex ratingRateLimiterMu;
+
 /// Parse a required SMALLINT query parameter.
 /// @returns the parsed value, or std::nullopt if missing/invalid.
 std::optional<int16_t> parseSmallInt(const drogon::HttpRequestPtr &req, const std::string &name) {
@@ -97,30 +115,36 @@ std::unique_ptr<RateLimiter> NoteController::noteRateLimiter_;
 std::unique_ptr<RateLimiter> NoteController::ratingRateLimiter_;
 
 RateLimiter &NoteController::noteRateLimiter() {
-    if (!noteRateLimiter_) {
-        noteRateLimiter_ = makeRateLimiterFromEnv(
-            "NOTE_CREATE_RATE_LIMIT_MAX", "NOTE_CREATE_RATE_LIMIT_WINDOW_SEC",
-            kDefaultNoteCreateMax, kDefaultNoteCreateWindowSec);
-    }
-    return *noteRateLimiter_;
+    return getOrCreateRateLimiter(noteRateLimiterMu, noteRateLimiter_, "NOTE_CREATE_RATE_LIMIT_MAX",
+                                  "NOTE_CREATE_RATE_LIMIT_WINDOW_SEC", kDefaultNoteCreateMax,
+                                  kDefaultNoteCreateWindowSec);
 }
 
 RateLimiter &NoteController::ratingRateLimiter() {
-    if (!ratingRateLimiter_) {
-        ratingRateLimiter_ = makeRateLimiterFromEnv(
-            "NOTE_RATING_RATE_LIMIT_MAX", "NOTE_RATING_RATE_LIMIT_WINDOW_SEC",
-            kDefaultNoteRatingMax, kDefaultNoteRatingWindowSec);
-    }
-    return *ratingRateLimiter_;
+    return getOrCreateRateLimiter(ratingRateLimiterMu, ratingRateLimiter_,
+                                  "NOTE_RATING_RATE_LIMIT_MAX", "NOTE_RATING_RATE_LIMIT_WINDOW_SEC",
+                                  kDefaultNoteRatingMax, kDefaultNoteRatingWindowSec);
 }
 
 void NoteController::setNoteRateLimiterForTesting(size_t maxRequests, std::chrono::seconds window) {
+    std::lock_guard<std::mutex> lock(noteRateLimiterMu);
     noteRateLimiter_ = std::make_unique<RateLimiter>(maxRequests, window);
 }
 
 void NoteController::setRatingRateLimiterForTesting(size_t maxRequests,
                                                     std::chrono::seconds window) {
+    std::lock_guard<std::mutex> lock(ratingRateLimiterMu);
     ratingRateLimiter_ = std::make_unique<RateLimiter>(maxRequests, window);
+}
+
+void NoteController::resetNoteRateLimiterForTesting() {
+    std::lock_guard<std::mutex> lock(noteRateLimiterMu);
+    noteRateLimiter_.reset();
+}
+
+void NoteController::resetRatingRateLimiterForTesting() {
+    std::lock_guard<std::mutex> lock(ratingRateLimiterMu);
+    ratingRateLimiter_.reset();
 }
 
 RateLimiter &NoteController::noteRateLimiterForTesting() { return noteRateLimiter(); }

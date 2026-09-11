@@ -96,14 +96,32 @@ class NoteController : public drogon::HttpController<NoteController> {
                   const std::string &id);
 
     /// Replaces the per-token note-creation rate limiter with a test-configured
-    /// instance. Must be called BEFORE drogon::app().run() to avoid data races.
+    /// instance. Thread-safe (internally mutex-guarded, T-0049 fix round) --
+    /// safe to call at any time, though tests should still avoid calling it
+    /// concurrently with in-flight requests they expect it to govern.
     /// Production code should never call this.
     static void setNoteRateLimiterForTesting(size_t maxRequests, std::chrono::seconds window);
 
     /// Replaces the per-token note-rating rate limiter with a test-configured
-    /// instance. Must be called BEFORE drogon::app().run() to avoid data races.
+    /// instance. Thread-safe (internally mutex-guarded, T-0049 fix round) --
+    /// safe to call at any time, though tests should still avoid calling it
+    /// concurrently with in-flight requests they expect it to govern.
     /// Production code should never call this.
     static void setRatingRateLimiterForTesting(size_t maxRequests, std::chrono::seconds window);
+
+    /// Resets the per-token note-creation rate limiter to its genuinely
+    /// uninitialized (nullptr) state, WITHOUT constructing a replacement --
+    /// unlike setNoteRateLimiterForTesting(). Exists so tests can exercise
+    /// the lazy first-access construction path itself (e.g. concurrent
+    /// first-request races). Production code should never call this.
+    static void resetNoteRateLimiterForTesting();
+
+    /// Resets the per-token note-rating rate limiter to its genuinely
+    /// uninitialized (nullptr) state, WITHOUT constructing a replacement --
+    /// unlike setRatingRateLimiterForTesting(). Exists so tests can exercise
+    /// the lazy first-access construction path itself (e.g. concurrent
+    /// first-request races). Production code should never call this.
+    static void resetRatingRateLimiterForTesting();
 
     /// Returns a reference to the active note-creation rate limiter for
     /// white-box unit testing. Must only be called after
@@ -119,13 +137,17 @@ class NoteController : public drogon::HttpController<NoteController> {
     /// Returns the active note-creation rate limiter, creating the default
     /// (configurable via NOTE_CREATE_RATE_LIMIT_MAX /
     /// NOTE_CREATE_RATE_LIMIT_WINDOW_SEC, defaulting to 20 per 60 s) on first
-    /// access.
+    /// access. Thread-safe: first-use construction is guarded by an internal
+    /// mutex (T-0049 fix round), so concurrent first requests from separate
+    /// HTTP worker threads cannot race on the underlying pointer.
     static RateLimiter &noteRateLimiter();
 
     /// Returns the active note-rating rate limiter, creating the default
     /// (configurable via NOTE_RATING_RATE_LIMIT_MAX /
     /// NOTE_RATING_RATE_LIMIT_WINDOW_SEC, defaulting to 60 per 60 s) on first
-    /// access.
+    /// access. Thread-safe: first-use construction is guarded by an internal
+    /// mutex (T-0049 fix round), so concurrent first requests from separate
+    /// HTTP worker threads cannot race on the underlying pointer.
     static RateLimiter &ratingRateLimiter();
 
     static std::unique_ptr<RateLimiter> noteRateLimiter_;
