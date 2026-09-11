@@ -36,6 +36,7 @@ func _init() -> void:
 	failures += _test_word_ids_for_category(c)
 	failures += _test_word_category(c)
 	failures += _test_word_label(c)
+	failures += _test_template_label(c)
 
 	if failures.is_empty():
 		print("T-0065 PASS: NoteCatalog metadata matches shared/note_templates.hpp")
@@ -223,6 +224,54 @@ func _test_word_label(c: NoteCatalog) -> Array[String]:
 	if not c.get_word_label(999).is_empty():
 		failures.append(
 			"get_word_label(999): expected '' for unknown word id, got '%s'" % c.get_word_label(999)
+		)
+
+	return failures
+
+
+## ── get_template_label() ────────────────────────────────────────────────────
+## Reviewer FAIL (2026-09-11): every dropdown item must show readable text
+## built from note_localization.h's kTemplatePatterns with each placeholder
+## rendered as its slot's category name — never a bare "Template N" id.
+## Templates 1-4/17/18 all share the raw pattern "{A} {B}" and 5-7 all share
+## "{A}"; only the category substitution makes them distinguishable.
+
+func _test_template_label(c: NoteCatalog) -> Array[String]:
+	var failures: Array[String] = []
+
+	var expected: Dictionary = {
+		1: "[action] [qualifier]",
+		2: "[hazard] [direction]",
+		3: "[object] [direction]",
+		4: "[action] [direction]",
+		5: "[hazard]",
+		6: "[action]",
+		7: "[direction]",
+		8: "[object] here",
+		9: "try [action] [qualifier]",
+		10: "beware [hazard] [direction]",
+		11: "[qualifier], [action]",
+		12: "I need help [direction]",
+		13: "I need [item]",
+		14: "something is wrong",
+		15: "[object] opens with [item]",
+		16: "go [direction]",
+		17: "[action] [object]",
+		18: "[object] [qualifier]",
+		19: "watch for [hazard]",
+		20: "safe passage",
+	}
+	for tid: int in expected:
+		var got: String = c.get_template_label(tid)
+		if got != expected[tid]:
+			failures.append(
+				"get_template_label(%d): expected '%s', got '%s'" % [tid, expected[tid], got]
+			)
+
+	if not c.get_template_label(999).is_empty():
+		failures.append(
+			"get_template_label(999): expected '' for unknown template id, got '%s'"
+			% c.get_template_label(999)
 		)
 
 	return failures

@@ -3,6 +3,9 @@ extends SceneTree
 ##
 ## Verifies:
 ##   - Template selection populates a dropdown with all 20 shipped templates.
+##   - Every template dropdown item's text is the catalog's readable template
+##     label (NoteCatalog.get_template_label) — never a bare id or "Template
+##     N" — and all 20 labels are pairwise distinct (reviewer FAIL 2026-09-11).
 ##   - Slot dropdowns populate from the intersection of the selected
 ##     template's required category and the player's currently-unlocked
 ##     vocabulary (docs/design/02-notes-system.md §5) — never the full
@@ -53,6 +56,7 @@ func _init() -> void:
 		return
 
 	failures += _test_template_dropdown_lists_all_templates()
+	failures += _test_template_dropdown_labels_are_readable()
 	failures += _test_zero_slot_template_needs_no_vocabulary()
 	failures += _test_slot_dropdown_filters_to_unlocked_words_in_category()
 	failures += _test_locked_slot_blocks_submission()
@@ -100,6 +104,46 @@ func _test_template_dropdown_lists_all_templates() -> Array[String]:
 	# Nothing selected until the player chooses.
 	if composer.can_submit():
 		failures.append("can_submit(): expected false before any template is selected")
+
+	composer.free()
+	return failures
+
+
+## ── Template dropdown labels are readable, not bare ids ─────────────────────
+## Reviewer FAIL (2026-09-11): the dropdown previously read "Template 1" ..
+## "Template 20" — meaningless to a player. Every item's text must equal the
+## catalog's own template label (NoteCatalog.get_template_label), never a bare
+## id or the literal "Template N" string, and all 20 labels must be pairwise
+## distinct — several templates share the same raw pattern ("{A} {B}" /
+## "{A}") and are only distinguishable once slot categories are substituted in.
+
+func _test_template_dropdown_labels_are_readable() -> Array[String]:
+	var failures: Array[String] = []
+	var composer: Control = _make_composer()
+	var catalog: NoteCatalog = NoteCatalog.new()
+
+	var seen_texts: Dictionary = {}
+	for i in composer.template_option.item_count:
+		var tid: int = composer.template_option.get_item_id(i)
+		var text: String = composer.template_option.get_item_text(i)
+		var expected: String = catalog.get_template_label(tid)
+
+		if text != expected:
+			failures.append(
+				"template_option item %d (id %d): expected catalog label '%s', got '%s'"
+				% [i, tid, expected, text]
+			)
+		if text == str(tid) or text == "Template %d" % tid:
+			failures.append(
+				"template_option item %d (id %d): text '%s' is a bare id, not a readable label"
+				% [i, tid, text]
+			)
+		if seen_texts.has(text):
+			failures.append(
+				"template_option: label '%s' is not unique (ids %d and %d)"
+				% [text, seen_texts[text], tid]
+			)
+		seen_texts[text] = tid
 
 	composer.free()
 	return failures
