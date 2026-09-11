@@ -17,21 +17,43 @@
 # backfilled by a dedicated follow-up card, never grown to silence a fresh
 # violation.
 #
-# character/player_walk_sheet_hybrid.provenance.json is DELIBERATELY NOT
-# listed here. It is the one sheet in this tree that is unambiguously a
-# locomotion cycle (its own frame_generation records 8 frames' worth of
-# per-frame walk-gait rig keypoints), and Codex's review independently
-# measured what a properly-classified recompute of it produces: pose IoU
-# 0.3935-0.6305 against the 0.70 floor, torso-histogram distance
-# 0.0469-0.3203 against the 0.15 cap -- a real, substantive failure, not a
-# missing-label technicality. Exempting it here would be exactly the
-# "silently exempt the shipped walk" the card forbids. It currently fails
-# this sweep for lacking a motion_class declaration at all; giving it the
-# accurate `motion_class: "locomotion"` label (so the pose-fidelity/
-# identity-stability recompute engages directly) is asset-data work under
-# `assets/final/character/**`, out of this card's own path scope (`tools/**`,
-# `.github/**`, `.claude/**`, `docs/**`) -- a follow-up card for whichever
-# agent owns that tree, not an exemption for this one.
+# ---------------------------------------------------------------------------
+# EXPLICIT INTERIM-PLACEHOLDER EXEMPTION -- @DennieSeth, 2026-09-11
+# ---------------------------------------------------------------------------
+# character/player_walk_sheet_hybrid.provenance.json IS listed below, by an
+# explicit, reviewed decision. This supersedes this card's original position
+# that it must NOT be exempted; that position was correct as a default and is
+# overridden here deliberately, on the record, so PR #375 can merge.
+#
+# What it is: the shipped T-0266 walk, accepted as an INTERIM PLACEHOLDER for
+# engine integration (T-0235 / T-0328 need a stand-in). It is not the game's
+# walk and is not claimed to be.
+#
+# Why it would otherwise fail: it is the one sheet in this tree that is
+# unambiguously a locomotion cycle, and a properly-classified recompute fails
+# the real motion metrics on merit (Codex review 2026-09-11, finding 2):
+#   pose IoU, per-frame        0.3935-0.6305   against a 0.70 floor
+#   torso histogram distance   0.0469-0.3203   against a 0.15 cap
+# That is a substantive failure, not a missing-label technicality.
+#
+# Why exempt rather than fix: there is nothing to fix in place -- the walk is
+# being REPLACED, not repaired. Its replacement is the Tier-2 part compositor,
+# T-0338. When that walk lands, this entry MUST be removed in the same change.
+#
+# This is the "explicit, reviewed placeholder exception for existing legacy
+# assets" the Codex review sanctions (finding 1's fix). It is NOT the silent
+# exempt T-0357 forbade: it is named, justified with measured numbers, tracked
+# to a replacement card, and guarded by
+# tests/test_character_motion_class_T0357.py, which also proves the exemption
+# is path-exact and that the CI command still exits non-zero for any fresh
+# failing artifact.
+#
+# KNOWN FOLLOW-ON (T-0359): this entry exempts only the missing-label check.
+# If T-0359 labels the walk `motion_class: "locomotion"`, the pose-fidelity /
+# identity-stability recompute will engage and FAIL on the numbers above, and
+# there is no motion-fidelity baseline to exempt it from. T-0359 must not land
+# before T-0338 replaces the walk, or CI goes red again.
+character/player_walk_sheet_hybrid.provenance.json
 character/player_crouch_hide_sheet_v1.provenance.json
 character/player_crouch_hide_sheet_v2.provenance.json
 character/player_die_sheet_v1.provenance.json
