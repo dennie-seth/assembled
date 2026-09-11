@@ -82,6 +82,13 @@ func _on_first_run_entry_room_ready() -> void:
 	_connect_signals()
 	_room_built = true
 
+## The FirstRunController constructed by this scene's own _ready() (T-0120).
+## Exposed for tests/test_main_scene_boot.gd, which loads this scene the way
+## a real launch does and needs to verify the controller actually exists
+## rather than reaching into a private field.
+func get_first_run_controller() -> Node:
+	return _first_run
+
 # ── Room construction ──────────────────────────────────────────────────────────
 
 func _build_room() -> void:

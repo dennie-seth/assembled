@@ -30,6 +30,11 @@ const IdentityStore := preload("res://identity_store.gd")
 ## immediately — this is a generous ceiling, not an expected wait.
 const WALL_LIMIT_MS: float = 5000.0
 
+## Set once _init() has added the main scene to the tree; _process() then
+## knows there is a frame's worth of assertions still to run.
+var _pending: bool = false
+var _instance: Node = null
+
 
 func _init() -> void:
 	var failures: Array[String] = []
@@ -70,21 +75,39 @@ func _init() -> void:
 
 	# Enter the real tree — required for get_tree()/is_inside_tree() calls
 	# deeper in the first-run presentation layer (BlockingNoticeScreen defeats
-	# ui_cancel/window-close via the tree it's actually inside).
+	# ui_cancel/window-close via the tree it's actually inside), and to
+	# exercise the exact `_ready()` path a real launch takes. `_ready()` for a
+	# node added via add_child() while its parent is already inside the tree
+	# is delivered through the engine's own deferred notification queue, not
+	# synchronously within this call (see first_run_controller.gd's and
+	# blocking_notice_screen.gd's own docs on the same hazard) — so the
+	# assertions below wait for the next real _process() frame rather than
+	# running immediately after add_child().
 	root.add_child(instance)
+	_instance = instance
+	_pending = true
+
+
+func _process(_delta: float) -> bool:
+	if not _pending:
+		return false
+	_pending = false
+
+	var instance: Node = _instance
+	var failures: Array[String] = []
 
 	if not instance.has_method("get_first_run_controller"):
 		failures.append(
 			"main scene root has no get_first_run_controller() — cannot verify the first-run controller was constructed"
 		)
 		_finish(failures)
-		return
+		return true
 
 	var first_run: Node = instance.get_first_run_controller()
 	if first_run == null:
 		failures.append("first-run controller was not constructed by the main scene's _ready()")
 		_finish(failures)
-		return
+		return true
 
 	if not (
 		first_run.has_method("get_note_client")
@@ -94,13 +117,13 @@ func _init() -> void:
 	):
 		failures.append("first-run controller is missing the getters this test needs to verify a screen")
 		_finish(failures)
-		return
+		return true
 
 	var note_client: NoteClient = first_run.get_note_client()
 	if note_client == null:
 		failures.append("first-run controller has no NoteClient — cannot drive the identity request")
 		_finish(failures)
-		return
+		return true
 
 	var resolved := _drive_until_screen(note_client, first_run, WALL_LIMIT_MS)
 	if not resolved:
@@ -109,13 +132,13 @@ func _init() -> void:
 			% int(WALL_LIMIT_MS)
 		)
 		_finish(failures)
-		return
+		return true
 
 	var screen: Node = _first_screen(first_run)
 	if screen == null:
 		failures.append("resolved but no screen reference was found — internal test bug")
 		_finish(failures)
-		return
+		return true
 
 	if not screen.is_inside_tree():
 		failures.append("first-run blocking screen exists but is not inside the scene tree")
@@ -123,6 +146,7 @@ func _init() -> void:
 		failures.append("first-run blocking screen exists but is not visible")
 
 	_finish(failures)
+	return true
 
 
 func _first_screen(first_run: Node) -> Node:
