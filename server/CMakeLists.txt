@@ -303,3 +303,15 @@ add_executable(note_proof_of_play_tests
 )
 target_link_libraries(note_proof_of_play_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(note_proof_of_play_tests)
+
+# T-0364: GET /v1/vocabulary — authenticated per-token unlocked word ids.
+# Tests: populated/empty vocabulary, agreement with POST /v1/notes's own
+# vocabulary check (every returned id accepted, an ungranted id rejected),
+# and the unauthenticated case. Separate binary: hosts its own drogon::app()
+# HTTP integration test.
+# vocabulary_handler_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(vocabulary_handler_tests
+  test/vocabulary_handler_test.cpp
+)
+target_link_libraries(vocabulary_handler_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(vocabulary_handler_tests)
