@@ -6,9 +6,10 @@ import { readTailLines, readHeadLines, numericUtilization, DEFAULT_TAIL_BYTES, D
 /**
  * The two `rate_limit_info.rateLimitType` values verified on live `claude` CLI telemetry (see
  * docs/usage-telemetry.md): `five_hour` was captured on 2026-08-29/09-04 runs; `seven_day` is
- * new evidence from the T-0367 task body's 2026-09-11 review of `tasks/.runs`. Both are read
- * independently -- see `readUsageTelemetry` -- because the newest event in a log is sometimes
- * the weekly one, which made a "newest event wins" reader blind to 5-hour pressure and vice versa.
+ * re-verified here directly against `tasks/.runs/T-0221-2026-08-23T12-26-17-498Z.jsonl:724` and
+ * `tasks/.runs/T-0367-2026-09-11T22-06-33-812Z.jsonl:1`. Both are read independently -- see
+ * `readUsageTelemetry` -- because the newest event in a log is sometimes the weekly one, which
+ * made a "newest event wins" reader blind to 5-hour pressure and vice versa.
  */
 export const WINDOW_KINDS = Object.freeze(["five_hour", "seven_day"]);
 
@@ -25,11 +26,11 @@ export const READING_STATUS = Object.freeze({
 });
 
 /**
- * Maximum acceptable staleness per window, in ms. Policy, not measurement (see
- * docs/usage-telemetry.md) -- there is no real inter-event interval data for either window yet,
- * so these are set conservatively: 15 minutes for `five_hour` (inside its roughly-once-per-turn
- * cadence), 2 hours for `seven_day` (a healthy board can go a while between weekly-window events
- * without that silence meaning anything is wrong).
+ * Maximum acceptable staleness per window, in ms. Measured, not asserted -- see
+ * docs/usage-telemetry.md's "Per-window record" table for the real tasks/.runs/*.jsonl
+ * inter-event gaps this is derived from: 15 minutes for `five_hour` sits above the worst observed
+ * gap (~2m20s) between consecutive readings in one session; 2 hours for `seven_day` sits above
+ * both the observed within-session repeat (~5m8s) and the observed across-run gap (~1h).
  */
 export const DEFAULT_MAX_STALENESS_MS = Object.freeze({
   five_hour: 15 * 60 * 1000,

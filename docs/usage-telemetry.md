@@ -7,29 +7,39 @@ to consume instead of the policy stand-ins `usageWindow.js` has used since T-024
 
 ## Provenance of the claims below
 
-Two different evidentiary tiers are cited here, and they are kept distinguishable on purpose:
+`tasks/.runs/` is a runtime-only directory (see `.gitignore` / `runOrchestrator.js`'s `runsDir`
+default) that starts empty in a fresh git worktree — but it is not empty at the repo root: 461
+real `*.jsonl` run logs live at `/home/dennieseth/dev/assembled-board/tasks/.runs/`, reachable
+from this worktree by absolute path with Read/Grep alone. Every claim below was checked directly
+against those logs in this session, not taken as given from the task card:
 
-1. **Already verified and committed**, before this card, from real `tasks/.runs/*.jsonl` payloads
-   captured on live runs — see `usageWindow.js` (verified against Claude Code 2.1.241 on
-   2026-09-04, payload captured verbatim from `tasks/.runs/T-0248-*.jsonl`) and
-   `usageLimitDetector.js`/its tests (the T-0233 healthy-event false-positive, and the genuine
-   429 rejection from `T-0233-2026-08-28T14-51-58-912Z.jsonl`). These are re-cited here, not
-   re-derived.
-2. **New for this card**, stated in the T-0367 task body itself as findings from a 2026-09-11
-   review of `tasks/.runs/*.jsonl` on the machine that authored the spec
-   (`wip_token_gate_spec_2026-09-11/SPEC_v2.md`): the `seven_day` window type, the numeric
-   `utilization`/`surpassedThreshold` fields on warning events (values seen: 0.5, 0.53, 0.57, 0.9,
-   0.91, 0.93), and the terminal shape of a quota stop (`terminal_reason: "api_error"`,
-   `api_error_status: 429`, `result: "You've hit your session limit · resets <time>"`).
+- `five_hour`, status-only `allowed` event carrying **no** `utilization` field at all —
+  `tasks/.runs/T-0287-2026-09-03T06-10-00-599Z.jsonl:1`. This is the direct evidence for the
+  estimated-not-measured rule below: a status-only `allowed` reading can carry zero information
+  beyond the coarse enum, so treating its policy-floor `0` as `measured` would be reporting a
+  guess as a fact.
+- `seven_day`, `allowed_warning` with numeric `utilization`/`surpassedThreshold` —
+  `tasks/.runs/T-0221-2026-08-23T12-26-17-498Z.jsonl:724`:
+  `{"status":"allowed_warning","resetsAt":1787781600,"rateLimitType":"seven_day","utilization":0.75,"isUsingOverage":false,"surpassedThreshold":0.75}`.
+- The newest-event-is-sometimes-the-weekly-one failure mode this card exists to fix —
+  `tasks/.runs/T-0367-2026-09-11T22-06-33-812Z.jsonl:1`, this card's own prior run log, opens with
+  a `seven_day` event, not `five_hour`.
+- The genuine 429 session-limit stop, with a full cumulative-usage object on the same event —
+  `tasks/.runs/T-0366-2026-09-11T18-15-10-554Z.jsonl:237`: `terminal_reason:"api_error"`,
+  `api_error_status:429`, `result:"You've hit your session limit · resets 9:50pm
+  (Europe/Budapest)"`, plus `usage:{...}` and `total_cost_usd:1.0869613999999999` on that *same*
+  `result` event. Worth stating explicitly for §3b below: a quota-stop still carries a real
+  cumulative total, so the ledger's result-authoritative path records that total, not zero, for
+  this outcome.
+- No `rate_limit_event` carries its own wall-clock field — confirmed on the same log's very first
+  line, `tasks/.runs/T-0366-2026-09-11T18-15-10-554Z.jsonl:1`, which has only `rate_limit_info`,
+  `uuid`, and `session_id` — no `timestamp` key — unlike the `assistant`/`user` events around it,
+  which all carry one. This is why the reader below falls back to the *log file's* mtime rather
+  than an event-level timestamp.
 
-**Honesty note on tier 2:** `tasks/.runs/` is a runtime-only directory (see `.gitignore` /
-`runOrchestrator.js`'s `runsDir` default) that is never committed and starts empty in a fresh
-git worktree. This implementer session runs in exactly such a worktree (`worktrees/T-0367`) with
-no history of live runs, so tier-2 claims could not be independently re-grepped from raw logs
-here — they are taken as given from the task card, which states them as directly observed. If
-that turns out to be wrong (a future run's log doesn't match), the reader below is built to fail
-safe: an unrecognized `rateLimitType` or `status` value is classified `unavailable`, never guessed
-at, and never silently treated as `unlimited`.
+If a future run's log ever fails to match one of these shapes, the reader below is still built to
+fail safe: an unrecognized `rateLimitType` or `status` value is classified `unavailable`, never
+guessed at, and never silently treated as `unlimited`.
 
 ## The real telemetry source
 
@@ -64,7 +74,7 @@ A terminal quota stop instead ends the run's final `result` event with:
 | Units | Utilization, 0..1 fraction of the window's cap. Not a token count or dollar figure — the CLI does not publish the underlying cap or a raw usage number, only this normalized fraction (when present) or the coarse `status` enum (always present). | Same unit, same caveat. |
 | Observation timestamp | No event carries its own wall-clock field. The reader uses the *run log's mtime* as the observation instant — sound when the matching event is the newest line in the log (the common case, `status:allowed`/`allowed_warning` roughly every turn); an underestimate of true age when the matching event was only found via the head-of-file fallback in a still-growing log (see `usageWindow.js`'s existing head-read rationale) — the tail was written more recently by *other* events, so mtime looks newer than the specific matching event actually is. This is the reader's one open imprecision; see `foundVia` on each reading. | Same mechanism. Weekly events are much sparser (once per ~week's worth of runs vs. once per turn), so the head-fallback path is the *normal* path here, not the exception — the imprecision above applies more often to this window than to the 5-hour one. |
 | Reset semantics | `resetsAt` (unix seconds) is the instant this specific window's cap frees up. Verified (not inferred from the phrase "5-hour window"): `usageWindow.js`'s `utilizationFromRateLimitInfo` already treats `now >= resetsAt*1000` as an elapsed window reading as fresh, and that behavior is unchanged here. Each window's `resetsAt` is read from its *own* matching event only — a `five_hour` reading never inherits or is reset by a `seven_day` event's `resetsAt` or vice versa (see "read independently" below). | Same semantics, own `resetsAt`. |
-| Maximum acceptable staleness | **Policy, not measurement** — pending real inter-event interval data for this window, set conservatively at 15 minutes (`DEFAULT_MAX_STALENESS_MS.five_hour`), inside the ~once-per-turn cadence already established for this window by `usageWindow.js`'s comments. | 2 hours (`DEFAULT_MAX_STALENESS_MS.seven_day`) — wider because a healthy board can legitimately go a while between weekly-window events. Both constants are exported and overridable per call; tightening them is a config change, not a code change. |
+| Maximum acceptable staleness | 15 minutes (`DEFAULT_MAX_STALENESS_MS.five_hour`) — measured, not asserted: `tasks/.runs/T-0366-2026-09-11T18-15-10-554Z.jsonl` records seven consecutive `five_hour` readings in one continuous session at lines 1/21/61/158/164/200/235. Using the nearest neighbouring `assistant`/`user` event's own `timestamp` field as each reading's observation instant (lines 5/22/62/159/165/199/234 respectively), the gaps between consecutive readings run ~9s, ~33s, ~1m42s, ~4s, ~2m20s, ~1m58s — the worst observed gap is ~2m20s. 15 minutes is >6x that worst observed gap, not a placeholder. | 2 hours (`DEFAULT_MAX_STALENESS_MS.seven_day`) — also measured: the one within-session repeat observed, `tasks/.runs/T-0367-2026-09-11T23-06-33-652Z.jsonl` lines 1 and 287 (same session `c3cf5aa3-...`), are ~5m8s apart (23:06:41 → 23:11:49, using the neighbouring `assistant` timestamp at line 6 as the session-start anchor and the tool-result timestamp at line 288 for the second reading); across separate orchestrator runs of this same card the gap widens to about an hour (that file's companion log, `T-0367-2026-09-11T22-06-33-812Z.jsonl`, created exactly one hour earlier, also opens with its own `seven_day` reading at line 1). 2 hours sits above both observed gaps. Both constants are exported and overridable per call; tightening them is a config change, not a code change. |
 
 ### Reading independently, not "newest wins"
 
@@ -135,9 +145,19 @@ every attempt recorded for a card. Both are computed on read (`attemptTotal`/`ca
 
 ## Out of scope for this card
 
-Wiring `recordAttemptUsage` calls into `runOrchestrator.js`'s actual phase-completion points is
-left to a follow-up: this card's acceptance is about the reader and ledger being correct and
-tested against realistic fixtures, not about the live orchestrator calling them yet. Doing so here
-would touch the orchestrator's hot paths under the same card that promises "no launch, admission,
-or poller behaviour changes" — safer to land the evidence infrastructure first and wire it up as
-its own reviewable diff.
+`recordAttemptUsage` has no caller yet — a deliberate module-boundary cut, not an oversight.
+Recording usage would not itself violate "no launch, admission, or poller behaviour changes"
+(writing a derived sidecar file is not a launch/admission/poller decision); the reason to defer is
+narrower than that. Wiring it in correctly means finding every one of `runOrchestrator.js`'s
+termination paths — PASS, FAIL-with-retry, FAIL-exhausted, `cancelled`, `crashed`, `_blocked`
+timeout, the inactivity-timeout-treated-as-retryable-FAIL case, and the planner's own
+success/failure — and threading the right `{cardId, attempt, phase, retry}` plus `outcome`/
+`complete` pair through each one. `runOrchestrator.js` has no existing test seam for asserting "a
+usage sidecar was written here" at each of those points; adding one under TDD, per
+`.claude/rules/conduct.md`, for every termination path is realistically its own card's worth of
+work, and touches the same retry/preservation logic (`_runAttempt`, `_handlePass`, `_blocked`)
+this evidence-only ticket promises not to perturb. A follow-up card — after T-C's cost estimator
+exists as the first real consumer of recorded attempt usage — should wire `recordAttemptUsage`
+into each termination path with dedicated tests per outcome. Until then, this module is correct
+and tested in isolation but inert in the live run; that narrowing is stated here explicitly so a
+human reviewer can accept it rather than discover it.
