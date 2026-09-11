@@ -243,6 +243,19 @@ TEST_CASE("POST /v1/notes/{id}/rate HTTP integration") {
         "INSERT INTO archetype_seen (token, archetype_id) VALUES ('test-tok-0047-http', 2) "
         "ON CONFLICT DO NOTHING");
 
+    // Second identity, dedicated to the rate-limit burst test below.
+    db->getClient()->execSqlSync(
+        "INSERT INTO identity (token) VALUES ('test-tok-0047-burst') ON CONFLICT DO NOTHING");
+    db->getClient()->execSqlSync(
+        "INSERT INTO archetype_seen (token, archetype_id) VALUES ('test-tok-0047-burst', 2) "
+        "ON CONFLICT DO NOTHING");
+
+    // T-0049: configure a small per-token note-rating ceiling for this run so
+    // the burst test below can actually trip it over HTTP. Must happen
+    // before drogon::app().run() starts (see setRatingRateLimiterForTesting
+    // doc).
+    assembled_server::NoteController::setRatingRateLimiterForTesting(6, std::chrono::seconds(60));
+
     // Create a note to rate via HTTP. STATION/tracks (2, 3) — unique per suite.
     assembled_server::PgNoteRepo repo(db->getClient());
     assembled_server::CreateNoteParams p;
@@ -324,18 +337,43 @@ TEST_CASE("POST /v1/notes/{id}/rate HTTP integration") {
         CHECK(code == drogon::k401Unauthorized);
     }
 
+    // Burst above the per-token note-rating rate limit → 429. The limiter
+    // was configured above to 6 requests / 60 s. Uses a dedicated token so
+    // this burst doesn't interact with the budget 'test-tok-0047-http'
+    // already spent in the sub-tests above.
+    {
+        for (int i = 0; i < 6; ++i) {
+            auto [code, j] = sendRate(note_id, 1, "test-tok-0047-burst");
+            CHECK(code == drogon::k200OK);
+        }
+
+        // Seventh request in the same window exceeds the configured ceiling.
+        auto [code, j] = sendRate(note_id, 1, "test-tok-0047-burst");
+        CHECK(code == drogon::k429TooManyRequests);
+        CHECK(j["error"].asInt() == 5001);
+    }
+
+    // A different token's steady-state usage is unaffected: 'test-tok-0047-http'
+    // has only spent 4 of its 6-request budget in the sub-tests above; the
+    // burst against a different token above must not affect it.
+    {
+        auto [code, j] = sendRate(note_id, 1, "test-tok-0047-http");
+        CHECK(code == drogon::k200OK);
+    }
+
     // ── Teardown ──────────────────────────────────────────────────────────────
     drogon::app().getLoop()->queueInLoop([]() { drogon::app().quit(); });
     serverThread.join();
 }
 
-// ── Note-rating rate limit: per-token, configurable per route group ───────────
+// ── Note-rating rate limit: RateLimiter class, white-box ──────────────────────
 //
-// Same rationale as the note-creation rate-limit tests in note_handler_test.cpp
-// and PetitionController's in petition_test.cpp: drogon::app() is a
-// process-global singleton already exercised by the HTTP integration suite
-// above, so the T-0049 acceptance criteria are verified white-box against
-// NoteController::ratingRateLimiter() directly.
+// The T-0049 acceptance criteria (burst rejected with 429, steady-state
+// unaffected) are verified over real HTTP in the integration suite above.
+// drogon::app() is a process-global singleton that can only run once per
+// binary, so it can't host a second HTTP run here; these cases give
+// supplementary white-box coverage of NoteController::ratingRateLimiter()'s
+// bucket-isolation behavior directly.
 
 TEST_CASE("Note-rating rate limiter allows steady-state usage under the limit") {
     assembled_server::NoteController::setRatingRateLimiterForTesting(3, std::chrono::seconds(60));
