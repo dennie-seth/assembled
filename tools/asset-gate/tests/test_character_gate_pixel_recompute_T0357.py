@@ -13,9 +13,12 @@ records for every one of its 8 frames), it renders the rig's own predicted
 silhouette for each frame and re-derives pose_fidelity_range/
 identity_stability_range from the sheet's actual pixels, ALWAYS overriding
 whatever the sidecar itself recorded for those two fields. When there is no
-rig evidence to recompute from at all, it falls back unchanged to
-`check_character_motion_fidelity`'s existing sidecar-trusting predicate --
-same thresholds, same predicate, just a different source for the range.
+rig evidence to recompute from at all, it FAILS naming exactly what is
+missing (2026-09-11 PR review, P1) -- it never falls back to trusting
+whatever range the sidecar itself self-reports. `idle` (and missing/
+unrecognised motion_class) are unaffected and keep skipping this check
+entirely; that classification requirement is
+`check_character_motion_class_declared`'s job, not this one's.
 
 `sweep_character_gate` is the single authoritative validator (T-0357 finding
 1): CHR-1 presence + the idle frame-delta cap + a validated motion_class
@@ -29,6 +32,7 @@ from __future__ import annotations
 import json
 
 import numpy as np
+from PIL import Image
 
 from asset_gate import art
 from asset_gate.character import (
@@ -162,21 +166,30 @@ def test_trusting_the_stale_sidecar_directly_would_have_wrongly_passed():
     assert naive.passed
 
 
-def test_falls_back_to_sidecar_trust_when_no_rig_evidence_recorded():
-    """No layout/frame_generation at all (an older-shaped sidecar, or a
-    hand-built regression fixture) -- nothing to recompute from, so this
-    falls back to the existing sidecar-trusting predicate unchanged."""
+def test_fails_when_no_rig_evidence_recorded_even_if_sidecar_scores_would_pass():
+    """T-0357 PR review 2026-09-11, P1: no layout/frame_generation at all (an
+    older-shaped sidecar, or a hand-built regression fixture) for a
+    locomotion/transition/loop asset must FAIL -- even when the sidecar's own
+    self-reported scores would themselves pass. This replaces the old
+    `test_falls_back_to_sidecar_trust_when_no_rig_evidence_recorded`, which
+    asserted the bug Codex found: a brand-new asset with no rig evidence and
+    perfect self-reported scores used to pass by falling back to trusting
+    those scores."""
     provenance = {
         "motion_class": "locomotion",
         "pose_fidelity_range": [0.75, 0.92],
         "identity_stability_range": [0.03, 0.09],
     }
     result = determine_character_motion_fidelity(provenance, sheet_name="x")
-    assert result.passed
+    assert not result.passed
     assert "recomputed_from_pixels" not in result.details
+    assert "layout" in result.reason
 
 
-def test_falls_back_and_fails_when_sidecar_reports_failing_range_with_no_rig_evidence():
+def test_fails_when_no_rig_evidence_regardless_of_sidecar_range():
+    """Same missing-evidence failure whether the sidecar's own self-reported
+    range would have passed or failed -- the fallback-to-sidecar-trust path
+    is gone entirely for locomotion/transition/loop, not just narrowed."""
     provenance = {
         "motion_class": "locomotion",
         "pose_fidelity_range": [0.1, 0.2],
@@ -184,6 +197,29 @@ def test_falls_back_and_fails_when_sidecar_reports_failing_range_with_no_rig_evi
     }
     result = determine_character_motion_fidelity(provenance, sheet_name="x")
     assert not result.passed
+    assert "recomputed_from_pixels" not in result.details
+
+
+def test_fails_naming_missing_frame_generation_when_layout_present_but_no_frame_generation():
+    provenance = {
+        "motion_class": "locomotion",
+        "layout": {"cols": 1, "rows": 1, "cell_px": CELL_PX},
+    }
+    result = determine_character_motion_fidelity(provenance, sheet_name="x")
+    assert not result.passed
+    assert "frame_generation" in result.reason
+
+
+def test_fails_naming_frame_count_mismatch_between_frame_generation_and_layout():
+    provenance = {
+        "motion_class": "locomotion",
+        "layout": {"cols": 2, "rows": 1, "cell_px": CELL_PX},
+        "frame_generation": [{"frame_index": 0, "pose_keypoints_file": "rig/frame_0.json"}],
+    }
+    result = determine_character_motion_fidelity(provenance, sheet_name="x")
+    assert not result.passed
+    assert "2x1" in result.reason
+    assert "1 entries" in result.reason
 
 
 def test_skips_for_idle_even_with_rig_evidence_present(tmp_path):
@@ -377,3 +413,137 @@ def test_sweep_character_gate_without_baselines_fails_undocumented_legacy_gap(tm
     results = sweep_character_gate(tmp_path, repo_root=tmp_path)
 
     assert not all_passed(results)
+
+
+# ---- CLI regression: the exact command CI/the reviewer route run
+# (T-0357 PR review 2026-09-11, P1 -- missing rig evidence must FAIL) ----
+
+
+def test_cli_character_gate_fails_on_new_transparent_sheet_with_no_rig_evidence(tmp_path):
+    """Codex's PR review reproduction: a brand-new, fully transparent 192x96
+    sheet whose sidecar declares motion_class='locomotion' with perfect
+    self-reported pose/identity scores, and NO 'layout'/'frame_generation' at
+    all, must make the real `character-gate` CLI -- the exact command CI and
+    the reviewer route run -- exit non-zero, not pass by trusting those
+    self-reported scores."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    character_dir = tmp_path / "character"
+    character_dir.mkdir()
+    prov = {
+        "model": "x.safetensors",
+        "seed": 1,
+        "frame_delta_range": [0.05, 0.09],
+        "arm_c_benchmark": [0.072, 0.112],
+        "beats_arm_c_benchmark": True,
+        "motion_class": "locomotion",
+        "pose_fidelity_range": [1.0, 1.0],
+        "identity_stability_range": [0.0, 0.0],
+    }
+    (character_dir / "new_blank_walk.provenance.json").write_text(json.dumps(prov))
+    Image.new("P", (192, 96), 0).save(character_dir / "new_blank_walk.png", transparency=0)
+
+    src = Path(__file__).resolve().parents[1] / "src"
+    env = {**os.environ, "PYTHONPATH": str(src), "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "asset_gate.cli",
+            "character-gate",
+            str(tmp_path),
+            "--repo-root",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "character_motion_fidelity" in proc.stdout
+    assert "new_blank_walk.provenance.json" in proc.stdout
+
+
+def test_cli_character_gate_fails_when_frame_generation_count_mismatches_layout(tmp_path):
+    """A sidecar whose 'frame_generation' frame count does not match its
+    declared 'layout' must make the real character-gate CLI exit non-zero --
+    malformed rig evidence is treated the same as missing rig evidence, never
+    silently falls back to trusting the sidecar's own scores."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    character_dir = tmp_path / "character"
+    character_dir.mkdir()
+    prov = {
+        "model": "x.safetensors",
+        "seed": 1,
+        "frame_delta_range": [0.05, 0.09],
+        "arm_c_benchmark": [0.072, 0.112],
+        "beats_arm_c_benchmark": True,
+        "motion_class": "locomotion",
+        "pose_fidelity_range": [1.0, 1.0],
+        "identity_stability_range": [0.0, 0.0],
+        "layout": {"cols": 2, "rows": 1, "cell_px": 96},
+        "frame_generation": [{"frame_index": 0, "pose_keypoints_file": "rig/frame_0.json"}],
+    }
+    (character_dir / "mismatched_walk.provenance.json").write_text(json.dumps(prov))
+    Image.new("P", (192, 96), 0).save(character_dir / "mismatched_walk.png", transparency=0)
+
+    src = Path(__file__).resolve().parents[1] / "src"
+    env = {**os.environ, "PYTHONPATH": str(src), "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "asset_gate.cli",
+            "character-gate",
+            str(tmp_path),
+            "--repo-root",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "character_motion_fidelity" in proc.stdout
+    assert "mismatched_walk.provenance.json" in proc.stdout
+
+
+def test_cli_character_gate_still_exits_zero_on_the_committed_asset_tree():
+    """T-0357 PR review 2026-09-11: the P1 fix (missing rig evidence FAILS a
+    locomotion/transition/loop asset) must not regress the committed tree --
+    the shipped walk records no `motion_class` at all, so it is unaffected,
+    and the interim-walk exemption stays confined to
+    `character_motion_class_declared`, not this path."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    src = Path(__file__).resolve().parents[1] / "src"
+    env = {**os.environ, "PYTHONPATH": str(src), "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "asset_gate.cli",
+            "character-gate",
+            str(repo_root / "assets" / "final"),
+            "--repo-root",
+            str(repo_root),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr

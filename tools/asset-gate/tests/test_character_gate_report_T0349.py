@@ -29,7 +29,6 @@ from asset_gate.character import (
     build_character_gate_report,
     check_character_arm_c_provenance,
     check_character_frame_delta_cap,
-    check_character_motion_fidelity,
 )
 from conftest import TEST_PALETTE_HEX, make_indexed_image
 
@@ -167,24 +166,24 @@ def test_report_rejects_frame_count_mismatch_with_grid():
 
 def test_report_includes_a_motion_fidelity_check(sheet, provenance):
     """This fixture's provenance has no `layout`/`frame_generation` (no rig
-    evidence to recompute from), so `character_motion_fidelity` must fall
-    back to the existing sidecar-trusting predicate unchanged -- but it
-    must APPEAR in `checks` (T-0357 finding 4; before this card it never
-    did, so a failing motion result could not drive a non-zero exit)."""
+    evidence to recompute from). Since the 2026-09-11 PR review's P1 fix, a
+    locomotion/transition/loop asset with no rig evidence FAILS naming the
+    missing evidence rather than falling back to the sidecar-trusting
+    predicate -- but either way it must APPEAR in `checks` (T-0357 finding
+    4; before this card it never did, so a failing motion result could not
+    drive a non-zero exit)."""
     report = build_character_gate_report(
         sheet, provenance, cols=2, rows=2, cell_px=2, sheet_name="x.png"
     )
-    expected = check_character_motion_fidelity(provenance, sheet_name="x.png")
-    assert report["checks"]["character_motion_fidelity"] == {
-        "passed": expected.passed,
-        "reason": expected.reason,
-    }
+    check = report["checks"]["character_motion_fidelity"]
+    assert check["passed"] is False
+    assert "layout" in check["reason"]
 
 
 def test_report_checks_aggregate_reflects_a_failing_motion_result(sheet, provenance):
-    """`provenance`'s motion_class is locomotion but records neither
-    pose_fidelity_range nor identity_stability_range -- character_motion_fidelity
-    must fail, and cli.py's own `all(check["passed"] for check in
+    """`provenance`'s motion_class is locomotion but records no rig evidence
+    (no `layout`/`frame_generation`) -- character_motion_fidelity must fail,
+    and cli.py's own `all(check["passed"] for check in
     report["checks"].values())` must see it."""
     report = build_character_gate_report(sheet, provenance, cols=2, rows=2, cell_px=2)
     assert report["checks"]["character_motion_fidelity"]["passed"] is False
