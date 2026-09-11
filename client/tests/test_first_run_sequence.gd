@@ -89,9 +89,13 @@ class Capture:
 	var chroma_events: Array = []          ## [String text]
 	var recap_events: Array = []           ## [String text]
 	var indicator_events: Array = []       ## [bool visible]
+	var save_failed_events: Array = []     ## [{phrase, attempted_path}]
 
 	func on_phrase_reveal_ready(phrase: String, notice_text: String, saved_path: String) -> void:
 		phrase_reveal_events.append({"phrase": phrase, "notice_text": notice_text, "saved_path": saved_path})
+
+	func on_phrase_save_failed(phrase: String, attempted_path: String) -> void:
+		save_failed_events.append({"phrase": phrase, "attempted_path": attempted_path})
 
 	func on_identity_failed(state: int, http_status: int) -> void:
 		identity_failed_events.append({"state": state, "http_status": http_status})
@@ -127,6 +131,7 @@ func _init() -> void:
 		return
 
 	failures += _test_identity_success_saves_before_reveal(mock)
+	failures += _test_save_failure_routes_away_from_reveal(mock)
 	failures += _test_both_loss_modes_named(mock)
 	failures += _test_no_escape_from_phrase_reveal(mock)
 	failures += _test_identity_unreachable_shows_offline_notice()
@@ -137,6 +142,7 @@ func _init() -> void:
 	failures += _test_session_end_offline_recap()
 	failures += _test_session_end_online_no_recap(mock)
 	failures += _test_notify_reachability_indicator(mock)
+	failures += _test_indicator_visible_after_offline_launch()
 
 	mock.stop()
 
@@ -174,6 +180,7 @@ func _make_seq() -> FirstRunSequence:
 func _connect_capture(seq: FirstRunSequence) -> Capture:
 	var cap := Capture.new()
 	seq.phrase_reveal_ready.connect(cap.on_phrase_reveal_ready)
+	seq.phrase_save_failed.connect(cap.on_phrase_save_failed)
 	seq.identity_failed.connect(cap.on_identity_failed)
 	seq.offline_notice_required.connect(cap.on_offline_notice_required)
 	seq.entry_room_ready.connect(cap.on_entry_room_ready)
@@ -221,6 +228,44 @@ func _test_identity_success_saves_before_reveal(mock: MockHttpServer) -> Array[S
 
 	if FileAccess.file_exists(TEST_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC1: a failed write must never reach the phrase-reveal screen ─────────────
+
+func _test_save_failure_routes_away_from_reveal(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	# A path under a directory that does not exist — FileAccess.open(WRITE)
+	# does not create missing parent directories, so this reliably fails.
+	const BAD_PATH := "user://T0120_missing_dir/phrase.txt"
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := FirstRunSequence.new()
+	seq.set_phrase_path(BAD_PATH)
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"fiftyone fiftytwo fiftythree fiftyfour fiftyfive fiftysix fiftyseven fiftyeight"}')
+	seq.start_new_game()
+	var completed := _drive(
+		client, mock, 5000.0,
+		func(): return cap.save_failed_events.size() > 0 or cap.phrase_reveal_events.size() > 0
+	)
+	client.free()
+
+	if not completed:
+		failures.append("save_failure: neither phrase_save_failed nor phrase_reveal_ready fired within 5 s")
+		return failures
+
+	if not cap.phrase_reveal_events.is_empty():
+		failures.append("save_failure: phrase_reveal_ready fired despite the write failing")
+	if cap.save_failed_events.size() != 1:
+		failures.append("save_failure: expected exactly 1 phrase_save_failed, got %d" % cap.save_failed_events.size())
+	if seq.get_state() != FirstRunSequence.State.SAVE_FAILED:
+		failures.append("save_failure: expected state SAVE_FAILED, got %d" % seq.get_state())
+
 	return failures
 
 
@@ -562,20 +607,69 @@ func _test_notify_reachability_indicator(mock: MockHttpServer) -> Array[String]:
 	client.free()
 	seq.acknowledge_phrase()
 
+	# _enter_room() (triggered by acknowledge_phrase() above) emits the
+	# indicator's initial state as soon as the room is reached (AC5 fix) — a
+	# baseline event this test must account for before driving transitions.
+	var base: int = cap.indicator_events.size()
+	if base != 1 or cap.indicator_events[0] != false:
+		failures.append(
+			"indicator: expected exactly 1 initial event [false] (online, hidden) on room entry, got %s"
+			% [cap.indicator_events]
+		)
+
 	seq.notify_reachability(false)
-	if cap.indicator_events.size() != 1 or cap.indicator_events[0] != true:
-		failures.append("indicator: expected [true] (indicator visible) after going offline, got %s" % [cap.indicator_events])
+	if cap.indicator_events.size() != base + 1 or cap.indicator_events[base] != true:
+		failures.append("indicator: expected indicator visible after going offline, got %s" % [cap.indicator_events])
 	if seq.is_server_reachable():
 		failures.append("indicator: is_server_reachable() true after notify_reachability(false)")
 
 	seq.notify_reachability(false)
-	if cap.indicator_events.size() != 1:
+	if cap.indicator_events.size() != base + 1:
 		failures.append("indicator: redundant notify_reachability(false) re-emitted the signal")
 
 	seq.notify_reachability(true)
-	if cap.indicator_events.size() != 2 or cap.indicator_events[1] != false:
-		failures.append("indicator: expected second event false (indicator hidden) after reconnecting")
+	if cap.indicator_events.size() != base + 2 or cap.indicator_events[base + 1] != false:
+		failures.append("indicator: expected a further event false (indicator hidden) after reconnecting")
 
 	if FileAccess.file_exists(TEST_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC5 regression: launch offline -> acknowledge_offline -> indicator visible ──
+## The bug this guards: notify_reachability() only emits on a *change*, and
+## _reachable was already false by the time OFFLINE_NOTICE was reached — so a
+## player who launches offline and acknowledges never saw the indicator at
+## all. The suite was green before this test existed because every other
+## indicator test only exercised the online -> offline transition.
+
+func _test_indicator_visible_after_offline_launch() -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % DEAD_PORT)
+	client.set_timeout_ms(SHORT_TIMEOUT_MS)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	seq.start_new_game()
+	var completed := _drive(client, null, 3000.0, func(): return cap.offline_notice_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("indicator_offline_launch: offline_notice_required not emitted within 3 s")
+		return failures
+
+	seq.acknowledge_offline()
+
+	if cap.indicator_events.is_empty():
+		failures.append("indicator_offline_launch: offline_indicator_changed never fired on room entry")
+	elif cap.indicator_events[-1] != true:
+		failures.append(
+			"indicator_offline_launch: expected the indicator visible on room entry while offline, got %s"
+			% [cap.indicator_events]
+		)
+
 	return failures

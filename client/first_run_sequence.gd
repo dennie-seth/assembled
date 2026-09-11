@@ -64,6 +64,7 @@ enum State {
 	AWAITING_IDENTITY, ## Waiting on POST /v1/identity to complete.
 	PHRASE_REVEAL,     ## Phrase saved; screen unskippable until acknowledge_phrase().
 	OFFLINE_NOTICE,    ## Identity request found the server unreachable.
+	SAVE_FAILED,       ## Identity minted but the phrase could not be written to disk.
 	IN_ENTRY_ROOM,     ## Dropped into the calm entry room; baseline window running.
 	ENDED,             ## Session has ended.
 }
@@ -81,6 +82,16 @@ signal phrase_reveal_ready(phrase: String, notice_text: String, saved_path: Stri
 ## @param state        A NoteClient.State value.
 ## @param http_status  The raw HTTP status code.
 signal identity_failed(state: int, http_status: int)
+
+## Emitted when the server minted an identity but the phrase could not be
+## written to disk (FileAccess.open failure). The phrase-reveal screen must
+## never be shown in this case — its copy asserts the phrase is already
+## saved, which would be a lie (AC1). There is no retry path here: the phrase
+## already exists server-side, but it is not recoverable client-side without
+## the write succeeding.
+## @param phrase         The server-issued phrase that failed to save.
+## @param attempted_path OS-level absolute path the write was attempted at.
+signal phrase_save_failed(phrase: String, attempted_path: String)
 
 ## Emitted when the identity request could not reach the server at all.
 ## Blocks continuing until acknowledge_offline() is called.
@@ -206,6 +217,14 @@ func _enter_room() -> void:
 	_baseline_elapsed = 0.0
 	_chroma_shown = false
 	entry_room_ready.emit()
+	# Emit the indicator's initial state on the first observation available to
+	# any listener that connected in response to entry_room_ready (i.e. a
+	# presentation layer that builds the indicator node here). Without this,
+	# a player who launched offline never sees the indicator: _reachable was
+	# already set to false back in _on_identity_received, so the next
+	# notify_reachability(false) during play is a no-op "no change" and never
+	# fires (AC5).
+	offline_indicator_changed.emit(not _reachable)
 
 
 func _build_phrase_notice_text() -> String:
@@ -224,8 +243,14 @@ func _on_identity_received(state: int, http_status: int, phrase: String) -> void
 				return
 			_reachable = true
 			# Save BEFORE emitting — the phrase-reveal screen must never be
-			# shown ahead of the file actually landing on disk (AC1).
-			IdentityStore.save_phrase(phrase, _phrase_path)
+			# shown ahead of the file actually landing on disk (AC1). Check
+			# the write actually succeeded: the notice copy asserts the
+			# phrase is already saved, so a silent I/O failure here would
+			# show that claim while it's false.
+			if not IdentityStore.save_phrase(phrase, _phrase_path):
+				_state = State.SAVE_FAILED
+				phrase_save_failed.emit(phrase, IdentityStore.resolve_path(_phrase_path))
+				return
 			_state = State.PHRASE_REVEAL
 			phrase_reveal_ready.emit(
 				phrase, _build_phrase_notice_text(), IdentityStore.resolve_path(_phrase_path)
