@@ -24,6 +24,14 @@ extends Node
 ##       for sprite in chroma_sprites:
 ##           sprite.collapse_proximity = p
 
+## The shared proximity-ramp utility (T-0122), referenced by preload() rather
+## than by its ClockProximity class_name: under `godot --headless --script`,
+## a script's global class_name may not yet be registered when a sibling
+## script referencing it by name is parsed (the same quirk chroma_sprite.gd's
+## test suite works around); preload() resolves the resource path directly
+## and sidesteps that ordering entirely.
+const _ClockProximity = preload("res://scripts/clock_proximity.gd")
+
 ## Unix timestamp (float seconds since epoch) when the universe collapses.
 ## Set from the server's authoritative collapse_expires_at field.
 var collapse_expires_at: float = 0.0
@@ -41,6 +49,8 @@ signal collapse_proximity_changed(proximity: float)
 
 
 ## Pure static function: compute collapse proximity given a clock reading.
+## Delegates to ClockProximity.compute() -- the formula is shared with
+## BleedClockDriver (T-0122), not duplicated (godot.md).
 ##
 ## @param now          Current Unix time (float seconds since epoch).
 ## @param expires_at   Unix timestamp when the universe collapses.
@@ -49,11 +59,7 @@ signal collapse_proximity_changed(proximity: float)
 ##                     0.0 = birth; 1.0 = at or past collapse.
 static func compute_proximity(
 		now: float, expires_at: float, duration_secs: float) -> float:
-	if duration_secs <= 0.0:
-		return 1.0
-	var remaining: float = expires_at - now
-	# remaining / duration_secs is 1.0 at birth, 0.0 at collapse.
-	return clampf(1.0 - (remaining / duration_secs), 0.0, 1.0)
+	return _ClockProximity.compute(now, expires_at, duration_secs)
 
 
 ## Compute proximity from the real system clock and emit the signal.

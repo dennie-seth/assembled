@@ -2,6 +2,13 @@ class_name BleedClockDriver
 extends Node
 ## Wires an item's bleed timer to the bleed-alpha shader ramp (T-0122).
 ##
+## Delegates its proximity math to ClockProximity via preload() rather than
+## referencing the ClockProximity class_name directly -- under `godot
+## --headless --script`, a script's global class_name may not yet be
+## registered when a sibling script referencing it by name is parsed (the
+## same quirk chroma_sprite.gd's test suite works around); preload() resolves
+## the resource path directly and sidesteps that ordering entirely.
+##
 ## Reads bleed_at (a Unix timestamp in seconds, from item_instance.bleed_at,
 ## `04-data-model.md` §3) and bleed_duration_secs (the timer's total span),
 ## then on every _process() tick computes a normalised proximity in [0.0, 1.0]
@@ -29,6 +36,10 @@ extends Node
 ##       for sprite in bleed_sprites:
 ##           sprite.bleed_proximity = p
 
+## The shared proximity-ramp utility, referenced by preload() rather than by
+## its ClockProximity class_name -- see the class-level doc comment above.
+const _ClockProximity = preload("res://scripts/clock_proximity.gd")
+
 ## Unix timestamp (float seconds since epoch) when this item instance bleeds.
 ## Set from the server's authoritative item_instance.bleed_at field.
 var bleed_at: float = 0.0
@@ -47,6 +58,8 @@ signal bleed_proximity_changed(proximity: float)
 
 
 ## Pure static function: compute bleed proximity given a clock reading.
+## Delegates to ClockProximity.compute() -- the formula is shared with
+## CollapseClockDriver (T-0197), not duplicated (godot.md).
 ##
 ## @param now           Current Unix time (float seconds since epoch).
 ## @param bleed_at      Unix timestamp when this item instance bleeds.
@@ -54,11 +67,7 @@ signal bleed_proximity_changed(proximity: float)
 ## @return              Normalised proximity in [0.0, 1.0].
 ##                      0.0 = timer start; 1.0 = at or past bleed_at.
 static func compute_proximity(now: float, bleed_at: float, duration_secs: float) -> float:
-	if duration_secs <= 0.0:
-		return 1.0
-	var remaining: float = bleed_at - now
-	# remaining / duration_secs is 1.0 at timer start, 0.0 at bleed_at.
-	return clampf(1.0 - (remaining / duration_secs), 0.0, 1.0)
+	return _ClockProximity.compute(now, bleed_at, duration_secs)
 
 
 ## Compute proximity from the real system clock and emit the signal.
