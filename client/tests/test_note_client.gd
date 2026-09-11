@@ -174,10 +174,22 @@ func _drive(
 
 
 ## ── Test: timeout ────────────────────────────────────────────────────────────
-## Connects to a port with nothing listening; expects STATE_TIMEOUT.
+## Connects to a server that accepts the TCP connection but never sends a
+## response, so curl's own transfer timeout (CURLE_OPERATION_TIMEDOUT) is what
+## fires. A port with nothing listening at all is the wrong fixture for this:
+## on Linux, connecting to a closed local port is refused immediately
+## (ECONNREFUSED / CURLE_COULDNT_CONNECT -> STATE_NETWORK_ERROR), it never
+## reaches the timeout path this test means to exercise.
 
 func _test_timeout() -> Array[String]:
 	var failures: Array[String] = []
+
+	var hang: MockHttpServer = MockHttpServer.new()
+	if not hang.listen(TIMEOUT_PORT):
+		failures.append(
+			"timeout: could not start hang server on port %d" % TIMEOUT_PORT
+		)
+		return failures
 
 	var client: NoteClient = NoteClient.new()
 	client.set_base_url("http://127.0.0.1:%d" % TIMEOUT_PORT)
@@ -189,8 +201,12 @@ func _test_timeout() -> Array[String]:
 	client.notes_fetched.connect(cap.on_notes_fetched)
 
 	client.fetch_notes(1, 1, 10)
-	var completed: bool = _drive(client, cap, null, 3000.0)
+	# Never queue a response: MockHttpServer.pump() accepts the connection
+	# into _pending but only replies once _queue is non-empty, so it holds
+	# the socket open and unresponsive for the life of this test.
+	var completed: bool = _drive(client, cap, hang, 3000.0)
 	client.free()
+	hang.stop()
 
 	if not completed:
 		failures.append("timeout: no signal received within 3 s wall time")
