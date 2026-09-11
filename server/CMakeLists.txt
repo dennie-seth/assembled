@@ -343,6 +343,18 @@ add_executable(healthz_timeout_tests
 target_link_libraries(healthz_timeout_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(healthz_timeout_tests)
 
+# T-0050 FIX ROUND 2 (Codex re-review 2026-09-11, P2): the query itself must
+# time out, not just the HTTP response -- a fourth, distinct DbClientPtr
+# from the other three healthz binaries (see their comments), needed
+# because HealthzController caches its client via call_once for the process
+# lifetime. Needs no live Postgres (closed port), so it always runs.
+# healthz_retention_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(healthz_retention_tests
+  test/healthz_retention_test.cpp
+)
+target_link_libraries(healthz_retention_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(healthz_retention_tests)
+
 # T-0050: structured request logging — RequestLogger::install() emits one
 # JSON log line per request (request_id, method, route, status,
 # duration_ms) via an injectable sink. Separate binary: spins up its own
