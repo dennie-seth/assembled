@@ -229,7 +229,13 @@ def test_the_walk_exemption_is_explicitly_justified_in_the_baseline_file():
     ).read_text()
     lines = text.splitlines()
     idx = next(i for i, ln in enumerate(lines) if ln.strip() == _WALK)
-    justification = "\n".join(lines[max(0, idx - 25) : idx])
+    # The justification is the contiguous comment block directly above the
+    # entry -- no other baseline entry may sit between the reason and the path.
+    start = idx
+    while start > 0 and (lines[start - 1].startswith("#") or not lines[start - 1].strip()):
+        start -= 1
+    justification = "\n".join(lines[start:idx])
+    assert justification.strip(), "the walk entry has no comment block directly above it"
 
     assert "T-0338" in justification, "the walk entry must name the card that replaces it"
     assert "interim" in justification.lower(), "the walk entry must say it is an interim placeholder"
