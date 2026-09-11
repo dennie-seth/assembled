@@ -58,8 +58,22 @@ void HealthzController::getHealthz(
     static drogon::orm::DbClientPtr dbClient;
     std::call_once(dbFlag, []() {
         auto db = Database::fromEnv();
-        if (db)
+        if (db) {
             dbClient = db->getClient();
+            // Bound the query itself, not just the HTTP response (Codex
+            // re-review 2026-09-11, P2): without this, execSqlAsync's
+            // success/exception callbacks -- and everything they capture --
+            // stay queued on the DbClient until a connection actually
+            // succeeds. Against a database that never resolves its
+            // connection (closed port, or one that drops mid-outage), that
+            // left the captured response state alive indefinitely even
+            // though the timer below had already answered the caller with
+            // a 503. This client is dedicated to HealthzController's own
+            // "SELECT 1" (see Database::fromEnv()'s per-controller
+            // call_once convention), so a client-wide deadline is safe here
+            // and does not affect any other controller's queries.
+            dbClient->setTimeout(healthzTimeoutSeconds());
+        }
     });
 
     if (!dbClient) {
