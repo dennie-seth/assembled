@@ -6,8 +6,9 @@ extends Node
 ## with no way for a player to ever see it — nothing constructed it, and
 ## nothing rendered anything it emitted. This class is that wiring: it owns
 ## the NoteClient + OfflineModeController the sequence needs, and drives the
-## presentation layer (two BlockingNoticeScreens, one OfflineIndicator) off
-## the sequence's signals (18-first-run.md §1-4).
+## presentation layer (two BlockingNoticeScreens, one OfflineIndicator, and a
+## TransientNotice for each of the chroma explanation and the session-end
+## recap) off the sequence's signals (18-first-run.md §1-4).
 ##
 ## Usage: add as a child of whatever scene should host the first-run flow,
 ## connect to entry_room_ready to know when it's safe to start normal
@@ -19,6 +20,7 @@ const IdentityStore := preload("res://identity_store.gd")
 const OfflineModeController := preload("res://offline_mode.gd")
 const BlockingNoticeScreen := preload("res://scripts/blocking_notice_screen.gd")
 const OfflineIndicator := preload("res://scripts/offline_indicator.gd")
+const TransientNotice := preload("res://scripts/transient_notice.gd")
 
 ## Emitted once every blocking first-run screen has been cleared and the
 ## player should be dropped into the calm entry room.
@@ -30,6 +32,8 @@ var _offline_mode: OfflineModeController
 var _phrase_screen: BlockingNoticeScreen
 var _offline_screen: BlockingNoticeScreen
 var _indicator: OfflineIndicator
+var _chroma_notice: TransientNotice
+var _recap_notice: TransientNotice
 var _phrase_path: String = IdentityStore.PHRASE_FILE
 
 
@@ -58,6 +62,8 @@ func initialize() -> void:
 	_sequence.phrase_reveal_ready.connect(_on_phrase_reveal_ready)
 	_sequence.offline_notice_required.connect(_on_offline_notice_required)
 	_sequence.entry_room_ready.connect(_on_entry_room_ready)
+	_sequence.chroma_explanation_ready.connect(_on_chroma_explanation_ready)
+	_sequence.session_end_offline_recap.connect(_on_session_end_offline_recap)
 	_offline_mode.server_reachable_changed.connect(_sequence.notify_reachability)
 
 	_indicator = OfflineIndicator.new()
@@ -95,6 +101,14 @@ func get_offline_screen() -> BlockingNoticeScreen:
 
 func get_offline_indicator() -> OfflineIndicator:
 	return _indicator
+
+
+func get_chroma_notice() -> TransientNotice:
+	return _chroma_notice
+
+
+func get_recap_notice() -> TransientNotice:
+	return _recap_notice
 
 
 ## Begin the first-run sequence: request a new identity from the server.
@@ -146,3 +160,17 @@ func _on_offline_acknowledged() -> void:
 
 func _on_entry_room_ready() -> void:
 	entry_room_ready.emit()
+
+
+func _on_chroma_explanation_ready(text: String) -> void:
+	_chroma_notice = TransientNotice.new()
+	_chroma_notice.build_ui()
+	_chroma_notice.show_text(text)
+	add_child(_chroma_notice)
+
+
+func _on_session_end_offline_recap(text: String) -> void:
+	_recap_notice = TransientNotice.new()
+	_recap_notice.build_ui()
+	_recap_notice.show_text(text)
+	add_child(_recap_notice)
