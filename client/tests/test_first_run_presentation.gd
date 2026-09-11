@@ -69,7 +69,7 @@ class MockHttpServer:
 		for conn: StreamPeerTCP in _pending:
 			conn.poll()
 			if conn.get_available_bytes() > 0 and _queue.size() > 0:
-				var _discard = conn.get_data(conn.get_available_bytes())
+				var _discard: Array = conn.get_data(conn.get_available_bytes())
 				var r: Dictionary = _queue.pop_front()
 				_send(conn, r.status, r.body)
 				done.append(conn)
@@ -140,7 +140,9 @@ func _init() -> void:
 ## test_chroma_shader.gd and FirstRunController.initialize() docs on why
 ## these headless tests never rely on Node._process() auto-driving anything)
 ## until predicate() is true or wall-time expires.
-func _drive_controller(controller, mock, wall_limit_ms: float, predicate: Callable) -> bool:
+func _drive_controller(
+		controller: FirstRunController, mock: MockHttpServer, wall_limit_ms: float, predicate: Callable
+) -> bool:
 	var start_ms: int = Time.get_ticks_msec()
 	while float(Time.get_ticks_msec() - start_ms) < wall_limit_ms:
 		if mock != null:

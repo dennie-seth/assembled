@@ -135,7 +135,7 @@ func _init() -> void:
 	failures += _test_both_loss_modes_named(mock)
 	failures += _test_no_escape_from_phrase_reveal(mock)
 	failures += _test_identity_unreachable_shows_offline_notice()
-	failures += _test_identity_5xx_stays_awaiting(mock)
+	failures += _test_identity_5xx_transitions_to_identity_failed_state(mock)
 	failures += _test_offline_ack_enters_room()
 	failures += _test_chroma_fires_once_after_baseline(mock)
 	failures += _test_chroma_never_fires_before_entry_room(mock)
@@ -143,6 +143,10 @@ func _init() -> void:
 	failures += _test_session_end_online_no_recap(mock)
 	failures += _test_notify_reachability_indicator(mock)
 	failures += _test_indicator_visible_after_offline_launch()
+	failures += _test_returning_player_skips_identity_request(mock)
+	failures += _test_acknowledge_error_enters_room_from_identity_failed(mock)
+	failures += _test_acknowledge_error_enters_room_from_save_failed(mock)
+	failures += _test_acknowledge_error_is_noop_outside_failure_states()
 
 	mock.stop()
 
@@ -266,6 +270,56 @@ func _test_save_failure_routes_away_from_reveal(mock: MockHttpServer) -> Array[S
 	if seq.get_state() != FirstRunSequence.State.SAVE_FAILED:
 		failures.append("save_failure: expected state SAVE_FAILED, got %d" % seq.get_state())
 
+	return failures
+
+
+## ── AC1 follow-up: a returning player must never re-request identity ──────────
+## save_phrase() opens FileAccess.WRITE, which truncates. Before this fix,
+## start_new_game() unconditionally called request_identity() on every
+## launch — including blockout_room.gd's own _ready(), the only production
+## caller — so the second launch of the game silently overwrote the first
+## saved phrase and made that universe permanently unreachable.
+
+func _test_returning_player_skips_identity_request(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var existing := "return one return two return three return four"
+
+	if not IdentityStore.save_phrase(existing, TEST_PATH):
+		failures.append("returning_player: fixture bug — could not pre-write the phrase file")
+		return failures
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+	# Deliberately nothing queued on mock, and no tick()/pump() below — the
+	# real assertion is that this all resolves synchronously, with no network
+	# round trip attempted at all.
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	seq.start_new_game()
+	client.free()
+
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append(
+			"returning_player: expected IN_ENTRY_ROOM synchronously (no network round trip), got %d"
+			% seq.get_state()
+		)
+	if cap.entry_room_events != 1:
+		failures.append("returning_player: expected exactly 1 entry_room_ready, got %d" % cap.entry_room_events)
+	if not cap.phrase_reveal_events.is_empty():
+		failures.append("returning_player: phrase_reveal_ready must not fire for a returning player")
+
+	var on_disk := IdentityStore.load_phrase(TEST_PATH)
+	if on_disk != existing:
+		failures.append(
+			"returning_player: phrase file was modified — got '%s', expected unchanged '%s'"
+			% [on_disk, existing]
+		)
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
 	return failures
 
 
@@ -396,7 +450,7 @@ func _test_identity_unreachable_shows_offline_notice() -> Array[String]:
 
 ## ── identity 5xx: reachable but identity creation failed — no crash, no phrase ─
 
-func _test_identity_5xx_stays_awaiting(mock: MockHttpServer) -> Array[String]:
+func _test_identity_5xx_transitions_to_identity_failed_state(mock: MockHttpServer) -> Array[String]:
 	var failures: Array[String] = []
 
 	var client := NoteClient.new()
@@ -418,10 +472,100 @@ func _test_identity_5xx_stays_awaiting(mock: MockHttpServer) -> Array[String]:
 	var ev: Dictionary = cap.identity_failed_events[0]
 	if ev.state != NoteClient.STATE_HTTP_5XX:
 		failures.append("identity_5xx: expected STATE_HTTP_5XX, got %d" % ev.state)
-	if seq.get_state() != FirstRunSequence.State.AWAITING_IDENTITY:
-		failures.append("identity_5xx: expected state AWAITING_IDENTITY, got %d" % seq.get_state())
+	# A 4xx/5xx means the server responded — the request never went
+	# unanswered, so this is distinct from OFFLINE_NOTICE. But identity
+	# creation itself failed, so remaining in AWAITING_IDENTITY forever
+	# (the old behavior) left the player with no way forward: nothing in
+	# FirstRunController consumes identity_failed, so blockout_room's
+	# entry_room_ready gate (T-0120 RE-SCOPE) never opens and the main scene
+	# renders nothing. IDENTITY_FAILED gives it a real exit via
+	# acknowledge_error(), covered below.
+	if seq.get_state() != FirstRunSequence.State.IDENTITY_FAILED:
+		failures.append("identity_5xx: expected state IDENTITY_FAILED, got %d" % seq.get_state())
 	if not seq.is_server_reachable():
 		failures.append("identity_5xx: is_server_reachable() false after a 5xx (server did respond)")
+
+	return failures
+
+
+## ── acknowledge_error(): the only way out of IDENTITY_FAILED/SAVE_FAILED ──────
+## Both are dead ends otherwise (T-0120 RE-SCOPE follow-up): nothing else in
+## the state machine can advance past them, so a player who hits either would
+## be stuck on a permanently blank screen with no acknowledgment path at all.
+
+func _test_acknowledge_error_enters_room_from_identity_failed(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(500, '{"error":0}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.identity_failed_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("ack_error_identity: identity_failed not emitted within 5 s")
+		return failures
+
+	seq.acknowledge_error()
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("ack_error_identity: expected IN_ENTRY_ROOM after acknowledge_error(), got %d" % seq.get_state())
+	if cap.entry_room_events != 1:
+		failures.append("ack_error_identity: expected exactly 1 entry_room_ready, got %d" % cap.entry_room_events)
+	# Nothing was ever saved (no phrase exists for this identity attempt), so
+	# the during-play offline indicator must warn accordingly even though the
+	# server itself did respond.
+	if seq.is_server_reachable():
+		failures.append("ack_error_identity: is_server_reachable() must be false — nothing here can be saved")
+
+	return failures
+
+
+func _test_acknowledge_error_enters_room_from_save_failed(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	const BAD_PATH := "user://T0120_missing_dir_2/phrase.txt"
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := FirstRunSequence.new()
+	seq.set_phrase_path(BAD_PATH)
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"sixty one sixty two sixty three sixty four sixty five sixty six sixty seven sixty eight"}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.save_failed_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("ack_error_save: phrase_save_failed not emitted within 5 s")
+		return failures
+
+	seq.acknowledge_error()
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("ack_error_save: expected IN_ENTRY_ROOM after acknowledge_error(), got %d" % seq.get_state())
+	if cap.entry_room_events != 1:
+		failures.append("ack_error_save: expected exactly 1 entry_room_ready, got %d" % cap.entry_room_events)
+
+	return failures
+
+
+func _test_acknowledge_error_is_noop_outside_failure_states() -> Array[String]:
+	var failures: Array[String] = []
+
+	var seq := _make_seq()
+	seq.acknowledge_error()
+	if seq.get_state() != FirstRunSequence.State.AWAITING_IDENTITY:
+		failures.append(
+			"ack_error_noop: acknowledge_error() must be a no-op outside SAVE_FAILED/IDENTITY_FAILED, got %d"
+			% seq.get_state()
+		)
 
 	return failures
 
