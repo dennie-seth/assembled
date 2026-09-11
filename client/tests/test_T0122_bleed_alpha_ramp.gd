@@ -40,6 +40,8 @@ extends SceneTree
 const SHADER_PATH: String = "res://shaders/chroma_palette_swap.gdshader"
 const SPRITE_SCRIPT_PATH: String = "res://chroma_sprite.gd"
 const DRIVER_SCRIPT_PATH: String = "res://scripts/bleed_clock_driver.gd"
+const COLLAPSE_DRIVER_SCRIPT_PATH: String = "res://scripts/collapse_clock_driver.gd"
+const CLOCK_PROXIMITY_SCRIPT_PATH: String = "res://scripts/clock_proximity.gd"
 
 ## Tolerance for floating-point comparisons.
 const EPS: float = 1e-5
@@ -285,6 +287,51 @@ func _init() -> void:
 				"no_timer: emitted value %f is outside [0,1] — looks like a raw countdown, not proximity"
 				% p_check
 			)
+
+	# ── 12. BleedClockDriver delegates to a shared ClockProximity utility ─────
+	# rather than copy-pasting CollapseClockDriver's (T-0197) proximity formula
+	# (godot.md: "shared logic belongs in an autoload or a GDExtension class,
+	# not copy-pasted across scripts"). Cross-check against the utility
+	# directly so a future divergence between the two drivers' formulas would
+	# fail here instead of silently drifting.
+	var clock_proximity_script = load(CLOCK_PROXIMITY_SCRIPT_PATH)
+	if clock_proximity_script == null:
+		failures.append(
+			"script load: could not load '%s' — BleedClockDriver must delegate to a shared utility, not duplicate CollapseClockDriver's formula"
+			% CLOCK_PROXIMITY_SCRIPT_PATH
+		)
+	else:
+		var collapse_driver_script = load(COLLAPSE_DRIVER_SCRIPT_PATH)
+		if collapse_driver_script == null:
+			failures.append(
+				"script load: could not load '%s'" % COLLAPSE_DRIVER_SCRIPT_PATH
+			)
+		for sample: Dictionary in [
+			{"now": bleed_at - HELD_DURATION_SECS, "target": bleed_at, "duration": HELD_DURATION_SECS},
+			{"now": bleed_at - HELD_DURATION_SECS * 0.5, "target": bleed_at, "duration": HELD_DURATION_SECS},
+			{"now": bleed_at - WORLD_DURATION_SECS * 0.25, "target": bleed_at, "duration": WORLD_DURATION_SECS},
+			{"now": bleed_at, "target": bleed_at, "duration": WORLD_DURATION_SECS},
+		]:
+			var util_p: float = clock_proximity_script.compute(
+				sample["now"], sample["target"], sample["duration"]
+			)
+			var bleed_p: float = driver_script.compute_proximity(
+				sample["now"], sample["target"], sample["duration"]
+			)
+			if not is_equal_approx(util_p, bleed_p):
+				failures.append(
+					"delegation: BleedClockDriver.compute_proximity(%f,%f,%f)=%f should equal ClockProximity.compute()=%f"
+					% [sample["now"], sample["target"], sample["duration"], bleed_p, util_p]
+				)
+			if collapse_driver_script != null:
+				var collapse_p: float = collapse_driver_script.compute_proximity(
+					sample["now"], sample["target"], sample["duration"]
+				)
+				if not is_equal_approx(util_p, collapse_p):
+					failures.append(
+						"delegation: CollapseClockDriver.compute_proximity(%f,%f,%f)=%f should equal ClockProximity.compute()=%f"
+						% [sample["now"], sample["target"], sample["duration"], collapse_p, util_p]
+					)
 
 	# ── Report ─────────────────────────────────────────────────────────────────
 	_report(failures)
