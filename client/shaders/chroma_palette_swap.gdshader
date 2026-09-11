@@ -42,12 +42,26 @@ uniform int origin_palette = 0;
 /// or numeric UI element anywhere in the pipeline.
 uniform float collapse_proximity : hint_range(0.0, 1.0) = 0.0;
 
+/// Bleed-clock proximity (T-0122, 07-items-economy.md §5): 0.0 = item's
+/// bleed_at is far away, 1.0 = imminent bleed. Shares this shader family with
+/// the chroma ramp above rather than a separate stack — one more uniform, no
+/// UI cost. Drives interior alpha fade + contour-only detection below; never
+/// rendered as a countdown number. Applies identically whether the caller is
+/// timing a held instance (60–90 min) or a world/escrow instance (48–72 h) —
+/// only the proximity value differs, never this shader's logic.
+uniform float bleed_proximity : hint_range(0.0, 1.0) = 0.0;
+
 /// Ramp exponent for the chroma-intensity curve.
 /// pow() on [0, 1] is monotonically non-decreasing; exponent > 1 gives a
 /// slow-build-then-surge profile so the early game reads as merely "slightly
 /// wrong" while the final minutes go chromatically violent.
 /// Must match RAMP_EXPONENT in chroma_sprite.gd (intensity_for_proximity).
 const float RAMP_EXPONENT = 2.0;
+
+/// Alpha above this threshold counts as "opaque" when detecting contour/edge
+/// texels for the bleed-alpha ramp. Must match EDGE_ALPHA_THRESHOLD in
+/// chroma_sprite.gd's test-side CPU simulation.
+const float BLEED_EDGE_ALPHA_THRESHOLD = 0.5;
 
 void fragment() {
 	// Palette index encoded in the RED channel of the indexed sprite (0–1
@@ -77,6 +91,26 @@ void fragment() {
 		out_col = mix(home_col, foreign_col, chroma);
 	}
 
-	// Compose with preserved source alpha so silhouette is unchanged.
-	COLOR = vec4(out_col.rgb, out_col.a * src_alpha);
+	// Bleed-alpha ramp: detect contour/edge texels by sampling the 4
+	// neighbouring texels' alpha. A texel counts as an edge if it is itself
+	// opaque but at least one neighbour is not — i.e. it sits on the
+	// silhouette boundary. Interior texels fade toward zero as bleed_proximity
+	// approaches 1.0; edge texels stay fully visible so the object always
+	// reads as a bare contour/outline immediately before it bleeds away.
+	bool is_edge = false;
+	if (src_alpha > BLEED_EDGE_ALPHA_THRESHOLD) {
+		vec2 texel = TEXTURE_PIXEL_SIZE;
+		float up = texture(TEXTURE, UV + vec2(0.0, -texel.y)).a;
+		float down = texture(TEXTURE, UV + vec2(0.0, texel.y)).a;
+		float left = texture(TEXTURE, UV + vec2(-texel.x, 0.0)).a;
+		float right = texture(TEXTURE, UV + vec2(texel.x, 0.0)).a;
+		is_edge = (up <= BLEED_EDGE_ALPHA_THRESHOLD || down <= BLEED_EDGE_ALPHA_THRESHOLD
+				|| left <= BLEED_EDGE_ALPHA_THRESHOLD || right <= BLEED_EDGE_ALPHA_THRESHOLD);
+	}
+	float interior_factor = 1.0 - bleed_proximity;
+	float bleed_alpha = is_edge ? src_alpha : src_alpha * interior_factor;
+
+	// Compose with the bleed-ramped alpha so silhouette shape is unchanged but
+	// visibility fades toward contour-only as bleed_at approaches.
+	COLOR = vec4(out_col.rgb, out_col.a * bleed_alpha);
 }
