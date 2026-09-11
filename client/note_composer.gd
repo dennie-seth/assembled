@@ -32,6 +32,11 @@ var template_option: OptionButton
 var slot_a_option: OptionButton
 var slot_b_option: OptionButton
 
+## Shown when the vocabulary fetch fails (timeout/4xx/5xx/network error, or a
+## malformed body) so an empty required slot dropdown is never mistaken for
+## "no words unlocked yet" — see can_submit() docs and _on_vocabulary_fetched.
+var vocabulary_error_label: Label
+
 
 ## Wire the catalog and build the dropdown controls. Must be called once
 ## before any other method.
@@ -134,10 +139,18 @@ func build_note_request() -> Dictionary:
 	return {"template_id": tid, "slots": slots, "item_ref": ""}
 
 
+## Build the dropdown rows inside a VBoxContainer so the template selector and
+## both slot dropdowns each get their own laid-out rect instead of stacking as
+## bare Control children at (0,0) on top of each other (T-0065 fix round,
+## Codex PR review 2026-09-11). Each row pairs a Label caption with its
+## OptionButton so the control is readable on its own, not just by dropdown
+## item text.
 func _build_options() -> void:
-	template_option = OptionButton.new()
-	template_option.name = "TemplateOption"
-	add_child(template_option)
+	var layout := VBoxContainer.new()
+	layout.name = "Layout"
+	add_child(layout)
+
+	template_option = _add_row(layout, "TemplateRow", "Template", "TemplateOption")
 	for tid: int in _catalog.get_template_ids():
 		template_option.add_item("Template %d" % tid, tid)
 	# OptionButton auto-selects the first item added to an empty list; force
@@ -145,17 +158,39 @@ func _build_options() -> void:
 	template_option.select(-1)
 	template_option.item_selected.connect(_on_template_selected)
 
-	slot_a_option = OptionButton.new()
-	slot_a_option.name = "SlotAOption"
+	slot_a_option = _add_row(layout, "SlotARow", "Slot A", "SlotAOption")
+	slot_a_option.get_parent().visible = false
 	slot_a_option.visible = false
-	add_child(slot_a_option)
 	slot_a_option.item_selected.connect(_on_slot_selected)
 
-	slot_b_option = OptionButton.new()
-	slot_b_option.name = "SlotBOption"
+	slot_b_option = _add_row(layout, "SlotBRow", "Slot B", "SlotBOption")
+	slot_b_option.get_parent().visible = false
 	slot_b_option.visible = false
-	add_child(slot_b_option)
 	slot_b_option.item_selected.connect(_on_slot_selected)
+
+	vocabulary_error_label = Label.new()
+	vocabulary_error_label.name = "VocabularyErrorLabel"
+	vocabulary_error_label.text = "Vocabulary unavailable — try again"
+	vocabulary_error_label.visible = false
+	layout.add_child(vocabulary_error_label)
+
+
+## Add an HBoxContainer row of {caption Label, OptionButton} to `parent`.
+## @return the row's OptionButton.
+func _add_row(parent: Control, row_name: String, label_text: String, option_name: String) -> OptionButton:
+	var row := HBoxContainer.new()
+	row.name = row_name
+	parent.add_child(row)
+
+	var label := Label.new()
+	label.name = option_name + "Label"
+	label.text = label_text
+	row.add_child(label)
+
+	var option := OptionButton.new()
+	option.name = option_name
+	row.add_child(option)
+	return option
 
 
 func _on_template_selected(_index: int) -> void:
@@ -166,20 +201,32 @@ func _on_slot_selected(_index: int) -> void:
 	composability_changed.emit(can_submit())
 
 
+## Handle NoteClient's vocabulary_fetched signal (docs/design/03-net-protocol.md
+## §5 Progression: GET /v1/vocabulary -> 200 [ word_id ... ]). Any non-OK
+## state or a body that isn't the documented JSON array of word ids is a
+## fetch failure: it surfaces a visible error rather than silently leaving
+## required dropdowns empty, and it never falls back to the full word
+## catalogue — locked vocabulary must stay unavailable either way.
 func _on_vocabulary_fetched(
 		_req_id: int, state: int, _http_status: int, body: String) -> void:
 	if state != NoteClient.STATE_OK:
-		set_unlocked_words([])
+		_show_vocabulary_error()
 		return
 	var json := JSON.new()
 	if json.parse(body) != OK:
-		set_unlocked_words([])
+		_show_vocabulary_error()
 		return
 	var data: Variant = json.get_data()
-	if data is Array:
-		set_unlocked_words(data)
-	else:
-		set_unlocked_words([])
+	if not data is Array:
+		_show_vocabulary_error()
+		return
+	vocabulary_error_label.visible = false
+	set_unlocked_words(data)
+
+
+func _show_vocabulary_error() -> void:
+	vocabulary_error_label.visible = true
+	set_unlocked_words([])
 
 
 func _refresh_slots() -> void:
@@ -195,14 +242,21 @@ func _refresh_slots() -> void:
 ## tier" (T-0065 acceptance).
 func _populate_slot(option: OptionButton, template_id: int, slot_index: int) -> void:
 	option.clear()
+	var row: Control = option.get_parent()
 	if template_id < 0:
 		option.visible = false
+		if row:
+			row.visible = false
 		return
 	var slot_count: int = _catalog.get_template_slot_count(template_id)
 	if slot_index >= slot_count:
 		option.visible = false
+		if row:
+			row.visible = false
 		return
 	option.visible = true
+	if row:
+		row.visible = true
 	var category: int = _catalog.get_template_slot_category(template_id, slot_index)
 	var candidates: PackedInt32Array = _catalog.get_word_ids_for_category(category)
 	for wid: int in candidates:

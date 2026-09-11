@@ -13,18 +13,35 @@ extends SceneTree
 ##     from options that were actually offered.
 ##   - No free-text field exists anywhere — every value placed into a
 ##     request comes from an OptionButton item id, never a LineEdit.
+##   - The template selector and both slot dropdowns lay out in a container
+##     with non-zero, non-overlapping rects for a real two-slot template
+##     (Codex PR review 2026-09-11 — previously all three sat at (0,0)).
+##   - attach_note_client() drives a real GET /v1/vocabulary request/response
+##     (docs/design/03-net-protocol.md §5 Progression) through NoteClient,
+##     covering a populated list, an empty list, and an error response —
+##     never injecting unlocked ids directly for these cases — and an error
+##     response surfaces a visible error state instead of silently presenting
+##     empty required dropdowns.
 ##
 ## Run headless:
 ##   godot --headless --script tests/test_note_composer.gd
 ## from client/. Exit 0 on PASS, 1 on any failure.
 
 const NoteComposer := preload("res://note_composer.gd")
+## Reused for its MockHttpServer helper (T-0063) rather than duplicating a
+## second TCP-backed mock server here.
+const NoteClientTests := preload("res://tests/test_note_client.gd")
 
 ## Word ids used across tests (see shared/note_templates.hpp):
 ##   1 = ahead (DIRECTION), 9 = the drop (HAZARD), 21 = wait (ACTION).
 const WORD_AHEAD: int = 1
 const WORD_THE_DROP: int = 9
 const WORD_WAIT: int = 21
+
+## Local port for the vocabulary-flow mock HTTP server. Distinct from
+## test_note_client.gd's MOCK_PORT (19994) so the two test files never race
+## for the same port if ever run concurrently.
+const VOCAB_MOCK_PORT: int = 19992
 
 
 func _init() -> void:
@@ -43,6 +60,8 @@ func _init() -> void:
 	failures += _test_switching_templates_resets_slots()
 	failures += _test_two_slot_template_request()
 	failures += _test_no_free_text_surface()
+	failures += await _test_two_slot_layout_no_overlap()
+	failures += _test_vocabulary_flow()
 
 	if failures.is_empty():
 		print("T-0065 PASS: NoteComposer dropdown-only composition verified")
@@ -275,12 +294,242 @@ func _test_no_free_text_surface() -> Array[String]:
 	var failures: Array[String] = []
 	var composer: Control = _make_composer()
 
-	for child in composer.get_children():
-		if child is LineEdit or child is TextEdit:
+	for descendant: Node in _all_descendants(composer):
+		if descendant is LineEdit or descendant is TextEdit:
 			failures.append(
 				"composer tree contains a free-text control (%s) — violates no-free-text-UGC"
-				% child.get_class()
+				% descendant.get_class()
 			)
 
 	composer.free()
+	return failures
+
+
+## Every node under `root`, recursively (root itself excluded). Used so the
+## no-free-text check covers the composer's full tree, not just its direct
+## children — the layout fix (T-0065 fix round) nests the OptionButtons a
+## level deeper inside row containers.
+func _all_descendants(root: Node) -> Array[Node]:
+	var result: Array[Node] = []
+	for child: Node in root.get_children():
+		result.append(child)
+		result += _all_descendants(child)
+	return result
+
+
+## ── Layout: dropdowns never overlap (Codex PR review 2026-09-11) ────────────
+## Reproduces the exact bug Codex found in Godot: with no layout container,
+## the template selector and both slot dropdowns all sat at rect (0,0) on top
+## of each other for a two-slot template. Adds the composer to the live
+## SceneTree and lets two real frames pass so the VBoxContainer/HBoxContainer
+## rows actually sort their children (Container defers layout via
+## queue_sort()) before asserting every control's global rect is non-zero and
+## no pair of rects overlaps.
+
+func _test_two_slot_layout_no_overlap() -> Array[String]:
+	var failures: Array[String] = []
+	var composer: Control = _make_composer()
+	get_root().add_child(composer)
+	composer.set_unlocked_words([WORD_THE_DROP, WORD_AHEAD])
+	composer.select_template(2) # "{HAZARD} {DIRECTION}" — two slots.
+
+	await process_frame
+	await process_frame
+
+	var rects: Dictionary = {
+		"template": composer.template_option.get_global_rect(),
+		"slot_a": composer.slot_a_option.get_global_rect(),
+		"slot_b": composer.slot_b_option.get_global_rect(),
+	}
+
+	for label: String in rects:
+		var rect: Rect2 = rects[label]
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			failures.append("layout: %s rect has non-positive size %s" % [label, str(rect)])
+
+	if rects.template.intersects(rects.slot_a):
+		failures.append(
+			"layout: template and slot_a rects overlap: %s / %s"
+			% [str(rects.template), str(rects.slot_a)]
+		)
+	if rects.template.intersects(rects.slot_b):
+		failures.append(
+			"layout: template and slot_b rects overlap: %s / %s"
+			% [str(rects.template), str(rects.slot_b)]
+		)
+	if rects.slot_a.intersects(rects.slot_b):
+		failures.append(
+			"layout: slot_a and slot_b rects overlap: %s / %s" % [str(rects.slot_a), str(rects.slot_b)]
+		)
+
+	composer.free()
+	return failures
+
+
+## ── Vocabulary fetch/response flow (Codex PR review 2026-09-11) ─────────────
+## Drives composer.attach_note_client() against a real NoteClient talking to a
+## mock HTTP server over GET /v1/vocabulary (docs/design/03-net-protocol.md
+## §5 Progression: 200 [ word_id ... ]) rather than calling
+## set_unlocked_words() directly — that's the path a real server response
+## takes, and the path Codex found broken (the composer cleared its unlocked
+## set on any failure with no visible error). Covers a populated list, an
+## empty list, and an error response in one server session so the error case
+## can also verify a previously-unlocked word does not survive a failed
+## refresh.
+
+func _test_vocabulary_flow() -> Array[String]:
+	var failures: Array[String] = []
+	var mock: NoteClientTests.MockHttpServer = NoteClientTests.MockHttpServer.new()
+	if not mock.listen(VOCAB_MOCK_PORT):
+		failures.append(
+			"vocabulary_flow: could not start mock HTTP server on port %d" % VOCAB_MOCK_PORT
+		)
+		return failures
+
+	failures += _test_vocabulary_fetch_populated(mock)
+	failures += _test_vocabulary_fetch_empty(mock)
+	failures += _test_vocabulary_fetch_error(mock)
+
+	mock.stop()
+	return failures
+
+
+## Drive `client` (and `mock`) until its vocabulary_fetched signal fires, or
+## `wall_limit_ms` elapses. Returns true iff the signal was observed.
+func _drive_until_vocabulary_settled(client: NoteClient, mock: NoteClientTests.MockHttpServer,
+		wall_limit_ms: float) -> bool:
+	var settled: Array[bool] = [false]
+	client.vocabulary_fetched.connect(
+		func(_req_id: int, _state: int, _http_status: int, _body: String) -> void: settled[0] = true)
+	var start_ms: int = Time.get_ticks_msec()
+	while float(Time.get_ticks_msec() - start_ms) < wall_limit_ms:
+		mock.pump()
+		client.tick(0.016)
+		if settled[0]:
+			return true
+		OS.delay_msec(5)
+	return false
+
+
+## Populated response: GET /v1/vocabulary -> 200 [9] unlocks exactly that word
+## and leaves the error state hidden.
+func _test_vocabulary_fetch_populated(mock: NoteClientTests.MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var client: NoteClient = NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % VOCAB_MOCK_PORT)
+	client.set_auth_token("tok")
+	var composer: Control = _make_composer()
+
+	mock.queue(200, "[%d]" % WORD_THE_DROP)
+	composer.attach_note_client(client)
+	if not _drive_until_vocabulary_settled(client, mock, 5000.0):
+		failures.append("vocabulary_fetch_populated: vocabulary_fetched signal never arrived")
+		composer.free()
+		client.free()
+		return failures
+
+	composer.select_template(5) # "{HAZARD}"
+	if composer.slot_a_option.item_count != 1:
+		failures.append(
+			"vocabulary_fetch_populated: expected 1 slot_a option, got %d"
+			% composer.slot_a_option.item_count
+		)
+	elif composer.slot_a_option.get_item_id(0) != WORD_THE_DROP:
+		failures.append(
+			"vocabulary_fetch_populated: expected slot_a option id %d, got %d"
+			% [WORD_THE_DROP, composer.slot_a_option.get_item_id(0)]
+		)
+	if composer.vocabulary_error_label.visible:
+		failures.append("vocabulary_fetch_populated: error label must stay hidden on success")
+
+	composer.free()
+	client.free()
+	return failures
+
+
+## Empty response: GET /v1/vocabulary -> 200 [] is a legitimate "nothing
+## unlocked yet" state, not an error — no error label, and a zero-slot
+## template stays composable.
+func _test_vocabulary_fetch_empty(mock: NoteClientTests.MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var client: NoteClient = NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % VOCAB_MOCK_PORT)
+	client.set_auth_token("tok")
+	var composer: Control = _make_composer()
+
+	mock.queue(200, "[]")
+	composer.attach_note_client(client)
+	if not _drive_until_vocabulary_settled(client, mock, 5000.0):
+		failures.append("vocabulary_fetch_empty: vocabulary_fetched signal never arrived")
+		composer.free()
+		client.free()
+		return failures
+
+	composer.select_template(5) # "{HAZARD}" — nothing unlocked in that category.
+	if composer.slot_a_option.item_count != 0:
+		failures.append(
+			"vocabulary_fetch_empty: expected 0 slot_a options with an empty vocabulary, got %d"
+			% composer.slot_a_option.item_count
+		)
+	if composer.vocabulary_error_label.visible:
+		failures.append(
+			"vocabulary_fetch_empty: an empty vocabulary is not a fetch error — error label must stay hidden"
+		)
+
+	composer.select_template(14) # zero-slot template.
+	if not composer.can_submit():
+		failures.append(
+			"vocabulary_fetch_empty: zero-slot template must stay submittable with empty vocabulary"
+		)
+
+	composer.free()
+	client.free()
+	return failures
+
+
+## Error response: a failed refresh must surface a visible error state and
+## must not let a word unlocked by an earlier successful fetch survive —
+## locked vocabulary stays unavailable on every fetch outcome, not just the
+## first one.
+func _test_vocabulary_fetch_error(mock: NoteClientTests.MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var client: NoteClient = NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % VOCAB_MOCK_PORT)
+	client.set_auth_token("tok")
+	var composer: Control = _make_composer()
+
+	mock.queue(200, "[%d]" % WORD_THE_DROP)
+	composer.attach_note_client(client)
+	if not _drive_until_vocabulary_settled(client, mock, 5000.0):
+		failures.append("vocabulary_fetch_error: initial vocabulary_fetched signal never arrived")
+		composer.free()
+		client.free()
+		return failures
+
+	mock.queue(500, '{"error":0}')
+	client.fetch_vocabulary()
+	if not _drive_until_vocabulary_settled(client, mock, 5000.0):
+		failures.append("vocabulary_fetch_error: refresh vocabulary_fetched signal never arrived")
+		composer.free()
+		client.free()
+		return failures
+
+	if not composer.vocabulary_error_label.visible:
+		failures.append(
+			"vocabulary_fetch_error: expected a visible error state, dropdowns silently empty instead"
+		)
+
+	composer.select_template(5) # "{HAZARD}"
+	if composer.slot_a_option.item_count != 0:
+		failures.append(
+			(
+				"vocabulary_fetch_error: word unlocked before the failed refresh must not still "
+				+ "be offered, got %d option(s)"
+			) % composer.slot_a_option.item_count
+		)
+	if composer.can_submit():
+		failures.append("vocabulary_fetch_error: composer must not be submittable after a failed fetch")
+
+	composer.free()
+	client.free()
 	return failures
