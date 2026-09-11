@@ -1,0 +1,52 @@
+# Documented pre-T-0357 motion-class gaps for the character motion-class
+# declaration sweep (T-0357, Codex review 2026-09-11 finding 2).
+#
+# Paths are relative to the assets/final/ root, forward slashes.
+#
+# T-0357 requires every character-generation output to declare a validated
+# motion_class (idle/locomotion/transition/loop). Before this card, NONE of
+# the committed character sidecars recorded one at all -- an absent class
+# silently rode the same skip/pass path a deliberately-idle sheet legitimately
+# uses in every downstream check (character.py's own T-0271/T-0340 module
+# notes), so nothing ever actually required a sheet to say what it is. These
+# 18 sidecars are exempted here because they predate the requirement entirely
+# and their real classification was never recorded -- the same historical-gap
+# shape character_arm_c_baseline.txt already documents for CHR-1's own
+# fields. This list is expected to shrink to ZERO as each sheet is
+# regenerated (picking up motion_class on merit) or has it genuinely
+# backfilled by a dedicated follow-up card, never grown to silence a fresh
+# violation.
+#
+# character/player_walk_sheet_hybrid.provenance.json is DELIBERATELY NOT
+# listed here. It is the one sheet in this tree that is unambiguously a
+# locomotion cycle (its own frame_generation records 8 frames' worth of
+# per-frame walk-gait rig keypoints), and Codex's review independently
+# measured what a properly-classified recompute of it produces: pose IoU
+# 0.3935-0.6305 against the 0.70 floor, torso-histogram distance
+# 0.0469-0.3203 against the 0.15 cap -- a real, substantive failure, not a
+# missing-label technicality. Exempting it here would be exactly the
+# "silently exempt the shipped walk" the card forbids. It currently fails
+# this sweep for lacking a motion_class declaration at all; giving it the
+# accurate `motion_class: "locomotion"` label (so the pose-fidelity/
+# identity-stability recompute engages directly) is asset-data work under
+# `assets/final/character/**`, out of this card's own path scope (`tools/**`,
+# `.github/**`, `.claude/**`, `docs/**`) -- a follow-up card for whichever
+# agent owns that tree, not an exemption for this one.
+character/player_crouch_hide_sheet_v1.provenance.json
+character/player_crouch_hide_sheet_v2.provenance.json
+character/player_die_sheet_v1.provenance.json
+character/player_die_sheet_v2.provenance.json
+character/player_idle_frame_hybrid_source_T0252.provenance.json
+character/player_idle_sheet_arm_a_T0228.provenance.json
+character/player_idle_sheet_arm_b_T0229.provenance.json
+character/player_idle_sheet_arm_c_T0230.provenance.json
+character/player_idle_sheet_chained_T0250.provenance.json
+character/player_idle_sheet_hybrid_T0252.provenance.json
+character/player_idle_sheet_pose_authority_T0249.provenance.json
+character/player_idle_sheet_sdxl_T0218.provenance.json
+character/player_idle_sheet_stage3_sdxl_T0218.provenance.json
+character/player_idle_sheet_v1.provenance.json
+character/player_idle_sheet_v2.provenance.json
+character/player_move_sheet_v1.provenance.json
+character/player_move_sheet_v2.provenance.json
+character/pose_grid_stage3_T0218.provenance.json

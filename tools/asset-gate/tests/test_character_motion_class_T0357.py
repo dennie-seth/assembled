@@ -209,16 +209,20 @@ def test_load_character_motion_class_baseline_default_excludes_the_shipped_walk(
     assert "character/player_walk_sheet_hybrid.provenance.json" not in baseline
 
 
-def test_load_character_motion_class_baseline_default_matches_every_committed_character_sidecar_lacking_a_class():
+def test_load_character_motion_class_baseline_default_matches_committed_sidecars_except_walk():
     """Every committed character provenance file that has no motion_class of
-    its own (i.e. every one except the walk sheet) must be covered by the
-    default baseline, or this sweep would red the whole existing asset tree
-    the moment it starts running in CI."""
+    its own must be covered by the default baseline, so this sweep doesn't
+    red the whole pre-existing asset tree the moment it starts running in
+    CI -- EXCEPT `player_walk_sheet_hybrid.provenance.json`, which the card
+    explicitly forbids exempting (see the baseline file's own comment)."""
     character_dir = _REPO_ROOT / "assets" / "final" / "character"
     baseline = load_character_motion_class_baseline()
 
     for path in character_dir.glob("*.provenance.json"):
         rel = f"character/{path.name}"
+        if path.name == "player_walk_sheet_hybrid.provenance.json":
+            assert rel not in baseline
+            continue
         provenance = json.loads(path.read_text())
         if provenance.get("motion_class") in KNOWN_MOTION_CLASSES:
             continue
