@@ -46,7 +46,7 @@ export const DEFAULT_TAIL_BYTES = 256 * 1024;
  */
 export const DEFAULT_MAX_LOGS_SCANNED = 12;
 
-function numericUtilization(info) {
+export function numericUtilization(info) {
   const raw = info.utilization;
   return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : null;
 }
@@ -84,7 +84,7 @@ export function utilizationFromRateLimitInfo(info, { now = Date.now() } = {}) {
  * partial read is dropped -- it is almost certainly a fragment of an NDJSON record that started
  * before the read offset, and a fragment parses as garbage rather than as anything meaningful.
  */
-async function readTailLines(filePath, tailBytes, openFn) {
+export async function readTailLines(filePath, tailBytes, openFn) {
   const handle = await openFn(filePath, "r");
   try {
     const { size } = await handle.stat();
@@ -117,7 +117,7 @@ async function readTailLines(filePath, tailBytes, openFn) {
  * is still tried FIRST and this only runs when the tail has nothing. Staleness is already handled
  * -- `utilizationFromRateLimitInfo` treats an elapsed `resetsAt` window as fresh.
  */
-async function readHeadLines(filePath, headBytes, openFn) {
+export async function readHeadLines(filePath, headBytes, openFn) {
   const handle = await openFn(filePath, "r");
   try {
     const { size } = await handle.stat();
