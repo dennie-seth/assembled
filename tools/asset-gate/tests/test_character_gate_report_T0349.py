@@ -157,3 +157,51 @@ def test_report_rejects_frame_count_mismatch_with_grid():
     sheet = _sheet_from_cells([_FRAME_0, _FRAME_1, _FRAME_2, _FRAME_3], cols=2, rows=2)
     with pytest.raises(ValueError):
         build_character_gate_report(sheet, {}, cols=3, rows=3, cell_px=2)
+
+
+# ---- T-0357: the motion-fidelity result joins the report's own checks,
+# and the retired 0.50 cap is marked diagnostic-only for locomotion/
+# transition/loop ----
+
+
+def test_report_includes_a_motion_fidelity_check(sheet, provenance):
+    """This fixture's provenance has no `layout`/`frame_generation` (no rig
+    evidence to recompute from). Since the 2026-09-11 PR review's P1 fix, a
+    locomotion/transition/loop asset with no rig evidence FAILS naming the
+    missing evidence rather than falling back to the sidecar-trusting
+    predicate -- but either way it must APPEAR in `checks` (T-0357 finding
+    4; before this card it never did, so a failing motion result could not
+    drive a non-zero exit)."""
+    report = build_character_gate_report(
+        sheet, provenance, cols=2, rows=2, cell_px=2, sheet_name="x.png"
+    )
+    check = report["checks"]["character_motion_fidelity"]
+    assert check["passed"] is False
+    assert "layout" in check["reason"]
+
+
+def test_report_checks_aggregate_reflects_a_failing_motion_result(sheet, provenance):
+    """`provenance`'s motion_class is locomotion but records no rig evidence
+    (no `layout`/`frame_generation`) -- character_motion_fidelity must fail,
+    and cli.py's own `all(check["passed"] for check in
+    report["checks"].values())` must see it."""
+    report = build_character_gate_report(sheet, provenance, cols=2, rows=2, cell_px=2)
+    assert report["checks"]["character_motion_fidelity"]["passed"] is False
+    assert not all(check["passed"] for check in report["checks"].values())
+
+
+def test_report_marks_the_retired_frame_delta_cap_diagnostic_only_for_locomotion(sheet, provenance):
+    report = build_character_gate_report(sheet, provenance, cols=2, rows=2, cell_px=2)
+    assert report["thresholds"]["frame_delta_cap_diagnostic_only"] is True
+
+
+def test_report_frame_delta_cap_is_not_diagnostic_only_for_idle(sheet):
+    report = build_character_gate_report(
+        sheet, {"motion_class": "idle"}, cols=2, rows=2, cell_px=2
+    )
+    assert report["thresholds"]["frame_delta_cap_diagnostic_only"] is False
+
+
+def test_report_frame_delta_cap_is_not_diagnostic_only_when_motion_class_missing(sheet):
+    report = build_character_gate_report(sheet, {}, cols=2, rows=2, cell_px=2)
+    assert report["thresholds"]["frame_delta_cap_diagnostic_only"] is False

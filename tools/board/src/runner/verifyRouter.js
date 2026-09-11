@@ -1,3 +1,5 @@
+import { CHARACTER_GATE_CLI_ARGS } from "../lib/characterGateCommand.js";
+
 const TASKS_PREFIX = "tasks/";
 const BOARD_PREFIX = "tools/board/";
 /**
@@ -146,6 +148,41 @@ function detectGateReportPaths(changedPaths) {
   return changedPaths.filter((changedPath) => changedPath.endsWith(".gate_report.json"));
 }
 
+/**
+ * T-0357: the character asset-gate's own enforcement source -- changing any
+ * of these can change what `character-gate` decides, so a diff touching one
+ * must run it, not just the generic pytest/ruff pass `python-verify` already
+ * gives every file under `tools/asset-gate/**`. Scoped to these specific
+ * files (not the whole package) so an unrelated change elsewhere in
+ * `tools/asset-gate` -- e.g. `checks/loudness.py`, the audio gate -- doesn't
+ * pay for a second venv build and CLI run it has no bearing on.
+ */
+const CHARACTER_GATE_SOURCE_FILES = new Set([
+  "tools/asset-gate/src/asset_gate/character.py",
+  "tools/asset-gate/src/asset_gate/cli.py",
+  "tools/asset-gate/src/asset_gate/art.py",
+  "tools/asset-gate/src/asset_gate/character_arm_c_baseline.txt",
+  "tools/asset-gate/src/asset_gate/character_motion_class_baseline.txt"
+]);
+
+/**
+ * T-0357: the actual enforcement inputs under `assets/final/character/**` --
+ * a sidecar or the sheet it describes. Deliberately excludes
+ * `*.gate_report.json` (that's `gate-report-pointer`'s own route, a
+ * point-in-time report for a reviewer to read, not the enforcement path
+ * itself) and any other file under the same directory.
+ */
+function touchesCharacterGateAsset(changedPath) {
+  if (!changedPath.startsWith("assets/final/character/")) return false;
+  return changedPath.endsWith(".provenance.json") || changedPath.endsWith(".png");
+}
+
+function touchesCharacterGateInputs(changedPaths) {
+  return changedPaths.some(
+    (p) => CHARACTER_GATE_SOURCE_FILES.has(p) || touchesCharacterGateAsset(p)
+  );
+}
+
 function detectPythonPackageRoots(changedPaths) {
   const touched = new Set();
   for (const path of changedPaths) {
@@ -202,7 +239,16 @@ function detectPythonPackageRoots(changedPaths) {
  * reviewer's own required-verification output already contains the gate's own `grid`/per-frame
  * numbers, closing the T-0259 gap where reviewers hand-re-derived pixel-delta ratios from the sheet
  * image and did not always agree (one measurement on the wrong grid gave 1.29x where the true value
- * on the 4x2 grid is 5.3077x). A diff touching several of these routes at once returns all of
+ * on the 4x2 grid is 5.3077x). A diff touching the character asset-gate's own source
+ * (`character.py`/`cli.py`/`art.py`/either baseline exemption file) or a character sheet's
+ * provenance sidecar/PNG under `assets/final/character/**` runs `character-gate-verify` (T-0357):
+ * `asset_gate.cli character-gate` -- CHR-1 presence, the idle frame-delta cap, a validated
+ * `motion_class` declaration, and pixel-recomputed motion fidelity, all in one sweep. Built from
+ * the same `CHARACTER_GATE_CLI_ARGS` constant (`lib/characterGateCommand.js`) `ci-asset-gate.yml`'s
+ * `character-gate` job embeds verbatim, so the two enforcement paths cannot silently drift apart
+ * the way `character-motion-fidelity-sweep` did before this card -- implemented and unit-tested,
+ * but invoked by no workflow and no reviewer route at all (Codex review 2026-09-11 finding 1). A
+ * diff touching several of these routes at once returns all of
  * them, one route per package/test for a multi-match diff. Diffs outside all of these prefixes
  * (client/** godot-cpp, etc.) return no routes here -- their verification stays qualitatively
  * described by the `verify` skill's table, unchanged.
@@ -277,6 +323,18 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
         `cd ${pkgDir} && python3 -m venv .venv && ` +
         `.venv/bin/pip install -e ".[dev]" && ` +
         `.venv/bin/pytest && .venv/bin/ruff check --fix . && .venv/bin/ruff check .`
+    });
+  }
+  if (touchesCharacterGateInputs(changedPaths)) {
+    routes.push({
+      id: "character-gate-verify",
+      label:
+        "Character gate (T-0357 authoritative validator -- CHR-1, idle frame-delta cap, " +
+        "motion-class declaration, pixel-recomputed motion fidelity; same command CI runs)",
+      command:
+        "cd tools/asset-gate && python3 -m venv .venv && " +
+        '.venv/bin/pip install -e ".[dev]" && ' +
+        `.venv/bin/python -m ${CHARACTER_GATE_CLI_ARGS}`
     });
   }
   for (const { path, fileName } of godotTests) {
