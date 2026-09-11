@@ -1,0 +1,360 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  summarizeUsageFromEvents,
+  usageLedgerEntryPath,
+  recordAttemptUsage,
+  readAttemptUsage,
+  listCardUsageEntries,
+  attemptTotal,
+  cardCycleTotal
+} from "../../src/runner/usageLedger.js";
+
+function assistantTurn({ model = "claude-sonnet-5", input = 0, output = 0, cacheCreate = 0, cacheRead = 0 } = {}) {
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      model,
+      content: [{ type: "text", text: "working" }],
+      usage: {
+        input_tokens: input,
+        output_tokens: output,
+        cache_creation_input_tokens: cacheCreate,
+        cache_read_input_tokens: cacheRead
+      }
+    }
+  };
+}
+
+/** A real completed run's terminal shape: the result event's usage is the SESSION cumulative. */
+function resultEvent({
+  isError = false,
+  input = 0,
+  output = 0,
+  cacheCreate = 0,
+  cacheRead = 0,
+  costUsd = 0,
+  terminalReason,
+  apiErrorStatus,
+  result = "done"
+} = {}) {
+  const event = {
+    type: "result",
+    is_error: isError,
+    result,
+    total_cost_usd: costUsd,
+    usage: {
+      input_tokens: input,
+      output_tokens: output,
+      cache_creation_input_tokens: cacheCreate,
+      cache_read_input_tokens: cacheRead
+    }
+  };
+  if (terminalReason) event.terminal_reason = terminalReason;
+  if (apiErrorStatus) event.api_error_status = apiErrorStatus;
+  return event;
+}
+
+/** Live shape from a genuine 429 session-limit stop (card evidence, T-0367). */
+function quotaStopResultEvent() {
+  return resultEvent({
+    isError: true,
+    terminalReason: "api_error",
+    apiErrorStatus: 429,
+    result: "You've hit your session limit · resets 6pm (Europe/Budapest)",
+    input: 12000,
+    output: 3400,
+    cacheCreate: 500,
+    cacheRead: 8000,
+    costUsd: 1.42
+  });
+}
+
+describe("summarizeUsageFromEvents", () => {
+  it("returns all-zero, source none, for an empty event list", () => {
+    const summary = summarizeUsageFromEvents([]);
+    expect(summary.tokens).toEqual({ input: 0, output: 0, cacheCreate: 0, cacheRead: 0 });
+    expect(summary.costUsd).toBe(0);
+    expect(summary.models).toEqual([]);
+    expect(summary.usageSource).toBe("none");
+  });
+
+  it("uses the result event's cumulative usage as authoritative, not the per-message sum", () => {
+    // The spec's core warning: never add per-message usage to a cumulative final result. Each
+    // assistant turn's usage is small; the result event already carries the whole session's total.
+    const events = [
+      assistantTurn({ input: 100, output: 50 }),
+      assistantTurn({ input: 120, output: 60 }),
+      resultEvent({ input: 5000, output: 1200, cacheCreate: 200, cacheRead: 900, costUsd: 0.87 })
+    ];
+
+    const summary = summarizeUsageFromEvents(events);
+
+    expect(summary.tokens).toEqual({ input: 5000, output: 1200, cacheCreate: 200, cacheRead: 900 });
+    expect(summary.costUsd).toBe(0.87);
+    expect(summary.usageSource).toBe("result");
+  });
+
+  it("falls back to the per-message sum as a lower bound when no result event exists", () => {
+    // Simulates a cancel/crash/phase-timeout: the run was cut off mid-stream, no result event
+    // ever arrived, so the only evidence of usage is what each assistant turn reported.
+    const events = [
+      assistantTurn({ input: 100, output: 50, cacheCreate: 10, cacheRead: 5 }),
+      assistantTurn({ input: 120, output: 60, cacheCreate: 0, cacheRead: 20 })
+    ];
+
+    const summary = summarizeUsageFromEvents(events);
+
+    expect(summary.tokens).toEqual({ input: 220, output: 110, cacheCreate: 10, cacheRead: 25 });
+    expect(summary.usageSource).toBe("incremental");
+    // a lower bound, not zero
+    expect(summary.tokens.input).toBeGreaterThan(0);
+  });
+
+  it("captures the model(s) seen across assistant turns", () => {
+    const events = [assistantTurn({ model: "claude-sonnet-5" }), assistantTurn({ model: "claude-sonnet-5" })];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.models).toEqual(["claude-sonnet-5"]);
+  });
+
+  it("captures the quota-stop terminal shape: terminal_reason, api_error_status, result text", () => {
+    const events = [assistantTurn({ input: 10, output: 5 }), quotaStopResultEvent()];
+    const summary = summarizeUsageFromEvents(events);
+
+    expect(summary.usageSource).toBe("result");
+    expect(summary.terminalReason).toBe("api_error");
+    expect(summary.apiErrorStatus).toBe(429);
+    expect(summary.resultText).toMatch(/session limit/);
+    expect(summary.tokens.input).toBe(12000);
+  });
+
+  it("ignores malformed events rather than throwing", () => {
+    expect(() => summarizeUsageFromEvents([null, undefined, 42, "oops", {}])).not.toThrow();
+  });
+
+  it("is not an array-safe function only by accident -- non-array input yields the zero summary", () => {
+    const summary = summarizeUsageFromEvents(null);
+    expect(summary.usageSource).toBe("none");
+  });
+});
+
+describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const key = { cardId: "T-0367", attempt: 1, phase: "implementer", retry: 0 };
+
+  it("writes one JSON sidecar per (card, attempt, phase, retry) key", async () => {
+    const events = [assistantTurn({ input: 10, output: 5 }), resultEvent({ input: 400, output: 100, costUsd: 0.02 })];
+    await recordAttemptUsage({ runsDir, ...key, events, outcome: "success", complete: true });
+
+    const filePath = usageLedgerEntryPath(runsDir, key);
+    const raw = JSON.parse(await fs.readFile(filePath, "utf8"));
+    expect(raw.cardId).toBe("T-0367");
+    expect(raw.outcome).toBe("success");
+    expect(raw.complete).toBe(true);
+    expect(raw.tokens.input).toBe(400);
+  });
+
+  it("replaying the same events twice does not double-count", async () => {
+    const events = [resultEvent({ input: 400, output: 100, cacheCreate: 20, cacheRead: 60, costUsd: 0.02 })];
+
+    await recordAttemptUsage({ runsDir, ...key, events, outcome: "success", complete: true });
+    await recordAttemptUsage({ runsDir, ...key, events, outcome: "success", complete: true });
+
+    const entry = await readAttemptUsage({ runsDir, ...key });
+    expect(entry.tokens).toEqual({ input: 400, output: 100, cacheCreate: 20, cacheRead: 60 });
+    expect(entry.costUsd).toBe(0.02);
+  });
+
+  it("recording again with a longer (growing) event list overwrites rather than accumulates", async () => {
+    const firstPass = [assistantTurn({ input: 50, output: 20 })];
+    const secondPass = [...firstPass, resultEvent({ input: 400, output: 100, costUsd: 0.02 })];
+
+    await recordAttemptUsage({ runsDir, ...key, events: firstPass, outcome: "crashed", complete: false });
+    await recordAttemptUsage({ runsDir, ...key, events: secondPass, outcome: "success", complete: true });
+
+    const entry = await readAttemptUsage({ runsDir, ...key });
+    // must reflect the result event's cumulative total, not firstPass + result
+    expect(entry.tokens.input).toBe(400);
+    expect(entry.outcome).toBe("success");
+    expect(entry.complete).toBe(true);
+  });
+
+  it("readAttemptUsage returns null for a key that was never recorded", async () => {
+    const entry = await readAttemptUsage({ runsDir, cardId: "T-9999", attempt: 1, phase: "implementer", retry: 0 });
+    expect(entry).toBeNull();
+  });
+
+  it("keeps an interrupted attempt's partial usage as a lower bound, not zero", async () => {
+    const events = [assistantTurn({ input: 300, output: 80 })];
+    await recordAttemptUsage({ runsDir, ...key, events, outcome: "phase_timeout", complete: false });
+
+    const entry = await readAttemptUsage({ runsDir, ...key });
+    expect(entry.complete).toBe(false);
+    expect(entry.outcome).toBe("phase_timeout");
+    expect(entry.usageSource).toBe("incremental");
+    expect(entry.tokens.input).toBe(300);
+  });
+
+  it("records every termination case with outcome and completeness", async () => {
+    const cases = [
+      { outcome: "success", complete: true, events: [resultEvent({ input: 10, output: 5 })] },
+      { outcome: "quota_stop", complete: true, events: [quotaStopResultEvent()] },
+      { outcome: "reviewer_fail", complete: true, events: [resultEvent({ input: 10, output: 5, result: "reviewer verdict: FAIL" })] },
+      { outcome: "cancelled", complete: false, events: [assistantTurn({ input: 10, output: 5 })] },
+      { outcome: "crashed", complete: false, events: [assistantTurn({ input: 10, output: 5 })] },
+      { outcome: "phase_timeout", complete: false, events: [assistantTurn({ input: 10, output: 5 })] }
+    ];
+
+    for (let i = 0; i < cases.length; i += 1) {
+      const c = cases[i];
+      await recordAttemptUsage({
+        runsDir,
+        cardId: "T-0367",
+        attempt: 1,
+        phase: "implementer",
+        retry: i,
+        events: c.events,
+        outcome: c.outcome,
+        complete: c.complete
+      });
+    }
+
+    for (let i = 0; i < cases.length; i += 1) {
+      const entry = await readAttemptUsage({ runsDir, cardId: "T-0367", attempt: 1, phase: "implementer", retry: i });
+      expect(entry.outcome).toBe(cases[i].outcome);
+      expect(entry.complete).toBe(cases[i].complete);
+    }
+  });
+});
+
+describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-totals-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  it("sums attempt totals across phases/retries within one attempt", async () => {
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-1000",
+      attempt: 1,
+      phase: "implementer",
+      retry: 0,
+      events: [resultEvent({ input: 100, output: 20, costUsd: 0.01 })],
+      outcome: "success",
+      complete: true
+    });
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-1000",
+      attempt: 1,
+      phase: "reviewer",
+      retry: 0,
+      events: [resultEvent({ input: 50, output: 10, costUsd: 0.005 })],
+      outcome: "success",
+      complete: true
+    });
+    // a second attempt (retry after FAIL) must not bleed into attempt 1's total
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-1000",
+      attempt: 2,
+      phase: "implementer",
+      retry: 0,
+      events: [resultEvent({ input: 900, output: 300, costUsd: 0.09 })],
+      outcome: "success",
+      complete: true
+    });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-1000" });
+
+    const attempt1 = attemptTotal(entries, 1);
+    expect(attempt1.tokens.input).toBe(150);
+    expect(attempt1.costUsd).toBeCloseTo(0.015, 6);
+
+    const attempt2 = attemptTotal(entries, 2);
+    expect(attempt2.tokens.input).toBe(900);
+  });
+
+  it("card-cycle total sums every attempt recorded for the card", async () => {
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-2000",
+      attempt: 1,
+      phase: "implementer",
+      retry: 0,
+      events: [resultEvent({ input: 100, output: 20, costUsd: 0.01 })],
+      outcome: "reviewer_fail",
+      complete: true
+    });
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-2000",
+      attempt: 2,
+      phase: "implementer",
+      retry: 0,
+      events: [resultEvent({ input: 200, output: 40, costUsd: 0.02 })],
+      outcome: "success",
+      complete: true
+    });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-2000" });
+    const total = cardCycleTotal(entries);
+
+    expect(total.tokens.input).toBe(300);
+    expect(total.costUsd).toBeCloseTo(0.03, 6);
+  });
+
+  it("listCardUsageEntries does not pick up a different card's entries", async () => {
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-3001",
+      attempt: 1,
+      phase: "implementer",
+      retry: 0,
+      events: [resultEvent({ input: 5, output: 1 })],
+      outcome: "success",
+      complete: true
+    });
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-3002",
+      attempt: 1,
+      phase: "implementer",
+      retry: 0,
+      events: [resultEvent({ input: 999, output: 999 })],
+      outcome: "success",
+      complete: true
+    });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-3001" });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].cardId).toBe("T-3001");
+  });
+
+  it("returns an empty list, and zero totals, when the card has no recorded usage", async () => {
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-9999" });
+    expect(entries).toEqual([]);
+    expect(cardCycleTotal(entries)).toEqual({
+      tokens: { input: 0, output: 0, cacheCreate: 0, cacheRead: 0 },
+      costUsd: 0
+    });
+  });
+});
