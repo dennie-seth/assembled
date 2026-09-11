@@ -10,6 +10,8 @@
 
 #include <unordered_map>
 
+#include <godot_cpp/variant/string.hpp>
+
 namespace assembled_client {
 
 /// English display strings for all 56 shipped word IDs (shared/note_templates.hpp
@@ -105,5 +107,32 @@ inline const std::unordered_map<int, const char *> kTemplatePatterns = {
     {19, "watch for {A}"},
     {20, "safe passage"},
 };
+
+/// Display label for a shared::WordCategory value (1-5), used to render a
+/// template's unfilled slot placeholder for the composer's template dropdown
+/// (T-0065 fix round) — e.g. template 1's "{A} {B}" becomes
+/// "[action] [qualifier]" rather than a bare id, and distinguishes templates
+/// that share the same raw pattern (1-4/17/18 all "{A} {B}"; 5-7 all "{A}").
+inline const std::unordered_map<int, const char *> kCategoryLabels = {
+    {1, "direction"},
+    {2, "hazard"},
+    {3, "action"},
+    {4, "object"},
+    {5, "qualifier"},
+};
+
+/// Placeholder substituted for a template pattern's {I} (item_ref) token when
+/// rendering a category-only preview label — item_ref has no WordCategory of
+/// its own since it is a separate `notes` column, not a word slot.
+inline constexpr const char *kItemRefCategoryLabel = "item";
+
+/// Substitute all occurrences of @p token in @p src with @p value. Shared by
+/// NoteRenderer (full word substitution) and NoteCatalog (category-label
+/// substitution for dropdown item text) so the two never carry independent
+/// copies of the same replacement logic.
+inline godot::String substitute_token(const godot::String &src, const godot::String &token,
+                                      const godot::String &value) {
+    return src.replace(token, value);
+}
 
 } // namespace assembled_client

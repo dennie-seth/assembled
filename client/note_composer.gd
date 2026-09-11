@@ -152,7 +152,7 @@ func _build_options() -> void:
 
 	template_option = _add_row(layout, "TemplateRow", "Template", "TemplateOption")
 	for tid: int in _catalog.get_template_ids():
-		template_option.add_item("Template %d" % tid, tid)
+		template_option.add_item(_catalog.get_template_label(tid), tid)
 	# OptionButton auto-selects the first item added to an empty list; force
 	# "nothing chosen yet" so can_submit() is false until the player picks.
 	template_option.select(-1)

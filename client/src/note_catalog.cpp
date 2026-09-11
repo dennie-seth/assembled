@@ -70,6 +70,44 @@ String NoteCatalog::get_word_label(int p_word_id) const {
     return String(it->second);
 }
 
+String NoteCatalog::get_template_label(int p_template_id) const {
+    auto pattern_it = assembled_client::kTemplatePatterns.find(p_template_id);
+    if (pattern_it == assembled_client::kTemplatePatterns.end()) {
+        return String();
+    }
+    const assembled::TemplateDef *tdef = nullptr;
+    for (const auto &t : assembled::kTemplates) {
+        if (t.id == p_template_id) {
+            tdef = &t;
+            break;
+        }
+    }
+    if (!tdef) {
+        return String();
+    }
+
+    String label = String(pattern_it->second);
+
+    if (tdef->slots >= 1) {
+        auto cat_it = assembled_client::kCategoryLabels.find(tdef->slot_a_category);
+        String cat = cat_it != assembled_client::kCategoryLabels.end() ? String(cat_it->second)
+                                                                        : String();
+        label = assembled_client::substitute_token(label, "{A}", "[" + cat + "]");
+    }
+    if (tdef->slots >= 2) {
+        auto cat_it = assembled_client::kCategoryLabels.find(tdef->slot_b_category);
+        String cat = cat_it != assembled_client::kCategoryLabels.end() ? String(cat_it->second)
+                                                                        : String();
+        label = assembled_client::substitute_token(label, "{B}", "[" + cat + "]");
+    }
+    if (label.contains("{I}")) {
+        label = assembled_client::substitute_token(
+            label, "{I}", "[" + String(assembled_client::kItemRefCategoryLabel) + "]");
+    }
+
+    return label;
+}
+
 void NoteCatalog::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_template_ids"), &NoteCatalog::get_template_ids);
     ClassDB::bind_method(D_METHOD("get_template_slot_count", "template_id"),
@@ -80,6 +118,8 @@ void NoteCatalog::_bind_methods() {
                          &NoteCatalog::get_word_ids_for_category);
     ClassDB::bind_method(D_METHOD("get_word_category", "word_id"), &NoteCatalog::get_word_category);
     ClassDB::bind_method(D_METHOD("get_word_label", "word_id"), &NoteCatalog::get_word_label);
+    ClassDB::bind_method(D_METHOD("get_template_label", "template_id"),
+                         &NoteCatalog::get_template_label);
 }
 
 } // namespace godot

@@ -20,11 +20,7 @@ namespace {
 
 using assembled_client::kTemplatePatterns;
 using assembled_client::kWordStrings;
-
-/// Substitute all occurrences of @p token in @p src with @p value.
-String substitute(const String &src, const String &token, const String &value) {
-    return src.replace(token, value);
-}
+using assembled_client::substitute_token;
 
 } // anonymous namespace
 
@@ -59,7 +55,7 @@ String NoteRenderer::render(int p_template_id, int p_slot_a, int p_slot_b,
         ERR_FAIL_COND_V_MSG(word_it == kWordStrings.end(), String(),
                             String("NoteRenderer: unknown slot_a word_id ") +
                                 String::num(p_slot_a) + " — localization key missing");
-        result = substitute(result, "{A}", String(word_it->second));
+        result = substitute_token(result, "{A}", String(word_it->second));
     }
 
     // Substitute slot_b word.
@@ -68,12 +64,12 @@ String NoteRenderer::render(int p_template_id, int p_slot_a, int p_slot_b,
         ERR_FAIL_COND_V_MSG(word_it == kWordStrings.end(), String(),
                             String("NoteRenderer: unknown slot_b word_id ") +
                                 String::num(p_slot_b) + " — localization key missing");
-        result = substitute(result, "{B}", String(word_it->second));
+        result = substitute_token(result, "{B}", String(word_it->second));
     }
 
     // Substitute item_ref (templates 13 and 15).
     if (result.contains("{I}")) {
-        result = substitute(result, "{I}", p_item_ref);
+        result = substitute_token(result, "{I}", p_item_ref);
     }
 
     return result;

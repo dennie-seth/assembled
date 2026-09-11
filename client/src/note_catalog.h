@@ -71,6 +71,21 @@ class NoteCatalog : public RefCounted {
      */
     String get_word_label(int p_word_id) const;
 
+    /**
+     * @brief Human-readable label for a template (composer dropdown item text).
+     *
+     * Reads the template's pattern from note_localization.h's shared
+     * kTemplatePatterns table — the same table NoteRenderer uses to render a
+     * finished note — and substitutes each unfilled {A}/{B}/{I} placeholder
+     * with its slot's word-category name (e.g. "[action] [qualifier]")
+     * instead of a bare template id. No template pattern or category name is
+     * duplicated here; both are read through note_localization.h.
+     *
+     * @param p_template_id Template ID from shared::kTemplates.
+     * @return The template's display label, or "" if p_template_id is not shipped.
+     */
+    String get_template_label(int p_template_id) const;
+
   protected:
     static void _bind_methods();
 };
