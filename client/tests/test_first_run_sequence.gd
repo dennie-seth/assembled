@@ -25,6 +25,12 @@ const IdentityStore := preload("res://identity_store.gd")
 
 ## Temporary phrase path — never touches the production save file.
 const TEST_PATH := "user://test_T0120.phrase"
+## Temporary chroma-marker path shared by _make_seq() — never touches
+## FirstRunSequence.CHROMA_SHOWN_FILE. user:// files persist on disk between
+## separate `godot --headless` invocations, so a sequence left at the
+## production default would leak "already shown" state into any other test
+## (in this file or another) that also leaves it at the default.
+const TEST_CHROMA_MARKER := "user://test_T0120_default_chroma_marker.marker"
 const MOCK_PORT: int = 19997
 const DEAD_PORT: int = 19998
 const SHORT_TIMEOUT_MS: int = 200
@@ -124,6 +130,9 @@ func _init() -> void:
 		quit(1)
 		return
 
+	if FileAccess.file_exists(TEST_CHROMA_MARKER):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_CHROMA_MARKER))
+
 	var mock := MockHttpServer.new()
 	if not mock.listen(MOCK_PORT):
 		printerr("T-0120 FAIL: could not start mock HTTP server on port %d" % MOCK_PORT)
@@ -147,11 +156,15 @@ func _init() -> void:
 	failures += _test_acknowledge_error_enters_room_from_identity_failed(mock)
 	failures += _test_acknowledge_error_enters_room_from_save_failed(mock)
 	failures += _test_acknowledge_error_is_noop_outside_failure_states()
+	failures += _test_identity_ok_empty_phrase_transitions_to_identity_failed(mock)
+	failures += _test_chroma_does_not_refire_for_returning_player(mock)
 
 	mock.stop()
 
 	if FileAccess.file_exists(TEST_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	if FileAccess.file_exists(TEST_CHROMA_MARKER):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_CHROMA_MARKER))
 
 	if failures.is_empty():
 		print("T-0120 PASS: first-run sequence verified")
@@ -178,6 +191,7 @@ func _drive(client: NoteClient, mock: MockHttpServer, wall_limit_ms: float, pred
 func _make_seq() -> FirstRunSequence:
 	var seq := FirstRunSequence.new()
 	seq.set_phrase_path(TEST_PATH)
+	seq.set_chroma_marker_path(TEST_CHROMA_MARKER)
 	return seq
 
 
@@ -567,6 +581,118 @@ func _test_acknowledge_error_is_noop_outside_failure_states() -> Array[String]:
 			% seq.get_state()
 		)
 
+	return failures
+
+
+## ── AC1/regression: a 2xx with no parseable phrase must not dead-end ─────────
+## extract_phrase() (note_client.cpp) returns "" for a 2xx body with no
+## "phrase" key — a malformed body, an empty JSON object, or a proxy/captive
+## portal interstitial could all land here. Before this fix, identity_failed
+## fired but _state stayed AWAITING_IDENTITY, so acknowledge_error() (whose
+## guard checks SAVE_FAILED/IDENTITY_FAILED) silently no-op'd: the error
+## screen would be dismissed and nothing would ever open the room — the
+## exact permanent-blank-screen outcome IDENTITY_FAILED exists to prevent.
+
+func _test_identity_ok_empty_phrase_transitions_to_identity_failed(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.identity_failed_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("identity_ok_empty_phrase: identity_failed not emitted within 5 s")
+		return failures
+
+	if seq.get_state() != FirstRunSequence.State.IDENTITY_FAILED:
+		failures.append(
+			"identity_ok_empty_phrase: expected state IDENTITY_FAILED, got %d — acknowledge_error() would no-op"
+			% seq.get_state()
+		)
+
+	seq.acknowledge_error()
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append(
+			"identity_ok_empty_phrase: acknowledge_error() must advance to IN_ENTRY_ROOM, got %d"
+			% seq.get_state()
+		)
+
+	return failures
+
+
+## ── AC7 follow-up: the chroma explanation must not re-fire on a returning ────
+## launch. "Exactly once" (AC7) means once ever, not once per process — but
+## _chroma_shown was a plain instance field reset by every _enter_room(), so
+## once the returning-player fix (AC1) made a second launch a first-class
+## path that also calls _enter_room(), the explanation silently started
+## re-firing on every single launch.
+
+func _test_chroma_does_not_refire_for_returning_player(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	const MARKER_PATH := "user://test_T0120_chroma.marker"
+	if FileAccess.file_exists(MARKER_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(MARKER_PATH))
+
+	# First launch: mints a phrase, enters the room, crosses the baseline.
+	var client1 := NoteClient.new()
+	client1.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq1 := _make_seq()
+	seq1.set_chroma_marker_path(MARKER_PATH)
+	seq1.setup(client1)
+	var cap1 := _connect_capture(seq1)
+
+	mock.queue(201, '{"phrase":"chroma one chroma two chroma three chroma four"}')
+	seq1.start_new_game()
+	var completed := _drive(client1, mock, 5000.0, func(): return cap1.phrase_reveal_events.size() > 0)
+	client1.free()
+	if not completed:
+		failures.append("chroma_returning: first launch never reached the phrase screen within 5 s")
+		if FileAccess.file_exists(TEST_PATH):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+		return failures
+
+	seq1.acknowledge_phrase()
+	seq1.tick(200.0)
+	if cap1.chroma_events.size() != 1:
+		failures.append(
+			"chroma_returning: expected exactly 1 chroma event on first launch, got %d" % cap1.chroma_events.size()
+		)
+
+	# Second launch: fresh sequence instance, same phrase file (so this is
+	# the returning-player path) and same marker path.
+	var client2 := NoteClient.new()
+	client2.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq2 := _make_seq()
+	seq2.set_chroma_marker_path(MARKER_PATH)
+	seq2.setup(client2)
+	var cap2 := _connect_capture(seq2)
+
+	seq2.start_new_game()
+	client2.free()
+
+	if seq2.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("chroma_returning: fixture bug — second launch did not reach IN_ENTRY_ROOM")
+	seq2.tick(200.0)
+	if not cap2.chroma_events.is_empty():
+		failures.append(
+			"chroma_returning: chroma explanation re-fired on a returning launch, got %d events"
+			% cap2.chroma_events.size()
+		)
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	if FileAccess.file_exists(MARKER_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(MARKER_PATH))
 	return failures
 
 

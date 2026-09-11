@@ -45,6 +45,10 @@ const DEAD_PORT: int = 19995
 ## server mid-test to simulate an outage — kept separate from MOCK_PORT so
 ## that doesn't affect any test running after it.
 const HEARTBEAT_MOCK_PORT: int = 19994
+## Dedicated port for the launch-offline-then-recovers test: starts with
+## nothing listening (server down at launch), then a mock is started on this
+## exact port mid-test to simulate the server coming back up.
+const RECOVERY_PORT: int = 19993
 const SHORT_TIMEOUT_MS: int = 200
 const TEST_PATH := "user://test_T0120_presentation.phrase"
 
@@ -109,6 +113,13 @@ func _init() -> void:
 		quit(1)
 		return
 
+	# user:// files persist on disk between separate `godot --headless`
+	# invocations — clean the shared test chroma marker before this run so a
+	# leftover from a previous run of this same script can't seed
+	# _chroma_shown = true and break _test_controller_chroma_notice_after_baseline.
+	if FileAccess.file_exists(FirstRunController.DEFAULT_TEST_CHROMA_MARKER_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(FirstRunController.DEFAULT_TEST_CHROMA_MARKER_PATH))
+
 	failures += _test_full_rect_anchors()
 	failures += _test_acknowledge_paths()
 	failures += _test_blocks_window_close()
@@ -131,6 +142,7 @@ func _init() -> void:
 	failures += _test_controller_identity_error_shows_screen_and_continues(mock)
 	failures += _test_controller_save_failure_shows_screen_and_continues(mock)
 	failures += _test_controller_indicator_follows_midsession_heartbeat_drop()
+	failures += _test_controller_indicator_clears_after_offline_launch_recovers()
 	failures += _test_controller_close_request_recap_then_completes()
 	failures += _test_controller_close_request_online_completes_immediately(mock)
 
@@ -138,6 +150,8 @@ func _init() -> void:
 
 	if FileAccess.file_exists(TEST_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	if FileAccess.file_exists(FirstRunController.DEFAULT_TEST_CHROMA_MARKER_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(FirstRunController.DEFAULT_TEST_CHROMA_MARKER_PATH))
 
 	if failures.is_empty():
 		print("T-0120-presentation PASS: first-run presentation layer verified")
@@ -670,6 +684,65 @@ func _test_controller_indicator_follows_midsession_heartbeat_drop() -> Array[Str
 		)
 
 	controller.free()
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── FirstRunController: launch offline, then the server comes back — the ────
+## indicator must clear (AC5), not stay pinned on for the rest of the
+## session. OfflineModeController and FirstRunSequence each track their own
+## `_reachable`, seeded independently (OfflineModeController always starts
+## optimistic). Before this fix, a launch-offline session left
+## FirstRunSequence's `_reachable` at false while OfflineModeController's was
+## still at its optimistic true — so the very next successful heartbeat saw
+## no *change* from OfflineModeController's point of view and never emitted
+## server_reachable_changed, leaving the indicator (and a false
+## nothing-was-saved recap at session end) stuck for the entire session even
+## though the player was demonstrably back online.
+
+func _test_controller_indicator_clears_after_offline_launch_recovers() -> Array[String]:
+	var failures: Array[String] = []
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % RECOVERY_PORT, SHORT_TIMEOUT_MS)
+
+	controller.start_new_game()
+	var went_offline := _drive_controller(
+		controller, null, 3000.0, func(): return controller.get_offline_screen() != null
+	)
+	if not went_offline:
+		failures.append("controller_recovers: offline screen never appeared within 3 s")
+		controller.free()
+		return failures
+
+	controller.get_offline_screen().acknowledged.emit()
+
+	var indicator := controller.get_offline_indicator()
+	if indicator == null or not indicator.visible:
+		failures.append("controller_recovers: indicator must be visible on room entry while offline")
+
+	# The server comes back: start listening on the exact port this
+	# controller is already configured for, then fire the heartbeat exactly
+	# like _process() would.
+	var recovery_mock := MockHttpServer.new()
+	if not recovery_mock.listen(RECOVERY_PORT):
+		failures.append("controller_recovers: could not start recovery mock HTTP server on port %d" % RECOVERY_PORT)
+		controller.free()
+		return failures
+	recovery_mock.queue(200, '[]')
+
+	controller._process(FirstRunController.HEARTBEAT_INTERVAL_SECS)
+	var recovered := _drive_controller(
+		controller, recovery_mock, 3000.0, func(): return not indicator.visible
+	)
+
+	if not recovered:
+		failures.append(
+			"controller_recovers: offline indicator must clear once a real heartbeat succeeds after a launch-offline session (AC5)"
+		)
+
+	controller.free()
+	recovery_mock.stop()
 	if FileAccess.file_exists(TEST_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
 	return failures
