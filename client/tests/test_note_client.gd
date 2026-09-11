@@ -51,6 +51,16 @@ class SignalCapture:
 			"http_status": http_status,
 		})
 
+	func on_vocabulary_fetched(
+			req_id: int, state: int, http_status: int, body: String) -> void:
+		events.append({
+			"signal": "vocabulary_fetched",
+			"req_id": req_id,
+			"state": state,
+			"http_status": http_status,
+			"body": body,
+		})
+
 
 ## Minimal TCP-backed HTTP mock server.  Queues canned responses; each
 ## accepted connection reads (and discards) the request then sends the next
@@ -132,6 +142,7 @@ func _init() -> void:
 	failures += _test_fetch_success(mock)
 	failures += _test_post_note_success(mock)
 	failures += _test_rate_note_success(mock)
+	failures += _test_fetch_vocabulary_success(mock)
 
 	mock.stop()
 
@@ -375,5 +386,46 @@ func _test_rate_note_success(mock: MockHttpServer) -> Array[String]:
 	if ev.http_status != 204:
 		failures.append(
 			"rate_success: expected http_status=204, got %d" % ev.http_status
+		)
+	return failures
+
+
+## ── Test: fetch vocabulary (success) ──────────────────────────────────────────
+## Mock returns 200 with a JSON array of unlocked word ids; expects STATE_OK on
+## vocabulary_fetched (T-0065: the note composer filters its slot dropdowns to
+## exactly this set).
+
+func _test_fetch_vocabulary_success(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client: NoteClient = NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+	client.set_auth_token("tok")
+
+	var cap: SignalCapture = SignalCapture.new()
+	client.vocabulary_fetched.connect(cap.on_vocabulary_fetched)
+
+	mock.queue(200, "[1,9,21]")
+	client.fetch_vocabulary()
+	var completed: bool = _drive(client, cap, mock, 5000.0)
+	client.free()
+
+	if not completed:
+		failures.append("vocabulary_success: no vocabulary_fetched signal received")
+		return failures
+
+	var ev: Dictionary = cap.events[0]
+	if ev.state != NoteClient.STATE_OK:
+		failures.append(
+			"vocabulary_success: expected STATE_OK (%d), got %d"
+			% [NoteClient.STATE_OK, ev.state]
+		)
+	if ev.http_status != 200:
+		failures.append(
+			"vocabulary_success: expected http_status=200, got %d" % ev.http_status
+		)
+	if ev.body != "[1,9,21]":
+		failures.append(
+			"vocabulary_success: expected body '[1,9,21]', got '%s'" % ev.body
 		)
 	return failures
