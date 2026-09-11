@@ -235,10 +235,14 @@ def test_the_walk_exemption_is_explicitly_justified_in_the_baseline_file():
     while start > 0 and (lines[start - 1].startswith("#") or not lines[start - 1].strip()):
         start -= 1
     justification = "\n".join(lines[start:idx])
-    assert justification.strip(), "the walk entry has no comment block directly above it"
+    assert justification.strip(), (
+        "the walk entry has no comment block directly above it"
+    )
 
     assert "T-0338" in justification, "the walk entry must name the card that replaces it"
-    assert "interim" in justification.lower(), "the walk entry must say it is an interim placeholder"
+    assert "interim" in justification.lower(), (
+        "the walk entry must say it is an interim placeholder"
+    )
     assert "0.70" in justification and "0.15" in justification, (
         "the walk entry must record the real metric floors it fails"
     )
@@ -256,7 +260,11 @@ def test_the_walk_exemption_is_path_exact_and_does_not_rescue_a_near_name(tmp_pa
         tmp_path, baseline=load_character_motion_class_baseline()
     )
     by_path = {r.details.get("path", ""): r for r in results}
-    entry = next(r for p, r in by_path.items() if p.endswith("player_walk_sheet_hybrid_v2.provenance.json"))
+    entry = next(
+        r
+        for p, r in by_path.items()
+        if p.endswith("player_walk_sheet_hybrid_v2.provenance.json")
+    )
 
     assert entry.passed is False
     assert "baseline_exempt" not in entry.details
@@ -278,7 +286,15 @@ def test_the_ci_command_still_exits_nonzero_on_a_fresh_failing_artifact(tmp_path
     src = Path(__file__).resolve().parents[1] / "src"
     env = {**os.environ, "PYTHONPATH": str(src), "PYTHONDONTWRITEBYTECODE": "1"}
     proc = subprocess.run(
-        [sys.executable, "-m", "asset_gate.cli", "character-gate", str(tmp_path), "--repo-root", str(tmp_path)],
+        [
+            sys.executable,
+            "-m",
+            "asset_gate.cli",
+            "character-gate",
+            str(tmp_path),
+            "--repo-root",
+            str(tmp_path),
+        ],
         capture_output=True,
         text=True,
         env=env,
