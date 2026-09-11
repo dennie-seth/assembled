@@ -141,11 +141,17 @@ TEST_CASE("GET /v1/vocabulary HTTP integration") {
     // from a prior run, then grant exactly {7, 21}.
     db->getClient()->execSqlSync(
         "DELETE FROM vocabulary WHERE token = 'test-token-vocab-populated'");
-    db->getClient()->execSqlSync(
-        "DELETE FROM vocabulary WHERE token = 'test-token-vocab-empty'");
+    db->getClient()->execSqlSync("DELETE FROM vocabulary WHERE token = 'test-token-vocab-empty'");
     db->getClient()->execSqlSync(
         "INSERT INTO vocabulary (token, word_id) VALUES "
         "('test-token-vocab-populated', 7), ('test-token-vocab-populated', 21)");
+
+    // Clear any notes this token left in a prior run. Anchor (4, 4) —
+    // MARKET / cellar — is not used by any other test suite, so exercising
+    // POST /v1/notes here cannot pollute another suite's exact-count
+    // assertions (unlike (3, 2), which notes_handler_test.cpp owns).
+    db->getClient()->execSqlSync(
+        "DELETE FROM notes WHERE author_token = 'test-token-vocab-populated'");
 
     // ── Server ────────────────────────────────────────────────────────────
     std::thread serverThread([]() {
@@ -191,8 +197,8 @@ TEST_CASE("GET /v1/vocabulary HTTP integration") {
         REQUIRE(templateId != -1);
 
         Json::Value body;
-        body["archetype"] = 3; // BRIDGE
-        body["tag"] = 2;       // midpoint
+        body["archetype"] = 4; // MARKET
+        body["tag"] = 4;       // cellar
         body["template_id"] = templateId;
         Json::Value slots(Json::arrayValue);
         slots.append(wordId);
@@ -207,8 +213,8 @@ TEST_CASE("GET /v1/vocabulary HTTP integration") {
     // Word 22 (run / ACTION) was never granted to the populated token.
     {
         Json::Value body;
-        body["archetype"] = 3;
-        body["tag"] = 2;
+        body["archetype"] = 4;
+        body["tag"] = 4;
         body["template_id"] = 6; // {ACTION}
         Json::Value slots(Json::arrayValue);
         slots.append(22);
