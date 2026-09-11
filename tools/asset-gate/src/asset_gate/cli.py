@@ -120,6 +120,7 @@ def _cmd_character_gate_report(args: argparse.Namespace) -> int:
         cell_px=args.cell_px,
         background_index=args.background_index,
         sheet_name=args.sheet_name if args.sheet_name else args.image,
+        repo_root=args.repo_root,
     )
     text = json.dumps(report, indent=2) + "\n"
     if args.out:
@@ -128,6 +129,20 @@ def _cmd_character_gate_report(args: argparse.Namespace) -> int:
         print(text)
     passed = all(check["passed"] for check in report["checks"].values())
     return 0 if passed else 1
+
+
+def _cmd_character_gate(args: argparse.Namespace) -> int:
+    baseline = character_mod.load_character_arm_c_baseline()
+    motion_class_baseline = character_mod.load_character_motion_class_baseline()
+    results = character_mod.sweep_character_gate(
+        args.root,
+        repo_root=args.repo_root,
+        baseline=baseline,
+        motion_class_baseline=motion_class_baseline,
+    )
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
 
 
 def _cmd_art_visibility(args: argparse.Namespace) -> int:
@@ -288,7 +303,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="identity recorded in the report's 'sheet' field (default: the image path as given)",
     )
     p.add_argument("--out", default=None, help="write the JSON report here instead of stdout")
+    p.add_argument(
+        "--repo-root",
+        default=".",
+        help=(
+            "repository root used to resolve each frame's versioned rig-keypoints file "
+            "(frame_generation[i].pose_keypoints_file) when recomputing motion fidelity "
+            "from pixels (T-0357; default: current directory)"
+        ),
+    )
     p.set_defaults(func=_cmd_character_gate_report)
+
+    p = sub.add_parser(
+        "character-gate",
+        help=(
+            "the single authoritative character validator (T-0357): CHR-1 presence, the "
+            "idle frame-delta cap, a validated motion_class declaration, and -- recomputed "
+            "live from each sheet's own PNG + versioned rig keypoints, never trusted from "
+            "the sidecar -- pose-fidelity/identity-stability for locomotion/transition/loop. "
+            "This is the one command both ci-asset-gate.yml and the board's reviewer route "
+            "run, so there is exactly one enforcement path (docs/board-invariants.md CHR-1, "
+            "docs/decision-log.md DL-31)"
+        ),
+    )
+    p.add_argument(
+        "root", help="directory whose subdirectories are asset classes (e.g. assets/final)"
+    )
+    p.add_argument(
+        "--repo-root",
+        default=".",
+        help=(
+            "repository root used to resolve versioned rig-keypoints files "
+            "(default: current directory)"
+        ),
+    )
+    p.set_defaults(func=_cmd_character_gate)
 
     p = sub.add_parser("art-palette", help="palette membership + index semantics (P-4)")
     p.add_argument("image")

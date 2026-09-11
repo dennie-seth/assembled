@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveVerifyRoutes, resolveDeliverableRoute, GODOT_HEADLESS_TIMEOUT_SECONDS } from "../../src/runner/verifyRouter.js";
+import { CHARACTER_GATE_CLI_ARGS } from "../../src/lib/characterGateCommand.js";
 
 describe("resolveVerifyRoutes", () => {
   it("routes a tasks/-only diff to the backlog validator AND the planner diff guard, and nothing else", () => {
@@ -244,11 +245,83 @@ describe("resolveVerifyRoutes -- gate-report-pointer (T-0349: point the reviewer
   });
 
   it("composes with an unrelated route on the same diff (a Python package diff + a committed gate report)", () => {
+    // T-0357: touching character.py also routes to character-gate-verify now --
+    // the whole point of this card is that the authoritative validator fires
+    // whenever the code it enforces changes, not just python-verify's generic
+    // pytest/ruff pass.
     const routes = resolveVerifyRoutes([
       "tools/asset-gate/src/asset_gate/character.py",
       "assets/final/character/player_walk_sheet_hybrid.gate_report.json"
     ]);
-    expect(routes.map((r) => r.id).sort()).toEqual(["gate-report-pointer", "python-verify:tools/asset-gate"]);
+    expect(routes.map((r) => r.id).sort()).toEqual([
+      "character-gate-verify",
+      "gate-report-pointer",
+      "python-verify:tools/asset-gate"
+    ]);
+  });
+});
+
+describe("resolveVerifyRoutes -- character-gate-verify (T-0357: one authoritative character validator, same command CI runs)", () => {
+  it("routes a diff touching character.py to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/character.py"]);
+    expect(routes.map((r) => r.id).sort()).toEqual(["character-gate-verify", "python-verify:tools/asset-gate"]);
+  });
+
+  it("routes a diff touching cli.py to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/cli.py"]);
+    expect(routes.map((r) => r.id)).toContain("character-gate-verify");
+  });
+
+  it("routes a diff touching art.py to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/art.py"]);
+    expect(routes.map((r) => r.id)).toContain("character-gate-verify");
+  });
+
+  it("routes a diff touching either baseline exemption file to character-gate-verify", () => {
+    const arm_c = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/character_arm_c_baseline.txt"]);
+    expect(arm_c.map((r) => r.id)).toContain("character-gate-verify");
+    const motionClass = resolveVerifyRoutes([
+      "tools/asset-gate/src/asset_gate/character_motion_class_baseline.txt"
+    ]);
+    expect(motionClass.map((r) => r.id)).toContain("character-gate-verify");
+  });
+
+  it("routes a diff touching a character provenance sidecar to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/final/character/player_walk_sheet_hybrid.provenance.json"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["character-gate-verify"]);
+  });
+
+  it("routes a diff touching a character sheet PNG to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes(["assets/final/character/player_walk_sheet_hybrid.png"]);
+    expect(routes.map((r) => r.id)).toEqual(["character-gate-verify"]);
+  });
+
+  it("does not route a diff touching only a committed *.gate_report.json -- that's gate-report-pointer's own job, not the enforcement path", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/final/character/player_walk_sheet_hybrid.gate_report.json"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["gate-report-pointer"]);
+  });
+
+  it("does not route an unrelated tools/asset-gate file (e.g. an audio check module)", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/checks/loudness.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:tools/asset-gate"]);
+  });
+
+  it("does not route an unrelated asset class under assets/final/** (e.g. a prop)", () => {
+    const routes = resolveVerifyRoutes(["assets/final/props/crate_stack_v1.png"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("is self-contained (cd tools/asset-gate, builds its own venv) and runs the exact same character-gate subcommand+args CI runs", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/character.py"]);
+    const route = routes.find((r) => r.id === "character-gate-verify");
+    expect(route.command).toContain("cd tools/asset-gate");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(`.venv/bin/python -m ${CHARACTER_GATE_CLI_ARGS}`);
   });
 });
 
