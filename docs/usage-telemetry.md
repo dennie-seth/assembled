@@ -148,14 +148,17 @@ actually empty — another consumer may already have spent some of it before thi
 
 `runLog.js` retains every event verbatim in `tasks/.runs/*.jsonl` already — the ledger does not
 duplicate that; it stores a **derived summary**, one JSON file per
-`(card, execution, attempt, phase, retry)` key
-(`tasks/.runs/<cardId>-exec<executionId>-attempt<N>-<phase>-retry<N>.usage.json`, mirroring
-`runState.js`'s `<taskId>.runstate.json` sidecar convention), always computed fresh from the full
-event list rather than accumulated as deltas. Recomputing from scratch on every call is what makes
-recording idempotent by construction: calling `recordAttemptUsage` twice with the same events
-overwrites the same file with the same content, never doubling a running total. Recording again
-with a **longer** events array (the normal "incrementally, and again at termination" case) simply
-recomputes and overwrites with the fuller picture — still one file, still one number, per key.
+`(card, execution, invocation, attempt, phase, retry)` key
+(`tasks/.runs/<cardId>-exec<executionId>-inv<invocationId>-attempt<N>-<phase>-retry<N>.usage.json`,
+mirroring `runState.js`'s `<taskId>.runstate.json` sidecar convention), always computed fresh from
+the full event list rather than accumulated as deltas. Recomputing from scratch on every call is
+what makes recording idempotent by construction: calling `recordAttemptUsage` twice with the same
+events overwrites the same file with the same content, never doubling a running total. Recording
+again with a **longer** events array (the normal "incrementally, and again at termination" case)
+simply recomputes and overwrites with the fuller picture — still one file, still one number, per
+key. `usageLedgerEntryPath` rejects a missing/empty `executionId` before building any path string
+(fix round, Codex review 2, 2026-09-12, finding 4) — no entry is ever written under an
+`…execundefined…`/`…execnull…` key.
 
 **Execution identity (fix round, Codex review 2026-09-12, P1).** The key used to be only
 `(card, attempt, phase, retry)`, and every fresh `runCard()` invocation restarts its own attempt
@@ -172,14 +175,54 @@ Every ledger entry a run produces carries this same id. `executionTotal(entries,
 reports one launch's own total; `cardCycleTotal(entries)` now explicitly means the card's LIFETIME
 total across every launch, not just the most recent one.
 
+**Invocation identity (fix round, Codex review 2, 2026-09-12, finding 2).** Reusing the persisted
+execution id on recovery is correct — the interrupted work is still logically the same launch — but
+it is NOT the same thing as reusing that launch's ledger *entries*. After a board crash, a restarted
+`runCard()` call resets its own attempt counter and opens a fresh run log; without a further
+identifier, the restarted implementer phase's own `(executionId, attempt=1, phase=implementer,
+retry=0)` key was identical to the interrupted phase's, so its terminal record silently overwrote
+the interrupted one. Reproduced with real ledger persistence: a 100-token interrupted attempt,
+followed (same execution id, no cleanup in between) by a 25-token restarted attempt — the file kept
+only `25`, losing the `100`. `_runPhase` now mints a fresh `invocationId` (`generateInvocationIdFn`,
+default `randomUUID`) the instant it starts — one per NEWLY SPAWNED PROCESS, never reused across a
+restart — and every `_recordUsage` call that phase's run produces (its own incremental records, and
+the terminal record its caller makes once the fuller classification is known) carries that same id.
+An execution id surviving into the next `runCard()` call is evidence of interrupted work to recover
+*alongside*, not evidence that the next phase's own consumption should be folded into it: only a
+genuine replay of the *same* original events (the growing-events-list case within one still-running
+process, unchanged from before) targets the same key. See
+`runOrchestrator.usageLedger.test.js`'s crash-recovery describe block for the end-to-end regression
+(real `recordAttemptUsage`/`ensureExecutionId`, not mocked): both the interrupted and the restarted
+entries survive under the same execution id but distinct invocation ids, and `executionTotal` sums
+to the correct `125`.
+
 **Never add per-message usage to a cumulative final result.** Each `assistant` event's
 `message.usage` reflects that one API call. The final `result` event's `usage`/`total_cost_usd` is
 already the *cumulative* total for the whole attempt. `summarizeUsageFromEvents` treats these as
-mutually exclusive, not additive: when a `result` event is present, its numbers are authoritative
-and the per-message sum is discarded entirely; only when no `result` event exists at all (a
-crash, cancel, or phase-timeout truncation) does the per-message sum become the recorded figure —
-explicitly tagged `usageSource: "incremental"` rather than `"result"`, so a reader can tell a real
-completed total from a lower-bound estimate of an interrupted one at a glance.
+mutually exclusive, not additive: when a `result` event carries a **valid** cumulative usage object,
+its numbers are authoritative and the per-message sum is discarded entirely; only when no `result`
+event exists at all (a crash, cancel, or phase-timeout truncation) does the per-message sum become
+the recorded figure — explicitly tagged `usageSource: "incremental"` rather than `"result"`, so a
+reader can tell a real completed total from a lower-bound estimate of an interrupted one at a glance.
+
+**A `result` event is authoritative only with a valid usage object (fix round, Codex review 2,
+2026-09-12, finding 3).** A `result` event with no `usage` field, an empty `usage: {}`, or a counter
+that isn't a finite nonnegative number used to be coerced straight to an all-zero token summary and
+reported `usageSource: "result"`, `usageIncomplete: false` — a *measured, complete* zero-cost
+session, discarding whatever real incremental usage had already been seen. Reproduced: a genuine
+100-input-token message followed by a bare `{type: "result"}` reported `0` input tokens, not `100`.
+`summarizeUsageFromEvents` now validates every usage counter (`input_tokens`, `output_tokens`,
+`cache_creation_input_tokens`, `cache_read_input_tokens`) as finite and nonnegative before trusting
+a `result` event at all; a missing/empty/malformed usage object falls back to the known incremental
+sum and sets `usageIncomplete: true`, same as a truncated run with no `result` event at all. The
+same finite/nonnegative validation applies to `assistant`-event usage — a malformed per-message
+counter is treated exactly like a missing one (incomplete, never coerced to zero), not just an empty
+object.
+
+A missing `total_cost_usd` is reported as `costUsd: null` ("unknown"), never `0` — a real measured
+zero cost (`total_cost_usd: 0` on a valid result) stays distinguishable from "we never got a cost
+figure at all". `costUsd` is only ever a genuine `0` when `usageSource` is `"none"` (literally no
+events were ever seen) or when a valid `result` event explicitly reported zero.
 
 **Message-level dedup (fix round, Codex review 2026-09-12, P1).** The incremental path used to sum
 every `assistant` event's usage unconditionally, on the assumption each represents a distinct API
@@ -208,14 +251,34 @@ three are computed on read (`attemptTotal`/`executionTotal`/`cardCycleTotal` ove
 straight to the real sidecar path with no ordering guarantee and no atomicity. Reproduced: an
 earlier in-progress write, artificially delayed, unblocked AFTER a later terminal write had already
 landed — the delayed write clobbered it, leaving the file showing the stale in-progress figure
-instead of the real terminal result. `recordAttemptUsage` now assigns each call a synchronous,
-monotonic sequence number at call time (before any I/O), writes to a temp file, and only commits
-via atomic rename if it is still the newest sequence number for its key by the time that temp write
-finishes — a stale write is dropped instead of regressing the file. A concurrent reader of the real
-path therefore always sees either the complete previous entry or the complete new one, never a
-partial write. `drainPendingUsageWrites()` waits for every currently in-flight write to settle;
-`runCard()` awaits it (best-effort) before its own span is considered over, so a write dispatched
-fire-and-forget mid-run can't race the run's own completion.
+instead of the real terminal result. `recordAttemptUsage` writes to a temp file then publishes via
+atomic rename, so a concurrent reader of the real path always sees either the complete previous
+entry or the complete new one, never a partial write.
+
+**Publication ordering survives a delayed RENAME, not just a delayed write (fix round, Codex review
+2, 2026-09-12, finding 1).** The first fix round's guard compared a synchronous sequence number
+against the "last committed" one right before rename — but it marked that sequence committed
+*before* the rename actually completed, so an older write could pass the check, stall mid-rename,
+and land on disk *after* a newer write's rename had already published. Reproduced: delay the older
+write's `renameFn`, let a newer terminal write publish first, then release the older one — the final
+file regressed to the older write's stale figures. A strict per-key mutex spanning the whole
+check-through-rename span would fix the ordering but at the cost of forcing a newer, terminal write
+to queue behind a slow superseded one — the wrong trade-off for a ledger where the terminal record
+matters most. Instead, `recordAttemptUsage` tracks the highest-sequence entry INTENDED for a key
+(`bestKnownByKey`, updated synchronously the instant the call is made, before any I/O) separately
+from the sequence actually believed to be on disk (`diskSequenceByKey`, updated only after a real
+rename lands). Every write's rename executes unconditionally — never skipped, since a delayed
+write's temp file can't be un-queued — but immediately after its own rename lands, it checks whether
+disk still reflects the best known entry; if a fresher one exists and disk doesn't yet show it, it
+republishes that fresher entry itself (a second write-temp-then-rename, looping until disk catches
+up). This makes disk content self-healing regardless of which write's I/O happens to finish last,
+without ever forcing a newer write to wait on an older one. A second regression covers a rename that
+fails outright: the previously published entry stays intact and the failure never advances what the
+next write for that key is compared against.
+
+`drainPendingUsageWrites()` waits for every currently in-flight write to settle; `runCard()` awaits
+it (best-effort) before its own span is considered over, so a write dispatched fire-and-forget
+mid-run can't race the run's own completion.
 
 ## `recordAttemptUsage` wiring into `runOrchestrator.js`
 
@@ -279,6 +342,12 @@ Every `_recordUsage` call also now passes `sourceLogPath: runLog.path` (fix roun
 `null`), and `_recordUsage` looks up the run's own execution id from a `taskId -> executionId` map
 populated once at the top of `runCard()` (see "Execution identity" above).
 
+`_runPhase` also mints the phase's `invocationId` (see "Invocation identity" above) and threads it
+through both its own internal `_recordUsage` calls and the returned result object
+(`{...result, events, cancelled, invocationId}`); every caller's own terminal `_recordUsage` call
+above reads `<phaseResult>.invocationId` off that return value rather than generating its own, so one
+phase's incremental and terminal records always share one invocation id.
+
 See `runOrchestrator.usageLedger.test.js` for the dedicated spec covering every case above:
 PASS records `success` for both phases; a retryable reviewer FAIL records `reviewer_fail` then a
 fresh `success` pair on the next attempt; an implementer crash records `crashed`; `cancelRun`
@@ -289,7 +358,12 @@ whose events carry a 429 session-limit result event classifies as `quota_stop` r
 lands mid-phase, before any terminal outcome; every recorded entry across a run shares one
 execution id, minted before the first process spawns and cleared on normal completion; pending
 usage writes are drained before `runCard()` returns; and an instrumentation failure
-(`recordAttemptUsageFn` rejecting on every call) never changes the run's own verdict.
+(`recordAttemptUsageFn` rejecting on every call) never changes the run's own verdict. Its
+crash-recovery describe block (fix round, Codex review 2, 2026-09-12, finding 2) drives the
+orchestrator through real (unmocked) `recordAttemptUsage`/`ensureExecutionId` across two separate
+`RunOrchestrator` instances sharing one `runsDir`, to reproduce and pin an actual board restart: an
+interrupted implementer phase's entry survives, untouched, alongside the restarted phase's own
+entry, both under the same recovered execution id but distinct invocation ids.
 
 ## Draining on board shutdown, not just run completion
 
