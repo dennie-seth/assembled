@@ -92,11 +92,12 @@ function makeRunLog() {
   };
 }
 
-function makeGithub() {
+function makeGithub(overrides = {}) {
   return {
     checkAvailability: vi.fn(async () => ({ available: false, reason: "not-installed" })),
     findExistingPr: vi.fn(async () => null),
-    createPr: vi.fn(async () => "https://github.com/example/repo/pull/1")
+    createPr: vi.fn(async () => "https://github.com/example/repo/pull/1"),
+    ...overrides
   };
 }
 
@@ -360,6 +361,41 @@ describe("RunOrchestrator — usage ledger wiring (T-0367 T-A)", () => {
     await runPromise;
 
     expect(lastUsageCallFor(recordAttemptUsageFn, 0, "planning")).toMatchObject({ outcome: "success", complete: true });
+  });
+
+  it("records a 'success' usage entry for the merge-conflict phase once conflicts are resolved and pushed", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({
+      fetch: vi.fn(async () => {}),
+      mergeDevelop: vi.fn(async () => conflictResult),
+      mergeStatus: vi.fn(async () => []),
+      hasUncommittedChanges: vi.fn(async () => false)
+    });
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      createPr: vi.fn(async () => "https://github.com/example/repo/pull/9")
+    });
+    const recordAttemptUsageFn = vi.fn(async () => {});
+    const orchestrator = makeOrchestrator({ store, git, runner, github, recordAttemptUsageFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.stdout.emit("data", ndjson(assistantEvent("resolved the conflict")));
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(lastUsageCallFor(recordAttemptUsageFn, 0, "merge-conflict")).toMatchObject({ outcome: "success", complete: true });
   });
 
   it("records usage incrementally mid-phase, not only at termination", async () => {
