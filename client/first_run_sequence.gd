@@ -281,13 +281,18 @@ func tick(delta: float) -> void:
 
 ## Report a reachability transition observed during play (bridge from
 ## OfflineModeController.server_reachable_changed). Emits
-## offline_indicator_changed only on an actual change (AC5).
+## offline_indicator_changed only on an actual change to _reachable (AC5).
+## The emitted value is is_server_reachable()-aware (not the raw `reachable`
+## argument): the indicator doubles as the unsaved-session warning (Review
+## FAIL, 2026-09-12), so a heartbeat that proves the network is back — even a
+## 401/503, which is what marks it reachable at all — must never read as "the
+## indicator can go away" while _session_saveable is still false.
 ## @param reachable  True if the server is currently reachable.
 func notify_reachability(reachable: bool) -> void:
 	if reachable == _reachable:
 		return
 	_reachable = reachable
-	offline_indicator_changed.emit(not reachable)
+	offline_indicator_changed.emit(not is_server_reachable())
 
 
 ## Conclude the session. Emits session_end_offline_recap if the session ends
@@ -317,8 +322,12 @@ func _enter_room() -> void:
 	# a player who launched offline never sees the indicator: _reachable was
 	# already set to false back in _on_identity_received, so the next
 	# notify_reachability(false) during play is a no-op "no change" and never
-	# fires (AC5).
-	offline_indicator_changed.emit(not _reachable)
+	# fires (AC5). Driven by is_server_reachable(), not _reachable alone
+	# (Review FAIL, 2026-09-12): this indicator is also the unsaved-session
+	# warning, so it must show whenever nothing can be saved — including
+	# right after acknowledge_error(), where _reachable is left true on
+	# purpose (the server did respond) but _session_saveable is false.
+	offline_indicator_changed.emit(not is_server_reachable())
 
 
 func _build_phrase_notice_text() -> String:
