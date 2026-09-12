@@ -9,6 +9,7 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { IdAllocatorDb } from "../src/lib/db/idAllocatorDb.js";
+import { recordAttemptUsage, readAttemptUsage } from "../src/runner/usageLedger.js";
 
 let tmpDir;
 let board;
@@ -401,5 +402,117 @@ describe("pty terminal integration", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(board.ptyBridge.sessions.size).toBe(0);
+  });
+});
+
+describe("usage-ledger drain on shutdown (T-0367 fix round 3)", () => {
+  // Before this round, only runCard()'s own `finally` drained pending usage-ledger writes --
+  // there was no call site at all for a board-process shutdown (a quota-stop/crash/restart is
+  // exactly when a terminal write racing process exit matters most; see docs/usage-telemetry.md).
+  const usageKey = (runsDir) => ({
+    runsDir,
+    cardId: "T-CLOSE-DRAIN",
+    executionId: "exec-close-1",
+    attempt: 1,
+    phase: "implementer",
+    retry: 0
+  });
+
+  it("drains an in-flight terminal usage write before close() resolves", async () => {
+    const runsDir = path.join(tmpDir, ".runs");
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    const write = recordAttemptUsage({
+      ...usageKey(runsDir),
+      events: [
+        {
+          type: "result",
+          usage: { input_tokens: 42, output_tokens: 7 },
+          total_cost_usd: 0.01
+        }
+      ],
+      outcome: "success",
+      complete: true,
+      writeFileFn: async (...args) => {
+        await gate;
+        // A real timing gap between "gate released" and "write actually lands" -- if close()
+        // does not itself await the drain, closePromise resolves before this elapses and the
+        // assertion below catches it reading a not-yet-written (null) entry.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return fs.writeFile(...args);
+      }
+    });
+
+    const closePromise = board.close();
+    release();
+    await closePromise;
+
+    const entry = await readAttemptUsage(usageKey(runsDir));
+    expect(entry).not.toBeNull();
+    expect(entry.tokens.input).toBe(42);
+    expect(entry.outcome).toBe("success");
+    expect(entry.complete).toBe(true);
+  });
+
+  it("a hung usage-ledger drain still lets close() finish within its bound", async () => {
+    const localTasksDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-drain-hang-"));
+    const localBoard = await startBoardServer({
+      tasksDir: localTasksDir,
+      port: 0,
+      usageDrainTimeoutMs: 50
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const runsDir = path.join(localTasksDir, ".runs");
+    const write = recordAttemptUsage({
+      ...usageKey(runsDir),
+      events: [{ type: "result", usage: { input_tokens: 5, output_tokens: 1 }, total_cost_usd: 0 }],
+      outcome: "success",
+      complete: true,
+      writeFileFn: async (...args) => {
+        await gate; // held past the drain bound below on purpose
+        return fs.writeFile(...args);
+      }
+    });
+
+    const start = Date.now();
+    await localBoard.close();
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(1000);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("usage-ledger drain"));
+
+    release();
+    await write;
+    warnSpy.mockRestore();
+    await fs.rm(localTasksDir, { recursive: true, force: true });
+  });
+
+  it("a rejecting usage-ledger drain is logged and never blocks close() or throws", async () => {
+    const localTasksDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-drain-fail-"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const localBoard = await startBoardServer({
+      tasksDir: localTasksDir,
+      port: 0,
+      drainPendingUsageWritesFn: async () => {
+        throw new Error("simulated drain failure");
+      }
+    });
+
+    await expect(localBoard.close()).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("usage-ledger drain"),
+      expect.anything()
+    );
+
+    warnSpy.mockRestore();
+    await fs.rm(localTasksDir, { recursive: true, force: true });
   });
 });
