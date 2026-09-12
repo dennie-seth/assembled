@@ -31,6 +31,20 @@ function tokensHaveAnyUsage(tokens) {
 }
 
 /**
+ * Identity for message-level dedup: session + assistant-message id together (Codex review
+ * 2026-09-12, P1). A live event stream repeats the same assistant message id multiple times,
+ * each occurrence carrying the SAME usage snapshot (not a delta) -- summing every occurrence
+ * double- (or triple-) counts a single API call. `null` means "no trustworthy identity", which
+ * the caller must treat as incomplete data, never as a zero-cost message.
+ */
+function assistantMessageDedupKey(event) {
+  const messageId = event.message && typeof event.message.id === "string" ? event.message.id : null;
+  if (messageId === null) return null;
+  const sessionId = typeof event.session_id === "string" ? event.session_id : "";
+  return `${sessionId}::${messageId}`;
+}
+
+/**
  * Reduces a run's parsed NDJSON events into one usage summary. Pure and total over its input --
  * never throws, treats non-array/malformed events as contributing nothing.
  *
@@ -45,21 +59,34 @@ function tokensHaveAnyUsage(tokens) {
  * Only when no `result` event exists at all (a cancel/crash/phase-timeout truncation) does the
  * per-message sum become the recorded figure, tagged `usageSource: "incremental"` so it reads as
  * a lower bound rather than a completed attempt's cost.
+ *
+ * Within the incremental path, each DISTINCT (session, message id) pair is counted at most once
+ * -- see `assistantMessageDedupKey` -- since the CLI's own stream repeats an assistant message
+ * verbatim (audited across six real `tasks/.runs/*.jsonl` logs, Codex review 2026-09-12). An
+ * event with no usable identity (missing message id, or missing/malformed usage) is never folded
+ * in as zero cost; it instead flips `usageIncomplete`, so a caller can tell "measured, low" from
+ * "some of this attempt's usage could not be read at all".
  */
 export function summarizeUsageFromEvents(events) {
   const list = Array.isArray(events) ? events : [];
 
-  let incrementalTokens = ZERO_TOKENS;
+  const perMessageTokens = new Map(); // dedupKey -> tokens; a repeat OVERWRITES, never sums
   const models = new Set();
   let resultUsage = null; // {tokens, costUsd, terminalReason, apiErrorStatus, resultText}
+  let hasIncompleteAssistantEvent = false;
 
   for (const event of list) {
     if (!event || typeof event !== "object") continue;
 
     if (event.type === "assistant" && event.message && typeof event.message === "object") {
       if (typeof event.message.model === "string") models.add(event.message.model);
-      const t = tokensFromUsageObj(event.message.usage);
-      if (t) incrementalTokens = addTokens(incrementalTokens, t);
+      const dedupKey = assistantMessageDedupKey(event);
+      const tokens = tokensFromUsageObj(event.message.usage);
+      if (dedupKey === null || tokens === null) {
+        hasIncompleteAssistantEvent = true;
+      } else {
+        perMessageTokens.set(dedupKey, tokens);
+      }
     }
 
     if (event.type === "result") {
@@ -73,6 +100,12 @@ export function summarizeUsageFromEvents(events) {
     }
   }
 
+  let incrementalTokens = ZERO_TOKENS;
+  for (const tokens of perMessageTokens.values()) incrementalTokens = addTokens(incrementalTokens, tokens);
+
+  // The final result event is authoritative within its session regardless of any incomplete
+  // per-message data seen along the way -- a completed attempt's cumulative total is real,
+  // known-good data even if some individual assistant events couldn't be read.
   if (resultUsage) {
     return {
       tokens: resultUsage.tokens,
@@ -81,19 +114,21 @@ export function summarizeUsageFromEvents(events) {
       usageSource: "result",
       terminalReason: resultUsage.terminalReason,
       apiErrorStatus: resultUsage.apiErrorStatus,
-      resultText: resultUsage.resultText
+      resultText: resultUsage.resultText,
+      usageIncomplete: false
     };
   }
 
-  const hasIncrementalUsage = models.size > 0 || tokensHaveAnyUsage(incrementalTokens);
+  const hasIncrementalUsage = models.size > 0 || tokensHaveAnyUsage(incrementalTokens) || perMessageTokens.size > 0;
   return {
     tokens: incrementalTokens,
     costUsd: 0,
     models: Array.from(models),
-    usageSource: hasIncrementalUsage ? "incremental" : "none",
+    usageSource: hasIncrementalUsage || hasIncompleteAssistantEvent ? "incremental" : "none",
     terminalReason: null,
     apiErrorStatus: null,
-    resultText: null
+    resultText: null,
+    usageIncomplete: hasIncompleteAssistantEvent
   };
 }
 
@@ -137,6 +172,7 @@ export async function recordAttemptUsage({
     costUsd: summary.costUsd,
     models: summary.models,
     usageSource: summary.usageSource,
+    usageIncomplete: summary.usageIncomplete,
     terminalReason: summary.terminalReason,
     apiErrorStatus: summary.apiErrorStatus,
     resultText: summary.resultText,

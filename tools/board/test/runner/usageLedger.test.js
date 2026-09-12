@@ -12,10 +12,30 @@ import {
   cardCycleTotal
 } from "../../src/runner/usageLedger.js";
 
-function assistantTurn({ model = "claude-sonnet-5", input = 0, output = 0, cacheCreate = 0, cacheRead = 0 } = {}) {
+let assistantMessageCounter = 0;
+
+/**
+ * A real assistant turn always carries a message id and (per the T-0367 fix-round audit of six
+ * live logs) a session id -- both default here to a fresh, distinct value per call so existing
+ * tests summing multiple `assistantTurn()` calls keep behaving exactly as before (each is a
+ * genuinely distinct message). Tests exercising the repeated-message-snapshot bug pass the same
+ * `id`/`sessionId` explicitly.
+ */
+function assistantTurn({
+  model = "claude-sonnet-5",
+  input = 0,
+  output = 0,
+  cacheCreate = 0,
+  cacheRead = 0,
+  id,
+  sessionId = "session-1"
+} = {}) {
+  assistantMessageCounter += 1;
   return {
     type: "assistant",
+    session_id: sessionId,
     message: {
+      id: id ?? `msg-${assistantMessageCounter}`,
       role: "assistant",
       model,
       content: [{ type: "text", text: "working" }],
@@ -138,6 +158,73 @@ describe("summarizeUsageFromEvents", () => {
   it("is not an array-safe function only by accident -- non-array input yields the zero summary", () => {
     const summary = summarizeUsageFromEvents(null);
     expect(summary.usageSource).toBe("none");
+  });
+});
+
+describe("summarizeUsageFromEvents -- message-level dedup (Codex review 2026-09-12, P1)", () => {
+  it("does not sum repeated snapshots of the same assistant message -- input 10, not 20", () => {
+    const events = [
+      assistantTurn({ id: "msg-shared", sessionId: "sess-1", input: 10 }),
+      assistantTurn({ id: "msg-shared", sessionId: "sess-1", input: 10 })
+    ];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.tokens.input).toBe(10);
+  });
+
+  it("keys dedup by session + message id together -- the same message id under a different session is not deduped", () => {
+    const events = [
+      assistantTurn({ id: "msg-1", sessionId: "sess-A", input: 10 }),
+      assistantTurn({ id: "msg-1", sessionId: "sess-B", input: 10 })
+    ];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.tokens.input).toBe(20);
+  });
+
+  it("real repeated-message stream shape: the same id repeats verbatim 3x, sums once per id, and a truncation before any result event still reads as a lower bound", () => {
+    // Shape from the T-0367 fix-round audit of 381_event_audit.log: a message id repeats with
+    // IDENTICAL usage counters across occurrences (a snapshot, not a delta) -- and no `result`
+    // event ever arrives (the run was cut off mid-stream).
+    const events = [
+      assistantTurn({ id: "msg-1", sessionId: "s", input: 2, output: 1, cacheCreate: 27666, cacheRead: 32154 }),
+      assistantTurn({ id: "msg-1", sessionId: "s", input: 2, output: 1, cacheCreate: 27666, cacheRead: 32154 }),
+      assistantTurn({ id: "msg-1", sessionId: "s", input: 2, output: 1, cacheCreate: 27666, cacheRead: 32154 }),
+      assistantTurn({ id: "msg-2", sessionId: "s", input: 5, output: 3 })
+    ];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.usageSource).toBe("incremental");
+    expect(summary.tokens).toEqual({ input: 7, output: 4, cacheCreate: 27666, cacheRead: 32154 });
+  });
+
+  it("a final result event stays authoritative within its session even over a repeated-message stream", () => {
+    const events = [
+      assistantTurn({ id: "msg-1", sessionId: "s", input: 2, cacheCreate: 27666 }),
+      assistantTurn({ id: "msg-1", sessionId: "s", input: 2, cacheCreate: 27666 }),
+      resultEvent({ input: 90000, output: 12000, costUsd: 3.5 })
+    ];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.usageSource).toBe("result");
+    expect(summary.tokens.input).toBe(90000);
+    expect(summary.usageIncomplete).toBe(false);
+  });
+
+  it("reports a missing message id as incomplete, never as complete zero-cost data", () => {
+    const events = [{ type: "assistant", message: { role: "assistant", model: "claude-sonnet-5", content: [], usage: { input_tokens: 10 } } }];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.usageIncomplete).toBe(true);
+    expect(summary.tokens.input).toBe(0);
+  });
+
+  it("reports missing usage on an otherwise-identified message as incomplete, never as complete zero-cost data", () => {
+    const events = [{ type: "assistant", session_id: "s", message: { id: "msg-1", role: "assistant", model: "claude-sonnet-5", content: [] } }];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.usageIncomplete).toBe(true);
+    expect(summary.tokens.input).toBe(0);
+  });
+
+  it("a fully-formed incremental stream is not flagged incomplete", () => {
+    const events = [assistantTurn({ id: "msg-1", input: 10 })];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.usageIncomplete).toBe(false);
   });
 });
 
