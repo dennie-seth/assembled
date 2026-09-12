@@ -48,6 +48,13 @@ const MAX_ATTEMPTS_MAX = 20;
 // re-scope acknowledgment); `rescoped_by`/`rescoped_at` record that acknowledgment, mirroring
 // `approved_by`/`approved_at`'s "written only by the server's own write paths" shape.
 const RESCOPE_RECORD_FIELDS = ["rescoped_by", "rescoped_at"];
+// T-0368: complexity_points is a human planning signal only (spec §2, §10 step 2) -- never
+// read by any launch/admission/auto-launch/cost path (see
+// test/complexityPointsLaunchIsolation.test.js). Nullable, restricted to the Fibonacci steps a
+// human would actually use for relative sizing; there is no default/fallback value because
+// "unscored" (null) is itself a meaningful, displayed state, unlike max_attempts' "no override".
+const COMPLEXITY_POINTS_FIELD = "complexity_points";
+const COMPLEXITY_POINTS_VALUES = [1, 2, 3, 5, 8, 13, 21];
 const ARRAY_FIELDS = ["comments", "attachments"];
 const COMMENT_FIELDS = ["author", "text", "timestamp"];
 const ATTACHMENT_STRING_FIELDS = ["filename", "mimetype", "uploaded_by", "uploaded_at"];
@@ -170,6 +177,14 @@ export function validateTask(data) {
       throw new Error(`Invalid ${field} "${data[field]}": expected a string or null`);
     }
   }
+  if (COMPLEXITY_POINTS_FIELD in data && data[COMPLEXITY_POINTS_FIELD] !== null) {
+    const value = data[COMPLEXITY_POINTS_FIELD];
+    if (!COMPLEXITY_POINTS_VALUES.includes(value)) {
+      throw new Error(
+        `Invalid complexity_points "${value}": expected one of ${COMPLEXITY_POINTS_VALUES.join(", ")}, or null for unscored`
+      );
+    }
+  }
   if ("comments" in data) {
     validateComments(data.comments);
   }
@@ -230,6 +245,7 @@ export function parseTask(raw) {
     round: data.round ?? 0,
     rescoped_by: data.rescoped_by ?? null,
     rescoped_at: data.rescoped_at ?? null,
+    complexity_points: data[COMPLEXITY_POINTS_FIELD] ?? null,
     comments: Array.isArray(data.comments) ? data.comments : [],
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
     body
@@ -251,6 +267,7 @@ export function serializeTask(task) {
     ...NUMERIC_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? 0)}`),
     `${MAX_ATTEMPTS_FIELD}: ${JSON.stringify(task[MAX_ATTEMPTS_FIELD] ?? null)}`,
     ...RESCOPE_RECORD_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? null)}`),
+    `${COMPLEXITY_POINTS_FIELD}: ${JSON.stringify(task[COMPLEXITY_POINTS_FIELD] ?? null)}`,
     ...ARRAY_FIELDS.map((field) => `${field}: ${JSON.stringify(task[field] ?? [])}`)
   ];
   return `---\n${lines.join("\n")}\n---\n${task.body}`;

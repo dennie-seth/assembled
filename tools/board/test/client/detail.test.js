@@ -86,4 +86,16 @@ describe("buildUpdateBody", () => {
     const patch = buildUpdateBody(orig, { ...orig, max_attempts: null });
     expect(patch).toEqual({});
   });
+
+  it("T-0368: includes complexity_points when changed", () => {
+    const orig = original({ complexity_points: null });
+    const patch = buildUpdateBody(orig, { ...orig, complexity_points: 5 });
+    expect(patch).toEqual({ complexity_points: 5 });
+  });
+
+  it("T-0368: does not include complexity_points when it is unchanged", () => {
+    const orig = original({ complexity_points: 5 });
+    const patch = buildUpdateBody(orig, { ...orig, complexity_points: 5 });
+    expect(patch).toEqual({});
+  });
 });
