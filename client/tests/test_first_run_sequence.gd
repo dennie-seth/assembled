@@ -1,0 +1,945 @@
+extends SceneTree
+## T-0120: First-run sequence tests.
+##
+## Verifies the FirstRunSequence state machine (18-first-run.md §1-4):
+##   - New Game triggers POST /v1/identity and the phrase is auto-saved to disk
+##     BEFORE the phrase-reveal screen is signalled (AC1)
+##   - The phrase-reveal screen only advances via acknowledge_phrase() — no
+##     other public method bypasses it (AC2, AC8)
+##   - The phrase notice names both loss modes distinctly (AC3)
+##   - An unreachable identity request shows a pre-play offline notice that
+##     only advances via acknowledge_offline() (AC4)
+##   - notify_reachability() drives a persistent during-play offline indicator
+##     signal (AC5)
+##   - end_session() emits a "nothing was saved" recap only when offline (AC6)
+##   - The chroma/clock explanation fires exactly once, only after the
+##     baseline exploration window elapses in the entry room, and contains no
+##     digits (AC7)
+##
+## Run headless:
+##   godot --headless --script tests/test_first_run_sequence.gd
+## from client/. Exit 0 on PASS, 1 on any failure.
+
+const FirstRunSequence := preload("res://first_run_sequence.gd")
+const IdentityStore := preload("res://identity_store.gd")
+
+## Temporary phrase path — never touches the production save file.
+const TEST_PATH := "user://test_T0120.phrase"
+## Temporary chroma-marker path shared by _make_seq() — never touches
+## FirstRunSequence.CHROMA_SHOWN_FILE. user:// files persist on disk between
+## separate `godot --headless` invocations, so a sequence left at the
+## production default would leak "already shown" state into any other test
+## (in this file or another) that also leaves it at the default.
+const TEST_CHROMA_MARKER := "user://test_T0120_default_chroma_marker.marker"
+const MOCK_PORT: int = 19997
+const DEAD_PORT: int = 19998
+const SHORT_TIMEOUT_MS: int = 200
+
+
+## Minimal TCP mock server (same pattern as test_identity_store.gd).
+class MockHttpServer:
+	var _tcp: TCPServer = TCPServer.new()
+	var _pending: Array = []
+	var _queue: Array = []
+
+	func listen(port: int) -> bool:
+		return _tcp.listen(port, "127.0.0.1") == OK
+
+	func stop() -> void:
+		_tcp.stop()
+
+	func queue(status: int, body: String) -> void:
+		_queue.append({"status": status, "body": body})
+
+	func pump() -> void:
+		while _tcp.is_connection_available():
+			_pending.append(_tcp.take_connection())
+
+		var done: Array = []
+		for conn: StreamPeerTCP in _pending:
+			conn.poll()
+			if conn.get_available_bytes() > 0 and _queue.size() > 0:
+				var _discard = conn.get_data(conn.get_available_bytes())
+				var r: Dictionary = _queue.pop_front()
+				_send(conn, r.status, r.body)
+				done.append(conn)
+
+		for conn: StreamPeerTCP in done:
+			_pending.erase(conn)
+
+	func _send(conn: StreamPeerTCP, status: int, body: String) -> void:
+		var status_text := "OK"
+		if status >= 500:
+			status_text = "Internal Server Error"
+		elif status >= 400:
+			status_text = "Client Error"
+		elif status == 201:
+			status_text = "Created"
+		var raw: String = (
+			"HTTP/1.1 %d %s\r\n"
+			+ "Content-Type: application/json\r\n"
+			+ "Content-Length: %d\r\n"
+			+ "Connection: close\r\n"
+			+ "\r\n"
+			+ "%s"
+		) % [status, status_text, body.length(), body]
+		conn.put_data(raw.to_utf8_buffer())
+
+
+## Captures every FirstRunSequence signal.
+class Capture:
+	var phrase_reveal_events: Array = []   ## [{phrase, notice_text, saved_path}]
+	var identity_failed_events: Array = [] ## [{state, http_status}]
+	var offline_notice_events: Array = []  ## [String notice_text]
+	var entry_room_events: int = 0
+	var chroma_events: Array = []          ## [String text]
+	var recap_events: Array = []           ## [String text]
+	var indicator_events: Array = []       ## [bool visible]
+	var save_failed_events: Array = []     ## [{phrase, attempted_path}]
+
+	func on_phrase_reveal_ready(phrase: String, notice_text: String, saved_path: String) -> void:
+		phrase_reveal_events.append({"phrase": phrase, "notice_text": notice_text, "saved_path": saved_path})
+
+	func on_phrase_save_failed(phrase: String, attempted_path: String) -> void:
+		save_failed_events.append({"phrase": phrase, "attempted_path": attempted_path})
+
+	func on_identity_failed(state: int, http_status: int) -> void:
+		identity_failed_events.append({"state": state, "http_status": http_status})
+
+	func on_offline_notice_required(notice_text: String) -> void:
+		offline_notice_events.append(notice_text)
+
+	func on_entry_room_ready() -> void:
+		entry_room_events += 1
+
+	func on_chroma_explanation_ready(text: String) -> void:
+		chroma_events.append(text)
+
+	func on_session_end_offline_recap(text: String) -> void:
+		recap_events.append(text)
+
+	func on_offline_indicator_changed(visible: bool) -> void:
+		indicator_events.append(visible)
+
+
+func _init() -> void:
+	var failures: Array[String] = []
+
+	if not ClassDB.class_exists("NoteClient"):
+		printerr("T-0120 FAIL: NoteClient not registered — GDExtension did not load")
+		quit(1)
+		return
+
+	if FileAccess.file_exists(TEST_CHROMA_MARKER):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_CHROMA_MARKER))
+
+	var mock := MockHttpServer.new()
+	if not mock.listen(MOCK_PORT):
+		printerr("T-0120 FAIL: could not start mock HTTP server on port %d" % MOCK_PORT)
+		quit(1)
+		return
+
+	failures += _test_identity_success_saves_before_reveal(mock)
+	failures += _test_save_failure_routes_away_from_reveal(mock)
+	failures += _test_both_loss_modes_named(mock)
+	failures += _test_no_escape_from_phrase_reveal(mock)
+	failures += _test_identity_unreachable_shows_offline_notice()
+	failures += _test_identity_5xx_transitions_to_identity_failed_state(mock)
+	failures += _test_offline_ack_enters_room()
+	failures += _test_chroma_fires_once_after_baseline(mock)
+	failures += _test_chroma_never_fires_before_entry_room(mock)
+	failures += _test_session_end_offline_recap()
+	failures += _test_session_end_online_no_recap(mock)
+	failures += _test_notify_reachability_indicator(mock)
+	failures += _test_indicator_visible_after_offline_launch()
+	failures += _test_returning_player_skips_identity_request(mock)
+	failures += _test_acknowledge_error_enters_room_from_identity_failed(mock)
+	failures += _test_acknowledge_error_enters_room_from_save_failed(mock)
+	failures += _test_acknowledge_error_is_noop_outside_failure_states()
+	failures += _test_identity_ok_empty_phrase_transitions_to_identity_failed(mock)
+	failures += _test_chroma_does_not_refire_for_returning_player(mock)
+
+	mock.stop()
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	if FileAccess.file_exists(TEST_CHROMA_MARKER):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_CHROMA_MARKER))
+
+	if failures.is_empty():
+		print("T-0120 PASS: first-run sequence verified")
+		quit(0)
+	else:
+		for f: String in failures:
+			printerr("T-0120 FAIL: " + f)
+		quit(1)
+
+
+## Drive NoteClient (and optional mock) until predicate() is true or wall-time expires.
+func _drive(client: NoteClient, mock: MockHttpServer, wall_limit_ms: float, predicate: Callable) -> bool:
+	var start_ms: int = Time.get_ticks_msec()
+	while float(Time.get_ticks_msec() - start_ms) < wall_limit_ms:
+		if mock != null:
+			mock.pump()
+		client.tick(0.016)
+		if predicate.call():
+			return true
+		OS.delay_msec(5)
+	return false
+
+
+func _make_seq() -> FirstRunSequence:
+	var seq := FirstRunSequence.new()
+	seq.set_phrase_path(TEST_PATH)
+	seq.set_chroma_marker_path(TEST_CHROMA_MARKER)
+	return seq
+
+
+func _connect_capture(seq: FirstRunSequence) -> Capture:
+	var cap := Capture.new()
+	seq.phrase_reveal_ready.connect(cap.on_phrase_reveal_ready)
+	seq.phrase_save_failed.connect(cap.on_phrase_save_failed)
+	seq.identity_failed.connect(cap.on_identity_failed)
+	seq.offline_notice_required.connect(cap.on_offline_notice_required)
+	seq.entry_room_ready.connect(cap.on_entry_room_ready)
+	seq.chroma_explanation_ready.connect(cap.on_chroma_explanation_ready)
+	seq.session_end_offline_recap.connect(cap.on_session_end_offline_recap)
+	seq.offline_indicator_changed.connect(cap.on_offline_indicator_changed)
+	return cap
+
+
+## ── AC1: phrase auto-saved to disk before the phrase-reveal screen fires ──────
+
+func _test_identity_success_saves_before_reveal(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var expected := "alpha bravo charlie delta echo foxtrot golf hotel"
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"%s"}' % expected)
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.phrase_reveal_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("save_before_reveal: phrase_reveal_ready not emitted within 5 s")
+		return failures
+
+	var ev: Dictionary = cap.phrase_reveal_events[0]
+	if ev.phrase != expected:
+		failures.append("save_before_reveal: phrase='%s', expected '%s'" % [ev.phrase, expected])
+
+	# The file must already be on disk by the time the signal is observed.
+	var on_disk := IdentityStore.load_phrase(TEST_PATH)
+	if on_disk != expected:
+		failures.append(
+			"save_before_reveal: phrase not on disk when signal fired — got '%s'" % on_disk
+		)
+
+	if seq.get_state() != FirstRunSequence.State.PHRASE_REVEAL:
+		failures.append("save_before_reveal: expected state PHRASE_REVEAL, got %d" % seq.get_state())
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC1: a failed write must never reach the phrase-reveal screen ─────────────
+
+func _test_save_failure_routes_away_from_reveal(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	# A path under a directory that does not exist — FileAccess.open(WRITE)
+	# does not create missing parent directories, so this reliably fails.
+	const BAD_PATH := "user://T0120_missing_dir/phrase.txt"
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := FirstRunSequence.new()
+	seq.set_phrase_path(BAD_PATH)
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"fiftyone fiftytwo fiftythree fiftyfour fiftyfive fiftysix fiftyseven fiftyeight"}')
+	seq.start_new_game()
+	var completed := _drive(
+		client, mock, 5000.0,
+		func(): return cap.save_failed_events.size() > 0 or cap.phrase_reveal_events.size() > 0
+	)
+	client.free()
+
+	if not completed:
+		failures.append("save_failure: neither phrase_save_failed nor phrase_reveal_ready fired within 5 s")
+		return failures
+
+	if not cap.phrase_reveal_events.is_empty():
+		failures.append("save_failure: phrase_reveal_ready fired despite the write failing")
+	if cap.save_failed_events.size() != 1:
+		failures.append("save_failure: expected exactly 1 phrase_save_failed, got %d" % cap.save_failed_events.size())
+	if seq.get_state() != FirstRunSequence.State.SAVE_FAILED:
+		failures.append("save_failure: expected state SAVE_FAILED, got %d" % seq.get_state())
+
+	return failures
+
+
+## ── AC1 follow-up: a returning player must never re-request identity ──────────
+## save_phrase() opens FileAccess.WRITE, which truncates. Before this fix,
+## start_new_game() unconditionally called request_identity() on every
+## launch — including blockout_room.gd's own _ready(), the only production
+## caller — so the second launch of the game silently overwrote the first
+## saved phrase and made that universe permanently unreachable.
+
+func _test_returning_player_skips_identity_request(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var existing := "return one return two return three return four"
+
+	if not IdentityStore.save_phrase(existing, TEST_PATH):
+		failures.append("returning_player: fixture bug — could not pre-write the phrase file")
+		return failures
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+	# Deliberately nothing queued on mock, and no tick()/pump() below — the
+	# real assertion is that this all resolves synchronously, with no network
+	# round trip attempted at all.
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	seq.start_new_game()
+	client.free()
+
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append(
+			"returning_player: expected IN_ENTRY_ROOM synchronously (no network round trip), got %d"
+			% seq.get_state()
+		)
+	if cap.entry_room_events != 1:
+		failures.append("returning_player: expected exactly 1 entry_room_ready, got %d" % cap.entry_room_events)
+	if not cap.phrase_reveal_events.is_empty():
+		failures.append("returning_player: phrase_reveal_ready must not fire for a returning player")
+
+	var on_disk := IdentityStore.load_phrase(TEST_PATH)
+	if on_disk != existing:
+		failures.append(
+			"returning_player: phrase file was modified — got '%s', expected unchanged '%s'"
+			% [on_disk, existing]
+		)
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC3: both loss modes named distinctly in the phrase notice ────────────────
+
+func _test_both_loss_modes_named(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"one two three four five six seven eight"}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.phrase_reveal_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("loss_modes: phrase_reveal_ready not emitted within 5 s")
+		return failures
+
+	var notice: String = cap.phrase_reveal_events[0].notice_text
+	var lower := notice.to_lower()
+	if not lower.contains("lose the phrase"):
+		failures.append("loss_modes: notice missing phrase-loss ending")
+	if not lower.contains("universe collapse"):
+		failures.append("loss_modes: notice missing universe-collapse ending")
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC2/AC8: nothing but acknowledge_phrase() can leave PHRASE_REVEAL ─────────
+
+func _test_no_escape_from_phrase_reveal(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"nine ten eleven twelve thirteen fourteen fifteen sixteen"}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.phrase_reveal_events.size() > 0)
+	if not completed:
+		failures.append("no_escape: phrase_reveal_ready not emitted within 5 s")
+		client.free()
+		return failures
+
+	# None of these should advance past PHRASE_REVEAL.
+	seq.acknowledge_offline()
+	seq.tick(99999.0)
+	seq.end_session()
+
+	if seq.get_state() != FirstRunSequence.State.PHRASE_REVEAL:
+		failures.append(
+			"no_escape: state escaped PHRASE_REVEAL via a non-acknowledgment call (state=%d)"
+			% seq.get_state()
+		)
+	if cap.entry_room_events != 0:
+		failures.append("no_escape: entry_room_ready fired without acknowledge_phrase()")
+	if not cap.chroma_events.is_empty():
+		failures.append("no_escape: chroma_explanation_ready fired without entering the room")
+
+	# Only acknowledge_phrase() may advance the state.
+	seq.acknowledge_phrase()
+	client.free()
+
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append(
+			"no_escape: acknowledge_phrase() did not advance to IN_ENTRY_ROOM (state=%d)"
+			% seq.get_state()
+		)
+	if cap.entry_room_events != 1:
+		failures.append(
+			"no_escape: expected exactly 1 entry_room_ready, got %d" % cap.entry_room_events
+		)
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC4: unreachable identity request blocks on a pre-play offline notice ────
+
+func _test_identity_unreachable_shows_offline_notice() -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % DEAD_PORT)
+	client.set_timeout_ms(SHORT_TIMEOUT_MS)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	seq.start_new_game()
+	var completed := _drive(client, null, 3000.0, func(): return cap.offline_notice_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("offline_notice: offline_notice_required not emitted within 3 s")
+		return failures
+
+	if cap.offline_notice_events[0].is_empty():
+		failures.append("offline_notice: notice text is empty")
+	if seq.get_state() != FirstRunSequence.State.OFFLINE_NOTICE:
+		failures.append("offline_notice: expected state OFFLINE_NOTICE, got %d" % seq.get_state())
+	if seq.is_server_reachable():
+		failures.append("offline_notice: is_server_reachable() true after a network-error identity request")
+	if not cap.phrase_reveal_events.is_empty():
+		failures.append("offline_notice: phrase_reveal_ready fired despite no identity being created")
+
+	# No escape here either — only acknowledge_offline() should advance.
+	seq.acknowledge_phrase()
+	if seq.get_state() != FirstRunSequence.State.OFFLINE_NOTICE:
+		failures.append("offline_notice: acknowledge_phrase() incorrectly advanced OFFLINE_NOTICE state")
+
+	return failures
+
+
+## ── identity 5xx: reachable but identity creation failed — no crash, no phrase ─
+
+func _test_identity_5xx_transitions_to_identity_failed_state(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(500, '{"error":0}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.identity_failed_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("identity_5xx: identity_failed not emitted within 5 s")
+		return failures
+
+	var ev: Dictionary = cap.identity_failed_events[0]
+	if ev.state != NoteClient.STATE_HTTP_5XX:
+		failures.append("identity_5xx: expected STATE_HTTP_5XX, got %d" % ev.state)
+	# A 4xx/5xx means the server responded — the request never went
+	# unanswered, so this is distinct from OFFLINE_NOTICE. But identity
+	# creation itself failed, so remaining in AWAITING_IDENTITY forever
+	# (the old behavior) left the player with no way forward: nothing in
+	# FirstRunController consumes identity_failed, so blockout_room's
+	# entry_room_ready gate (T-0120 RE-SCOPE) never opens and the main scene
+	# renders nothing. IDENTITY_FAILED gives it a real exit via
+	# acknowledge_error(), covered below.
+	if seq.get_state() != FirstRunSequence.State.IDENTITY_FAILED:
+		failures.append("identity_5xx: expected state IDENTITY_FAILED, got %d" % seq.get_state())
+	if not seq.is_server_reachable():
+		failures.append("identity_5xx: is_server_reachable() false after a 5xx (server did respond)")
+
+	return failures
+
+
+## ── acknowledge_error(): the only way out of IDENTITY_FAILED/SAVE_FAILED ──────
+## Both are dead ends otherwise (T-0120 RE-SCOPE follow-up): nothing else in
+## the state machine can advance past them, so a player who hits either would
+## be stuck on a permanently blank screen with no acknowledgment path at all.
+
+func _test_acknowledge_error_enters_room_from_identity_failed(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(500, '{"error":0}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.identity_failed_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("ack_error_identity: identity_failed not emitted within 5 s")
+		return failures
+
+	seq.acknowledge_error()
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("ack_error_identity: expected IN_ENTRY_ROOM after acknowledge_error(), got %d" % seq.get_state())
+	if cap.entry_room_events != 1:
+		failures.append("ack_error_identity: expected exactly 1 entry_room_ready, got %d" % cap.entry_room_events)
+	# Nothing was ever saved (no phrase exists for this identity attempt), so
+	# the during-play offline indicator must warn accordingly even though the
+	# server itself did respond.
+	if seq.is_server_reachable():
+		failures.append("ack_error_identity: is_server_reachable() must be false — nothing here can be saved")
+
+	return failures
+
+
+func _test_acknowledge_error_enters_room_from_save_failed(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	const BAD_PATH := "user://T0120_missing_dir_2/phrase.txt"
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := FirstRunSequence.new()
+	seq.set_phrase_path(BAD_PATH)
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"sixty one sixty two sixty three sixty four sixty five sixty six sixty seven sixty eight"}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.save_failed_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("ack_error_save: phrase_save_failed not emitted within 5 s")
+		return failures
+
+	seq.acknowledge_error()
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("ack_error_save: expected IN_ENTRY_ROOM after acknowledge_error(), got %d" % seq.get_state())
+	if cap.entry_room_events != 1:
+		failures.append("ack_error_save: expected exactly 1 entry_room_ready, got %d" % cap.entry_room_events)
+
+	return failures
+
+
+func _test_acknowledge_error_is_noop_outside_failure_states() -> Array[String]:
+	var failures: Array[String] = []
+
+	var seq := _make_seq()
+	seq.acknowledge_error()
+	if seq.get_state() != FirstRunSequence.State.AWAITING_IDENTITY:
+		failures.append(
+			"ack_error_noop: acknowledge_error() must be a no-op outside SAVE_FAILED/IDENTITY_FAILED, got %d"
+			% seq.get_state()
+		)
+
+	return failures
+
+
+## ── AC1/regression: a 2xx with no parseable phrase must not dead-end ─────────
+## extract_phrase() (note_client.cpp) returns "" for a 2xx body with no
+## "phrase" key — a malformed body, an empty JSON object, or a proxy/captive
+## portal interstitial could all land here. Before this fix, identity_failed
+## fired but _state stayed AWAITING_IDENTITY, so acknowledge_error() (whose
+## guard checks SAVE_FAILED/IDENTITY_FAILED) silently no-op'd: the error
+## screen would be dismissed and nothing would ever open the room — the
+## exact permanent-blank-screen outcome IDENTITY_FAILED exists to prevent.
+
+func _test_identity_ok_empty_phrase_transitions_to_identity_failed(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{}')
+	seq.start_new_game()
+	var completed := _drive(client, mock, 5000.0, func(): return cap.identity_failed_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("identity_ok_empty_phrase: identity_failed not emitted within 5 s")
+		return failures
+
+	if seq.get_state() != FirstRunSequence.State.IDENTITY_FAILED:
+		failures.append(
+			"identity_ok_empty_phrase: expected state IDENTITY_FAILED, got %d — acknowledge_error() would no-op"
+			% seq.get_state()
+		)
+
+	seq.acknowledge_error()
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append(
+			"identity_ok_empty_phrase: acknowledge_error() must advance to IN_ENTRY_ROOM, got %d"
+			% seq.get_state()
+		)
+
+	return failures
+
+
+## ── AC7 follow-up: the chroma explanation must not re-fire on a returning ────
+## launch. "Exactly once" (AC7) means once ever, not once per process — but
+## _chroma_shown was a plain instance field reset by every _enter_room(), so
+## once the returning-player fix (AC1) made a second launch a first-class
+## path that also calls _enter_room(), the explanation silently started
+## re-firing on every single launch.
+
+func _test_chroma_does_not_refire_for_returning_player(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	const MARKER_PATH := "user://test_T0120_chroma.marker"
+	if FileAccess.file_exists(MARKER_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(MARKER_PATH))
+
+	# First launch: mints a phrase, enters the room, crosses the baseline.
+	var client1 := NoteClient.new()
+	client1.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq1 := _make_seq()
+	seq1.set_chroma_marker_path(MARKER_PATH)
+	seq1.setup(client1)
+	var cap1 := _connect_capture(seq1)
+
+	mock.queue(201, '{"phrase":"chroma one chroma two chroma three chroma four"}')
+	seq1.start_new_game()
+	var completed := _drive(client1, mock, 5000.0, func(): return cap1.phrase_reveal_events.size() > 0)
+	client1.free()
+	if not completed:
+		failures.append("chroma_returning: first launch never reached the phrase screen within 5 s")
+		if FileAccess.file_exists(TEST_PATH):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+		return failures
+
+	seq1.acknowledge_phrase()
+	seq1.tick(200.0)
+	if cap1.chroma_events.size() != 1:
+		failures.append(
+			"chroma_returning: expected exactly 1 chroma event on first launch, got %d" % cap1.chroma_events.size()
+		)
+
+	# Second launch: fresh sequence instance, same phrase file (so this is
+	# the returning-player path) and same marker path.
+	var client2 := NoteClient.new()
+	client2.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq2 := _make_seq()
+	seq2.set_chroma_marker_path(MARKER_PATH)
+	seq2.setup(client2)
+	var cap2 := _connect_capture(seq2)
+
+	seq2.start_new_game()
+	client2.free()
+
+	if seq2.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("chroma_returning: fixture bug — second launch did not reach IN_ENTRY_ROOM")
+	seq2.tick(200.0)
+	if not cap2.chroma_events.is_empty():
+		failures.append(
+			"chroma_returning: chroma explanation re-fired on a returning launch, got %d events"
+			% cap2.chroma_events.size()
+		)
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	if FileAccess.file_exists(MARKER_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(MARKER_PATH))
+	return failures
+
+
+## ── acknowledge_offline() advances OFFLINE_NOTICE -> IN_ENTRY_ROOM ────────────
+
+func _test_offline_ack_enters_room() -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % DEAD_PORT)
+	client.set_timeout_ms(SHORT_TIMEOUT_MS)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	seq.start_new_game()
+	var completed := _drive(client, null, 3000.0, func(): return cap.offline_notice_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("offline_ack: offline_notice_required not emitted within 3 s")
+		return failures
+
+	seq.acknowledge_offline()
+	if seq.get_state() != FirstRunSequence.State.IN_ENTRY_ROOM:
+		failures.append("offline_ack: expected IN_ENTRY_ROOM after acknowledge_offline(), got %d" % seq.get_state())
+	if cap.entry_room_events != 1:
+		failures.append("offline_ack: expected exactly 1 entry_room_ready, got %d" % cap.entry_room_events)
+
+	return failures
+
+
+## ── AC7: chroma explanation fires exactly once after the baseline window ─────
+
+func _test_chroma_fires_once_after_baseline(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"seventeen eighteen nineteen twenty twentyone twentytwo twentythree twentyfour"}')
+	seq.start_new_game()
+	_drive(client, mock, 5000.0, func(): return cap.phrase_reveal_events.size() > 0)
+	client.free()
+	seq.acknowledge_phrase()
+
+	# Below the baseline window: must not fire yet.
+	seq.tick(1.0)
+	seq.tick(1.0)
+	if not cap.chroma_events.is_empty():
+		failures.append("chroma_once: fired before the baseline exploration window elapsed")
+
+	# Cross the threshold: must fire exactly once.
+	seq.tick(FirstRunSequence.BASELINE_EXPLORATION_SECS)
+	if cap.chroma_events.size() != 1:
+		failures.append("chroma_once: expected exactly 1 emission crossing the threshold, got %d" % cap.chroma_events.size())
+	elif cap.chroma_events[0].is_empty():
+		failures.append("chroma_once: emitted text is empty")
+	else:
+		var text: String = cap.chroma_events[0]
+		for i in range(10):
+			if text.contains(str(i)):
+				failures.append("chroma_once: explanation text contains a digit ('%d') — must never show a number" % i)
+				break
+
+	# Further ticks must not re-fire it.
+	seq.tick(FirstRunSequence.BASELINE_EXPLORATION_SECS)
+	if cap.chroma_events.size() != 1:
+		failures.append("chroma_once: fired more than once (%d total)" % cap.chroma_events.size())
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── chroma explanation never fires before the player is in the entry room ────
+
+func _test_chroma_never_fires_before_entry_room(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	# Still in AWAITING_IDENTITY — ticking a huge delta must be a no-op.
+	seq.tick(999999.0)
+	if not cap.chroma_events.is_empty():
+		failures.append("chroma_never_early: fired while state was AWAITING_IDENTITY")
+
+	mock.queue(201, '{"phrase":"twentyfive twentysix twentyseven twentyeight twentynine thirty thirtyone thirtytwo"}')
+	seq.start_new_game()
+	_drive(client, mock, 5000.0, func(): return cap.phrase_reveal_events.size() > 0)
+	client.free()
+
+	# In PHRASE_REVEAL, still not the entry room — must not fire.
+	seq.tick(999999.0)
+	if not cap.chroma_events.is_empty():
+		failures.append("chroma_never_early: fired while state was PHRASE_REVEAL")
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC6: session-end recap fires only when the session ends offline ──────────
+
+func _test_session_end_offline_recap() -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % DEAD_PORT)
+	client.set_timeout_ms(SHORT_TIMEOUT_MS)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	seq.start_new_game()
+	_drive(client, null, 3000.0, func(): return cap.offline_notice_events.size() > 0)
+	client.free()
+	seq.acknowledge_offline()
+
+	seq.end_session()
+	if cap.recap_events.size() != 1:
+		failures.append("session_end_offline: expected exactly 1 recap, got %d" % cap.recap_events.size())
+	elif cap.recap_events[0].is_empty():
+		failures.append("session_end_offline: recap text is empty")
+	if seq.get_state() != FirstRunSequence.State.ENDED:
+		failures.append("session_end_offline: expected state ENDED, got %d" % seq.get_state())
+
+	return failures
+
+
+func _test_session_end_online_no_recap(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"thirtythree thirtyfour thirtyfive thirtysix thirtyseven thirtyeight thirtynine forty"}')
+	seq.start_new_game()
+	_drive(client, mock, 5000.0, func(): return cap.phrase_reveal_events.size() > 0)
+	client.free()
+	seq.acknowledge_phrase()
+
+	seq.end_session()
+	if not cap.recap_events.is_empty():
+		failures.append("session_end_online: recap fired despite being reachable")
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC5: notify_reachability() drives the persistent offline indicator ───────
+
+func _test_notify_reachability_indicator(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	mock.queue(201, '{"phrase":"fortyone fortytwo fortythree fortyfour fortyfive fortysix fortyseven fortyeight"}')
+	seq.start_new_game()
+	_drive(client, mock, 5000.0, func(): return cap.phrase_reveal_events.size() > 0)
+	client.free()
+	seq.acknowledge_phrase()
+
+	# _enter_room() (triggered by acknowledge_phrase() above) emits the
+	# indicator's initial state as soon as the room is reached (AC5 fix) — a
+	# baseline event this test must account for before driving transitions.
+	var base: int = cap.indicator_events.size()
+	if base != 1 or cap.indicator_events[0] != false:
+		failures.append(
+			"indicator: expected exactly 1 initial event [false] (online, hidden) on room entry, got %s"
+			% [cap.indicator_events]
+		)
+
+	seq.notify_reachability(false)
+	if cap.indicator_events.size() != base + 1 or cap.indicator_events[base] != true:
+		failures.append("indicator: expected indicator visible after going offline, got %s" % [cap.indicator_events])
+	if seq.is_server_reachable():
+		failures.append("indicator: is_server_reachable() true after notify_reachability(false)")
+
+	seq.notify_reachability(false)
+	if cap.indicator_events.size() != base + 1:
+		failures.append("indicator: redundant notify_reachability(false) re-emitted the signal")
+
+	seq.notify_reachability(true)
+	if cap.indicator_events.size() != base + 2 or cap.indicator_events[base + 1] != false:
+		failures.append("indicator: expected a further event false (indicator hidden) after reconnecting")
+
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── AC5 regression: launch offline -> acknowledge_offline -> indicator visible ──
+## The bug this guards: notify_reachability() only emits on a *change*, and
+## _reachable was already false by the time OFFLINE_NOTICE was reached — so a
+## player who launches offline and acknowledges never saw the indicator at
+## all. The suite was green before this test existed because every other
+## indicator test only exercised the online -> offline transition.
+
+func _test_indicator_visible_after_offline_launch() -> Array[String]:
+	var failures: Array[String] = []
+
+	var client := NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % DEAD_PORT)
+	client.set_timeout_ms(SHORT_TIMEOUT_MS)
+
+	var seq := _make_seq()
+	seq.setup(client)
+	var cap := _connect_capture(seq)
+
+	seq.start_new_game()
+	var completed := _drive(client, null, 3000.0, func(): return cap.offline_notice_events.size() > 0)
+	client.free()
+
+	if not completed:
+		failures.append("indicator_offline_launch: offline_notice_required not emitted within 3 s")
+		return failures
+
+	seq.acknowledge_offline()
+
+	if cap.indicator_events.is_empty():
+		failures.append("indicator_offline_launch: offline_indicator_changed never fired on room entry")
+	elif cap.indicator_events[-1] != true:
+		failures.append(
+			"indicator_offline_launch: expected the indicator visible on room entry while offline, got %s"
+			% [cap.indicator_events]
+		)
+
+	return failures
