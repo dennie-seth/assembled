@@ -113,7 +113,6 @@ class MockHttpServer:
 ## synchronously like every other test in this file).
 var _failures: Array[String] = []
 var _pending_layout_check: bool = false
-var _layout_screen: BlockingNoticeScreen = null
 
 
 func _init() -> void:
@@ -153,7 +152,7 @@ func _init() -> void:
 	failures += _test_controller_identity_error_shows_screen_and_continues(mock)
 	failures += _test_controller_save_failure_shows_screen_and_continues(mock)
 	failures += _test_controller_indicator_follows_midsession_heartbeat_drop()
-	failures += _test_controller_indicator_clears_after_offline_launch_recovers()
+	failures += _test_controller_indicator_stays_visible_after_offline_launch_heartbeat()
 	failures += _test_controller_close_request_recap_then_completes()
 	failures += _test_controller_close_request_online_completes_immediately(mock)
 	failures += _test_controller_phrase_screen_displays_phrase(mock)
@@ -668,7 +667,12 @@ func _test_controller_save_failure_shows_screen_and_continues(mock: MockHttpServ
 ## production emitter at all (it only fires from NoteClient.notes_fetched,
 ## and nothing ever called fetch_notes() in production), so the indicator was
 ## frozen at whatever it read on room entry for the entire rest of the
-## session.
+## session. Also proves AC17's converse (Review FAIL, 2026-09-12): for a
+## session that was always genuinely saveable (identity minted successfully),
+## the warning DOES clear once a later heartbeat proves the network is back —
+## the "never clears via heartbeat alone" rule in
+## _test_controller_indicator_stays_visible_after_offline_launch_heartbeat()
+## applies specifically to a session that was never saveable to begin with.
 
 func _test_controller_indicator_follows_midsession_heartbeat_drop() -> Array[String]:
 	var failures: Array[String] = []
@@ -715,25 +719,45 @@ func _test_controller_indicator_follows_midsession_heartbeat_drop() -> Array[Str
 			"controller_heartbeat: offline indicator must follow a mid-session reachability drop detected by the periodic heartbeat (AC5)"
 		)
 
+	# The network comes back. This session's identity was minted successfully
+	# (the phrase screen above), so _session_saveable was never set false —
+	# unlike the launch-offline case, a heartbeat proving reachability here
+	# really does mean the session is genuinely saveable again, and the
+	# warning must clear (AC17's converse: the distinction cuts both ways).
+	heartbeat_mock.listen(HEARTBEAT_MOCK_PORT)
+	heartbeat_mock.queue(200, '[]')
+	controller._process(FirstRunController.HEARTBEAT_INTERVAL_SECS)
+	var recovered := _drive_controller(
+		controller, heartbeat_mock, 3000.0, func(): return not indicator.visible
+	)
+
+	if not recovered:
+		failures.append(
+			"controller_heartbeat: offline indicator must clear once a heartbeat succeeds again for a session that was always saveable (AC17)"
+		)
+
 	controller.free()
+	heartbeat_mock.stop()
 	if FileAccess.file_exists(TEST_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
 	return failures
 
 
 ## ── FirstRunController: launch offline, then the server comes back — the ────
-## indicator must clear (AC5), not stay pinned on for the rest of the
-## session. OfflineModeController and FirstRunSequence each track their own
-## `_reachable`, seeded independently (OfflineModeController always starts
-## optimistic). Before this fix, a launch-offline session left
-## FirstRunSequence's `_reachable` at false while OfflineModeController's was
-## still at its optimistic true — so the very next successful heartbeat saw
-## no *change* from OfflineModeController's point of view and never emitted
-## server_reachable_changed, leaving the indicator (and a false
-## nothing-was-saved recap at session end) stuck for the entire session even
-## though the player was demonstrably back online.
+## indicator must NOT clear on a heartbeat alone (AC17, Review FAIL
+## 2026-09-12). A launch-offline session never minted an identity — nothing
+## was ever saveable for it — so a heartbeat proving the network is back
+## reachable is not the same as the session becoming saveable again; the
+## indicator doubles as the unsaved-session warning and must keep warning for
+## the rest of this session regardless of network recovery. This inverts the
+## test's own prior assertion, which is the exact regression the reviewer
+## found: `_test_controller_indicator_clears_after_offline_launch_recovers`
+## used to assert the indicator cleared here, which is precisely what AC17
+## forbids ("no heartbeat response ... clears the unsaved-session warning ...
+## until a real identity recovery succeeds" — there is no identity-recovery
+## path in this flow, so it must never clear).
 
-func _test_controller_indicator_clears_after_offline_launch_recovers() -> Array[String]:
+func _test_controller_indicator_stays_visible_after_offline_launch_heartbeat() -> Array[String]:
 	var failures: Array[String] = []
 	var controller := FirstRunController.new()
 	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % RECOVERY_PORT, SHORT_TIMEOUT_MS)
@@ -753,7 +777,7 @@ func _test_controller_indicator_clears_after_offline_launch_recovers() -> Array[
 	if indicator == null or not indicator.visible:
 		failures.append("controller_recovers: indicator must be visible on room entry while offline")
 
-	# The server comes back: start listening on the exact port this
+	# The network comes back: start listening on the exact port this
 	# controller is already configured for, then fire the heartbeat exactly
 	# like _process() would.
 	var recovery_mock := MockHttpServer.new()
@@ -763,14 +787,21 @@ func _test_controller_indicator_clears_after_offline_launch_recovers() -> Array[
 		return failures
 	recovery_mock.queue(200, '[]')
 
-	controller._process(FirstRunController.HEARTBEAT_INTERVAL_SECS)
-	var recovered := _drive_controller(
-		controller, recovery_mock, 3000.0, func(): return not indicator.visible
+	var heartbeat_events := [0]
+	controller.get_note_client().notes_fetched.connect(
+		func(_req: int, _state: int, _status: int, _body: String): heartbeat_events[0] += 1
 	)
 
-	if not recovered:
+	controller._process(FirstRunController.HEARTBEAT_INTERVAL_SECS)
+	var heartbeat_done := _drive_controller(
+		controller, recovery_mock, 3000.0, func(): return heartbeat_events[0] > 0
+	)
+
+	if not heartbeat_done:
+		failures.append("controller_recovers: heartbeat request to the recovery mock never completed within 3 s")
+	elif not indicator.visible:
 		failures.append(
-			"controller_recovers: offline indicator must clear once a real heartbeat succeeds after a launch-offline session (AC5)"
+			"controller_recovers: a heartbeat alone must not clear the unsaved-session warning after a launch-offline session (AC17) — nothing was ever saved this session"
 		)
 
 	controller.free()
@@ -906,7 +937,12 @@ func _test_controller_phrase_screen_displays_phrase(mock: MockHttpServer) -> Arr
 ## overwrote the same _reachable field is_server_reachable() and
 ## end_session()'s recap decision both read, clearing both — reproduced by
 ## Codex as: identity 503 -> acknowledge -> heartbeat 401 -> reachable=true ->
-## end session -> no recap, despite the player never having an identity.
+## end session -> no recap, despite the player never having an identity. Also
+## asserts the persistent offline indicator — which IS the unsaved-session
+## warning (Review FAIL, 2026-09-12: a prior fix cleared the recap but left
+## the indicator driven by raw reachability, so the warning was never shown
+## for this entire scenario) — is visible both right after the failure and
+## after the heartbeat.
 
 func _test_controller_heartbeat_after_identity_failure_keeps_unsaved_state() -> Array[String]:
 	var failures: Array[String] = []
@@ -935,6 +971,12 @@ func _test_controller_heartbeat_after_identity_failure_keeps_unsaved_state() -> 
 	if controller.get_sequence().is_server_reachable():
 		failures.append("controller_unsaved: is_server_reachable() must be false right after an identity failure")
 
+	var indicator := controller.get_offline_indicator()
+	if indicator == null or not indicator.visible:
+		failures.append(
+			"controller_unsaved: the unsaved-session warning indicator must be visible right after an identity failure (AC17)"
+		)
+
 	var heartbeat_events := [0]
 	controller.get_note_client().notes_fetched.connect(
 		func(_req: int, _state: int, _status: int, _body: String): heartbeat_events[0] += 1
@@ -953,6 +995,10 @@ func _test_controller_heartbeat_after_identity_failure_keeps_unsaved_state() -> 
 
 	if controller.get_sequence().is_server_reachable():
 		failures.append("controller_unsaved: a 401 heartbeat response must not clear the unsaved-session state")
+	if indicator == null or not indicator.visible:
+		failures.append(
+			"controller_unsaved: the unsaved-session warning indicator must still be visible after the 401 heartbeat (AC17/AC18)"
+		)
 
 	controller.end_session()
 	if controller.get_recap_notice() == null or not controller.get_recap_notice().visible:
@@ -976,6 +1022,18 @@ func _test_controller_heartbeat_after_identity_failure_keeps_unsaved_state() -> 
 ## 384x216 viewport size until its first processed frame either (verified
 ## empirically against this exact Godot build). See test_main_scene_boot.gd's
 ## identical note on _ready()/layout timing in this harness.
+##
+## Covers all three BlockingNoticeScreen instances the controller actually
+## builds (Review FAIL, 2026-09-12: the prior version of this test exercised
+## only the phrase-reveal screen) — the phrase-reveal screen (with the long
+## save path FIRST_RUN_NOTICE substitutes in), the offline-notice screen
+## (no path — the offline path fires before any identity/phrase exists), and
+## the identity/save-error screen (with a long save path, mirroring
+## FirstRunController._on_phrase_save_failed()'s copy verbatim — kept as a
+## literal here rather than importing a production constant so this test
+## doesn't depend on FirstRunController's private wording beyond what a
+## player would actually see; if that format string changes, this literal
+## must be updated to match).
 
 const LAYOUT_TEST_LONG_PATH := (
 	"/home/exampleuser/.local/share/godot/app_userdata/assembled-client/"
@@ -983,26 +1041,96 @@ const LAYOUT_TEST_LONG_PATH := (
 )
 const LAYOUT_TEST_PHRASE := "alpha bravo charlie delta echo foxtrot golf hotel"
 
+## Must match FirstRunController._on_phrase_save_failed()'s format string.
+const LAYOUT_TEST_SAVE_FAILED_NOTICE_FORMAT := (
+	"Your phrase couldn't be saved to %s. Nothing has been saved for this session — "
+	+ "you can continue, but this session's progress won't be recorded."
+)
+
+## One entry per blocking screen this game actually shows a player, each with
+## its own expected copy/phrase/overflow expectation. Built in
+## _start_layout_readability_test(), measured in
+## _finish_layout_readability_test() once a real frame has resolved layout.
+var _layout_screens: Array[Dictionary] = []
+
 
 func _start_layout_readability_test() -> void:
-	_layout_screen = BlockingNoticeScreen.new()
-	root.add_child(_layout_screen)
-	_layout_screen.set_phrase_text(LAYOUT_TEST_PHRASE)
-	_layout_screen.set_notice_text(IdentityStore.FIRST_RUN_NOTICE.replace("[path]", LAYOUT_TEST_LONG_PATH))
+	var phrase_screen := BlockingNoticeScreen.new()
+	root.add_child(phrase_screen)
+	phrase_screen.set_phrase_text(LAYOUT_TEST_PHRASE)
+	phrase_screen.set_notice_text(IdentityStore.FIRST_RUN_NOTICE.replace("[path]", LAYOUT_TEST_LONG_PATH))
+
+	var offline_screen := BlockingNoticeScreen.new()
+	offline_screen.acknowledge_button_text = "[ Continue anyway ]"
+	root.add_child(offline_screen)
+	offline_screen.set_notice_text(FirstRunSequence.OFFLINE_NOTICE_TEXT)
+
+	var error_screen := BlockingNoticeScreen.new()
+	error_screen.acknowledge_button_text = "[ Continue anyway ]"
+	root.add_child(error_screen)
+	error_screen.set_notice_text(LAYOUT_TEST_SAVE_FAILED_NOTICE_FORMAT % LAYOUT_TEST_LONG_PATH)
+
+	_layout_screens = [
+		{
+			"label": "phrase_reveal",
+			"screen": phrase_screen,
+			"notice": IdentityStore.FIRST_RUN_NOTICE.replace("[path]", LAYOUT_TEST_LONG_PATH),
+			"phrase": LAYOUT_TEST_PHRASE,
+			"expect_overflow": true,
+		},
+		{
+			"label": "offline_notice",
+			"screen": offline_screen,
+			"notice": FirstRunSequence.OFFLINE_NOTICE_TEXT,
+			"phrase": "",
+			"expect_overflow": false,
+		},
+		{
+			"label": "identity_error",
+			"screen": error_screen,
+			"notice": LAYOUT_TEST_SAVE_FAILED_NOTICE_FORMAT % LAYOUT_TEST_LONG_PATH,
+			"phrase": "",
+			"expect_overflow": true,
+		},
+	]
 	_pending_layout_check = true
 
 
 func _finish_layout_readability_test() -> Array[String]:
 	var failures: Array[String] = []
-	var screen := _layout_screen
 	var viewport_size: Vector2 = root.get_visible_rect().size
+
+	for entry: Dictionary in _layout_screens:
+		failures += _check_screen_layout(
+			entry.screen, entry.notice, entry.phrase, entry.expect_overflow, entry.label, viewport_size
+		)
+		entry.screen.free()
+
+	_layout_screens = []
+	return failures
+
+
+## Shared bounds/overlap/copy check for one blocking screen at the 384x216
+## logical viewport. @param expected_phrase empty means this screen has no
+## phrase label to check (the offline and identity-error screens never call
+## set_phrase_text()). @param expect_overflow asserts the fixture actually
+## exercises the scroll area (a long save path taller than the visible
+## area) — without this guard the no-overlap check could pass trivially for
+## copy that was never going to overlap anything regardless of layout.
+func _check_screen_layout(
+		screen: BlockingNoticeScreen,
+		expected_notice: String,
+		expected_phrase: String,
+		expect_overflow: bool,
+		label: String,
+		viewport_size: Vector2
+) -> Array[String]:
+	var failures: Array[String] = []
 
 	var scroll: ScrollContainer = screen.get_scroll_container()
 	var button: Button = screen.get_node("Root/AcknowledgeButton")
 	if scroll == null or button == null:
-		failures.append("layout_384x216: scroll container or acknowledge button not found")
-		screen.free()
-		_layout_screen = null
+		failures.append("layout_384x216[%s]: scroll container or acknowledge button not found" % label)
 		return failures
 
 	var scroll_rect := scroll.get_rect()
@@ -1013,36 +1141,34 @@ func _finish_layout_readability_test() -> Array[String]:
 		or scroll_rect.end.x > viewport_size.x or scroll_rect.end.y > viewport_size.y
 	):
 		failures.append(
-			"layout_384x216: scroll area %s exceeds the %s viewport" % [scroll_rect, viewport_size]
+			"layout_384x216[%s]: scroll area %s exceeds the %s viewport" % [label, scroll_rect, viewport_size]
 		)
 	if (
 		button_rect.position.x < 0.0 or button_rect.position.y < 0.0
 		or button_rect.end.x > viewport_size.x or button_rect.end.y > viewport_size.y
 	):
 		failures.append(
-			"layout_384x216: acknowledge button %s exceeds the %s viewport" % [button_rect, viewport_size]
+			"layout_384x216[%s]: acknowledge button %s exceeds the %s viewport" % [label, button_rect, viewport_size]
 		)
 	if scroll_rect.intersects(button_rect):
 		failures.append(
-			"layout_384x216: scroll area %s overlaps the acknowledge button %s" % [scroll_rect, button_rect]
+			"layout_384x216[%s]: scroll area %s overlaps the acknowledge button %s" % [label, scroll_rect, button_rect]
 		)
 
 	var notice_label := screen.get_notice_label()
-	var expected_notice: String = IdentityStore.FIRST_RUN_NOTICE.replace("[path]", LAYOUT_TEST_LONG_PATH)
 	if notice_label == null or notice_label.text != expected_notice:
-		failures.append("layout_384x216: full notice copy must be present verbatim, not truncated")
-	elif notice_label.size.y <= scroll_rect.size.y:
+		failures.append("layout_384x216[%s]: full notice copy must be present verbatim, not truncated" % label)
+	elif expect_overflow and notice_label.size.y <= scroll_rect.size.y:
 		# Confirms this test actually exercises the overflow a long save path
 		# creates — if this stops being true, the "no overlap" assertion
 		# above would pass trivially for the wrong reason.
 		failures.append(
-			"layout_384x216: fixture bug — the long-path notice text must be taller than the scroll area to exercise scrolling"
+			"layout_384x216[%s]: fixture bug — the long-path notice text must be taller than the scroll area to exercise scrolling" % label
 		)
 
-	var phrase_label := screen.get_phrase_label()
-	if phrase_label == null or not phrase_label.text.contains(LAYOUT_TEST_PHRASE):
-		failures.append("layout_384x216: full phrase must be present verbatim, not truncated")
+	if not expected_phrase.is_empty():
+		var phrase_label := screen.get_phrase_label()
+		if phrase_label == null or not phrase_label.text.contains(expected_phrase):
+			failures.append("layout_384x216[%s]: full phrase must be present verbatim, not truncated" % label)
 
-	screen.free()
-	_layout_screen = null
 	return failures
