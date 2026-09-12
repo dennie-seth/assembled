@@ -218,11 +218,106 @@ export function usageLedgerEntryPath(runsDir, { cardId, executionId, invocationI
 
 /**
  * Monotonic call-order counter, assigned synchronously (before any `await`) the instant
- * `recordAttemptUsage` is invoked, and embedded in the entry as its `revision`. This is what lets
- * two racing writes for the same key agree on which one is "newer" regardless of which one's I/O
- * happens to finish first.
+ * `recordAttemptUsage` is invoked. Combined with `epoch` (below) into the composite `revision`
+ * embedded in the entry. This is what lets two racing writes for the same key agree on which one
+ * is "newer" regardless of which one's I/O happens to finish first -- but ALONE it is not enough:
+ * it lives only in memory, restarting at 0 every process start, so without `epoch` a pre-restart
+ * `rev6` would outrank a post-restart `rev1` for the same entry (Round 6, 2026-09-12).
  */
 let nextWriteSequence = 0;
+
+/**
+ * Per-`runsDir` cache of this process's persisted, never-decreasing epoch (Round 6, 2026-09-12).
+ * `ensureEpoch` is a plain (non-async) function so calling it is synchronous -- the very first
+ * call for a given `runsDir` starts `loadAndBumpEpoch` and caches its pending Promise immediately,
+ * before any `await` runs, so every racing call within the same tick observes the same cached
+ * Promise rather than each separately reading-and-bumping the persisted file. The epoch value
+ * itself is therefore identical for every write this process makes against one `runsDir` for its
+ * entire lifetime (until `resetUsageLedgerProcessStateForTests` simulates a restart), which is
+ * exactly why deferring its resolution past an `await` never reorders same-process writes: two
+ * calls sharing one epoch are ordered entirely by their (synchronously assigned) `sequence`.
+ */
+const epochCache = new Map();
+
+/** Path to a `runsDir`'s persisted epoch sidecar (Round 6, 2026-09-12). */
+export function usageLedgerEpochStatePath(runsDir) {
+  return path.join(runsDir, ".usage-ledger-epoch.json");
+}
+
+/**
+ * Reads the persisted epoch for `runsDir` (0 if missing/unreadable/malformed) and persists
+ * `previous + 1` before returning it -- "bumped once per process" per entry's `runsDir`. A failed
+ * persist is best-effort, same posture as `ensureExecutionId`: this process still uses the bumped
+ * value for its own writes, it just won't be recoverable by a later process if the write itself
+ * never reached disk.
+ */
+async function loadAndBumpEpoch(runsDir, { readFileFn, writeFileFn, mkdirFn }) {
+  let previous = 0;
+  try {
+    const raw = await readFileFn(usageLedgerEpochStatePath(runsDir), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.epoch === "number" && Number.isFinite(parsed.epoch)) {
+      previous = parsed.epoch;
+    }
+  } catch {
+    // missing, unreadable, or malformed -- treat as "no process has ever written here"
+  }
+
+  const epoch = previous + 1;
+  try {
+    await mkdirFn(runsDir, { recursive: true });
+    await writeFileFn(usageLedgerEpochStatePath(runsDir), JSON.stringify({ epoch }), "utf8");
+  } catch {
+    // best-effort persist -- see docstring above
+  }
+  return epoch;
+}
+
+function ensureEpoch(runsDir, deps) {
+  if (!epochCache.has(runsDir)) {
+    epochCache.set(runsDir, loadAndBumpEpoch(runsDir, deps));
+  }
+  return epochCache.get(runsDir);
+}
+
+/**
+ * Test-only: simulates a fresh board process for `runsDir` (every `runsDir` if omitted) -- clears
+ * the in-memory sequence counter AND the cached epoch, so the next `recordAttemptUsage` call
+ * re-derives its epoch from the persisted sidecar (bumping it past whatever this "process" already
+ * wrote) exactly as a genuinely restarted board would. Production code never calls this.
+ */
+export function resetUsageLedgerProcessStateForTests(runsDir) {
+  nextWriteSequence = 0;
+  if (typeof runsDir === "string") {
+    epochCache.delete(runsDir);
+  } else {
+    epochCache.clear();
+  }
+}
+
+/** `true` when `a` is a strictly newer revision than `b` -- epoch first, then sequence. */
+function revisionIsNewer(a, b) {
+  if (a.epoch !== b.epoch) return a.epoch > b.epoch;
+  return a.sequence > b.sequence;
+}
+
+/** `true` when `a` and `b` are the identical (epoch, sequence) pair. */
+function revisionsEqual(a, b) {
+  return a.epoch === b.epoch && a.sequence === b.sequence;
+}
+
+/**
+ * Normalizes a parsed entry's `revision` into `{epoch, sequence}`, falling back to the values
+ * embedded in the revision filename itself (`matchEpoch`/`matchSequence`) when the entry's own
+ * `revision` field is missing or malformed -- a reader should never throw on a partially-written
+ * or hand-crafted fixture file, just fall back to the filename's own identity.
+ */
+function normalizeRevision(raw, matchEpoch, matchSequence) {
+  if (raw && raw.revision && typeof raw.revision === "object" && Number.isFinite(raw.revision.epoch) && Number.isFinite(raw.revision.sequence)) {
+    return { epoch: raw.revision.epoch, sequence: raw.revision.sequence };
+  }
+  return { epoch: matchEpoch, sequence: matchSequence };
+}
 
 /** In-flight write promises, so `drainPendingUsageWrites` can wait for all of them to settle. */
 const pendingWrites = new Set();
@@ -251,13 +346,13 @@ function randomSuffix() {
   return Math.random().toString(36).slice(2);
 }
 
-const REVISION_SUFFIX_RE = /\.rev(\d+)\.json$/;
+const REVISION_SUFFIX_RE = /\.rev(\d+)-(\d+)\.json$/;
 
 /**
  * Best-effort cleanup: deletes every sibling revision file for `canonicalPath` strictly older
- * than `keepRevision`. Never throws -- a failed prune leaves a harmless stray file behind rather
- * than affecting correctness (readers always select the freshest valid revision regardless of
- * how many older ones still exist on disk).
+ * than `keepRevision` (`{epoch, sequence}`). Never throws -- a failed prune leaves a harmless
+ * stray file behind rather than affecting correctness (readers always select the freshest valid
+ * revision regardless of how many older ones still exist on disk).
  */
 async function pruneOlderRevisions(runsDir, canonicalPath, keepRevision, { readdirFn, unlinkFn }) {
   const base = path.basename(canonicalPath);
@@ -271,7 +366,8 @@ async function pruneOlderRevisions(runsDir, canonicalPath, keepRevision, { readd
     if (!name.startsWith(`${base}.rev`)) continue;
     const match = REVISION_SUFFIX_RE.exec(name);
     if (!match) continue;
-    if (Number(match[1]) < keepRevision) {
+    const revision = { epoch: Number(match[1]), sequence: Number(match[2]) };
+    if (!revisionsEqual(revision, keepRevision) && !revisionIsNewer(revision, keepRevision)) {
       await unlinkFn(path.join(runsDir, name)).catch(() => {});
     }
   }
@@ -279,7 +375,7 @@ async function pruneOlderRevisions(runsDir, canonicalPath, keepRevision, { readd
 
 /**
  * Scans `runsDir` for every revision file published under `canonicalPath` and returns the entry
- * with the highest revision number that still parses -- `null` if none exist.
+ * with the highest `(epoch, sequence)` revision that still parses -- `null` if none exist.
  */
 async function findLatestRevisionEntry(runsDir, canonicalPath, { readdirFn, readFileFn }) {
   const base = path.basename(canonicalPath);
@@ -302,8 +398,8 @@ async function findLatestRevisionEntry(runsDir, canonicalPath, { readdirFn, read
     } catch {
       continue; // rotated/deleted between readdir and read, or malformed -- skip rather than throw
     }
-    const revision = typeof raw.revision === "number" ? raw.revision : Number(match[1]);
-    if (!best || revision > best.revision) best = { revision, entry: raw };
+    const revision = normalizeRevision(raw, Number(match[1]), Number(match[2]));
+    if (!best || revisionIsNewer(revision, best.revision)) best = { revision, entry: raw };
   }
   return best ? best.entry : null;
 }
@@ -317,19 +413,25 @@ async function findLatestRevisionEntry(runsDir, canonicalPath, { readdirFn, read
  * `outcome` and `complete` are supplied by the caller (the orchestrator knows why an attempt
  * stopped feeding events -- this module does not re-derive that from the events themselves).
  *
- * Publication is monotonic per key by construction (Codex review 3, 2026-09-12, finding 1): each
- * call writes to its OWN immutable revision file (`<canonicalPath>.rev<sequence>.json`, `sequence`
- * assigned synchronously in call order at function entry) via write-temp-file-then-atomic-rename,
- * never a shared mutable path. Two racing writes for the same key therefore never contend for the
- * same rename destination at all -- there is no "older rename lands after a newer one and
- * clobbers it" race to guard against, because an older write's revision file, however late it
- * lands (or even if its own publish fails outright), can never overwrite a newer revision's
- * content. `readAttemptUsage`/`listCardUsageEntries` always select the highest-revision file
- * present for a key, so the value they report can only ever advance, never regress, as more
- * revisions land in whatever order their I/O happens to settle. A best-effort prune after each
- * successful publish deletes now-superseded revisions so a long run's many incremental writes
- * don't accumulate unbounded files per key; a failed prune is harmless (readers still pick the
- * freshest valid revision by content, not by "the only file present").
+ * Publication is monotonic per key by construction (Codex review 3, 2026-09-12, finding 1) AND
+ * across board restarts (Round 6, 2026-09-12): each call writes to its OWN immutable revision file
+ * (`<canonicalPath>.rev<epoch>-<sequence>.json`). `sequence` is a monotonic per-process counter
+ * assigned synchronously in call order at function entry; `epoch` is this process's persisted,
+ * never-decreasing epoch for `runsDir` (see `ensureEpoch`/`loadAndBumpEpoch` above), which strictly
+ * increases every time the board restarts. A bare in-process sequence would restart at 0 after a
+ * crash/restart, letting a pre-restart `rev6` outrank a post-restart `rev1` for the same entry --
+ * `epoch` closes that gap: ANY post-restart revision outranks EVERY pre-restart one for the same
+ * key, regardless of their sequence numbers, while within one process lifetime (one fixed epoch)
+ * ordering is exactly the prior sequence-only behavior. Two racing writes for the same key
+ * therefore never contend for the same rename destination at all -- there is no "older rename
+ * lands after a newer one and clobbers it" race to guard against, because an older write's
+ * revision file, however late it lands (or even if its own publish fails outright), can never
+ * overwrite a newer revision's content. `readAttemptUsage`/`listCardUsageEntries` always select
+ * the highest-revision file present for a key, so the value they report can only ever advance,
+ * never regress, as more revisions land in whatever order their I/O happens to settle. A
+ * best-effort prune after each successful publish deletes now-superseded revisions so a long run's
+ * many incremental writes don't accumulate unbounded files per key; a failed prune is harmless
+ * (readers still pick the freshest valid revision by content, not by "the only file present").
  */
 export async function recordAttemptUsage({
   runsDir,
@@ -353,10 +455,22 @@ export async function recordAttemptUsage({
   const key = { cardId, executionId, invocationId, attempt, phase, retry };
   const canonicalPath = usageLedgerEntryPath(runsDir, key); // throws before any I/O if ids are invalid
 
-  const revision = ++nextWriteSequence;
+  // Both fixed synchronously, before any `await`, so call order alone determines which of two
+  // racing writes for this key is "newer": `sequence` via the usual pre-existing counter, and
+  // `epochPromise` pinned to the one cached Promise every call against this `runsDir` shares for
+  // this process's lifetime (see `ensureEpoch`) -- so its eventual resolved value is identical
+  // across every racing call regardless of which one's epoch-lookup I/O happens to settle first.
+  // Deliberately uses the REAL fs primitives, never the caller-injected `readFileFn`/
+  // `writeFileFn`/`mkdirFn` above -- those exist so a test can gate/fail THIS call's own entry
+  // write, and reusing them for the epoch sidecar would gate/fail every OTHER racing call sharing
+  // the same cached epoch promise too, deadlocking tests that inject a delay expecting it to
+  // affect only their own write.
+  const sequence = ++nextWriteSequence;
+  const epochPromise = ensureEpoch(runsDir, { readFileFn: fs.readFile, writeFileFn: fs.writeFile, mkdirFn: fs.mkdir });
+
   const recordedAtMs = now().getTime();
   const summary = summarizeUsageFromEvents(events);
-  const entry = {
+  const entryBase = {
     cardId,
     executionId,
     invocationId,
@@ -374,14 +488,17 @@ export async function recordAttemptUsage({
     apiErrorStatus: summary.apiErrorStatus,
     resultText: summary.resultText,
     sourceLogPath,
-    recordedAt: new Date(recordedAtMs).toISOString(),
-    revision
+    recordedAt: new Date(recordedAtMs).toISOString()
   };
 
-  const revisionPath = `${canonicalPath}.rev${revision}.json`;
   const tmpPath = `${canonicalPath}.tmp-${process.pid}-${randomSuffix()}`;
 
   const writePromise = (async () => {
+    const epoch = await epochPromise;
+    const revision = { epoch, sequence };
+    const entry = { ...entryBase, revision };
+    const revisionPath = `${canonicalPath}.rev${epoch}-${sequence}.json`;
+
     await mkdirFn(runsDir, { recursive: true });
     await writeFileFn(tmpPath, JSON.stringify(entry, null, 2), "utf8");
     try {
@@ -404,7 +521,7 @@ export async function readAttemptUsage({ runsDir, cardId, executionId, invocatio
   return findLatestRevisionEntry(runsDir, canonicalPath, { readdirFn, readFileFn });
 }
 
-const REVISION_FILENAME_RE = /^(.+)-exec(.+)-inv(.+)-attempt(\d+)-(.+)-retry(\d+)\.usage\.json\.rev(\d+)\.json$/;
+const REVISION_FILENAME_RE = /^(.+)-exec(.+)-inv(.+)-attempt(\d+)-(.+)-retry(\d+)\.usage\.json\.rev(\d+)-(\d+)\.json$/;
 
 /**
  * All recorded usage entries for one card, across every execution/invocation/attempt/phase/retry
@@ -431,10 +548,10 @@ export async function listCardUsageEntries({ runsDir, cardId, readdirFn = fs.rea
     } catch {
       continue; // rotated/deleted between readdir and read, or malformed -- skip rather than throw
     }
-    const revision = typeof raw.revision === "number" ? raw.revision : Number(match[7]);
+    const revision = normalizeRevision(raw, Number(match[7]), Number(match[8]));
     const ks = `${match[1]}::${match[2]}::${match[3]}::${match[4]}::${match[5]}::${match[6]}`;
     const existing = bestByKey.get(ks);
-    if (!existing || revision > existing.revision) bestByKey.set(ks, { revision, entry: raw });
+    if (!existing || revisionIsNewer(revision, existing.revision)) bestByKey.set(ks, { revision, entry: raw });
   }
   return Array.from(bestByKey.values()).map((v) => v.entry);
 }

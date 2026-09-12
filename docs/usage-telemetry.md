@@ -303,6 +303,52 @@ entry per key — the freshest revision — never one row per revision.
 it (best-effort) before its own span is considered over, so a write dispatched fire-and-forget
 mid-run can't race the run's own completion.
 
+**Revision numbers are monotonic across board restarts, not just within one process (Round 6,
+2026-09-12).** The `revision` embedded in each entry used to be a bare in-process counter
+(`nextWriteSequence`, starting at 0) with no persisted state at all. A restarted board process
+starts that counter over from 0, so a pre-restart write that reached `rev6` would outrank a
+post-restart write at `rev1` for the *same* entry — exactly backwards, and reachable whenever a
+write targets the same entry across a restart (ordinary phase spawns never do, since each gets a
+fresh invocation id — but a future replay/backfill tool that correctly reuses an entry's *original*
+invocation id, per the no-default-invocation-id contract above, does exactly this).
+
+`revision` is now the composite `{epoch, sequence}`. `sequence` is the same per-process,
+call-order counter as before. `epoch` is a per-`runsDir` integer persisted to
+`<runsDir>/.usage-ledger-epoch.json` and bumped by exactly 1 the first time any write touches that
+`runsDir` in this process's lifetime (`ensureEpoch`/`loadAndBumpEpoch`) — never by wall-clock time,
+which can run backwards (NTP, WSL clock skew). Revisions compare `epoch` first, then `sequence`, so
+ANY write from a newer process outranks EVERY write from an older one for the same entry,
+regardless of their respective sequence numbers, while ordering within one process (one fixed
+epoch) is exactly the prior sequence-only behavior.
+
+Call order still defines recency within a process, which is the property the spec is strictest
+about: `sequence` is assigned synchronously at `recordAttemptUsage`'s entry, before any `await`, so
+a later call always outranks an earlier one even if the earlier call's I/O resolves later. `epoch`
+is resolved asynchronously (it has to be — it's a disk read) via a Promise memoized per `runsDir`
+in `ensureEpoch`: the *first* call against a given `runsDir` in this process starts
+`loadAndBumpEpoch` and caches its pending Promise synchronously, before any `await` runs, so every
+other call sharing that `runsDir` — no matter when each one happens to call `ensureEpoch` — observes
+and awaits that exact same cached Promise rather than separately reading-and-bumping the file
+itself (which would both race on the read and risk each process-local write seeing a different
+epoch value). Because every write in one process resolves to the identical epoch value, deferring
+its resolution past an `await` never reorders two same-process writes — they're still ordered
+entirely by their synchronously-assigned `sequence`. The epoch bump deliberately always uses the
+real `fs.readFile`/`fs.writeFile`/`fs.mkdir`, never `recordAttemptUsage`'s own caller-injectable
+`readFileFn`/`writeFileFn`/`mkdirFn` — those exist so a test can gate or fail *that call's own*
+entry write, and routing the epoch sidecar through them would gate or fail every other racing call
+that shares the same cached epoch promise too, needlessly coupling two unrelated concerns.
+
+A restart is simulated in tests via `resetUsageLedgerProcessStateForTests(runsDir)` — a test-only
+hook that clears both the in-memory `nextWriteSequence` and the cached epoch for `runsDir`, so the
+next write re-derives its epoch from the persisted sidecar (bumping it past whatever value this
+"process" already wrote) exactly as a genuinely restarted board would. See the "revision numbers
+survive a board restart" describe block in `usageLedger.test.js`: a write issued after a simulated
+restart outranks a pre-restart write for the same entry; a replay that reuses the original
+invocation id after a restart is visible to readers and the stale pre-restart revision is pruned;
+two concurrent writes immediately after a restart still get distinct revisions with the later call
+winning; and the pre-existing late-rename monotonic-publication guarantee still holds once a
+restart has happened in between.
+
 **Aggregate cost is nullable (fix round, Codex review 3, 2026-09-12, finding 2).** Per-entry
 `costUsd: null` ("unknown") was already correct (see above), but `attemptTotal`/`executionTotal`/
 `cardCycleTotal` silently coerced an unknown entry's cost to `0` before summing — an execution total
