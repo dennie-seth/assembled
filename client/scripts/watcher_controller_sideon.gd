@@ -11,7 +11,15 @@
 ##
 ## cover_props: Array[Vector2] — populate with CoverBreakV2.get_cover_interval()
 ## values before adding to the scene tree.
-class_name WatcherControllerSideon
+##
+## No class_name here — client/signal_tower/watcher_controller_sideon.gd
+## (T-0194) already declares the global WatcherControllerSideon class_name,
+## and Godot does not allow two scripts to declare the same one (see
+## tests/test_no_duplicate_class_names.gd). Every caller of this file already
+## loads it by path
+## (preload("res://scripts/watcher_controller_sideon.gd")), never by the
+## global type name, so dropping the redundant declaration changes nothing
+## observable.
 extends CharacterBody2D
 
 const _SensorScript: GDScript = preload("res://sensor.gd")
