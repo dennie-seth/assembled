@@ -240,6 +240,34 @@ TEST_CASE("GET /v1/vocabulary HTTP integration") {
         CHECK(body["error"].asInt() == 1001);
     }
 
+    // ── Test 6: unknown non-empty bearer token — pinned to what POST ──────
+    // /v1/notes does for that same token. An unknown token has no identity
+    // row and no vocabulary rows, which is indistinguishable at the SQL
+    // level from a known token with nothing unlocked: both query zero rows.
+    // GET /v1/vocabulary must therefore agree with POST /v1/notes exactly
+    // the same way test 4 does for the empty-but-known token (Codex
+    // re-review, 2026-09-11 coverage gap).
+    {
+        const std::string unknownToken = "test-token-vocab-never-seen";
+
+        auto [code, body] = sendVocabularyGet(httpClient, unknownToken);
+        CHECK(code == drogon::k200OK);
+        REQUIRE(body.isArray());
+        CHECK(body.size() == 0u);
+
+        Json::Value noteBody;
+        noteBody["archetype"] = 4;
+        noteBody["tag"] = 4;
+        noteBody["template_id"] = 6; // {ACTION}
+        Json::Value slots(Json::arrayValue);
+        slots.append(22); // ACTION word never granted to any test token here
+        noteBody["slots"] = slots;
+
+        auto [noteCode, noteJson] = sendNotePostRaw(httpClient, noteBody, unknownToken);
+        CHECK(noteCode == drogon::k403Forbidden);
+        CHECK(noteJson["error"].asInt() == 4002);
+    }
+
     // ── Teardown ──────────────────────────────────────────────────────────
     drogon::app().getLoop()->queueInLoop([]() { drogon::app().quit(); });
     serverThread.join();
