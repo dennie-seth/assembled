@@ -17,6 +17,13 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_DIR = path.join(ROOT, "src/runner");
 const EXTRA_ADMISSION_FILES = ["src/lib/dependencyGuard.js", "src/lib/roundCap.js"];
+// promptBuilder.js lives in src/runner/ but never makes a launch/admission/cost decision --
+// it only assembles prompt text handed to `claude -p`. Acceptance criterion 4 of T-0368
+// requires it to name complexity_points in the planner's card-authoring guidance
+// (PLANNER_EXPANSION_WORKFLOW), so it's excluded here by name rather than by a
+// harder-to-audit content heuristic -- everything else under src/runner/ is still scanned
+// wholesale, including any new file a later card in this set lands there.
+const NON_DECISION_FILES = ["src/runner/promptBuilder.js"];
 
 function listJsFiles(dir) {
   return readdirSync(dir)
@@ -25,7 +32,9 @@ function listJsFiles(dir) {
 }
 
 const FILES_TO_CHECK = [
-  ...listJsFiles(RUNNER_DIR).map((abs) => path.relative(ROOT, abs)),
+  ...listJsFiles(RUNNER_DIR)
+    .map((abs) => path.relative(ROOT, abs))
+    .filter((relPath) => !NON_DECISION_FILES.includes(relPath)),
   ...EXTRA_ADMISSION_FILES
 ];
 
