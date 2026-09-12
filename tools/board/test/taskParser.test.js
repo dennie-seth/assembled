@@ -22,6 +22,7 @@ const VALID_TASK = {
   round: 0,
   rescoped_by: null,
   rescoped_at: null,
+  complexity_points: null,
   comments: [],
   attachments: [],
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
@@ -320,6 +321,58 @@ describe("round (T-0344: experiment-round cap, distinct from the attempts/max_at
 
   it("throws when round is a non-integer number", () => {
     expect(() => parseTask(frontmatter({ round: 1.5 }))).toThrow(/round/i);
+  });
+});
+
+describe("complexity_points (T-0368: human planning signal only, Fibonacci scale)", () => {
+  it("round-trips a task with complexity_points set", () => {
+    const task = { ...VALID_TASK, complexity_points: 5 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("accepts every legal Fibonacci value", () => {
+    for (const value of [1, 2, 3, 5, 8, 13, 21]) {
+      const task = { ...VALID_TASK, complexity_points: value };
+      expect(parseTask(serializeTask(task))).toEqual(task);
+    }
+  });
+
+  it("defaults complexity_points to null when absent from the frontmatter -- existing cards keep working unchanged", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.complexity_points).toBeNull();
+  });
+
+  it("throws a clear error when complexity_points is not a legal Fibonacci value", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: 4 }))).toThrow(/complexity_points/i);
+  });
+
+  it("throws when complexity_points is zero", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: 0 }))).toThrow(/complexity_points/i);
+  });
+
+  it("throws when complexity_points is negative", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: -1 }))).toThrow(/complexity_points/i);
+  });
+
+  it("throws when complexity_points is not an integer", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: "five" }))).toThrow(/complexity_points/i);
+  });
+
+  it("throws when complexity_points is a non-integer number", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: 5.5 }))).toThrow(/complexity_points/i);
   });
 });
 

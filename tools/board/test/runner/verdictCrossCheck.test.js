@@ -309,14 +309,23 @@ describe("crossCheckVerdict", () => {
     });
     expect(result.verdict).toBe("FAIL");
     expect(result.downgraded).toBe(true);
+    // T-0357: a character sheet PNG also routes to character-gate-verify now, so
+    // BOTH required commands are missing here, not just deliverable-check.
     expect(result.crossCheckFailures).toEqual([
+      expect.objectContaining({ id: "character-gate-verify", status: "not_run" }),
       expect.objectContaining({ id: "deliverable-check", status: "not_run" })
     ]);
   });
 
-  it("keeps a self-reported PASS as PASS when the diff-triggered deliverable check (--require-artifact) actually ran and exited zero", () => {
+  it("keeps a self-reported PASS as PASS when the diff-triggered deliverable check (--require-artifact) AND character-gate-verify actually ran and exited zero", () => {
     const events = [
-      ...bashCall("1", "node tools/board/scripts/checkDeliverable.js T-0198 --require-artifact", { ok: true })
+      ...bashCall(
+        "1",
+        "cd tools/asset-gate && python3 -m venv .venv && .venv/bin/pip install -e \".[dev]\" && " +
+          ".venv/bin/python -m asset_gate.cli character-gate ../../assets/final --repo-root ../../",
+        { ok: true }
+      ),
+      ...bashCall("2", "node tools/board/scripts/checkDeliverable.js T-0198 --require-artifact", { ok: true })
     ];
     const result = crossCheckVerdict({
       verdict: PASS,
@@ -329,7 +338,13 @@ describe("crossCheckVerdict", () => {
 
   it("keys the deliverable-check cross-check on the actual task id, not the trailing --require-artifact flag (a run for a DIFFERENT task id must not satisfy this one)", () => {
     const events = [
-      ...bashCall("1", "node tools/board/scripts/checkDeliverable.js T-9999 --require-artifact", { ok: true })
+      ...bashCall(
+        "1",
+        "cd tools/asset-gate && python3 -m venv .venv && .venv/bin/pip install -e \".[dev]\" && " +
+          ".venv/bin/python -m asset_gate.cli character-gate ../../assets/final --repo-root ../../",
+        { ok: true }
+      ),
+      ...bashCall("2", "node tools/board/scripts/checkDeliverable.js T-9999 --require-artifact", { ok: true })
     ];
     const result = crossCheckVerdict({
       verdict: PASS,
