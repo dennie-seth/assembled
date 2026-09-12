@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { NdjsonEventParser } from "./streamParser.js";
 import { buildPrompt, buildPlannerPrompt, buildMergeConflictPrompt, resolveRulesForPaths } from "./promptBuilder.js";
 import { buildReviewerPrompt } from "./reviewerPrompt.js";
@@ -349,6 +350,7 @@ export class RunOrchestrator {
     ensureExecutionIdFn = ensureExecutionId,
     clearExecutionIdFn = clearExecutionId,
     drainPendingUsageWritesFn = drainPendingUsageWrites,
+    generateInvocationIdFn = randomUUID,
     buildVerdictDigestFn = buildVerdictDigest,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
@@ -399,6 +401,7 @@ export class RunOrchestrator {
     this.ensureExecutionIdFn = ensureExecutionIdFn;
     this.clearExecutionIdFn = clearExecutionIdFn;
     this.drainPendingUsageWritesFn = drainPendingUsageWritesFn;
+    this.generateInvocationIdFn = generateInvocationIdFn;
     /** taskId -> the current runCard() span's unique execution id (usageLedger.js). */
     this._executionIds = new Map();
     this.buildVerdictDigestFn = buildVerdictDigestFn;
@@ -884,6 +887,7 @@ export class RunOrchestrator {
     void this._recordUsage(taskId, {
       attempt,
       phase: "implementer",
+      invocationId: implementerResult.invocationId,
       events: implementerResult.events,
       outcome: eventsContainUsageLimitSignature(implementerResult.events) ? "quota_stop" : "success",
       complete: true,
@@ -972,6 +976,7 @@ export class RunOrchestrator {
     void this._recordUsage(taskId, {
       attempt,
       phase: "reviewer",
+      invocationId: reviewerResult.invocationId,
       events: reviewerResult.events,
       outcome: eventsContainUsageLimitSignature(reviewerResult.events)
         ? "quota_stop"
@@ -1052,6 +1057,7 @@ export class RunOrchestrator {
     void this._recordUsage(taskId, {
       attempt: 0,
       phase: "planning",
+      invocationId: plannerResult.invocationId,
       events: plannerResult.events,
       outcome: eventsContainUsageLimitSignature(plannerResult.events) ? "quota_stop" : "success",
       complete: true,
@@ -1203,12 +1209,13 @@ export class RunOrchestrator {
    * write failure (disk full, permissions) is instrumentation, not a run outcome, and must
    * never fail or alter the run it's recording.
    */
-  async _recordUsage(taskId, { attempt, phase, retry = 0, events, outcome, complete, sourceLogPath = null }) {
+  async _recordUsage(taskId, { attempt, phase, retry = 0, invocationId = null, events, outcome, complete, sourceLogPath = null }) {
     try {
       await this.recordAttemptUsageFn({
         runsDir: this.runsDir,
         cardId: taskId,
         executionId: this._executionIds.get(taskId) ?? null,
+        invocationId,
         attempt,
         phase,
         retry,
@@ -1232,6 +1239,17 @@ export class RunOrchestrator {
   }
 
   async _runPhase({ taskId, task, phase, agent, prompt, allowedTools, worktreeDir, model, runLog, attempt = 0 }) {
+    // T-0367 fix round (Codex review 2, 2026-09-12, finding 2): minted fresh for every NEWLY
+    // SPAWNED phase process, distinct from the card's own executionId. After a board crash, a
+    // restarted card reuses its persisted executionId (see ensureExecutionIdFn) -- that's what
+    // "recovery" means, the interrupted work is still logically the same launch -- but the
+    // restarted phase is a brand-new child process, and without a distinct id here it would
+    // silently overwrite the interrupted phase's own (executionId, attempt, phase, retry) ledger
+    // entry instead of leaving it in place alongside its own. Every `_recordUsage` call this
+    // phase's own run produces (the incremental one below, and the terminal one the caller makes
+    // once it knows the fuller classification) carries this SAME id, since they all describe one
+    // process's consumption.
+    const invocationId = this.generateInvocationIdFn();
     const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model });
     const entry = { phase, run, worktreeDir, cancelled: false };
     this.activeRuns.set(taskId, entry);
@@ -1269,7 +1287,7 @@ export class RunOrchestrator {
         // something this orchestrator never sees (a board crash, an OOM-kill), this is the most
         // recent recorded figure and is what keeps that case from silently recording as zero.
         if (event.type === "assistant") {
-          void this._recordUsage(taskId, { attempt, phase, events, outcome: "in_progress", complete: false, sourceLogPath: runLog.path });
+          void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "in_progress", complete: false, sourceLogPath: runLog.path });
         }
       }
     });
@@ -1415,14 +1433,14 @@ export class RunOrchestrator {
     // never add real disk-I/O latency to the phase-completion path a phase timeout/cancellation
     // is already on (the run's own retry loop must not wait on a usage-ledger write to proceed).
     if (entry.cancelled) {
-      void this._recordUsage(taskId, { attempt, phase, events, outcome: "cancelled", complete: false, sourceLogPath: runLog.path });
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "cancelled", complete: false, sourceLogPath: runLog.path });
     } else if (result.timedOut) {
-      void this._recordUsage(taskId, { attempt, phase, events, outcome: "phase_timeout", complete: false, sourceLogPath: runLog.path });
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "phase_timeout", complete: false, sourceLogPath: runLog.path });
     } else if (result.exitCode !== 0) {
-      void this._recordUsage(taskId, { attempt, phase, events, outcome: "crashed", complete: false, sourceLogPath: runLog.path });
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "crashed", complete: false, sourceLogPath: runLog.path });
     }
 
-    return { ...result, events, cancelled: entry.cancelled };
+    return { ...result, events, cancelled: entry.cancelled, invocationId };
   }
 
   /** Phase budget for the agent this phase runs as -- see resolvePhaseTimeoutMs for precedence. */
@@ -2099,6 +2117,7 @@ export class RunOrchestrator {
     void this._recordUsage(taskId, {
       attempt: 0,
       phase: "merge-conflict",
+      invocationId: result.invocationId,
       events: result.events,
       outcome: eventsContainUsageLimitSignature(result.events) ? "quota_stop" : "success",
       complete: true,
