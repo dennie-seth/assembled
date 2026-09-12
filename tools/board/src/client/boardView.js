@@ -5,6 +5,7 @@ import {
   computeDependencyStatus,
   computeUnmetDependencies,
   sortTasks,
+  summarizeComplexityPoints,
   SORT_KEYS
 } from "./board.js";
 import { createAutoScrollController } from "./dragAutoScroll.js";
@@ -216,7 +217,11 @@ function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus,
 
   const header = document.createElement("h2");
   header.className = "column-header";
-  header.textContent = `${STATUS_LABELS[status] ?? status} (${tasks.length})`;
+  // T-0368: the planning-signal summary is display-only -- it never feeds any launch/admission
+  // decision (see test/complexityPointsLaunchIsolation.test.js).
+  const { total, unscored } = summarizeComplexityPoints(tasks);
+  const unscoredSuffix = unscored > 0 ? ` · ${unscored} unscored` : "";
+  header.textContent = `${STATUS_LABELS[status] ?? status} (${tasks.length}) · ${total} pts${unscoredSuffix}`;
   column.appendChild(header);
 
   const sortKey = callbacks.columnSort?.get(status) ?? "id";
