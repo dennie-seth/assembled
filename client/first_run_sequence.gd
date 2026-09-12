@@ -134,7 +134,23 @@ signal session_end_offline_recap(text: String)
 signal offline_indicator_changed(visible: bool)
 
 var _state: State = State.AWAITING_IDENTITY
+## Pure network reachability — did the most recent identity request or
+## heartbeat get any response at all, timeout, or hit a network error. Never
+## set directly by anything except an actual network outcome (see
+## notify_reachability() and _on_identity_received()).
 var _reachable: bool = true
+## Whether this session has (or ever had) a real saved identity worth
+## protecting — distinct from _reachable (Codex re-review, 2026-09-11): a
+## 4xx/5xx identity response, a failed phrase write, or a launch with no
+## server at all all mean nothing was ever saved for this session, and no
+## amount of the network later responding again (even a heartbeat 2xx) makes
+## that untrue. Only acknowledge_error() and the offline-at-launch branch of
+## _on_identity_received() ever set this false; nothing ever sets it back to
+## true once false, since there is no session-recovery path yet. Kept
+## separate from _reachable specifically so a heartbeat response — including
+## a 401/503, which is a real, correct "reachable" observation at the network
+## layer — can never be mistaken for the session becoming saveable again.
+var _session_saveable: bool = true
 var _phrase_path: String = IdentityStore.PHRASE_FILE
 var _chroma_marker_path: String = CHROMA_SHOWN_FILE
 var _note_client: NoteClient = null
@@ -166,10 +182,14 @@ func get_state() -> State:
 	return _state
 
 
-## True if the most recent identity/reachability signal indicated the server
-## was reachable. Starts optimistic (true) until proven otherwise.
+## True if the server is currently reachable AND this session has a real
+## saved identity worth protecting. Starts optimistic (true) until proven
+## otherwise. False either while the network is down, or — permanently, for
+## the rest of the session — once nothing was ever actually saved (an
+## identity/save failure, or a launch with no server reachable at all), even
+## if the network later recovers (Codex re-review, 2026-09-11).
 func is_server_reachable() -> bool:
-	return _reachable
+	return _reachable and _session_saveable
 
 
 ## Begin the first-run sequence: request a new identity from the server, or
@@ -231,14 +251,17 @@ func acknowledge_offline() -> void:
 ## SAVE_FAILED or IDENTITY_FAILED — both are otherwise dead ends, since no
 ## other method advances past them and blockout_room.gd gates the entire
 ## room on entry_room_ready. No-op outside those two states. Enters the room
-## in a not-reachable posture: no valid phrase/identity exists for this
-## session either way, so nothing can be saved regardless of whether the
+## with the session marked not-saveable: no valid phrase/identity exists for
+## this session either way, so nothing can be saved regardless of whether the
 ## server itself is up (IDENTITY_FAILED) or down (SAVE_FAILED never even
 ## involved a server problem, but the outcome for the player is identical).
+## Deliberately does NOT touch _reachable — IDENTITY_FAILED in particular
+## means the server did respond, and a later heartbeat response must never be
+## read as "the session is fine now" (Codex re-review, 2026-09-11).
 func acknowledge_error() -> void:
 	if _state != State.SAVE_FAILED and _state != State.IDENTITY_FAILED:
 		return
-	_reachable = false
+	_session_saveable = false
 	_enter_room()
 
 
@@ -276,7 +299,7 @@ func notify_reachability(reachable: bool) -> void:
 func end_session() -> void:
 	if _state != State.IN_ENTRY_ROOM:
 		return
-	if not _reachable:
+	if not is_server_reachable():
 		session_end_offline_recap.emit(SESSION_END_OFFLINE_RECAP_TEXT)
 	_state = State.ENDED
 
@@ -349,8 +372,13 @@ func _on_identity_received(state: int, http_status: int, phrase: String) -> void
 			)
 		NoteClient.STATE_TIMEOUT, NoteClient.STATE_NETWORK_ERROR:
 			# No phrase could be minted at all — skip straight to the offline
-			# notice rather than fabricating a phrase-reveal screen.
+			# notice rather than fabricating a phrase-reveal screen. Nothing
+			# was ever saved this session, and that stays true even if the
+			# server later comes back within the same session (Codex
+			# re-review, 2026-09-11) — there is no retry of the identity
+			# request once the room is entered.
 			_reachable = false
+			_session_saveable = false
 			_state = State.OFFLINE_NOTICE
 			offline_notice_required.emit(OFFLINE_NOTICE_TEXT)
 		_:

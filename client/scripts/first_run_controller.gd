@@ -241,9 +241,15 @@ func _finish_close_request() -> void:
 		tree.quit()
 
 
-func _on_phrase_reveal_ready(_phrase: String, notice_text: String, _saved_path: String) -> void:
+func _on_phrase_reveal_ready(phrase: String, notice_text: String, _saved_path: String) -> void:
 	_phrase_screen = BlockingNoticeScreen.new()
 	_phrase_screen.build_ui()
+	# The phrase itself, in its own control — distinct from the warning copy
+	# below, which only ever talks about the phrase (Codex re-review,
+	# 2026-09-11). save_phrase() has already succeeded by the time
+	# phrase_reveal_ready fires (FirstRunSequence._on_identity_received()),
+	# so save-before-display ordering holds regardless of this call order.
+	_phrase_screen.set_phrase_text(phrase)
 	_phrase_screen.set_notice_text(notice_text)
 	_phrase_screen.acknowledged.connect(_on_phrase_acknowledged)
 	add_child(_phrase_screen)
