@@ -425,7 +425,9 @@ describe("usage-ledger drain on shutdown (T-0367 fix round 3)", () => {
       release = resolve;
     });
 
-    const write = recordAttemptUsage({
+    // Fire-and-forget on purpose, matching how the orchestrator itself dispatches a terminal
+    // record (`void this._recordUsage(...)`) -- close() is what's under test for whether it waits.
+    recordAttemptUsage({
       ...usageKey(runsDir),
       events: [
         {
@@ -444,7 +446,7 @@ describe("usage-ledger drain on shutdown (T-0367 fix round 3)", () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
         return fs.writeFile(...args);
       }
-    });
+    }).catch(() => {});
 
     const closePromise = board.close();
     release();

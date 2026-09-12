@@ -290,3 +290,37 @@ lands mid-phase, before any terminal outcome; every recorded entry across a run 
 execution id, minted before the first process spawns and cleared on normal completion; pending
 usage writes are drained before `runCard()` returns; and an instrumentation failure
 (`recordAttemptUsageFn` rejecting on every call) never changes the run's own verdict.
+
+## Draining on board shutdown, not just run completion
+
+Fix round 3 (2026-09-12) closed a gap the round above didn't cover: `runCard()`'s own `finally`
+(above) only drains pending usage-ledger writes when a *run* finishes normally. Nothing drained on
+an actual board-*process* shutdown, and — worse — nothing in production called the board's
+`close()` at all. `serviceRestart.js`'s auto-restart and `deploy.sh` both stop the systemd unit with
+`systemctl --user restart/stop`, i.e. a plain `SIGTERM`, and `tools/board/src/server/index.js`
+installed handlers only for `uncaughtException`/`unhandledRejection` — so Node exited on that signal
+without running any cleanup, and a terminal write dispatched fire-and-forget
+(`void this._recordUsage(...)`) mid-write at exactly that moment could be lost. That is precisely
+the quota-stop/crash/restart shutdown this ticket exists to measure, so losing the terminal figure
+there defeats the point.
+
+Two pieces close it:
+
+- **`boardServer.js`'s `close()`** now awaits a bounded drain (`drainUsageWritesBestEffort`,
+  default `usageDrainTimeoutMs: 3000`, overridable via `BOARD_USAGE_DRAIN_TIMEOUT_MS` or the
+  `startBoardServer` options for tests) before closing the HTTP server and DB — the drain runs
+  while the process can still do I/O, not after. A timed-out or rejecting drain is logged
+  (`console.warn`) and swallowed, never thrown: this is instrumentation, so it must never block
+  shutdown past its bound or change any card's verdict.
+- **`index.js`** installs `SIGTERM`/`SIGINT` handlers that `await board.close()` (which now
+  includes the drain above) and then `process.exit(0)` — the actual call site auto-restart and
+  deploys were missing. A rejecting `close()` is logged but still followed by the exit, so a
+  shutdown-time instrumentation failure can never wedge the process past the signal it was asked to
+  stop for. The bound is kept comfortably inside this board's known 90-second final-SIGTERM systemd
+  timeout.
+
+See `boardServer.test.js`'s "usage-ledger drain on shutdown" suite and `server/index.test.js`'s
+"orderly shutdown on SIGTERM/SIGINT" suite: an in-flight terminal write is on disk with its correct
+tokens/outcome/`complete` flag by the time `close()` resolves; a drain held open past its bound
+still lets `close()` finish within that bound; a rejecting drain never throws out of `close()`; and
+both signal handlers call `close()` then exit, including when `close()` itself rejects.
