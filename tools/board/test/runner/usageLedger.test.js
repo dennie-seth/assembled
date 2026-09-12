@@ -232,6 +232,72 @@ describe("summarizeUsageFromEvents -- message-level dedup (Codex review 2026-09-
   });
 });
 
+describe("summarizeUsageFromEvents -- final-result validity and cost provenance (Codex review 2, 2026-09-12)", () => {
+  it("a result event with no usage object at all keeps the known incremental usage and marks the entry incomplete", () => {
+    // Codex's reproduction: a valid 100-input-token message followed by a bare `{type: "result"}`
+    // used to report 0 input, usageSource "result", usageIncomplete false -- discarding real,
+    // already-known consumption and calling it a measured, complete zero-cost session.
+    const events = [assistantTurn({ id: "msg-1", input: 100 }), { type: "result" }];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.tokens.input).toBe(100);
+    expect(summary.usageSource).toBe("incremental");
+    expect(summary.usageIncomplete).toBe(true);
+  });
+
+  it("a result event with an empty usage object is treated the same as a missing one", () => {
+    const events = [assistantTurn({ id: "msg-1", input: 100 }), { type: "result", usage: {} }];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.tokens.input).toBe(100);
+    expect(summary.usageIncomplete).toBe(true);
+  });
+
+  it("a result event with a malformed (negative) counter is not authoritative and does not corrupt the incremental total", () => {
+    const events = [assistantTurn({ id: "msg-1", input: 100 }), { type: "result", usage: { input_tokens: -1, output_tokens: 5 } }];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.tokens.input).toBe(100);
+    expect(summary.usageIncomplete).toBe(true);
+  });
+
+  it("an assistant message with an empty usage object is reported incomplete, never coerced to zero-cost", () => {
+    const events = [{ type: "assistant", session_id: "s", message: { id: "msg-1", usage: {} } }];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.usageIncomplete).toBe(true);
+    expect(summary.tokens.input).toBe(0);
+  });
+
+  it("an assistant message with a non-finite counter is reported incomplete, never coerced to zero-cost", () => {
+    const events = [{ type: "assistant", session_id: "s", message: { id: "msg-1", usage: { input_tokens: Number.NaN, output_tokens: 1 } } }];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.usageIncomplete).toBe(true);
+  });
+
+  it("a missing monetary cost on a valid result is recorded as unknown (null), distinct from a measured zero cost", () => {
+    const noCostEvent = { type: "result", usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } };
+    const summary = summarizeUsageFromEvents([noCostEvent]);
+    expect(summary.usageSource).toBe("result");
+    expect(summary.costUsd).toBeNull();
+  });
+
+  it("a valid result event with total_cost_usd: 0 reports a measured zero cost, not unknown", () => {
+    const events = [resultEvent({ input: 10, output: 5, costUsd: 0 })];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.costUsd).toBe(0);
+  });
+
+  it("cost is unknown (null), not zero, when only incremental (non-result) usage was ever seen", () => {
+    const events = [assistantTurn({ id: "msg-1", input: 10 })];
+    const summary = summarizeUsageFromEvents(events);
+    expect(summary.usageSource).toBe("incremental");
+    expect(summary.costUsd).toBeNull();
+  });
+
+  it("cost is a genuine measured zero when no events were seen at all", () => {
+    const summary = summarizeUsageFromEvents([]);
+    expect(summary.usageSource).toBe("none");
+    expect(summary.costUsd).toBe(0);
+  });
+});
+
 describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
   let runsDir;
 
@@ -687,5 +753,141 @@ describe("write ordering and atomicity (Codex review 2026-09-12, P2)", () => {
 
     const entry = await readAttemptUsage({ ...base, runsDir });
     expect(entry).toBeNull();
+  });
+});
+
+describe("publication ordering across out-of-order renames (Codex review 2, 2026-09-12, finding 1)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-publish-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const base = { runsDir, cardId: "T-PUBLISH", executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0 };
+
+  it("a delayed earlier RENAME (not write) never overwrites a later terminal write that already published", async () => {
+    // The prior regression only delayed the temp-file WRITE, which happens before the old
+    // revision-vs-committed check -- so it passed while the check-through-rename interval stayed
+    // open. Codex's reproduction delays the RENAME itself: the older write's temp file is already
+    // on disk and its revision check already passed before the newer write even starts.
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let started;
+    const ready = new Promise((resolve) => {
+      started = resolve;
+    });
+
+    const older = recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 10 })],
+      outcome: "in_progress",
+      complete: false,
+      renameFn: async (...args) => {
+        started();
+        await gate;
+        return fs.rename(...args);
+      }
+    });
+    await ready;
+
+    // The newer, terminal write must complete on its own -- it must NEVER be forced to queue
+    // behind the older write's still-open (delayed) rename.
+    await recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 100 })],
+      outcome: "success",
+      complete: true
+    });
+
+    release();
+    await older;
+
+    const final = await readAttemptUsage({ ...base, runsDir });
+    expect(final.tokens.input).toBe(100);
+    expect(final.outcome).toBe("success");
+    expect(final.complete).toBe(true);
+  });
+
+  it("a failed rename leaves the previously published entry intact and never advances committed state", async () => {
+    await recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 50 })],
+      outcome: "success",
+      complete: true
+    });
+
+    await expect(
+      recordAttemptUsage({
+        ...base,
+        runsDir,
+        events: [assistantTurn({ id: "msg-1", input: 999 })],
+        outcome: "success",
+        complete: true,
+        renameFn: async () => {
+          throw new Error("rename failed: EXDEV");
+        }
+      })
+    ).rejects.toThrow("rename failed: EXDEV");
+
+    const entry = await readAttemptUsage({ ...base, runsDir });
+    expect(entry.tokens.input).toBe(50);
+
+    // A write for the SAME key afterward must still be accepted as newer -- a failed rename must
+    // never have advanced the committed marker on this key's behalf.
+    await recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 75 })],
+      outcome: "success",
+      complete: true
+    });
+    const after = await readAttemptUsage({ ...base, runsDir });
+    expect(after.tokens.input).toBe(75);
+  });
+});
+
+describe("execution id hardening (Codex review 2, 2026-09-12, finding 4)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-execid-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  it("usageLedgerEntryPath rejects a missing executionId before building any path", () => {
+    expect(() => usageLedgerEntryPath(runsDir, { cardId: "T-BAD", executionId: undefined, attempt: 1, phase: "implementer", retry: 0 })).toThrow();
+    expect(() => usageLedgerEntryPath(runsDir, { cardId: "T-BAD", executionId: null, attempt: 1, phase: "implementer", retry: 0 })).toThrow();
+    expect(() => usageLedgerEntryPath(runsDir, { cardId: "T-BAD", executionId: "", attempt: 1, phase: "implementer", retry: 0 })).toThrow();
+  });
+
+  it("recordAttemptUsage rejects a missing executionId and never writes an execundefined/execnull entry", async () => {
+    await expect(
+      recordAttemptUsage({
+        runsDir,
+        cardId: "T-BAD",
+        executionId: undefined,
+        attempt: 1,
+        phase: "implementer",
+        retry: 0,
+        events: [assistantTurn({ id: "msg-1", input: 10 })],
+        outcome: "success",
+        complete: true
+      })
+    ).rejects.toThrow();
+
+    const names = await fs.readdir(runsDir).catch(() => []);
+    expect(names.some((n) => n.includes("execundefined") || n.includes("execnull"))).toBe(false);
   });
 });
