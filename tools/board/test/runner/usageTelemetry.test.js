@@ -15,13 +15,15 @@ const NOW_MS = 1_788_000_000_000;
 const FUTURE_RESETS_AT = Math.floor(NOW_MS / 1000) + 3600;
 const PAST_RESETS_AT = Math.floor(NOW_MS / 1000) - 3600;
 
-function rateLimitEvent(info) {
-  return {
+function rateLimitEvent(info, { receivedAtMs } = {}) {
+  const event = {
     type: "rate_limit_event",
     rate_limit_info: info,
     uuid: "54d022f9-8efd-43e7-a49f-67cac9a3e682",
     session_id: "18d5c168-5e17-4062-8f5a-4d502597766f"
   };
+  if (typeof receivedAtMs === "number") event.receivedAtMs = receivedAtMs;
+  return event;
 }
 
 /** The exact shape a live `claude` CLI run writes for a healthy 5-hour reading. */
@@ -70,9 +72,22 @@ describe("readWindowUsage", () => {
     await fs.rm(runsDir, { recursive: true, force: true });
   });
 
+  /**
+   * Stamps a `rate_limit_event` lacking its own `receivedAtMs` with `mtimeMs` before writing --
+   * every existing test in this file writes a log once, at one coherent instant, so treating that
+   * instant as this event's trusted receive timestamp preserves exactly the same behavior these
+   * tests already pinned before the receive-timestamp fix (Codex review 2026-09-12, P1). Tests
+   * exercising the NEW "no trustworthy timing" fallback bypass this helper and write raw JSON
+   * lines directly, the same way Codex's own reproduction probe does.
+   */
   async function writeLog(name, events, mtimeMs) {
     const filePath = path.join(runsDir, name);
-    await fs.writeFile(filePath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+    const stamped = events.map((e) =>
+      e && e.type === "rate_limit_event" && typeof e.receivedAtMs !== "number" && mtimeMs !== undefined
+        ? { ...e, receivedAtMs: mtimeMs }
+        : e
+    );
+    await fs.writeFile(filePath, stamped.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
     if (mtimeMs !== undefined) {
       await fs.utimes(filePath, new Date(mtimeMs), new Date(mtimeMs));
     }
@@ -211,7 +226,12 @@ describe("independent windows -- the bug this card fixes", () => {
 
   async function writeLog(name, events, mtimeMs) {
     const filePath = path.join(runsDir, name);
-    await fs.writeFile(filePath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+    const stamped = events.map((e) =>
+      e && e.type === "rate_limit_event" && typeof e.receivedAtMs !== "number" && mtimeMs !== undefined
+        ? { ...e, receivedAtMs: mtimeMs }
+        : e
+    );
+    await fs.writeFile(filePath, stamped.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
     if (mtimeMs !== undefined) await fs.utimes(filePath, new Date(mtimeMs), new Date(mtimeMs));
     return filePath;
   }
@@ -268,5 +288,103 @@ describe("independent windows -- the bug this card fixes", () => {
 
     expect(telemetry.five_hour.logPath).toContain("T-0002-new.jsonl");
     expect(telemetry.seven_day.logPath).toContain("T-0001-old.jsonl");
+  });
+});
+
+describe("receive-timestamp freshness, not log-file mtime (Codex review 2026-09-12, P1)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-telemetry-receive-ts-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  /** Writes raw JSON lines with no auto-stamping -- full control, matching Codex's own probe. */
+  async function writeRaw(name, lines) {
+    const filePath = path.join(runsDir, name);
+    await fs.writeFile(filePath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
+    return filePath;
+  }
+
+  it("Codex's exact reproduction: a weekly reading in a log last modified 3 hours ago stays stale after an unrelated event is appended", async () => {
+    const logPath = await writeRaw("old-event.jsonl", [rateLimitEvent(sevenDayAllowed({ status: "allowed_warning", utilization: 0.75 }))]);
+    const threeHoursAgo = NOW_MS - 3 * 3600 * 1000;
+    await fs.utimes(logPath, new Date(threeHoursAgo), new Date(threeHoursAgo));
+
+    const before = await readWindowUsage({ runsDir, windowKind: "seven_day", now: NOW_MS });
+    expect(before.classification).toBe(READING_STATUS.STALE);
+
+    await fs.appendFile(logPath, JSON.stringify({ type: "assistant", timestamp: new Date(NOW_MS).toISOString(), message: { content: [] } }) + "\n");
+
+    const after = await readWindowUsage({ runsDir, windowKind: "seven_day", now: NOW_MS });
+    expect(after.classification).toBe(READING_STATUS.STALE);
+    expect(after.utilization).toBeNull();
+  });
+
+  it("an actively-growing log does not make an old receive-stamped reading look fresh", async () => {
+    const logPath = await writeRaw("active.jsonl", [
+      rateLimitEvent(fiveHourAllowed({ status: "allowed_warning", utilization: 0.6 }), {
+        receivedAtMs: NOW_MS - (DEFAULT_MAX_STALENESS_MS.five_hour + 60_000)
+      })
+    ]);
+    // Many later, unrelated writes keep bumping the file's mtime close to "now".
+    for (let i = 0; i < 5; i += 1) {
+      await fs.appendFile(logPath, JSON.stringify({ type: "assistant", timestamp: new Date(NOW_MS).toISOString(), message: { content: [] } }) + "\n");
+    }
+    await fs.utimes(logPath, new Date(NOW_MS), new Date(NOW_MS));
+
+    const reading = await readWindowUsage({ runsDir, windowKind: "five_hour", now: NOW_MS });
+    expect(reading.classification).toBe(READING_STATUS.STALE);
+    expect(reading.utilization).toBeNull();
+  });
+
+  it("sparse weekly events are aged from their own receive timestamp, not the file's mtime", async () => {
+    const logPath = await writeRaw("sparse-weekly.jsonl", [
+      rateLimitEvent(sevenDayAllowed({ status: "allowed_warning", utilization: 0.4 }), { receivedAtMs: NOW_MS - 1000 })
+    ]);
+    for (let i = 0; i < 20; i += 1) {
+      await fs.appendFile(logPath, JSON.stringify({ type: "assistant", timestamp: new Date(NOW_MS).toISOString(), message: { content: [] } }) + "\n");
+    }
+    await fs.utimes(logPath, new Date(NOW_MS), new Date(NOW_MS));
+
+    const reading = await readWindowUsage({ runsDir, windowKind: "seven_day", now: NOW_MS });
+    expect(reading.classification).toBe(READING_STATUS.MEASURED);
+    expect(reading.utilization).toBe(0.4);
+  });
+
+  it("conflicting observations across files: the newer receive-stamped event wins, even from a log with an older mtime", async () => {
+    await writeRaw("file-a.jsonl", [rateLimitEvent(fiveHourAllowed({ status: "allowed_warning", utilization: 0.2 }), { receivedAtMs: NOW_MS - 5000 })]);
+    await fs.utimes(path.join(runsDir, "file-a.jsonl"), new Date(NOW_MS), new Date(NOW_MS));
+
+    await writeRaw("file-b.jsonl", [rateLimitEvent(fiveHourAllowed({ status: "allowed_warning", utilization: 0.8 }), { receivedAtMs: NOW_MS - 500 })]);
+    await fs.utimes(path.join(runsDir, "file-b.jsonl"), new Date(NOW_MS - 100_000), new Date(NOW_MS - 100_000));
+
+    const reading = await readWindowUsage({ runsDir, windowKind: "five_hour", now: NOW_MS });
+    // file-b's event is the NEWER observation (receivedAtMs closer to now) even though file-a
+    // has the newer mtime -- the old mtime-sorted reader would have picked file-a's 0.2 instead.
+    expect(reading.utilization).toBe(0.8);
+    expect(reading.logPath).toContain("file-b.jsonl");
+  });
+
+  it("a historical record with no trustworthy timing is classified conservatively as stale, never measured/estimated", async () => {
+    const logPath = await writeRaw("no-receipt.jsonl", [rateLimitEvent(fiveHourAllowed({ status: "allowed_warning", utilization: 0.3 }))]);
+    await fs.utimes(logPath, new Date(NOW_MS), new Date(NOW_MS));
+
+    const reading = await readWindowUsage({ runsDir, windowKind: "five_hour", now: NOW_MS });
+    expect(reading.classification).toBe(READING_STATUS.STALE);
+    expect(reading.utilization).toBeNull();
+  });
+
+  it("an elapsed reset invalidates the old window's observation rather than reporting verified empty capacity", async () => {
+    await writeRaw("elapsed.jsonl", [
+      rateLimitEvent(fiveHourAllowed({ status: "rejected", resetsAt: PAST_RESETS_AT, utilization: 1 }), { receivedAtMs: NOW_MS - 1000 })
+    ]);
+    const reading = await readWindowUsage({ runsDir, windowKind: "five_hour", now: NOW_MS });
+    expect(reading.classification).toBe(READING_STATUS.ESTIMATED);
+    expect(reading.utilization).toBe(0);
+    expect(reading.resetElapsed).toBe(true);
   });
 });

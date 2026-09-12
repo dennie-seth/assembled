@@ -1250,6 +1250,15 @@ export class RunOrchestrator {
     let appendChain = Promise.resolve();
     const parser = new NdjsonEventParser({
       onEvent: (event) => {
+        // T-0367 fix round (Codex review 2026-09-12, P1): a `rate_limit_event` carries no
+        // wall-clock field of its own, so `usageTelemetry.js`'s freshness check needs one
+        // stamped on arrival -- this is the instant the board actually saw the event, which
+        // `readWindowUsage` then trusts over the containing log file's mtime (a later, unrelated
+        // write to the same log otherwise makes an old reading look fresh; see
+        // docs/usage-telemetry.md).
+        if (event.type === "rate_limit_event" && typeof event.receivedAtMs !== "number") {
+          event.receivedAtMs = this.now().getTime();
+        }
         events.push(event);
         appendChain = appendChain.then(() => runLog.append(event));
         this.hub.broadcast({ type: "run-event", id: taskId, phase, event });

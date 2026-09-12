@@ -514,3 +514,55 @@ describe("RunOrchestrator — usage-ledger write draining and instrumentation is
     expect(task.status).toBe("review");
   });
 });
+
+describe("RunOrchestrator — quota event receive-timestamp stamping (Codex review 2026-09-12, P1)", () => {
+  it("stamps a rate_limit_event with receivedAtMs at arrival, before it's appended to the run log", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const runLogs = [];
+    const fixedNow = new Date("2026-09-12T12:00:00.000Z");
+    const orchestrator = makeOrchestrator({ store, git, runner, runLogs, now: () => fixedNow });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.stdout.emit(
+      "data",
+      ndjson({ type: "rate_limit_event", rate_limit_info: { status: "allowed", rateLimitType: "five_hour", resetsAt: 9999999999 } })
+    );
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fine"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    const implementerLog = runLogs[0];
+    const quotaEvent = implementerLog.events.find((e) => e.type === "rate_limit_event");
+    expect(quotaEvent).toBeDefined();
+    expect(quotaEvent.receivedAtMs).toBe(fixedNow.getTime());
+  });
+
+  it("does not overwrite an already-stamped receivedAtMs (e.g. on a replay)", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const runLogs = [];
+    const orchestrator = makeOrchestrator({ store, git, runner, runLogs });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.stdout.emit(
+      "data",
+      ndjson({ type: "rate_limit_event", receivedAtMs: 12345, rate_limit_info: { status: "allowed", rateLimitType: "five_hour", resetsAt: 9999999999 } })
+    );
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fine"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    const implementerLog = runLogs[0];
+    const quotaEvent = implementerLog.events.find((e) => e.type === "rate_limit_event");
+    expect(quotaEvent.receivedAtMs).toBe(12345);
+  });
+});

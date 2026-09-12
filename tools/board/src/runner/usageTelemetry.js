@@ -37,6 +37,16 @@ export const DEFAULT_MAX_STALENESS_MS = Object.freeze({
   seven_day: 2 * 60 * 60 * 1000
 });
 
+/**
+ * A quota event carries no wall-clock field of its own (verified against real run logs -- see
+ * docs/usage-telemetry.md), so the board stamps one on arrival: `runOrchestrator.js`'s `_runPhase`
+ * sets `receivedAtMs` to the local clock reading at the instant its NDJSON parser hands back the
+ * event, before it's appended to the run log. That is the ONLY trustworthy observation instant --
+ * never the containing file's mtime, which reflects whatever was written to the log MOST
+ * RECENTLY, not when this specific line arrived (Codex review 2026-09-12, P1: an unrelated later
+ * write -- another event in this window, or the OTHER window's -- bumped the file's mtime and
+ * made a 3-hour-old reading misclassify as fresh).
+ */
 function lastMatchingRateLimitInfoIn(lines, predicate) {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i].trim();
@@ -48,11 +58,25 @@ function lastMatchingRateLimitInfoIn(lines, predicate) {
       continue;
     }
     const info = rateLimitInfoFromEvent(event);
-    if (info && predicate(info)) return info;
+    if (info && predicate(info)) {
+      const receivedAtMs = typeof event.receivedAtMs === "number" && Number.isFinite(event.receivedAtMs) ? event.receivedAtMs : null;
+      return { info, receivedAtMs };
+    }
   }
   return null;
 }
 
+/**
+ * Scans up to `maxLogsScanned` logs (still shortlisted newest-mtime-first -- a cheap, effective
+ * heuristic for WHICH files are worth opening at all) and returns the single newest MATCHING
+ * event across all of them, selected by each candidate's own `receivedAtMs`, never by which log
+ * happened to have the newest mtime (Codex review 2026-09-12, P1's "conflicting observations
+ * across files" case). When NOT ONE scanned candidate carries a trustworthy `receivedAtMs` --
+ * a historical record predating this fix, or a test/tool that wrote a raw event directly -- falls
+ * back to the newest-mtime candidate but flags `timingTrusted: false`, so `classifyReading` can
+ * treat it conservatively (age unknown, never measured/estimated) instead of trusting a file mtime
+ * that was never a sound proxy for this event's own age to begin with.
+ */
 async function findNewestMatchingRateLimitInfo({
   runsDir,
   predicate,
@@ -84,23 +108,37 @@ async function findNewestMatchingRateLimitInfo({
   }
   logs.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
+  const candidates = [];
   for (const log of logs.slice(0, maxLogsScanned)) {
-    let info = null;
+    let match = null;
     let foundVia = null;
     try {
-      info = lastMatchingRateLimitInfoIn(await readTailLines(log.filePath, tailBytes, openFn), predicate);
-      if (info) {
+      match = lastMatchingRateLimitInfoIn(await readTailLines(log.filePath, tailBytes, openFn), predicate);
+      if (match) {
         foundVia = "tail";
       } else {
-        info = lastMatchingRateLimitInfoIn(await readHeadLines(log.filePath, tailBytes, openFn), predicate);
-        if (info) foundVia = "head";
+        match = lastMatchingRateLimitInfoIn(await readHeadLines(log.filePath, tailBytes, openFn), predicate);
+        if (match) foundVia = "head";
       }
     } catch {
       continue;
     }
-    if (info) return { info, logPath: log.filePath, observedAtMs: log.mtimeMs, foundVia };
+    if (match) candidates.push({ ...match, logPath: log.filePath, mtimeMs: log.mtimeMs, foundVia });
   }
-  return null;
+
+  if (candidates.length === 0) return null;
+
+  const timed = candidates.filter((c) => c.receivedAtMs !== null);
+  if (timed.length > 0) {
+    timed.sort((a, b) => b.receivedAtMs - a.receivedAtMs);
+    const winner = timed[0];
+    return { info: winner.info, logPath: winner.logPath, observedAtMs: winner.receivedAtMs, foundVia: winner.foundVia, timingTrusted: true };
+  }
+
+  // No scanned candidate carries a trustworthy receive timestamp -- candidates[0] is still the
+  // newest-mtime one, since `logs` (and therefore `candidates`) was built in mtime-desc order.
+  const fallback = candidates[0];
+  return { info: fallback.info, logPath: fallback.logPath, observedAtMs: fallback.mtimeMs, foundVia: fallback.foundVia, timingTrusted: false };
 }
 
 function toMs(seconds) {
@@ -123,13 +161,18 @@ function unavailableReading(windowKind, reason, maxStalenessMs) {
     maxStalenessMs,
     logPath: null,
     foundVia: null,
+    timingTrusted: null,
     reason
   };
 }
 
-function classifyReading({ windowKind, info, observedAtMs, now, maxStalenessMs, logPath, foundVia }) {
-  const ageMs = Math.max(0, now - observedAtMs);
-  const stale = ageMs > maxStalenessMs;
+function classifyReading({ windowKind, info, observedAtMs, now, maxStalenessMs, logPath, foundVia, timingTrusted }) {
+  // Untrusted timing (a historical record with no receive timestamp -- see
+  // `findNewestMatchingRateLimitInfo`) can never be proven fresh, so it is always treated as
+  // stale regardless of what the file's mtime might otherwise suggest -- "unknown or stale
+  // capacity must never silently become unlimited".
+  const ageMs = timingTrusted ? Math.max(0, now - observedAtMs) : null;
+  const stale = !timingTrusted || ageMs > maxStalenessMs;
 
   const status = typeof info.status === "string" ? info.status : null;
   const surpassedThreshold = typeof info.surpassedThreshold === "number" ? info.surpassedThreshold : null;
@@ -158,6 +201,8 @@ function classifyReading({ windowKind, info, observedAtMs, now, maxStalenessMs, 
   }
 
   const reasonBase = `status=${status} rateLimitType=${info.rateLimitType ?? windowKind} (${logPath})`;
+  const reportedObservedAtMs = timingTrusted ? observedAtMs : null;
+  const untrustedReason = `no receive timestamp recorded for this event -- historical record, age unknown, treated conservatively as stale ${reasonBase}`;
 
   if (dataKind === null) {
     return {
@@ -170,11 +215,12 @@ function classifyReading({ windowKind, info, observedAtMs, now, maxStalenessMs, 
       resetsAtMs,
       resetsAtIso: resetsAtMs === null ? null : new Date(resetsAtMs).toISOString(),
       resetElapsed,
-      observedAtMs,
+      observedAtMs: reportedObservedAtMs,
       ageMs,
       maxStalenessMs,
       logPath,
       foundVia,
+      timingTrusted,
       reason: `unrecognized rate-limit status "${status}" ${reasonBase}`
     };
   }
@@ -189,12 +235,13 @@ function classifyReading({ windowKind, info, observedAtMs, now, maxStalenessMs, 
     resetsAtMs,
     resetsAtIso: resetsAtMs === null ? null : new Date(resetsAtMs).toISOString(),
     resetElapsed,
-    observedAtMs,
+    observedAtMs: reportedObservedAtMs,
     ageMs,
     maxStalenessMs,
     logPath,
     foundVia,
-    reason: stale ? `stale (age ${ageMs}ms > max ${maxStalenessMs}ms) ${reasonBase}` : reasonBase
+    timingTrusted,
+    reason: !timingTrusted ? untrustedReason : stale ? `stale (age ${ageMs}ms > max ${maxStalenessMs}ms) ${reasonBase}` : reasonBase
   };
 }
 
@@ -251,7 +298,8 @@ export async function readWindowUsage({
     now,
     maxStalenessMs: effectiveMaxStalenessMs,
     logPath: found.logPath,
-    foundVia: found.foundVia
+    foundVia: found.foundVia,
+    timingTrusted: found.timingTrusted
   });
 }
 

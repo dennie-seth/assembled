@@ -34,8 +34,16 @@ against those logs in this session, not taken as given from the task card:
 - No `rate_limit_event` carries its own wall-clock field — confirmed on the same log's very first
   line, `tasks/.runs/T-0366-2026-09-11T18-15-10-554Z.jsonl:1`, which has only `rate_limit_info`,
   `uuid`, and `session_id` — no `timestamp` key — unlike the `assistant`/`user` events around it,
-  which all carry one. This is why the reader below falls back to the *log file's* mtime rather
-  than an event-level timestamp.
+  which all carry one. **Fix round (Codex review 2026-09-12, P1):** this file's original reader
+  fell back to the *containing log file's* mtime as a stand-in for the event's observation
+  instant — reproduced as a live bug: a `seven_day` reading in a log last modified 3 hours ago
+  correctly read `stale`, but after appending one wholly unrelated `assistant` event to that same
+  log (bumping the file's mtime to "now"), the identical stale reading flipped to `measured`. Any
+  later write to the log — the *other* window's own telemetry, or ordinary turn output — could
+  make an old reading look fresh. `runOrchestrator.js`'s `_runPhase` now stamps a `receivedAtMs`
+  field (the board's own local clock reading, `this.now().getTime()`) onto every
+  `rate_limit_event` at the instant its NDJSON parser hands the event back — before it is ever
+  appended to the run log — and the reader below trusts that field, never the file's mtime.
 
 If a future run's log ever fails to match one of these shapes, the reader below is still built to
 fail safe: an unrecognized `rateLimitType` or `status` value is classified `unavailable`, never
@@ -72,7 +80,7 @@ A terminal quota stop instead ends the run's final `result` event with:
 |---|---|---|
 | Limit-pool identity | Per-account, per-provider (Anthropic API via the `claude` CLI's own auth), not per-model — `rate_limit_info` carries no model field, and neither window type is scoped narrower than the authenticated identity `claude auth status` reports. | Same identity, longer pool. |
 | Units | Utilization, 0..1 fraction of the window's cap. Not a token count or dollar figure — the CLI does not publish the underlying cap or a raw usage number, only this normalized fraction (when present) or the coarse `status` enum (always present). | Same unit, same caveat. |
-| Observation timestamp | No event carries its own wall-clock field. The reader uses the *run log's mtime* as the observation instant — sound when the matching event is the newest line in the log (the common case, `status:allowed`/`allowed_warning` roughly every turn); an underestimate of true age when the matching event was only found via the head-of-file fallback in a still-growing log (see `usageWindow.js`'s existing head-read rationale) — the tail was written more recently by *other* events, so mtime looks newer than the specific matching event actually is. This is the reader's one open imprecision; see `foundVia` on each reading. | Same mechanism. Weekly events are much sparser (once per ~week's worth of runs vs. once per turn), so the head-fallback path is the *normal* path here, not the exception — the imprecision above applies more often to this window than to the 5-hour one. |
+| Observation timestamp | No event carries its own wall-clock field, so the board stamps one itself: `runOrchestrator.js`'s `_runPhase` sets `receivedAtMs` (`this.now().getTime()`) on every `rate_limit_event` the instant its NDJSON parser hands the event back, before it's ever appended to the run log. `readWindowUsage` selects the newest MATCHING event by this field, never by the containing log file's mtime (fix round, Codex review 2026-09-12, P1 — see the reproduced bug in the "Provenance" section above). A record with no `receivedAtMs` at all — one written before this fix landed, or by anything that appends to a run log directly rather than through the orchestrator — has no trustworthy timing and is always classified `stale` regardless of file mtime, never silently trusted as fresh; see "Classification" below. | Same mechanism. Weekly events are much sparser (once per ~week's worth of runs vs. once per turn), so a `seven_day` reading is more likely to sit in a log that keeps growing long after that specific reading arrived — exactly the case a file-mtime-based reader gets wrong most often. |
 | Reset semantics | `resetsAt` (unix seconds) is the instant this specific window's cap frees up. Verified (not inferred from the phrase "5-hour window"): `usageWindow.js`'s `utilizationFromRateLimitInfo` already treats `now >= resetsAt*1000` as an elapsed window reading as fresh, and that behavior is unchanged here. Each window's `resetsAt` is read from its *own* matching event only — a `five_hour` reading never inherits or is reset by a `seven_day` event's `resetsAt` or vice versa (see "read independently" below). | Same semantics, own `resetsAt`. |
 | Maximum acceptable staleness | 15 minutes (`DEFAULT_MAX_STALENESS_MS.five_hour`) — measured, not asserted: `tasks/.runs/T-0366-2026-09-11T18-15-10-554Z.jsonl` records seven consecutive `five_hour` readings in one continuous session at lines 1/21/61/158/164/200/235. Using the nearest neighbouring `assistant`/`user` event's own `timestamp` field as each reading's observation instant (lines 5/22/62/159/165/199/234 respectively), the gaps between consecutive readings run ~9s, ~33s, ~1m42s, ~4s, ~2m20s, ~1m58s — the worst observed gap is ~2m20s. 15 minutes is >6x that worst observed gap, not a placeholder. | 2 hours (`DEFAULT_MAX_STALENESS_MS.seven_day`) — also measured, corrected from an earlier reviewer round that (correctly) flagged this file as having grown since first cited: `tasks/.runs/T-0367-2026-09-11T23-06-33-652Z.jsonl` accumulates `seven_day` readings across every implementer/reviewer session run against this same card, at lines 1/287/411/619/1029/1190/1434. Only lines 1 and 287 share one session (`c3cf5aa3-...`, the only true same-session repeat in the file) — ~5m8s apart (23:06:41 → 23:11:49, using the neighbouring `assistant` timestamp at line 6 as the session-start anchor and the tool-result timestamp at line 288 for the second reading). The rest (lines 411/619/1029/1190/1434) are each a *different* session's own opening reading, not a repeat, so they don't tighten the within-session bound; they do confirm the window's utilization holds steady (0.59–0.61) across many separate orchestrator runs, never misread as reset. Cross-session, the gap between a card's separate runs widens to roughly an hour (`tasks/.runs/T-0367-2026-09-11T22-06-33-812Z.jsonl`, created exactly one hour before the 23:06 file, also opens with its own `seven_day` reading at line 1). 2 hours sits above every observed gap, same-session or cross-session. Both constants are exported and overridable per call; tightening them is a config change, not a code change. |
 
@@ -91,39 +99,78 @@ still found even when the very latest event anywhere is `five_hour:allowed`. See
 `usageTelemetry.test.js`'s "independent windows" suite for the failure mode this prevents and the
 regression test that pins it.
 
+"Newest" is decided by each matching candidate's own `receivedAtMs` (see "Observation timestamp"
+above), never by which log file happens to have the newest mtime: `findNewestMatchingRateLimitInfo`
+still shortlists up to `maxLogsScanned` logs by mtime (a cheap heuristic for which files are worth
+opening at all), but then compares every matching candidate found across that shortlist by receive
+timestamp before picking a winner. A fix-round regression test (Codex review 2026-09-12, P1) pins
+this directly: two logs each carry a matching event, the log with the OLDER mtime holds the event
+with the NEWER `receivedAtMs`, and the reader still picks that one.
+
 ## Classification: measured / estimated / stale / unavailable
 
 Every reading `readWindowUsage`/`readUsageTelemetry` returns is one of exactly four
 classifications, so a caller can never mistake a policy stand-in for a real number, or a merely-old
 reading for a genuinely-missing one:
 
-- **`measured`** — the event carried an explicit, in-range (`0..1`) numeric `utilization`, and the
-  reading is fresh (age ≤ the window's max staleness). This is real telemetry, not a guess.
+- **`measured`** — the event carried an explicit, in-range (`0..1`) numeric `utilization`, the
+  reading has a trustworthy `receivedAtMs`, and it is fresh (age ≤ the window's max staleness).
+  This is real telemetry, not a guess.
 - **`estimated`** — no numeric `utilization` was present, so the reading falls back to the same
   status-only stand-in `usageWindow.js` already uses (`allowed`→0, `allowed_warning`→0.9,
-  `rejected`→1, elapsed-reset→0). Still fresh. **A status-only `allowed` event is always
-  `estimated`, never `measured`** — the zero it reports is a policy floor, not a measurement of
-  zero usage, and collapsing that distinction was exactly the bug this card exists to fix.
-- **`stale`** — a matching event was found, but its observation age exceeds the window's max
-  staleness. The numeric `utilization` is deliberately **not** surfaced as usable in this case
-  (`utilization: null`) — "unknown or stale capacity must never silently become unlimited" means a
-  stale `allowed` must not read the same as a fresh one to any downstream gate.
+  `rejected`→1, elapsed-reset→0). Still requires trustworthy, fresh timing. **A status-only
+  `allowed` event is always `estimated`, never `measured`** — the zero it reports is a policy
+  floor, not a measurement of zero usage, and collapsing that distinction was exactly the bug this
+  card exists to fix.
+- **`stale`** — either a matching event was found but its observation age (by `receivedAtMs`)
+  exceeds the window's max staleness, OR the event has no trustworthy `receivedAtMs` at all (a
+  historical record predating this fix, or anything that wrote a raw event outside the
+  orchestrator's own capture path) — an untimed record can never be proven fresh, so it is always
+  treated as stale rather than trusting the file's mtime as a substitute (fix round, Codex review
+  2026-09-12, P1). The numeric `utilization` is deliberately **not** surfaced as usable in either
+  case (`utilization: null`) — "unknown or stale capacity must never silently become unlimited"
+  means a stale (or untimed) `allowed` must not read the same as a fresh one to any downstream
+  gate. `timingTrusted: false` on the reading distinguishes the untimed case from a genuinely aged
+  one, and `observedAtMs`/`ageMs` are both `null` when timing isn't trustworthy.
 - **`unavailable`** — no event matching this window's `rateLimitType` was found anywhere in the
   scanned logs, or its `status` was unrecognized (a CLI value this reader has never seen). Also
   `utilization: null`. Distinguished from `stale` in the reading's `reason` string and in which of
-  `logPath`/`observedAtMs` are present (both `null` for `unavailable`, both populated for `stale`).
+  `logPath`/`observedAtMs` are present (both `null` for `unavailable`, `logPath` populated for
+  `stale` even when `observedAtMs` is `null` for an untimed record).
+
+An elapsed reset (`resetsAt` already in the past relative to `now`) invalidates the OLD window's
+observation rather than reporting verified empty capacity: it still reads `estimated` (never
+`measured`) at `utilization: 0`, since a reset having occurred is not proof the new window is
+actually empty — another consumer may already have spent some of it before this reading was taken.
+`resetElapsed: true` on the reading is what distinguishes this from a genuinely fresh zero.
 
 ## The idempotent usage ledger
 
 `runLog.js` retains every event verbatim in `tasks/.runs/*.jsonl` already — the ledger does not
-duplicate that; it stores a **derived summary**, one JSON file per `(card, attempt, phase, retry)`
-key (`tasks/.runs/<cardId>-attempt<N>-<phase>-retry<N>.usage.json`, mirroring `runState.js`'s
-`<taskId>.runstate.json` sidecar convention), always computed fresh from the full event list rather
-than accumulated as deltas. Recomputing from scratch on every call is what makes recording
-idempotent by construction: calling `recordAttemptUsage` twice with the same events overwrites the
-same file with the same content, never doubling a running total. Recording again with a **longer**
-events array (the normal "incrementally, and again at termination" case) simply recomputes and
-overwrites with the fuller picture — still one file, still one number, per key.
+duplicate that; it stores a **derived summary**, one JSON file per
+`(card, execution, attempt, phase, retry)` key
+(`tasks/.runs/<cardId>-exec<executionId>-attempt<N>-<phase>-retry<N>.usage.json`, mirroring
+`runState.js`'s `<taskId>.runstate.json` sidecar convention), always computed fresh from the full
+event list rather than accumulated as deltas. Recomputing from scratch on every call is what makes
+recording idempotent by construction: calling `recordAttemptUsage` twice with the same events
+overwrites the same file with the same content, never doubling a running total. Recording again
+with a **longer** events array (the normal "incrementally, and again at termination" case) simply
+recomputes and overwrites with the fuller picture — still one file, still one number, per key.
+
+**Execution identity (fix round, Codex review 2026-09-12, P1).** The key used to be only
+`(card, attempt, phase, retry)`, and every fresh `runCard()` invocation restarts its own attempt
+loop at 1 — so a rerun of a card silently overwrote a previous launch's attempt-1 ledger files.
+Reproduced live: a 100-token launch that ended in a quota-stop, followed by a fresh 25-token launch
+that succeeded, both attempt 1 — the card's reported total came out to 25, not 125.
+`usageLedger.js`'s `ensureExecutionId` mints a unique id (persisted to
+`tasks/.runs/<cardId>.execution.json`) the moment `runCard()` claims a card, before ANY process is
+spawned (worktree setup, planner, implementer, reviewer, merge-conflict all follow), and
+`clearExecutionId` removes it again once that `runCard()` span ends normally — so the NEXT launch
+mints a fresh id, while a launch whose own cleanup never got to run (the board process died
+mid-run) leaves its id in place for `ensureExecutionId` to recover on the next call for that card.
+Every ledger entry a run produces carries this same id. `executionTotal(entries, executionId)`
+reports one launch's own total; `cardCycleTotal(entries)` now explicitly means the card's LIFETIME
+total across every launch, not just the most recent one.
 
 **Never add per-message usage to a cumulative final result.** Each `assistant` event's
 `message.usage` reflects that one API call. The final `result` event's `usage`/`total_cost_usd` is
@@ -134,14 +181,41 @@ crash, cancel, or phase-timeout truncation) does the per-message sum become the 
 explicitly tagged `usageSource: "incremental"` rather than `"result"`, so a reader can tell a real
 completed total from a lower-bound estimate of an interrupted one at a glance.
 
+**Message-level dedup (fix round, Codex review 2026-09-12, P1).** The incremental path used to sum
+every `assistant` event's usage unconditionally, on the assumption each represents a distinct API
+call. A live-log audit (six recent runs, all six affected) found the CLI instead repeats the same
+assistant message id multiple times, each occurrence carrying the SAME usage snapshot, not a
+delta — one card's own log had 234 of 284 distinct message ids repeated, 323 extra events.
+Reproduced: two events sharing one message id, each reporting `input: 10`, summed to `input: 20`
+instead of `10`. `summarizeUsageFromEvents` now keys incremental usage by `(session_id,
+message.id)` and keeps the LAST snapshot seen per key rather than summing repeats. An event with no
+usable identity (missing message id, or missing/malformed usage) is never folded in as zero cost;
+it instead sets `usageIncomplete: true` on the summary and the recorded ledger entry, so a reader
+can tell "measured, low" from "some of this attempt's usage could not be read at all". A final
+`result` event, when present, is still fully authoritative over all of this within its session.
+
 Outcome and completeness are supplied by the caller (the orchestrator knows *why* an attempt
 stopped feeding events — success, quota-stop, reviewer FAIL, cancel, crash, or phase timeout; the
 ledger does not re-derive that from raw events). `complete: false` on cancel/crash/timeout is what
 marks a recorded figure a lower bound rather than a finished attempt's cost.
 
-Attempt totals sum every phase/retry recorded for one `(card, attempt)` pair; card-cycle totals sum
-every attempt recorded for a card. Both are computed on read (`attemptTotal`/`cardCycleTotal` over
+Attempt totals sum every phase/retry recorded for one `(card, attempt)` pair; card-cycle (lifetime)
+totals sum every execution/attempt recorded for a card; execution totals sum one launch alone. All
+three are computed on read (`attemptTotal`/`executionTotal`/`cardCycleTotal` over
 `listCardUsageEntries`), not stored redundantly, so there is nothing to keep in sync.
+
+**Write ordering and atomicity (fix round, Codex review 2026-09-12, P2).** Every write used to go
+straight to the real sidecar path with no ordering guarantee and no atomicity. Reproduced: an
+earlier in-progress write, artificially delayed, unblocked AFTER a later terminal write had already
+landed — the delayed write clobbered it, leaving the file showing the stale in-progress figure
+instead of the real terminal result. `recordAttemptUsage` now assigns each call a synchronous,
+monotonic sequence number at call time (before any I/O), writes to a temp file, and only commits
+via atomic rename if it is still the newest sequence number for its key by the time that temp write
+finishes — a stale write is dropped instead of regressing the file. A concurrent reader of the real
+path therefore always sees either the complete previous entry or the complete new one, never a
+partial write. `drainPendingUsageWrites()` waits for every currently in-flight write to settle;
+`runCard()` awaits it (best-effort) before its own span is considered over, so a write dispatched
+fire-and-forget mid-run can't race the run's own completion.
 
 ## `recordAttemptUsage` wiring into `runOrchestrator.js`
 
@@ -190,10 +264,18 @@ single phase execution today (only the outer attempt loop, which maps onto `atte
 nothing yet for a nonzero `retry` to distinguish. The ledger's key schema already supports it for
 whenever that changes.
 
+Every `_recordUsage` call also now passes `sourceLogPath: runLog.path` (fix round, Codex review
+2026-09-12, P1 — previously not passed at all, leaving every recorded entry's `sourceLogPath` field
+`null`), and `_recordUsage` looks up the run's own execution id from a `taskId -> executionId` map
+populated once at the top of `runCard()` (see "Execution identity" above).
+
 See `runOrchestrator.usageLedger.test.js` for the dedicated spec covering every case above:
 PASS records `success` for both phases; a retryable reviewer FAIL records `reviewer_fail` then a
 fresh `success` pair on the next attempt; an implementer crash records `crashed`; `cancelRun`
 records `cancelled`; an inactivity-timed-out phase records `phase_timeout`; a clean-exit phase
 whose events carry a 429 session-limit result event classifies as `quota_stop` rather than
-`success`; the planner phase records at attempt 0; and an incremental (`complete: false`) record
-lands mid-phase, before any terminal outcome.
+`success`; the planner phase records at attempt 0; an incremental (`complete: false`) record
+lands mid-phase, before any terminal outcome; every recorded entry across a run shares one
+execution id, minted before the first process spawns and cleared on normal completion; pending
+usage writes are drained before `runCard()` returns; and an instrumentation failure
+(`recordAttemptUsageFn` rejecting on every call) never changes the run's own verdict.
