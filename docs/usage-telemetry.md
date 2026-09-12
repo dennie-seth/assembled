@@ -430,6 +430,53 @@ caller yet (a future raw-log replay/backfill tool, tracked for T-0369, must reco
 the same consumption); when one exists, that identity is its own explicit input, never a silent
 fallback.
 
+**A concurrent prune must never make an existing entry read as absent (Codex review 0913,
+2026-09-13).** `findLatestRevisionEntry` (`readAttemptUsage`) and `listCardUsageEntries` each list
+`runsDir` once, then open every candidate revision file they saw. Publication always creates the new
+revision file *before* pruning older ones for that key, so a listing snapshot can go stale between
+its `readdirFn` call and a later `readFileFn` call: a newer write can publish and prune a name this
+reader already listed, and opening that name now fails with `ENOENT`. The old code treated that
+exactly like "malformed, skip it" — if every candidate the listing saw was pruned out from under it
+before it got a chance to open any of them, the reader reported `null` (or, for
+`listCardUsageEntries`, silently dropped that one key) even though the entry had been recorded
+continuously and a fresh listing would have found its current revision immediately. Reproduced by
+Codex: publish 100; let `readAttemptUsage` list; publish 150 before it opens → `null` (a fresh read
+returns 150); the same shape through `listCardUsageEntries` → zero entries, `executionTotal` zero
+tokens/cost.
+
+Both readers now re-list from scratch, bounded by `MAX_READ_RESCAN_ATTEMPTS` (5), whenever they hit
+an `ENOENT` on a name their own listing produced — `listCardUsageEntries` restarts its *entire* scan
+on any such miss rather than dropping just the contended key, so a card-wide read either resolves
+consistently after re-scanning or never claims completeness for a partial result. A listing that
+comes back with zero candidate revision files for a key is *not* retried: since publication always
+writes the new file before removing the old one, an entry that has ever been recorded has at least
+one revision file present at every instant, so zero candidates means the key genuinely has no
+revisions — `null`/`[]` immediately, no re-scan, even while other keys are being published and
+pruned concurrently. Persistent contention that outlasts the bound raises the newly exported
+`UsageLedgerReadIndeterminateError` (`code: "USAGE_LEDGER_READ_INDETERMINATE"`) instead of ever
+returning something a caller could mistake for an entry, for absent, or for a measured zero/partial
+total — nothing in `tools/board/src` consumes these readers or totals yet (only tests; T-0369/T-0370
+will), so this is safe to introduce now and callers built on top of this ledger must treat that error
+as "read failed, try again" rather than "zero usage". See the "a concurrent prune must never make an
+existing entry read as absent" describe block in `usageLedger.test.js`: forced single interleavings
+via both an injected `readdirFn` and an injected `readFileFn` recover the previous-or-newer value for
+`readAttemptUsage`; a forced interleaving on one of two keys still returns both keys through
+`listCardUsageEntries` with a nonzero `executionTotal`; persistent contention (every listing
+followed by another publish+prune) ends in `UsageLedgerReadIndeterminateError` for both readers; and
+a key with zero revision files reads as absent throughout, even while a different key churns.
+
+**The stored epoch must be a safe integer (Codex review 0913, 2026-09-13).** `loadStoredEpoch`
+previously accepted any finite number. `REVISION_SUFFIX_RE` (`\d+`) can't parse a revision filename
+built from a fractional (`2.5`), astronomically large (`1e300`), or negative (`-7`) epoch, so a
+corrupted-but-technically-numeric stored epoch could make the *next* process's writes permanently
+unreadable by any reader, rather than merely "unrecoverable from the sidecar" (the case
+`loadAndBumpEpoch`'s disk-scan fallback already tolerates). `loadStoredEpoch` and
+`highestEpochOnDisk` now both require `Number.isSafeInteger(n) && n >= 0`, treating anything else
+exactly like a missing/corrupt sidecar (`loadAndBumpEpoch`'s `highestEpochOnDisk` fallback still
+recovers the true epoch from revision filenames already on disk). See the "the stored epoch must be
+a safe integer" describe block in `usageLedger.test.js`: a stored epoch of `2.5`, `1e300`, or `-7`
+between two simulated processes still lets the post-restart write win and stay visible.
+
 ## `recordAttemptUsage` wiring into `runOrchestrator.js`
 
 A prior reviewer round FAILed this card on exactly the gap the section above used to describe:
