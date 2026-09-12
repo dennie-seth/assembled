@@ -145,6 +145,51 @@ export function usageLedgerEntryPath(runsDir, { cardId, executionId, attempt, ph
 }
 
 /**
+ * Monotonic call-order counter, assigned synchronously (before any `await`) the instant
+ * `recordAttemptUsage` is invoked -- this is the actual "monotonic revision" the write-ordering
+ * guard below compares on, NOT `recordedAtMs`: wall-clock time is coarse enough (millisecond
+ * resolution) that two calls issued back-to-back in the same test tick can tie, and a tie must
+ * still resolve deterministically by call order, never by whichever write's I/O merely finishes
+ * first.
+ */
+let nextWriteSequence = 0;
+
+/**
+ * The highest write sequence number that has actually been committed (renamed into place) for a
+ * given ledger key, in-process only. Backs the monotonic-revision guard in `recordAttemptUsage`:
+ * a write whose own sequence number is older than what's already landed for its key is dropped
+ * rather than allowed to regress the file (Codex review 2026-09-12, P2).
+ */
+const lastCommittedSequenceByKey = new Map();
+
+function ledgerKeyString({ cardId, executionId, attempt, phase, retry }) {
+  return `${cardId}::${executionId}::${attempt}::${phase}::${retry}`;
+}
+
+/** In-flight write promises, so `drainPendingUsageWrites` can wait for all of them to settle. */
+const pendingWrites = new Set();
+
+function trackPendingWrite(promise) {
+  const settled = promise.then(
+    () => {},
+    () => {}
+  );
+  pendingWrites.add(settled);
+  settled.finally(() => pendingWrites.delete(settled));
+}
+
+/**
+ * Waits for every currently in-flight `recordAttemptUsage` write to settle (success or failure).
+ * Called on orderly `runCard()` completion and on board shutdown (Codex review 2026-09-12, P2) so
+ * a terminal write dispatched fire-and-forget (`void this._recordUsage(...)`, see
+ * `runOrchestrator.js`) is guaranteed to have actually reached disk before the run -- or the board
+ * process -- is considered done.
+ */
+export async function drainPendingUsageWrites() {
+  await Promise.allSettled([...pendingWrites]);
+}
+
+/**
  * Records (or re-records) usage for one execution/attempt/phase/retry. Always recomputes the
  * summary from the full `events` list passed in and overwrites the sidecar file -- this is what
  * makes it idempotent: replaying the same events, or calling again with a longer (growing) events
@@ -153,6 +198,21 @@ export function usageLedgerEntryPath(runsDir, { cardId, executionId, attempt, ph
  *
  * `outcome` and `complete` are supplied by the caller (the orchestrator knows why an attempt
  * stopped feeding events -- this module does not re-derive that from the events themselves).
+ *
+ * Publishes via write-temp-file-then-atomic-rename, never a direct `writeFile` to the real path,
+ * so a concurrent reader never observes a half-written file (Codex review 2026-09-12, P2): POSIX
+ * rename onto an existing path is atomic, so `usageLedgerEntryPath`'s file is always either the
+ * complete previous entry or the complete new one.
+ *
+ * Guards against out-of-order completion with a monotonic-revision check rather than a strict
+ * per-key write queue: a call-order sequence number is assigned synchronously at call time
+ * (before any I/O), and the decision "am I still the newest write for this key" is made
+ * synchronously too, right after this call's own temp-file write finishes and before its rename --
+ * so two racing writes can never both believe they're the winner, and a write that started
+ * earlier but whose I/O happens to finish later (an earlier in-progress record delayed behind a
+ * later terminal one) is dropped instead of regressing the file. A strict queue would instead have
+ * forced the later (terminal) call to wait behind the earlier (slower) one, which is the wrong
+ * outcome here.
  */
 export async function recordAttemptUsage({
   runsDir,
@@ -167,8 +227,12 @@ export async function recordAttemptUsage({
   sourceLogPath = null,
   now = () => new Date(),
   writeFileFn = fs.writeFile,
-  mkdirFn = fs.mkdir
+  mkdirFn = fs.mkdir,
+  renameFn = fs.rename,
+  unlinkFn = fs.unlink
 }) {
+  const sequence = ++nextWriteSequence;
+  const recordedAtMs = now().getTime();
   const summary = summarizeUsageFromEvents(events);
   const entry = {
     cardId,
@@ -187,12 +251,34 @@ export async function recordAttemptUsage({
     apiErrorStatus: summary.apiErrorStatus,
     resultText: summary.resultText,
     sourceLogPath,
-    recordedAt: now().toISOString()
+    recordedAt: new Date(recordedAtMs).toISOString()
   };
 
-  await mkdirFn(runsDir, { recursive: true });
-  await writeFileFn(usageLedgerEntryPath(runsDir, { cardId, executionId, attempt, phase, retry }), JSON.stringify(entry, null, 2), "utf8");
-  return entry;
+  const key = { cardId, executionId, attempt, phase, retry };
+  const filePath = usageLedgerEntryPath(runsDir, key);
+  const ks = ledgerKeyString(key);
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+
+  const writePromise = (async () => {
+    await mkdirFn(runsDir, { recursive: true });
+    await writeFileFn(tmpPath, JSON.stringify(entry, null, 2), "utf8");
+
+    // Synchronous compare-and-set: no `await` between reading and updating
+    // `lastCommittedSequenceByKey`, so two concurrent callers can never both conclude they're the
+    // winner for the same key.
+    const currentBest = lastCommittedSequenceByKey.get(ks) ?? -Infinity;
+    if (sequence < currentBest) {
+      await unlinkFn(tmpPath).catch(() => {});
+      return entry;
+    }
+    lastCommittedSequenceByKey.set(ks, sequence);
+
+    await renameFn(tmpPath, filePath);
+    return entry;
+  })();
+
+  trackPendingWrite(writePromise);
+  return writePromise;
 }
 
 /** Returns `null` (never throws) when the key was never recorded. */

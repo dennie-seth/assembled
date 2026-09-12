@@ -12,7 +12,8 @@ import {
   cardCycleTotal,
   executionTotal,
   ensureExecutionId,
-  clearExecutionId
+  clearExecutionId,
+  drainPendingUsageWrites
 } from "../../src/runner/usageLedger.js";
 
 let assistantMessageCounter = 0;
@@ -530,5 +531,161 @@ describe("execution identity (Codex review 2026-09-12, P1)", () => {
     it("clearExecutionId is a no-op (never throws) when nothing was persisted", async () => {
       await expect(clearExecutionId({ runsDir, cardId: "T-9004" })).resolves.not.toThrow();
     });
+  });
+});
+
+describe("write ordering and atomicity (Codex review 2026-09-12, P2)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-atomic-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const base = { runsDir, cardId: "T-REVIEW", executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0 };
+
+  it("a delayed earlier in-progress write never overwrites a later terminal write that already committed", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let started;
+    const ready = new Promise((resolve) => {
+      started = resolve;
+    });
+
+    const old = recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 10 })],
+      outcome: "in_progress",
+      complete: false,
+      writeFileFn: async (...args) => {
+        started();
+        await gate;
+        return fs.writeFile(...args);
+      }
+    });
+    await ready;
+
+    await recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 100 })],
+      outcome: "success",
+      complete: true
+    });
+
+    release();
+    await old;
+
+    const last = await readAttemptUsage({ ...base, runsDir });
+    expect(last.tokens.input).toBe(100);
+    expect(last.outcome).toBe("success");
+    expect(last.complete).toBe(true);
+  });
+
+  it("publishes via a temp file then an atomic rename -- a reader never sees a half-written file", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let started;
+    const ready = new Promise((resolve) => {
+      started = resolve;
+    });
+
+    await recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 1 })],
+      outcome: "in_progress",
+      complete: false
+    });
+
+    const write = recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 2 })],
+      outcome: "success",
+      complete: true,
+      writeFileFn: async (...args) => {
+        const result = await fs.writeFile(...args);
+        started();
+        await gate;
+        return result;
+      }
+    });
+    await ready;
+
+    // The new content has been fully written to its OWN temp file but not yet renamed into
+    // place -- a concurrent reader of the real destination path must see the complete OLD
+    // file, never a parse error from a half-renamed/half-written destination, and never the
+    // new content before the rename that publishes it.
+    const duringWrite = await readAttemptUsage({ ...base, runsDir });
+    expect(duringWrite).not.toBeNull();
+    expect(duringWrite.tokens.input).toBe(1);
+
+    release();
+    await write;
+
+    const after = await readAttemptUsage({ ...base, runsDir });
+    expect(after.tokens.input).toBe(2);
+  });
+
+  it("drainPendingUsageWrites waits for an in-flight write before resolving", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    const write = recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 5 })],
+      outcome: "success",
+      complete: true,
+      writeFileFn: async (...args) => {
+        await gate;
+        return fs.writeFile(...args);
+      }
+    });
+
+    let drained = false;
+    const drain = drainPendingUsageWrites().then(() => {
+      drained = true;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(drained).toBe(false);
+
+    release();
+    await write;
+    await drain;
+    expect(drained).toBe(true);
+  });
+
+  it("a failed write rejects (for the caller to swallow) and never leaves a corrupt/partial ledger file behind", async () => {
+    // recordAttemptUsage itself may reject -- it's the ORCHESTRATOR's job (_recordUsage's
+    // try/catch) to make that failure never affect a run's own verdict. This test just pins
+    // that a failed write never leaves a corrupt/partial file behind.
+    await expect(
+      recordAttemptUsage({
+        ...base,
+        runsDir,
+        events: [assistantTurn({ id: "msg-1", input: 1 })],
+        outcome: "success",
+        complete: true,
+        writeFileFn: async () => {
+          throw new Error("disk full");
+        }
+      })
+    ).rejects.toThrow("disk full");
+
+    const entry = await readAttemptUsage({ ...base, runsDir });
+    expect(entry).toBeNull();
   });
 });

@@ -142,6 +142,7 @@ function makeOrchestrator({
   recordAttemptUsageFn,
   ensureExecutionIdFn,
   clearExecutionIdFn,
+  drainPendingUsageWritesFn,
   ...overrides
 } = {}) {
   const createRunLogFn = vi.fn(async () => {
@@ -173,6 +174,7 @@ function makeOrchestrator({
     recordAttemptUsageFn: recordAttemptUsageFn ?? vi.fn(async () => {}),
     ensureExecutionIdFn: ensureExecutionIdFn ?? vi.fn(async () => `exec-${++executionIdCounter}`),
     clearExecutionIdFn: clearExecutionIdFn ?? vi.fn(async () => {}),
+    drainPendingUsageWritesFn: drainPendingUsageWritesFn ?? vi.fn(async () => {}),
     ...overrides
   });
 }
@@ -461,5 +463,54 @@ describe("RunOrchestrator — execution identity (Codex review 2026-09-12, P1)",
 
     const executionIds = new Set(usageCalls(recordAttemptUsageFn).map((c) => c.executionId));
     expect(executionIds.size).toBe(2);
+  });
+});
+
+describe("RunOrchestrator — usage-ledger write draining and instrumentation isolation (Codex review 2026-09-12, P2)", () => {
+  it("drains pending usage writes before runCard() resolves", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const callOrder = [];
+    const recordAttemptUsageFn = vi.fn(async () => {
+      callOrder.push("recordAttemptUsage");
+    });
+    const drainPendingUsageWritesFn = vi.fn(async () => {
+      callOrder.push("drain");
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, recordAttemptUsageFn, drainPendingUsageWritesFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fine"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(drainPendingUsageWritesFn).toHaveBeenCalled();
+    expect(callOrder[callOrder.length - 1]).toBe("drain");
+  });
+
+  it("an instrumentation failure (recordAttemptUsageFn rejects on every call) never changes the run's verdict", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const recordAttemptUsageFn = vi.fn(async () => {
+      throw new Error("disk full");
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, recordAttemptUsageFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(recordAttemptUsageFn).toHaveBeenCalled();
+    const task = await store.get("T-0001");
+    expect(task.status).toBe("review");
   });
 });

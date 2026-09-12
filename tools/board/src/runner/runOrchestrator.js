@@ -22,7 +22,7 @@ import {
   applyPlannerFileViewDiff
 } from "./plannerFileView.js";
 import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
-import { recordAttemptUsage, ensureExecutionId, clearExecutionId } from "./usageLedger.js";
+import { recordAttemptUsage, ensureExecutionId, clearExecutionId, drainPendingUsageWrites } from "./usageLedger.js";
 import { computeFailureSignature } from "./failureSignature.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
 import {
@@ -348,6 +348,7 @@ export class RunOrchestrator {
     recordAttemptUsageFn = recordAttemptUsage,
     ensureExecutionIdFn = ensureExecutionId,
     clearExecutionIdFn = clearExecutionId,
+    drainPendingUsageWritesFn = drainPendingUsageWrites,
     buildVerdictDigestFn = buildVerdictDigest,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
@@ -397,6 +398,7 @@ export class RunOrchestrator {
     this.recordAttemptUsageFn = recordAttemptUsageFn;
     this.ensureExecutionIdFn = ensureExecutionIdFn;
     this.clearExecutionIdFn = clearExecutionIdFn;
+    this.drainPendingUsageWritesFn = drainPendingUsageWritesFn;
     /** taskId -> the current runCard() span's unique execution id (usageLedger.js). */
     this._executionIds = new Map();
     this.buildVerdictDigestFn = buildVerdictDigestFn;
@@ -627,6 +629,13 @@ export class RunOrchestrator {
       // stale pid behind) keeps a future restart's liveness check from having to reason about
       // a runstate written by a run that's already fully finished.
       await this.clearRunStateFn({ runsDir: this.runsDir, taskId });
+      // T-0367 fix round (Codex review 2026-09-12, P2): every usage-ledger write this run
+      // dispatched was fire-and-forget (`void this._recordUsage(...)`) so it never added latency
+      // to the run itself -- but that also means one could still be in flight right here. Drain
+      // them before this runCard() span is considered over, so the run's own terminal write is
+      // guaranteed to have reached disk rather than racing the process's own exit. Best-effort:
+      // wrapped so a drain failure can never fail the run it's instrumenting.
+      await this.drainPendingUsageWritesFn().catch(() => {});
       // Same posture as clearRunStateFn above: this run's own span is over, so the next
       // runCard() call for this card (a genuinely new launch) must mint a fresh execution id
       // rather than reusing this one. Only a runCard() call whose OWN cleanup never got to run
