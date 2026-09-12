@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 const ZERO_TOKENS = Object.freeze({ input: 0, output: 0, cacheCreate: 0, cacheRead: 0 });
 
@@ -132,16 +133,23 @@ export function summarizeUsageFromEvents(events) {
   };
 }
 
-/** Path to the one JSON sidecar recording a given (card, attempt, phase, retry) key's usage. */
-export function usageLedgerEntryPath(runsDir, { cardId, attempt, phase, retry }) {
-  return path.join(runsDir, `${cardId}-attempt${attempt}-${phase}-retry${retry}.usage.json`);
+/**
+ * Path to the one JSON sidecar recording a given (card, execution, attempt, phase, retry) key's
+ * usage. `executionId` (Codex review 2026-09-12, P1) distinguishes separate launches of the SAME
+ * card: without it, a rerun that starts a fresh attempt-1 overwrites a previous launch's
+ * attempt-1 file, and the two launches' totals get silently conflated. See `ensureExecutionId`
+ * for how a launch's id is minted/persisted/reused.
+ */
+export function usageLedgerEntryPath(runsDir, { cardId, executionId, attempt, phase, retry }) {
+  return path.join(runsDir, `${cardId}-exec${executionId}-attempt${attempt}-${phase}-retry${retry}.usage.json`);
 }
 
 /**
- * Records (or re-records) usage for one attempt/phase/retry. Always recomputes the summary from
- * the full `events` list passed in and overwrites the sidecar file -- this is what makes it
- * idempotent: replaying the same events, or calling again with a longer (growing) events list as
- * a run progresses, produces one file with one correct number, never an accumulated double-count.
+ * Records (or re-records) usage for one execution/attempt/phase/retry. Always recomputes the
+ * summary from the full `events` list passed in and overwrites the sidecar file -- this is what
+ * makes it idempotent: replaying the same events, or calling again with a longer (growing) events
+ * list as a run progresses, produces one file with one correct number, never an accumulated
+ * double-count.
  *
  * `outcome` and `complete` are supplied by the caller (the orchestrator knows why an attempt
  * stopped feeding events -- this module does not re-derive that from the events themselves).
@@ -149,6 +157,7 @@ export function usageLedgerEntryPath(runsDir, { cardId, attempt, phase, retry })
 export async function recordAttemptUsage({
   runsDir,
   cardId,
+  executionId,
   attempt,
   phase,
   retry,
@@ -163,6 +172,7 @@ export async function recordAttemptUsage({
   const summary = summarizeUsageFromEvents(events);
   const entry = {
     cardId,
+    executionId,
     attempt,
     phase,
     retry,
@@ -181,14 +191,14 @@ export async function recordAttemptUsage({
   };
 
   await mkdirFn(runsDir, { recursive: true });
-  await writeFileFn(usageLedgerEntryPath(runsDir, { cardId, attempt, phase, retry }), JSON.stringify(entry, null, 2), "utf8");
+  await writeFileFn(usageLedgerEntryPath(runsDir, { cardId, executionId, attempt, phase, retry }), JSON.stringify(entry, null, 2), "utf8");
   return entry;
 }
 
 /** Returns `null` (never throws) when the key was never recorded. */
-export async function readAttemptUsage({ runsDir, cardId, attempt, phase, retry, readFileFn = fs.readFile }) {
+export async function readAttemptUsage({ runsDir, cardId, executionId, attempt, phase, retry, readFileFn = fs.readFile }) {
   try {
-    const raw = await readFileFn(usageLedgerEntryPath(runsDir, { cardId, attempt, phase, retry }), "utf8");
+    const raw = await readFileFn(usageLedgerEntryPath(runsDir, { cardId, executionId, attempt, phase, retry }), "utf8");
     return JSON.parse(raw);
   } catch (err) {
     if (err && err.code === "ENOENT") return null;
@@ -196,9 +206,9 @@ export async function readAttemptUsage({ runsDir, cardId, attempt, phase, retry,
   }
 }
 
-const ENTRY_FILENAME_RE = /^(.+)-attempt(\d+)-(.+)-retry(\d+)\.usage\.json$/;
+const ENTRY_FILENAME_RE = /^(.+)-exec(.+)-attempt(\d+)-(.+)-retry(\d+)\.usage\.json$/;
 
-/** All recorded usage entries for one card, across every attempt/phase/retry. */
+/** All recorded usage entries for one card, across every execution/attempt/phase/retry. */
 export async function listCardUsageEntries({ runsDir, cardId, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
   let names;
   try {
@@ -238,7 +248,80 @@ export function attemptTotal(entries, attempt) {
   return sumEntries(entries.filter((e) => e.attempt === attempt));
 }
 
-/** Sums every attempt/phase/retry recorded for the card -- the whole current work cycle. */
+/** Sums every attempt/phase/retry recorded for ONE execution (one launch/rerun) of the card. */
+export function executionTotal(entries, executionId) {
+  return sumEntries(entries.filter((e) => e.executionId === executionId));
+}
+
+/**
+ * Sums every execution/attempt/phase/retry ever recorded for the card -- the card's LIFETIME
+ * total across every separate launch, not just the most recent one. Distinct from
+ * `executionTotal`, which scopes to a single launch (Codex review 2026-09-12, P1): two separate
+ * launches of the same card must each keep their own total while still contributing to this one.
+ */
 export function cardCycleTotal(entries) {
   return sumEntries(entries);
+}
+
+/** Path to a card's persisted current-execution-id sidecar (separate from runState.js's own). */
+export function executionIdStatePath(runsDir, cardId) {
+  return path.join(runsDir, `${cardId}.execution.json`);
+}
+
+/**
+ * Mints (and persists) a unique execution id for a card the FIRST time this is called for it,
+ * before its first process is ever spawned -- see `runOrchestrator.js`'s `runCard()`, which calls
+ * this immediately after its re-entrancy guard, ahead of worktree setup or any child process.
+ * Every ledger entry recorded during that run carries this same id (see `usageLedgerEntryPath`),
+ * so a rerun of the same card never collides with a previous launch's attempt-1 file.
+ *
+ * A replay or recovery of the SAME execution -- the persisted sidecar is still present because a
+ * previous `runCard()` call never reached its own cleanup (e.g. the whole board process died
+ * mid-run) -- reuses the persisted id rather than minting a new one, which is what "recovery"
+ * means here: the ledger keeps recording under the execution that was actually already running.
+ * `clearExecutionId` (called from `runCard()`'s own `finally`) is what makes the NEXT genuinely
+ * new launch mint a fresh id instead of reusing this one forever.
+ */
+export async function ensureExecutionId({
+  runsDir,
+  cardId,
+  generateIdFn = randomUUID,
+  now = () => new Date(),
+  readFileFn = fs.readFile,
+  writeFileFn = fs.writeFile,
+  mkdirFn = fs.mkdir
+}) {
+  try {
+    const raw = await readFileFn(executionIdStatePath(runsDir, cardId), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.executionId === "string" && parsed.executionId.length > 0) {
+      return parsed.executionId;
+    }
+  } catch {
+    // Missing, unreadable, or malformed -- mint a fresh one below.
+  }
+
+  const executionId = generateIdFn();
+  try {
+    await mkdirFn(runsDir, { recursive: true });
+    await writeFileFn(
+      executionIdStatePath(runsDir, cardId),
+      JSON.stringify({ executionId, createdAt: now().toISOString() }),
+      "utf8"
+    );
+  } catch {
+    // Best-effort, same posture as runState.js's writeRunState: an id that can't be persisted
+    // still works for THIS run's own in-memory bookkeeping (every ledger entry it produces still
+    // carries it) -- it just won't be recoverable by a later replay/recovery call after a crash.
+  }
+  return executionId;
+}
+
+/** Best-effort: clearing the execution-id sidecar must never fail a run's own cleanup. */
+export async function clearExecutionId({ runsDir, cardId, unlinkFn = fs.unlink }) {
+  try {
+    await unlinkFn(executionIdStatePath(runsDir, cardId));
+  } catch {
+    // already gone -- nothing to clean up
+  }
 }

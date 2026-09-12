@@ -163,6 +163,10 @@ function makeOrchestrator({ store, git, runner, hub, github, idAllocator, taskSt
       list.push(entry);
       archives.set(id, list);
     },
+    // T-0367 fix round: ensureExecutionIdFn is awaited directly at the top of runCard() -- avoid
+    // real filesystem I/O against this file's fake "/repo" paths on that critical path.
+    ensureExecutionIdFn: vi.fn(async () => "exec-test"),
+    clearExecutionIdFn: vi.fn(async () => {}),
     ...overrides
   });
   orchestrator.testVerdictArchives = archives;

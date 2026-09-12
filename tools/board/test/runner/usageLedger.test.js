@@ -9,7 +9,10 @@ import {
   readAttemptUsage,
   listCardUsageEntries,
   attemptTotal,
-  cardCycleTotal
+  cardCycleTotal,
+  executionTotal,
+  ensureExecutionId,
+  clearExecutionId
 } from "../../src/runner/usageLedger.js";
 
 let assistantMessageCounter = 0;
@@ -239,9 +242,9 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
     await fs.rm(runsDir, { recursive: true, force: true });
   });
 
-  const key = { cardId: "T-0367", attempt: 1, phase: "implementer", retry: 0 };
+  const key = { cardId: "T-0367", executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0 };
 
-  it("writes one JSON sidecar per (card, attempt, phase, retry) key", async () => {
+  it("writes one JSON sidecar per (card, execution, attempt, phase, retry) key", async () => {
     const events = [assistantTurn({ input: 10, output: 5 }), resultEvent({ input: 400, output: 100, costUsd: 0.02 })];
     await recordAttemptUsage({ runsDir, ...key, events, outcome: "success", complete: true });
 
@@ -279,7 +282,7 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
   });
 
   it("readAttemptUsage returns null for a key that was never recorded", async () => {
-    const entry = await readAttemptUsage({ runsDir, cardId: "T-9999", attempt: 1, phase: "implementer", retry: 0 });
+    const entry = await readAttemptUsage({ runsDir, cardId: "T-9999", executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0 });
     expect(entry).toBeNull();
   });
 
@@ -309,6 +312,7 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
       await recordAttemptUsage({
         runsDir,
         cardId: "T-0367",
+        executionId: "exec-1",
         attempt: 1,
         phase: "implementer",
         retry: i,
@@ -319,7 +323,7 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
     }
 
     for (let i = 0; i < cases.length; i += 1) {
-      const entry = await readAttemptUsage({ runsDir, cardId: "T-0367", attempt: 1, phase: "implementer", retry: i });
+      const entry = await readAttemptUsage({ runsDir, cardId: "T-0367", executionId: "exec-1", attempt: 1, phase: "implementer", retry: i });
       expect(entry.outcome).toBe(cases[i].outcome);
       expect(entry.complete).toBe(cases[i].complete);
     }
@@ -341,6 +345,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-1000",
+      executionId: "exec-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -351,6 +356,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-1000",
+      executionId: "exec-1",
       attempt: 1,
       phase: "reviewer",
       retry: 0,
@@ -362,6 +368,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-1000",
+      executionId: "exec-1",
       attempt: 2,
       phase: "implementer",
       retry: 0,
@@ -380,10 +387,11 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     expect(attempt2.tokens.input).toBe(900);
   });
 
-  it("card-cycle total sums every attempt recorded for the card", async () => {
+  it("card-cycle (lifetime) total sums every attempt recorded for the card", async () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-2000",
+      executionId: "exec-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -394,6 +402,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-2000",
+      executionId: "exec-1",
       attempt: 2,
       phase: "implementer",
       retry: 0,
@@ -413,6 +422,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-3001",
+      executionId: "exec-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -423,6 +433,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-3002",
+      executionId: "exec-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -442,6 +453,82 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     expect(cardCycleTotal(entries)).toEqual({
       tokens: { input: 0, output: 0, cacheCreate: 0, cacheRead: 0 },
       costUsd: 0
+    });
+  });
+});
+
+describe("execution identity (Codex review 2026-09-12, P1)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-execution-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  it("two separate launches of the same card, both attempt 1, keep separate execution totals that still sum to a correct lifetime total", async () => {
+    // Codex's exact reproduction: a rerun used to restart at attempt 1 and overwrite the
+    // previous launch's attempt-1 file, so the card total came out to 25, not 125.
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-REVIEW",
+      executionId: "exec-A",
+      attempt: 1,
+      phase: "implementer",
+      retry: 0,
+      events: [assistantTurn({ id: "msg-1", input: 100 })],
+      outcome: "quota_stop",
+      complete: false
+    });
+    await recordAttemptUsage({
+      runsDir,
+      cardId: "T-REVIEW",
+      executionId: "exec-B",
+      attempt: 1,
+      phase: "implementer",
+      retry: 0,
+      events: [assistantTurn({ id: "msg-1", input: 25 })],
+      outcome: "success",
+      complete: true
+    });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-REVIEW" });
+    expect(cardCycleTotal(entries).tokens.input).toBe(125);
+    expect(executionTotal(entries, "exec-A").tokens.input).toBe(100);
+    expect(executionTotal(entries, "exec-B").tokens.input).toBe(25);
+  });
+
+  it("usageLedgerEntryPath produces distinct paths for distinct executions of the same (card, attempt, phase, retry)", () => {
+    const a = usageLedgerEntryPath(runsDir, { cardId: "T-1", executionId: "exec-A", attempt: 1, phase: "implementer", retry: 0 });
+    const b = usageLedgerEntryPath(runsDir, { cardId: "T-1", executionId: "exec-B", attempt: 1, phase: "implementer", retry: 0 });
+    expect(a).not.toBe(b);
+  });
+
+  describe("ensureExecutionId / clearExecutionId", () => {
+    it("mints a fresh id when none is persisted yet", async () => {
+      const id = await ensureExecutionId({ runsDir, cardId: "T-9001", generateIdFn: () => "generated-id" });
+      expect(id).toBe("generated-id");
+    });
+
+    it("reuses the persisted id on a replay/recovery call instead of minting a new one", async () => {
+      const first = await ensureExecutionId({ runsDir, cardId: "T-9002", generateIdFn: () => "first-id" });
+      const second = await ensureExecutionId({ runsDir, cardId: "T-9002", generateIdFn: () => "second-id" });
+      expect(first).toBe("first-id");
+      expect(second).toBe("first-id");
+    });
+
+    it("clearExecutionId lets the next ensureExecutionId call mint a genuinely new id", async () => {
+      const first = await ensureExecutionId({ runsDir, cardId: "T-9003", generateIdFn: () => "first-id" });
+      await clearExecutionId({ runsDir, cardId: "T-9003" });
+      const second = await ensureExecutionId({ runsDir, cardId: "T-9003", generateIdFn: () => "second-id" });
+      expect(first).toBe("first-id");
+      expect(second).toBe("second-id");
+    });
+
+    it("clearExecutionId is a no-op (never throws) when nothing was persisted", async () => {
+      await expect(clearExecutionId({ runsDir, cardId: "T-9004" })).resolves.not.toThrow();
     });
   });
 });

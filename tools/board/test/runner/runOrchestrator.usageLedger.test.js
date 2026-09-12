@@ -132,12 +132,25 @@ async function nthChild(runner, n) {
   return runner.spawnedChildren[n - 1];
 }
 
-function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], recordAttemptUsageFn, ...overrides } = {}) {
+function makeOrchestrator({
+  store,
+  git,
+  runner,
+  hub,
+  github,
+  runLogs = [],
+  recordAttemptUsageFn,
+  ensureExecutionIdFn,
+  clearExecutionIdFn,
+  ...overrides
+} = {}) {
   const createRunLogFn = vi.fn(async () => {
     const log = makeRunLog();
     runLogs.push(log);
     return log;
   });
+
+  let executionIdCounter = 0;
 
   return new RunOrchestrator({
     store,
@@ -158,6 +171,8 @@ function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], recor
     readVerdictEntriesFn: async () => [],
     appendVerdictEntryFn: async () => {},
     recordAttemptUsageFn: recordAttemptUsageFn ?? vi.fn(async () => {}),
+    ensureExecutionIdFn: ensureExecutionIdFn ?? vi.fn(async () => `exec-${++executionIdCounter}`),
+    clearExecutionIdFn: clearExecutionIdFn ?? vi.fn(async () => {}),
     ...overrides
   });
 }
@@ -364,5 +379,87 @@ describe("RunOrchestrator — usage ledger wiring (T-0367 T-A)", () => {
     reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fine"))));
     reviewChild.emit("exit", 0, null);
     await runPromise;
+  });
+});
+
+describe("RunOrchestrator — execution identity (Codex review 2026-09-12, P1)", () => {
+  it("mints the execution id before the first process is spawned, and every recordAttemptUsageFn call for the run carries it", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const recordAttemptUsageFn = vi.fn(async () => {});
+    const callOrder = [];
+    const ensureExecutionIdFn = vi.fn(async () => {
+      callOrder.push("ensureExecutionId");
+      return "exec-fixed";
+    });
+    runner.start.mockImplementation(async () => {
+      callOrder.push("runner.start");
+      const child = fakeChildProcess();
+      runner.spawnedChildren.push(child);
+      return { runId: "run", child };
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, recordAttemptUsageFn, ensureExecutionIdFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fine"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(callOrder[0]).toBe("ensureExecutionId");
+    expect(ensureExecutionIdFn).toHaveBeenCalledTimes(1);
+    const calls = usageCalls(recordAttemptUsageFn);
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call.executionId).toBe("exec-fixed");
+    }
+  });
+
+  it("clears the persisted execution id on completion so the next launch mints a fresh one", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const clearExecutionIdFn = vi.fn(async () => {});
+    const orchestrator = makeOrchestrator({ store, git, runner, clearExecutionIdFn });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fine"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(clearExecutionIdFn).toHaveBeenCalledWith(expect.objectContaining({ cardId: "T-0001" }));
+  });
+
+  it("gives two separate runCard() launches of the same card distinct execution ids", async () => {
+    const store = makeStore([baseTask()]);
+    const recordAttemptUsageFn = vi.fn(async () => {});
+    let executionIdCounter = 0;
+    const ensureExecutionIdFn = vi.fn(async () => `exec-${++executionIdCounter}`);
+
+    async function driveOnePassingRun() {
+      const git = makeGit();
+      const runner = makeRunner();
+      const orchestrator = makeOrchestrator({ store, git, runner, recordAttemptUsageFn, ensureExecutionIdFn });
+      const runPromise = orchestrator.runCard("T-0001");
+      const implChild = await nthChild(runner, 1);
+      implChild.emit("exit", 0, null);
+      const reviewChild = await nthChild(runner, 2);
+      reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fine"))));
+      reviewChild.emit("exit", 0, null);
+      await runPromise;
+    }
+
+    await driveOnePassingRun();
+    await store.update("T-0001", { status: "ready" });
+    await driveOnePassingRun();
+
+    const executionIds = new Set(usageCalls(recordAttemptUsageFn).map((c) => c.executionId));
+    expect(executionIds.size).toBe(2);
   });
 });

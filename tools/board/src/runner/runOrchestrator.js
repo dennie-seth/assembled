@@ -22,7 +22,7 @@ import {
   applyPlannerFileViewDiff
 } from "./plannerFileView.js";
 import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
-import { recordAttemptUsage } from "./usageLedger.js";
+import { recordAttemptUsage, ensureExecutionId, clearExecutionId } from "./usageLedger.js";
 import { computeFailureSignature } from "./failureSignature.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
 import {
@@ -346,6 +346,8 @@ export class RunOrchestrator {
     readVerdictEntriesFn = readVerdictEntries,
     appendVerdictEntryFn = appendVerdictEntry,
     recordAttemptUsageFn = recordAttemptUsage,
+    ensureExecutionIdFn = ensureExecutionId,
+    clearExecutionIdFn = clearExecutionId,
     buildVerdictDigestFn = buildVerdictDigest,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
@@ -393,6 +395,10 @@ export class RunOrchestrator {
     this.readVerdictEntriesFn = readVerdictEntriesFn;
     this.appendVerdictEntryFn = appendVerdictEntryFn;
     this.recordAttemptUsageFn = recordAttemptUsageFn;
+    this.ensureExecutionIdFn = ensureExecutionIdFn;
+    this.clearExecutionIdFn = clearExecutionIdFn;
+    /** taskId -> the current runCard() span's unique execution id (usageLedger.js). */
+    this._executionIds = new Map();
     this.buildVerdictDigestFn = buildVerdictDigestFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
@@ -557,6 +563,15 @@ export class RunOrchestrator {
     const worktreeDir = path.join(this.worktreesDir, taskId);
 
     this.activeCardIds.add(taskId);
+    // T-0367 fix round (Codex review 2026-09-12, P1): minted/persisted before ANY process is
+    // spawned (worktree setup, planner, implementer, reviewer, merge-conflict all follow this),
+    // so every usage-ledger entry this run produces carries the SAME id -- a rerun of this same
+    // card starts a fresh execution id rather than colliding with a previous launch's attempt-1
+    // ledger files. `ensureExecutionIdFn` reuses a persisted id instead of minting a new one only
+    // when one is already on disk -- i.e. a genuine replay/recovery of a run whose own cleanup
+    // never got to finish (see the `finally` block below, which clears it on every normal exit).
+    const executionId = await this.ensureExecutionIdFn({ runsDir: this.runsDir, cardId: taskId });
+    this._executionIds.set(taskId, executionId);
     let worktreeReady = false;
     const stopHeartbeat = this._startHeartbeat(taskId);
     try {
@@ -612,6 +627,13 @@ export class RunOrchestrator {
       // stale pid behind) keeps a future restart's liveness check from having to reason about
       // a runstate written by a run that's already fully finished.
       await this.clearRunStateFn({ runsDir: this.runsDir, taskId });
+      // Same posture as clearRunStateFn above: this run's own span is over, so the next
+      // runCard() call for this card (a genuinely new launch) must mint a fresh execution id
+      // rather than reusing this one. Only a runCard() call whose OWN cleanup never got to run
+      // (e.g. the whole board process died mid-run) leaves the persisted id behind for
+      // ensureExecutionIdFn to recover on the next call.
+      this._executionIds.delete(taskId);
+      await this.clearExecutionIdFn({ runsDir: this.runsDir, cardId: taskId });
       if (this.activeCardIds.size === 0) {
         this.onIdle();
       }
@@ -855,7 +877,8 @@ export class RunOrchestrator {
       phase: "implementer",
       events: implementerResult.events,
       outcome: eventsContainUsageLimitSignature(implementerResult.events) ? "quota_stop" : "success",
-      complete: true
+      complete: true,
+      sourceLogPath: runLog.path
     });
 
     if (this.autoCaptureUncommitted) {
@@ -946,7 +969,8 @@ export class RunOrchestrator {
         : verdict.verdict === "PASS"
           ? "success"
           : "reviewer_fail",
-      complete: true
+      complete: true,
+      sourceLogPath: runLog.path
     });
 
     return { stop: false, verdict: { ...verdict, phase: verdict.phase ?? "reviewer" }, events: [...implementerResult.events, ...reviewerResult.events] };
@@ -1021,7 +1045,8 @@ export class RunOrchestrator {
       phase: "planning",
       events: plannerResult.events,
       outcome: eventsContainUsageLimitSignature(plannerResult.events) ? "quota_stop" : "success",
-      complete: true
+      complete: true,
+      sourceLogPath: runLog.path
     });
 
     if (fileView) {
@@ -1169,17 +1194,19 @@ export class RunOrchestrator {
    * write failure (disk full, permissions) is instrumentation, not a run outcome, and must
    * never fail or alter the run it's recording.
    */
-  async _recordUsage(taskId, { attempt, phase, retry = 0, events, outcome, complete }) {
+  async _recordUsage(taskId, { attempt, phase, retry = 0, events, outcome, complete, sourceLogPath = null }) {
     try {
       await this.recordAttemptUsageFn({
         runsDir: this.runsDir,
         cardId: taskId,
+        executionId: this._executionIds.get(taskId) ?? null,
         attempt,
         phase,
         retry,
         events,
         outcome,
         complete,
+        sourceLogPath,
         now: this.now
       });
     } catch (err) {
@@ -1224,7 +1251,7 @@ export class RunOrchestrator {
         // something this orchestrator never sees (a board crash, an OOM-kill), this is the most
         // recent recorded figure and is what keeps that case from silently recording as zero.
         if (event.type === "assistant") {
-          void this._recordUsage(taskId, { attempt, phase, events, outcome: "in_progress", complete: false });
+          void this._recordUsage(taskId, { attempt, phase, events, outcome: "in_progress", complete: false, sourceLogPath: runLog.path });
         }
       }
     });
@@ -1370,11 +1397,11 @@ export class RunOrchestrator {
     // never add real disk-I/O latency to the phase-completion path a phase timeout/cancellation
     // is already on (the run's own retry loop must not wait on a usage-ledger write to proceed).
     if (entry.cancelled) {
-      void this._recordUsage(taskId, { attempt, phase, events, outcome: "cancelled", complete: false });
+      void this._recordUsage(taskId, { attempt, phase, events, outcome: "cancelled", complete: false, sourceLogPath: runLog.path });
     } else if (result.timedOut) {
-      void this._recordUsage(taskId, { attempt, phase, events, outcome: "phase_timeout", complete: false });
+      void this._recordUsage(taskId, { attempt, phase, events, outcome: "phase_timeout", complete: false, sourceLogPath: runLog.path });
     } else if (result.exitCode !== 0) {
-      void this._recordUsage(taskId, { attempt, phase, events, outcome: "crashed", complete: false });
+      void this._recordUsage(taskId, { attempt, phase, events, outcome: "crashed", complete: false, sourceLogPath: runLog.path });
     }
 
     return { ...result, events, cancelled: entry.cancelled };
