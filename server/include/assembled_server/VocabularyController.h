@@ -18,8 +18,17 @@
 ///     1001  UNKNOWN_TOKEN — Authorization header missing or malformed.
 ///
 ///   Response shape: 03-net-protocol.md §5 Progression — 200 [ word_id ... ].
+///
+///   The query runs via execSqlAsync (never execSqlSync/a worker thread) so
+///   it can't stall the Drogon HTTP event loop, and the underlying DbClient
+///   carries a real deadline (Drogon's DbClient::setTimeout) so a request
+///   against an unreachable database still gets a bounded 503 instead of
+///   hanging for the life of the outage (Codex re-review, 2026-09-11).
 
 #include <drogon/HttpController.h>
+
+#include <chrono>
+#include <cstddef>
 
 namespace assembled_server {
 
@@ -35,9 +44,25 @@ class VocabularyController : public drogon::HttpController<VocabularyController>
     ///                 - 200 JSON array of word ids unlocked for the caller
     ///                   (empty array if none are unlocked).
     ///                 - 401 JSON {"error":1001} if Authorization is absent/malformed.
-    ///                 - 503 if no DATABASE_URL is configured.
+    ///                 - 503 if no DATABASE_URL is configured, the query fails, or
+    ///                   the query's deadline (see setQueryTimeoutForTesting) elapses.
     void listVocabulary(const drogon::HttpRequestPtr &req,
                         std::function<void(const drogon::HttpResponsePtr &)> &&callback);
+
+    /// Test-only hook (Codex re-review, 2026-09-11): overrides the query
+    /// deadline that would otherwise come from VOCABULARY_QUERY_TIMEOUT_MS /
+    /// the built-in default, so an outage test doesn't have to wait out the
+    /// production timeout. Must be called before the first request in the
+    /// process -- the deadline is applied to the DbClient once, the first
+    /// time it's constructed.
+    static void setQueryTimeoutForTesting(std::chrono::milliseconds timeout);
+
+    /// @return the number of GET /v1/vocabulary requests whose async query
+    /// is still outstanding (queued on the DB, or awaiting its deadline).
+    /// Test-only: proves the per-request state is released promptly once
+    /// the deadline elapses rather than retained for the life of a DB
+    /// outage (Codex re-review, 2026-09-11).
+    static std::size_t pendingQueryCountForTests();
 };
 
 } // namespace assembled_server
