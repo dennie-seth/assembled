@@ -309,14 +309,17 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
     await fs.rm(runsDir, { recursive: true, force: true });
   });
 
-  const key = { cardId: "T-0367", executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0 };
+  const key = { cardId: "T-0367", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 };
 
-  it("writes one JSON sidecar per (card, execution, attempt, phase, retry) key", async () => {
+  it("writes one recorded entry per (card, execution, invocation, attempt, phase, retry) key, as a revision file alongside the canonical path", async () => {
     const events = [assistantTurn({ input: 10, output: 5 }), resultEvent({ input: 400, output: 100, costUsd: 0.02 })];
     await recordAttemptUsage({ runsDir, ...key, events, outcome: "success", complete: true });
 
-    const filePath = usageLedgerEntryPath(runsDir, key);
-    const raw = JSON.parse(await fs.readFile(filePath, "utf8"));
+    const canonicalPath = usageLedgerEntryPath(runsDir, key);
+    const names = await fs.readdir(runsDir);
+    expect(names.some((n) => n.startsWith(`${path.basename(canonicalPath)}.rev`))).toBe(true);
+
+    const raw = await readAttemptUsage({ runsDir, ...key });
     expect(raw.cardId).toBe("T-0367");
     expect(raw.outcome).toBe("success");
     expect(raw.complete).toBe(true);
@@ -349,7 +352,7 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
   });
 
   it("readAttemptUsage returns null for a key that was never recorded", async () => {
-    const entry = await readAttemptUsage({ runsDir, cardId: "T-9999", executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0 });
+    const entry = await readAttemptUsage({ runsDir, cardId: "T-9999", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
     expect(entry).toBeNull();
   });
 
@@ -379,7 +382,7 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
       await recordAttemptUsage({
         runsDir,
         cardId: "T-0367",
-        executionId: "exec-1",
+        executionId: "exec-1", invocationId: "inv-1",
         attempt: 1,
         phase: "implementer",
         retry: i,
@@ -390,7 +393,7 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
     }
 
     for (let i = 0; i < cases.length; i += 1) {
-      const entry = await readAttemptUsage({ runsDir, cardId: "T-0367", executionId: "exec-1", attempt: 1, phase: "implementer", retry: i });
+      const entry = await readAttemptUsage({ runsDir, cardId: "T-0367", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: i });
       expect(entry.outcome).toBe(cases[i].outcome);
       expect(entry.complete).toBe(cases[i].complete);
     }
@@ -412,7 +415,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-1000",
-      executionId: "exec-1",
+      executionId: "exec-1", invocationId: "inv-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -423,7 +426,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-1000",
-      executionId: "exec-1",
+      executionId: "exec-1", invocationId: "inv-1",
       attempt: 1,
       phase: "reviewer",
       retry: 0,
@@ -435,7 +438,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-1000",
-      executionId: "exec-1",
+      executionId: "exec-1", invocationId: "inv-1",
       attempt: 2,
       phase: "implementer",
       retry: 0,
@@ -458,7 +461,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-2000",
-      executionId: "exec-1",
+      executionId: "exec-1", invocationId: "inv-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -469,7 +472,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-2000",
-      executionId: "exec-1",
+      executionId: "exec-1", invocationId: "inv-1",
       attempt: 2,
       phase: "implementer",
       retry: 0,
@@ -489,7 +492,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-3001",
-      executionId: "exec-1",
+      executionId: "exec-1", invocationId: "inv-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -500,7 +503,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-3002",
-      executionId: "exec-1",
+      executionId: "exec-1", invocationId: "inv-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -519,7 +522,9 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
     expect(entries).toEqual([]);
     expect(cardCycleTotal(entries)).toEqual({
       tokens: { input: 0, output: 0, cacheCreate: 0, cacheRead: 0 },
-      costUsd: 0
+      costUsd: 0,
+      knownCostUsd: 0,
+      unknownCostEntries: 0
     });
   });
 });
@@ -541,7 +546,7 @@ describe("execution identity (Codex review 2026-09-12, P1)", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-REVIEW",
-      executionId: "exec-A",
+      executionId: "exec-A", invocationId: "inv-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -552,7 +557,7 @@ describe("execution identity (Codex review 2026-09-12, P1)", () => {
     await recordAttemptUsage({
       runsDir,
       cardId: "T-REVIEW",
-      executionId: "exec-B",
+      executionId: "exec-B", invocationId: "inv-1",
       attempt: 1,
       phase: "implementer",
       retry: 0,
@@ -568,8 +573,8 @@ describe("execution identity (Codex review 2026-09-12, P1)", () => {
   });
 
   it("usageLedgerEntryPath produces distinct paths for distinct executions of the same (card, attempt, phase, retry)", () => {
-    const a = usageLedgerEntryPath(runsDir, { cardId: "T-1", executionId: "exec-A", attempt: 1, phase: "implementer", retry: 0 });
-    const b = usageLedgerEntryPath(runsDir, { cardId: "T-1", executionId: "exec-B", attempt: 1, phase: "implementer", retry: 0 });
+    const a = usageLedgerEntryPath(runsDir, { cardId: "T-1", executionId: "exec-A", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
+    const b = usageLedgerEntryPath(runsDir, { cardId: "T-1", executionId: "exec-B", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
     expect(a).not.toBe(b);
   });
 
@@ -611,7 +616,7 @@ describe("write ordering and atomicity (Codex review 2026-09-12, P2)", () => {
     await fs.rm(runsDir, { recursive: true, force: true });
   });
 
-  const base = { runsDir, cardId: "T-REVIEW", executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0 };
+  const base = { runsDir, cardId: "T-REVIEW", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 };
 
   it("a delayed earlier in-progress write never overwrites a later terminal write that already committed", async () => {
     let release;
@@ -767,7 +772,7 @@ describe("publication ordering across out-of-order renames (Codex review 2, 2026
     await fs.rm(runsDir, { recursive: true, force: true });
   });
 
-  const base = { runsDir, cardId: "T-PUBLISH", executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0 };
+  const base = { runsDir, cardId: "T-PUBLISH", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 };
 
   it("a delayed earlier RENAME (not write) never overwrites a later terminal write that already published", async () => {
     // The prior regression only delayed the temp-file WRITE, which happens before the old
@@ -889,5 +894,243 @@ describe("execution id hardening (Codex review 2, 2026-09-12, finding 4)", () =>
 
     const names = await fs.readdir(runsDir).catch(() => []);
     expect(names.some((n) => n.includes("execundefined") || n.includes("execnull"))).toBe(false);
+  });
+});
+
+describe("invocation id hardening (Codex review 3, 2026-09-12, finding 3)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-invid-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  it("usageLedgerEntryPath rejects a missing invocationId before building any path, instead of defaulting to a shared key", () => {
+    expect(() =>
+      usageLedgerEntryPath(runsDir, { cardId: "T-BAD", executionId: "exec-1", invocationId: undefined, attempt: 1, phase: "implementer", retry: 0 })
+    ).toThrow();
+    expect(() =>
+      usageLedgerEntryPath(runsDir, { cardId: "T-BAD", executionId: "exec-1", invocationId: null, attempt: 1, phase: "implementer", retry: 0 })
+    ).toThrow();
+    expect(() =>
+      usageLedgerEntryPath(runsDir, { cardId: "T-BAD", executionId: "exec-1", invocationId: "", attempt: 1, phase: "implementer", retry: 0 })
+    ).toThrow();
+  });
+
+  it("recordAttemptUsage rejects a missing invocationId and never writes a record under a default/shared key", async () => {
+    await expect(
+      recordAttemptUsage({
+        runsDir,
+        cardId: "T-BAD",
+        executionId: "exec-1",
+        invocationId: undefined,
+        attempt: 1,
+        phase: "implementer",
+        retry: 0,
+        events: [assistantTurn({ id: "msg-1", input: 10 })],
+        outcome: "success",
+        complete: true
+      })
+    ).rejects.toThrow();
+
+    // No record was ever written for this card under ANY invocation id -- there is no shared
+    // "default" key a caller that omits invocationId could have silently landed on.
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-BAD" });
+    expect(entries).toHaveLength(0);
+  });
+});
+
+describe("aggregate cost nullability (Codex review 3, 2026-09-12, finding 2)", () => {
+  const tokens = { input: 100, output: 0, cacheCreate: 0, cacheRead: 0 };
+
+  it("reports a measured total cost when every contributing entry has a known cost", () => {
+    const entries = [
+      { executionId: "e", tokens, costUsd: 0.01 },
+      { executionId: "e", tokens, costUsd: 0.02 }
+    ];
+    const total = executionTotal(entries, "e");
+    expect(total.costUsd).toBeCloseTo(0.03, 6);
+    expect(total.knownCostUsd).toBeCloseTo(0.03, 6);
+    expect(total.unknownCostEntries).toBe(0);
+  });
+
+  it("reports an unknown (null) total cost, never a measured zero, when the only contributing entry's cost is unknown", () => {
+    // Codex's exact reproduction: executionTotal of one 100-token entry with costUsd: null
+    // returned { ..., costUsd: 0 } -- silently presenting "we never got a cost figure" as a
+    // genuine measured zero.
+    const entries = [{ executionId: "e", tokens, costUsd: null }];
+    const total = executionTotal(entries, "e");
+    expect(total.tokens).toEqual(tokens);
+    expect(total.costUsd).toBeNull();
+    expect(total.knownCostUsd).toBe(0);
+    expect(total.unknownCostEntries).toBe(1);
+  });
+
+  it("for a mixed collection, reports a null total cost alongside the known subtotal and the unknown-entry count", () => {
+    const entries = [
+      { executionId: "e", tokens, costUsd: 0.05 },
+      { executionId: "e", tokens, costUsd: null },
+      { executionId: "e", tokens, costUsd: 0.02 }
+    ];
+    const total = executionTotal(entries, "e");
+    expect(total.costUsd).toBeNull();
+    expect(total.knownCostUsd).toBeCloseTo(0.07, 6);
+    expect(total.unknownCostEntries).toBe(1);
+  });
+
+  it("a measured zero cost (every contributing entry known, all zero) stays a real zero, not null", () => {
+    const entries = [
+      { executionId: "e", tokens, costUsd: 0 },
+      { executionId: "e", tokens, costUsd: 0 }
+    ];
+    const total = executionTotal(entries, "e");
+    expect(total.costUsd).toBe(0);
+    expect(total.unknownCostEntries).toBe(0);
+  });
+
+  it("attemptTotal and cardCycleTotal share the same nullable-cost behavior as executionTotal", () => {
+    const entries = [
+      { attempt: 1, executionId: "e", tokens, costUsd: null },
+      { attempt: 1, executionId: "e", tokens, costUsd: 0.01 }
+    ];
+    expect(attemptTotal(entries, 1).costUsd).toBeNull();
+    expect(cardCycleTotal(entries).costUsd).toBeNull();
+  });
+});
+
+describe("monotonic ledger publication (Codex review 3, 2026-09-12, finding 1)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-monotonic-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const base = { runsDir, cardId: "T-MONOTONIC", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 };
+
+  it("a late-but-successful older rename never becomes visible once a newer write has already published -- sampled throughout, not just at the end", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let started;
+    const ready = new Promise((resolve) => {
+      started = resolve;
+    });
+
+    const older = recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 10 })],
+      outcome: "in_progress",
+      complete: false,
+      renameFn: async (...args) => {
+        started();
+        await gate;
+        return fs.rename(...args);
+      }
+    });
+    await ready;
+
+    await recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 100 })],
+      outcome: "success",
+      complete: true
+    });
+
+    // Sample on every event-loop turn until the delayed older write has fully settled --
+    // deterministic (no wall-clock timer race): the `while (!settled)` loop is guaranteed at
+    // least one iteration, since `older` can't possibly settle synchronously within this tick.
+    let settled = false;
+    older.finally(() => {
+      settled = true;
+    });
+
+    release();
+    const samples = [];
+    while (!settled) {
+      const entry = await readAttemptUsage({ ...base, runsDir });
+      if (entry) samples.push(entry.tokens.input);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await drainPendingUsageWrites();
+    const finalEntry = await readAttemptUsage({ ...base, runsDir });
+    samples.push(finalEntry.tokens.input);
+
+    expect(samples.length).toBeGreaterThan(0);
+    expect(samples.every((v) => v === 100)).toBe(true);
+
+    const final = await readAttemptUsage({ ...base, runsDir });
+    expect(final.tokens.input).toBe(100);
+    expect(final.outcome).toBe("success");
+    expect(final.complete).toBe(true);
+  });
+
+  it("an older write's publish failure (injected EIO) never affects the newer committed entry, once both writes and drainPendingUsageWrites settle", async () => {
+    // Adapted from Codex's probe, which injected the EIO into the OLDER write's self-heal
+    // "fixup" rename specifically -- a mechanism this fix removes entirely in favor of each
+    // write publishing to its own immutable revision file, so an older write's own publish
+    // failure can no longer corrupt a newer write's already-published revision at all.
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let started;
+    const ready = new Promise((resolve) => {
+      started = resolve;
+    });
+
+    const older = recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 10 })],
+      outcome: "in_progress",
+      complete: false,
+      renameFn: async () => {
+        started();
+        await gate;
+        throw Object.assign(new Error("simulated publish I/O failure"), { code: "EIO" });
+      }
+    });
+    await ready;
+
+    await recordAttemptUsage({
+      ...base,
+      runsDir,
+      events: [assistantTurn({ id: "msg-1", input: 100 })],
+      outcome: "success",
+      complete: true
+    });
+
+    const beforeRelease = await readAttemptUsage({ ...base, runsDir });
+    expect(beforeRelease.tokens.input).toBe(100);
+
+    release();
+    await expect(older).rejects.toThrow("simulated publish I/O failure");
+    await drainPendingUsageWrites();
+
+    const final = await readAttemptUsage({ ...base, runsDir });
+    expect(final.tokens.input).toBe(100);
+    expect(final.outcome).toBe("success");
+    expect(final.complete).toBe(true);
+  });
+
+  it("readers never see a mix of two revisions or a partially-pruned state -- listCardUsageEntries returns exactly one entry per key, the freshest", async () => {
+    await recordAttemptUsage({ ...base, runsDir, events: [assistantTurn({ id: "msg-1", input: 1 })], outcome: "in_progress", complete: false });
+    await recordAttemptUsage({ ...base, runsDir, events: [assistantTurn({ id: "msg-1", input: 2 })], outcome: "in_progress", complete: false });
+    await recordAttemptUsage({ ...base, runsDir, events: [assistantTurn({ id: "msg-1", input: 3 })], outcome: "success", complete: true });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-MONOTONIC" });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tokens.input).toBe(3);
+    expect(entries[0].complete).toBe(true);
   });
 });

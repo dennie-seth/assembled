@@ -413,6 +413,7 @@ describe("usage-ledger drain on shutdown (T-0367 fix round 3)", () => {
     runsDir,
     cardId: "T-CLOSE-DRAIN",
     executionId: "exec-close-1",
+    invocationId: "inv-close-1",
     attempt: 1,
     phase: "implementer",
     retry: 0
