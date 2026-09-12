@@ -15,7 +15,8 @@ import {
   ensureExecutionId,
   clearExecutionId,
   drainPendingUsageWrites,
-  resetUsageLedgerProcessStateForTests
+  resetUsageLedgerProcessStateForTests,
+  UsageLedgerReadIndeterminateError
 } from "../../src/runner/usageLedger.js";
 
 let assistantMessageCounter = 0;
@@ -1359,5 +1360,159 @@ describe("epoch robustness against a lost/damaged/never-written epoch file (Epoc
     expect(final.tokens.input).toBe(999);
     expect(final.outcome).toBe("success");
     expect(final.complete).toBe(true);
+  });
+});
+
+describe("a concurrent prune must never make an existing entry read as absent (Codex review 0913, 2026-09-13)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-prune-race-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const base = () => ({ runsDir, cardId: "T-PRUNE-RACE", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
+  const eventsWithInput = (input) => [assistantTurn({ id: "msg-1", input })];
+
+  it("readAttemptUsage: a republish+prune forced between listing and open (via readdirFn) returns the previous or newer committed value, never null", async () => {
+    await recordAttemptUsage({ ...base(), events: eventsWithInput(100), outcome: "success", complete: true });
+
+    let readdirCalls = 0;
+    const result = await readAttemptUsage({
+      ...base(),
+      readdirFn: async (dir) => {
+        readdirCalls += 1;
+        const names = await fs.readdir(dir);
+        if (readdirCalls === 1) {
+          await recordAttemptUsage({ ...base(), events: eventsWithInput(150), outcome: "success", complete: true });
+        }
+        return names;
+      }
+    });
+
+    expect(result).not.toBeNull();
+    expect([100, 150]).toContain(result.tokens.input);
+    expect(readdirCalls).toBeGreaterThan(1);
+  });
+
+  it("readAttemptUsage: a republish+prune forced between listing and open (via readFileFn) returns the previous or newer committed value, never null", async () => {
+    await recordAttemptUsage({ ...base(), events: eventsWithInput(100), outcome: "success", complete: true });
+
+    let triggered = false;
+    const result = await readAttemptUsage({
+      ...base(),
+      readFileFn: async (filePath, encoding) => {
+        if (!triggered) {
+          triggered = true;
+          await recordAttemptUsage({ ...base(), events: eventsWithInput(150), outcome: "success", complete: true });
+        }
+        return fs.readFile(filePath, encoding);
+      }
+    });
+
+    expect(result).not.toBeNull();
+    expect([100, 150]).toContain(result.tokens.input);
+  });
+
+  it("listCardUsageEntries: a republish between listing and open for one of two keys still returns both keys, and executionTotal is never zero", async () => {
+    const keyA = { ...base(), phase: "implementer" };
+    const keyB = { ...base(), phase: "reviewer" };
+    await recordAttemptUsage({ ...keyA, events: eventsWithInput(40), outcome: "success", complete: true });
+    await recordAttemptUsage({ ...keyB, events: eventsWithInput(60), outcome: "success", complete: true });
+
+    let readdirCalls = 0;
+    const entries = await listCardUsageEntries({
+      runsDir,
+      cardId: base().cardId,
+      readdirFn: async (dir) => {
+        readdirCalls += 1;
+        const names = await fs.readdir(dir);
+        if (readdirCalls === 1) {
+          await recordAttemptUsage({ ...keyA, events: eventsWithInput(45), outcome: "success", complete: true });
+        }
+        return names;
+      }
+    });
+
+    expect(entries).toHaveLength(2);
+    const total = executionTotal(entries, base().executionId);
+    expect(total.tokens.input).toBeGreaterThan(0);
+  });
+
+  it("persistent contention (every listing followed by a publish+prune) ends in an explicit indeterminate result within the bound, never null/empty/zero", async () => {
+    await recordAttemptUsage({ ...base(), events: eventsWithInput(100), outcome: "success", complete: true });
+
+    let n = 0;
+    const readAttemptRace = readAttemptUsage({
+      ...base(),
+      readdirFn: async (dir) => {
+        const names = await fs.readdir(dir);
+        n += 1;
+        await recordAttemptUsage({ ...base(), events: eventsWithInput(100 + n), outcome: "success", complete: true });
+        return names;
+      }
+    });
+    await expect(readAttemptRace).rejects.toThrow(UsageLedgerReadIndeterminateError);
+
+    let m = 0;
+    const listRace = listCardUsageEntries({
+      runsDir,
+      cardId: base().cardId,
+      readdirFn: async (dir) => {
+        const names = await fs.readdir(dir);
+        m += 1;
+        await recordAttemptUsage({ ...base(), events: eventsWithInput(200 + m), outcome: "success", complete: true });
+        return names;
+      }
+    });
+    await expect(listRace).rejects.toThrow(UsageLedgerReadIndeterminateError);
+  });
+
+  it("a key with no revision files still reads as absent, even while another key is being published and pruned concurrently", async () => {
+    const otherKey = { ...base(), phase: "reviewer" };
+    await recordAttemptUsage({ ...otherKey, events: eventsWithInput(1), outcome: "in_progress", complete: false });
+    await recordAttemptUsage({ ...otherKey, events: eventsWithInput(2), outcome: "success", complete: true });
+
+    const result = await readAttemptUsage({ ...base() }); // base's own key (phase: implementer) was never recorded
+    expect(result).toBeNull();
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-PRUNE-RACE-NEVER-RECORDED" });
+    expect(entries).toEqual([]);
+  });
+});
+
+describe("the stored epoch must be a safe integer (Codex review 0913, 2026-09-13)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-epoch-safe-int-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const key = () => ({ runsDir, cardId: "T-EPOCH-SAFE", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
+
+  it.each([
+    ["fractional", 2.5],
+    ["astronomically large", 1e300],
+    ["negative", -7]
+  ])("a stored epoch that is %s is treated as missing, and the post-restart write still wins and stays visible", async (_label, badEpoch) => {
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 10 })], outcome: "in_progress", complete: false });
+
+    resetUsageLedgerProcessStateForTests(runsDir);
+    await fs.writeFile(usageLedgerEpochStatePath(runsDir), JSON.stringify({ epoch: badEpoch }), "utf8");
+
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 777 })], outcome: "success", complete: true });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-EPOCH-SAFE" });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tokens.input).toBe(777);
+    expect(entries[0].outcome).toBe("success");
+    expect(entries[0].complete).toBe(true);
   });
 });
