@@ -49,6 +49,8 @@ const HEARTBEAT_MOCK_PORT: int = 19994
 ## nothing listening (server down at launch), then a mock is started on this
 ## exact port mid-test to simulate the server coming back up.
 const RECOVERY_PORT: int = 19993
+## Dedicated port for the identity-failure + heartbeat regression test below.
+const UNSAVED_STATE_PORT: int = 19992
 const SHORT_TIMEOUT_MS: int = 200
 const TEST_PATH := "user://test_T0120_presentation.phrase"
 
@@ -105,6 +107,15 @@ class MockHttpServer:
 		conn.put_data(raw.to_utf8_buffer())
 
 
+## Accumulated across _init() (synchronous tests) and _process() (the one
+## test below that needs a real engine frame for Control layout to resolve —
+## see _start_layout_readability_test()'s docs on why that one can't run
+## synchronously like every other test in this file).
+var _failures: Array[String] = []
+var _pending_layout_check: bool = false
+var _layout_screen: BlockingNoticeScreen = null
+
+
 func _init() -> void:
 	var failures: Array[String] = []
 
@@ -145,6 +156,8 @@ func _init() -> void:
 	failures += _test_controller_indicator_clears_after_offline_launch_recovers()
 	failures += _test_controller_close_request_recap_then_completes()
 	failures += _test_controller_close_request_online_completes_immediately(mock)
+	failures += _test_controller_phrase_screen_displays_phrase(mock)
+	failures += _test_controller_heartbeat_after_identity_failure_keeps_unsaved_state()
 
 	mock.stop()
 
@@ -153,11 +166,30 @@ func _init() -> void:
 	if FileAccess.file_exists(FirstRunController.DEFAULT_TEST_CHROMA_MARKER_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(FirstRunController.DEFAULT_TEST_CHROMA_MARKER_PATH))
 
-	if failures.is_empty():
+	_failures = failures
+	_start_layout_readability_test()
+
+
+## _process() picks up after _start_layout_readability_test() adds a screen to
+## the live tree — Control anchor/offset layout (and therefore autowrap
+## height, which is what this test actually needs to measure) does not
+## resolve until the engine processes a real frame; see
+## _start_layout_readability_test()'s own docs.
+func _process(_delta: float) -> bool:
+	if not _pending_layout_check:
+		return false
+	_pending_layout_check = false
+	_failures += _finish_layout_readability_test()
+	_finish()
+	return true
+
+
+func _finish() -> void:
+	if _failures.is_empty():
 		print("T-0120-presentation PASS: first-run presentation layer verified")
 		quit(0)
 	else:
-		for f: String in failures:
+		for f: String in _failures:
 			printerr("T-0120-presentation FAIL: " + f)
 		quit(1)
 
@@ -819,4 +851,198 @@ func _test_controller_close_request_online_completes_immediately(mock: MockHttpS
 	controller.free()
 	if FileAccess.file_exists(TEST_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── FirstRunController: the phrase-reveal screen must show the phrase ────────
+## itself (Codex re-review, 2026-09-11, P2) — before this fix,
+## _on_phrase_reveal_ready() ignored the phrase argument entirely and only
+## ever rendered notice_text (the warning + saved path), so a player was
+## asked to acknowledge "This phrase is you" without ever seeing it.
+
+func _test_controller_phrase_screen_displays_phrase(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % MOCK_PORT)
+
+	var phrase := "quartz river lantern hollow drift ember north gate"
+	mock.queue(201, '{"phrase":"%s"}' % phrase)
+	controller.start_new_game()
+	var completed := _drive_controller(
+		controller, mock, 5000.0, func(): return controller.get_phrase_screen() != null
+	)
+	if not completed:
+		failures.append("controller_phrase_text: phrase screen never appeared within 5 s")
+		controller.free()
+		return failures
+
+	var screen := controller.get_phrase_screen()
+	var phrase_label := screen.get_phrase_label()
+	if phrase_label == null or not phrase_label.text.contains(phrase):
+		failures.append("controller_phrase_text: the phrase-reveal screen must visibly display the phrase itself")
+
+	var notice_label := screen.get_notice_label()
+	if notice_label == null:
+		failures.append("controller_phrase_text: notice label not found")
+	elif notice_label.text.contains(phrase):
+		failures.append(
+			"controller_phrase_text: the phrase must be its own control, separate from the warning text"
+		)
+
+	controller.free()
+	if FileAccess.file_exists(TEST_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PATH))
+	return failures
+
+
+## ── FirstRunController regression: a heartbeat response after an identity ────
+## failure must never clear the unsaved-session state (Codex re-review,
+## 2026-09-11, P1). OfflineModeController correctly treats ANY HTTP response —
+## including a 401 or 503 — as network-reachable; that's a real and separate
+## distinction from a timeout/network error. But acknowledge_error() leaves
+## FirstRunSequence with no valid identity for this session, and a later
+## heartbeat succeeding at the network layer must never be read as "the
+## session is saveable again." Before this fix, notify_reachability(true)
+## overwrote the same _reachable field is_server_reachable() and
+## end_session()'s recap decision both read, clearing both — reproduced by
+## Codex as: identity 503 -> acknowledge -> heartbeat 401 -> reachable=true ->
+## end session -> no recap, despite the player never having an identity.
+
+func _test_controller_heartbeat_after_identity_failure_keeps_unsaved_state() -> Array[String]:
+	var failures: Array[String] = []
+
+	var identity_mock := MockHttpServer.new()
+	if not identity_mock.listen(UNSAVED_STATE_PORT):
+		failures.append("controller_unsaved: could not start mock HTTP server on port %d" % UNSAVED_STATE_PORT)
+		return failures
+
+	var controller := FirstRunController.new()
+	controller.configure_for_test(TEST_PATH, "http://127.0.0.1:%d" % UNSAVED_STATE_PORT)
+
+	identity_mock.queue(503, '{"error":0}')
+	controller.start_new_game()
+	var completed := _drive_controller(
+		controller, identity_mock, 5000.0, func(): return controller.get_error_screen() != null
+	)
+	if not completed:
+		failures.append("controller_unsaved: error screen never appeared within 5 s")
+		controller.free()
+		identity_mock.stop()
+		return failures
+
+	controller.get_error_screen().acknowledged.emit()
+
+	if controller.get_sequence().is_server_reachable():
+		failures.append("controller_unsaved: is_server_reachable() must be false right after an identity failure")
+
+	var heartbeat_events := [0]
+	controller.get_note_client().notes_fetched.connect(
+		func(_req: int, _state: int, _status: int, _body: String): heartbeat_events[0] += 1
+	)
+
+	identity_mock.queue(401, '')
+	controller._process(FirstRunController.HEARTBEAT_INTERVAL_SECS)
+	var heartbeat_done := _drive_controller(
+		controller, identity_mock, 3000.0, func(): return heartbeat_events[0] > 0
+	)
+	if not heartbeat_done:
+		failures.append("controller_unsaved: heartbeat request to the mock server never completed within 3 s")
+		controller.free()
+		identity_mock.stop()
+		return failures
+
+	if controller.get_sequence().is_server_reachable():
+		failures.append("controller_unsaved: a 401 heartbeat response must not clear the unsaved-session state")
+
+	controller.end_session()
+	if controller.get_recap_notice() == null or not controller.get_recap_notice().visible:
+		failures.append("controller_unsaved: ending the session must still show the nothing-was-saved recap")
+
+	controller.free()
+	identity_mock.stop()
+	return failures
+
+
+## ── BlockingNoticeScreen: all first-run copy must be readable at the game's ───
+## configured 384x216 logical viewport, with the acknowledgment button in its
+## own area the text never overlaps — even with a long save path (Codex
+## re-review, 2026-09-11, P1: measured the old fixed-offset label overflowing
+## to y=411 while the button started at y=184). Needs a real engine frame —
+## unlike every other test in this file, which never adds a node to the live
+## tree at all: a Label's autowrap-driven minimum size (and therefore whether
+## the notice copy actually needs to scroll) isn't resolved until the layout
+## system processes the node inside a real Viewport, and this headless
+## `--script` run's own root Window doesn't apply project.godot's configured
+## 384x216 viewport size until its first processed frame either (verified
+## empirically against this exact Godot build). See test_main_scene_boot.gd's
+## identical note on _ready()/layout timing in this harness.
+
+const LAYOUT_TEST_LONG_PATH := (
+	"/home/exampleuser/.local/share/godot/app_userdata/assembled-client/"
+	+ "very/deeply/nested/save/directory/identity.phrase"
+)
+const LAYOUT_TEST_PHRASE := "alpha bravo charlie delta echo foxtrot golf hotel"
+
+
+func _start_layout_readability_test() -> void:
+	_layout_screen = BlockingNoticeScreen.new()
+	root.add_child(_layout_screen)
+	_layout_screen.set_phrase_text(LAYOUT_TEST_PHRASE)
+	_layout_screen.set_notice_text(IdentityStore.FIRST_RUN_NOTICE.replace("[path]", LAYOUT_TEST_LONG_PATH))
+	_pending_layout_check = true
+
+
+func _finish_layout_readability_test() -> Array[String]:
+	var failures: Array[String] = []
+	var screen := _layout_screen
+	var viewport_size: Vector2 = root.get_visible_rect().size
+
+	var scroll: ScrollContainer = screen.get_scroll_container()
+	var button: Button = screen.get_node("Root/AcknowledgeButton")
+	if scroll == null or button == null:
+		failures.append("layout_384x216: scroll container or acknowledge button not found")
+		screen.free()
+		_layout_screen = null
+		return failures
+
+	var scroll_rect := scroll.get_rect()
+	var button_rect := button.get_rect()
+
+	if (
+		scroll_rect.position.x < 0.0 or scroll_rect.position.y < 0.0
+		or scroll_rect.end.x > viewport_size.x or scroll_rect.end.y > viewport_size.y
+	):
+		failures.append(
+			"layout_384x216: scroll area %s exceeds the %s viewport" % [scroll_rect, viewport_size]
+		)
+	if (
+		button_rect.position.x < 0.0 or button_rect.position.y < 0.0
+		or button_rect.end.x > viewport_size.x or button_rect.end.y > viewport_size.y
+	):
+		failures.append(
+			"layout_384x216: acknowledge button %s exceeds the %s viewport" % [button_rect, viewport_size]
+		)
+	if scroll_rect.intersects(button_rect):
+		failures.append(
+			"layout_384x216: scroll area %s overlaps the acknowledge button %s" % [scroll_rect, button_rect]
+		)
+
+	var notice_label := screen.get_notice_label()
+	var expected_notice: String = IdentityStore.FIRST_RUN_NOTICE.replace("[path]", LAYOUT_TEST_LONG_PATH)
+	if notice_label == null or notice_label.text != expected_notice:
+		failures.append("layout_384x216: full notice copy must be present verbatim, not truncated")
+	elif notice_label.size.y <= scroll_rect.size.y:
+		# Confirms this test actually exercises the overflow a long save path
+		# creates — if this stops being true, the "no overlap" assertion
+		# above would pass trivially for the wrong reason.
+		failures.append(
+			"layout_384x216: fixture bug — the long-path notice text must be taller than the scroll area to exercise scrolling"
+		)
+
+	var phrase_label := screen.get_phrase_label()
+	if phrase_label == null or not phrase_label.text.contains(LAYOUT_TEST_PHRASE):
+		failures.append("layout_384x216: full phrase must be present verbatim, not truncated")
+
+	screen.free()
+	_layout_screen = null
 	return failures
