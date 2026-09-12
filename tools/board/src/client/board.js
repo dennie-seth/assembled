@@ -72,6 +72,24 @@ export function computeDependencyStatus(tasks) {
   return status;
 }
 
+/**
+ * Per-column planning-signal total (T-0368): the sum of complexity_points across `tasks`, plus
+ * a count of how many of them carry no score at all. `null`/absent counts as unscored, never as
+ * zero -- a card nobody has sized yet is not the same as a card sized at zero points.
+ */
+export function summarizeComplexityPoints(tasks) {
+  let total = 0;
+  let unscored = 0;
+  for (const task of tasks) {
+    if (Number.isInteger(task.complexity_points)) {
+      total += task.complexity_points;
+    } else {
+      unscored += 1;
+    }
+  }
+  return { total, unscored };
+}
+
 /** Reverse-dependency counts: how many other tasks list each task id in their depends_on. */
 export function computeBlockerCounts(tasks) {
   const counts = new Map();
