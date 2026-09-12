@@ -1,6 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { RunOrchestrator } from "../../src/runner/runOrchestrator.js";
+import {
+  recordAttemptUsage,
+  ensureExecutionId,
+  clearExecutionId,
+  drainPendingUsageWrites,
+  listCardUsageEntries,
+  executionTotal
+} from "../../src/runner/usageLedger.js";
 
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
@@ -600,5 +611,109 @@ describe("RunOrchestrator — quota event receive-timestamp stamping (Codex revi
     const implementerLog = runLogs[0];
     const quotaEvent = implementerLog.events.find((e) => e.type === "rate_limit_event");
     expect(quotaEvent.receivedAtMs).toBe(12345);
+  });
+});
+
+describe("RunOrchestrator — crash-recovery invocation identity (Codex review 2, 2026-09-12, finding 2)", () => {
+  it("a phase restarted after a board crash never overwrites the interrupted phase's own ledger entry, and the execution total is 125", async () => {
+    // Real ledger persistence throughout -- a mocked recordAttemptUsageFn (as every other test in
+    // this file uses) can't reproduce this bug: Codex's reproduction needed the real
+    // recordAttemptUsage + ensureExecutionId functions actually writing/reading disk state.
+    const runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-orch-crash-recovery-"));
+    let invocationCounter = 0;
+    const generateInvocationIdFn = () => `inv-${++invocationCounter}`;
+
+    try {
+      const store = makeStore([baseTask()]);
+      const git = makeGit();
+
+      // First launch: the implementer phase reports 100 tokens, then the board "dies" -- its
+      // process never exits, so runCard() never reaches its own finally/cleanup (no
+      // clearExecutionId, no drain). This is what leaves the persisted execution id sidecar
+      // behind for the restarted launch to recover.
+      const runner1 = makeRunner();
+      const orchestrator1 = makeOrchestrator({
+        store,
+        git,
+        runner: runner1,
+        runsDir,
+        recordAttemptUsageFn: recordAttemptUsage,
+        ensureExecutionIdFn: ensureExecutionId,
+        clearExecutionIdFn: clearExecutionId,
+        drainPendingUsageWritesFn: drainPendingUsageWrites,
+        generateInvocationIdFn
+      });
+
+      const firstRun = orchestrator1.runCard("T-0001");
+      firstRun.catch(() => {}); // deliberately never awaited to completion -- see below
+      const implChild1 = await nthChild(runner1, 1);
+      implChild1.stdout.emit(
+        "data",
+        ndjson({ type: "assistant", session_id: "sess-1", message: { id: "msg-1", model: "fixture", usage: { input_tokens: 100, output_tokens: 1 } } })
+      );
+      // No 'exit' event ever fires for this child -- the process (and the whole board) is gone.
+      await vi.waitFor(async () => {
+        const entries = await listCardUsageEntries({ runsDir, cardId: "T-0001" });
+        expect(entries.length).toBeGreaterThan(0);
+      });
+
+      const interruptedEntries = await listCardUsageEntries({ runsDir, cardId: "T-0001" });
+      expect(interruptedEntries).toHaveLength(1);
+      expect(interruptedEntries[0]).toMatchObject({ outcome: "in_progress", complete: false });
+      expect(interruptedEntries[0].tokens.input).toBe(100);
+      const executionId = interruptedEntries[0].executionId;
+      const interruptedInvocationId = interruptedEntries[0].invocationId;
+
+      // Board restarts: a fresh orchestrator instance (fresh in-memory state), same runsDir --
+      // ensureExecutionId reads the persisted sidecar and reuses the same execution id, exactly
+      // as a genuine recovery should. The restarted implementer phase is a brand-new process and
+      // must mint its own invocation id rather than colliding with the interrupted one's.
+      // (A real restart's orphan-reaper/liveness path is what actually resets a crashed card's
+      // status back to "ready" before re-launching it -- out of scope here, so it's done directly.)
+      await store.update("T-0001", { status: "ready" });
+      const runner2 = makeRunner();
+      const orchestrator2 = makeOrchestrator({
+        store,
+        git,
+        runner: runner2,
+        runsDir,
+        recordAttemptUsageFn: recordAttemptUsage,
+        ensureExecutionIdFn: ensureExecutionId,
+        clearExecutionIdFn: clearExecutionId,
+        drainPendingUsageWritesFn: drainPendingUsageWrites,
+        generateInvocationIdFn
+      });
+
+      const secondRun = orchestrator2.runCard("T-0001");
+      const implChild2 = await nthChild(runner2, 1);
+      implChild2.stdout.emit(
+        "data",
+        ndjson({ type: "assistant", session_id: "sess-2", message: { id: "msg-2", model: "fixture", usage: { input_tokens: 25, output_tokens: 1 } } })
+      );
+      implChild2.emit("exit", 0, null);
+      const reviewChild2 = await nthChild(runner2, 2);
+      reviewChild2.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "fine"))));
+      reviewChild2.emit("exit", 0, null);
+      await secondRun;
+
+      const entries = await listCardUsageEntries({ runsDir, cardId: "T-0001" });
+      // The interrupted phase's own entry must still be there, untouched, alongside the
+      // restarted phase's entries -- not overwritten.
+      const stillInterrupted = entries.find((e) => e.invocationId === interruptedInvocationId);
+      expect(stillInterrupted).toBeTruthy();
+      expect(stillInterrupted.tokens.input).toBe(100);
+      expect(stillInterrupted.complete).toBe(false);
+
+      // Recovery reused the same execution id -- this is a restart of the SAME logical launch.
+      expect(entries.every((e) => e.executionId === executionId)).toBe(true);
+      // But every phase spawn got its own invocation id -- the restarted implementer's entry
+      // never shares a key with the interrupted one's.
+      const invocationIds = new Set(entries.map((e) => e.invocationId));
+      expect(invocationIds.size).toBeGreaterThanOrEqual(2);
+
+      expect(executionTotal(entries, executionId).tokens.input).toBe(125);
+    } finally {
+      await fs.rm(runsDir, { recursive: true, force: true });
+    }
   });
 });
