@@ -141,3 +141,24 @@ sessions; it is not a fix, and no card should be considered unblocked by applyin
 See `docs/design/agent-runner.md`'s Guardrails section for the general `--allowedTools`-from-agent-
 definition model this sits underneath, and `tools/board/test/runner/referenceFetchGrant.test.js`'s
 header comment for the T-0276 precedent this finding extends.
+
+## Appendix: raw NDJSON denial lines
+
+Two of the rows above, verbatim, both `claude` 2.1.241, 2026-09-12:
+
+Row 2 (infra's grant widened with `Write(.claude/rules/**), Edit(.claude/rules/**)`, in
+`/tmp/t0374-verify-infra`, session `42fced0b-ba58-45f8-85a0-bc7033d89a1b`):
+
+```json
+{"type":"system","subtype":"permission_denied","tool_name":"Write","tool_use_id":"toolu_017GC7i9vFpACZAaSrdAkRbW","decision_reason_type":"safetyCheck","decision_reason":"Claude requested permissions to edit /tmp/t0374-verify-infra/.claude/rules/t0374-scratch.md which is a sensitive file.","message":"Claude requested permissions to edit /tmp/t0374-verify-infra/.claude/rules/t0374-scratch.md which is a sensitive file."}
+```
+
+Row 6 (client's real, unmodified grant, in `/tmp/t0374-verify-client`, session
+`33701c14-f8ef-48e6-a467-111c1384f49a`):
+
+```json
+{"type":"system","subtype":"permission_denied","tool_name":"Write","tool_use_id":"toolu_01DhkT44Rcz3AG4dhdcaWQtR","decision_reason_type":"safetyCheck","decision_reason":"Claude requested permissions to edit /tmp/t0374-verify-client/.claude/rules/t0374-scratch-client.md which is a sensitive file.","message":"Claude requested permissions to edit /tmp/t0374-verify-client/.claude/rules/t0374-scratch-client.md which is a sensitive file."}
+```
+
+Byte-for-byte identical `decision_reason_type`/message shape between infra's widened grant and
+client's untouched one — the grant played no role in either outcome.
