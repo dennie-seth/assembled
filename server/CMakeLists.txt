@@ -61,6 +61,7 @@ add_library(assembled_server_lib OBJECT
   src/SweepWorker.cpp
   src/PetitionController.cpp
   src/UniqueCustodyLog.cpp
+  src/VocabularyController.cpp
 )
 # PUBLIC: server headers under include/, plus repo root so that both server
 # and tests can #include "shared/note_templates.hpp" (T-0043).
@@ -303,3 +304,27 @@ add_executable(note_proof_of_play_tests
 )
 target_link_libraries(note_proof_of_play_tests PRIVATE assembled_server_lib doctest::doctest)
 doctest_discover_tests(note_proof_of_play_tests)
+
+# T-0364: GET /v1/vocabulary — authenticated per-token unlocked word ids.
+# Tests: populated/empty vocabulary, agreement with POST /v1/notes's own
+# vocabulary check (every returned id accepted, an ungranted id rejected),
+# and the unauthenticated case. Separate binary: hosts its own drogon::app()
+# HTTP integration test.
+# vocabulary_handler_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(vocabulary_handler_tests
+  test/vocabulary_handler_test.cpp
+)
+target_link_libraries(vocabulary_handler_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(vocabulary_handler_tests)
+
+# T-0364 fix round: Codex re-review of #379 (P1, 2026-09-11) -- the
+# vocabulary query must run asynchronously with a real deadline and never
+# block the HTTP event loop. Separate binary, own DATABASE_URL (a closed
+# local port, set before main()) -- must not share the singleton or the
+# real DATABASE_URL with vocabulary_handler_tests.
+# vocabulary_outage_test.cpp defines its own DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN.
+add_executable(vocabulary_outage_tests
+  test/vocabulary_outage_test.cpp
+)
+target_link_libraries(vocabulary_outage_tests PRIVATE assembled_server_lib doctest::doctest)
+doctest_discover_tests(vocabulary_outage_tests)
