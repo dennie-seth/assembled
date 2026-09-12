@@ -152,6 +152,15 @@ Reusable procedures agents invoke by name. See `.claude/skills/*/SKILL.md`.
   when the card leaves `in-progress`/`VALIDATION` (merge or abandon).
 - **`--allowedTools` from the agent definition only.** Everything else is
   denied. Never `--dangerously-skip-permissions`.
+- **`.claude/**` is off-limits to every agent, `infra` included, no matter what
+  `--allowedTools` grants.** The Claude Code CLI's own built-in sensitive-file
+  check blocks any Edit/Write under `.claude/` in a headless (`-p`) run,
+  independent of the resolved tool grant, settings-level permission rules,
+  permission mode, or hooks — see
+  `docs/design/claude-cli-sensitive-file-protection.md` for the live
+  reproduction (T-0374). `.claude/agents/**`, `.claude/rules/**`, and
+  `.claude/skills/**` changes go through a human directly, the same as
+  `.claude/settings.json` / `.claude/settings.local.json` always have.
 - **Run stream persisted.** Every NDJSON stream is written verbatim to
   `tasks/.runs/T-NNNN-<ts>.jsonl` — the audit trail for what a run actually
   did, independent of the summarized log pane.
