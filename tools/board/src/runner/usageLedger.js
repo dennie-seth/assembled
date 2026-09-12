@@ -244,38 +244,143 @@ export function usageLedgerEpochStatePath(runsDir) {
   return path.join(runsDir, ".usage-ledger-epoch.json");
 }
 
-/**
- * Reads the persisted epoch for `runsDir` (0 if missing/unreadable/malformed) and persists
- * `previous + 1` before returning it -- "bumped once per process" per entry's `runsDir`. A failed
- * persist is best-effort, same posture as `ensureExecutionId`: this process still uses the bumped
- * value for its own writes, it just won't be recoverable by a later process if the write itself
- * never reached disk.
- */
-async function loadAndBumpEpoch(runsDir, { readFileFn, writeFileFn, mkdirFn }) {
-  let previous = 0;
-  try {
-    const raw = await readFileFn(usageLedgerEpochStatePath(runsDir), "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.epoch === "number" && Number.isFinite(parsed.epoch)) {
-      previous = parsed.epoch;
-    }
-  } catch {
-    // missing, unreadable, or malformed -- treat as "no process has ever written here"
-  }
-
-  const epoch = previous + 1;
-  try {
-    await mkdirFn(runsDir, { recursive: true });
-    await writeFileFn(usageLedgerEpochStatePath(runsDir), JSON.stringify({ epoch }), "utf8");
-  } catch {
-    // best-effort persist -- see docstring above
-  }
-  return epoch;
+/** Path to one process's exclusive claim on a candidate epoch (Epoch robustness, 2026-09-12). */
+function usageLedgerEpochClaimPath(runsDir, epoch) {
+  return path.join(runsDir, `.usage-ledger-epoch.claim-${epoch}.json`);
 }
 
-function ensureEpoch(runsDir, deps) {
+/**
+ * Reads the persisted epoch sidecar for `runsDir` -- 0 if it is missing, unreadable, or holds
+ * anything other than a finite `epoch` number (empty file, invalid JSON, non-numeric field: Epoch
+ * robustness, 2026-09-12). Losing or damaging this file must never LOWER the epoch a process ends
+ * up claiming -- that is what pairing it with `highestEpochOnDisk` below is for.
+ */
+async function loadStoredEpoch(runsDir) {
+  try {
+    const raw = await fs.readFile(usageLedgerEpochStatePath(runsDir), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.epoch === "number" && Number.isFinite(parsed.epoch)) {
+      return parsed.epoch;
+    }
+  } catch {
+    // missing, unreadable, or malformed -- treat as "no trustworthy stored epoch"
+  }
+  return 0;
+}
+
+/**
+ * The highest epoch embedded in any revision file's name, for ANY entry, anywhere in `runsDir`
+ * (Epoch robustness, 2026-09-12). The revision files a prior process actually published are
+ * durable, first-class evidence of every epoch it ever used -- unlike the epoch sidecar, they
+ * cannot be silently truncated by a single failed write, so scanning them is what lets a process
+ * recover the true epoch history even when the sidecar is lost, corrupted, or was never written at
+ * all. Scoped to the whole `runsDir` rather than one entry's own revisions: that is a strictly
+ * larger set, so it still satisfies "at least the highest epoch used for THIS entry" while needing
+ * only one scan per process instead of one per entry.
+ */
+async function highestEpochOnDisk(runsDir) {
+  let names;
+  try {
+    names = await fs.readdir(runsDir);
+  } catch {
+    return 0;
+  }
+  let highest = 0;
+  for (const name of names) {
+    const match = REVISION_SUFFIX_RE.exec(name);
+    if (!match) continue;
+    const epoch = Number(match[1]);
+    if (Number.isFinite(epoch) && epoch > highest) highest = epoch;
+  }
+  return highest;
+}
+
+/**
+ * Persists `epoch` as the new stored epoch via temp-file-then-rename (Epoch robustness,
+ * 2026-09-12) -- a plain `writeFile` can leave a truncated sidecar behind if the process dies
+ * mid-write, which is exactly the "damaged epoch file" case `loadStoredEpoch` has to tolerate.
+ * Best-effort, same posture as `ensureExecutionId`: a failed persist (ENOSPC, EACCES, or -- as the
+ * "silently failed persist" regression simulates -- a directory sitting at the sidecar's own path)
+ * still lets this process use `epoch` for its own writes; it just won't be recoverable from the
+ * sidecar by a later process, which is why `highestEpochOnDisk` exists as a second, independent
+ * source of truth.
+ */
+async function persistStoredEpoch(runsDir, epoch) {
+  const statePath = usageLedgerEpochStatePath(runsDir);
+  const tmpPath = `${statePath}.tmp-${process.pid}-${randomSuffix()}`;
+  try {
+    await fs.mkdir(runsDir, { recursive: true });
+    await fs.writeFile(tmpPath, JSON.stringify({ epoch }), "utf8");
+    await fs.rename(tmpPath, statePath);
+  } catch {
+    await fs.unlink(tmpPath).catch(() => {});
+    // best-effort persist -- see docstring above
+  }
+}
+
+/**
+ * Bounds how many already-claimed epochs one process will step over before giving up and using
+ * its last-tried candidate unclaimed. Astronomically larger than any real contention -- this is a
+ * runaway-loop backstop, not a tuned concurrency limit.
+ */
+const EPOCH_CLAIM_MAX_ATTEMPTS = 10000;
+
+/**
+ * Exclusively claims `startCandidate`, or the first free epoch at or above it, via `wx` (create,
+ * fail if it already exists) so two processes racing for the same `runsDir` can never both walk
+ * away believing they claimed the same epoch (Epoch robustness, 2026-09-12). A plain
+ * read-then-write -- round 6's ENTIRE guard -- lets two processes both observe the same "next"
+ * value and both persist it, because nothing stops their reads and writes from interleaving; an
+ * exclusive create is atomic at the filesystem level, so exactly one of two simultaneous attempts
+ * at the same candidate succeeds and the other sees `EEXIST` and must try the next one.
+ *
+ * Falls back to returning `startCandidate` itself, unclaimed, when a claim file can't be created
+ * at all (`EACCES`, `ENOSPC`, a read-only filesystem, ...) -- usage instrumentation must never
+ * crash the board over this (constraint 6); the disk-seeded candidate is still provably higher
+ * than everything already on disk, it just no longer carries the exclusive-claim guarantee against
+ * a concurrent process hitting the exact same failure mode at the exact same instant.
+ */
+async function claimEpochAtomically(runsDir, startCandidate) {
+  let candidate = startCandidate;
+  for (let attempts = 0; attempts < EPOCH_CLAIM_MAX_ATTEMPTS; attempts += 1) {
+    try {
+      await fs.writeFile(usageLedgerEpochClaimPath(runsDir, candidate), "", { flag: "wx" });
+      return candidate;
+    } catch (err) {
+      if (err && err.code === "EEXIST") {
+        candidate += 1;
+        continue;
+      }
+      return candidate; // can't claim exclusively at all -- fall back to the disk-seeded value
+    }
+  }
+  return candidate;
+}
+
+/**
+ * Derives this process's epoch for `runsDir`: at least `max(stored sidecar epoch, highest epoch
+ * seen in any revision filename on disk) + 1`, then exclusively claimed so a concurrent process
+ * computing the same candidate can never walk away with it too (Epoch robustness, 2026-09-12).
+ * Losing, truncating, or never having written the sidecar can only make the SIDECAR's own
+ * contribution read as 0 -- it can never lower the candidate below what `highestEpochOnDisk`
+ * independently recovers from the revision files a prior process actually published. Deliberately
+ * always uses the real `fs.*` primitives, exactly like round 6's version did, and for the same
+ * reason: routing this through `recordAttemptUsage`'s own caller-injectable `readFileFn`/
+ * `writeFileFn`/`mkdirFn` would gate or fail every OTHER racing call sharing this process's single
+ * cached epoch promise, not just the call that injected them.
+ */
+async function loadAndBumpEpoch(runsDir) {
+  await fs.mkdir(runsDir, { recursive: true }).catch(() => {});
+  const [storedEpoch, diskEpoch] = await Promise.all([loadStoredEpoch(runsDir), highestEpochOnDisk(runsDir)]);
+  const candidate = Math.max(storedEpoch, diskEpoch) + 1;
+  const claimed = await claimEpochAtomically(runsDir, candidate);
+  await persistStoredEpoch(runsDir, claimed);
+  return claimed;
+}
+
+function ensureEpoch(runsDir) {
   if (!epochCache.has(runsDir)) {
-    epochCache.set(runsDir, loadAndBumpEpoch(runsDir, deps));
+    epochCache.set(runsDir, loadAndBumpEpoch(runsDir));
   }
   return epochCache.get(runsDir);
 }
@@ -466,7 +571,7 @@ export async function recordAttemptUsage({
   // the same cached epoch promise too, deadlocking tests that inject a delay expecting it to
   // affect only their own write.
   const sequence = ++nextWriteSequence;
-  const epochPromise = ensureEpoch(runsDir, { readFileFn: fs.readFile, writeFileFn: fs.writeFile, mkdirFn: fs.mkdir });
+  const epochPromise = ensureEpoch(runsDir);
 
   const recordedAtMs = now().getTime();
   const summary = summarizeUsageFromEvents(events);

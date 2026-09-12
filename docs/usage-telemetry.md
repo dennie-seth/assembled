@@ -349,6 +349,64 @@ two concurrent writes immediately after a restart still get distinct revisions w
 winning; and the pre-existing late-rename monotonic-publication guarantee still holds once a
 restart has happened in between.
 
+**The claimed epoch survives a lost, damaged, or never-written sidecar, and is claimed atomically
+(Epoch robustness, 2026-09-12).** Round 6's `loadAndBumpEpoch` trusted the sidecar alone: it read
+`<runsDir>/.usage-ledger-epoch.json` (0 if missing/unreadable/malformed) and persisted `stored + 1`
+with a plain `writeFile`, with no exclusive claim over that value. Both halves were exploitable —
+reproduced independently of the round-6 test suite, all four cases against the *same* entry a
+replay/backfill correctly reuses an invocation id for:
+- Losing, truncating, or corrupting the sidecar between two processes made the second process
+  re-derive the SAME epoch the first one already used (a truncated/empty/non-numeric-epoch sidecar,
+  or one deleted outright) — its pre-restart revision then outranked the post-restart write.
+- A first process whose sidecar *persist* silently failed (the standard best-effort posture) left
+  no record at all for a later, disk-healthy process to build on — same collision.
+- Two processes starting together, each first-writing the same entry concurrently, could both read
+  "no epoch claimed yet" and both persist the same value — one process's terminal record was
+  silently overwritten by the other's.
+
+The fix has two independent halves, `loadAndBumpEpoch` now composes both:
+1. **`highestEpochOnDisk`** scans every `*.rev<epoch>-<seq>.json` filename already in `runsDir`, for
+   ANY entry, and returns the highest `<epoch>` found. Revision files are durable, first-class
+   evidence of every epoch a process actually used to publish — unlike the sidecar, a single failed
+   write can never truncate them. The claimed candidate is `max(loadStoredEpoch(runsDir),
+   highestEpochOnDisk(runsDir)) + 1`, so a lost/damaged/never-written sidecar can only ever make the
+   *sidecar's own* contribution read as 0 — it can never lower the candidate below what the
+   revision files on disk independently prove was already used. One scan per process, for the
+   whole `runsDir`, is a strictly larger set than "this one entry's own revisions" and so still
+   satisfies the per-entry guarantee.
+2. **`claimEpochAtomically`** claims that candidate via an exclusive create (`{ flag: "wx" }`) of a
+   per-epoch claim file (`.usage-ledger-epoch.claim-<epoch>.json`); on `EEXIST` it retries the next
+   integer up. Exclusive create is atomic at the filesystem level, so of two simultaneous attempts
+   at the same candidate exactly one succeeds — closing the gap a plain read-then-write can't: two
+   processes computing the identical candidate now walk away with two DIFFERENT claimed epochs, not
+   the same one. `persistStoredEpoch` still writes the sidecar afterward (now via temp-file +
+   rename, never a truncatable direct write) purely as a fast path for the next process to avoid
+   rescanning revision files from epoch 0 — the claim files and the revision-file scan are what
+   actually make the guarantee hold even when that sidecar write is lost. If the claim file itself
+   can't be created at all (`EACCES`, `ENOSPC`, a read-only filesystem), usage recording falls back
+   to the disk-seeded candidate unclaimed rather than ever throwing — still provably higher than
+   everything already on disk, just without the exclusive-claim guarantee against another process
+   hitting the identical failure at the identical instant. Claim files are never pruned (one small
+   file per process start is an acceptable, permanent cost) — pruning risks removing the highest
+   live claim and making an in-use epoch claimable again.
+
+Both halves are deliberately real `fs.*` calls, never `recordAttemptUsage`'s own caller-injectable
+`readFileFn`/`writeFileFn`/`mkdirFn`, for the same reason round 6 already establishes above. The
+disk scan and claim happen once per process inside the same memoized `ensureEpoch` promise as
+before — this does NOT reopen round 6's call-order rule: `sequence` is still fixed synchronously at
+`recordAttemptUsage`'s entry, so a later call in one process still outranks an earlier one
+regardless of how long the (per-process, one-time) epoch claim takes to resolve.
+
+See the "epoch robustness" describe block in `usageLedger.test.js`: an empty, invalid-JSON, or
+non-numeric-epoch sidecar between two simulated processes never lets the pre-restart revision
+outrank the post-restart one; a deleted sidecar behaves identically; a silently-failed persist (a
+directory placed at the sidecar's own path, so the final rename can never land) still lets a later,
+disk-healthy process claim correctly; and two genuinely independent module instances (`vi.resetModules()`
++ a fresh dynamic `import()`, simulating two real processes racing rather than two calls sharing one
+process's cache) claim distinct epochs when they first-write the identical entry concurrently, with
+neither's revision file overwritten by the other's and the higher-epoch process's later terminal
+record never overwritten or deleted.
+
 **Aggregate cost is nullable (fix round, Codex review 3, 2026-09-12, finding 2).** Per-entry
 `costUsd: null` ("unknown") was already correct (see above), but `attemptTotal`/`executionTotal`/
 `cardCycleTotal` silently coerced an unknown entry's cost to `0` before summing — an execution total
