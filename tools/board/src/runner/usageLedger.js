@@ -259,13 +259,26 @@ async function loadStoredEpoch(runsDir) {
   try {
     const raw = await fs.readFile(usageLedgerEpochStatePath(runsDir), "utf8");
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.epoch === "number" && Number.isFinite(parsed.epoch)) {
+    if (parsed && isSafeNonNegativeInteger(parsed.epoch)) {
       return parsed.epoch;
     }
   } catch {
     // missing, unreadable, or malformed -- treat as "no trustworthy stored epoch"
   }
   return 0;
+}
+
+/**
+ * A stored/on-disk epoch is only ever trustworthy as a safe, non-negative integer (Codex review
+ * 0913, 2026-09-13): a fractional (`2.5`), astronomically large (`1e300`), or negative (`-7`) value
+ * can't round-trip through `REVISION_SUFFIX_RE`'s `\d+` filename matcher, so a later reader would
+ * silently fail to parse that revision's filename and report the entry as missing. Treating anything
+ * that isn't a safe nonnegative integer as "no trustworthy epoch" (falling back to 0 here, and to
+ * "ignore this filename" in `highestEpochOnDisk`) means the epoch a process ends up claiming is
+ * always one every reader can actually parse back out of a revision filename.
+ */
+function isSafeNonNegativeInteger(n) {
+  return Number.isSafeInteger(n) && n >= 0;
 }
 
 /**
@@ -290,7 +303,7 @@ async function highestEpochOnDisk(runsDir) {
     const match = REVISION_SUFFIX_RE.exec(name);
     if (!match) continue;
     const epoch = Number(match[1]);
-    if (Number.isFinite(epoch) && epoch > highest) highest = epoch;
+    if (isSafeNonNegativeInteger(epoch) && epoch > highest) highest = epoch;
   }
   return highest;
 }
@@ -479,34 +492,86 @@ async function pruneOlderRevisions(runsDir, canonicalPath, keepRevision, { readd
 }
 
 /**
+ * Thrown by `readAttemptUsage`/`listCardUsageEntries` when a bounded number of re-scans still
+ * couldn't produce a stable read against persistent concurrent publish+prune activity (Codex review
+ * 0913, 2026-09-13). An exported, distinctly-typed error so a caller can never mistake it for an
+ * entry, for "absent" (`null`/`[]`), or for a measured zero/partial total -- see
+ * `docs/usage-telemetry.md`.
+ */
+export class UsageLedgerReadIndeterminateError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UsageLedgerReadIndeterminateError";
+    this.code = "USAGE_LEDGER_READ_INDETERMINATE";
+  }
+}
+
+/**
+ * Bounds how many times a reader re-lists `runsDir` after finding a listed revision file already
+ * pruned out from under it. Small and fixed: ordinary contention (one write landing between a
+ * listing and an open) resolves on the very next re-scan; this only exists to turn PERSISTENT
+ * contention into an explicit `UsageLedgerReadIndeterminateError` instead of retrying forever.
+ */
+const MAX_READ_RESCAN_ATTEMPTS = 5;
+
+/**
  * Scans `runsDir` for every revision file published under `canonicalPath` and returns the entry
  * with the highest `(epoch, sequence)` revision that still parses -- `null` if none exist.
+ *
+ * A listed revision file can be pruned by a concurrent, newer publish between this function's
+ * `readdirFn` call and its `readFileFn` call for that name (Codex review 0913, 2026-09-13): publish
+ * order is "write the new revision file, THEN prune older ones", so by the time that happens the
+ * entry's current value is always recoverable from a FRESH listing -- the one this function already
+ * took is just stale. Treating that as "file doesn't exist, so this candidate contributes nothing"
+ * (the old behavior) could make an entry that has been recorded continuously read as `null` if the
+ * only revision names this call happened to see all got pruned before it opened them. Re-listing
+ * from scratch (bounded by `MAX_READ_RESCAN_ATTEMPTS`) instead lets a fresh scan pick up whatever
+ * revision is current now, so the result is always the previous or a newer committed value -- never
+ * a false "absent". A genuinely empty candidate set (no revision files matching this entry at all,
+ * in a single listing) is NOT re-scanned: publication always creates the new file before removing
+ * the old one, so an entry that has ever been recorded always has at least one revision file present
+ * at every instant: zero candidates means the entry truly was never recorded.
  */
 async function findLatestRevisionEntry(runsDir, canonicalPath, { readdirFn, readFileFn }) {
   const base = path.basename(canonicalPath);
-  let names;
-  try {
-    names = await readdirFn(runsDir);
-  } catch (err) {
-    if (err && err.code === "ENOENT") return null;
-    throw err;
+
+  for (let attempt = 0; attempt < MAX_READ_RESCAN_ATTEMPTS; attempt += 1) {
+    let names;
+    try {
+      names = await readdirFn(runsDir);
+    } catch (err) {
+      if (err && err.code === "ENOENT") return null;
+      throw err;
+    }
+
+    const candidates = names.filter((name) => name.startsWith(`${base}.rev`) && REVISION_SUFFIX_RE.test(name));
+    if (candidates.length === 0) return null; // no revision file exists right now -- genuinely absent
+
+    let best = null;
+    let sawConcurrentPrune = false;
+    for (const name of candidates) {
+      const match = REVISION_SUFFIX_RE.exec(name);
+      let raw;
+      try {
+        raw = JSON.parse(await readFileFn(path.join(runsDir, name), "utf8"));
+      } catch (err) {
+        if (err && err.code === "ENOENT") {
+          sawConcurrentPrune = true; // pruned between our listing and our open -- re-scan
+          continue;
+        }
+        continue; // malformed -- skip rather than throw, same as always
+      }
+      const revision = normalizeRevision(raw, Number(match[1]), Number(match[2]));
+      if (!best || revisionIsNewer(revision, best.revision)) best = { revision, entry: raw };
+    }
+
+    if (sawConcurrentPrune) continue; // this listing is stale -- a fresh one recovers the current value
+    return best ? best.entry : null;
   }
 
-  let best = null;
-  for (const name of names) {
-    if (!name.startsWith(`${base}.rev`)) continue;
-    const match = REVISION_SUFFIX_RE.exec(name);
-    if (!match) continue;
-    let raw;
-    try {
-      raw = JSON.parse(await readFileFn(path.join(runsDir, name), "utf8"));
-    } catch {
-      continue; // rotated/deleted between readdir and read, or malformed -- skip rather than throw
-    }
-    const revision = normalizeRevision(raw, Number(match[1]), Number(match[2]));
-    if (!best || revisionIsNewer(revision, best.revision)) best = { revision, entry: raw };
-  }
-  return best ? best.entry : null;
+  throw new UsageLedgerReadIndeterminateError(
+    `usage ledger: could not resolve a stable read for "${base}" after ${MAX_READ_RESCAN_ATTEMPTS} re-scans (persistent concurrent publish/prune)`
+  );
 }
 
 /**
@@ -632,33 +697,54 @@ const REVISION_FILENAME_RE = /^(.+)-exec(.+)-inv(.+)-attempt(\d+)-(.+)-retry(\d+
  * All recorded usage entries for one card, across every execution/invocation/attempt/phase/retry
  * -- exactly ONE entry per key, the freshest revision published for it (never one entry per
  * revision, which would inflate every total downstream).
+ *
+ * Card-wide reads stay whole under concurrent publish+prune (Codex review 0913, 2026-09-13): if ANY
+ * listed revision file is pruned before this function opens it, the WHOLE scan restarts from a
+ * fresh listing rather than silently dropping just that one key -- a card read must never present a
+ * subset of its keys as if it were the complete result (a caller cannot tell "this card has fewer
+ * keys" from "one key's read raced a publish"). Bounded by `MAX_READ_RESCAN_ATTEMPTS`, same as
+ * `findLatestRevisionEntry`; persistent contention raises `UsageLedgerReadIndeterminateError`
+ * instead of ever returning a partial or falsely-empty list.
  */
 export async function listCardUsageEntries({ runsDir, cardId, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
-  let names;
-  try {
-    names = await readdirFn(runsDir);
-  } catch (err) {
-    if (err && err.code === "ENOENT") return [];
-    throw err;
+  for (let attempt = 0; attempt < MAX_READ_RESCAN_ATTEMPTS; attempt += 1) {
+    let names;
+    try {
+      names = await readdirFn(runsDir);
+    } catch (err) {
+      if (err && err.code === "ENOENT") return [];
+      throw err;
+    }
+
+    const bestByKey = new Map();
+    let sawConcurrentPrune = false;
+    for (const name of names) {
+      const match = REVISION_FILENAME_RE.exec(name);
+      if (!match) continue;
+      if (match[1] !== cardId) continue;
+      let raw;
+      try {
+        raw = JSON.parse(await readFileFn(path.join(runsDir, name), "utf8"));
+      } catch (err) {
+        if (err && err.code === "ENOENT") {
+          sawConcurrentPrune = true; // pruned between our listing and our open -- re-scan the whole card
+          continue;
+        }
+        continue; // malformed -- skip rather than throw, same as always
+      }
+      const revision = normalizeRevision(raw, Number(match[7]), Number(match[8]));
+      const ks = `${match[1]}::${match[2]}::${match[3]}::${match[4]}::${match[5]}::${match[6]}`;
+      const existing = bestByKey.get(ks);
+      if (!existing || revisionIsNewer(revision, existing.revision)) bestByKey.set(ks, { revision, entry: raw });
+    }
+
+    if (sawConcurrentPrune) continue;
+    return Array.from(bestByKey.values()).map((v) => v.entry);
   }
 
-  const bestByKey = new Map();
-  for (const name of names) {
-    const match = REVISION_FILENAME_RE.exec(name);
-    if (!match) continue;
-    if (match[1] !== cardId) continue;
-    let raw;
-    try {
-      raw = JSON.parse(await readFileFn(path.join(runsDir, name), "utf8"));
-    } catch {
-      continue; // rotated/deleted between readdir and read, or malformed -- skip rather than throw
-    }
-    const revision = normalizeRevision(raw, Number(match[7]), Number(match[8]));
-    const ks = `${match[1]}::${match[2]}::${match[3]}::${match[4]}::${match[5]}::${match[6]}`;
-    const existing = bestByKey.get(ks);
-    if (!existing || revisionIsNewer(revision, existing.revision)) bestByKey.set(ks, { revision, entry: raw });
-  }
-  return Array.from(bestByKey.values()).map((v) => v.entry);
+  throw new UsageLedgerReadIndeterminateError(
+    `usage ledger: could not resolve a stable card-wide read for "${cardId}" after ${MAX_READ_RESCAN_ATTEMPTS} re-scans (persistent concurrent publish/prune)`
+  );
 }
 
 /**
