@@ -14,6 +14,7 @@ function task(overrides = {}) {
     created: "2026-07-31",
     body: "## Context\nsome context\n\n## Acceptance\n- [ ] do it",
     max_attempts: null,
+    complexity_points: null,
     ...overrides
   };
 }
