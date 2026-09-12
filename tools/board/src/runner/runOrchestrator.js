@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { NdjsonEventParser } from "./streamParser.js";
 import { buildPrompt, buildPlannerPrompt, buildMergeConflictPrompt, resolveRulesForPaths } from "./promptBuilder.js";
 import { buildReviewerPrompt } from "./reviewerPrompt.js";
@@ -22,6 +23,7 @@ import {
   applyPlannerFileViewDiff
 } from "./plannerFileView.js";
 import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
+import { recordAttemptUsage, ensureExecutionId, clearExecutionId, drainPendingUsageWrites } from "./usageLedger.js";
 import { computeFailureSignature } from "./failureSignature.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
 import {
@@ -344,6 +346,11 @@ export class RunOrchestrator {
     crossCheckVerdictFn = crossCheckVerdict,
     readVerdictEntriesFn = readVerdictEntries,
     appendVerdictEntryFn = appendVerdictEntry,
+    recordAttemptUsageFn = recordAttemptUsage,
+    ensureExecutionIdFn = ensureExecutionId,
+    clearExecutionIdFn = clearExecutionId,
+    drainPendingUsageWritesFn = drainPendingUsageWrites,
+    generateInvocationIdFn = randomUUID,
     buildVerdictDigestFn = buildVerdictDigest,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
@@ -390,6 +397,13 @@ export class RunOrchestrator {
     this.crossCheckVerdictFn = crossCheckVerdictFn;
     this.readVerdictEntriesFn = readVerdictEntriesFn;
     this.appendVerdictEntryFn = appendVerdictEntryFn;
+    this.recordAttemptUsageFn = recordAttemptUsageFn;
+    this.ensureExecutionIdFn = ensureExecutionIdFn;
+    this.clearExecutionIdFn = clearExecutionIdFn;
+    this.drainPendingUsageWritesFn = drainPendingUsageWritesFn;
+    this.generateInvocationIdFn = generateInvocationIdFn;
+    /** taskId -> the current runCard() span's unique execution id (usageLedger.js). */
+    this._executionIds = new Map();
     this.buildVerdictDigestFn = buildVerdictDigestFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
@@ -554,6 +568,15 @@ export class RunOrchestrator {
     const worktreeDir = path.join(this.worktreesDir, taskId);
 
     this.activeCardIds.add(taskId);
+    // T-0367 fix round (Codex review 2026-09-12, P1): minted/persisted before ANY process is
+    // spawned (worktree setup, planner, implementer, reviewer, merge-conflict all follow this),
+    // so every usage-ledger entry this run produces carries the SAME id -- a rerun of this same
+    // card starts a fresh execution id rather than colliding with a previous launch's attempt-1
+    // ledger files. `ensureExecutionIdFn` reuses a persisted id instead of minting a new one only
+    // when one is already on disk -- i.e. a genuine replay/recovery of a run whose own cleanup
+    // never got to finish (see the `finally` block below, which clears it on every normal exit).
+    const executionId = await this.ensureExecutionIdFn({ runsDir: this.runsDir, cardId: taskId });
+    this._executionIds.set(taskId, executionId);
     let worktreeReady = false;
     const stopHeartbeat = this._startHeartbeat(taskId);
     try {
@@ -609,6 +632,20 @@ export class RunOrchestrator {
       // stale pid behind) keeps a future restart's liveness check from having to reason about
       // a runstate written by a run that's already fully finished.
       await this.clearRunStateFn({ runsDir: this.runsDir, taskId });
+      // T-0367 fix round (Codex review 2026-09-12, P2): every usage-ledger write this run
+      // dispatched was fire-and-forget (`void this._recordUsage(...)`) so it never added latency
+      // to the run itself -- but that also means one could still be in flight right here. Drain
+      // them before this runCard() span is considered over, so the run's own terminal write is
+      // guaranteed to have reached disk rather than racing the process's own exit. Best-effort:
+      // wrapped so a drain failure can never fail the run it's instrumenting.
+      await this.drainPendingUsageWritesFn().catch(() => {});
+      // Same posture as clearRunStateFn above: this run's own span is over, so the next
+      // runCard() call for this card (a genuinely new launch) must mint a fresh execution id
+      // rather than reusing this one. Only a runCard() call whose OWN cleanup never got to run
+      // (e.g. the whole board process died mid-run) leaves the persisted id behind for
+      // ensureExecutionIdFn to recover on the next call.
+      this._executionIds.delete(taskId);
+      await this.clearExecutionIdFn({ runsDir: this.runsDir, cardId: taskId });
       if (this.activeCardIds.size === 0) {
         this.onIdle();
       }
@@ -728,7 +765,8 @@ export class RunOrchestrator {
         worktreeDir,
         branch,
         runLog,
-        currentReused
+        currentReused,
+        attempt
       );
       if (stop) return;
 
@@ -796,7 +834,7 @@ export class RunOrchestrator {
   }
 
   /** Runs one implementer+reviewer cycle. Returns `{stop: true}` once the card has already been left in a terminal state (crash/blocked/cancelled) -- the caller must not act further -- or `{stop: false, verdict}` for the caller to grade. */
-  async _runAttempt(taskId, task, effectiveAgent, worktreeDir, branch, runLog, reused) {
+  async _runAttempt(taskId, task, effectiveAgent, worktreeDir, branch, runLog, reused, attempt) {
     const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
     const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
@@ -819,7 +857,8 @@ export class RunOrchestrator {
       allowedTools,
       worktreeDir,
       model: agentDef.model,
-      runLog
+      runLog,
+      attempt
     });
     if (implementerResult.cancelled) {
       return { stop: true };
@@ -839,6 +878,21 @@ export class RunOrchestrator {
       await this._blocked(taskId, this._crashReason("implementer", implementerResult));
       return { stop: true };
     }
+
+    // T-0367: the implementer phase ran to completion. The only further classification this
+    // phase alone can carry is a genuine 429 quota stop mid-stream (usageLimitDetector.js) --
+    // distinct from `success` because its result event still carries a real cumulative total,
+    // not a lower bound (see docs/usage-telemetry.md). Fire-and-forget: instrumentation only,
+    // never a reason to add latency to the retry loop's own progress.
+    void this._recordUsage(taskId, {
+      attempt,
+      phase: "implementer",
+      invocationId: implementerResult.invocationId,
+      events: implementerResult.events,
+      outcome: eventsContainUsageLimitSignature(implementerResult.events) ? "quota_stop" : "success",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
 
     if (this.autoCaptureUncommitted) {
       await this._captureUncommittedImplementerWork(taskId, worktreeDir, runLog);
@@ -875,7 +929,8 @@ export class RunOrchestrator {
       allowedTools: reviewerAllowedTools,
       worktreeDir,
       model: reviewerAgentDef.model,
-      runLog
+      runLog,
+      attempt
     });
     if (reviewerResult.cancelled) {
       return { stop: true };
@@ -912,6 +967,25 @@ export class RunOrchestrator {
     if (verdict.downgraded) {
       await this._logCrossCheck(taskId, runLog, verdict.notes);
     }
+
+    // T-0367: reviewer_fail covers every non-PASS verdict (FAIL and NEEDS_HUMAN_DECISION alike)
+    // -- both are a completed, real reviewer verdict, not a truncation, so complete stays true.
+    // A quota-stop signature takes priority over the verdict itself: a self-reported PASS/FAIL
+    // alongside a 429 in the same event stream is still a quota stop, not a graded verdict.
+    // Fire-and-forget, same reasoning as the implementer's own record above.
+    void this._recordUsage(taskId, {
+      attempt,
+      phase: "reviewer",
+      invocationId: reviewerResult.invocationId,
+      events: reviewerResult.events,
+      outcome: eventsContainUsageLimitSignature(reviewerResult.events)
+        ? "quota_stop"
+        : verdict.verdict === "PASS"
+          ? "success"
+          : "reviewer_fail",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
 
     return { stop: false, verdict: { ...verdict, phase: verdict.phase ?? "reviewer" }, events: [...implementerResult.events, ...reviewerResult.events] };
   }
@@ -976,6 +1050,19 @@ export class RunOrchestrator {
       await this._blocked(taskId, this._crashReason("planner", plannerResult));
       return false;
     }
+
+    // T-0367: the planner's own success/failure, keyed at attempt 0 -- it runs once, before the
+    // implementer/reviewer attempt loop even starts, so it never carries a loop attempt number.
+    // Fire-and-forget, same reasoning as the implementer/reviewer records above.
+    void this._recordUsage(taskId, {
+      attempt: 0,
+      phase: "planning",
+      invocationId: plannerResult.invocationId,
+      events: plannerResult.events,
+      outcome: eventsContainUsageLimitSignature(plannerResult.events) ? "quota_stop" : "success",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
 
     if (fileView) {
       const plan = await diffPlannerFileView({ tasksDir: fileView.tasksDir, before: fileView.before });
@@ -1110,6 +1197,39 @@ export class RunOrchestrator {
     await this._appendComment(taskId, "assembled-board", message);
   }
 
+  /**
+   * Single chokepoint for T-0367's idempotent usage ledger (usageLedger.js): every call
+   * recomputes and overwrites the one sidecar for this (card, attempt, phase, retry) key, so
+   * an incremental mid-run call and a later terminal call for the same key never double-count --
+   * they simply overwrite with a fuller/more accurate picture. `retry` defaults to 0: this
+   * orchestrator has no sub-retry loop within a single phase execution today (see
+   * docs/usage-telemetry.md's "out of scope" section), only the outer attempt loop.
+   *
+   * Best-effort by design, same posture as `_preserveBranch`/the heartbeat: a usage-ledger
+   * write failure (disk full, permissions) is instrumentation, not a run outcome, and must
+   * never fail or alter the run it's recording.
+   */
+  async _recordUsage(taskId, { attempt, phase, retry = 0, invocationId = null, events, outcome, complete, sourceLogPath = null }) {
+    try {
+      await this.recordAttemptUsageFn({
+        runsDir: this.runsDir,
+        cardId: taskId,
+        executionId: this._executionIds.get(taskId) ?? null,
+        invocationId,
+        attempt,
+        phase,
+        retry,
+        events,
+        outcome,
+        complete,
+        sourceLogPath,
+        now: this.now
+      });
+    } catch (err) {
+      console.warn(`Board: failed to record usage ledger entry for ${taskId} (attempt ${attempt}, phase ${phase}, outcome ${outcome}): ${err.message}`);
+    }
+  }
+
   _crashReason(phase, result) {
     if (result.spawnError) {
       return `${phase} failed to start: ${result.spawnError.message}`;
@@ -1118,7 +1238,18 @@ export class RunOrchestrator {
     return `${phase} process exited with code ${result.exitCode ?? "null"}${signalSuffix}`;
   }
 
-  async _runPhase({ taskId, task, phase, agent, prompt, allowedTools, worktreeDir, model, runLog }) {
+  async _runPhase({ taskId, task, phase, agent, prompt, allowedTools, worktreeDir, model, runLog, attempt = 0 }) {
+    // T-0367 fix round (Codex review 2, 2026-09-12, finding 2): minted fresh for every NEWLY
+    // SPAWNED phase process, distinct from the card's own executionId. After a board crash, a
+    // restarted card reuses its persisted executionId (see ensureExecutionIdFn) -- that's what
+    // "recovery" means, the interrupted work is still logically the same launch -- but the
+    // restarted phase is a brand-new child process, and without a distinct id here it would
+    // silently overwrite the interrupted phase's own (executionId, attempt, phase, retry) ledger
+    // entry instead of leaving it in place alongside its own. Every `_recordUsage` call this
+    // phase's own run produces (the incremental one below, and the terminal one the caller makes
+    // once it knows the fuller classification) carries this SAME id, since they all describe one
+    // process's consumption.
+    const invocationId = this.generateInvocationIdFn();
     const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model });
     const entry = { phase, run, worktreeDir, cancelled: false };
     this.activeRuns.set(taskId, entry);
@@ -1137,9 +1268,27 @@ export class RunOrchestrator {
     let appendChain = Promise.resolve();
     const parser = new NdjsonEventParser({
       onEvent: (event) => {
+        // T-0367 fix round (Codex review 2026-09-12, P1): a `rate_limit_event` carries no
+        // wall-clock field of its own, so `usageTelemetry.js`'s freshness check needs one
+        // stamped on arrival -- this is the instant the board actually saw the event, which
+        // `readWindowUsage` then trusts over the containing log file's mtime (a later, unrelated
+        // write to the same log otherwise makes an old reading look fresh; see
+        // docs/usage-telemetry.md).
+        if (event.type === "rate_limit_event" && typeof event.receivedAtMs !== "number") {
+          event.receivedAtMs = this.now().getTime();
+        }
         events.push(event);
         appendChain = appendChain.then(() => runLog.append(event));
         this.hub.broadcast({ type: "run-event", id: taskId, phase, event });
+        // T-0367 incremental usage recording: fired on every assistant turn (where token usage
+        // actually grows), never awaited -- a slow/failing ledger write must not add latency to
+        // the phase's own event loop. `complete: false` marks this a lower bound, overwritten by
+        // the terminal record below once the phase actually ends; if the process is killed by
+        // something this orchestrator never sees (a board crash, an OOM-kill), this is the most
+        // recent recorded figure and is what keeps that case from silently recording as zero.
+        if (event.type === "assistant") {
+          void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "in_progress", complete: false, sourceLogPath: runLog.path });
+        }
       }
     });
 
@@ -1273,7 +1422,25 @@ export class RunOrchestrator {
     await appendChain;
 
     this.activeRuns.delete(taskId);
-    return { ...result, events, cancelled: entry.cancelled };
+
+    // T-0367: the three outcomes decidable here, without any verdict/classification the caller
+    // alone has (PASS/FAIL, quota-stop). A clean exit (exitCode 0) is deliberately NOT recorded
+    // here -- the caller (implementer/reviewer/planner/merge-conflict-specific code) records that
+    // case once it knows the fuller classification (success vs quota_stop vs reviewer_fail), so
+    // this phase's key ends up with exactly one terminal entry, not two disagreeing ones.
+    //
+    // Fire-and-forget, like the incremental record above: this is instrumentation, and must
+    // never add real disk-I/O latency to the phase-completion path a phase timeout/cancellation
+    // is already on (the run's own retry loop must not wait on a usage-ledger write to proceed).
+    if (entry.cancelled) {
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "cancelled", complete: false, sourceLogPath: runLog.path });
+    } else if (result.timedOut) {
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "phase_timeout", complete: false, sourceLogPath: runLog.path });
+    } else if (result.exitCode !== 0) {
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "crashed", complete: false, sourceLogPath: runLog.path });
+    }
+
+    return { ...result, events, cancelled: entry.cancelled, invocationId };
   }
 
   /** Phase budget for the agent this phase runs as -- see resolvePhaseTimeoutMs for precedence. */
@@ -1940,6 +2107,22 @@ export class RunOrchestrator {
       await this._abortMergeBestEffort(worktreeDir);
       return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
     }
+
+    // T-0367: the merge-conflict phase ran to completion, same classification the
+    // implementer/reviewer/planner phases already record right after their own `_runPhase`
+    // call -- this is the phase's OWN process finishing cleanly, not yet the business-level
+    // "did it actually resolve everything" verdict checked below. Keyed at attempt 0, same as
+    // the planner: it runs once per develop-sync, outside the implementer/reviewer retry loop.
+    // Fire-and-forget, same reasoning as every other phase's own record.
+    void this._recordUsage(taskId, {
+      attempt: 0,
+      phase: "merge-conflict",
+      invocationId: result.invocationId,
+      events: result.events,
+      outcome: eventsContainUsageLimitSignature(result.events) ? "quota_stop" : "success",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
 
     const stillUnresolved = await this.git.mergeStatus({ worktreeDir });
     const dirty = await this.git.hasUncommittedChanges({ worktreeDir });

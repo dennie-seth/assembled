@@ -29,3 +29,23 @@ const board = await startBoardServer({
 
 const { port } = board.server.address();
 console.log(`assembled-board listening on http://127.0.0.1:${port} (ws: /ws/board)`);
+
+// Auto-restart (serviceRestart.js) and deploy.sh both stop the unit with `systemctl --user
+// restart/stop`, i.e. SIGTERM -- and without a handler, Node dies without running any cleanup at
+// all, so a usage-ledger write in flight at exactly that moment (a quota-stop/crash/restart is
+// what this ticket exists to measure) is lost (T-0367 fix round 3, 2026-09-12). close() itself
+// bounds its own drain, so this handler never needs its own timeout on top of that; a close()
+// failure is logged, never allowed to prevent the process from actually exiting on the signal it
+// was asked to stop for.
+async function shutdown(signal) {
+  console.log(`[board] received ${signal}, shutting down...`);
+  try {
+    await board.close();
+  } catch (err) {
+    console.error("[board] error while closing during shutdown:", err);
+  }
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
