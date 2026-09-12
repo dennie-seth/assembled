@@ -4,11 +4,6 @@ import { randomUUID } from "node:crypto";
 
 const ZERO_TOKENS = Object.freeze({ input: 0, output: 0, cacheCreate: 0, cacheRead: 0 });
 
-/** A ledger entry with no distinct invocation id (legacy callers that never spawned a
- * per-phase invocation identity). Real orchestrator call sites always pass a real one
- * (Codex review 2, 2026-09-12, finding 2). */
-const DEFAULT_INVOCATION_ID = "0";
-
 function numberOr0(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
@@ -182,8 +177,23 @@ function assertValidExecutionId(executionId) {
 }
 
 /**
- * Path to the one JSON sidecar recording a given (card, execution, invocation, attempt, phase,
- * retry) key's usage.
+ * Rejected up front, exactly like `assertValidExecutionId` (Codex review 3, 2026-09-12,
+ * recommendation): a missing/empty invocationId used to silently fall back to a shared
+ * `DEFAULT_INVOCATION_ID`, conflating any callers that omitted it onto one key. There is no
+ * default any more -- every NEW record must carry a real, caller-supplied invocation identity. A
+ * future replay/backfill tool that needs to target a pre-existing legacy identity takes that as
+ * its own explicit input, never a silent fallback (see docs/usage-telemetry.md).
+ */
+function assertValidInvocationId(invocationId) {
+  if (typeof invocationId !== "string" || invocationId.length === 0) {
+    throw new Error(`usage ledger: invocationId is required and must be a non-empty string (got ${JSON.stringify(invocationId)})`);
+  }
+}
+
+/**
+ * Path to the CANONICAL (card, execution, invocation, attempt, phase, retry) key's usage --
+ * an identity, not necessarily the exact file written to disk for any one call (see
+ * `recordAttemptUsage`'s immutable-revision publication below).
  *
  * `executionId` (Codex review 2026-09-12, P1) distinguishes separate launches of the SAME card:
  * without it, a rerun that starts a fresh attempt-1 overwrites a previous launch's attempt-1
@@ -197,40 +207,22 @@ function assertValidExecutionId(executionId) {
  * persisted executionId (that's what "recovery" means -- the interrupted work is still logically
  * part of the same launch), but the restarted phase is a brand-new child process that must never
  * overwrite the interrupted phase's own entry. The orchestrator mints a fresh one per `_runPhase`
- * call; callers that never pass one (most direct ledger tests) share one fixed default, which
- * preserves this module's pre-existing overwrite-on-replay semantics for them.
+ * call. Also rejected up front when missing or empty (Codex review 3, 2026-09-12) -- there is no
+ * shared default key any more.
  */
 export function usageLedgerEntryPath(runsDir, { cardId, executionId, invocationId, attempt, phase, retry }) {
   assertValidExecutionId(executionId);
-  const resolvedInvocationId = invocationId ?? DEFAULT_INVOCATION_ID;
-  return path.join(runsDir, `${cardId}-exec${executionId}-inv${resolvedInvocationId}-attempt${attempt}-${phase}-retry${retry}.usage.json`);
+  assertValidInvocationId(invocationId);
+  return path.join(runsDir, `${cardId}-exec${executionId}-inv${invocationId}-attempt${attempt}-${phase}-retry${retry}.usage.json`);
 }
 
 /**
  * Monotonic call-order counter, assigned synchronously (before any `await`) the instant
- * `recordAttemptUsage` is invoked. This is what lets two racing writes for the same key agree on
- * which one is "newer" regardless of which one's I/O happens to finish first.
+ * `recordAttemptUsage` is invoked, and embedded in the entry as its `revision`. This is what lets
+ * two racing writes for the same key agree on which one is "newer" regardless of which one's I/O
+ * happens to finish first.
  */
 let nextWriteSequence = 0;
-
-/**
- * The highest-sequence entry INTENDED for a given ledger key, updated synchronously (no `await`
- * in between) the instant `recordAttemptUsage` is called for it -- before any I/O. This is the
- * single source of truth reconciliation reads from; it never regresses for a given key.
- */
-const bestKnownByKey = new Map(); // ks -> {sequence, entry}
-
-/**
- * The sequence number of whichever entry is BELIEVED to currently be on disk for a given key,
- * updated unconditionally right after any actual rename completes -- including a rename that
- * turns out to be stale. Comparing this against `bestKnownByKey` is what lets a write notice "my
- * rename just clobbered the file with stale data" and self-heal (see `publishAndReconcile`).
- */
-const diskSequenceByKey = new Map();
-
-function ledgerKeyString({ cardId, executionId, invocationId, attempt, phase, retry }) {
-  return `${cardId}::${executionId}::${invocationId}::${attempt}::${phase}::${retry}`;
-}
 
 /** In-flight write promises, so `drainPendingUsageWrites` can wait for all of them to settle. */
 const pendingWrites = new Set();
@@ -259,68 +251,85 @@ function randomSuffix() {
   return Math.random().toString(36).slice(2);
 }
 
+const REVISION_SUFFIX_RE = /\.rev(\d+)\.json$/;
+
 /**
- * Publishes `entry` (already written to `tmpPath`) by renaming it onto `filePath`, THEN
- * reconciles the key against whatever the freshest known write for it actually is (Codex review
- * 2, 2026-09-12, finding 1).
- *
- * The rename here always executes -- there is no pre-rename "am I stale, should I skip"
- * check -- because a stale write that's been delayed can't be cancelled once its temp file
- * exists, and a strict per-key mutex spanning the whole check-through-rename span would force a
- * NEWER write to queue behind an OLDER, still in-flight one, which is the wrong outcome (a
- * terminal write must never wait behind a slow superseded one). Instead, correctness comes from
- * reconciliation: whichever rename physically lands on disk, THIS call always checks afterward
- * whether a fresher entry is known for the key and, if the disk doesn't already reflect it,
- * republishes that fresher entry itself. Because `bestKnownByKey` only ever advances forward,
- * this loop always terminates, and disk content converges on the truly newest entry regardless of
- * which write's I/O happened to finish last.
+ * Best-effort cleanup: deletes every sibling revision file for `canonicalPath` strictly older
+ * than `keepRevision`. Never throws -- a failed prune leaves a harmless stray file behind rather
+ * than affecting correctness (readers always select the freshest valid revision regardless of
+ * how many older ones still exist on disk).
  */
-async function publishAndReconcile(ks, filePath, sequence, tmpPath, { runsDir, writeFileFn, mkdirFn, renameFn, unlinkFn }) {
+async function pruneOlderRevisions(runsDir, canonicalPath, keepRevision, { readdirFn, unlinkFn }) {
+  const base = path.basename(canonicalPath);
+  let names;
   try {
-    await renameFn(tmpPath, filePath);
-  } catch (err) {
-    await unlinkFn(tmpPath).catch(() => {});
-    throw err;
+    names = await readdirFn(runsDir);
+  } catch {
+    return;
   }
-  diskSequenceByKey.set(ks, sequence);
-
-  for (;;) {
-    const best = bestKnownByKey.get(ks);
-    const diskSeq = diskSequenceByKey.get(ks) ?? -Infinity;
-    if (!best || best.sequence <= diskSeq) return;
-
-    const fixupTmpPath = `${filePath}.tmp-fixup-${process.pid}-${randomSuffix()}`;
-    await mkdirFn(runsDir, { recursive: true });
-    await writeFileFn(fixupTmpPath, JSON.stringify(best.entry, null, 2), "utf8");
-    try {
-      await renameFn(fixupTmpPath, filePath);
-    } catch {
-      // Best-effort: whichever write settles next (this one's own retry never happens, but any
-      // other in-flight write for the same key will run this same reconciliation loop) picks the
-      // fix back up. A failed fixup must never surface as this call's own failure -- publishing
-      // THIS call's own data already succeeded above.
-      await unlinkFn(fixupTmpPath).catch(() => {});
-      return;
+  for (const name of names) {
+    if (!name.startsWith(`${base}.rev`)) continue;
+    const match = REVISION_SUFFIX_RE.exec(name);
+    if (!match) continue;
+    if (Number(match[1]) < keepRevision) {
+      await unlinkFn(path.join(runsDir, name)).catch(() => {});
     }
-    diskSequenceByKey.set(ks, best.sequence);
   }
 }
 
 /**
+ * Scans `runsDir` for every revision file published under `canonicalPath` and returns the entry
+ * with the highest revision number that still parses -- `null` if none exist.
+ */
+async function findLatestRevisionEntry(runsDir, canonicalPath, { readdirFn, readFileFn }) {
+  const base = path.basename(canonicalPath);
+  let names;
+  try {
+    names = await readdirFn(runsDir);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null;
+    throw err;
+  }
+
+  let best = null;
+  for (const name of names) {
+    if (!name.startsWith(`${base}.rev`)) continue;
+    const match = REVISION_SUFFIX_RE.exec(name);
+    if (!match) continue;
+    let raw;
+    try {
+      raw = JSON.parse(await readFileFn(path.join(runsDir, name), "utf8"));
+    } catch {
+      continue; // rotated/deleted between readdir and read, or malformed -- skip rather than throw
+    }
+    const revision = typeof raw.revision === "number" ? raw.revision : Number(match[1]);
+    if (!best || revision > best.revision) best = { revision, entry: raw };
+  }
+  return best ? best.entry : null;
+}
+
+/**
  * Records (or re-records) usage for one execution/invocation/attempt/phase/retry. Always
- * recomputes the summary from the full `events` list passed in and publishes a full sidecar
- * file -- this is what makes it idempotent: replaying the same events, or calling again with a
- * longer (growing) events list as a run progresses, produces one file with one correct number,
- * never an accumulated double-count.
+ * recomputes the summary from the full `events` list passed in -- this is what makes it
+ * idempotent: replaying the same events, or calling again with a longer (growing) events list as
+ * a run progresses, produces one correct number, never an accumulated double-count.
  *
  * `outcome` and `complete` are supplied by the caller (the orchestrator knows why an attempt
  * stopped feeding events -- this module does not re-derive that from the events themselves).
  *
- * Publishes via write-temp-file-then-atomic-rename, never a direct `writeFile` to the real path,
- * so a concurrent reader never observes a half-written file: POSIX rename onto an existing path
- * is atomic, so `usageLedgerEntryPath`'s file is always either a complete previous entry or a
- * complete new one. See `publishAndReconcile` for how concurrent/out-of-order writes for the same
- * key are reconciled so the newest one always wins on disk.
+ * Publication is monotonic per key by construction (Codex review 3, 2026-09-12, finding 1): each
+ * call writes to its OWN immutable revision file (`<canonicalPath>.rev<sequence>.json`, `sequence`
+ * assigned synchronously in call order at function entry) via write-temp-file-then-atomic-rename,
+ * never a shared mutable path. Two racing writes for the same key therefore never contend for the
+ * same rename destination at all -- there is no "older rename lands after a newer one and
+ * clobbers it" race to guard against, because an older write's revision file, however late it
+ * lands (or even if its own publish fails outright), can never overwrite a newer revision's
+ * content. `readAttemptUsage`/`listCardUsageEntries` always select the highest-revision file
+ * present for a key, so the value they report can only ever advance, never regress, as more
+ * revisions land in whatever order their I/O happens to settle. A best-effort prune after each
+ * successful publish deletes now-superseded revisions so a long run's many incremental writes
+ * don't accumulate unbounded files per key; a failed prune is harmless (readers still pick the
+ * freshest valid revision by content, not by "the only file present").
  */
 export async function recordAttemptUsage({
   runsDir,
@@ -338,19 +347,19 @@ export async function recordAttemptUsage({
   writeFileFn = fs.writeFile,
   mkdirFn = fs.mkdir,
   renameFn = fs.rename,
-  unlinkFn = fs.unlink
+  unlinkFn = fs.unlink,
+  readdirFn = fs.readdir
 }) {
-  const resolvedInvocationId = invocationId ?? DEFAULT_INVOCATION_ID;
-  const key = { cardId, executionId, invocationId: resolvedInvocationId, attempt, phase, retry };
-  const filePath = usageLedgerEntryPath(runsDir, key); // throws before any I/O if executionId is invalid
+  const key = { cardId, executionId, invocationId, attempt, phase, retry };
+  const canonicalPath = usageLedgerEntryPath(runsDir, key); // throws before any I/O if ids are invalid
 
-  const sequence = ++nextWriteSequence;
+  const revision = ++nextWriteSequence;
   const recordedAtMs = now().getTime();
   const summary = summarizeUsageFromEvents(events);
   const entry = {
     cardId,
     executionId,
-    invocationId: resolvedInvocationId,
+    invocationId,
     attempt,
     phase,
     retry,
@@ -365,24 +374,23 @@ export async function recordAttemptUsage({
     apiErrorStatus: summary.apiErrorStatus,
     resultText: summary.resultText,
     sourceLogPath,
-    recordedAt: new Date(recordedAtMs).toISOString()
+    recordedAt: new Date(recordedAtMs).toISOString(),
+    revision
   };
 
-  const ks = ledgerKeyString(key);
-  const tmpPath = `${filePath}.tmp-${process.pid}-${randomSuffix()}`;
-
-  // Synchronous, no `await` before this point since function entry: this call's data becomes the
-  // new "best known" for its key immediately, so a slower write that settles later can always
-  // tell it's been superseded and self-heal (see `publishAndReconcile`).
-  const existingBest = bestKnownByKey.get(ks);
-  if (!existingBest || existingBest.sequence < sequence) {
-    bestKnownByKey.set(ks, { sequence, entry });
-  }
+  const revisionPath = `${canonicalPath}.rev${revision}.json`;
+  const tmpPath = `${canonicalPath}.tmp-${process.pid}-${randomSuffix()}`;
 
   const writePromise = (async () => {
     await mkdirFn(runsDir, { recursive: true });
     await writeFileFn(tmpPath, JSON.stringify(entry, null, 2), "utf8");
-    await publishAndReconcile(ks, filePath, sequence, tmpPath, { runsDir, writeFileFn, mkdirFn, renameFn, unlinkFn });
+    try {
+      await renameFn(tmpPath, revisionPath);
+    } catch (err) {
+      await unlinkFn(tmpPath).catch(() => {});
+      throw err;
+    }
+    await pruneOlderRevisions(runsDir, canonicalPath, revision, { readdirFn, unlinkFn });
     return entry;
   })();
 
@@ -391,19 +399,18 @@ export async function recordAttemptUsage({
 }
 
 /** Returns `null` (never throws) when the key was never recorded. */
-export async function readAttemptUsage({ runsDir, cardId, executionId, invocationId, attempt, phase, retry, readFileFn = fs.readFile }) {
-  try {
-    const raw = await readFileFn(usageLedgerEntryPath(runsDir, { cardId, executionId, invocationId, attempt, phase, retry }), "utf8");
-    return JSON.parse(raw);
-  } catch (err) {
-    if (err && err.code === "ENOENT") return null;
-    throw err;
-  }
+export async function readAttemptUsage({ runsDir, cardId, executionId, invocationId, attempt, phase, retry, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
+  const canonicalPath = usageLedgerEntryPath(runsDir, { cardId, executionId, invocationId, attempt, phase, retry });
+  return findLatestRevisionEntry(runsDir, canonicalPath, { readdirFn, readFileFn });
 }
 
-const ENTRY_FILENAME_RE = /^(.+)-exec(.+)-inv(.+)-attempt(\d+)-(.+)-retry(\d+)\.usage\.json$/;
+const REVISION_FILENAME_RE = /^(.+)-exec(.+)-inv(.+)-attempt(\d+)-(.+)-retry(\d+)\.usage\.json\.rev(\d+)\.json$/;
 
-/** All recorded usage entries for one card, across every execution/invocation/attempt/phase/retry. */
+/**
+ * All recorded usage entries for one card, across every execution/invocation/attempt/phase/retry
+ * -- exactly ONE entry per key, the freshest revision published for it (never one entry per
+ * revision, which would inflate every total downstream).
+ */
 export async function listCardUsageEntries({ runsDir, cardId, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
   let names;
   try {
@@ -413,29 +420,51 @@ export async function listCardUsageEntries({ runsDir, cardId, readdirFn = fs.rea
     throw err;
   }
 
-  const entries = [];
+  const bestByKey = new Map();
   for (const name of names) {
-    const match = ENTRY_FILENAME_RE.exec(name);
+    const match = REVISION_FILENAME_RE.exec(name);
     if (!match) continue;
     if (match[1] !== cardId) continue;
+    let raw;
     try {
-      const raw = await readFileFn(path.join(runsDir, name), "utf8");
-      entries.push(JSON.parse(raw));
+      raw = JSON.parse(await readFileFn(path.join(runsDir, name), "utf8"));
     } catch {
-      // Rotated/deleted between readdir and read, or malformed -- skip rather than throw.
+      continue; // rotated/deleted between readdir and read, or malformed -- skip rather than throw
     }
+    const revision = typeof raw.revision === "number" ? raw.revision : Number(match[7]);
+    const ks = `${match[1]}::${match[2]}::${match[3]}::${match[4]}::${match[5]}::${match[6]}`;
+    const existing = bestByKey.get(ks);
+    if (!existing || revision > existing.revision) bestByKey.set(ks, { revision, entry: raw });
   }
-  return entries;
+  return Array.from(bestByKey.values()).map((v) => v.entry);
 }
 
+/**
+ * Aggregates cost as nullable (Codex review 3, 2026-09-12, finding 2): `costUsd: null`
+ * ("unknown") whenever ANY contributing entry's own cost is unknown (`null`/non-numeric),
+ * alongside `knownCostUsd` (the subtotal of every entry that DID carry a known cost) and
+ * `unknownCostEntries` (how many didn't) so a caller can present "known subtotal, N entries
+ * unmeasured" instead of a misleadingly precise total. A measured zero (`costUsd: 0`) is reported
+ * only when every contributing entry's cost is known -- never a stand-in for "we don't know".
+ */
 function sumEntries(entries) {
   let tokens = ZERO_TOKENS;
-  let costUsd = 0;
+  let knownCostUsd = 0;
+  let unknownCostEntries = 0;
   for (const entry of entries) {
     if (entry.tokens) tokens = addTokens(tokens, entry.tokens);
-    costUsd += numberOr0(entry.costUsd);
+    if (typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd)) {
+      knownCostUsd += entry.costUsd;
+    } else {
+      unknownCostEntries += 1;
+    }
   }
-  return { tokens, costUsd };
+  return {
+    tokens,
+    costUsd: unknownCostEntries > 0 ? null : knownCostUsd,
+    knownCostUsd,
+    unknownCostEntries
+  };
 }
 
 /** Sums every phase/retry recorded for one attempt number. Never mixes attempts together. */

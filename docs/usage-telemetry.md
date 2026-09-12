@@ -147,18 +147,23 @@ actually empty — another consumer may already have spent some of it before thi
 ## The idempotent usage ledger
 
 `runLog.js` retains every event verbatim in `tasks/.runs/*.jsonl` already — the ledger does not
-duplicate that; it stores a **derived summary**, one JSON file per
-`(card, execution, invocation, attempt, phase, retry)` key
-(`tasks/.runs/<cardId>-exec<executionId>-inv<invocationId>-attempt<N>-<phase>-retry<N>.usage.json`,
+duplicate that; it stores a **derived summary**, logically one entry per
+`(card, execution, invocation, attempt, phase, retry)` key, identified by a canonical path
+(`usageLedgerEntryPath`: `tasks/.runs/<cardId>-exec<executionId>-inv<invocationId>-attempt<N>-<phase>-retry<N>.usage.json`,
 mirroring `runState.js`'s `<taskId>.runstate.json` sidecar convention), always computed fresh from
-the full event list rather than accumulated as deltas. Recomputing from scratch on every call is
-what makes recording idempotent by construction: calling `recordAttemptUsage` twice with the same
-events overwrites the same file with the same content, never doubling a running total. Recording
+the full event list rather than accumulated as deltas. The PHYSICAL file a given call publishes to
+is that canonical path plus a `.rev<sequence>.json` suffix (see "Publication is monotonic per key"
+below) — `readAttemptUsage`/`listCardUsageEntries` always resolve a key to its single
+highest-revision entry, so every consumer of this module still sees exactly one logical entry per
+key regardless of that physical layout. Recomputing from scratch on every call is what makes
+recording idempotent by construction: calling `recordAttemptUsage` twice with the same events
+converges on one reported entry with the same content, never doubling a running total. Recording
 again with a **longer** events array (the normal "incrementally, and again at termination" case)
-simply recomputes and overwrites with the fuller picture — still one file, still one number, per
-key. `usageLedgerEntryPath` rejects a missing/empty `executionId` before building any path string
-(fix round, Codex review 2, 2026-09-12, finding 4) — no entry is ever written under an
-`…execundefined…`/`…execnull…` key.
+simply recomputes and publishes a fresh, higher revision with the fuller picture — still one
+reported number per key. `usageLedgerEntryPath` rejects a missing/empty `executionId` (fix round,
+Codex review 2, 2026-09-12, finding 4) or `invocationId` (fix round, Codex review 3, 2026-09-12)
+before building any path string — no entry is ever written under an `…execundefined…`/`…execnull…`
+key, or a shared default invocation key.
 
 **Execution identity (fix round, Codex review 2026-09-12, P1).** The key used to be only
 `(card, attempt, phase, retry)`, and every fresh `runCard()` invocation restarts its own attempt
@@ -255,30 +260,71 @@ instead of the real terminal result. `recordAttemptUsage` writes to a temp file 
 atomic rename, so a concurrent reader of the real path always sees either the complete previous
 entry or the complete new one, never a partial write.
 
-**Publication ordering survives a delayed RENAME, not just a delayed write (fix round, Codex review
-2, 2026-09-12, finding 1).** The first fix round's guard compared a synchronous sequence number
-against the "last committed" one right before rename — but it marked that sequence committed
-*before* the rename actually completed, so an older write could pass the check, stall mid-rename,
-and land on disk *after* a newer write's rename had already published. Reproduced: delay the older
-write's `renameFn`, let a newer terminal write publish first, then release the older one — the final
-file regressed to the older write's stale figures. A strict per-key mutex spanning the whole
-check-through-rename span would fix the ordering but at the cost of forcing a newer, terminal write
-to queue behind a slow superseded one — the wrong trade-off for a ledger where the terminal record
-matters most. Instead, `recordAttemptUsage` tracks the highest-sequence entry INTENDED for a key
-(`bestKnownByKey`, updated synchronously the instant the call is made, before any I/O) separately
-from the sequence actually believed to be on disk (`diskSequenceByKey`, updated only after a real
-rename lands). Every write's rename executes unconditionally — never skipped, since a delayed
-write's temp file can't be un-queued — but immediately after its own rename lands, it checks whether
-disk still reflects the best known entry; if a fresher one exists and disk doesn't yet show it, it
-republishes that fresher entry itself (a second write-temp-then-rename, looping until disk catches
-up). This makes disk content self-healing regardless of which write's I/O happens to finish last,
-without ever forcing a newer write to wait on an older one. A second regression covers a rename that
-fails outright: the previously published entry stays intact and the failure never advances what the
-next write for that key is compared against.
+**Publication is monotonic per key by construction, via immutable revision files (fix round, Codex
+review 3, 2026-09-12, finding 1 — superseding the prior `bestKnownByKey`/`diskSequenceByKey`
+self-heal design below).** Two earlier attempts both wrote every racing write for a key to the SAME
+mutable path and tried to reconcile after the fact:
+
+1. A synchronous "last committed sequence" check right before rename — but it marked a sequence
+   committed *before* its rename actually completed, so an older write could pass the check, stall
+   mid-rename, and land on disk *after* a newer write's rename had already published. Reproduced:
+   delay the older write's `renameFn`, let a newer terminal write publish first, then release the
+   older one — the final file regressed to the older write's stale figures.
+2. A "self-heal" follow-up (`bestKnownByKey` tracking the freshest entry INTENDED for a key,
+   `diskSequenceByKey` tracking what was actually last rendered to disk) that republished the
+   freshest entry whenever a write noticed its own rename had left disk stale. This fixed the
+   ordinary case but the repair step could itself fail (an injected `EIO` on the repair rename) and
+   nothing else was left to retry it — the corrupted, stale value stayed visible indefinitely, and
+   even when repair succeeded, there was a real window where a concurrent reader could observe the
+   stale value before the repair rename landed.
+
+Both approaches shared the same flaw: they let TWO writes' renames target the same destination path
+and tried to out-race or repair the result afterward. `recordAttemptUsage` now sidesteps the race
+instead of reconciling it: each call publishes to its OWN immutable revision file —
+`<canonicalPath>.rev<sequence>.json`, where `sequence` is a monotonic counter assigned synchronously
+in call order at function entry and embedded in the entry as `revision` — via the same
+write-temp-then-atomic-rename as before, but never onto a path any other write could also be
+targeting. `readAttemptUsage`/`listCardUsageEntries` scan for every revision file published under a
+key's canonical path and report the one with the highest `revision`. An older write's rename,
+however late it lands — or even if it fails outright — can therefore never overwrite, corrupt, or
+transiently mask a newer revision's content, because there is no shared destination for it to land
+on: the value a reader can observe for a key only ever advances as higher revisions publish, never
+regresses, at every point a reader might sample it, not merely at the end once everything has
+settled. A best-effort prune (`pruneOlderRevisions`, ignoring its own errors) deletes now-superseded
+revisions after each successful publish so a long run's many incremental per-assistant-event writes
+don't accumulate unbounded files per key; a failed prune just leaves a harmless stray file; it can
+never affect which revision a reader selects. See the "monotonic ledger publication" describe block
+in `usageLedger.test.js`: a late-but-successful older rename sampled continuously throughout never
+shows the stale value at any point; an older write's own publish failure (injected `EIO`) never
+affects the already-published newer entry; and `listCardUsageEntries` still returns exactly one
+entry per key — the freshest revision — never one row per revision.
 
 `drainPendingUsageWrites()` waits for every currently in-flight write to settle; `runCard()` awaits
 it (best-effort) before its own span is considered over, so a write dispatched fire-and-forget
 mid-run can't race the run's own completion.
+
+**Aggregate cost is nullable (fix round, Codex review 3, 2026-09-12, finding 2).** Per-entry
+`costUsd: null` ("unknown") was already correct (see above), but `attemptTotal`/`executionTotal`/
+`cardCycleTotal` silently coerced an unknown entry's cost to `0` before summing — an execution total
+of one 100-token entry with `costUsd: null` reported `costUsd: 0`, presenting "we never got a cost
+figure" as a genuine measured zero, and a mixed collection presented its known subtotal as if it
+were the whole. `sumEntries` (and the three totals built on it) now reports `costUsd: null` whenever
+ANY contributing entry's own cost is unknown, alongside `knownCostUsd` (the subtotal of every entry
+that DID carry a known cost) and `unknownCostEntries` (how many didn't) — a caller can present
+"known subtotal, N entries unmeasured" instead of a misleadingly precise total. A measured `costUsd:
+0` is reported only when every contributing entry's cost is known — all-known, unknown-only, and
+mixed collections are each covered in `usageLedger.test.js`.
+
+**No default invocation id (fix round, Codex review 3, 2026-09-12, recommendation).**
+`usageLedgerEntryPath`/`recordAttemptUsage` used to fall back a missing/empty `invocationId` to a
+fixed `DEFAULT_INVOCATION_ID`, silently sharing one key between any callers that omitted it —
+exactly the same class of bug executionId hardening (finding 4, above) already closed for
+`executionId`. Both ids are now rejected up front, before any path string is built, with the same
+posture: no entry is ever written under a shared/default invocation key. There is no legacy-replay
+caller yet (a future raw-log replay/backfill tool, tracked for T-0369, must recover each record's
+*original* invocation id from the source run rather than mint a new one — otherwise it double-counts
+the same consumption); when one exists, that identity is its own explicit input, never a silent
+fallback.
 
 ## `recordAttemptUsage` wiring into `runOrchestrator.js`
 
