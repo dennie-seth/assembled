@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
   summarizeUsageFromEvents,
   usageLedgerEntryPath,
+  usageLedgerEpochStatePath,
   recordAttemptUsage,
   readAttemptUsage,
   listCardUsageEntries,
@@ -1233,6 +1234,129 @@ describe("revision numbers survive a board restart (Round 6, 2026-09-12)", () =>
 
     const final = await readAttemptUsage(key());
     expect(final.tokens.input).toBe(100);
+    expect(final.outcome).toBe("success");
+    expect(final.complete).toBe(true);
+  });
+});
+
+describe("epoch robustness against a lost/damaged/never-written epoch file (Epoch robustness, 2026-09-12)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-epoch-robust-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const key = () => ({ runsDir, cardId: "T-EPOCH", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
+
+  it.each([
+    ["empty file", ""],
+    ["invalid JSON", "{not json"],
+    ["non-numeric epoch", JSON.stringify({ epoch: "not-a-number" })]
+  ])("a %s epoch sidecar between two simulated processes never lets the pre-restart revision outrank the post-restart one", async (_label, corruptContent) => {
+    // Process 1 writes several in-progress revisions for one entry (mirrors the round-7 writeup's
+    // reproduction: process 1 leaves revisions 10..60 behind for the SAME entry a replay/backfill
+    // would later reuse).
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 10 })], outcome: "in_progress", complete: false });
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 60 })], outcome: "in_progress", complete: false });
+
+    resetUsageLedgerProcessStateForTests(runsDir);
+    // Simulate the epoch sidecar getting truncated/corrupted between the two processes -- a plain
+    // "stored epoch, else 0" read would let process 2 re-claim an epoch process 1 already used.
+    await fs.writeFile(usageLedgerEpochStatePath(runsDir), corruptContent, "utf8");
+
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 777 })], outcome: "success", complete: true });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-EPOCH" });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tokens.input).toBe(777);
+    expect(entries[0].outcome).toBe("success");
+    expect(entries[0].complete).toBe(true);
+
+    // The stale pre-restart revision was pruned, not merely outranked.
+    const names = await fs.readdir(runsDir);
+    const revisionFiles = names.filter((name) => name.includes(".rev"));
+    expect(revisionFiles).toHaveLength(1);
+  });
+
+  it("a deleted epoch sidecar between two simulated processes never lets the pre-restart revision outrank the post-restart one", async () => {
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 10 })], outcome: "in_progress", complete: false });
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 60 })], outcome: "in_progress", complete: false });
+
+    resetUsageLedgerProcessStateForTests(runsDir);
+    await fs.unlink(usageLedgerEpochStatePath(runsDir)).catch(() => {});
+
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 777 })], outcome: "success", complete: true });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-EPOCH" });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tokens.input).toBe(777);
+    expect(entries[0].outcome).toBe("success");
+  });
+
+  it("a prior process's silently-failed epoch persist does not let a later, disk-healthy process reuse its epoch", async () => {
+    // A directory sitting at the sidecar's own path makes `persistStoredEpoch`'s final rename
+    // fail exactly like a real ENOSPC/EACCES persist failure would -- and, being best-effort, that
+    // failure is swallowed silently, exactly as production code does.
+    await fs.mkdir(usageLedgerEpochStatePath(runsDir), { recursive: true });
+
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 60 })], outcome: "in_progress", complete: false });
+
+    const stat = await fs.stat(usageLedgerEpochStatePath(runsDir));
+    expect(stat.isDirectory()).toBe(true); // confirms the persist really did fail silently
+
+    resetUsageLedgerProcessStateForTests(runsDir);
+    // Disk is healthy again for the next process.
+    await fs.rm(usageLedgerEpochStatePath(runsDir), { recursive: true, force: true });
+
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 777 })], outcome: "success", complete: true });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-EPOCH" });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tokens.input).toBe(777);
+    expect(entries[0].outcome).toBe("success");
+  });
+
+  it("two fresh module instances racing on one runsDir claim distinct epochs for the SAME entry, and the higher-epoch process's terminal record is never overwritten or deleted", async () => {
+    vi.resetModules();
+    const processA = await import("../../src/runner/usageLedger.js");
+    vi.resetModules();
+    const processB = await import("../../src/runner/usageLedger.js");
+
+    const sharedKey = { runsDir, cardId: "T-EPOCH-RACE", executionId: "exec-shared", invocationId: "inv-shared", attempt: 1, phase: "implementer", retry: 0 };
+    const eventsWithInput = (input) => [{ type: "result", usage: { input_tokens: input, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, total_cost_usd: 0 }];
+
+    // Both processes fire their FIRST write against this runsDir at the same time -- neither has
+    // resolved its epoch lookup yet, so a plain read-then-write epoch (round 6) would let both
+    // observe "no epoch claimed yet" and both persist/use the same value for the identical entry.
+    const [entryA, entryB] = await Promise.all([
+      processA.recordAttemptUsage({ ...sharedKey, events: eventsWithInput(500), outcome: "in_progress", complete: false }),
+      processB.recordAttemptUsage({ ...sharedKey, events: eventsWithInput(600), outcome: "in_progress", complete: false })
+    ]);
+
+    expect(entryA.revision.epoch).not.toBe(entryB.revision.epoch);
+
+    const higher = entryA.revision.epoch > entryB.revision.epoch ? { mod: processA, entry: entryA } : { mod: processB, entry: entryB };
+    const lower = higher.mod === processA ? { mod: processB, entry: entryB } : { mod: processA, entry: entryA };
+
+    // Neither's revision file was overwritten by the other's -- each published under its own
+    // distinct (epoch, sequence) revision file name.
+    expect(higher.entry.revision).not.toEqual(lower.entry.revision);
+
+    // Readers agree with whichever process claimed the higher epoch.
+    const beforeTerminal = await higher.mod.readAttemptUsage(sharedKey);
+    expect(beforeTerminal.tokens.input).toBe(higher.entry.tokens.input);
+
+    // The higher-epoch process now publishes the terminal complete record.
+    await higher.mod.recordAttemptUsage({ ...sharedKey, events: eventsWithInput(999), outcome: "success", complete: true });
+    await higher.mod.drainPendingUsageWrites();
+    await lower.mod.drainPendingUsageWrites();
+
+    const final = await higher.mod.readAttemptUsage(sharedKey);
+    expect(final.tokens.input).toBe(999);
     expect(final.outcome).toBe("success");
     expect(final.complete).toBe(true);
   });
