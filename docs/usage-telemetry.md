@@ -250,6 +250,16 @@ termination. That gap is now closed. `RunOrchestrator` takes an injectable `reco
 - **The planner's own success/failure** (`_planUnassignedCard`), on a clean exit, records
   `success`/`quota_stop` at `attempt: 0` — planning runs once, before the implementer/reviewer
   attempt loop even starts, so it never carries a loop attempt number.
+- **The merge-conflict phase's caller** (`_syncBranchWithDevelop`), on a clean exit, records
+  `success`/`quota_stop` at `attempt: 0` — same reasoning as the planner: develop-sync runs once
+  per PASS, outside the implementer/reviewer retry loop. This call sits right after the
+  `exitCode !== 0` check, same position as every other phase's own record, and covers both ways
+  the phase can finish cleanly (a merge fully resolved and pushed, or one this method's own
+  `stillUnresolved`/`dirty` check later decides was left incomplete) — that follow-on business
+  check is a separate FAIL-style reason surfaced on the card, not a different usage
+  classification: the phase's own process still ran to completion either way. Fixed in this
+  round: this caller did not exist before, so a resolved merge-conflict phase's ledger entry was
+  stuck at its last incremental `in_progress`/`complete: false` record forever.
 
 Every `_recordUsage` call is fire-and-forget (`void`, never `await`ed by its caller): this is
 instrumentation, and a disk-I/O hiccup (or, in tests, a call to a filesystem path that doesn't
@@ -274,7 +284,8 @@ PASS records `success` for both phases; a retryable reviewer FAIL records `revie
 fresh `success` pair on the next attempt; an implementer crash records `crashed`; `cancelRun`
 records `cancelled`; an inactivity-timed-out phase records `phase_timeout`; a clean-exit phase
 whose events carry a 429 session-limit result event classifies as `quota_stop` rather than
-`success`; the planner phase records at attempt 0; an incremental (`complete: false`) record
+`success`; the planner phase records at attempt 0; a resolved merge-conflict phase records
+`success` at attempt 0; an incremental (`complete: false`) record
 lands mid-phase, before any terminal outcome; every recorded entry across a run shares one
 execution id, minted before the first process spawns and cleared on normal completion; pending
 usage writes are drained before `runCard()` returns; and an instrumentation failure

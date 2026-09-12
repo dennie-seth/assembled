@@ -2090,6 +2090,21 @@ export class RunOrchestrator {
       return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
     }
 
+    // T-0367: the merge-conflict phase ran to completion, same classification the
+    // implementer/reviewer/planner phases already record right after their own `_runPhase`
+    // call -- this is the phase's OWN process finishing cleanly, not yet the business-level
+    // "did it actually resolve everything" verdict checked below. Keyed at attempt 0, same as
+    // the planner: it runs once per develop-sync, outside the implementer/reviewer retry loop.
+    // Fire-and-forget, same reasoning as every other phase's own record.
+    void this._recordUsage(taskId, {
+      attempt: 0,
+      phase: "merge-conflict",
+      events: result.events,
+      outcome: eventsContainUsageLimitSignature(result.events) ? "quota_stop" : "success",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
+
     const stillUnresolved = await this.git.mergeStatus({ worktreeDir });
     const dirty = await this.git.hasUncommittedChanges({ worktreeDir });
     if (stillUnresolved.length > 0 || dirty) {
