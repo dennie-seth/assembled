@@ -128,8 +128,8 @@ jobs:
       # src/asset_gate/transparency_baseline.txt.
       - run: python -m asset_gate.cli transparency-sweep ../../assets/final
 
-  character-arm-c-sweep:
-    name: character CHR-1 provenance sweep (docs/board-invariants.md CHR-1, T-0258)
+  character-gate:
+    name: character asset gate (T-0357 -- CHR-1, idle frame-delta cap, motion-class declaration, pixel-recomputed motion fidelity)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,15 +140,26 @@ jobs:
 
       - run: pip install -e ".[dev]"
 
-      # CHR-1 requires every character-generation output to record both its own
-      # frame_delta_range and its Arm-C benchmark comparison (arm_c_benchmark +
-      # beats_arm_c_benchmark) -- before T-0258 this was convention only, so a new
-      # character generator could drop the fields silently. This sweep is scoped
-      # to the `character` asset class only (props/tiles/concept/entity sheets
-      # never fail it); paths listed in character_arm_c_baseline.txt are the 15
-      # sidecars that predate CHR-1 and are tracked for backfill/regeneration in a
-      # follow-up card, not fixed here.
-      - run: python -m asset_gate.cli character-arm-c-sweep ../../assets/final
+      # T-0357 (Codex review 2026-09-11): the single authoritative character
+      # validator, and the one command both this job and the board's reviewer
+      # route run (verifyRouter.js's character-gate-verify route, built from the
+      # same asset_gate.cli character-gate ../../assets/final --repo-root ../../
+      # args via tools/board/src/lib/characterGateCommand.js's
+      # CHARACTER_GATE_CLI_ARGS constant -- see ciCharacterGateCommand.test.js).
+      # Supersedes the narrower character-arm-c-sweep (CHR-1 presence only): this
+      # sweep also enforces the idle frame-delta cap, requires every
+      # character-generation output to declare a validated motion_class (a
+      # missing/unrecognised class used to silently skip every downstream check,
+      # finding 2), and recomputes pose-fidelity/identity-stability live from
+      # each sheet's own PNG + versioned rig keypoints instead of trusting
+      # whatever range its sidecar happens to record (finding 3) -- so a stale
+      # sidecar score, or a locomotion sheet that genuinely fails, cannot merge
+      # silently the way T-0340's own motion-fidelity sweep did (implemented and
+      # unit-tested, but never invoked by any workflow -- finding 1).
+      # character_arm_c_baseline.txt / character_motion_class_baseline.txt list
+      # the documented pre-existing gaps this sweep exempts; anything not listed
+      # there must pass on merit.
+      - run: python -m asset_gate.cli character-gate ../../assets/final --repo-root ../../
 
   visibility-sweep:
     name: rendered-visibility sweep (PR #231 / T-0215 alpha-zero bug)

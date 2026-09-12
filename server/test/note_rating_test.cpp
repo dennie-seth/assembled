@@ -12,15 +12,24 @@
 ///     (multi-voter scenario; also verifies vote-change updates the tally).
 ///   - HTTP: POST /v1/notes/{id}/rate returns 200 for valid calls, 400 for an
 ///     illegal val, and 401 when the Authorization header is absent.
+///
+/// T-0049: per-token rate limiting on the note-rating route group.
+///   5001 RATE_LIMITED          — burst above the configured per-token
+///                                ceiling is rejected; steady-state usage
+///                                under the ceiling is unaffected
+///                                (03-net-protocol.md §7).
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <atomic>
+#include <barrier>
 #include <chrono>
 #include <cstdlib>
 #include <future>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <drogon/HttpAppFramework.h>
 #include <drogon/HttpClient.h>
@@ -28,7 +37,9 @@
 
 #include "assembled_server/Database.h"
 #include "assembled_server/MigrationRunner.h"
+#include "assembled_server/NoteController.h"
 #include "assembled_server/NoteRepo.h"
+#include "assembled_server/RateLimiter.h"
 
 #ifndef ASSEMBLED_MIGRATIONS_DIR
 #error "ASSEMBLED_MIGRATIONS_DIR must be defined by CMake"
@@ -235,6 +246,19 @@ TEST_CASE("POST /v1/notes/{id}/rate HTTP integration") {
         "INSERT INTO archetype_seen (token, archetype_id) VALUES ('test-tok-0047-http', 2) "
         "ON CONFLICT DO NOTHING");
 
+    // Second identity, dedicated to the rate-limit burst test below.
+    db->getClient()->execSqlSync(
+        "INSERT INTO identity (token) VALUES ('test-tok-0047-burst') ON CONFLICT DO NOTHING");
+    db->getClient()->execSqlSync(
+        "INSERT INTO archetype_seen (token, archetype_id) VALUES ('test-tok-0047-burst', 2) "
+        "ON CONFLICT DO NOTHING");
+
+    // T-0049: configure a small per-token note-rating ceiling for this run so
+    // the burst test below can actually trip it over HTTP. Must happen
+    // before drogon::app().run() starts (see setRatingRateLimiterForTesting
+    // doc).
+    assembled_server::NoteController::setRatingRateLimiterForTesting(6, std::chrono::seconds(60));
+
     // Create a note to rate via HTTP. STATION/tracks (2, 3) — unique per suite.
     assembled_server::PgNoteRepo repo(db->getClient());
     assembled_server::CreateNoteParams p;
@@ -316,7 +340,151 @@ TEST_CASE("POST /v1/notes/{id}/rate HTTP integration") {
         CHECK(code == drogon::k401Unauthorized);
     }
 
+    // Burst above the per-token note-rating rate limit → 429. The limiter
+    // was configured above to 6 requests / 60 s. Uses a dedicated token so
+    // this burst doesn't interact with the budget 'test-tok-0047-http'
+    // already spent in the sub-tests above.
+    {
+        for (int i = 0; i < 6; ++i) {
+            auto [code, j] = sendRate(note_id, 1, "test-tok-0047-burst");
+            CHECK(code == drogon::k200OK);
+        }
+
+        // Seventh request in the same window exceeds the configured ceiling.
+        auto [code, j] = sendRate(note_id, 1, "test-tok-0047-burst");
+        CHECK(code == drogon::k429TooManyRequests);
+        CHECK(j["error"].asInt() == 5001);
+    }
+
+    // A different token's steady-state usage is unaffected: 'test-tok-0047-http'
+    // has only spent 4 of its 6-request budget in the sub-tests above; the
+    // burst against a different token above must not affect it.
+    {
+        auto [code, j] = sendRate(note_id, 1, "test-tok-0047-http");
+        CHECK(code == drogon::k200OK);
+    }
+
     // ── Teardown ──────────────────────────────────────────────────────────────
     drogon::app().getLoop()->queueInLoop([]() { drogon::app().quit(); });
     serverThread.join();
+}
+
+// ── Note-rating rate limit: RateLimiter class, white-box ──────────────────────
+//
+// The T-0049 acceptance criteria (burst rejected with 429, steady-state
+// unaffected) are verified over real HTTP in the integration suite above.
+// drogon::app() is a process-global singleton that can only run once per
+// binary, so it can't host a second HTTP run here; these cases give
+// supplementary white-box coverage of NoteController::ratingRateLimiter()'s
+// bucket-isolation behavior directly.
+
+TEST_CASE("Note-rating rate limiter allows steady-state usage under the limit") {
+    assembled_server::NoteController::setRatingRateLimiterForTesting(3, std::chrono::seconds(60));
+    assembled_server::RateLimiter &limiter =
+        assembled_server::NoteController::ratingRateLimiterForTesting();
+
+    const std::string key = "note-rate-tok-steady";
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+}
+
+TEST_CASE("Note-rating rate limiter rejects a burst above the configured limit") {
+    assembled_server::NoteController::setRatingRateLimiterForTesting(2, std::chrono::seconds(60));
+    assembled_server::RateLimiter &limiter =
+        assembled_server::NoteController::ratingRateLimiterForTesting();
+
+    const std::string key = "note-rate-tok-burst";
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == false); // third request in the same window is rejected
+
+    // A different token's bucket is independent of tok-burst's usage.
+    CHECK(limiter.allow("note-rate-tok-other") == true);
+}
+
+// ── T-0049 fix round: concurrent first-access construction race ──────────────
+//
+// Codex PR review (2026-09-11, #373 P2): NoteController::ratingRateLimiter()
+// checked its shared static unique_ptr and assigned it with no
+// synchronization -- the mutex inside RateLimiter::allow() protects bucket
+// data only, not construction/replacement of the limiter object itself.
+// Concurrent first requests on separate HTTP worker threads could race on
+// the pointer. This fires kThreads genuinely concurrent "first" requests at
+// a deliberately-reset (uninitialized, never pre-constructed) limiter and
+// asserts exactly the configured ceiling is admitted and the remainder are
+// rejected with 429, which only holds if construction is synchronized.
+TEST_CASE("Rating rate limiter: concurrent first requests race safely on construction") {
+    // resetRatingRateLimiterForTesting() forces the pointer back to nullptr.
+    // setRatingRateLimiterForTesting() (used elsewhere in this file) instead
+    // pre-constructs a RateLimiter directly, which would defeat the point of
+    // this test -- there would be nothing left to race on.
+    assembled_server::NoteController::resetRatingRateLimiterForTesting();
+
+    // Configure the lazy-construction path via env vars, the same way
+    // production does. Save/restore so this doesn't leak into other
+    // TEST_CASEs sharing this binary.
+    const char *prevMaxRaw = std::getenv("NOTE_RATING_RATE_LIMIT_MAX");
+    const bool hadPrevMax = prevMaxRaw != nullptr;
+    const std::string prevMax = hadPrevMax ? prevMaxRaw : "";
+    const char *prevWinRaw = std::getenv("NOTE_RATING_RATE_LIMIT_WINDOW_SEC");
+    const bool hadPrevWin = prevWinRaw != nullptr;
+    const std::string prevWin = hadPrevWin ? prevWinRaw : "";
+    const char *prevDbRaw = std::getenv("DATABASE_URL");
+    const bool hadPrevDb = prevDbRaw != nullptr;
+    const std::string prevDb = hadPrevDb ? prevDbRaw : "";
+
+    constexpr int kLimit = 1;
+    constexpr int kThreads = 16;
+    setenv("NOTE_RATING_RATE_LIMIT_MAX", "1", 1);
+    setenv("NOTE_RATING_RATE_LIMIT_WINDOW_SEC", "60", 1);
+    // Rejected (429) requests never reach the DB client lookup (the rate
+    // check runs first in rateNote()); the one admitted request would, but
+    // with DATABASE_URL unset it short-circuits to 503 instead of racing a
+    // detached worker thread against this TEST_CASE's teardown.
+    unsetenv("DATABASE_URL");
+
+    assembled_server::NoteController controller;
+    std::barrier start(kThreads);
+    std::atomic<int> admitted{0};
+    std::atomic<int> rejected{0};
+
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        threads.emplace_back([&]() {
+            Json::Value body;
+            body["val"] = 1;
+            auto req = drogon::HttpRequest::newHttpJsonRequest(body);
+            req->addHeader("Authorization", "Bearer rate-limiter-race-token");
+            start.arrive_and_wait();
+            controller.rateNote(
+                req,
+                [&](const drogon::HttpResponsePtr &resp) {
+                    if (resp->statusCode() == drogon::k429TooManyRequests)
+                        ++rejected;
+                    else
+                        ++admitted;
+                },
+                "00000000-0000-0000-0000-000000000001");
+        });
+    }
+    for (auto &t : threads)
+        t.join();
+
+    if (hadPrevMax)
+        setenv("NOTE_RATING_RATE_LIMIT_MAX", prevMax.c_str(), 1);
+    else
+        unsetenv("NOTE_RATING_RATE_LIMIT_MAX");
+    if (hadPrevWin)
+        setenv("NOTE_RATING_RATE_LIMIT_WINDOW_SEC", prevWin.c_str(), 1);
+    else
+        unsetenv("NOTE_RATING_RATE_LIMIT_WINDOW_SEC");
+    if (hadPrevDb)
+        setenv("DATABASE_URL", prevDb.c_str(), 1);
+    else
+        unsetenv("DATABASE_URL");
+
+    CHECK(admitted.load() == kLimit);
+    CHECK(rejected.load() == kThreads - kLimit);
 }
