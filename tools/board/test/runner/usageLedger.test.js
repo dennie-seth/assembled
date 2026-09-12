@@ -13,7 +13,8 @@ import {
   executionTotal,
   ensureExecutionId,
   clearExecutionId,
-  drainPendingUsageWrites
+  drainPendingUsageWrites,
+  resetUsageLedgerProcessStateForTests
 } from "../../src/runner/usageLedger.js";
 
 let assistantMessageCounter = 0;
@@ -1132,5 +1133,107 @@ describe("monotonic ledger publication (Codex review 3, 2026-09-12, finding 1)",
     expect(entries).toHaveLength(1);
     expect(entries[0].tokens.input).toBe(3);
     expect(entries[0].complete).toBe(true);
+  });
+});
+
+describe("revision numbers survive a board restart (Round 6, 2026-09-12)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-usage-ledger-restart-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const key = () => ({ runsDir, cardId: "T-RESTART", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
+
+  it("a write after a simulated restart always outranks every revision already on disk for the same entry -- the in-memory sequence counter alone would restart at 1 and lose", async () => {
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 100 })], outcome: "in_progress", complete: false });
+    const beforeRestart = await readAttemptUsage(key());
+    expect(beforeRestart.tokens.input).toBe(100);
+
+    // Simulate a fresh board process for this runsDir: a test-only hook resets the in-memory
+    // write-sequence counter exactly as a fresh module instance would start at zero again.
+    resetUsageLedgerProcessStateForTests(runsDir);
+
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 25 })], outcome: "success", complete: true });
+
+    const after = await readAttemptUsage(key());
+    expect(after.tokens.input).toBe(25);
+    expect(after.outcome).toBe("success");
+    expect(after.complete).toBe(true);
+  });
+
+  it("a replay that reuses the original invocation id after a restart is visible to readers, and the post-publish prune removes the stale pre-restart revision", async () => {
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 100 })], outcome: "in_progress", complete: false });
+
+    resetUsageLedgerProcessStateForTests(runsDir);
+
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 25 })], outcome: "success", complete: true });
+
+    const entries = await listCardUsageEntries({ runsDir, cardId: "T-RESTART" });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].tokens.input).toBe(25);
+
+    const names = await fs.readdir(runsDir);
+    const revisionFiles = names.filter((name) => name.includes(".rev"));
+    expect(revisionFiles).toHaveLength(1); // the stale pre-restart revision was pruned, not just outranked
+  });
+
+  it("two concurrent writes to the same entry immediately after a restart get distinct revisions, and the later call wins", async () => {
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 5 })], outcome: "in_progress", complete: false });
+
+    resetUsageLedgerProcessStateForTests(runsDir);
+
+    const first = recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 10 })], outcome: "in_progress", complete: false });
+    const second = recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 20 })], outcome: "success", complete: true });
+    const [firstEntry, secondEntry] = await Promise.all([first, second]);
+
+    expect(firstEntry.revision).not.toEqual(secondEntry.revision);
+
+    const final = await readAttemptUsage(key());
+    expect(final.tokens.input).toBe(20);
+    expect(final.outcome).toBe("success");
+    expect(final.complete).toBe(true);
+  });
+
+  it("does not regress any existing monotonic-publication guarantee: a late-but-successful older rename still never becomes visible after a restart has bumped the epoch", async () => {
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 1 })], outcome: "in_progress", complete: false });
+    resetUsageLedgerProcessStateForTests(runsDir);
+
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let started;
+    const ready = new Promise((resolve) => {
+      started = resolve;
+    });
+
+    const older = recordAttemptUsage({
+      ...key(),
+      events: [assistantTurn({ id: "msg-1", input: 10 })],
+      outcome: "in_progress",
+      complete: false,
+      renameFn: async (...args) => {
+        started();
+        await gate;
+        return fs.rename(...args);
+      }
+    });
+    await ready;
+
+    await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 100 })], outcome: "success", complete: true });
+
+    release();
+    await older;
+    await drainPendingUsageWrites();
+
+    const final = await readAttemptUsage(key());
+    expect(final.tokens.input).toBe(100);
+    expect(final.outcome).toBe("success");
+    expect(final.complete).toBe(true);
   });
 });
