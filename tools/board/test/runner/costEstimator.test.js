@@ -11,7 +11,8 @@ import {
   estimateCost,
   measureCoverage,
   buildCostEstimatorTable,
-  collectObservationsFromLedger
+  collectObservationsFromLedger,
+  buildWeeklyCalibrationSummary
 } from "../../src/runner/costEstimator.js";
 
 function exactEntry(costUsd, overrides = {}) {
@@ -212,5 +213,67 @@ describe("collectObservationsFromLedger -- consumer contract 1: indeterminate re
     await expect(
       collectObservationsFromLedger({ runsDir: "/irrelevant", cardIds: ["T-ONE", "T-TWO"], listCardUsageEntriesFn })
     ).resolves.toBeTruthy();
+  });
+});
+
+describe("buildWeeklyCalibrationSummary -- cadence (acceptance 5): a real summary from continuously collected data", () => {
+  it("groups continuously collected ledger observations by type into a versioned, dated table", async () => {
+    const listCardUsageEntriesFn = async ({ cardId }) => {
+      const byCard = {
+        "T-REVIEW-1": [1, 2, 3, 4, 5, 6].map((v) => ({ costUsd: v, complete: true, outcome: "success" })),
+        "T-REVIEW-2": [{ costUsd: 7, complete: true, outcome: "success" }],
+        "T-INFRA-1": [{ costUsd: 0.4, complete: true, outcome: "success" }]
+      };
+      return byCard[cardId] ?? [];
+    };
+
+    const summary = await buildWeeklyCalibrationSummary({
+      runsDir: "/irrelevant",
+      cardIdsByType: { review: ["T-REVIEW-1", "T-REVIEW-2"], "infra-small": ["T-INFRA-1"] },
+      fitDate: "2026-09-13T00:00:00.000Z",
+      listCardUsageEntriesFn
+    });
+
+    expect(summary.estimatorVersion).toBe(ESTIMATOR_VERSION);
+    expect(summary.fitDate).toBe("2026-09-13T00:00:00.000Z");
+    expect(summary.sampleCounts.review).toBe(7);
+    expect(summary.types.review.estimateSource).toBe(ESTIMATE_SOURCE.EMPIRICAL);
+    expect(summary.sampleCounts["infra-small"]).toBe(1);
+    expect(summary.types["infra-small"].estimateSource).toBe(ESTIMATE_SOURCE.PRIOR);
+  });
+
+  it("reports each type's measured coverage fraction alongside its estimate", async () => {
+    const listCardUsageEntriesFn = async () =>
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 20].map((v) => ({ costUsd: v, complete: true, outcome: "success" }));
+
+    const summary = await buildWeeklyCalibrationSummary({
+      runsDir: "/irrelevant",
+      cardIdsByType: { review: ["T-A"] },
+      fitDate: "2026-09-13T00:00:00.000Z",
+      coverageTarget: 0.5,
+      listCardUsageEntriesFn
+    });
+
+    expect(summary.types.review.coverage).toBeTruthy();
+    expect(summary.types.review.coverage.evaluated).toBeGreaterThan(0);
+    expect(summary.types.review.coverage.fraction).toBeGreaterThanOrEqual(0);
+    expect(summary.types.review.coverage.fraction).toBeLessThanOrEqual(1);
+  });
+
+  it("names indeterminate cards per type instead of silently shrinking that type's calibration pool", async () => {
+    const listCardUsageEntriesFn = async ({ cardId }) => {
+      if (cardId === "T-BAD") throw new UsageLedgerReadIndeterminateError("simulated contention");
+      return [{ costUsd: 1, complete: true, outcome: "success" }];
+    };
+
+    const summary = await buildWeeklyCalibrationSummary({
+      runsDir: "/irrelevant",
+      cardIdsByType: { review: ["T-GOOD", "T-BAD"] },
+      fitDate: "2026-09-13T00:00:00.000Z",
+      listCardUsageEntriesFn
+    });
+
+    expect(summary.indeterminateCardIds.review).toEqual(["T-BAD"]);
+    expect(summary.sampleCounts.review).toBe(1);
   });
 });
