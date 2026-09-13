@@ -161,7 +161,9 @@ describe("estimateCost -- sparse-data priors and fail-safe hold (acceptance 4)",
 
   it("respects the sparse-data threshold boundary", () => {
     expect(MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE).toBeGreaterThan(0);
-    const belowThreshold = Array.from({ length: MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE - 1 }, () => ({ censored: false, costUsd: 1 }));
+    // Below the type's prior ($0.75 for review) so the threshold boundary is what's under test,
+    // not the separate prior-raised-by-observation behavior (see the dedicated finding-2 tests).
+    const belowThreshold = Array.from({ length: MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE - 1 }, () => ({ censored: false, costUsd: 0.1 }));
     expect(estimateCost({ type: "review", observations: belowThreshold }).estimateSource).toBe(ESTIMATE_SOURCE.PRIOR);
     const atThreshold = Array.from({ length: MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE }, () => ({ censored: false, costUsd: 1 }));
     expect(estimateCost({ type: "review", observations: atThreshold }).estimateSource).toBe(ESTIMATE_SOURCE.EMPIRICAL);
@@ -172,7 +174,9 @@ describe("buildCostEstimatorTable -- versioned with sample counts and fit dates 
   it("records estimator version, fit date, coverage target, and per-type sample counts", () => {
     const typeSamples = {
       review: Array.from({ length: 6 }, (_, i) => ({ censored: false, costUsd: i + 1 })),
-      "infra-small": [{ censored: false, costUsd: 1 }]
+      // Below the infra-small prior ($0.50) -- this test is about sample-count-driven
+      // PRIOR-vs-EMPIRICAL source selection, not the separate prior-raising behavior.
+      "infra-small": [{ censored: false, costUsd: 0.1 }]
     };
     const table = buildCostEstimatorTable({ typeSamples, fitDate: "2026-09-13T00:00:00.000Z", coverageTarget: 0.85 });
     expect(table.estimatorVersion).toBe(ESTIMATOR_VERSION);
@@ -364,9 +368,11 @@ describe("estimateCost -- censoring survives fitting, never becomes an exact val
   });
 
   it("only exact observations count toward the empirical sample threshold", () => {
+    // Values kept below the review prior ($0.75) so this stays a pure sample-count test, distinct
+    // from the dedicated prior-raised-by-observation tests (finding 2, below).
     const fourExactOneCensored = [
-      ...Array.from({ length: 4 }, () => ({ censored: false, costUsd: 1 })),
-      { censored: true, lowerBoundUsd: 1 }
+      ...Array.from({ length: 4 }, () => ({ censored: false, costUsd: 0.1 })),
+      { censored: true, lowerBoundUsd: 0.1 }
     ];
     // 5 total observations, but only 4 exact -- still below MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE (5).
     expect(estimateCost({ type: "review", observations: fourExactOneCensored }).estimateSource).toBe(ESTIMATE_SOURCE.PRIOR);
