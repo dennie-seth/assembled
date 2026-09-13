@@ -352,10 +352,21 @@ export async function collectObservationsFromLedger({ runsDir, cardIds, listCard
  * requires between "continuously collected" (`collectObservationsFromLedger`, called once per
  * type here) and "a weekly calibration summary" (`buildCostEstimatorTable`'s versioned,
  * sample-counted, dated table). Each type's `indeterminateCardIds` are reported alongside its
- * sample count -- never silently folded into a smaller-but-confident pool -- and each type's
- * estimate carries its own `measureCoverage` result, so "reports the measured fraction of runs
- * that exceeded their estimate" (acceptance 2) is something this summary actually does, not only
- * something `measureCoverage` could do if a caller remembered to invoke it separately.
+ * sample count -- never silently folded into a smaller-but-confident pool.
+ *
+ * A type with ANY indeterminate card read (Codex WIP-gate batch review finding 4) never publishes
+ * a usable prior or empirical estimate from the reduced, readable-only pool -- that would present
+ * a number as trustworthy when real consumption from the unreadable cards is simply missing from
+ * it. Instead it gets `indeterminateEstimate()`'s explicit shape plus a `reason` naming the
+ * offending cards; what the readable subset alone would have fit is still surfaced, but only under
+ * `provisionalFitDiagnostic`, explicitly `usable: false`.
+ *
+ * Every type's per-type entry carries `inSampleFitDiagnostic` (Codex WIP-gate batch review finding
+ * 5) rather than a field named `coverage`: fitting an estimate from a pool and then scoring that
+ * SAME pool against it is a fit-on-training-data check, not real coverage. Real coverage compares
+ * realized outcomes against their own pre-launch, immutable recorded predictions -- see
+ * `advisoryLogger.js`'s `measureRecordedCoverage`, which reads those recorded predictions instead
+ * of refitting.
  */
 export async function buildWeeklyCalibrationSummary({
   runsDir,
@@ -375,10 +386,25 @@ export async function buildWeeklyCalibrationSummary({
       cardIds,
       listCardUsageEntriesFn
     });
-    const estimate = estimateCost({ type, observations, coverageTarget });
-    sampleCounts[type] = observations.length;
     indeterminateCardIds[type] = badCardIds;
-    types[type] = { ...estimate, coverage: measureCoverage(observations, estimate) };
+    sampleCounts[type] = observations.length;
+
+    if (badCardIds.length > 0) {
+      const exactCount = observations.filter((o) => !o.censored).length;
+      const censoredCount = observations.filter((o) => o.censored).length;
+      const provisional = estimateCost({ type, observations, coverageTarget });
+      types[type] = {
+        ...indeterminateEstimate({ sampleCount: observations.length, exactCount, censoredCount }),
+        coverageTarget,
+        reason: `indeterminate ledger read(s) for card(s) ${badCardIds.join(", ")} -- ${type} estimate and coverage withheld until resolved`,
+        inSampleFitDiagnostic: { evaluated: 0, exceeded: 0, fraction: null },
+        provisionalFitDiagnostic: { ...provisional, usable: false }
+      };
+      continue;
+    }
+
+    const estimate = estimateCost({ type, observations, coverageTarget });
+    types[type] = { ...estimate, inSampleFitDiagnostic: measureCoverage(observations, estimate) };
   }
 
   return { estimatorVersion, fitDate, coverageTarget, sampleCounts, types, indeterminateCardIds };
