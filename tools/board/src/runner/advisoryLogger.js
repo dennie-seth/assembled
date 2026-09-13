@@ -222,7 +222,9 @@ export async function recordAdvisoryOutcome({
  * -- there is nothing to compare an actual against. A record file that can't be read or parsed
  * can't be attributed to any estimator/fit group, so it's skipped and counted in its own top-level
  * `unreadable` tally instead of aborting the whole calculation -- every other record is still
- * scored.
+ * scored. Content that parses as JSON but isn't a plain record object (`null`, an array, or a bare
+ * scalar like `42`/`"x"`) is treated the same as a parse failure -- counted `unreadable`, never
+ * dereferenced (which would throw on `null`) and never miscounted as `pending` (2026-09-13).
  */
 export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
   let files;
@@ -243,6 +245,10 @@ export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir,
     try {
       record = JSON.parse(await readFileFn(path.join(runsDir, file), "utf8"));
     } catch {
+      unreadable += 1;
+      continue;
+    }
+    if (record === null || typeof record !== "object" || Array.isArray(record)) {
       unreadable += 1;
       continue;
     }
