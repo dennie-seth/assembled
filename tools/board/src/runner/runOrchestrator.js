@@ -22,7 +22,7 @@ import {
   diffPlannerFileView,
   applyPlannerFileViewDiff
 } from "./plannerFileView.js";
-import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
+import { eventsContainUsageLimitSignature, usageLimitSignatureForEvents } from "./usageLimitDetector.js";
 import { recordAttemptUsage, ensureExecutionId, clearExecutionId, drainPendingUsageWrites } from "./usageLedger.js";
 import { computeFailureSignature } from "./failureSignature.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
@@ -1669,11 +1669,12 @@ export class RunOrchestrator {
    */
   async _escalateIfGenuineBlocker(taskId, attemptRecords, runLog, { noProgress = false, repeatedSignature = null } = {}) {
     const allEvents = attemptRecords.flatMap((r) => r.events ?? []);
-    if (eventsContainUsageLimitSignature(allEvents)) {
+    const usageLimitSignature = usageLimitSignatureForEvents(allEvents);
+    if (usageLimitSignature) {
       await this._logEscalation(
         taskId,
         runLog,
-        "Escalation skipped: usage/rate-limit signature detected in the run output -- treated as a transient stop, card left blocked for a normal later re-run."
+        `Escalation skipped: usage/rate-limit signature detected in the run output (${usageLimitSignature}) -- treated as a transient stop, card left blocked for a normal later re-run.`
       );
       return;
     }
