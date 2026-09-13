@@ -118,6 +118,12 @@ describe("estimateCost -- censored observations enter calibration as lower bound
 
     expect(withCensored.value).toBeGreaterThan(withoutCensored.value);
     expect(withCensored.censoredCount).toBe(1);
+    // Corrected semantics (Codex WIP-gate batch review finding 1): a censored $500 lower bound that
+    // an ordinary 0.9-coverage quantile can't support must NEVER be reported as a plain "empirical"
+    // fit -- that would present a number the exact data alone doesn't back up as if it were a
+    // confident measurement. It must surface a separately classified, still-raised fallback instead.
+    expect(withCensored.classification).not.toBe("empirical");
+    expect(withCensored.value).toBeGreaterThanOrEqual(500);
   });
 
   it("counts a censored observation whose lower bound already exceeds the estimate as a proven overrun", () => {
@@ -242,7 +248,12 @@ describe("buildWeeklyCalibrationSummary -- cadence (acceptance 5): a real summar
     expect(summary.types["infra-small"].estimateSource).toBe(ESTIMATE_SOURCE.PRIOR);
   });
 
-  it("reports each type's measured coverage fraction alongside its estimate", async () => {
+  it("reports each type's in-sample fit diagnostic alongside its estimate, named as a diagnostic (finding 5/7)", async () => {
+    // Corrected semantics (Codex WIP-gate batch review finding 5): fitting an estimate from a pool
+    // and then scoring that SAME pool against it is a fit-on-training-data check, not real
+    // coverage (real coverage compares realized outcomes to their pre-launch, immutable recorded
+    // predictions -- see advisoryLogger.test.js's measureRecordedCoverage). This field is renamed
+    // and must never be presented as "coverage".
     const listCardUsageEntriesFn = async () =>
       [1, 1, 1, 1, 1, 1, 1, 1, 1, 20].map((v) => ({ costUsd: v, complete: true, outcome: "success" }));
 
@@ -254,10 +265,11 @@ describe("buildWeeklyCalibrationSummary -- cadence (acceptance 5): a real summar
       listCardUsageEntriesFn
     });
 
-    expect(summary.types.review.coverage).toBeTruthy();
-    expect(summary.types.review.coverage.evaluated).toBeGreaterThan(0);
-    expect(summary.types.review.coverage.fraction).toBeGreaterThanOrEqual(0);
-    expect(summary.types.review.coverage.fraction).toBeLessThanOrEqual(1);
+    expect(summary.types.review).not.toHaveProperty("coverage");
+    expect(summary.types.review.inSampleFitDiagnostic).toBeTruthy();
+    expect(summary.types.review.inSampleFitDiagnostic.evaluated).toBeGreaterThan(0);
+    expect(summary.types.review.inSampleFitDiagnostic.fraction).toBeGreaterThanOrEqual(0);
+    expect(summary.types.review.inSampleFitDiagnostic.fraction).toBeLessThanOrEqual(1);
   });
 
   it("names indeterminate cards per type instead of silently shrinking that type's calibration pool", async () => {
@@ -275,5 +287,225 @@ describe("buildWeeklyCalibrationSummary -- cadence (acceptance 5): a real summar
 
     expect(summary.indeterminateCardIds.review).toEqual(["T-BAD"]);
     expect(summary.sampleCounts.review).toBe(1);
+  });
+});
+
+describe("buildWeeklyCalibrationSummary -- stays indeterminate, never a usable estimate from a reduced pool (Codex WIP-gate batch review finding 4)", () => {
+  it("publishes an explicit indeterminate classification and reason naming the cards, for a type where EVERY card is unreadable", async () => {
+    const listCardUsageEntriesFn = async () => {
+      throw new UsageLedgerReadIndeterminateError("simulated persistent contention");
+    };
+
+    const summary = await buildWeeklyCalibrationSummary({
+      runsDir: "/irrelevant",
+      cardIdsByType: { review: ["T-UNREADABLE-1", "T-UNREADABLE-2"] },
+      fitDate: "2026-09-13T00:00:00.000Z",
+      listCardUsageEntriesFn
+    });
+
+    expect(summary.types.review.classification).toBe("indeterminate");
+    expect(summary.types.review.value).toBeNull();
+    expect(summary.types.review.estimateSource).not.toBe(ESTIMATE_SOURCE.EMPIRICAL);
+    expect(summary.types.review.estimateSource).not.toBe(ESTIMATE_SOURCE.PRIOR);
+    expect(summary.types.review.reason).toMatch(/T-UNREADABLE-1/);
+    expect(summary.types.review.reason).toMatch(/T-UNREADABLE-2/);
+    // A provisional fit computed from the (empty) readable subset may be surfaced, but only under
+    // a separate name, explicitly flagged as not usable -- never as the type's real estimate.
+    expect(summary.types.review.provisionalFitDiagnostic).toBeTruthy();
+    expect(summary.types.review.provisionalFitDiagnostic.usable).toBe(false);
+  });
+
+  it("publishes indeterminate for a type with ONE unreadable card mixed with an otherwise-readable pool", async () => {
+    const listCardUsageEntriesFn = async ({ cardId }) => {
+      if (cardId === "T-BAD") throw new UsageLedgerReadIndeterminateError("simulated contention");
+      return Array.from({ length: 6 }, (_, i) => ({ costUsd: i + 1, complete: true, outcome: "success" }));
+    };
+
+    const summary = await buildWeeklyCalibrationSummary({
+      runsDir: "/irrelevant",
+      cardIdsByType: { review: ["T-GOOD", "T-BAD"] },
+      fitDate: "2026-09-13T00:00:00.000Z",
+      listCardUsageEntriesFn
+    });
+
+    // Reproduced defect this corrects: previously this published `value: 0.75, classification:
+    // "prior", sampleCounts.review: 0` from the reduced (readable-only) pool as if it were usable.
+    expect(summary.types.review.classification).toBe("indeterminate");
+    expect(summary.types.review.value).toBeNull();
+    expect(summary.types.review.reason).toMatch(/T-BAD/);
+    expect(summary.types.review.provisionalFitDiagnostic.usable).toBe(false);
+    // The provisional fit, clearly flagged unusable, may still show what the readable subset alone
+    // would have produced -- it just must never masquerade as the real estimate.
+    expect(summary.types.review.provisionalFitDiagnostic.estimateSource).toBe(ESTIMATE_SOURCE.EMPIRICAL);
+  });
+});
+
+describe("estimateCost -- censoring survives fitting, never becomes an exact value (Codex WIP-gate batch review finding 1)", () => {
+  it("an all-censored pool for a registered type never yields a determinate empirical zero", () => {
+    // Reproduced defect: five {costUsd: null, complete: false, outcome: "crashed"} observations
+    // used to fit as `value: 0, uncertainty: 0, classification: "empirical"` -- censored records
+    // must never satisfy MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE on their own.
+    const allCensored = Array.from({ length: 5 }, () => ({ censored: true, lowerBoundUsd: 0 }));
+    const estimate = estimateCost({ type: "infra-large", observations: allCensored });
+
+    expect(estimate.classification).not.toBe("empirical");
+    expect(estimate).not.toEqual(expect.objectContaining({ value: 0, uncertainty: expect.objectContaining({ value: 0 }) }));
+    expect(estimate.exactCount).toBe(0);
+    expect(estimate.censoredCount).toBe(5);
+  });
+
+  it("an all-censored pool for an UNREGISTERED type holds for sizing instead of bypassing the fail-safe", () => {
+    const allCensored = Array.from({ length: 5 }, () => ({ censored: true, lowerBoundUsd: 0 }));
+    const estimate = estimateCost({ type: "unregistered-nobody-registered", observations: allCensored });
+
+    expect(estimate.estimateSource).toBe(ESTIMATE_SOURCE.UNKNOWN_HOLD);
+    expect(estimate.classification).toBe("large_hold_for_sizing");
+    expect(estimate.value).toBeNull();
+  });
+
+  it("only exact observations count toward the empirical sample threshold", () => {
+    const fourExactOneCensored = [
+      ...Array.from({ length: 4 }, () => ({ censored: false, costUsd: 1 })),
+      { censored: true, lowerBoundUsd: 1 }
+    ];
+    // 5 total observations, but only 4 exact -- still below MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE (5).
+    expect(estimateCost({ type: "review", observations: fourExactOneCensored }).estimateSource).toBe(ESTIMATE_SOURCE.PRIOR);
+  });
+
+  it("reports exact and censored counts separately in the estimate", () => {
+    const observations = [
+      ...Array.from({ length: 6 }, () => ({ censored: false, costUsd: 1 })),
+      { censored: true, lowerBoundUsd: 0.5 }
+    ];
+    const estimate = estimateCost({ type: "review", observations });
+    expect(estimate.exactCount).toBe(6);
+    expect(estimate.censoredCount).toBe(1);
+    expect(estimate.sampleCount).toBe(7);
+  });
+
+  it("when censored risk exceeds what the coverage target can support, falls back to a separately classified, still-raised estimate -- never hides it as empirical", () => {
+    const mixedPool = [
+      ...Array.from({ length: 5 }, () => ({ censored: false, costUsd: 1 })),
+      { censored: true, lowerBoundUsd: 500 }
+    ];
+    const estimate = estimateCost({ type: "review", observations: mixedPool, coverageTarget: 0.9 });
+
+    expect(estimate.classification).not.toBe("empirical");
+    expect(estimate.value).toBeGreaterThanOrEqual(500);
+  });
+});
+
+describe("estimateCost -- sparse-data prior never sits below proven consumption (Codex WIP-gate batch review finding 2)", () => {
+  it("BELOW the empirical threshold, a $500 censored lower bound on infra-small raises the estimate above the $0.50 prior", () => {
+    // Reproduced defect: infra-small with one observation censored at $500 used to still return
+    // the flat $0.50 prior, discarding the proven $500 floor entirely.
+    const estimate = estimateCost({ type: "infra-small", observations: [{ censored: true, lowerBoundUsd: 500 }] });
+
+    expect(estimate.value).toBeGreaterThanOrEqual(500);
+    expect(estimate.estimateSource).not.toBe(ESTIMATE_SOURCE.PRIOR);
+    expect(estimate.classification).not.toBe("prior");
+  });
+
+  it("ABOVE the empirical threshold, a $500 censored lower bound on infra-small still raises the estimate above the $0.50 prior", () => {
+    const observations = [...Array.from({ length: 5 }, () => ({ censored: false, costUsd: 1 })), { censored: true, lowerBoundUsd: 500 }];
+    const estimate = estimateCost({ type: "infra-small", observations });
+
+    expect(estimate.value).toBeGreaterThanOrEqual(500);
+    expect(estimate.estimateSource).not.toBe(ESTIMATE_SOURCE.PRIOR);
+  });
+
+  it("below the threshold, an exact cost that's cheaper than the prior does NOT raise the estimate -- only proven consumption ABOVE the prior does", () => {
+    const estimate = estimateCost({ type: "infra-large", observations: [{ censored: false, costUsd: 0.01 }] });
+    expect(estimate.estimateSource).toBe(ESTIMATE_SOURCE.PRIOR);
+    expect(estimate.value).toBe(TYPE_PRIORS["infra-large"].value);
+  });
+});
+
+describe("observationFromAttemptEntry -- outcome decides exactness, fail-safe (Codex WIP-gate batch review finding 3)", () => {
+  it("a terminal quota-stop with complete:true and a known cost is a LOWER BOUND, not exact (real runOrchestrator.js shape)", () => {
+    // Reproduced defect: {costUsd: 1.42, complete: true, outcome: "quota_stop", ...} used to be
+    // treated as an exact observation -- "complete" only means the phase process ended, not that
+    // the recorded cost was the true final cost of successful work.
+    const obs = observationFromAttemptEntry({
+      costUsd: 1.42,
+      complete: true,
+      outcome: "quota_stop",
+      terminalReason: "api_error",
+      apiErrorStatus: 429
+    });
+    expect(obs).toEqual({ censored: true, lowerBoundUsd: 1.42 });
+  });
+
+  it("a reviewer failure with complete:true is a LOWER BOUND, not exact (real runOrchestrator.js shape)", () => {
+    const obs = observationFromAttemptEntry({ costUsd: 0.8, complete: true, outcome: "reviewer_fail" });
+    expect(obs).toEqual({ censored: true, lowerBoundUsd: 0.8 });
+  });
+
+  it("phase_timeout, cancelled, crashed, and in_progress are all lower bounds even with a known cost", () => {
+    for (const outcome of ["phase_timeout", "cancelled", "crashed", "in_progress"]) {
+      const obs = observationFromAttemptEntry({ costUsd: 3.3, complete: outcome === "in_progress" ? false : false, outcome });
+      expect(obs).toEqual({ censored: true, lowerBoundUsd: 3.3 });
+    }
+  });
+
+  it("fail-safe: an outcome this module has never seen before is a lower bound, not exact", () => {
+    const obs = observationFromAttemptEntry({ costUsd: 9.9, complete: true, outcome: "some_future_outcome_not_yet_invented" });
+    expect(obs).toEqual({ censored: true, lowerBoundUsd: 9.9 });
+  });
+
+  it("only an explicitly successful outcome with complete:true and a known cost is exact", () => {
+    const obs = observationFromAttemptEntry({ costUsd: 2.5, complete: true, outcome: "success" });
+    expect(obs).toEqual({ censored: false, costUsd: 2.5 });
+  });
+});
+
+describe("end-to-end: unknown-cost ledger entries through collection + estimateCost never yield a determinate estimate the data can't support (Codex WIP-gate batch review)", () => {
+  it("an all-censored pool (crashed/quota-stopped) for a registered type yields the type's prior, not an empirical zero", async () => {
+    const listCardUsageEntriesFn = async () =>
+      Array.from({ length: 5 }, () => ({ costUsd: null, complete: false, outcome: "crashed" }));
+
+    const { observations } = await collectObservationsFromLedger({
+      runsDir: "/irrelevant",
+      cardIds: ["T-CRASHY"],
+      listCardUsageEntriesFn
+    });
+    const estimate = estimateCost({ type: "infra-large", observations });
+
+    expect(estimate.classification).not.toBe("empirical");
+    expect(estimate.value).toBe(TYPE_PRIORS["infra-large"].value);
+    expect(estimate.estimateSource).toBe(ESTIMATE_SOURCE.PRIOR);
+  });
+
+  it("a mixed pool (some exact successes, one expensive quota-stop) yields a raised, separately classified fallback -- not empirical", async () => {
+    const listCardUsageEntriesFn = async () => [
+      ...Array.from({ length: 5 }, () => ({ costUsd: 1, complete: true, outcome: "success" })),
+      { costUsd: 500, complete: true, outcome: "quota_stop", terminalReason: "api_error", apiErrorStatus: 429 }
+    ];
+
+    const { observations } = await collectObservationsFromLedger({
+      runsDir: "/irrelevant",
+      cardIds: ["T-MIXED"],
+      listCardUsageEntriesFn
+    });
+    const estimate = estimateCost({ type: "infra-small", observations, coverageTarget: 0.9 });
+
+    expect(estimate.classification).not.toBe("empirical");
+    expect(estimate.value).toBeGreaterThanOrEqual(500);
+    expect(estimate.censoredCount).toBe(1);
+    expect(estimate.exactCount).toBe(5);
+  });
+
+  it("an unregistered type with no usable data holds for sizing -- never a numeric guess", async () => {
+    const listCardUsageEntriesFn = async () => [];
+    const { observations } = await collectObservationsFromLedger({
+      runsDir: "/irrelevant",
+      cardIds: ["T-NEW-TYPE"],
+      listCardUsageEntriesFn
+    });
+    const estimate = estimateCost({ type: "totally-unregistered-type", observations });
+
+    expect(estimate.estimateSource).toBe(ESTIMATE_SOURCE.UNKNOWN_HOLD);
+    expect(estimate.classification).toBe("large_hold_for_sizing");
+    expect(estimate.value).toBeNull();
   });
 });
