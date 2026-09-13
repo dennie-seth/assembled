@@ -21,6 +21,8 @@ export const MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE = 5;
 export const ESTIMATE_SOURCE = Object.freeze({
   EMPIRICAL: "empirical_quantile",
   PRIOR: "type_prior",
+  PRIOR_RAISED_BY_OBSERVATION: "type_prior_raised_by_observation",
+  CONSERVATIVE_FALLBACK: "conservative_lower_bound_fallback",
   UNKNOWN_HOLD: "unknown_hold_for_sizing"
 });
 
@@ -41,29 +43,66 @@ export const TYPE_PRIORS = Object.freeze({
  * Sentinel for "no estimate and no prior" (spec §2): fail safe, never a numeric guess. A caller
  * must treat this as "large / hold for sizing", not as "zero cost" or "no data available".
  */
-function holdForSizingEstimate() {
+function holdForSizingEstimate({ sampleCount = 0, exactCount = 0, censoredCount = 0 } = {}) {
   return {
     value: null,
     unit: "usd",
     estimateSource: ESTIMATE_SOURCE.UNKNOWN_HOLD,
     estimatorVersion: ESTIMATOR_VERSION,
     uncertainty: null,
-    classification: "large_hold_for_sizing"
+    classification: "large_hold_for_sizing",
+    sampleCount,
+    exactCount,
+    censoredCount
   };
 }
 
 /**
+ * Sentinel for "consumption exists but could not be read consistently" (T-0367 consumer contract
+ * 1): never a `0`/`[]`/skipped observation. Shared by the advisory logger's own indeterminate
+ * ledger-read path and the weekly summary's per-type indeterminate path, so both present the same
+ * `classification`/`consumption` shape a caller can key off of.
+ */
+export function indeterminateEstimate({ sampleCount = 0, exactCount = 0, censoredCount = 0 } = {}) {
+  return {
+    value: null,
+    unit: "usd",
+    estimateSource: "ledger_read_indeterminate",
+    estimatorVersion: ESTIMATOR_VERSION,
+    uncertainty: null,
+    classification: "indeterminate",
+    consumption: "indeterminate",
+    sampleCount,
+    exactCount,
+    censoredCount
+  };
+}
+
+/**
+ * The only `outcome` string runOrchestrator.js writes that means the phase actually finished its
+ * work successfully (`runOrchestrator.js:892,983,1062,2122`). Every other outcome it writes --
+ * `quota_stop` (a terminal 429 mid-stream, `:888-894`), `reviewer_fail` (a completed but non-PASS
+ * verdict, `:981-986`), `phase_timeout`, `cancelled`, `crashed`, `in_progress` -- and any outcome
+ * this module has never seen (a later addition to the producer) all mean "the process ended" or
+ * "is still running", never "the work succeeded", and are censored lower bounds (Codex WIP-gate
+ * batch review finding 3). Fail-safe: an unrecognized outcome is never treated as exact.
+ */
+const SUCCESSFUL_OUTCOME = "success";
+
+/**
  * Converts one usage-ledger attempt entry (`recordAttemptUsage`'s own shape: `costUsd`,
- * `complete`) into a calibration observation. `complete === false` (crashed/cancelled/
- * phase-timeout/quota-stop-mid-flight) means the true cost may still be higher than whatever was
- * recorded -- a censored LOWER bound, never a finished figure (spec §2 "Censored observations").
- * A `complete === true` entry whose own `costUsd` is `null` (usageLedger's documented "valid
- * result event with no total_cost_usd figure" case) is likewise censored, not a measured zero --
- * "complete" describes the attempt's lifecycle, not whether its cost was ever actually observed.
+ * `complete`, `outcome`) into a calibration observation. `complete` alone describes only whether
+ * the phase process ended -- it is `true` on a quota stop and on a reviewer failure just as much
+ * as on a genuine success (see `SUCCESSFUL_OUTCOME` above), so exactness requires BOTH `complete
+ * === true` AND `outcome === "success"` (spec §2 "Censored observations"; Codex WIP-gate batch
+ * review finding 3). Everything else -- incomplete, non-success, or unknown-cost even when
+ * `complete` -- is a censored LOWER bound, never a finished figure. A `complete === true` entry
+ * whose own `costUsd` is `null` (usageLedger's documented "valid result event with no
+ * total_cost_usd figure" case) is likewise censored, not a measured zero.
  */
 export function observationFromAttemptEntry(entry) {
   const hasKnownCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
-  if (entry.complete === true && hasKnownCost) {
+  if (entry.complete === true && entry.outcome === SUCCESSFUL_OUTCOME && hasKnownCost) {
     return { censored: false, costUsd: entry.costUsd };
   }
   return { censored: true, lowerBoundUsd: hasKnownCost ? entry.costUsd : 0 };
@@ -84,10 +123,6 @@ export function observationFromAggregate(aggregate) {
   return { censored: false, costUsd: aggregate.costUsd };
 }
 
-function observationValue(observation) {
-  return observation.censored ? observation.lowerBoundUsd : observation.costUsd;
-}
-
 /** Linear-interpolation percentile over a pre-sorted ascending array (numpy's default method). */
 function quantileOf(sortedValues, q) {
   if (sortedValues.length === 0) return 0;
@@ -106,42 +141,111 @@ function standardDeviation(values, mean) {
   return Math.sqrt(variance);
 }
 
-/**
- * Fits one type's cost estimate from its calibration observations (spec §2/§7). Coverage, not
- * average: the reported value is an upper quantile (`coverageTarget`, default 0.9) PLUS an
- * uncertainty margin -- never a plain mean, and never silently dropping censored (lower-bound)
- * observations from the pool that determines that quantile. Falls back to `TYPE_PRIORS[type]`
- * under `MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE`, and to the fail-safe hold-for-sizing sentinel when
- * neither empirical data nor a registered prior exists for `type`.
- */
-export function estimateCost({ type, observations, coverageTarget = DEFAULT_COVERAGE_TARGET }) {
-  const censoredCount = observations.filter((o) => o.censored).length;
-  const sampleCount = observations.length;
+/** Splits a pool of observations into exact costs and censored lower bounds (never mixed). */
+function splitObservations(observations) {
+  const exact = [];
+  const censoredLowerBounds = [];
+  for (const observation of observations) {
+    if (observation.censored) censoredLowerBounds.push(observation.lowerBoundUsd);
+    else exact.push(observation.costUsd);
+  }
+  return { exact, censoredLowerBounds };
+}
 
-  if (sampleCount < MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE) {
-    const prior = TYPE_PRIORS[type];
-    if (!prior) return holdForSizingEstimate();
+/**
+ * Sparse-data path (spec §2 "Priors"; Codex WIP-gate batch review finding 2): below
+ * `MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE` exact observations, the registered `TYPE_PRIORS[type]` is
+ * the starting point -- but the sparse-data prior must never sit below proven consumption. Any
+ * exact cost or censored lower bound already observed ABOVE the prior raises the estimate to at
+ * least that amount, under its own classification (`prior_raised_by_observation`), rather than
+ * silently discarding it. A censored lower bound of 0 (cost genuinely unknown) carries no
+ * magnitude and never raises anything on its own.
+ */
+function sparseEstimate({ type, exact, censoredLowerBounds, sampleCount, coverageTarget }) {
+  const exactCount = exact.length;
+  const censoredCount = censoredLowerBounds.length;
+  const prior = TYPE_PRIORS[type];
+  if (!prior) return holdForSizingEstimate({ sampleCount, exactCount, censoredCount });
+
+  const provenFloor = Math.max(0, ...exact, ...censoredLowerBounds);
+  if (provenFloor > prior.value) {
     return {
-      value: prior.value,
+      value: provenFloor + prior.uncertainty,
       unit: prior.unit,
-      estimateSource: ESTIMATE_SOURCE.PRIOR,
+      estimateSource: ESTIMATE_SOURCE.PRIOR_RAISED_BY_OBSERVATION,
       estimatorVersion: ESTIMATOR_VERSION,
       coverageTarget,
-      uncertainty: { measure: "prior_fixed", value: prior.uncertainty },
+      uncertainty: { measure: "prior_margin_over_observed_floor", value: prior.uncertainty },
       sampleCount,
+      exactCount,
       censoredCount,
-      classification: "prior"
+      classification: "prior_raised_by_observation"
     };
   }
 
-  const values = observations.map(observationValue).sort((a, b) => a - b);
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const stddevValue = standardDeviation(values, mean);
-  const quantileValue = quantileOf(values, coverageTarget);
-  const estimateValue = quantileValue + stddevValue;
+  return {
+    value: prior.value,
+    unit: prior.unit,
+    estimateSource: ESTIMATE_SOURCE.PRIOR,
+    estimatorVersion: ESTIMATOR_VERSION,
+    coverageTarget,
+    uncertainty: { measure: "prior_fixed", value: prior.uncertainty },
+    sampleCount,
+    exactCount,
+    censoredCount,
+    classification: "prior"
+  };
+}
+
+/**
+ * Empirical path (spec §2/§7; Codex WIP-gate batch review finding 1) -- reached only once at
+ * least `MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE` EXACT observations exist. The candidate quantile and
+ * its stddev margin come from the exact observations alone -- a censored lower bound never enters
+ * that arithmetic as if it were a final cost. Every censored observation is then checked against
+ * the candidate: one whose lower bound already exceeds it is a KNOWN exceedance (proven), one
+ * whose lower bound is at or below it is a POTENTIAL exceedance (its true cost is unresolved and
+ * may still be higher). If known-plus-potential exceedances are more than the coverage target
+ * allows (`1 - coverageTarget` of the whole pool), the candidate quantile isn't supported by data
+ * this uncertain -- return a separately classified, still-raised conservative fallback (at least
+ * the highest lower bound plus a margin) instead of ever calling it "empirical".
+ */
+function empiricalEstimate({ type, exact, censoredLowerBounds, sampleCount, coverageTarget }) {
+  const exactCount = exact.length;
+  const censoredCount = censoredLowerBounds.length;
+  const poolSize = exactCount + censoredCount;
+
+  const sortedExact = [...exact].sort((a, b) => a - b);
+  const mean = sortedExact.reduce((a, b) => a + b, 0) / sortedExact.length;
+  const stddevValue = standardDeviation(sortedExact, mean);
+  const quantileValue = quantileOf(sortedExact, coverageTarget);
+  const candidateValue = quantileValue + stddevValue;
+
+  const knownExceedances =
+    exact.filter((v) => v > candidateValue).length + censoredLowerBounds.filter((v) => v > candidateValue).length;
+  const potentialExceedances = censoredLowerBounds.filter((v) => v <= candidateValue).length;
+  const totalRisk = knownExceedances + potentialExceedances;
+  const allowedExceedanceFraction = 1 - coverageTarget;
+
+  if (poolSize > 0 && totalRisk / poolSize > allowedExceedanceFraction) {
+    const highestLowerBound = censoredLowerBounds.length ? Math.max(...censoredLowerBounds) : 0;
+    const floor = Math.max(candidateValue, highestLowerBound);
+    const margin = Math.max(stddevValue, highestLowerBound * 0.1, 0.01);
+    return {
+      value: floor + margin,
+      unit: "usd",
+      estimateSource: ESTIMATE_SOURCE.CONSERVATIVE_FALLBACK,
+      estimatorVersion: ESTIMATOR_VERSION,
+      coverageTarget,
+      uncertainty: { measure: "censored_unsupported_margin", value: margin },
+      sampleCount,
+      exactCount,
+      censoredCount,
+      classification: "conservative_fallback"
+    };
+  }
 
   return {
-    value: estimateValue,
+    value: candidateValue,
     unit: "usd",
     estimateSource: ESTIMATE_SOURCE.EMPIRICAL,
     estimatorVersion: ESTIMATOR_VERSION,
@@ -149,9 +253,28 @@ export function estimateCost({ type, observations, coverageTarget = DEFAULT_COVE
     quantileValue,
     uncertainty: { measure: "stddev", value: stddevValue, z: 1 },
     sampleCount,
+    exactCount,
     censoredCount,
     classification: "empirical"
   };
+}
+
+/**
+ * Fits one type's cost estimate from its calibration observations (spec §2/§7). Coverage, not
+ * average: the reported value is an upper quantile (`coverageTarget`, default 0.9) PLUS an
+ * uncertainty margin -- never a plain mean. Only EXACT observations count toward
+ * `MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE` (Codex WIP-gate batch review finding 1) -- a pool of
+ * censored-only observations, however large, falls to the sparse-data path (`sparseEstimate`),
+ * never to a confident-looking empirical fit built from lower bounds treated as final costs.
+ */
+export function estimateCost({ type, observations, coverageTarget = DEFAULT_COVERAGE_TARGET }) {
+  const { exact, censoredLowerBounds } = splitObservations(observations);
+  const sampleCount = observations.length;
+
+  if (exact.length < MIN_SAMPLES_FOR_EMPIRICAL_ESTIMATE) {
+    return sparseEstimate({ type, exact, censoredLowerBounds, sampleCount, coverageTarget });
+  }
+  return empiricalEstimate({ type, exact, censoredLowerBounds, sampleCount, coverageTarget });
 }
 
 /**
