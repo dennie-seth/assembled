@@ -12,7 +12,8 @@ import {
   recordAdvisoryOutcome,
   withAdvisoryLogging,
   decideLaunchAdvisory,
-  measureRecordedCoverage
+  measureRecordedCoverage,
+  advisoryLogPath
 } from "../../src/runner/advisoryLogger.js";
 
 let runsDir;
@@ -130,17 +131,71 @@ describe("recordAdvisoryOutcome -- eventual outcome is attached after the fact",
       cardId: "T-0369",
       executionId: "exec-2",
       invocationId: "inv-2",
-      outcome: { actualCostUsd: 1.5, exceededEstimate: true }
+      outcome: { actualCostUsd: 1.5, costKind: "exact" }
     });
 
-    expect(updated.outcome).toEqual({ actualCostUsd: 1.5, exceededEstimate: true });
+    expect(updated.outcome).toEqual({ actualCostUsd: 1.5, costKind: "exact" });
     expect(updated.prediction).toEqual(SAMPLE_ESTIMATE); // the original prediction is untouched
   });
 
   it("refuses to attach an outcome to a decision that was never recorded", async () => {
     await expect(
       recordAdvisoryOutcome({ runsDir, cardId: "T-0369", executionId: "never", invocationId: "never", outcome: {} })
+    ).rejects.toThrow(/no decision recorded/);
+  });
+});
+
+describe("recordAdvisoryOutcome -- validates the outcome shape before writing (recorded coverage must fail safe)", () => {
+  const MALFORMED_OUTCOMES = [
+    ["null cost", { actualCostUsd: null, costKind: "exact" }],
+    ["numeric-string cost", { actualCostUsd: "12", costKind: "exact" }],
+    ["missing costKind", { actualCostUsd: 2 }],
+    ["unknown costKind", { actualCostUsd: 2, costKind: "something_new" }],
+    ["negative cost", { actualCostUsd: -5, costKind: "exact" }],
+    ["non-finite cost", { actualCostUsd: Infinity, costKind: "lower_bound" }],
+    ["empty object", {}]
+  ];
+
+  it.each(MALFORMED_OUTCOMES)("rejects %s and writes nothing", async (_label, outcome) => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-malformed",
+      invocationId: "inv-1",
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "advisory dry run"
+    });
+
+    await expect(
+      recordAdvisoryOutcome({ runsDir, cardId: "T-0369", executionId: "exec-malformed", invocationId: "inv-1", outcome })
     ).rejects.toThrow();
+
+    const onDisk = JSON.parse(
+      await fs.readFile(advisoryLogPath(runsDir, { cardId: "T-0369", executionId: "exec-malformed", invocationId: "inv-1" }), "utf8")
+    );
+    expect(onDisk.outcome).toBeNull();
+    expect(onDisk.prediction).toEqual(SAMPLE_ESTIMATE);
+  });
+
+  it("accepts a valid lower_bound outcome", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-valid-lb",
+      invocationId: "inv-1",
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "advisory dry run"
+    });
+    const updated = await recordAdvisoryOutcome({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-valid-lb",
+      invocationId: "inv-1",
+      outcome: { actualCostUsd: 3, costKind: "lower_bound" }
+    });
+    expect(updated.outcome).toEqual({ actualCostUsd: 3, costKind: "lower_bound" });
   });
 });
 
@@ -398,6 +453,77 @@ describe("measureRecordedCoverage -- coverage measures realized outcomes against
     const { groups, pending } = await measureRecordedCoverage({ runsDir });
     expect(pending).toBe(1);
     expect(Object.keys(groups)).toHaveLength(0);
+  });
+});
+
+describe("measureRecordedCoverage -- fails safe on malformed outcomes and corrupt record files (recorded coverage fail-safe round)", () => {
+  // Writes an outcome directly to disk, bypassing recordAdvisoryOutcome's validation, to simulate
+  // an older or hand-written record file the reader must still tolerate.
+  async function recordWithRawOutcome({ executionId, predictionValue = 5, outcome, fitDate = "2026-09-13" }) {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId,
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate,
+      estimate: { ...SAMPLE_ESTIMATE, value: predictionValue },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+    const filePath = advisoryLogPath(runsDir, { cardId: "T-0369", executionId, invocationId: "inv-1" });
+    const existing = JSON.parse(await fs.readFile(filePath, "utf8"));
+    await fs.writeFile(filePath, JSON.stringify({ ...existing, outcome }), "utf8");
+  }
+
+  const MALFORMED_OUTCOMES = [
+    ["null cost", { actualCostUsd: null, costKind: "exact" }],
+    ["numeric-string cost", { actualCostUsd: "12", costKind: "exact" }],
+    ["missing costKind", { actualCostUsd: 2 }],
+    ["unknown costKind", { actualCostUsd: 2, costKind: "something_new" }],
+    ["negative cost", { actualCostUsd: -5, costKind: "exact" }]
+  ];
+
+  it("reports all five malformed outcomes as unresolved, never moving evaluated/exceeded, fraction null", async () => {
+    for (const [i, [, outcome]] of MALFORMED_OUTCOMES.entries()) {
+      await recordWithRawOutcome({ executionId: `exec-bad-${i}`, predictionValue: 5, outcome });
+    }
+
+    const { groups } = await measureRecordedCoverage({ runsDir });
+    const group = groups[`${ESTIMATOR_VERSION}::2026-09-13`];
+    expect(group.evaluated).toBe(0);
+    expect(group.exceeded).toBe(0);
+    expect(group.unresolved).toBe(5);
+    expect(group.fraction).toBeNull();
+  });
+
+  it("a mixed fixture scores the valid records exactly as before, malformed ones unresolved", async () => {
+    for (let i = 0; i < 3; i += 1) {
+      await recordWithRawOutcome({ executionId: `exec-valid-${i}`, predictionValue: 1, outcome: { actualCostUsd: 10, costKind: "exact" } });
+    }
+    for (const [i, [, outcome]] of MALFORMED_OUTCOMES.entries()) {
+      await recordWithRawOutcome({ executionId: `exec-bad-mixed-${i}`, predictionValue: 1, outcome });
+    }
+
+    const { groups } = await measureRecordedCoverage({ runsDir });
+    const group = groups[`${ESTIMATOR_VERSION}::2026-09-13`];
+    expect(group.evaluated).toBe(3);
+    expect(group.exceeded).toBe(3);
+    expect(group.unresolved).toBe(5);
+    expect(group.fraction).toBe(1);
+  });
+
+  it("a corrupt record file beside valid ones leaves the valid records' result identical, and is counted in a top-level tally", async () => {
+    for (let i = 0; i < 3; i += 1) {
+      await recordWithRawOutcome({ executionId: `exec-corrupt-baseline-${i}`, predictionValue: 1, outcome: { actualCostUsd: 10, costKind: "exact" } });
+    }
+    const { groups: before } = await measureRecordedCoverage({ runsDir });
+
+    await fs.writeFile(path.join(runsDir, "T-0369-execcorrupt-invinv-1.advisory.json"), '{"trunc', "utf8");
+
+    const { groups: after, unreadable } = await measureRecordedCoverage({ runsDir });
+    expect(after).toEqual(before);
+    expect(unreadable).toBe(1);
   });
 });
 
