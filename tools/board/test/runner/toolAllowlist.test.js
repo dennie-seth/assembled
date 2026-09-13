@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   resolveAllowedTools,
   isToolAllowed,
+  checkToolPermission,
   parseToolsString,
   READ_ONLY_DEFAULT_TOOLS
 } from "../../src/runner/toolAllowlist.js";
@@ -367,6 +368,84 @@ describe("isToolAllowed", () => {
     expect(
       isToolAllowed("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:script.py)", tildeOnly)
     ).toBe(false);
+  });
+});
+
+describe("isToolAllowed: .claude/ path guard (T-0376)", () => {
+  // Every implementer agent grants a plain, argument-less `Write`/`Edit` -- see the bare
+  // `allowed.arg === null` branch above. In reality the Claude Code CLI's own sensitive-file
+  // protection denies every Edit/Write under .claude/ in an unattended run regardless of that
+  // grant (T-0374, evidence quoted in this card's body). The board's own model has to agree,
+  // or anything that reasons from it is wrong about .claude/.
+  const bareWriteEdit = ["Read", "Write", "Edit", "Grep", "Glob"];
+
+  it("denies Edit/Write on .claude/settings.json and .claude/settings.local.json despite a plain Edit/Write grant", () => {
+    expect(isToolAllowed("Edit(.claude/settings.json)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Write(.claude/settings.json)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Edit(.claude/settings.local.json)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Write(.claude/settings.local.json)", bareWriteEdit)).toBe(false);
+  });
+
+  it("denies Edit/Write anywhere under .claude/agents/** and .claude/rules/**", () => {
+    expect(isToolAllowed("Edit(.claude/agents/infra.md)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Write(.claude/agents/infra.md)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Edit(.claude/rules/conduct.md)", bareWriteEdit)).toBe(false);
+  });
+
+  it("normalizes an absolute in-worktree path, a leading ./, and .. traversal before the check", () => {
+    expect(
+      isToolAllowed(
+        "Edit(/home/dennieseth/dev/assembled-board/worktrees/T-0376/.claude/settings.json)",
+        bareWriteEdit
+      )
+    ).toBe(false);
+    expect(isToolAllowed("Edit(./.claude/settings.json)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Edit(tools/../.claude/settings.json)", bareWriteEdit)).toBe(false);
+  });
+
+  it("does not flag a path that merely contains the text .claude elsewhere", () => {
+    expect(isToolAllowed("Edit(docs/notes-on-.claude.md)", bareWriteEdit)).toBe(true);
+    expect(isToolAllowed("Write(docs/notes-on-.claude.md)", bareWriteEdit)).toBe(true);
+  });
+
+  it("keeps today's behaviour for paths outside .claude/: a plain Edit/Write grant still allows them", () => {
+    expect(isToolAllowed("Edit(tools/board/src/runner/toolAllowlist.js)", bareWriteEdit)).toBe(true);
+    expect(isToolAllowed("Write(assets/final/palette/home_palette.json)", bareWriteEdit)).toBe(true);
+  });
+
+  it("still denies Edit/Write under .claude/ when there is no grant for the tool at all", () => {
+    expect(isToolAllowed("Edit(.claude/settings.json)", ["Read", "Grep", "Glob"])).toBe(false);
+  });
+
+  for (const agentName of ["infra", "server", "client", "assets"]) {
+    it(`resolved permissions for the ${agentName} agent no longer report .claude/settings.json as editable`, () => {
+      const resolved = resolveAllowedTools(agentName, { agentsDir: REAL_AGENTS_DIR });
+      expect(isToolAllowed("Edit(.claude/settings.json)", resolved)).toBe(false);
+      expect(isToolAllowed("Write(.claude/settings.json)", resolved)).toBe(false);
+      expect(isToolAllowed("Edit(.claude/settings.local.json)", resolved)).toBe(false);
+    });
+  }
+});
+
+describe("checkToolPermission", () => {
+  const bareWriteEdit = ["Read", "Write", "Edit", "Grep", "Glob"];
+
+  it("agrees with isToolAllowed's boolean verdict for an ordinary, non-.claude request", () => {
+    const result = checkToolPermission("Edit(tools/board/src/foo.js)", bareWriteEdit);
+    expect(result.allowed).toBe(true);
+    expect(result.reason).toBeNull();
+  });
+
+  it("agrees with isToolAllowed's boolean verdict for a denied request", () => {
+    const result = checkToolPermission("Bash(rm:*)", bareWriteEdit);
+    expect(result.allowed).toBe(false);
+  });
+
+  it("names the Claude Code CLI's sensitive-file protection as the reason for a .claude/ denial", () => {
+    const result = checkToolPermission("Edit(.claude/settings.json)", bareWriteEdit);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/sensitive-file protection/i);
+    expect(result.reason).toMatch(/claude code cli/i);
   });
 });
 
