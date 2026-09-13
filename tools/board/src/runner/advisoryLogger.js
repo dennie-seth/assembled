@@ -2,13 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { READING_STATUS, readUsageTelemetry } from "./usageTelemetry.js";
 import { UsageLedgerReadIndeterminateError, listCardUsageEntries } from "./usageLedger.js";
-import {
-  ESTIMATOR_VERSION,
-  DEFAULT_COVERAGE_TARGET,
-  observationFromAttemptEntry,
-  estimateCost,
-  indeterminateEstimate
-} from "./costEstimator.js";
+import { DEFAULT_COVERAGE_TARGET, observationFromAttemptEntry, estimateCost, indeterminateEstimate } from "./costEstimator.js";
 
 /**
  * A window's telemetry counts as verified available capacity ONLY when T-0367's reader classified

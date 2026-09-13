@@ -209,7 +209,7 @@ function sparseEstimate({ type, exact, censoredLowerBounds, sampleCount, coverag
  * this uncertain -- return a separately classified, still-raised conservative fallback (at least
  * the highest lower bound plus a margin) instead of ever calling it "empirical".
  */
-function empiricalEstimate({ type, exact, censoredLowerBounds, sampleCount, coverageTarget }) {
+function empiricalEstimate({ exact, censoredLowerBounds, sampleCount, coverageTarget }) {
   const exactCount = exact.length;
   const censoredCount = censoredLowerBounds.length;
   const poolSize = exactCount + censoredCount;
