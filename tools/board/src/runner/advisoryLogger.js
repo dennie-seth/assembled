@@ -2,7 +2,13 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { READING_STATUS, readUsageTelemetry } from "./usageTelemetry.js";
 import { UsageLedgerReadIndeterminateError, listCardUsageEntries } from "./usageLedger.js";
-import { ESTIMATOR_VERSION, DEFAULT_COVERAGE_TARGET, observationFromAttemptEntry, estimateCost } from "./costEstimator.js";
+import {
+  ESTIMATOR_VERSION,
+  DEFAULT_COVERAGE_TARGET,
+  observationFromAttemptEntry,
+  estimateCost,
+  indeterminateEstimate
+} from "./costEstimator.js";
 
 /**
  * A window's telemetry counts as verified available capacity ONLY when T-0367's reader classified
@@ -46,6 +52,7 @@ export async function decideLaunchAdvisory({
   cardId,
   type,
   coverageTarget = DEFAULT_COVERAGE_TARGET,
+  fitDate = null,
   now = Date.now(),
   listCardUsageEntriesFn = listCardUsageEntries,
   readUsageTelemetryFn = readUsageTelemetry
@@ -58,16 +65,10 @@ export async function decideLaunchAdvisory({
   } catch (err) {
     if (!(err instanceof UsageLedgerReadIndeterminateError)) throw err;
     return {
-      estimate: {
-        value: null,
-        unit: "usd",
-        estimateSource: "ledger_read_indeterminate",
-        estimatorVersion: ESTIMATOR_VERSION,
-        uncertainty: null,
-        classification: "indeterminate",
-        consumption: "indeterminate"
-      },
+      estimate: indeterminateEstimate(),
       telemetryReadings,
+      type,
+      fitDate,
       reason: `ledger read indeterminate for ${cardId}: ${err.message}`
     };
   }
@@ -77,6 +78,8 @@ export async function decideLaunchAdvisory({
   return {
     estimate,
     telemetryReadings,
+    type,
+    fitDate,
     reason: `estimate for ${cardId} (${type}) from ${observations.length} prior observation(s), source ${estimate.estimateSource}`
   };
 }
@@ -110,6 +113,8 @@ export async function recordAdvisoryDecision({
   cardId,
   executionId,
   invocationId,
+  type = null,
+  fitDate = null,
   estimate,
   telemetryReadings,
   reason,
@@ -124,6 +129,8 @@ export async function recordAdvisoryDecision({
     cardId,
     executionId,
     invocationId,
+    type,
+    fitDate,
     prediction: estimate,
     telemetryFreshness: buildTelemetryFreshness(telemetryReadings),
     estimatorVersion: estimate.estimatorVersion,
@@ -164,6 +171,77 @@ export async function recordAdvisoryOutcome({
   const updated = { ...existing, outcome, updatedAt: now().toISOString() };
   await writeAtomic(filePath, updated, { writeFileFn, mkdirFn, renameFn, unlinkFn });
   return updated;
+}
+
+/**
+ * Measures real coverage: how often a RECORDED, immutable pre-launch prediction was exceeded by
+ * what actually happened (Codex WIP-gate batch review finding 6, 2026-09-13). This never refits an
+ * estimate from the realized costs and scores them against that fresh fit -- that would be a
+ * fit-on-training-data check (see costEstimator.js's `inSampleFitDiagnostic`), not coverage of a
+ * prediction made before the outcome was known. Every advisory record already carries the
+ * estimator version and fit identity (`fitDate`) its `prediction` came from
+ * (`recordAdvisoryDecision`); results are grouped by that pair so a later re-fit's coverage is
+ * never blended with an earlier one's.
+ *
+ * A record's `outcome` (attached by `recordAdvisoryOutcome`, itself never mutating `prediction`)
+ * must carry `actualCostUsd` and `costKind` ("exact" or "lower_bound"). An exact actual exceeds
+ * when it's greater than `prediction.value`. A lower-bound actual whose bound already exceeds the
+ * prediction is a PROVEN overrun; one whose bound is still below is UNRESOLVED -- its true cost may
+ * yet be higher, so it is never counted as a proven non-overrun. Records with no `outcome` yet are
+ * pending, not scored. Records whose `prediction` is indeterminate/null (no numeric value) are
+ * excluded from scoring entirely and counted separately -- there is nothing to compare an actual
+ * against.
+ */
+export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
+  let files;
+  try {
+    files = await readdirFn(runsDir);
+  } catch (err) {
+    if (err.code === "ENOENT") return { groups: {}, excludedIndeterminate: 0, pending: 0 };
+    throw err;
+  }
+
+  const groups = {};
+  let excludedIndeterminate = 0;
+  let pending = 0;
+
+  for (const file of files.filter((f) => f.endsWith(".advisory.json"))) {
+    const record = JSON.parse(await readFileFn(path.join(runsDir, file), "utf8"));
+    if (!record.outcome) {
+      pending += 1;
+      continue;
+    }
+    const prediction = record.prediction;
+    if (!prediction || prediction.value === null || prediction.value === undefined) {
+      excludedIndeterminate += 1;
+      continue;
+    }
+
+    const estimatorVersion = record.estimatorVersion ?? prediction.estimatorVersion ?? "unknown";
+    const fitIdentity = record.fitDate ?? "unversioned";
+    const key = `${estimatorVersion}::${fitIdentity}`;
+    groups[key] ??= { estimatorVersion, fitDate: record.fitDate ?? null, evaluated: 0, exceeded: 0, unresolved: 0 };
+    const group = groups[key];
+
+    const { actualCostUsd, costKind } = record.outcome;
+    if (costKind === "lower_bound") {
+      if (actualCostUsd > prediction.value) {
+        group.evaluated += 1;
+        group.exceeded += 1;
+      } else {
+        group.unresolved += 1;
+      }
+    } else {
+      group.evaluated += 1;
+      if (actualCostUsd > prediction.value) group.exceeded += 1;
+    }
+  }
+
+  for (const group of Object.values(groups)) {
+    group.fraction = group.evaluated === 0 ? null : group.exceeded / group.evaluated;
+  }
+
+  return { groups, excludedIndeterminate, pending };
 }
 
 /**

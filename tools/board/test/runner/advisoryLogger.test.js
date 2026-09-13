@@ -179,9 +179,11 @@ describe("decideLaunchAdvisory -- consumer contract 1 wired into the advisory lo
   });
 
   it("builds a real estimate from the card's own ledger history on the happy path", async () => {
+    // Values kept below the infra-small prior ($0.50) so this stays a plain "below MIN_SAMPLES ->
+    // prior" happy path, distinct from the dedicated prior-raised-by-observation tests.
     const listCardUsageEntriesFn = async () => [
-      { costUsd: 1, complete: true, outcome: "success" },
-      { costUsd: 2, complete: true, outcome: "success" }
+      { costUsd: 0.1, complete: true, outcome: "success" },
+      { costUsd: 0.2, complete: true, outcome: "success" }
     ];
     const decision = await decideLaunchAdvisory({
       runsDir: "/irrelevant",
