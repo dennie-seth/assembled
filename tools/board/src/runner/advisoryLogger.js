@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { READING_STATUS } from "./usageTelemetry.js";
+import { READING_STATUS, readUsageTelemetry } from "./usageTelemetry.js";
+import { UsageLedgerReadIndeterminateError, listCardUsageEntries } from "./usageLedger.js";
+import { ESTIMATOR_VERSION, DEFAULT_COVERAGE_TARGET, observationFromAttemptEntry, estimateCost } from "./costEstimator.js";
 
 /**
  * A window's telemetry counts as verified available capacity ONLY when T-0367's reader classified
@@ -25,6 +27,58 @@ export function buildTelemetryFreshness(telemetryReadings) {
     freshness[windowKind] = classifyWindowCapacity(reading);
   }
   return freshness;
+}
+
+/**
+ * Builds the `{estimate, telemetryReadings, reason}` triple `recordAdvisoryDecision` persists, by
+ * reading this card's own ledger history and current telemetry -- the concrete `decide()` a real
+ * launch passes to `withAdvisoryLogging` (T-0367 consumer contract 1, Codex review 0913,
+ * 2026-09-13). That contract names both "the estimator" (`costEstimator.js`'s
+ * `collectObservationsFromLedger`, for the many-card calibration pool) AND "the advisory logger"
+ * as places a `UsageLedgerReadIndeterminateError` must never become a silent zero/empty read --
+ * this is the advisory logger's own half of that. A card whose own ledger read is indeterminate
+ * gets an explicit `classification: "indeterminate"` estimate (never `estimateCost([])`, which
+ * would read as a confident zero-cost/no-history result) and a `reason` that names the read as
+ * indeterminate, so the persisted record shows *why* the prediction is unreliable.
+ */
+export async function decideLaunchAdvisory({
+  runsDir,
+  cardId,
+  type,
+  coverageTarget = DEFAULT_COVERAGE_TARGET,
+  now = Date.now(),
+  listCardUsageEntriesFn = listCardUsageEntries,
+  readUsageTelemetryFn = readUsageTelemetry
+}) {
+  const telemetryReadings = await readUsageTelemetryFn({ runsDir, now });
+
+  let entries;
+  try {
+    entries = await listCardUsageEntriesFn({ runsDir, cardId });
+  } catch (err) {
+    if (!(err instanceof UsageLedgerReadIndeterminateError)) throw err;
+    return {
+      estimate: {
+        value: null,
+        unit: "usd",
+        estimateSource: "ledger_read_indeterminate",
+        estimatorVersion: ESTIMATOR_VERSION,
+        uncertainty: null,
+        classification: "indeterminate",
+        consumption: "indeterminate"
+      },
+      telemetryReadings,
+      reason: `ledger read indeterminate for ${cardId}: ${err.message}`
+    };
+  }
+
+  const observations = entries.map(observationFromAttemptEntry);
+  const estimate = estimateCost({ type, observations, coverageTarget });
+  return {
+    estimate,
+    telemetryReadings,
+    reason: `estimate for ${cardId} (${type}) from ${observations.length} prior observation(s), source ${estimate.estimateSource}`
+  };
 }
 
 /** Path to one launch decision's advisory record -- mirrors usageLedger.js's key convention. */

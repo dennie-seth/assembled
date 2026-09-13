@@ -220,7 +220,7 @@ describe("decideLaunchAdvisory -- consumer contract 1 wired into the advisory lo
     const { advisory, result } = await withAdvisoryLogging({ decide, launch });
 
     expect(result).toBe("LAUNCHED");
-    expect(advisory.estimate.classification).toBe("indeterminate");
+    expect(advisory.prediction.classification).toBe("indeterminate");
     expect(advisory.reason).toMatch(/indeterminate/i);
   });
 });
