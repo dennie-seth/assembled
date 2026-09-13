@@ -222,3 +222,41 @@ export async function collectObservationsFromLedger({ runsDir, cardIds, listCard
   }
   return { observations, indeterminateCardIds };
 }
+
+/**
+ * Builds one weekly calibration summary (spec §7 "Cadence": "collect continuously, publish
+ * weekly") straight from continuously collected ledger data -- the concrete link acceptance 5
+ * requires between "continuously collected" (`collectObservationsFromLedger`, called once per
+ * type here) and "a weekly calibration summary" (`buildCostEstimatorTable`'s versioned,
+ * sample-counted, dated table). Each type's `indeterminateCardIds` are reported alongside its
+ * sample count -- never silently folded into a smaller-but-confident pool -- and each type's
+ * estimate carries its own `measureCoverage` result, so "reports the measured fraction of runs
+ * that exceeded their estimate" (acceptance 2) is something this summary actually does, not only
+ * something `measureCoverage` could do if a caller remembered to invoke it separately.
+ */
+export async function buildWeeklyCalibrationSummary({
+  runsDir,
+  cardIdsByType,
+  fitDate,
+  estimatorVersion = ESTIMATOR_VERSION,
+  coverageTarget = DEFAULT_COVERAGE_TARGET,
+  listCardUsageEntriesFn = listCardUsageEntries
+}) {
+  const sampleCounts = {};
+  const types = {};
+  const indeterminateCardIds = {};
+
+  for (const [type, cardIds] of Object.entries(cardIdsByType)) {
+    const { observations, indeterminateCardIds: badCardIds } = await collectObservationsFromLedger({
+      runsDir,
+      cardIds,
+      listCardUsageEntriesFn
+    });
+    const estimate = estimateCost({ type, observations, coverageTarget });
+    sampleCounts[type] = observations.length;
+    indeterminateCardIds[type] = badCardIds;
+    types[type] = { ...estimate, coverage: measureCoverage(observations, estimate) };
+  }
+
+  return { estimatorVersion, fitDate, coverageTarget, sampleCounts, types, indeterminateCardIds };
+}
