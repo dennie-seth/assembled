@@ -4,14 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
 import { UsageLedgerReadIndeterminateError } from "../../src/runner/usageLedger.js";
-import { ESTIMATOR_VERSION, ESTIMATE_SOURCE } from "../../src/runner/costEstimator.js";
+import { ESTIMATOR_VERSION, ESTIMATE_SOURCE, TYPE_PRIORS } from "../../src/runner/costEstimator.js";
 import {
   classifyWindowCapacity,
   buildTelemetryFreshness,
   recordAdvisoryDecision,
   recordAdvisoryOutcome,
   withAdvisoryLogging,
-  decideLaunchAdvisory
+  decideLaunchAdvisory,
+  measureRecordedCoverage
 } from "../../src/runner/advisoryLogger.js";
 
 let runsDir;
@@ -256,5 +257,227 @@ describe("withAdvisoryLogging -- proves the logger changes no launch (acceptance
     const { advisory, result } = await withAdvisoryLogging({ decide, launch });
     expect(advisory).toEqual({ reason: "ok" });
     expect(result).toBe("LAUNCHED");
+  });
+});
+
+describe("recordAdvisoryDecision -- carries the fit identity its prediction came from (Codex WIP-gate batch review finding 6)", () => {
+  it("persists type and fitDate alongside the prediction so coverage can be grouped by them later", async () => {
+    const entry = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-fit",
+      invocationId: "inv-fit",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "advisory dry run"
+    });
+
+    expect(entry.type).toBe("infra-small");
+    expect(entry.fitDate).toBe("2026-09-13");
+    expect(entry.estimatorVersion).toBe(ESTIMATOR_VERSION);
+  });
+
+  it("decideLaunchAdvisory passes the type and fitDate it was given through to its returned decision", async () => {
+    const decision = await decideLaunchAdvisory({
+      runsDir: "/irrelevant",
+      cardId: "T-0369",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      listCardUsageEntriesFn: async () => [],
+      readUsageTelemetryFn: async () => SAMPLE_TELEMETRY
+    });
+    expect(decision.type).toBe("infra-small");
+    expect(decision.fitDate).toBe("2026-09-13");
+  });
+});
+
+describe("measureRecordedCoverage -- coverage measures realized outcomes against recorded pre-launch predictions (Codex WIP-gate batch review finding 6)", () => {
+  async function recordAndResolve({ executionId, predictionValue, actualCostUsd, costKind = "exact", estimatorVersion = ESTIMATOR_VERSION, fitDate = "2026-09-13" }) {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId,
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate,
+      estimate: { ...SAMPLE_ESTIMATE, value: predictionValue, estimatorVersion },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+    return recordAdvisoryOutcome({
+      runsDir,
+      cardId: "T-0369",
+      executionId,
+      invocationId: "inv-1",
+      outcome: { actualCostUsd, costKind }
+    });
+  }
+
+  it("reports all five as overruns for a fixture of five recorded $1 predictions with $10 actual costs", async () => {
+    for (let i = 0; i < 5; i += 1) {
+      await recordAndResolve({ executionId: `exec-overrun-${i}`, predictionValue: 1, actualCostUsd: 10 });
+    }
+
+    const { groups } = await measureRecordedCoverage({ runsDir });
+    const group = groups[`${ESTIMATOR_VERSION}::2026-09-13`];
+    expect(group.evaluated).toBe(5);
+    expect(group.exceeded).toBe(5);
+    expect(group.fraction).toBe(1);
+  });
+
+  it("recording an outcome never alters the recorded prediction itself", async () => {
+    await recordAndResolve({ executionId: "exec-immutable", predictionValue: 1, actualCostUsd: 10 });
+    const onDisk = JSON.parse(
+      await fs.readFile(path.join(runsDir, "T-0369-execexec-immutable-invinv-1.advisory.json"), "utf8")
+    );
+    expect(onDisk.prediction.value).toBe(1);
+    expect(onDisk.outcome.actualCostUsd).toBe(10);
+  });
+
+  it("groups separately by estimator version and fit identity", async () => {
+    await recordAndResolve({ executionId: "exec-v1", predictionValue: 1, actualCostUsd: 10, estimatorVersion: "v1", fitDate: "2026-09-13" });
+    await recordAndResolve({ executionId: "exec-v2", predictionValue: 1, actualCostUsd: 10, estimatorVersion: "v2", fitDate: "2026-09-20" });
+
+    const { groups } = await measureRecordedCoverage({ runsDir });
+    expect(groups["v1::2026-09-13"].evaluated).toBe(1);
+    expect(groups["v2::2026-09-20"].evaluated).toBe(1);
+  });
+
+  it("a censored (lower-bound) actual above the prediction is a proven overrun", async () => {
+    await recordAndResolve({ executionId: "exec-lb-over", predictionValue: 1, actualCostUsd: 5, costKind: "lower_bound" });
+    const { groups } = await measureRecordedCoverage({ runsDir });
+    const group = groups[`${ESTIMATOR_VERSION}::2026-09-13`];
+    expect(group.evaluated).toBe(1);
+    expect(group.exceeded).toBe(1);
+  });
+
+  it("a censored (lower-bound) actual below the prediction is unresolved -- never counted as a proven non-overrun", async () => {
+    await recordAndResolve({ executionId: "exec-lb-under", predictionValue: 100, actualCostUsd: 5, costKind: "lower_bound" });
+    const { groups } = await measureRecordedCoverage({ runsDir });
+    const group = groups[`${ESTIMATOR_VERSION}::2026-09-13`];
+    expect(group.evaluated).toBe(0);
+    expect(group.unresolved).toBe(1);
+  });
+
+  it("excludes records with an indeterminate/null prediction from scoring, counted separately", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-indet",
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { value: null, classification: "indeterminate", consumption: "indeterminate", estimatorVersion: ESTIMATOR_VERSION },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "ledger read indeterminate"
+    });
+    await recordAdvisoryOutcome({ runsDir, cardId: "T-0369", executionId: "exec-indet", invocationId: "inv-1", outcome: { actualCostUsd: 5, costKind: "exact" } });
+
+    const { groups, excludedIndeterminate } = await measureRecordedCoverage({ runsDir });
+    expect(excludedIndeterminate).toBe(1);
+    expect(Object.values(groups).some((g) => g.evaluated > 0)).toBe(false);
+  });
+
+  it("a record with no outcome yet (pending) is not scored", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-pending",
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+
+    const { groups, pending } = await measureRecordedCoverage({ runsDir });
+    expect(pending).toBe(1);
+    expect(Object.keys(groups)).toHaveLength(0);
+  });
+});
+
+describe("end-to-end: unknown-cost ledger entries through collection, estimateCost, and the advisory record (Codex WIP-gate batch review)", () => {
+  const readUsageTelemetryFn = async () => SAMPLE_TELEMETRY;
+
+  it("an all-censored pool for a registered type produces a persisted prior, not a determinate empirical estimate the data can't support", async () => {
+    const listCardUsageEntriesFn = async () =>
+      Array.from({ length: 5 }, () => ({ costUsd: null, complete: false, outcome: "crashed" }));
+
+    const decision = await decideLaunchAdvisory({
+      runsDir: "/irrelevant",
+      cardId: "T-0369",
+      type: "infra-large",
+      listCardUsageEntriesFn,
+      readUsageTelemetryFn
+    });
+    const record = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-e2e-censored",
+      invocationId: "inv-1",
+      type: decision.type,
+      estimate: decision.estimate,
+      telemetryReadings: decision.telemetryReadings,
+      reason: decision.reason
+    });
+
+    expect(record.prediction.classification).not.toBe("empirical");
+    expect(record.prediction.value).toBe(TYPE_PRIORS["infra-large"].value);
+  });
+
+  it("a mixed pool (exact successes plus one expensive quota-stop) produces a raised, separately classified persisted prediction", async () => {
+    const listCardUsageEntriesFn = async () => [
+      ...Array.from({ length: 5 }, () => ({ costUsd: 1, complete: true, outcome: "success" })),
+      { costUsd: 500, complete: true, outcome: "quota_stop", terminalReason: "api_error", apiErrorStatus: 429 }
+    ];
+
+    const decision = await decideLaunchAdvisory({
+      runsDir: "/irrelevant",
+      cardId: "T-0369",
+      type: "infra-small",
+      listCardUsageEntriesFn,
+      readUsageTelemetryFn
+    });
+    const record = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-e2e-mixed",
+      invocationId: "inv-1",
+      type: decision.type,
+      estimate: decision.estimate,
+      telemetryReadings: decision.telemetryReadings,
+      reason: decision.reason
+    });
+
+    expect(record.prediction.classification).not.toBe("empirical");
+    expect(record.prediction.value).toBeGreaterThanOrEqual(500);
+  });
+
+  it("an unregistered type with no usable data produces a persisted hold-for-sizing prediction, never a numeric guess", async () => {
+    const listCardUsageEntriesFn = async () => [];
+
+    const decision = await decideLaunchAdvisory({
+      runsDir: "/irrelevant",
+      cardId: "T-0369",
+      type: "totally-unregistered-type",
+      listCardUsageEntriesFn,
+      readUsageTelemetryFn
+    });
+    const record = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-e2e-unregistered",
+      invocationId: "inv-1",
+      type: decision.type,
+      estimate: decision.estimate,
+      telemetryReadings: decision.telemetryReadings,
+      reason: decision.reason
+    });
+
+    expect(record.prediction.classification).toBe("large_hold_for_sizing");
+    expect(record.prediction.value).toBeNull();
   });
 });
