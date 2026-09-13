@@ -3,8 +3,16 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
+import { UsageLedgerReadIndeterminateError } from "../../src/runner/usageLedger.js";
 import { ESTIMATOR_VERSION, ESTIMATE_SOURCE } from "../../src/runner/costEstimator.js";
-import { classifyWindowCapacity, buildTelemetryFreshness, recordAdvisoryDecision, recordAdvisoryOutcome, withAdvisoryLogging } from "../../src/runner/advisoryLogger.js";
+import {
+  classifyWindowCapacity,
+  buildTelemetryFreshness,
+  recordAdvisoryDecision,
+  recordAdvisoryOutcome,
+  withAdvisoryLogging,
+  decideLaunchAdvisory
+} from "../../src/runner/advisoryLogger.js";
 
 let runsDir;
 
@@ -132,6 +140,88 @@ describe("recordAdvisoryOutcome -- eventual outcome is attached after the fact",
     await expect(
       recordAdvisoryOutcome({ runsDir, cardId: "T-0369", executionId: "never", invocationId: "never", outcome: {} })
     ).rejects.toThrow();
+  });
+});
+
+describe("decideLaunchAdvisory -- consumer contract 1 wired into the advisory logger itself", () => {
+  const readUsageTelemetryFn = async () => SAMPLE_TELEMETRY;
+
+  it("preserves an indeterminate ledger read as explicit indeterminate consumption, never zero or empty", async () => {
+    const listCardUsageEntriesFn = async () => {
+      throw new UsageLedgerReadIndeterminateError("simulated persistent contention");
+    };
+
+    const decision = await decideLaunchAdvisory({
+      runsDir: "/irrelevant",
+      cardId: "T-0369",
+      type: "infra-small",
+      listCardUsageEntriesFn,
+      readUsageTelemetryFn
+    });
+
+    expect(decision.estimate.value).toBeNull();
+    expect(decision.estimate.classification).toBe("indeterminate");
+    expect(decision.estimate.consumption).toBe("indeterminate");
+    // Never presented as "no usage" (which would read as a confident zero-cost estimate).
+    expect(decision.estimate.value).not.toBe(0);
+    expect(decision.reason).toMatch(/indeterminate/i);
+    expect(decision.reason).toMatch(/T-0369/);
+  });
+
+  it("re-throws any other ledger read error unchanged", async () => {
+    const listCardUsageEntriesFn = async () => {
+      throw new Error("unrelated disk failure");
+    };
+    await expect(
+      decideLaunchAdvisory({ runsDir: "/irrelevant", cardId: "T-0369", type: "infra-small", listCardUsageEntriesFn, readUsageTelemetryFn })
+    ).rejects.toThrow("unrelated disk failure");
+  });
+
+  it("builds a real estimate from the card's own ledger history on the happy path", async () => {
+    const listCardUsageEntriesFn = async () => [
+      { costUsd: 1, complete: true, outcome: "success" },
+      { costUsd: 2, complete: true, outcome: "success" }
+    ];
+    const decision = await decideLaunchAdvisory({
+      runsDir: "/irrelevant",
+      cardId: "T-0369",
+      type: "infra-small",
+      listCardUsageEntriesFn,
+      readUsageTelemetryFn
+    });
+    expect(decision.estimate.estimateSource).toBe(ESTIMATE_SOURCE.PRIOR); // below MIN_SAMPLES
+    expect(decision.reason).not.toMatch(/indeterminate/i);
+  });
+
+  it("an indeterminate decision can still be persisted and never blocks launch via withAdvisoryLogging", async () => {
+    const listCardUsageEntriesFn = async () => {
+      throw new UsageLedgerReadIndeterminateError("boom");
+    };
+    const decide = async () => {
+      const decision = await decideLaunchAdvisory({
+        runsDir,
+        cardId: "T-0369",
+        type: "infra-small",
+        listCardUsageEntriesFn,
+        readUsageTelemetryFn
+      });
+      return recordAdvisoryDecision({
+        runsDir,
+        cardId: "T-0369",
+        executionId: "exec-indeterminate",
+        invocationId: "inv-1",
+        estimate: decision.estimate,
+        telemetryReadings: decision.telemetryReadings,
+        reason: decision.reason
+      });
+    };
+    const launch = async () => "LAUNCHED";
+
+    const { advisory, result } = await withAdvisoryLogging({ decide, launch });
+
+    expect(result).toBe("LAUNCHED");
+    expect(advisory.estimate.classification).toBe("indeterminate");
+    expect(advisory.reason).toMatch(/indeterminate/i);
   });
 });
 
