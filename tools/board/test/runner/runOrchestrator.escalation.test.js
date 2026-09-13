@@ -176,10 +176,12 @@ function makeOrchestrator({ store, git, runner, hub, github, idAllocator, taskSt
 /**
  * Drives the nth implementer+reviewer cycle to a FAIL verdict.
  * `reviewerPreamble` is raw chatter emitted *outside* the ```verdict fenced block -- for
- * simulating a usage-limit signature that shows up in the CLI's raw output but isn't part of the
- * reviewer's structured verdict notes. `notesOverride` replaces the verdict's own `notes` field --
- * for simulating what the reviewer actually wrote about why it failed (the text the blocker-report
- * categorizer reads).
+ * simulating prose that merely quotes a usage/rate-limit phrase without any request actually
+ * having been refused (T-0377: this must never suppress escalation on its own). `notesOverride`
+ * replaces the verdict's own `notes` field -- for simulating what the reviewer actually wrote
+ * about why it failed (the text the blocker-report categorizer reads). `extraEvents` are raw
+ * NDJSON events emitted before the verdict block, for structured signals (`rate_limit_event`,
+ * a terminal 429 `result`, an explicit `error` code) that a real refusal would carry.
  */
 async function driveFailCycle(runner, n, { reviewerPreamble = "", notesOverride, extraEvents = [] } = {}) {
   const implChild = await nthChild(runner, n * 2 - 1);
@@ -276,15 +278,29 @@ describe("RunOrchestrator escalation -- genuine blocker after auto-retry exhaust
   });
 });
 
-describe("RunOrchestrator escalation -- usage/rate-limit exclusion", () => {
-  it("does not create a blocker report or remediation card when a usage-limit signature appears in any attempt's output", async () => {
+/** Real 429 session-limit stop shape (card evidence, T-0366-2026-09-11T18-15-10-554Z.jsonl). */
+function quotaStopResultEvent() {
+  return {
+    type: "result",
+    is_error: true,
+    terminal_reason: "api_error",
+    api_error_status: 429,
+    result: "You've hit your session limit · resets 6pm (Europe/Budapest)",
+    total_cost_usd: 1.42,
+    usage: { input_tokens: 12000, output_tokens: 3400, cache_creation_input_tokens: 500, cache_read_input_tokens: 8000 }
+  };
+}
+
+describe("RunOrchestrator escalation -- quoted usage/rate-limit prose never suppresses a genuine FAIL (T-0377 / PR #381)", () => {
+  it("still escalates when a reviewer's raw preamble merely quotes 'usage limit reached' text", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
     const runner = makeRunner();
     const orchestrator = makeOrchestrator({ store, git, runner });
 
     const runPromise = orchestrator.runCard("T-0001");
-    // The signature shows up mid-way through the exhausted attempts, not necessarily the last one.
+    // The quoted phrase shows up mid-way through the exhausted attempts -- no request was ever
+    // actually refused, so this must not suppress escalation.
     await exhaustToBlocked(runner, {
       reviewerPreambleForAttempt: (n) => (n === 3 ? "Claude AI usage limit reached. Your limit will reset at 5pm. " : "")
     });
@@ -292,14 +308,11 @@ describe("RunOrchestrator escalation -- usage/rate-limit exclusion", () => {
 
     const original = await store.get("T-0001");
     expect(original.status).toBe("blocked");
-    expect(original.comments).toEqual([]);
-    expect(original.depends_on).toEqual([]);
-
-    const allTasks = await store.list();
-    expect(allTasks).toHaveLength(1);
+    expect(original.comments.find((c) => c.text.includes("Blocker report"))).toBeTruthy();
+    expect(await store.list()).toHaveLength(2);
   });
 
-  it("recognizes a rate-limit/429 signature too, not just the literal phrase 'usage limit'", async () => {
+  it("still escalates when a reviewer's raw preamble merely quotes a 429/rate-limited phrase", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
     const runner = makeRunner();
@@ -311,7 +324,88 @@ describe("RunOrchestrator escalation -- usage/rate-limit exclusion", () => {
     });
     await runPromise;
 
+    const original = await store.get("T-0001");
+    expect(original.comments.find((c) => c.text.includes("Blocker report"))).toBeTruthy();
+    expect(await store.list()).toHaveLength(2);
+  });
+
+  it("does not suppress escalation for the real T-0367 shape: completed results, healthy telemetry, repeatedly-quoted session-limit text", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner, {
+      // Every attempt's own reviewer round completes normally (verdictBlock always emits a
+      // `result`-shaped assistant text, never a terminal api_error/429) while quoting the T-0366
+      // refusal phrase verbatim in the reviewer's raw preamble -- exactly what T-0367/PR #381's
+      // docs, fixtures and reviewer notes did 39 times over.
+      reviewerPreambleForAttempt: () => "Fixture asserts the CLI's \"You've hit your session limit\" text is handled correctly. ",
+      extraEventsForAttempt: () => [{ type: "rate_limit_event", rate_limit_info: { status: "allowed", rateLimitType: "five_hour" }, session_id: "s-1" }]
+    });
+    await runPromise;
+
+    const original = await store.get("T-0001");
+    expect(original.status).toBe("blocked");
+    expect(original.comments.find((c) => c.text.includes("Blocker report"))).toBeTruthy();
+    expect(await store.list()).toHaveLength(2);
+  });
+});
+
+describe("RunOrchestrator escalation -- a genuine structured usage-limit stop still suppresses", () => {
+  it("suppresses escalation when an attempt's own result event is a genuine terminal 429 api_error stop", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner, {
+      extraEventsForAttempt: (n) => (n === MAX_AUTO_RETRY_ATTEMPTS ? [quotaStopResultEvent()] : [])
+    });
+    await runPromise;
+
+    const original = await store.get("T-0001");
+    expect(original.status).toBe("blocked");
+    expect(original.comments).toEqual([]);
+    expect(original.depends_on).toEqual([]);
     expect(await store.list()).toHaveLength(1);
+  });
+
+  it("suppresses escalation when an attempt carries an explicit rate_limit error code with no prose at all", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner, {
+      extraEventsForAttempt: (n) => (n === MAX_AUTO_RETRY_ATTEMPTS ? [{ type: "assistant", error: "rate_limit" }] : [])
+    });
+    await runPromise;
+
+    expect(await store.list()).toHaveLength(1);
+  });
+
+  it("names the structured signal that triggered escalation suppression in the run log", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const runLogs = [];
+    const orchestrator = makeOrchestrator({ store, git, runner, runLogs });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner, {
+      extraEventsForAttempt: (n) => (n === MAX_AUTO_RETRY_ATTEMPTS ? [quotaStopResultEvent()] : [])
+    });
+    await runPromise;
+
+    const log = runLogs.at(-1);
+    const escalationEvent = log.events.find((e) => e.type === "escalation");
+    expect(escalationEvent).toBeTruthy();
+    expect(escalationEvent.message).toMatch(/api_error/);
+    expect(escalationEvent.message).toMatch(/429/);
   });
 });
 
