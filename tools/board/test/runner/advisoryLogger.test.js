@@ -527,6 +527,94 @@ describe("measureRecordedCoverage -- fails safe on malformed outcomes and corrup
   });
 });
 
+describe("measureRecordedCoverage -- a record file that parses but is not a plain object goes to unreadable, never crashes, never counts as pending", () => {
+  const ODD_CONTENTS = [
+    ["null", "null"],
+    ["an array", "[]"],
+    ["a bare number", "42"],
+    ["a bare string", '"x"']
+  ];
+
+  for (const [label, raw] of ODD_CONTENTS) {
+    it(`a file containing exactly ${label} beside a valid record leaves the valid record's result identical and raises unreadable by one`, async () => {
+      await recordAdvisoryDecision({
+        runsDir,
+        cardId: "T-0369",
+        executionId: "exec-oddbaseline",
+        invocationId: "inv-1",
+        type: "infra-small",
+        fitDate: "2026-09-13",
+        estimate: { ...SAMPLE_ESTIMATE, value: 1 },
+        telemetryReadings: SAMPLE_TELEMETRY,
+        reason: "test fixture"
+      });
+      await recordAdvisoryOutcome({
+        runsDir,
+        cardId: "T-0369",
+        executionId: "exec-oddbaseline",
+        invocationId: "inv-1",
+        outcome: { actualCostUsd: 10, costKind: "exact" }
+      });
+
+      const { groups: before } = await measureRecordedCoverage({ runsDir });
+
+      await fs.writeFile(path.join(runsDir, "T-0369-execodd-invinv-1.advisory.json"), raw, "utf8");
+
+      const { groups: after, unreadable, pending } = await measureRecordedCoverage({ runsDir });
+      expect(after).toEqual(before);
+      expect(unreadable).toBe(1);
+      expect(pending).toBe(0);
+    });
+  }
+
+  it("does not throw on a null-content file and still scores the valid record", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-nullthrow",
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { ...SAMPLE_ESTIMATE, value: 1 },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+    await recordAdvisoryOutcome({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-nullthrow",
+      invocationId: "inv-1",
+      outcome: { actualCostUsd: 10, costKind: "exact" }
+    });
+    await fs.writeFile(path.join(runsDir, "T-0369-execnull-invinv-1.advisory.json"), "null", "utf8");
+
+    await expect(measureRecordedCoverage({ runsDir })).resolves.toBeTruthy();
+    const { groups, unreadable } = await measureRecordedCoverage({ runsDir });
+    const group = groups[`${ESTIMATOR_VERSION}::2026-09-13`];
+    expect(group.evaluated).toBe(1);
+    expect(group.exceeded).toBe(1);
+    expect(unreadable).toBe(1);
+  });
+
+  it("a record that parses to a plain object keeps today's handling unchanged", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-plainobj-pending",
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { ...SAMPLE_ESTIMATE, value: 1 },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+
+    const { pending, unreadable } = await measureRecordedCoverage({ runsDir });
+    expect(pending).toBe(1);
+    expect(unreadable).toBe(0);
+  });
+});
+
 describe("end-to-end: unknown-cost ledger entries through collection, estimateCost, and the advisory record (Codex WIP-gate batch review)", () => {
   const readUsageTelemetryFn = async () => SAMPLE_TELEMETRY;
 
