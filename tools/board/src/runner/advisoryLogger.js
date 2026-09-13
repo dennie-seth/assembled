@@ -83,6 +83,24 @@ export function advisoryLogPath(runsDir, { cardId, executionId, invocationId }) 
   return path.join(runsDir, `${cardId}-exec${executionId}-inv${invocationId}.advisory.json`);
 }
 
+const VALID_OUTCOME_COST_KINDS = new Set(["exact", "lower_bound"]);
+
+/**
+ * An outcome is scoreable only when it names which kind of number it carries (`costKind: "exact"`
+ * or `"lower_bound"`) and that number is a finite, non-negative `actualCostUsd` -- no coercion of
+ * strings, no null/undefined standing in for zero. Anything else, including a shape nobody has
+ * written yet, fails safe as unresolved rather than being scored as a met or missed prediction
+ * (recorded coverage fail-safe round, 2026-09-13). A genuinely unknown actual cost should be
+ * recorded as a `lower_bound` at the known subtotal (>= 0, per T-0367 consumer contract 2), never
+ * as a null exact cost.
+ */
+function isScoreableOutcome(outcome) {
+  if (!outcome || typeof outcome !== "object" || Array.isArray(outcome)) return false;
+  if (!VALID_OUTCOME_COST_KINDS.has(outcome.costKind)) return false;
+  const { actualCostUsd } = outcome;
+  return typeof actualCostUsd === "number" && Number.isFinite(actualCostUsd) && actualCostUsd >= 0;
+}
+
 async function writeAtomic(filePath, data, { writeFileFn, mkdirFn, renameFn, unlinkFn }) {
   const tmpPath = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
   await mkdirFn(path.dirname(filePath), { recursive: true });
@@ -141,6 +159,11 @@ export async function recordAdvisoryDecision({
  * Attaches the eventual outcome to a previously recorded advisory decision (spec §10 step 3: "and
  * the eventual outcome"). Throws if the decision was never recorded -- an outcome with nothing to
  * attach to is a caller bug, not a record this module should silently invent.
+ *
+ * Also throws, writing nothing, if `outcome` isn't a scoreable shape (`isScoreableOutcome`) -- the
+ * logger itself must never produce a malformed outcome (recorded coverage fail-safe round,
+ * 2026-09-13). `measureRecordedCoverage`'s own fail-safe handling of a malformed outcome remains,
+ * for older or hand-written record files this validation didn't cover.
  */
 export async function recordAdvisoryOutcome({
   runsDir,
@@ -162,6 +185,11 @@ export async function recordAdvisoryOutcome({
   } catch (err) {
     throw new Error(`advisory logger: no decision recorded for ${cardId}/${executionId}/${invocationId}, cannot attach outcome (${err.message})`);
   }
+  if (!isScoreableOutcome(outcome)) {
+    throw new Error(
+      `advisory logger: malformed outcome for ${cardId}/${executionId}/${invocationId} -- requires costKind "exact" or "lower_bound" and a finite, non-negative actualCostUsd, got ${JSON.stringify(outcome)}`
+    );
+  }
   const updated = { ...existing, outcome, updatedAt: now().toISOString() };
   await writeAtomic(filePath, updated, { writeFileFn, mkdirFn, renameFn, unlinkFn });
   return updated;
@@ -178,29 +206,46 @@ export async function recordAdvisoryOutcome({
  * never blended with an earlier one's.
  *
  * A record's `outcome` (attached by `recordAdvisoryOutcome`, itself never mutating `prediction`)
- * must carry `actualCostUsd` and `costKind` ("exact" or "lower_bound"). An exact actual exceeds
- * when it's greater than `prediction.value`. A lower-bound actual whose bound already exceeds the
- * prediction is a PROVEN overrun; one whose bound is still below is UNRESOLVED -- its true cost may
- * yet be higher, so it is never counted as a proven non-overrun. Records with no `outcome` yet are
- * pending, not scored. Records whose `prediction` is indeterminate/null (no numeric value) are
- * excluded from scoring entirely and counted separately -- there is nothing to compare an actual
- * against.
+ * is scored only when it's a valid exact outcome (`costKind: "exact"` with a finite, non-negative
+ * numeric `actualCostUsd`) or a valid lower-bound outcome (`costKind: "lower_bound"`, same numeric
+ * constraint) -- see `isScoreableOutcome`. Every other shape -- a null or non-numeric cost, a
+ * numeric string, a negative or non-finite cost, a missing or unknown `costKind`, a non-object
+ * outcome -- is UNRESOLVED and never enters `evaluated` or `exceeded` (recorded coverage fail-safe
+ * round, 2026-09-13). `recordAdvisoryOutcome` now rejects these at write time, but this reader must
+ * still tolerate them in older or hand-written record files.
+ *
+ * An exact actual exceeds when it's greater than `prediction.value`. A lower-bound actual whose
+ * bound already exceeds the prediction is a PROVEN overrun; one whose bound is still below is
+ * UNRESOLVED -- its true cost may yet be higher, so it is never counted as a proven non-overrun.
+ * Records with no `outcome` yet are pending, not scored. Records whose `prediction` is
+ * indeterminate/null (no numeric value) are excluded from scoring entirely and counted separately
+ * -- there is nothing to compare an actual against. A record file that can't be read or parsed
+ * can't be attributed to any estimator/fit group, so it's skipped and counted in its own top-level
+ * `unreadable` tally instead of aborting the whole calculation -- every other record is still
+ * scored.
  */
 export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
   let files;
   try {
     files = await readdirFn(runsDir);
   } catch (err) {
-    if (err.code === "ENOENT") return { groups: {}, excludedIndeterminate: 0, pending: 0 };
+    if (err.code === "ENOENT") return { groups: {}, excludedIndeterminate: 0, pending: 0, unreadable: 0 };
     throw err;
   }
 
   const groups = {};
   let excludedIndeterminate = 0;
   let pending = 0;
+  let unreadable = 0;
 
   for (const file of files.filter((f) => f.endsWith(".advisory.json"))) {
-    const record = JSON.parse(await readFileFn(path.join(runsDir, file), "utf8"));
+    let record;
+    try {
+      record = JSON.parse(await readFileFn(path.join(runsDir, file), "utf8"));
+    } catch {
+      unreadable += 1;
+      continue;
+    }
     if (!record.outcome) {
       pending += 1;
       continue;
@@ -216,6 +261,11 @@ export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir,
     const key = `${estimatorVersion}::${fitIdentity}`;
     groups[key] ??= { estimatorVersion, fitDate: record.fitDate ?? null, evaluated: 0, exceeded: 0, unresolved: 0 };
     const group = groups[key];
+
+    if (!isScoreableOutcome(record.outcome)) {
+      group.unresolved += 1;
+      continue;
+    }
 
     const { actualCostUsd, costKind } = record.outcome;
     if (costKind === "lower_bound") {
@@ -235,7 +285,7 @@ export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir,
     group.fraction = group.evaluated === 0 ? null : group.exceeded / group.evaluated;
   }
 
-  return { groups, excludedIndeterminate, pending };
+  return { groups, excludedIndeterminate, pending, unreadable };
 }
 
 /**
