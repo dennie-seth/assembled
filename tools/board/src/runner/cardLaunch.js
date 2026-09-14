@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { assertCanMoveToInProgress, UnmetDependencyError, DependencyCycleError } from "../lib/dependencyGuard.js";
 import { assertRoundCapClear, RoundCapExceededError } from "../lib/roundCap.js";
 import { appendNote, effectiveMaxAttempts } from "./runOrchestrator.js";
-import { ensureExecutionId, executionTotal, listCardUsageEntries } from "./usageLedger.js";
+import { ensureExecutionId, executionTotal, executionEndedSuccessfully, listCardUsageEntries } from "./usageLedger.js";
 import { withAdvisoryLogging, recordAdvisoryOutcome } from "./advisoryLogger.js";
 import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
 import { loadAdmissionConfigFromEnv } from "./admissionDecision.js";
@@ -18,9 +18,19 @@ import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
  * (`recordAdvisoryOutcome`, which `measureRecordedCoverage` later reads) is always derived from
  * the usage ledger's own recorded cost for this execution, never from `status` itself -- a
  * "failed" launch can still have a known, exact cost (e.g. a clean reviewer FAIL) just as a
- * "completed" one can have only a lower bound (e.g. an unread result event). Every step is
- * best-effort: a failure here must never surface past this function, since by the time it runs
- * the run it describes is already over and there is nothing left to refuse.
+ * "completed" one can have only a lower bound (e.g. an unread result event).
+ *
+ * T-0370 fix round (Codex review, finding 4): `costKind: "exact"` requires MORE than
+ * `executionTotal(...).costUsd` merely being non-null -- `executionEndedSuccessfully` also
+ * requires every contributing ledger entry to be a successful, complete entry
+ * (`usageLedger.js`'s own `_recordUsage` classification), since `runCard` resolving (or even
+ * rejecting) is not itself proof the run succeeded: a terminal quota stop, a reviewer FAIL that
+ * lands the card on `blocked`, and a cancellation all still resolve/settle the same promise chain
+ * while carrying a real, known subtotal that must be reported as a LOWER BOUND, not an exact
+ * actual (the "stopped-work" defect T-0369 already fixed on the estimator side of this).
+ *
+ * Every step is best-effort: a failure here must never surface past this function, since by the
+ * time it runs the run it describes is already over and there is nothing left to refuse.
  */
 export async function reconcileLaunchOutcome({
   runsDir,
@@ -38,10 +48,9 @@ export async function reconcileLaunchOutcome({
   try {
     const entries = await listCardUsageEntriesFn({ runsDir, cardId });
     const total = executionTotal(entries, executionId);
-    outcome =
-      typeof total.costUsd === "number"
-        ? { costKind: "exact", actualCostUsd: total.costUsd }
-        : { costKind: "lower_bound", actualCostUsd: total.knownCostUsd };
+    outcome = executionEndedSuccessfully(entries, executionId)
+      ? { costKind: "exact", actualCostUsd: total.costUsd }
+      : { costKind: "lower_bound", actualCostUsd: total.knownCostUsd };
   } catch {
     outcome = { costKind: "lower_bound", actualCostUsd: 0 };
   }
