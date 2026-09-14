@@ -92,6 +92,35 @@ describe("evaluateWindowAdmission -- estimate must be a real known number", () =
   });
 });
 
+describe("evaluateWindowAdmission -- T-0370 fix round finding 1/6: an unknown reserved-unspent-cost is an explicit hold, never a fabricated zero", () => {
+  const unitConversion = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+
+  it("holds with RESERVED_COST_UNKNOWN when reservedUnspentCostUsd is null (a failed pool listing or unreadable ledger, never coerced to 0)", () => {
+    const decision = evaluateWindowAdmission({
+      windowKind: "five_hour",
+      reading: reading({ utilization: 0.1 }),
+      estimate: estimate({ value: 0.5 }),
+      reservedUnspentCostUsd: null,
+      config,
+      unitConversion
+    });
+    expect(decision.admitted).toBeNull();
+    expect(decision.holdReason).toBe(HOLD_REASON.RESERVED_COST_UNKNOWN);
+  });
+
+  it("still admits normally when reservedUnspentCostUsd is a real number (unaffected by the new guard)", () => {
+    const decision = evaluateWindowAdmission({
+      windowKind: "five_hour",
+      reading: reading({ utilization: 0.1 }),
+      estimate: estimate({ value: 0.5 }),
+      reservedUnspentCostUsd: 1,
+      config,
+      unitConversion
+    });
+    expect(decision.holdReason).not.toBe(HOLD_REASON.RESERVED_COST_UNKNOWN);
+  });
+});
+
 describe("evaluateWindowAdmission -- units must match", () => {
   it("holds with UNITS_NOT_COMPARABLE for a USD estimate against a utilization-only reading, with no conversion supplied (the default)", () => {
     const decision = evaluateWindowAdmission({
