@@ -724,4 +724,22 @@ describe("createAutoLaunchPoller — window-aware usage comparison (WIP gate T-D
     expect(launchFn).toHaveBeenCalledOnce();
     expect(logLines(logger)).toMatch(/window-aware usage comparison unavailable/);
   });
+
+  it("T-0370 (Codex finding 3): a never-settling readUsageTelemetryFn cannot hang a tick -- the launch still happens once the bound elapses", async () => {
+    vi.useFakeTimers();
+    try {
+      const { poller, launchFn } = makeTelemetryPoller({
+        readUsageTelemetryFn: vi.fn(() => new Promise(() => {})),
+        usage: { utilization: 0.1, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed utilization=0.1" }
+      });
+
+      const tickPromise = poller.tick();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await tickPromise;
+
+      expect(launchFn).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

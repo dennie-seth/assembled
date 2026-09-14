@@ -361,6 +361,22 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     expect(byCard["T-0001"]).toBeCloseTo(byCard["T-0002"]);
   });
 
+  it("T-0370 (Codex finding 3): a never-settling ensureExecutionIdFn cannot hang the launch -- runCard is still called once the bound elapses", async () => {
+    vi.useFakeTimers();
+    try {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const ensureExecutionIdFn = vi.fn(() => new Promise(() => {}));
+
+      const launchPromise = launchCardRun({ orchestrator, id: "T-0001", ensureExecutionIdFn });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await launchPromise;
+
+      expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("T-0370 (Codex finding 1): two DIFFERENT launches through the real launchCardRun boundary are serialized -- the pool is never overbooked by the recorded decisions", async () => {
     const orchestrator = makeAdvisoryOrchestrator([
       makeTask({ id: "T-0001", agent: "infra" }),
