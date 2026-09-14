@@ -1,4 +1,4 @@
-import { decideLaunchAdvisory } from "./advisoryLogger.js";
+import { decideLaunchAdvisory, recordAdvisoryDecision } from "./advisoryLogger.js";
 import { estimateCost, DEFAULT_COVERAGE_TARGET, indeterminateEstimate } from "./costEstimator.js";
 import { readUsageTelemetry, WINDOW_KINDS } from "./usageTelemetry.js";
 import { evaluateAdmission } from "./admissionDecision.js";
@@ -162,7 +162,8 @@ export function buildLaunchDecide({
   listActiveReservationsFn = listActiveReservations,
   reserveLaunchSlotFn = reserveLaunchSlot,
   decideLaunchAdvisoryFn = decideLaunchAdvisory,
-  estimateCostFn = estimateCost
+  estimateCostFn = estimateCost,
+  recordAdvisoryDecisionFn = recordAdvisoryDecision
 }) {
   async function innerDecide() {
     const implementerAdvisory = await decideLaunchAdvisoryFn({
@@ -229,7 +230,7 @@ export function buildLaunchDecide({
       Object.entries(admission.windows).map(([windowKind, decision]) => [windowKind, decision.admitted === null ? decision.holdReason : decision.admitted])
     );
 
-    return {
+    const record = {
       estimate: reservedCycle,
       telemetryReadings: implementerAdvisory.telemetryReadings,
       type,
@@ -240,6 +241,17 @@ export function buildLaunchDecide({
         `admission=${JSON.stringify(windowSummary)}`,
       admission
     };
+
+    // The write itself is part of what constraint 6 bounds ("reading telemetry, estimating,
+    // reserving or LOGGING"), so it happens inside this same envelope, ahead of `launch()` --
+    // never after, and never able to throw or hang past `withBoundedDecide`'s own timeout.
+    try {
+      await recordAdvisoryDecisionFn({ runsDir, cardId, executionId, invocationId, type, fitDate, estimate: reservedCycle, telemetryReadings: implementerAdvisory.telemetryReadings, reason: record.reason });
+    } catch (err) {
+      logger.log(`wip-gate advisory: failed to record advisory decision for ${cardId}/${executionId}/${invocationId} -- launch proceeds unaffected: ${err.message}`);
+    }
+
+    return record;
   }
 
   return withBoundedDecide(innerDecide, { timeoutMs, fallback: fallbackRecordFactory({ type, fitDate }), logger });
