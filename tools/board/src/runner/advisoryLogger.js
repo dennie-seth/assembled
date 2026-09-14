@@ -1,0 +1,348 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { READING_STATUS, readUsageTelemetry } from "./usageTelemetry.js";
+import { UsageLedgerReadIndeterminateError, listCardUsageEntries } from "./usageLedger.js";
+import { DEFAULT_COVERAGE_TARGET, observationFromAttemptEntry, estimateCost, indeterminateEstimate } from "./costEstimator.js";
+
+/**
+ * A window's telemetry counts as verified available capacity ONLY when T-0367's reader classified
+ * it `measured` (T-0367 consumer contract 3, Codex review 0913, 2026-09-13). `estimated` (a
+ * status-only `allowed` event, or an elapsed reset), `stale`, and `unavailable` all withhold a
+ * real number and must never be presented as proof of headroom another consumer hasn't already
+ * spent.
+ */
+export function classifyWindowCapacity(reading) {
+  return {
+    windowKind: reading.windowKind,
+    classification: reading.classification,
+    verifiedAvailable: reading.classification === READING_STATUS.MEASURED,
+    utilization: reading.classification === READING_STATUS.MEASURED ? reading.utilization : null
+  };
+}
+
+/** Applies `classifyWindowCapacity` to every window in a `readUsageTelemetry()`-shaped result. */
+export function buildTelemetryFreshness(telemetryReadings) {
+  const freshness = {};
+  for (const [windowKind, reading] of Object.entries(telemetryReadings)) {
+    freshness[windowKind] = classifyWindowCapacity(reading);
+  }
+  return freshness;
+}
+
+/**
+ * Builds the `{estimate, telemetryReadings, reason}` triple `recordAdvisoryDecision` persists, by
+ * reading this card's own ledger history and current telemetry -- the concrete `decide()` a real
+ * launch passes to `withAdvisoryLogging` (T-0367 consumer contract 1, Codex review 0913,
+ * 2026-09-13). That contract names both "the estimator" (`costEstimator.js`'s
+ * `collectObservationsFromLedger`, for the many-card calibration pool) AND "the advisory logger"
+ * as places a `UsageLedgerReadIndeterminateError` must never become a silent zero/empty read --
+ * this is the advisory logger's own half of that. A card whose own ledger read is indeterminate
+ * gets an explicit `classification: "indeterminate"` estimate (never `estimateCost([])`, which
+ * would read as a confident zero-cost/no-history result) and a `reason` that names the read as
+ * indeterminate, so the persisted record shows *why* the prediction is unreliable.
+ */
+export async function decideLaunchAdvisory({
+  runsDir,
+  cardId,
+  type,
+  coverageTarget = DEFAULT_COVERAGE_TARGET,
+  fitDate = null,
+  now = Date.now(),
+  listCardUsageEntriesFn = listCardUsageEntries,
+  readUsageTelemetryFn = readUsageTelemetry
+}) {
+  const telemetryReadings = await readUsageTelemetryFn({ runsDir, now });
+
+  let entries;
+  try {
+    entries = await listCardUsageEntriesFn({ runsDir, cardId });
+  } catch (err) {
+    if (!(err instanceof UsageLedgerReadIndeterminateError)) throw err;
+    return {
+      estimate: indeterminateEstimate(),
+      telemetryReadings,
+      type,
+      fitDate,
+      reason: `ledger read indeterminate for ${cardId}: ${err.message}`
+    };
+  }
+
+  const observations = entries.map(observationFromAttemptEntry);
+  const estimate = estimateCost({ type, observations, coverageTarget });
+  return {
+    estimate,
+    telemetryReadings,
+    type,
+    fitDate,
+    reason: `estimate for ${cardId} (${type}) from ${observations.length} prior observation(s), source ${estimate.estimateSource}`
+  };
+}
+
+/** Path to one launch decision's advisory record -- mirrors usageLedger.js's key convention. */
+export function advisoryLogPath(runsDir, { cardId, executionId, invocationId }) {
+  return path.join(runsDir, `${cardId}-exec${executionId}-inv${invocationId}.advisory.json`);
+}
+
+const VALID_OUTCOME_COST_KINDS = new Set(["exact", "lower_bound"]);
+
+/**
+ * An outcome is scoreable only when it names which kind of number it carries (`costKind: "exact"`
+ * or `"lower_bound"`) and that number is a finite, non-negative `actualCostUsd` -- no coercion of
+ * strings, no null/undefined standing in for zero. Anything else, including a shape nobody has
+ * written yet, fails safe as unresolved rather than being scored as a met or missed prediction
+ * (recorded coverage fail-safe round, 2026-09-13). A genuinely unknown actual cost should be
+ * recorded as a `lower_bound` at the known subtotal (>= 0, per T-0367 consumer contract 2), never
+ * as a null exact cost.
+ */
+function isScoreableOutcome(outcome) {
+  if (!outcome || typeof outcome !== "object" || Array.isArray(outcome)) return false;
+  if (!VALID_OUTCOME_COST_KINDS.has(outcome.costKind)) return false;
+  const { actualCostUsd } = outcome;
+  return typeof actualCostUsd === "number" && Number.isFinite(actualCostUsd) && actualCostUsd >= 0;
+}
+
+/**
+ * A scoreable prediction value is a finite, non-negative number -- the same rule
+ * `isScoreableOutcome` already applies to `actualCostUsd`, mirrored here for the prediction side
+ * (Codex review 2026-09-14). No coercion of strings ("100" is not 100); `Infinity` (round-trips
+ * from JSON `1e400`) and `NaN` are rejected too. `null`/`undefined` are NOT handled here -- those
+ * mean "indeterminate estimate" and keep their own `excludedIndeterminate` handling upstream.
+ */
+function isScoreablePredictionValue(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+async function writeAtomic(filePath, data, { writeFileFn, mkdirFn, renameFn, unlinkFn }) {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  await mkdirFn(path.dirname(filePath), { recursive: true });
+  await writeFileFn(tmpPath, JSON.stringify(data, null, 2), "utf8");
+  try {
+    await renameFn(tmpPath, filePath);
+  } catch (err) {
+    await unlinkFn(tmpPath).catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Records one launch decision's advisory evidence (spec §10 step 3): the cost prediction, each
+ * telemetry window's freshness classification, the estimator version, and the reason the decision
+ * was made -- with `outcome: null` (pending) until `recordAdvisoryOutcome` attaches what actually
+ * happened. This function only ever writes a record; it never returns anything a caller could use
+ * to gate the launch it describes (see `withAdvisoryLogging`, which enforces that structurally).
+ *
+ * Rejects, writing nothing, an `estimate.value` that is neither exactly `null` (a valid
+ * hold-for-sizing/indeterminate decision) nor a finite, non-negative number -- the write-time twin
+ * of `isScoreablePredictionValue`, so the logger itself can never persist a malformed prediction
+ * for `measureRecordedCoverage` to later have to fail safe against (Codex review 2026-09-14).
+ */
+export async function recordAdvisoryDecision({
+  runsDir,
+  cardId,
+  executionId,
+  invocationId,
+  type = null,
+  fitDate = null,
+  estimate,
+  telemetryReadings,
+  reason,
+  now = () => new Date(),
+  writeFileFn = fs.writeFile,
+  mkdirFn = fs.mkdir,
+  renameFn = fs.rename,
+  unlinkFn = fs.unlink
+}) {
+  if (estimate.value !== null && !isScoreablePredictionValue(estimate.value)) {
+    throw new Error(
+      `advisory logger: malformed estimate.value for ${cardId}/${executionId}/${invocationId} -- requires exactly null or a finite, non-negative number, got ${JSON.stringify(estimate.value)}`
+    );
+  }
+  const recordedAt = now().toISOString();
+  const entry = {
+    cardId,
+    executionId,
+    invocationId,
+    type,
+    fitDate,
+    prediction: estimate,
+    telemetryFreshness: buildTelemetryFreshness(telemetryReadings),
+    estimatorVersion: estimate.estimatorVersion,
+    reason,
+    outcome: null,
+    recordedAt,
+    updatedAt: recordedAt
+  };
+  await writeAtomic(advisoryLogPath(runsDir, { cardId, executionId, invocationId }), entry, { writeFileFn, mkdirFn, renameFn, unlinkFn });
+  return entry;
+}
+
+/**
+ * Attaches the eventual outcome to a previously recorded advisory decision (spec §10 step 3: "and
+ * the eventual outcome"). Throws if the decision was never recorded -- an outcome with nothing to
+ * attach to is a caller bug, not a record this module should silently invent.
+ *
+ * Also throws, writing nothing, if `outcome` isn't a scoreable shape (`isScoreableOutcome`) -- the
+ * logger itself must never produce a malformed outcome (recorded coverage fail-safe round,
+ * 2026-09-13). `measureRecordedCoverage`'s own fail-safe handling of a malformed outcome remains,
+ * for older or hand-written record files this validation didn't cover.
+ */
+export async function recordAdvisoryOutcome({
+  runsDir,
+  cardId,
+  executionId,
+  invocationId,
+  outcome,
+  now = () => new Date(),
+  readFileFn = fs.readFile,
+  writeFileFn = fs.writeFile,
+  mkdirFn = fs.mkdir,
+  renameFn = fs.rename,
+  unlinkFn = fs.unlink
+}) {
+  const filePath = advisoryLogPath(runsDir, { cardId, executionId, invocationId });
+  let existing;
+  try {
+    existing = JSON.parse(await readFileFn(filePath, "utf8"));
+  } catch (err) {
+    throw new Error(`advisory logger: no decision recorded for ${cardId}/${executionId}/${invocationId}, cannot attach outcome (${err.message})`);
+  }
+  if (!isScoreableOutcome(outcome)) {
+    throw new Error(
+      `advisory logger: malformed outcome for ${cardId}/${executionId}/${invocationId} -- requires costKind "exact" or "lower_bound" and a finite, non-negative actualCostUsd, got ${JSON.stringify(outcome)}`
+    );
+  }
+  const updated = { ...existing, outcome, updatedAt: now().toISOString() };
+  await writeAtomic(filePath, updated, { writeFileFn, mkdirFn, renameFn, unlinkFn });
+  return updated;
+}
+
+/**
+ * Measures real coverage: how often a RECORDED, immutable pre-launch prediction was exceeded by
+ * what actually happened (Codex WIP-gate batch review finding 6, 2026-09-13). This never refits an
+ * estimate from the realized costs and scores them against that fresh fit -- that would be a
+ * fit-on-training-data check (see costEstimator.js's `inSampleFitDiagnostic`), not coverage of a
+ * prediction made before the outcome was known. Every advisory record already carries the
+ * estimator version and fit identity (`fitDate`) its `prediction` came from
+ * (`recordAdvisoryDecision`); results are grouped by that pair so a later re-fit's coverage is
+ * never blended with an earlier one's.
+ *
+ * A record's `outcome` (attached by `recordAdvisoryOutcome`, itself never mutating `prediction`)
+ * is scored only when it's a valid exact outcome (`costKind: "exact"` with a finite, non-negative
+ * numeric `actualCostUsd`) or a valid lower-bound outcome (`costKind: "lower_bound"`, same numeric
+ * constraint) -- see `isScoreableOutcome`. Every other shape -- a null or non-numeric cost, a
+ * numeric string, a negative or non-finite cost, a missing or unknown `costKind`, a non-object
+ * outcome -- is UNRESOLVED and never enters `evaluated` or `exceeded` (recorded coverage fail-safe
+ * round, 2026-09-13). `recordAdvisoryOutcome` now rejects these at write time, but this reader must
+ * still tolerate them in older or hand-written record files.
+ *
+ * An exact actual exceeds when it's greater than `prediction.value`. A lower-bound actual whose
+ * bound already exceeds the prediction is a PROVEN overrun; one whose bound is still below is
+ * UNRESOLVED -- its true cost may yet be higher, so it is never counted as a proven non-overrun.
+ * Records with no `outcome` yet are pending, not scored. Records whose `prediction` is
+ * indeterminate/null (no numeric value) are excluded from scoring entirely and counted separately
+ * -- there is nothing to compare an actual against. A record file that can't be read or parsed
+ * can't be attributed to any estimator/fit group, so it's skipped and counted in its own top-level
+ * `unreadable` tally instead of aborting the whole calculation -- every other record is still
+ * scored. Content that parses as JSON but isn't a plain record object (`null`, an array, or a bare
+ * scalar like `42`/`"x"`) is treated the same as a parse failure -- counted `unreadable`, never
+ * dereferenced (which would throw on `null`) and never miscounted as `pending` (2026-09-13).
+ *
+ * A record's `prediction.value` is scored only when it's a finite, non-negative number
+ * (`isScoreablePredictionValue`) -- a non-null value that's a string, negative, `Infinity`
+ * (JSON `1e400`) or `NaN` is reported in its own `invalidPrediction` tally and never enters
+ * `evaluated`/`exceeded`/`fraction`; a `null`/`undefined` value keeps the existing
+ * `excludedIndeterminate` handling (Codex review 2026-09-14). Only a missing outcome (the key is
+ * `null`, `undefined`, or simply absent) counts as `pending` -- `false`, `0` and `""` are
+ * present-but-malformed values that reach `isScoreableOutcome` and land in `unresolved` instead.
+ */
+export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
+  let files;
+  try {
+    files = await readdirFn(runsDir);
+  } catch (err) {
+    if (err.code === "ENOENT") return { groups: {}, excludedIndeterminate: 0, invalidPrediction: 0, pending: 0, unreadable: 0 };
+    throw err;
+  }
+
+  const groups = {};
+  let excludedIndeterminate = 0;
+  let invalidPrediction = 0;
+  let pending = 0;
+  let unreadable = 0;
+
+  for (const file of files.filter((f) => f.endsWith(".advisory.json"))) {
+    let record;
+    try {
+      record = JSON.parse(await readFileFn(path.join(runsDir, file), "utf8"));
+    } catch {
+      unreadable += 1;
+      continue;
+    }
+    if (record === null || typeof record !== "object" || Array.isArray(record)) {
+      unreadable += 1;
+      continue;
+    }
+    if (record.outcome === null || record.outcome === undefined) {
+      pending += 1;
+      continue;
+    }
+    const prediction = record.prediction;
+    if (!prediction || prediction.value === null || prediction.value === undefined) {
+      excludedIndeterminate += 1;
+      continue;
+    }
+    if (!isScoreablePredictionValue(prediction.value)) {
+      invalidPrediction += 1;
+      continue;
+    }
+
+    const estimatorVersion = record.estimatorVersion ?? prediction.estimatorVersion ?? "unknown";
+    const fitIdentity = record.fitDate ?? "unversioned";
+    const key = `${estimatorVersion}::${fitIdentity}`;
+    groups[key] ??= { estimatorVersion, fitDate: record.fitDate ?? null, evaluated: 0, exceeded: 0, unresolved: 0 };
+    const group = groups[key];
+
+    if (!isScoreableOutcome(record.outcome)) {
+      group.unresolved += 1;
+      continue;
+    }
+
+    const { actualCostUsd, costKind } = record.outcome;
+    if (costKind === "lower_bound") {
+      if (actualCostUsd > prediction.value) {
+        group.evaluated += 1;
+        group.exceeded += 1;
+      } else {
+        group.unresolved += 1;
+      }
+    } else {
+      group.evaluated += 1;
+      if (actualCostUsd > prediction.value) group.exceeded += 1;
+    }
+  }
+
+  for (const group of Object.values(groups)) {
+    group.fraction = group.evaluated === 0 ? null : group.exceeded / group.evaluated;
+  }
+
+  return { groups, excludedIndeterminate, invalidPrediction, pending, unreadable };
+}
+
+/**
+ * Structurally guarantees the advisory logger changes no launch (spec §10 step 3 / this card's
+ * "Do not" list): `launch()` always runs and its result is always returned untouched, regardless
+ * of what `decide()` predicts or whether `decide()` throws outright. Advisory failures are
+ * swallowed (never rethrown) precisely because instrumentation must never delay or block the
+ * launch it's describing -- the same posture `usageLedger.js`'s fire-and-forget recording already
+ * takes for the same reason.
+ */
+export async function withAdvisoryLogging({ decide, launch }) {
+  let advisory = null;
+  try {
+    advisory = await decide();
+  } catch {
+    advisory = null;
+  }
+  const result = await launch();
+  return { advisory, result };
+}
