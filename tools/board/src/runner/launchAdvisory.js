@@ -3,7 +3,53 @@ import { estimateCost, DEFAULT_COVERAGE_TARGET, indeterminateEstimate } from "./
 import { readUsageTelemetry, WINDOW_KINDS } from "./usageTelemetry.js";
 import { evaluateAdmission } from "./admissionDecision.js";
 import { listCardUsageEntries, executionTotal } from "./usageLedger.js";
-import { listActiveReservations, sumActiveReservedCostUsd, reserveLaunchSlot } from "./launchReservation.js";
+import { listActiveReservations, remainingReservedCostUsd, reserveLaunchSlot } from "./launchReservation.js";
+
+/**
+ * Serializes the read-active-reservations -> evaluate-admission -> write-own-lease critical
+ * section across EVERY concurrent launch this board process handles (T-0370 fix round, Codex
+ * review finding 1: "checking capacity and reserving it is one atomic operation over the shared
+ * capacity pool"). Both the Run button and the auto-launch poller go through `launchCardRun` ->
+ * `buildLaunchDecide`, i.e. this same module, and both launchers live inside the ONE board
+ * process that holds board ownership (`boardOwnership.js`) -- a second board process never
+ * launches concurrently against the same `runsDir`, so an in-process lock is sufficient (per this
+ * card's own governing constraint 3); it does not need to be cross-process. A turn that throws
+ * still releases the lock for the next one -- `.then(fn, fn)` runs `fn` either way, and the
+ * lock's own continuation swallows both outcomes so one turn's rejection can never wedge the
+ * queue for every launch after it.
+ */
+let capacityLock = Promise.resolve();
+function withCapacityLock(fn) {
+  const turn = capacityLock.then(fn, fn);
+  capacityLock = turn.then(
+    () => undefined,
+    () => undefined
+  );
+  return turn;
+}
+
+/**
+ * Sums every OTHER active reservation's REMAINING (not raw) future cost (T-0370 fix round, Codex
+ * review finding 6: "active reservations are counted at their remaining future cost"). Returns
+ * `null` -- never `0` -- the instant any part of this read is unreliable: a reservation's own
+ * ledger spend lookup failing makes the WHOLE sum indeterminate, since silently treating that one
+ * reservation as fully unspent (or fully spent) would misstate the shared pool in whichever
+ * direction happens to be wrong.
+ */
+export async function sumActiveReservedRemainingCostUsd({ runsDir, reservations, listCardUsageEntriesFn = listCardUsageEntries }) {
+  let total = 0;
+  for (const reservation of reservations) {
+    let entries;
+    try {
+      entries = await listCardUsageEntriesFn({ runsDir, cardId: reservation.cardId });
+    } catch {
+      return null;
+    }
+    const spent = executionTotal(entries, reservation.executionId).knownCostUsd;
+    total += remainingReservedCostUsd(reservation, spent);
+  }
+  return total;
+}
 
 /**
  * WIP gate T-D (launch-time contracts, 2026-09-14): the glue that composes T-0367's per-window
@@ -115,6 +161,7 @@ function fallbackRecordFactory({ type, fitDate }) {
     telemetryReadings: {},
     type,
     fitDate,
+    reservedUnspentCostUsd: null,
     reason: `wip-gate advisory decide() ${reason}${err ? `: ${err.message}` : ""} -- launch proceeded unaffected`,
     admission: null
   });
@@ -160,6 +207,7 @@ export function buildLaunchDecide({
   readUsageTelemetryFn = readUsageTelemetry,
   listCardUsageEntriesFn = listCardUsageEntries,
   listActiveReservationsFn = listActiveReservations,
+  sumActiveReservedRemainingCostUsdFn = sumActiveReservedRemainingCostUsd,
   reserveLaunchSlotFn = reserveLaunchSlot,
   decideLaunchAdvisoryFn = decideLaunchAdvisory,
   estimateCostFn = estimateCost,
@@ -195,36 +243,49 @@ export function buildLaunchDecide({
 
     const reservedCostUsd = typeof reservedCycle.value === "number" ? Math.max(0, reservedCycle.value - alreadyChargedUsd) : 0;
 
-    let otherActiveReservations = [];
-    try {
-      otherActiveReservations = await listActiveReservationsFn({ runsDir });
-    } catch {
-      otherActiveReservations = [];
-    }
-    const reservedUnspentCostUsd = sumActiveReservedCostUsd(otherActiveReservations);
+    // T-0370 fix round (Codex review, finding 1): read-other-reservations, evaluate admission,
+    // and write THIS launch's own lease as one atomic turn -- see `withCapacityLock`'s docstring.
+    // A pool-listing failure or an unreadable per-reservation ledger spend makes
+    // `reservedUnspentCostUsd` `null` (never a fabricated `0`), which `evaluateAdmission` already
+    // turns into an explicit `RESERVED_COST_UNKNOWN` hold (finding 6).
+    const { reservedUnspentCostUsd, admission } = await withCapacityLock(async () => {
+      let otherActiveReservations;
+      try {
+        otherActiveReservations = await listActiveReservationsFn({ runsDir });
+      } catch {
+        otherActiveReservations = null;
+      }
 
-    const admission = evaluateAdmission({
-      telemetryReadings: implementerAdvisory.telemetryReadings,
-      estimate: reservedCycle,
-      reservedUnspentCostUsd,
-      config: admissionConfig
-    });
+      const reservedUnspentCostUsd =
+        otherActiveReservations === null
+          ? null
+          : await sumActiveReservedRemainingCostUsdFn({ runsDir, reservations: otherActiveReservations, listCardUsageEntriesFn });
 
-    try {
-      await reserveLaunchSlotFn({
-        runsDir,
-        cardId,
-        executionId,
-        invocationId,
-        owner,
-        reservedCostUsd,
-        windows: [...WINDOW_KINDS],
-        reason: `reserved execution cycle (implementer+review x${maxAttempts}) for ${cardId}`,
-        now
+      const admission = evaluateAdmission({
+        telemetryReadings: implementerAdvisory.telemetryReadings,
+        estimate: reservedCycle,
+        reservedUnspentCostUsd,
+        config: admissionConfig
       });
-    } catch (err) {
-      logger.log(`wip-gate advisory: reservation failed for ${cardId}/${executionId}/${invocationId} -- launch proceeds unaffected: ${err.message}`);
-    }
+
+      try {
+        await reserveLaunchSlotFn({
+          runsDir,
+          cardId,
+          executionId,
+          invocationId,
+          owner,
+          reservedCostUsd,
+          windows: [...WINDOW_KINDS],
+          reason: `reserved execution cycle (implementer+review x${maxAttempts}) for ${cardId}`,
+          now
+        });
+      } catch (err) {
+        logger.log(`wip-gate advisory: reservation failed for ${cardId}/${executionId}/${invocationId} -- launch proceeds unaffected: ${err.message}`);
+      }
+
+      return { reservedUnspentCostUsd, admission };
+    });
 
     const windowSummary = Object.fromEntries(
       Object.entries(admission.windows).map(([windowKind, decision]) => [windowKind, decision.admitted === null ? decision.holdReason : decision.admitted])
@@ -235,6 +296,7 @@ export function buildLaunchDecide({
       telemetryReadings: implementerAdvisory.telemetryReadings,
       type,
       fitDate,
+      reservedUnspentCostUsd,
       reason:
         `${implementerAdvisory.reason}; reserved execution cycle ${reservedCycle.classification} ` +
         `(reservedCostUsd=${reservedCostUsd}, alreadyChargedUsd=${alreadyChargedUsd}); ` +
