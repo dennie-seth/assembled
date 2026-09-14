@@ -637,6 +637,14 @@ describe("measureRecordedCoverage -- validates prediction.value before scoring (
     });
     const filePath = advisoryLogPath(runsDir, { cardId: "T-0369", executionId, invocationId: "inv-1" });
     const existing = JSON.parse(await fs.readFile(filePath, "utf8"));
+    if (predictionValue === Infinity) {
+      // JSON.stringify(Infinity) serializes to `null`, which would collapse this case into the
+      // null-prediction (excludedIndeterminate) path instead of testing the JSON `1e400` case
+      // Codex's probe reproduces -- write the raw JSON literal instead, as the probe does.
+      const raw = JSON.stringify({ ...existing, prediction: { ...existing.prediction, value: 1 }, outcome }).replace('"value":1', '"value":1e400');
+      await fs.writeFile(filePath, raw, "utf8");
+      return;
+    }
     await fs.writeFile(
       filePath,
       JSON.stringify({ ...existing, prediction: { ...existing.prediction, value: predictionValue }, outcome }),

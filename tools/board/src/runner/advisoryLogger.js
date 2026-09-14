@@ -101,6 +101,17 @@ function isScoreableOutcome(outcome) {
   return typeof actualCostUsd === "number" && Number.isFinite(actualCostUsd) && actualCostUsd >= 0;
 }
 
+/**
+ * A scoreable prediction value is a finite, non-negative number -- the same rule
+ * `isScoreableOutcome` already applies to `actualCostUsd`, mirrored here for the prediction side
+ * (Codex review 2026-09-14). No coercion of strings ("100" is not 100); `Infinity` (round-trips
+ * from JSON `1e400`) and `NaN` are rejected too. `null`/`undefined` are NOT handled here -- those
+ * mean "indeterminate estimate" and keep their own `excludedIndeterminate` handling upstream.
+ */
+function isScoreablePredictionValue(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 async function writeAtomic(filePath, data, { writeFileFn, mkdirFn, renameFn, unlinkFn }) {
   const tmpPath = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
   await mkdirFn(path.dirname(filePath), { recursive: true });
@@ -119,6 +130,11 @@ async function writeAtomic(filePath, data, { writeFileFn, mkdirFn, renameFn, unl
  * was made -- with `outcome: null` (pending) until `recordAdvisoryOutcome` attaches what actually
  * happened. This function only ever writes a record; it never returns anything a caller could use
  * to gate the launch it describes (see `withAdvisoryLogging`, which enforces that structurally).
+ *
+ * Rejects, writing nothing, an `estimate.value` that is neither exactly `null` (a valid
+ * hold-for-sizing/indeterminate decision) nor a finite, non-negative number -- the write-time twin
+ * of `isScoreablePredictionValue`, so the logger itself can never persist a malformed prediction
+ * for `measureRecordedCoverage` to later have to fail safe against (Codex review 2026-09-14).
  */
 export async function recordAdvisoryDecision({
   runsDir,
@@ -136,6 +152,11 @@ export async function recordAdvisoryDecision({
   renameFn = fs.rename,
   unlinkFn = fs.unlink
 }) {
+  if (estimate.value !== null && !isScoreablePredictionValue(estimate.value)) {
+    throw new Error(
+      `advisory logger: malformed estimate.value for ${cardId}/${executionId}/${invocationId} -- requires exactly null or a finite, non-negative number, got ${JSON.stringify(estimate.value)}`
+    );
+  }
   const recordedAt = now().toISOString();
   const entry = {
     cardId,
@@ -225,18 +246,27 @@ export async function recordAdvisoryOutcome({
  * scored. Content that parses as JSON but isn't a plain record object (`null`, an array, or a bare
  * scalar like `42`/`"x"`) is treated the same as a parse failure -- counted `unreadable`, never
  * dereferenced (which would throw on `null`) and never miscounted as `pending` (2026-09-13).
+ *
+ * A record's `prediction.value` is scored only when it's a finite, non-negative number
+ * (`isScoreablePredictionValue`) -- a non-null value that's a string, negative, `Infinity`
+ * (JSON `1e400`) or `NaN` is reported in its own `invalidPrediction` tally and never enters
+ * `evaluated`/`exceeded`/`fraction`; a `null`/`undefined` value keeps the existing
+ * `excludedIndeterminate` handling (Codex review 2026-09-14). Only a missing outcome (the key is
+ * `null`, `undefined`, or simply absent) counts as `pending` -- `false`, `0` and `""` are
+ * present-but-malformed values that reach `isScoreableOutcome` and land in `unresolved` instead.
  */
 export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
   let files;
   try {
     files = await readdirFn(runsDir);
   } catch (err) {
-    if (err.code === "ENOENT") return { groups: {}, excludedIndeterminate: 0, pending: 0, unreadable: 0 };
+    if (err.code === "ENOENT") return { groups: {}, excludedIndeterminate: 0, invalidPrediction: 0, pending: 0, unreadable: 0 };
     throw err;
   }
 
   const groups = {};
   let excludedIndeterminate = 0;
+  let invalidPrediction = 0;
   let pending = 0;
   let unreadable = 0;
 
@@ -252,13 +282,17 @@ export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir,
       unreadable += 1;
       continue;
     }
-    if (!record.outcome) {
+    if (record.outcome === null || record.outcome === undefined) {
       pending += 1;
       continue;
     }
     const prediction = record.prediction;
     if (!prediction || prediction.value === null || prediction.value === undefined) {
       excludedIndeterminate += 1;
+      continue;
+    }
+    if (!isScoreablePredictionValue(prediction.value)) {
+      invalidPrediction += 1;
       continue;
     }
 
@@ -291,7 +325,7 @@ export async function measureRecordedCoverage({ runsDir, readdirFn = fs.readdir,
     group.fraction = group.evaluated === 0 ? null : group.exceeded / group.evaluated;
   }
 
-  return { groups, excludedIndeterminate, pending, unreadable };
+  return { groups, excludedIndeterminate, invalidPrediction, pending, unreadable };
 }
 
 /**
