@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES } from "../../src/runner/cardLaunch.js";
+import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES, reconcileLaunchOutcome } from "../../src/runner/cardLaunch.js";
 import { ROUND_CAP } from "../../src/lib/roundCap.js";
 import { listActiveReservations } from "../../src/runner/launchReservation.js";
 import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
@@ -217,6 +217,74 @@ describe("launchCardRun — launch", () => {
     await launchCardRun({ orchestrator, id: "T-0001", logger });
     await flush();
     expect(logger.error).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("reconcileLaunchOutcome -- T-0370 fix round finding 4: honest outcome classification", () => {
+  function baseArgs(overrides = {}) {
+    return {
+      runsDir: "/irrelevant",
+      cardId: "T-0001",
+      executionId: "exec-1",
+      invocationId: "inv-1",
+      status: "completed",
+      logger: { log: vi.fn(), error: vi.fn() },
+      recordAdvisoryOutcomeFn: vi.fn(async () => {}),
+      releaseReservationFn: vi.fn(async () => {}),
+      ...overrides
+    };
+  }
+
+  it("records an EXACT outcome for a successful run whose every ledger entry is a successful, complete, known-cost entry", async () => {
+    const args = baseArgs({
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.3, complete: true, outcome: "success" },
+        { executionId: "exec-1", attempt: 1, phase: "reviewer", retry: 0, costUsd: 0.1, complete: true, outcome: "success" }
+      ])
+    });
+    await reconcileLaunchOutcome(args);
+    const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
+    expect(outcome.costKind).toBe("exact");
+    expect(outcome.actualCostUsd).toBeCloseTo(0.4);
+  });
+
+  it("records a LOWER BOUND for a terminal quota_stop, even with status: failed and a real known cost -- runCard resolving/rejecting is not treated as success", async () => {
+    const args = baseArgs({
+      status: "failed",
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 4, complete: true, outcome: "quota_stop" }
+      ])
+    });
+    await reconcileLaunchOutcome(args);
+    const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
+    expect(outcome.costKind).toBe("lower_bound");
+    expect(outcome.actualCostUsd).toBeCloseTo(4);
+  });
+
+  it("records a LOWER BOUND for a reviewer-FAIL run that resolves the card to blocked, even though runCard resolved without throwing", async () => {
+    const args = baseArgs({
+      status: "completed",
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.3, complete: true, outcome: "success" },
+        { executionId: "exec-1", attempt: 1, phase: "reviewer", retry: 0, costUsd: 0.1, complete: true, outcome: "reviewer_fail" }
+      ])
+    });
+    await reconcileLaunchOutcome(args);
+    const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
+    expect(outcome.costKind).toBe("lower_bound");
+    expect(outcome.actualCostUsd).toBeCloseTo(0.4);
+  });
+
+  it("records a LOWER BOUND for a cancellation", async () => {
+    const args = baseArgs({
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.2, complete: false, outcome: "cancelled" }
+      ])
+    });
+    await reconcileLaunchOutcome(args);
+    const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
+    expect(outcome.costKind).toBe("lower_bound");
+    expect(outcome.actualCostUsd).toBeCloseTo(0.2);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   attemptTotal,
   cardCycleTotal,
   executionTotal,
+  executionEndedSuccessfully,
   ensureExecutionId,
   clearExecutionId,
   drainPendingUsageWrites,
@@ -992,6 +993,52 @@ describe("aggregate cost nullability (Codex review 3, 2026-09-12, finding 2)", (
     const total = executionTotal(entries, "e");
     expect(total.costUsd).toBe(0);
     expect(total.unknownCostEntries).toBe(0);
+  });
+
+  it("T-0370 (Codex fix round finding 4): executionEndedSuccessfully is true only when every contributing entry is a successful, complete, known-cost entry", () => {
+    expect(
+      executionEndedSuccessfully(
+        [{ executionId: "e", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.01, complete: true, outcome: "success" }],
+        "e"
+      )
+    ).toBe(true);
+  });
+
+  it("T-0370: false for a quota_stop entry, even though it carries a real known cost -- runCard resolving is not treated as success", () => {
+    expect(
+      executionEndedSuccessfully(
+        [{ executionId: "e", attempt: 1, phase: "implementer", retry: 0, costUsd: 4, complete: true, outcome: "quota_stop" }],
+        "e"
+      )
+    ).toBe(false);
+  });
+
+  it("T-0370: false for a reviewer_fail entry that resolves the card to blocked", () => {
+    expect(
+      executionEndedSuccessfully(
+        [
+          { executionId: "e", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.01, complete: true, outcome: "success" },
+          { executionId: "e", attempt: 1, phase: "reviewer", retry: 0, costUsd: 0.01, complete: true, outcome: "reviewer_fail" }
+        ],
+        "e"
+      )
+    ).toBe(false);
+  });
+
+  it("T-0370: false for a cancelled entry", () => {
+    expect(
+      executionEndedSuccessfully([{ executionId: "e", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.01, complete: false, outcome: "cancelled" }], "e")
+    ).toBe(false);
+  });
+
+  it("T-0370: false when there are no entries at all for this execution", () => {
+    expect(executionEndedSuccessfully([], "e")).toBe(false);
+  });
+
+  it("T-0370: false when a successful entry's own cost is unknown, even though the outcome says success", () => {
+    expect(
+      executionEndedSuccessfully([{ executionId: "e", attempt: 1, phase: "implementer", retry: 0, costUsd: null, complete: true, outcome: "success" }], "e")
+    ).toBe(false);
   });
 
   it("attemptTotal and cardCycleTotal share the same nullable-cost behavior as executionTotal", () => {
