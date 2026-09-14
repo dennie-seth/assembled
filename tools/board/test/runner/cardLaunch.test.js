@@ -1,6 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES } from "../../src/runner/cardLaunch.js";
 import { ROUND_CAP } from "../../src/lib/roundCap.js";
+import { listActiveReservations } from "../../src/runner/launchReservation.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -40,6 +44,16 @@ function makeOrchestrator(tasks, { running = new Set(), runCard } = {}) {
     hasActiveRuns: vi.fn(() => running.size > 0),
     runCard: runCard ?? vi.fn(async () => undefined)
   };
+}
+
+/** Polls a real-filesystem-backed condition until it holds, for chains whose reconciliation crosses real fs I/O the setImmediate flush below doesn't wait long enough for. */
+async function waitFor(conditionFn, { timeoutMs = 2000, intervalMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await conditionFn()) return;
+    if (Date.now() >= deadline) throw new Error("waitFor: condition never became true");
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 }
 
 /** Lets a fire-and-forget `runCard().catch(...)` chain settle before assertions. */
@@ -211,5 +225,94 @@ describe("CardLaunchError", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe("CardLaunchError");
     expect(err.statusCode).toBe(409);
+  });
+});
+
+describe("launchCardRun — advisory + reservation at the shared launch boundary (WIP gate T-D)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "cardLaunch-advisory-test-"));
+  });
+
+  afterEach(async () => {
+    // A test's fire-and-forget reconciliation (runCardPromise.then(...) inside launchCardRun)
+    // can still be mid-write when the test itself returns -- retry rm across that real-fs race
+    // rather than letting a stray ENOTEMPTY fail an unrelated test.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        await fs.rm(runsDir, { recursive: true, force: true });
+        return;
+      } catch (err) {
+        if (err.code !== "ENOTEMPTY" || attempt === 9) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+  });
+
+  function makeAdvisoryOrchestrator(tasks, opts = {}) {
+    const orchestrator = makeOrchestrator(tasks, opts);
+    orchestrator.runsDir = runsDir;
+    return orchestrator;
+  }
+
+  it("reserves budget and records an advisory decision before launching, without refusing or delaying it", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+
+    const reservations = await listActiveReservations({ runsDir });
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0].cardId).toBe("T-0001");
+
+    const advisoryFiles = (await fs.readdir(runsDir)).filter((f) => f.endsWith(".advisory.json"));
+    expect(advisoryFiles).toHaveLength(1);
+  });
+
+  it("releases the reservation and attaches a completed outcome once the run finishes successfully", async () => {
+    let resolveRun;
+    const runCard = vi.fn(() => new Promise((resolve) => (resolveRun = resolve)));
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })], { runCard });
+    await launchCardRun({ orchestrator, id: "T-0001" });
+
+    expect(await listActiveReservations({ runsDir })).toHaveLength(1);
+
+    resolveRun();
+    await waitFor(async () => (await listActiveReservations({ runsDir })).length === 0);
+
+    const advisoryFile = (await fs.readdir(runsDir)).find((f) => f.endsWith(".advisory.json"));
+    const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+    expect(record.outcome).not.toBeNull();
+  });
+
+  it("releases the reservation, records a failed outcome, and still posts the existing Run Failed note when the run rejects", async () => {
+    const runCard = vi.fn(async () => {
+      throw new Error("spawn failed");
+    });
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })], { runCard });
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await launchCardRun({ orchestrator, id: "T-0001", logger });
+    await waitFor(async () => (await listActiveReservations({ runsDir })).length === 0);
+
+    expect(orchestrator.store.update).toHaveBeenCalledWith("T-0001", expect.objectContaining({ status: "blocked" }));
+    expect(orchestrator.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "changed", id: "T-0001" }));
+  });
+
+  it("never refuses or delays the launch even when the advisory pipeline itself is broken", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    // A file, not a directory, at the runsDir path -- every mkdir/readdir/writeFile the advisory
+    // and reservation machinery attempts underneath it fails with ENOTDIR.
+    const blockedPath = path.join(runsDir, "blocked-file");
+    await fs.writeFile(blockedPath, "x");
+    orchestrator.runsDir = blockedPath;
+
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).resolves.toBeDefined();
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("skips the advisory/reservation machinery entirely for an orchestrator with no runsDir (older/minimal test doubles)", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ agent: "infra" })]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
   });
 });

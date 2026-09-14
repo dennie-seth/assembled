@@ -1,6 +1,60 @@
+import { randomUUID } from "node:crypto";
 import { assertCanMoveToInProgress, UnmetDependencyError, DependencyCycleError } from "../lib/dependencyGuard.js";
 import { assertRoundCapClear, RoundCapExceededError } from "../lib/roundCap.js";
-import { appendNote } from "./runOrchestrator.js";
+import { appendNote, MAX_AUTO_RETRY_ATTEMPTS } from "./runOrchestrator.js";
+import { ensureExecutionId, executionTotal, listCardUsageEntries } from "./usageLedger.js";
+import { withAdvisoryLogging, recordAdvisoryOutcome } from "./advisoryLogger.js";
+import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
+import { loadAdmissionConfigFromEnv } from "./admissionDecision.js";
+import { releaseReservation } from "./launchReservation.js";
+
+/**
+ * WIP gate T-D (spec §5/§10, launch-time contracts 2026-09-14): attaches the realized outcome
+ * to the advisory decision `launchCardRun` recorded at launch time, and releases that launch's
+ * reservation -- called once `orchestrator.runCard(id)` settles, however it settles (success,
+ * reviewer-fail-then-blocked, crash-caught-and-rethrown, ...). `status` is carried on the
+ * reservation's own `outcome` field for a human reading the ledger; the SCORED outcome
+ * (`recordAdvisoryOutcome`, which `measureRecordedCoverage` later reads) is always derived from
+ * the usage ledger's own recorded cost for this execution, never from `status` itself -- a
+ * "failed" launch can still have a known, exact cost (e.g. a clean reviewer FAIL) just as a
+ * "completed" one can have only a lower bound (e.g. an unread result event). Every step is
+ * best-effort: a failure here must never surface past this function, since by the time it runs
+ * the run it describes is already over and there is nothing left to refuse.
+ */
+export async function reconcileLaunchOutcome({
+  runsDir,
+  cardId,
+  executionId,
+  invocationId,
+  status,
+  errorMessage = null,
+  logger = console,
+  listCardUsageEntriesFn = listCardUsageEntries,
+  recordAdvisoryOutcomeFn = recordAdvisoryOutcome,
+  releaseReservationFn = releaseReservation
+}) {
+  let outcome;
+  try {
+    const entries = await listCardUsageEntriesFn({ runsDir, cardId });
+    const total = executionTotal(entries, executionId);
+    outcome =
+      typeof total.costUsd === "number"
+        ? { costKind: "exact", actualCostUsd: total.costUsd }
+        : { costKind: "lower_bound", actualCostUsd: total.knownCostUsd };
+  } catch {
+    outcome = { costKind: "lower_bound", actualCostUsd: 0 };
+  }
+  try {
+    await recordAdvisoryOutcomeFn({ runsDir, cardId, executionId, invocationId, outcome });
+  } catch (err) {
+    logger.error(`Agent Runner: failed to record advisory outcome for ${cardId}:`, err.message);
+  }
+  try {
+    await releaseReservationFn({ runsDir, cardId, executionId, invocationId, outcome: { status, errorMessage } });
+  } catch (err) {
+    logger.error(`Agent Runner: failed to release launch reservation for ${cardId}:`, err.message);
+  }
+}
 
 /** The statuses the board's Run/Re-run button accepts. */
 export const RUNNABLE_STATUSES = new Set(["ready", "review", "blocked"]);
@@ -34,7 +88,17 @@ export class CardLaunchError extends Error {
  * as `blocked` + a "Run Failed" note and broadcast, exactly as before -- and a failure to persist
  * *that* is logged and swallowed, since there is nothing left to report it to.
  */
-export async function launchCardRun({ orchestrator, id, logger = console }) {
+export async function launchCardRun({
+  orchestrator,
+  id,
+  logger = console,
+  ensureExecutionIdFn = ensureExecutionId,
+  randomUUIDFn = randomUUID,
+  buildLaunchDecideFn = buildLaunchDecide,
+  withAdvisoryLoggingFn = withAdvisoryLogging,
+  loadAdmissionConfigFromEnvFn = loadAdmissionConfigFromEnv,
+  reconcileLaunchOutcomeFn = reconcileLaunchOutcome
+}) {
   if (!orchestrator) {
     throw new CardLaunchError("Agent Runner is not configured on this server", 501);
   }
@@ -91,7 +155,64 @@ export async function launchCardRun({ orchestrator, id, logger = console }) {
     throw err;
   }
 
-  orchestrator.runCard(id).catch(async (err) => {
+  // WIP gate T-D (spec §5/§10, launch-time contracts 2026-09-14): the shared launch boundary --
+  // this is the one place both the Run button and the auto-launch poller launch through, so it
+  // is where the admission/advisory/reservation machinery hooks in. Every step of it is bounded
+  // and failure-isolated (buildLaunchDecide/withBoundedDecide): a throwing or hung telemetry
+  // read, estimator, or reservation write degrades to an explicit hold record rather than ever
+  // refusing or delaying the launch below. `orchestrator.runsDir` absent (an older or minimal
+  // test double) skips this entirely and falls straight through to the plain launch, unchanged
+  // from before this card.
+  const runsDir = orchestrator.runsDir;
+  let executionId = null;
+  let invocationId = null;
+  let runCardPromise;
+
+  if (runsDir) {
+    try {
+      executionId = await ensureExecutionIdFn({ runsDir, cardId: id }).catch(() => randomUUIDFn());
+      invocationId = randomUUIDFn();
+      const decide = buildLaunchDecideFn({
+        runsDir,
+        cardId: id,
+        executionId,
+        invocationId,
+        type: resolveCostEstimatorType(task),
+        owner: `cardLaunch:${id}`,
+        maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
+        admissionConfig: loadAdmissionConfigFromEnvFn({ logger }),
+        logger
+      });
+
+      await withAdvisoryLoggingFn({
+        decide,
+        launch: async () => {
+          runCardPromise = orchestrator.runCard(id);
+          return task;
+        }
+      });
+    } catch (err) {
+      logger.log(`wip-gate advisory: launch-boundary advisory pipeline failed for ${id} -- launch proceeds unaffected: ${err.message}`);
+    }
+  }
+
+  // The advisory branch above always reaches `launch()` in every failure mode it itself
+  // anticipates (withAdvisoryLoggingFn's own contract guarantees `launch()` runs regardless of
+  // what `decide()` does). This is the true last resort: `runCardPromise` is still unset only if
+  // something upstream of `launch()` itself threw synchronously (e.g. building the decide
+  // function) -- constraint 6 requires the launch to proceed even then.
+  if (!runCardPromise) {
+    runCardPromise = orchestrator.runCard(id);
+  }
+
+  if (runsDir && executionId !== null && invocationId !== null) {
+    runCardPromise.then(
+      () => reconcileLaunchOutcomeFn({ runsDir, cardId: id, executionId, invocationId, status: "completed", logger }),
+      (err) => reconcileLaunchOutcomeFn({ runsDir, cardId: id, executionId, invocationId, status: "failed", errorMessage: err.message, logger })
+    );
+  }
+
+  runCardPromise.catch(async (err) => {
     logger.error(`Agent Runner: run failed for ${id}:`, err);
     try {
       const current = await orchestrator.store.get(id);
