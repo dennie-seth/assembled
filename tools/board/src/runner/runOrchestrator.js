@@ -59,6 +59,23 @@ import { roundsSinceDeliverable, roundCapParkedComment, ROUND_CAP } from "../lib
 export const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
 /**
+ * T-0343: resolves a card's own attempt budget, falling back to MAX_AUTO_RETRY_ATTEMPTS for
+ * every card that carries no explicit override -- absent, null, or (defensively) anything not a
+ * positive integer. taskParser.js's validateTask already rejects a malformed or out-of-range
+ * value at the point a card is written, so this never needs to reject anything itself; it only
+ * has to tell "an explicit override is present" apart from "it isn't".
+ *
+ * T-0370 (Codex review finding 7, 2026-09-14): exported standalone, not just as the class's own
+ * `_effectiveMaxAttempts` method, so the shared launch boundary (`cardLaunch.js`) reserves
+ * against the SAME retry allowance the runner's own auto-retry loop actually honours, instead of
+ * a separately-hardcoded `MAX_AUTO_RETRY_ATTEMPTS` that silently drifts from a card's real
+ * `max_attempts` override.
+ */
+export function effectiveMaxAttempts(task) {
+  return Number.isInteger(task.max_attempts) && task.max_attempts > 0 ? task.max_attempts : MAX_AUTO_RETRY_ATTEMPTS;
+}
+
+/**
  * How often the owning run refreshes its liveness marker, for the whole runCard span and
  * independent of phase boundaries (fix-plan item #3,
  * docs/reviews/2026-09-03-run-lifecycle-state-management.md). Comfortably under runState.js's
@@ -1528,17 +1545,9 @@ export class RunOrchestrator {
     await this._updateAndBroadcast(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
   }
 
-  /**
-   * T-0343: resolves a card's own attempt budget, falling back to MAX_AUTO_RETRY_ATTEMPTS for
-   * every card that carries no explicit override -- absent, null, or (defensively) anything not
-   * a positive integer. taskParser.js's validateTask already rejects a malformed or out-of-range
-   * value at the point a card is written, so this never needs to reject anything itself; it only
-   * has to tell "an explicit override is present" apart from "it isn't".
-   */
+  /** Delegates to the module-level `effectiveMaxAttempts` -- see its own docstring (T-0370). */
   _effectiveMaxAttempts(task) {
-    return Number.isInteger(task.max_attempts) && task.max_attempts > 0
-      ? task.max_attempts
-      : MAX_AUTO_RETRY_ATTEMPTS;
+    return effectiveMaxAttempts(task);
   }
 
   /**

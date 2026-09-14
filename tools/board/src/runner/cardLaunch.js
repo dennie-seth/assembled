@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assertCanMoveToInProgress, UnmetDependencyError, DependencyCycleError } from "../lib/dependencyGuard.js";
 import { assertRoundCapClear, RoundCapExceededError } from "../lib/roundCap.js";
-import { appendNote, MAX_AUTO_RETRY_ATTEMPTS } from "./runOrchestrator.js";
+import { appendNote, effectiveMaxAttempts } from "./runOrchestrator.js";
 import { ensureExecutionId, executionTotal, listCardUsageEntries } from "./usageLedger.js";
 import { withAdvisoryLogging, recordAdvisoryOutcome } from "./advisoryLogger.js";
 import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
@@ -179,7 +179,7 @@ export async function launchCardRun({
         invocationId,
         type: resolveCostEstimatorType(task),
         owner: `cardLaunch:${id}`,
-        maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
+        maxAttempts: effectiveMaxAttempts(task),
         admissionConfig: loadAdmissionConfigFromEnvFn({ logger }),
         logger
       });
