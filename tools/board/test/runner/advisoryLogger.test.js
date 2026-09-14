@@ -615,6 +615,216 @@ describe("measureRecordedCoverage -- a record file that parses but is not a plai
   });
 });
 
+describe("measureRecordedCoverage -- validates prediction.value before scoring (Codex review 2026-09-14)", () => {
+  const INVALID_PREDICTION_VALUES = [
+    ["a non-numeric string", "not-a-number"],
+    ["a numeric string", "100"],
+    ["a negative number", -1],
+    ["Infinity (JSON 1e400)", Infinity]
+  ];
+
+  async function recordRawPrediction({ executionId, predictionValue, outcome = { costKind: "exact", actualCostUsd: 10 } }) {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId,
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { ...SAMPLE_ESTIMATE, value: 1 },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+    const filePath = advisoryLogPath(runsDir, { cardId: "T-0369", executionId, invocationId: "inv-1" });
+    const existing = JSON.parse(await fs.readFile(filePath, "utf8"));
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({ ...existing, prediction: { ...existing.prediction, value: predictionValue }, outcome }),
+      "utf8"
+    );
+  }
+
+  it.each(INVALID_PREDICTION_VALUES)("a record whose prediction.value is %s is reported invalid, never scored", async (_label, predictionValue) => {
+    await recordRawPrediction({ executionId: "exec-invalid-pred", predictionValue });
+
+    const { groups, invalidPrediction } = await measureRecordedCoverage({ runsDir });
+    expect(invalidPrediction).toBe(1);
+    expect(Object.values(groups).some((g) => g.evaluated > 0 || g.exceeded > 0)).toBe(false);
+  });
+
+  it("a mixed fixture: invalid predictions never move the valid records' evaluated/exceeded/fraction", async () => {
+    for (let i = 0; i < 5; i += 1) {
+      await recordAndResolve({ executionId: `exec-valid-pred-${i}`, predictionValue: 1, actualCostUsd: 10 });
+    }
+    for (const [i, [, predictionValue]] of INVALID_PREDICTION_VALUES.entries()) {
+      await recordRawPrediction({ executionId: `exec-invalid-pred-mixed-${i}`, predictionValue });
+    }
+
+    const { groups, invalidPrediction } = await measureRecordedCoverage({ runsDir });
+    const group = groups[`${ESTIMATOR_VERSION}::2026-09-13`];
+    expect(group.evaluated).toBe(5);
+    expect(group.exceeded).toBe(5);
+    expect(group.fraction).toBe(1);
+    expect(invalidPrediction).toBe(4);
+  });
+
+  it("a null prediction still counts as excludedIndeterminate, not invalidPrediction", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-null-pred",
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { value: null, classification: "indeterminate", consumption: "indeterminate", estimatorVersion: ESTIMATOR_VERSION },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "ledger read indeterminate"
+    });
+    await recordAdvisoryOutcome({ runsDir, cardId: "T-0369", executionId: "exec-null-pred", invocationId: "inv-1", outcome: { actualCostUsd: 5, costKind: "exact" } });
+
+    const { excludedIndeterminate, invalidPrediction } = await measureRecordedCoverage({ runsDir });
+    expect(excludedIndeterminate).toBe(1);
+    expect(invalidPrediction).toBe(0);
+  });
+
+  // Local helper mirroring the earlier describe block's recordAndResolve, since it's scoped there.
+  async function recordAndResolve({ executionId, predictionValue, actualCostUsd, costKind = "exact", estimatorVersion = ESTIMATOR_VERSION, fitDate = "2026-09-13" }) {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId,
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate,
+      estimate: { ...SAMPLE_ESTIMATE, value: predictionValue, estimatorVersion },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+    return recordAdvisoryOutcome({
+      runsDir,
+      cardId: "T-0369",
+      executionId,
+      invocationId: "inv-1",
+      outcome: { actualCostUsd, costKind }
+    });
+  }
+});
+
+describe("measureRecordedCoverage -- only a missing outcome is pending; false/0/\"\" are unresolved (Codex review 2026-09-14)", () => {
+  const FALSY_NON_MISSING_OUTCOMES = [
+    ["false", false],
+    ["0", 0],
+    ["empty string", ""]
+  ];
+
+  async function recordRawOutcome({ executionId, outcome }) {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId,
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { ...SAMPLE_ESTIMATE, value: 1 },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+    const filePath = advisoryLogPath(runsDir, { cardId: "T-0369", executionId, invocationId: "inv-1" });
+    const existing = JSON.parse(await fs.readFile(filePath, "utf8"));
+    await fs.writeFile(filePath, JSON.stringify({ ...existing, outcome }), "utf8");
+  }
+
+  it.each(FALSY_NON_MISSING_OUTCOMES)("a record whose outcome is %s is counted unresolved, not pending", async (_label, outcome) => {
+    await recordRawOutcome({ executionId: "exec-falsy-outcome", outcome });
+
+    const { groups, pending } = await measureRecordedCoverage({ runsDir });
+    expect(pending).toBe(0);
+    const group = groups[`${ESTIMATOR_VERSION}::2026-09-13`];
+    expect(group.unresolved).toBe(1);
+    expect(group.evaluated).toBe(0);
+  });
+
+  it("a genuinely missing outcome (undefined key) is still pending", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-truly-pending",
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { ...SAMPLE_ESTIMATE, value: 1 },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "test fixture"
+    });
+
+    const { pending, groups } = await measureRecordedCoverage({ runsDir });
+    expect(pending).toBe(1);
+    expect(Object.keys(groups)).toHaveLength(0);
+  });
+});
+
+describe("recordAdvisoryDecision -- rejects a malformed prediction value before writing (Codex review 2026-09-14)", () => {
+  const INVALID_PREDICTION_VALUES = [
+    ["a non-numeric string", "not-a-number"],
+    ["a numeric string", "100"],
+    ["a negative number", -1],
+    ["Infinity", Infinity],
+    ["NaN", NaN],
+    ["missing value", undefined]
+  ];
+
+  it.each(INVALID_PREDICTION_VALUES)("rejects estimate.value = %s and writes nothing", async (_label, value) => {
+    const estimate = { ...SAMPLE_ESTIMATE, value };
+    await expect(
+      recordAdvisoryDecision({
+        runsDir,
+        cardId: "T-0369",
+        executionId: "exec-bad-prediction",
+        invocationId: "inv-1",
+        type: "infra-small",
+        fitDate: "2026-09-13",
+        estimate,
+        telemetryReadings: SAMPLE_TELEMETRY,
+        reason: "test fixture"
+      })
+    ).rejects.toThrow();
+
+    await expect(
+      fs.readFile(advisoryLogPath(runsDir, { cardId: "T-0369", executionId: "exec-bad-prediction", invocationId: "inv-1" }), "utf8")
+    ).rejects.toThrow();
+  });
+
+  it("still records a valid null value (hold-for-sizing / indeterminate)", async () => {
+    const entry = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-null-value-ok",
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { value: null, classification: "large_hold_for_sizing", estimatorVersion: ESTIMATOR_VERSION },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "no data"
+    });
+    expect(entry.prediction.value).toBeNull();
+  });
+
+  it("still records a valid finite non-negative numeric value", async () => {
+    const entry = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-valid-value-ok",
+      invocationId: "inv-1",
+      type: "infra-small",
+      fitDate: "2026-09-13",
+      estimate: { ...SAMPLE_ESTIMATE, value: 0 },
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "zero is valid"
+    });
+    expect(entry.prediction.value).toBe(0);
+  });
+});
+
 describe("end-to-end: unknown-cost ledger entries through collection, estimateCost, and the advisory record (Codex WIP-gate batch review)", () => {
   const readUsageTelemetryFn = async () => SAMPLE_TELEMETRY;
 
