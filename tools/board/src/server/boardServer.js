@@ -229,7 +229,15 @@ export async function startBoardServer({
   // non-owner process reads a different runs directory and must never release another live
   // board's reservations.
   if (ownership.owned) {
-    await reconcileReservationsOnStartup({ runsDir: path.join(tasksDir, ".runs"), store: guardedStore });
+    // reconcileReservationsOnStartup already tolerates an unreadable/malformed lease file or an
+    // unlistable reservation directory internally (T-0370 follow-up) -- this try/catch is a
+    // backstop for anything else that call could still throw (e.g. a release write failing), so
+    // that reservation reconciliation can never be the reason a board process fails to start.
+    try {
+      await reconcileReservationsOnStartup({ runsDir: path.join(tasksDir, ".runs"), store: guardedStore });
+    } catch (err) {
+      console.error(`launch-reservation: startup reconciliation failed -- continuing startup: ${err.message}`);
+    }
   }
   selfImprovementLoop.start();
   autoPullPoller.start();

@@ -172,19 +172,20 @@ export async function releaseReservation({
 }
 
 /**
- * Every currently-unreleased lease across `runsDir`. `[]` only when the reservation dir has never
- * been created (nothing has ever been reserved). Any OTHER failure to list the directory, or any
- * lease file that can't be read and parsed, throws `ReservationPoolReadError` rather than
- * silently excluding it from the pool (T-0370 fix round, Codex review finding 1) -- a caller that
- * can't prove the pool is empty must never treat it as empty.
+ * Shared directory walk behind both `listActiveReservations` and
+ * `reconcileReservationsOnStartup` -- the two callers differ only in what they do when the pool
+ * can't be fully read, never in how they read it. `onListError`/`onEntryError` decide that: throw
+ * to make the failure an explicit hold (admission time), or log-and-return-a-fallback to tolerate
+ * it (startup, T-0370 follow-up). `[]` from the walk itself only when the reservation dir has
+ * never been created (nothing has ever been reserved) -- that case is never a failure either way.
  */
-export async function listActiveReservations({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
+async function readReservationEntries({ runsDir, readdirFn, readFileFn, onListError, onEntryError }) {
   let names;
   try {
     names = await readdirFn(reservationDir(runsDir));
   } catch (err) {
     if (err && err.code === "ENOENT") return [];
-    throw new ReservationPoolReadError(`launch reservation: could not list the reservation pool: ${err.message}`);
+    return onListError(err);
   }
   const active = [];
   for (const name of names) {
@@ -193,11 +194,36 @@ export async function listActiveReservations({ runsDir, readdirFn = fs.readdir, 
     try {
       entry = JSON.parse(await readFileFn(path.join(reservationDir(runsDir), name), "utf8"));
     } catch (err) {
-      throw new ReservationPoolReadError(`launch reservation: lease file ${name} is unreadable or malformed -- ${err.message}`);
+      const fallback = onEntryError(name, err);
+      if (fallback !== undefined) active.push(fallback);
+      continue;
     }
     if (entry && entry.released !== true) active.push(entry);
   }
   return active;
+}
+
+/**
+ * Every currently-unreleased lease across `runsDir`. `[]` only when the reservation dir has never
+ * been created (nothing has ever been reserved). Any OTHER failure to list the directory, or any
+ * lease file that can't be read and parsed, throws `ReservationPoolReadError` rather than
+ * silently excluding it from the pool (T-0370 fix round, Codex review finding 1) -- a caller that
+ * can't prove the pool is empty must never treat it as empty. This is the admission-time contract;
+ * it is unchanged by the startup follow-up below (`reconcileReservationsOnStartup` reads the pool
+ * with its own, tolerant handlers instead of calling this function).
+ */
+export async function listActiveReservations({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
+  return readReservationEntries({
+    runsDir,
+    readdirFn,
+    readFileFn,
+    onListError: (err) => {
+      throw new ReservationPoolReadError(`launch reservation: could not list the reservation pool: ${err.message}`);
+    },
+    onEntryError: (name, err) => {
+      throw new ReservationPoolReadError(`launch reservation: lease file ${name} is unreadable or malformed -- ${err.message}`);
+    }
+  });
 }
 
 /** Total unspent reserved cost (USD) across a set of active reservations -- `reserved_unspent_cost` in spec §4's formula. */
@@ -232,15 +258,43 @@ export function remainingReservedCostUsd(reservation, spentUsd) {
  * this sweep reclaims the reservation that decision left behind. A card the store no longer
  * knows about at all (deleted) is treated the same as "not in flight" -- there's nothing left
  * for the reservation to protect.
+ *
+ * T-0370 follow-up: this is the ONE caller that tolerates a pool it can't fully read. An
+ * unreadable/malformed lease file, or a `.launch-reservations` directory that can't be listed at
+ * all, must never stop the board from starting -- a single bad file left behind by a previous
+ * crash would otherwise fail every future startup, including the auto-pull restart on merge. Each
+ * is logged and left exactly as found on disk for a human to inspect; every OTHER lease in the
+ * pool is still reconciled (per-file resilience, not all-or-nothing). This does NOT weaken
+ * `listActiveReservations`'s own admission-time contract above -- an admission decision still
+ * sees an unreadable pool as an explicit hold; only startup's reaction to the same failure
+ * differs.
  */
 export async function reconcileReservationsOnStartup({
   runsDir,
   store,
   now = () => new Date(),
   logger = console,
-  liveStatuses = new Set(["in-progress", "validation"])
+  liveStatuses = new Set(["in-progress", "validation"]),
+  readdirFn = fs.readdir,
+  readFileFn = fs.readFile
 }) {
-  const active = await listActiveReservations({ runsDir });
+  const active = await readReservationEntries({
+    runsDir,
+    readdirFn,
+    readFileFn,
+    onListError: (err) => {
+      logger.error(
+        `launch-reservation: could not list the reservation pool at startup (${reservationDir(runsDir)}) -- leaving it untouched and continuing startup: ${err.message}`
+      );
+      return [];
+    },
+    onEntryError: (name, err) => {
+      logger.error(
+        `launch-reservation: lease file ${name} is unreadable or malformed at startup -- leaving it untouched for inspection: ${err.message}`
+      );
+      return undefined;
+    }
+  });
   const released = [];
   for (const reservation of active) {
     let task = null;
