@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
-import { DEFAULT_ADMISSION_CONFIG } from "../../src/runner/admissionDecision.js";
+import { DEFAULT_ADMISSION_CONFIG, HOLD_REASON } from "../../src/runner/admissionDecision.js";
 import { decideLaunchAdvisory } from "../../src/runner/advisoryLogger.js";
 import {
   DEFAULT_ADVISORY_TIMEOUT_MS,
   resolveCostEstimatorType,
   reservedExecutionCycleEstimate,
   withBoundedDecide,
-  buildLaunchDecide
+  buildLaunchDecide,
+  sumActiveReservedRemainingCostUsd
 } from "../../src/runner/launchAdvisory.js";
 
 describe("resolveCostEstimatorType", () => {
@@ -266,5 +267,72 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
     });
     const record = await buildLaunchDecide(deps)();
     expect(record.estimate).toBeDefined();
+  });
+
+  describe("T-0370 fix round finding 6 -- counts other active reservations at their REMAINING future cost", () => {
+    it("reduces another active reservation's contribution by what its own execution already charged", async () => {
+      const deps = baseDeps({
+        listActiveReservationsFn: vi.fn(async () => [
+          { cardId: "T-OTHER", executionId: "exec-other", reservedCostUsd: 10, released: false }
+        ]),
+        listCardUsageEntriesFn: vi.fn(async ({ cardId }) =>
+          cardId === "T-OTHER"
+            ? [{ executionId: "exec-other", attempt: 1, phase: "implementer", retry: 0, costUsd: 4, complete: true, outcome: "success" }]
+            : []
+        )
+      });
+      const record = await buildLaunchDecide(deps)();
+      expect(record.reservedUnspentCostUsd).toBe(6);
+    });
+
+    it("is indeterminate (never 0) when the pool listing fails -- a failure to list the pool never becomes an empty pool", async () => {
+      const deps = baseDeps({
+        listActiveReservationsFn: vi.fn(async () => {
+          throw new Error("EACCES");
+        })
+      });
+      const record = await buildLaunchDecide(deps)();
+      expect(record.reservedUnspentCostUsd).toBeNull();
+      expect(record.admission.windows.five_hour.holdReason).toBe(HOLD_REASON.RESERVED_COST_UNKNOWN);
+    });
+
+    it("is indeterminate (never 0) when another reservation's own ledger read fails", async () => {
+      const deps = baseDeps({
+        listActiveReservationsFn: vi.fn(async () => [{ cardId: "T-OTHER", executionId: "exec-other", reservedCostUsd: 10, released: false }]),
+        listCardUsageEntriesFn: vi.fn(async ({ cardId }) => {
+          if (cardId === "T-OTHER") throw new Error("ledger unreadable");
+          return [];
+        })
+      });
+      const record = await buildLaunchDecide(deps)();
+      expect(record.reservedUnspentCostUsd).toBeNull();
+    });
+  });
+
+  describe("sumActiveReservedRemainingCostUsd -- the pure orchestration this card's admission check consumes", () => {
+    it("sums the remaining cost across several active reservations", async () => {
+      const total = await sumActiveReservedRemainingCostUsd({
+        runsDir: "/irrelevant",
+        reservations: [
+          { cardId: "T-0001", executionId: "e1", reservedCostUsd: 10 },
+          { cardId: "T-0002", executionId: "e2", reservedCostUsd: 5 }
+        ],
+        listCardUsageEntriesFn: vi.fn(async ({ cardId }) =>
+          cardId === "T-0001" ? [{ executionId: "e1", costUsd: 4, complete: true, outcome: "success" }] : []
+        )
+      });
+      expect(total).toBe(6 + 5);
+    });
+
+    it("returns null the instant any single reservation's ledger read fails", async () => {
+      const total = await sumActiveReservedRemainingCostUsd({
+        runsDir: "/irrelevant",
+        reservations: [{ cardId: "T-0001", executionId: "e1", reservedCostUsd: 10 }],
+        listCardUsageEntriesFn: vi.fn(async () => {
+          throw new Error("unreadable");
+        })
+      });
+      expect(total).toBeNull();
+    });
   });
 });

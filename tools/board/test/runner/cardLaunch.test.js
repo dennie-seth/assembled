@@ -5,6 +5,7 @@ import path from "node:path";
 import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES } from "../../src/runner/cardLaunch.js";
 import { ROUND_CAP } from "../../src/lib/roundCap.js";
 import { listActiveReservations } from "../../src/runner/launchReservation.js";
+import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -358,5 +359,41 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     expect(byCard["T-0001"]).toBeGreaterThan(0);
     expect(byCard["T-0002"]).toBeGreaterThan(0);
     expect(byCard["T-0001"]).toBeCloseTo(byCard["T-0002"]);
+  });
+
+  it("T-0370 (Codex finding 1): two DIFFERENT launches through the real launchCardRun boundary are serialized -- the pool is never overbooked by the recorded decisions", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([
+      makeTask({ id: "T-0001", agent: "infra" }),
+      makeTask({ id: "T-0002", agent: "infra" })
+    ]);
+
+    // Wraps the REAL buildLaunchDecide (production logic, not hand-composed primitives -- see
+    // Codex's own note that the prior race probe overbooked by construction because it never
+    // went through this function) just to capture what it computed, for the assertion below.
+    const records = {};
+    const buildLaunchDecideFn = (args) => {
+      const decide = realBuildLaunchDecide(args);
+      return async () => {
+        const record = await decide();
+        records[args.cardId] = record;
+        return record;
+      };
+    };
+
+    await Promise.all([
+      launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn }),
+      launchCardRun({ orchestrator, id: "T-0002", buildLaunchDecideFn })
+    ]);
+
+    const a = records["T-0001"];
+    const b = records["T-0002"];
+    expect(a.reservedUnspentCostUsd).not.toBeNull();
+    expect(b.reservedUnspentCostUsd).not.toBeNull();
+    // The read-check-reserve section is serialized: exactly one of the two launches' admission
+    // reads happened BEFORE the other had written its own lease (sees 0 others), and the other
+    // happened after (sees the first's full reserved amount) -- never both computed against a
+    // shared, stale empty pool, which is what would let the combined demand overbook capacity.
+    const sawOthersReservation = [a, b].filter((r) => r.reservedUnspentCostUsd > 0);
+    expect(sawOthersReservation).toHaveLength(1);
   });
 });
