@@ -122,9 +122,8 @@ describe("evaluateWindowAdmission -- with a versioned unit conversion, applies s
   const unitConversion = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
 
   it("admits when the predicted cost fits inside the remaining budget", () => {
-    // remaining = 1 - 0.2 = 0.8; reserved 1usd/10 = 0.1; allowance 0.05; uncertainty 0.05
-    // budget = 0.8 - 0.1 - 0.05 - 0.05 = 0.6 (utilization units) == 6 usd
-    // predicted 1usd <= 6usd -> admitted
+    // remaining = 1 - 0.2 = 0.8; reserved 1usd/10 = 0.1 (utilization units); allowance 0.05; uncertainty 0.05
+    // budget = 0.8 - 0.1 - 0.05 - 0.05 = 0.6 (utilization units); predicted 1usd/10 = 0.1 utilization units <= 0.6 -> admitted
     const decision = evaluateWindowAdmission({
       windowKind: "five_hour",
       reading: reading({ utilization: 0.2 }),
@@ -135,7 +134,7 @@ describe("evaluateWindowAdmission -- with a versioned unit conversion, applies s
     });
     expect(decision.admitted).toBe(true);
     expect(decision.holdReason).toBeNull();
-    expect(decision.budget).toBeCloseTo(6);
+    expect(decision.budget).toBeCloseTo(0.6);
   });
 
   it("refuses when the predicted cost exceeds the remaining budget", () => {
