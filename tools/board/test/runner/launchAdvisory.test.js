@@ -128,6 +128,7 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
       listCardUsageEntriesFn: vi.fn(async () => []),
       listActiveReservationsFn: vi.fn(async () => []),
       reserveLaunchSlotFn: vi.fn(async (args) => ({ ...args, released: false })),
+      recordAdvisoryDecisionFn: vi.fn(async (args) => ({ ...args, outcome: null })),
       ...overrides
     };
   }
@@ -238,5 +239,32 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
     const deps = baseDeps({ type: null });
     const record = await buildLaunchDecide(deps)();
     expect(record.estimate.value).toBeNull();
+  });
+
+  it("persists the decision via T-0369's recordAdvisoryDecision, keyed by the same launch identity", async () => {
+    const deps = baseDeps();
+    const record = await buildLaunchDecide(deps)();
+    expect(deps.recordAdvisoryDecisionFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runsDir: "/irrelevant",
+        cardId: "T-0001",
+        executionId: "exec-1",
+        invocationId: "inv-1",
+        type: "infra-small",
+        estimate: record.estimate,
+        telemetryReadings: record.telemetryReadings,
+        reason: record.reason
+      })
+    );
+  });
+
+  it("is failure-isolated: a throwing recordAdvisoryDecisionFn still returns the computed record, never throws", async () => {
+    const deps = baseDeps({
+      recordAdvisoryDecisionFn: vi.fn(async () => {
+        throw new Error("disk full");
+      })
+    });
+    const record = await buildLaunchDecide(deps)();
+    expect(record.estimate).toBeDefined();
   });
 });
