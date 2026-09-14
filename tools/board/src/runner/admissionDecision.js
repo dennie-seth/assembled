@@ -10,7 +10,8 @@ import { READING_STATUS, WINDOW_KINDS } from "./usageTelemetry.js";
 export const HOLD_REASON = Object.freeze({
   NO_MEASURED_READING: "no_measured_window_reading",
   ESTIMATE_UNKNOWN: "estimate_unknown",
-  UNITS_NOT_COMPARABLE: "units_not_comparable"
+  UNITS_NOT_COMPARABLE: "units_not_comparable",
+  RESERVED_COST_UNKNOWN: "reserved_cost_unknown"
 });
 
 /** The unit every window's `readWindowUsage` reading is expressed in -- see usageTelemetry.js. */
@@ -77,6 +78,15 @@ export function evaluateWindowAdmission({ windowKind, reading, estimate, reserve
 
   if (!estimateIsKnown(estimate)) {
     return holdDecision(windowKind, HOLD_REASON.ESTIMATE_UNKNOWN, { estimateClassification: estimate?.classification ?? null });
+  }
+
+  // T-0370 fix round (Codex review, finding 1/6): `reservedUnspentCostUsd` is only ever a real
+  // number when both the active-reservation pool AND every active reservation's own ledger spend
+  // were readable. A caller that couldn't determine one passes `null` explicitly (never a
+  // fabricated `0`, which would silently under-count other in-flight launches' consumption) --
+  // that is an explicit hold, same as an unknown estimate or an unmeasured window.
+  if (typeof reservedUnspentCostUsd !== "number" || !Number.isFinite(reservedUnspentCostUsd)) {
+    return holdDecision(windowKind, HOLD_REASON.RESERVED_COST_UNKNOWN);
   }
 
   const predictedRemainingCostUpperBound =
