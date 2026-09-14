@@ -4,6 +4,7 @@ import { readUsageTelemetry, WINDOW_KINDS } from "./usageTelemetry.js";
 import { evaluateAdmission } from "./admissionDecision.js";
 import { listCardUsageEntries, executionTotal } from "./usageLedger.js";
 import { listActiveReservations, remainingReservedCostUsd, reserveLaunchSlot } from "./launchReservation.js";
+import { withTimeout } from "./boundedAwait.js";
 
 /**
  * Serializes the read-active-reservations -> evaluate-admission -> write-own-lease critical
@@ -121,36 +122,37 @@ export function reservedExecutionCycleEstimate({ implementerEstimate, reviewEsti
  * throwing) `decide()` would still delay the launch, since `withAdvisoryLogging`'s try/catch
  * only guards against a throw, not against a hang. The underlying `decideFn` call is never
  * cancelled (Node has no such primitive) -- it keeps running in the background after a timeout
- * fires, and its eventual settlement (or failure) is simply ignored, the same fire-and-forget
- * posture `usageLedger.js` already takes for the same reason.
+ * fires, and its eventual settlement (or failure) is simply ignored... except that "ignored" used
+ * to mean `decideFn` still finished writing a reservation lease and a pending advisory record on
+ * its own time, well after the caller had already moved on with the fallback (T-0370 fix round,
+ * Codex review finding 5: a timed-out lease that outlives the run it was for, and a
+ * `outcome: null` record nothing will ever attach an outcome to). Two things fix that:
+ *
+ *  1. `decideFn` is called with a `cancelToken` (`{cancelled}`) that flips to `true` the instant
+ *     this wrapper commits to the fallback (timeout OR thrown error) -- `decideFn` is expected to
+ *     check it before any write with a durable side effect and skip that write once it's true.
+ *  2. `onFallback(fallbackRecord)`, when supplied, is awaited BEFORE the fallback resolves --
+ *     this is how the fallback itself gets persisted durably (see `buildLaunchDecide`'s own use:
+ *     it calls `recordAdvisoryDecisionFn` with the fallback's fields), so a late
+ *     `reconcileLaunchOutcome` always finds a decision to attach an outcome to, even one that
+ *     never got past a timeout.
  */
-export function withBoundedDecide(decideFn, { timeoutMs = DEFAULT_ADVISORY_TIMEOUT_MS, fallback, logger = console } = {}) {
+export function withBoundedDecide(decideFn, { timeoutMs = DEFAULT_ADVISORY_TIMEOUT_MS, fallback, onFallback, logger = console } = {}) {
   return function boundedDecide() {
-    return new Promise((resolve) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        logger.log(`wip-gate advisory: decide() exceeded ${timeoutMs}ms -- launch proceeds unaffected, recording a timeout hold`);
-        resolve(fallback("timeout"));
-      }, timeoutMs);
-      if (typeof timer.unref === "function") timer.unref();
-
-      Promise.resolve()
-        .then(decideFn)
-        .then((value) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve(value);
-        })
-        .catch((err) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          logger.log(`wip-gate advisory: decide() failed -- launch proceeds unaffected: ${err.message}`);
-          resolve(fallback("error", err));
-        });
+    const cancelToken = { cancelled: false };
+    return withTimeout(() => decideFn(cancelToken), {
+      timeoutMs,
+      logger,
+      label: "wip-gate advisory: decide()",
+      fallback: (reason, err) => {
+        cancelToken.cancelled = true;
+        const fallbackRecord = fallback(reason, err);
+        if (!onFallback) return fallbackRecord;
+        return Promise.resolve()
+          .then(() => onFallback(fallbackRecord))
+          .catch(() => {})
+          .then(() => fallbackRecord);
+      }
     });
   };
 }
@@ -213,7 +215,7 @@ export function buildLaunchDecide({
   estimateCostFn = estimateCost,
   recordAdvisoryDecisionFn = recordAdvisoryDecision
 }) {
-  async function innerDecide() {
+  async function innerDecide(cancelToken) {
     const implementerAdvisory = await decideLaunchAdvisoryFn({
       runsDir,
       cardId,
@@ -249,6 +251,16 @@ export function buildLaunchDecide({
     // `reservedUnspentCostUsd` `null` (never a fabricated `0`), which `evaluateAdmission` already
     // turns into an explicit `RESERVED_COST_UNKNOWN` hold (finding 6).
     const { reservedUnspentCostUsd, admission } = await withCapacityLock(async () => {
+      // T-0370 fix round (Codex review, finding 5): a timeout/error already resolved the caller
+      // with a durably-persisted fallback by the time this turn reaches the front of the lock --
+      // writing a lease now would only orphan it (nothing will ever release it, since
+      // reconcileLaunchOutcome already ran, or will run, against a key this write didn't exist
+      // for yet).
+      if (cancelToken?.cancelled) {
+        logger.log(`wip-gate advisory: decide() for ${cardId}/${executionId}/${invocationId} already timed out/failed -- skipping the late reservation write`);
+        return { reservedUnspentCostUsd: null, admission: null };
+      }
+
       let otherActiveReservations;
       try {
         otherActiveReservations = await listActiveReservationsFn({ runsDir });
@@ -268,6 +280,13 @@ export function buildLaunchDecide({
         config: admissionConfig
       });
 
+      // Re-checked: the reads above awaited, so the timeout could have fired while this turn was
+      // still in flight.
+      if (cancelToken?.cancelled) {
+        logger.log(`wip-gate advisory: decide() for ${cardId}/${executionId}/${invocationId} timed out/failed while evaluating admission -- skipping the late reservation write`);
+        return { reservedUnspentCostUsd, admission };
+      }
+
       try {
         await reserveLaunchSlotFn({
           runsDir,
@@ -286,6 +305,22 @@ export function buildLaunchDecide({
 
       return { reservedUnspentCostUsd, admission };
     });
+
+    // The timeout/error fallback already recorded (and persisted) ITS OWN decision for this
+    // launch identity -- a late write here would either orphan a second, outcome-less record or
+    // clobber the one `reconcileLaunchOutcome` may already be attaching an outcome to.
+    if (cancelToken?.cancelled) {
+      logger.log(`wip-gate advisory: decide() for ${cardId}/${executionId}/${invocationId} timed out/failed before persisting -- the fallback record already covers it`);
+      return {
+        estimate: reservedCycle,
+        telemetryReadings: implementerAdvisory.telemetryReadings,
+        type,
+        fitDate,
+        reservedUnspentCostUsd,
+        reason: `late decide() result discarded -- already superseded by a timeout/error fallback for ${cardId}/${executionId}/${invocationId}`,
+        admission
+      };
+    }
 
     const windowSummary = Object.fromEntries(
       Object.entries(admission.windows).map(([windowKind, decision]) => [windowKind, decision.admitted === null ? decision.holdReason : decision.admitted])
@@ -316,5 +351,24 @@ export function buildLaunchDecide({
     return record;
   }
 
-  return withBoundedDecide(innerDecide, { timeoutMs, fallback: fallbackRecordFactory({ type, fitDate }), logger });
+  return withBoundedDecide(innerDecide, {
+    timeoutMs,
+    fallback: fallbackRecordFactory({ type, fitDate }),
+    logger,
+    // T-0370 fix round (Codex review, finding 5): persists the timeout/error fallback itself, so
+    // a later reconcileLaunchOutcome always finds a decision recorded for this launch identity --
+    // never a decision that only ever existed in memory, gone the instant this call returns.
+    onFallback: (fallbackRecord) =>
+      recordAdvisoryDecisionFn({
+        runsDir,
+        cardId,
+        executionId,
+        invocationId,
+        type,
+        fitDate,
+        estimate: fallbackRecord.estimate,
+        telemetryReadings: fallbackRecord.telemetryReadings,
+        reason: fallbackRecord.reason
+      })
+  });
 }
