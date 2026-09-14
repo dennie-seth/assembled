@@ -2,6 +2,7 @@ import { launchCardRun, CardLaunchError } from "./cardLaunch.js";
 import { readUsageSnapshot } from "./usageWindow.js";
 import { readUsageTelemetry, WINDOW_KINDS, READING_STATUS } from "./usageTelemetry.js";
 import { admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
+import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
 
 const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 
@@ -203,18 +204,24 @@ export function createAutoLaunchPoller({
     // WIP gate T-D (launch-time contracts, 2026-09-14): read the 5-hour/weekly windows
     // independently (T-0367) and log the comparison against the legacy newest-event decision
     // above, on every tick, regardless of configuration -- this is what lets the difference be
-    // judged from evidence before anyone flips WIP_GATE_ENFORCEMENT_ENABLED. Bounded/failure-
-    // isolated: a telemetry read failure here can never affect the legacy gate's own decision.
+    // judged from evidence before anyone flips WIP_GATE_ENFORCEMENT_ENABLED. Bounded (T-0370 fix
+    // round, Codex finding 3: a hung reader must never stall a tick) and failure-isolated: a
+    // telemetry read failure or timeout here can never affect the legacy gate's own decision.
+    const telemetryReadings = await withTimeout(() => readUsageTelemetryFn({ runsDir, now: now() }), {
+      timeoutMs: DEFAULT_BOUND_MS,
+      fallback: () => null,
+      logger,
+      label: `${LOG_PREFIX}: readUsageTelemetry`
+    });
     let windowAware = null;
-    try {
-      const telemetryReadings = await readUsageTelemetryFn({ runsDir, now: now() });
+    if (telemetryReadings) {
       windowAware = evaluateWindowAwareUsageGate({ telemetryReadings, usageMax });
       logger.log(
         `${LOG_PREFIX}: usage gate comparison -- legacy(newest-event)=${usage.utilization ?? "unknown"} ` +
           `window-aware=[${describeWindowAwareGate(windowAware)}]`
       );
-    } catch (err) {
-      logger.log(`${LOG_PREFIX}: window-aware usage comparison unavailable: ${err.message}`);
+    } else {
+      logger.log(`${LOG_PREFIX}: window-aware usage comparison unavailable`);
     }
 
     if (enforcementEnabled && windowAware) {

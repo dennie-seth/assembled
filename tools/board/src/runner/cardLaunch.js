@@ -7,6 +7,7 @@ import { withAdvisoryLogging, recordAdvisoryOutcome } from "./advisoryLogger.js"
 import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
 import { loadAdmissionConfigFromEnv } from "./admissionDecision.js";
 import { releaseReservation } from "./launchReservation.js";
+import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
 
 /**
  * WIP gate T-D (spec §5/§10, launch-time contracts 2026-09-14): attaches the realized outcome
@@ -170,7 +171,15 @@ export async function launchCardRun({
 
   if (runsDir) {
     try {
-      executionId = await ensureExecutionIdFn({ runsDir, cardId: id }).catch(() => randomUUIDFn());
+      // T-0370 fix round (Codex finding 3): bounded, not just error-caught -- a hung
+      // ensureExecutionId read (not just a throwing one) must never keep runCard from being
+      // called.
+      executionId = await withTimeout(() => ensureExecutionIdFn({ runsDir, cardId: id }), {
+        timeoutMs: DEFAULT_BOUND_MS,
+        fallback: () => randomUUIDFn(),
+        logger,
+        label: `wip-gate advisory: ensureExecutionId(${id})`
+      });
       invocationId = randomUUIDFn();
       const decide = buildLaunchDecideFn({
         runsDir,
