@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createAutoLaunchPoller,
   selectNextCard,
+  evaluateWindowAwareUsageGate,
   autoLaunchEnabledFromEnv,
   autoLaunchIntervalMsFromEnv,
   autoLaunchUsageMaxFromEnv,
@@ -9,6 +10,7 @@ import {
   DEFAULT_AUTO_LAUNCH_USAGE_MAX
 } from "../../src/runner/autoLaunchPoller.js";
 import { CardLaunchError } from "../../src/runner/cardLaunch.js";
+import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -587,5 +589,134 @@ describe("usage gate surfaces WHEN the limit resets, not just that it is blocked
 
     expect(launchFn).toHaveBeenCalledOnce();
     expect(logLines(logger)).not.toMatch(/resets at/i);
+  });
+});
+
+function telemetryReading(overrides = {}) {
+  return { windowKind: "five_hour", classification: READING_STATUS.MEASURED, utilization: 0.1, resetElapsed: false, ...overrides };
+}
+
+describe("evaluateWindowAwareUsageGate", () => {
+  it("blocks a window whose measured utilization is at or above usageMax", () => {
+    const result = evaluateWindowAwareUsageGate({
+      telemetryReadings: {
+        five_hour: telemetryReading({ windowKind: "five_hour", utilization: 0.9 }),
+        seven_day: telemetryReading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      usageMax: 0.8
+    });
+    expect(result.blocked).toBe(true);
+    expect(result.blockedWindows).toEqual(["five_hour"]);
+    expect(result.windows.seven_day.blocked).toBe(false);
+  });
+
+  it("never blocks on an unmeasured window -- unknown stays unknown, not a fabricated block", () => {
+    const result = evaluateWindowAwareUsageGate({
+      telemetryReadings: {
+        five_hour: telemetryReading({ windowKind: "five_hour", classification: READING_STATUS.STALE, utilization: null }),
+        seven_day: telemetryReading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      usageMax: 0.8
+    });
+    expect(result.windows.five_hour.blocked).toBeNull();
+    expect(result.blocked).toBe(false);
+  });
+
+  it("is healthy when every measured window sits below usageMax", () => {
+    const result = evaluateWindowAwareUsageGate({
+      telemetryReadings: {
+        five_hour: telemetryReading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: telemetryReading({ windowKind: "seven_day", utilization: 0.2 })
+      },
+      usageMax: 0.8
+    });
+    expect(result.blocked).toBe(false);
+    expect(result.blockedWindows).toEqual([]);
+  });
+});
+
+describe("createAutoLaunchPoller — window-aware usage comparison (WIP gate T-D, launch-time contracts)", () => {
+  function makeTelemetryPoller({
+    telemetryReadings = {
+      five_hour: telemetryReading({ windowKind: "five_hour", utilization: 0.1 }),
+      seven_day: telemetryReading({ windowKind: "seven_day", utilization: 0.1 })
+    },
+    readUsageTelemetryFn = vi.fn(async () => telemetryReadings),
+    enforcementEnabled = false,
+    ...overrides
+  } = {}) {
+    return { ...makePoller({ readUsageTelemetryFn, enforcementEnabled, ...overrides }), readUsageTelemetryFn };
+  }
+
+  it("with the default (advisory) configuration, logs the window-aware decision alongside the legacy one but still launches on the legacy decision alone", async () => {
+    const { poller, launchFn, logger } = makeTelemetryPoller({
+      usage: { utilization: 0.1, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed utilization=0.1" },
+      telemetryReadings: {
+        five_hour: telemetryReading({ windowKind: "five_hour", utilization: 0.95 }), // window-aware WOULD block
+        seven_day: telemetryReading({ windowKind: "seven_day", utilization: 0.1 })
+      }
+    });
+
+    await poller.tick();
+
+    expect(launchFn).toHaveBeenCalledOnce();
+    expect(logLines(logger)).toMatch(/usage gate comparison/);
+    expect(logLines(logger)).toMatch(/window-aware/);
+  });
+
+  it("under the enforcement flag, the window-aware decision replaces the legacy gate and blocks a launch the legacy gate alone would have allowed", async () => {
+    const { poller, launchFn, logger } = makeTelemetryPoller({
+      enforcementEnabled: true,
+      usage: { utilization: 0.1, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed utilization=0.1" },
+      telemetryReadings: {
+        five_hour: telemetryReading({ windowKind: "five_hour", utilization: 0.95 }),
+        seven_day: telemetryReading({ windowKind: "seven_day", utilization: 0.1 })
+      }
+    });
+
+    await poller.tick();
+
+    expect(launchFn).not.toHaveBeenCalled();
+    expect(logLines(logger)).toMatch(/window-aware usage gate blocked/i);
+  });
+
+  it("under the enforcement flag, a healthy window-aware reading launches even though this card never enables the flag on the live board", async () => {
+    const { poller, launchFn } = makeTelemetryPoller({
+      enforcementEnabled: true,
+      usage: { utilization: 0.1, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed utilization=0.1" },
+      telemetryReadings: {
+        five_hour: telemetryReading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: telemetryReading({ windowKind: "seven_day", utilization: 0.1 })
+      }
+    });
+
+    await poller.tick();
+    expect(launchFn).toHaveBeenCalledOnce();
+  });
+
+  it("defaults to enforcement OFF (admissionEnforcementEnabledFromEnv), so a fresh poller with no override never blocks on window-aware evidence alone", async () => {
+    const { poller, launchFn } = makePoller({
+      readUsageTelemetryFn: vi.fn(async () => ({
+        five_hour: telemetryReading({ windowKind: "five_hour", utilization: 0.99 }),
+        seven_day: telemetryReading({ windowKind: "seven_day", utilization: 0.99 })
+      })),
+      usage: { utilization: 0.1, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed utilization=0.1" }
+    });
+    await poller.tick();
+    expect(launchFn).toHaveBeenCalledOnce();
+  });
+
+  it("is failure-isolated: a throwing window-aware telemetry reader never affects the legacy gate's own decision", async () => {
+    const { poller, launchFn, logger } = makeTelemetryPoller({
+      readUsageTelemetryFn: vi.fn(async () => {
+        throw new Error("telemetry unreadable");
+      }),
+      usage: { utilization: 0.1, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed utilization=0.1" }
+    });
+
+    await poller.tick();
+
+    expect(launchFn).toHaveBeenCalledOnce();
+    expect(logLines(logger)).toMatch(/window-aware usage comparison unavailable/);
   });
 });
