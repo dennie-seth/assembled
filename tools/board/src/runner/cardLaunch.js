@@ -5,9 +5,28 @@ import { appendNote, effectiveMaxAttempts } from "./runOrchestrator.js";
 import { ensureExecutionId, executionTotal, executionEndedSuccessfully, listCardUsageEntries } from "./usageLedger.js";
 import { withAdvisoryLogging, recordAdvisoryOutcome } from "./advisoryLogger.js";
 import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
-import { loadAdmissionConfigFromEnv } from "./admissionDecision.js";
+import { loadAdmissionConfigFromEnv, admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
 import { releaseReservation } from "./launchReservation.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
+import { evaluateOverrunPolicy, isBoundedContinuation } from "./overrunPolicy.js";
+
+/**
+ * Names why the shared admission decision refuses a launch under enforcement, or `null` when it
+ * doesn't (T-0370 fix round, Codex review finding 2). `admission` missing entirely (the advisory
+ * pipeline itself timed out/errored, per `launchAdvisory.js`'s fallback) is itself a hold --
+ * unknown capacity is never treated as "not blocked". `admission.admitted === true` requires
+ * EVERY window to have admitted (see `admissionDecision.js`'s `evaluateAdmission`); anything else
+ * -- an explicit `false`, or the aggregate `null` a per-window hold reason produces -- refuses,
+ * naming each non-admitting window's own reason.
+ */
+function describeAdmissionRefusal(admission) {
+  if (!admission) return "advisory decision unavailable (timeout/error) -- unknown capacity";
+  if (admission.admitted === true) return null;
+  const reasons = Object.entries(admission.windows ?? {})
+    .filter(([, decision]) => decision.admitted !== true)
+    .map(([windowKind, decision]) => `${windowKind}: ${decision.holdReason ?? "insufficient_capacity"}`);
+  return reasons.length > 0 ? reasons.join("; ") : "insufficient capacity";
+}
 
 /**
  * WIP gate T-D (spec §5/§10, launch-time contracts 2026-09-14): attaches the realized outcome
@@ -107,7 +126,11 @@ export async function launchCardRun({
   buildLaunchDecideFn = buildLaunchDecide,
   withAdvisoryLoggingFn = withAdvisoryLogging,
   loadAdmissionConfigFromEnvFn = loadAdmissionConfigFromEnv,
-  reconcileLaunchOutcomeFn = reconcileLaunchOutcome
+  reconcileLaunchOutcomeFn = reconcileLaunchOutcome,
+  enforcementEnabledFn = admissionEnforcementEnabledFromEnv,
+  evaluateOverrunPolicyFn = evaluateOverrunPolicy,
+  listCardUsageEntriesFn = listCardUsageEntries,
+  releaseReservationFn = releaseReservation
 }) {
   if (!orchestrator) {
     throw new CardLaunchError("Agent Runner is not configured on this server", 501);
@@ -174,6 +197,7 @@ export async function launchCardRun({
   // test double) skips this entirely and falls straight through to the plain launch, unchanged
   // from before this card.
   const runsDir = orchestrator.runsDir;
+  const enforcementEnabled = enforcementEnabledFn();
   let executionId = null;
   let invocationId = null;
   let runCardPromise;
@@ -202,14 +226,52 @@ export async function launchCardRun({
         logger
       });
 
+      // T-0370 fix round (Codex finding 2): the shared admission decision is only AUTHORITATIVE
+      // (able to refuse the launch) under the enforcement flag -- default config always reaches
+      // `orchestrator.runCard` exactly as it did before this card, since `advisory` is only
+      // inspected below when `enforcementEnabled` is true. `advisory` is captured via this
+      // closure rather than threaded through `withAdvisoryLoggingFn`'s own return, so `launch()`
+      // can see what `decide()` produced without weakening `withAdvisoryLogging`'s own structural
+      // guarantee that `launch()` always runs (see advisoryLogger.js).
+      let advisory = null;
       await withAdvisoryLoggingFn({
-        decide,
+        decide: async () => {
+          advisory = await decide();
+          return advisory;
+        },
         launch: async () => {
+          if (enforcementEnabled) {
+            const refusal = describeAdmissionRefusal(advisory?.admission);
+            if (refusal) {
+              await releaseReservationFn({ runsDir, cardId: id, executionId, invocationId, outcome: { status: "refused_enforcement", reason: refusal } }).catch(() => {});
+              throw new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- ${refusal}`, 409);
+            }
+
+            // Spec §11: an active overrun stop refuses a brand-new admission, but a card that is
+            // already mid-cycle (this execution already has ledger history) may still continue --
+            // refusing an in-flight card's own retry would abandon already-spent work rather than
+            // bound it.
+            const overrun = await evaluateOverrunPolicyFn({ runsDir });
+            if (overrun.overrun) {
+              let priorEntries = [];
+              try {
+                priorEntries = (await listCardUsageEntriesFn({ runsDir, cardId: id })).filter((entry) => entry.executionId === executionId);
+              } catch {
+                priorEntries = [];
+              }
+              if (!isBoundedContinuation({ priorEntriesForExecution: priorEntries })) {
+                await releaseReservationFn({ runsDir, cardId: id, executionId, invocationId, outcome: { status: "refused_overrun_stop", reason: overrun.reason } }).catch(() => {});
+                throw new CardLaunchError(`Cannot run ${id}: WIP gate overrun stop -- ${overrun.reason}`, 409);
+              }
+              logger.log(`wip-gate enforcement: overrun stop active but ${id} is a bounded continuation of an already-admitted execution -- allowed`);
+            }
+          }
           runCardPromise = orchestrator.runCard(id);
           return task;
         }
       });
     } catch (err) {
+      if (err instanceof CardLaunchError) throw err;
       logger.log(`wip-gate advisory: launch-boundary advisory pipeline failed for ${id} -- launch proceeds unaffected: ${err.message}`);
     }
   }
