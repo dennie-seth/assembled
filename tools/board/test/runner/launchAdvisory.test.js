@@ -309,6 +309,66 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
     });
   });
 
+  describe("T-0370 fix round finding 5 -- no orphan leases or outcome-less records from timed-out advisory work", () => {
+    it("a late-resolving decide() after timeout never writes a lease or a second record once the caller has already moved on", async () => {
+      vi.useFakeTimers();
+      try {
+        let resolveSlow;
+        const deps = baseDeps({
+          timeoutMs: 50,
+          decideLaunchAdvisoryFn: vi.fn(
+            () =>
+              new Promise((resolve) => {
+                resolveSlow = resolve;
+              })
+          )
+        });
+        const decide = buildLaunchDecide(deps);
+        const decidePromise = decide();
+        await vi.advanceTimersByTimeAsync(60);
+        const timedOutRecord = await decidePromise;
+        expect(timedOutRecord.reason).toMatch(/timeout/);
+        // The timeout fallback is itself persisted durably, not just returned in memory --
+        // so a later reconcileLaunchOutcome has something to attach an outcome to.
+        expect(deps.recordAdvisoryDecisionFn).toHaveBeenCalledTimes(1);
+        expect(deps.recordAdvisoryDecisionFn.mock.calls[0][0].estimate.value).toBeNull();
+
+        // The real advisory work finally resolves, well after the caller (and a hypothetical
+        // reconcileLaunchOutcome for the now-settled run) already moved on with the fallback.
+        resolveSlow({
+          estimate: { value: 0.5, unit: "usd", classification: "prior", estimatorVersion: "v1" },
+          telemetryReadings: {},
+          type: "infra-small",
+          fitDate: null,
+          reason: "late"
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Late side effects never happened: no orphan lease, no second (pending/outcome-less) record.
+        expect(deps.reserveLaunchSlotFn).not.toHaveBeenCalled();
+        expect(deps.recordAdvisoryDecisionFn).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("an estimator error persists the indeterminate fallback decision durably, not just as an in-memory return value", async () => {
+      const deps = baseDeps({
+        decideLaunchAdvisoryFn: vi.fn(async () => {
+          throw new Error("estimator blew up");
+        })
+      });
+      const record = await buildLaunchDecide(deps)();
+      expect(deps.recordAdvisoryDecisionFn).toHaveBeenCalledTimes(1);
+      const persisted = deps.recordAdvisoryDecisionFn.mock.calls[0][0];
+      expect(persisted.estimate.value).toBeNull();
+      expect(record.estimate.value).toBeNull();
+    });
+  });
+
   describe("sumActiveReservedRemainingCostUsd -- the pure orchestration this card's admission check consumes", () => {
     it("sums the remaining cost across several active reservations", async () => {
       const total = await sumActiveReservedRemainingCostUsd({
