@@ -1,5 +1,7 @@
 import { launchCardRun, CardLaunchError } from "./cardLaunch.js";
 import { readUsageSnapshot } from "./usageWindow.js";
+import { readUsageTelemetry, WINDOW_KINDS, READING_STATUS } from "./usageTelemetry.js";
+import { admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
 
 const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 
@@ -98,6 +100,37 @@ export function selectNextCard(tasks) {
 }
 
 
+/**
+ * WIP gate T-D (launch-time contracts, 2026-09-14): reads the 5-hour and weekly windows
+ * INDEPENDENTLY (T-0367's `readUsageTelemetry`), unlike the legacy gate above which reads
+ * whichever window's event happens to be newest. A window only blocks when its OWN reading is
+ * `measured` and at or above `usageMax` -- an `estimated`/`stale`/`unavailable` reading is
+ * unknown capacity, never coerced into a block (the same "unknown stays unknown" rule
+ * `admissionDecision.js` applies at the dollar-formula layer, applied here to this simpler
+ * utilization-threshold comparison). This is evidence-collection only by default: see
+ * `tick()` for where `enforcementEnabled` decides whether this replaces the legacy gate above.
+ */
+export function evaluateWindowAwareUsageGate({ telemetryReadings, usageMax }) {
+  const windows = {};
+  const blockedWindows = [];
+  for (const windowKind of WINDOW_KINDS) {
+    const reading = telemetryReadings[windowKind];
+    const isMeasured = Boolean(reading) && reading.classification === READING_STATUS.MEASURED && typeof reading.utilization === "number";
+    const blocked = isMeasured ? reading.utilization >= usageMax : null;
+    windows[windowKind] = { classification: reading?.classification ?? null, utilization: isMeasured ? reading.utilization : null, blocked };
+    if (blocked === true) blockedWindows.push(windowKind);
+  }
+  return { blocked: blockedWindows.length > 0, blockedWindows, windows };
+}
+
+function describeWindowAwareGate(windowAware) {
+  return WINDOW_KINDS.map((windowKind) => {
+    const w = windowAware.windows[windowKind];
+    const state = w.blocked === null ? `unknown(${w.classification})` : w.blocked ? `BLOCKED(${w.utilization})` : `ok(${w.utilization})`;
+    return `${windowKind}=${state}`;
+  }).join(" ");
+}
+
 /** Renders the reset window for a skip line: when the limit frees up, and how long that is. */
 function describeReset(usage, nowMs) {
   if (!usage || usage.resetsAtMs === null || usage.resetsAtMs === undefined) {
@@ -142,6 +175,8 @@ export function createAutoLaunchPoller({
   intervalMs = autoLaunchIntervalMsFromEnv(),
   usageMax = autoLaunchUsageMaxFromEnv(),
   readUsage = readUsageSnapshot,
+  readUsageTelemetryFn = readUsageTelemetry,
+  enforcementEnabled = admissionEnforcementEnabledFromEnv(),
   launchFn = launchCardRun,
   now = () => Date.now(),
   logger = console
@@ -164,7 +199,31 @@ export function createAutoLaunchPoller({
     } catch (err) {
       return skip(`usage could not be determined: ${err.message}`);
     }
-    if (usage.utilization === null || usage.utilization === undefined) {
+
+    // WIP gate T-D (launch-time contracts, 2026-09-14): read the 5-hour/weekly windows
+    // independently (T-0367) and log the comparison against the legacy newest-event decision
+    // above, on every tick, regardless of configuration -- this is what lets the difference be
+    // judged from evidence before anyone flips WIP_GATE_ENFORCEMENT_ENABLED. Bounded/failure-
+    // isolated: a telemetry read failure here can never affect the legacy gate's own decision.
+    let windowAware = null;
+    try {
+      const telemetryReadings = await readUsageTelemetryFn({ runsDir, now: now() });
+      windowAware = evaluateWindowAwareUsageGate({ telemetryReadings, usageMax });
+      logger.log(
+        `${LOG_PREFIX}: usage gate comparison -- legacy(newest-event)=${usage.utilization ?? "unknown"} ` +
+          `window-aware=[${describeWindowAwareGate(windowAware)}]`
+      );
+    } catch (err) {
+      logger.log(`${LOG_PREFIX}: window-aware usage comparison unavailable: ${err.message}`);
+    }
+
+    if (enforcementEnabled && windowAware) {
+      // Replaces the legacy gate entirely under the flag -- this card never enables it on the
+      // live board (see the "Do not" list); default configuration never reaches this branch.
+      if (windowAware.blocked) {
+        return skip(`window-aware usage gate blocked (enforcement mode): ${windowAware.blockedWindows.join(", ")}`);
+      }
+    } else if (usage.utilization === null || usage.utilization === undefined) {
       // Genuinely ABSENT telemetry is not the same as a signal we failed to read, and the
       // difference decides whether skipping protects anything.
       //

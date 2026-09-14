@@ -45,6 +45,10 @@ function makePoller({
   usage = { utilization: 0, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed" },
   launchFn = vi.fn(async ({ id }) => makeTask({ id })),
   logger = makeLogger(),
+  readUsageTelemetryFn = vi.fn(async () => ({
+    five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0, resetElapsed: false },
+    seven_day: { windowKind: "seven_day", classification: "measured", utilization: 0, resetElapsed: false }
+  })),
   ...overrides
 } = {}) {
   const store = makeStore(tasks);
@@ -58,11 +62,12 @@ function makePoller({
     intervalMs: 1000,
     usageMax: 0.8,
     readUsage,
+    readUsageTelemetryFn,
     launchFn,
     logger,
     ...overrides
   });
-  return { poller, store, orchestrator, readUsage, launchFn, logger };
+  return { poller, store, orchestrator, readUsage, readUsageTelemetryFn, launchFn, logger };
 }
 
 /** Every log line the poller emits carries this prefix, so a skip reason is greppable in the journal. */
