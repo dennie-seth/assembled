@@ -380,8 +380,12 @@ describe("launch reservation reconciliation on startup (WIP gate T-D)", () => {
     try {
       malformedBoard = await startBoardServer({ tasksDir: dir, port: 0 });
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("corrupt.reservation.json"));
-      // The well-formed dangling lease is still reconciled even though a malformed one sits beside it.
-      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+      // The well-formed dangling lease is still reconciled even though a malformed one sits beside
+      // it -- read its lease file directly, since listActiveReservations itself would still throw
+      // with the malformed file left (on purpose) in the pool.
+      const leasePath = path.join(runsDir, ".launch-reservations", "T-0062-execexec-crashed-invinv-crashed.reservation.json");
+      const leaseOnDisk = JSON.parse(await fs.readFile(leasePath, "utf8"));
+      expect(leaseOnDisk.released).toBe(true);
     } finally {
       errorSpy.mockRestore();
       if (malformedBoard) await malformedBoard.close();

@@ -326,7 +326,13 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
   }
 
   it("reserves budget and records an advisory decision before launching, without refusing or delaying it", async () => {
-    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    // Held in flight (CI + startup follow-up, 2026-09-14): a mocked runCard that settles
+    // immediately can release its lease before this assertion runs, since the fire-and-forget
+    // reconciliation chain races the test's own await. Holding it open until after the
+    // assertions makes the lease/advisory-file counts deterministic by construction.
+    let resolveRun;
+    const runCard = vi.fn(() => new Promise((resolve) => (resolveRun = resolve)));
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })], { runCard });
     await launchCardRun({ orchestrator, id: "T-0001" });
     expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
 
@@ -336,6 +342,8 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
 
     const advisoryFiles = (await fs.readdir(runsDir)).filter((f) => f.endsWith(".advisory.json"));
     expect(advisoryFiles).toHaveLength(1);
+
+    resolveRun();
   });
 
   it("releases the reservation and attaches a completed outcome once the run finishes successfully", async () => {
@@ -408,10 +416,15 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
   });
 
   it("two simultaneous controlled launches (different cards) cannot reserve the same remaining capacity -- each gets its own lease, and the sum reflects both", async () => {
-    const orchestrator = makeAdvisoryOrchestrator([
-      makeTask({ id: "T-0001", agent: "infra" }),
-      makeTask({ id: "T-0002", agent: "infra" })
-    ]);
+    // Held in flight (CI + startup follow-up, 2026-09-14): see the identical note on the
+    // single-launch test above -- a run that finishes and releases its lease before this
+    // assertion runs would undercount the pool. This is the exact test that flaked in CI.
+    const resolvers = [];
+    const runCard = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+    const orchestrator = makeAdvisoryOrchestrator(
+      [makeTask({ id: "T-0001", agent: "infra" }), makeTask({ id: "T-0002", agent: "infra" })],
+      { runCard }
+    );
 
     await Promise.all([launchCardRun({ orchestrator, id: "T-0001" }), launchCardRun({ orchestrator, id: "T-0002" })]);
 
@@ -427,6 +440,8 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     expect(byCard["T-0001"]).toBeGreaterThan(0);
     expect(byCard["T-0002"]).toBeGreaterThan(0);
     expect(byCard["T-0001"]).toBeCloseTo(byCard["T-0002"]);
+
+    resolvers.forEach((resolve) => resolve());
   });
 
   it("T-0370 (Codex finding 3): a never-settling ensureExecutionIdFn cannot hang the launch -- runCard is still called once the bound elapses", async () => {
@@ -504,10 +519,15 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
   });
 
   it("T-0370 (Codex finding 1): two DIFFERENT launches through the real launchCardRun boundary are serialized -- the pool is never overbooked by the recorded decisions", async () => {
-    const orchestrator = makeAdvisoryOrchestrator([
-      makeTask({ id: "T-0001", agent: "infra" }),
-      makeTask({ id: "T-0002", agent: "infra" })
-    ]);
+    // Held in flight (CI + startup follow-up, 2026-09-14): see the identical note on the two
+    // tests above -- the second decision must see the first's still-active lease, which a run
+    // that's already finished and released by the time it runs would falsify.
+    const resolvers = [];
+    const runCard = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+    const orchestrator = makeAdvisoryOrchestrator(
+      [makeTask({ id: "T-0001", agent: "infra" }), makeTask({ id: "T-0002", agent: "infra" })],
+      { runCard }
+    );
 
     // Wraps the REAL buildLaunchDecide (production logic, not hand-composed primitives -- see
     // Codex's own note that the prior race probe overbooked by construction because it never
@@ -537,5 +557,7 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     // shared, stale empty pool, which is what would let the combined demand overbook capacity.
     const sawOthersReservation = [a, b].filter((r) => r.reservedUnspentCostUsd > 0);
     expect(sawOthersReservation).toHaveLength(1);
+
+    resolvers.forEach((resolve) => resolve());
   });
 });

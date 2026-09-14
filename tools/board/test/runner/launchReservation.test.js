@@ -231,8 +231,11 @@ describe("reconcileReservationsOnStartup -- T-0370 follow-up: board startup is n
     const result = await reconcileReservationsOnStartup({ runsDir, store, logger });
 
     // The readable dangling lease is still released even though an unreadable one sits beside it.
+    // (listActiveReservations itself would still throw here -- the malformed file is left in the
+    // pool on purpose -- so read the specific lease file directly instead.)
     expect(result.released).toEqual([expect.objectContaining({ cardId: "T-0001" })]);
-    expect(await listActiveReservations({ runsDir })).toEqual([]);
+    const leaseOnDisk = JSON.parse(await fs.readFile(reservationLeasePath(runsDir, key({ cardId: "T-0001" })), "utf8"));
+    expect(leaseOnDisk.released).toBe(true);
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("corrupt.reservation.json"));
 
     // The malformed file itself is left exactly as it was -- never deleted or rewritten.
