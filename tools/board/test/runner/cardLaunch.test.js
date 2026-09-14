@@ -315,4 +315,26 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     await launchCardRun({ orchestrator, id: "T-0001" });
     expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
   });
+
+  it("two simultaneous controlled launches (different cards) cannot reserve the same remaining capacity -- each gets its own lease, and the sum reflects both", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([
+      makeTask({ id: "T-0001", agent: "infra" }),
+      makeTask({ id: "T-0002", agent: "infra" })
+    ]);
+
+    await Promise.all([launchCardRun({ orchestrator, id: "T-0001" }), launchCardRun({ orchestrator, id: "T-0002" })]);
+
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0002");
+
+    const reservations = await listActiveReservations({ runsDir });
+    expect(reservations).toHaveLength(2);
+    const byCard = Object.fromEntries(reservations.map((r) => [r.cardId, r.reservedCostUsd]));
+    // Neither launch's reservation write clobbered the other's -- both are present with their
+    // own full reserved amount, and a later admission check reading `reservedUnspentCostUsd`
+    // sees the sum of both, never just one.
+    expect(byCard["T-0001"]).toBeGreaterThan(0);
+    expect(byCard["T-0002"]).toBeGreaterThan(0);
+    expect(byCard["T-0001"]).toBeCloseTo(byCard["T-0002"]);
+  });
 });
