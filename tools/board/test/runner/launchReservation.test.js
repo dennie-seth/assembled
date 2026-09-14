@@ -8,8 +8,10 @@ import {
   releaseReservation,
   listActiveReservations,
   sumActiveReservedCostUsd,
+  remainingReservedCostUsd,
   reconcileReservationsOnStartup,
-  DuplicateReservationError
+  DuplicateReservationError,
+  ReservationPoolReadError
 } from "../../src/runner/launchReservation.js";
 
 let runsDir;
@@ -98,6 +100,52 @@ describe("listActiveReservations / sumActiveReservedCostUsd", () => {
     const missing = path.join(runsDir, "never-created");
     expect(await listActiveReservations({ runsDir: missing })).toEqual([]);
     expect(sumActiveReservedCostUsd(await listActiveReservations({ runsDir: missing }))).toBe(0);
+  });
+});
+
+describe("remainingReservedCostUsd -- T-0370 fix round finding 6: a live reservation is counted at its REMAINING future cost", () => {
+  it("subtracts what the execution has already charged from the raw reserved amount", () => {
+    expect(remainingReservedCostUsd({ reservedCostUsd: 10 }, 4)).toBe(6);
+  });
+
+  it("never goes negative when the execution charged more than was reserved", () => {
+    expect(remainingReservedCostUsd({ reservedCostUsd: 10 }, 15)).toBe(0);
+  });
+
+  it("treats a non-numeric reservedCostUsd as nothing reserved, and a non-numeric spend as nothing spent", () => {
+    expect(remainingReservedCostUsd({ reservedCostUsd: null }, 4)).toBe(0);
+    expect(remainingReservedCostUsd({ reservedCostUsd: 10 }, null)).toBe(10);
+  });
+});
+
+describe("listActiveReservations -- T-0370 fix round finding 1: an unreadable/malformed lease never silently disappears", () => {
+  it("throws ReservationPoolReadError instead of silently skipping a malformed lease file", async () => {
+    await reserveLaunchSlot({ runsDir, ...key({ cardId: "T-0001" }), owner: "a", reservedCostUsd: 2 });
+    await fs.writeFile(path.join(runsDir, ".launch-reservations", "corrupt.reservation.json"), "{not json", "utf8");
+
+    await expect(listActiveReservations({ runsDir })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+
+  it("throws ReservationPoolReadError (never an empty pool) when the reservation directory can't be listed for a reason other than ENOENT", async () => {
+    await reserveLaunchSlot({ runsDir, ...key({ cardId: "T-0001" }), owner: "a", reservedCostUsd: 2 });
+    const readdirFn = async () => {
+      throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    };
+    await expect(listActiveReservations({ runsDir, readdirFn })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+});
+
+describe("reserveLaunchSlot -- T-0370 fix round finding 1: atomic write", () => {
+  it("never leaves a half-written lease visible at its final path even if the write is interrupted after the content lands on disk but before the final link", async () => {
+    // Simulate a crash between "temp file fully written" and "linked into place": the caller
+    // sees the write fail, and the final path must not exist at all -- not present-but-truncated.
+    const linkFn = async () => {
+      throw new Error("simulated crash before link");
+    };
+    await expect(reserveLaunchSlot({ runsDir, ...key(), owner: "a", reservedCostUsd: 2, linkFn })).rejects.toThrow(
+      "simulated crash before link"
+    );
+    await expect(fs.readFile(reservationLeasePath(runsDir, key()), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
