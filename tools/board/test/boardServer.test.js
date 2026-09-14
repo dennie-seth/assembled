@@ -356,6 +356,64 @@ describe("launch reservation reconciliation on startup (WIP gate T-D)", () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("T-0370 follow-up: starts successfully with a malformed lease file in .launch-reservations, logs the problem, and still releases a well-formed dangling lease beside it", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-reservation-malformed-"));
+    await fs.writeFile(
+      path.join(dir, "T-0062.md"),
+      makeTaskRaw({ id: "T-0062", status: "blocked", title: "Crashed mid-launch" }),
+      "utf8"
+    );
+    const runsDir = path.join(dir, ".runs");
+    await reserveLaunchSlot({
+      runsDir,
+      cardId: "T-0062",
+      executionId: "exec-crashed",
+      invocationId: "inv-crashed",
+      owner: "cardLaunch:T-0062",
+      reservedCostUsd: 3
+    });
+    await fs.writeFile(path.join(runsDir, ".launch-reservations", "corrupt.reservation.json"), "{trunc", "utf8");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let malformedBoard;
+    try {
+      malformedBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("corrupt.reservation.json"));
+      // The well-formed dangling lease is still reconciled even though a malformed one sits beside it.
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+      if (malformedBoard) await malformedBoard.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T-0370 follow-up: starts successfully when the reservation directory itself can't be listed, and logs the problem", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-reservation-unlistable-"));
+    await fs.writeFile(
+      path.join(dir, "T-0063.md"),
+      makeTaskRaw({ id: "T-0063", status: "blocked", title: "Unreadable pool" }),
+      "utf8"
+    );
+    const runsDir = path.join(dir, ".runs");
+    await fs.mkdir(runsDir, { recursive: true });
+    // A regular file where the reservation directory should be -- readdir fails with ENOTDIR
+    // (not ENOENT), exercising "the directory itself can't be listed" without depending on
+    // platform-specific permission bits.
+    await fs.writeFile(path.join(runsDir, ".launch-reservations"), "not a directory", "utf8");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let unlistableBoard;
+    try {
+      unlistableBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      if (unlistableBoard) await unlistableBoard.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("auto-pull poller wiring", () => {

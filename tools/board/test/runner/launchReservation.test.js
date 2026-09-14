@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -217,5 +217,40 @@ describe("reconcileReservationsOnStartup", () => {
     const active = await listActiveReservations({ runsDir });
     expect(active.map((r) => r.cardId)).toEqual(["T-0001"]);
     expect(sumActiveReservedCostUsd(active)).toBe(2);
+  });
+});
+
+describe("reconcileReservationsOnStartup -- T-0370 follow-up: board startup is never blocked by an unreadable reservation pool", () => {
+  it("logs and skips a malformed lease file instead of throwing ReservationPoolReadError, and still reconciles a well-formed dangling lease beside it", async () => {
+    await reserveLaunchSlot({ runsDir, ...key({ cardId: "T-0001" }), owner: "a", reservedCostUsd: 4 });
+    await fs.writeFile(path.join(runsDir, ".launch-reservations", "corrupt.reservation.json"), "{not json", "utf8");
+    const store = { get: async (id) => (id === "T-0001" ? { id, status: "blocked" } : null) };
+    const errorSpy = vi.fn();
+    const logger = { log: vi.fn(), error: errorSpy };
+
+    const result = await reconcileReservationsOnStartup({ runsDir, store, logger });
+
+    // The readable dangling lease is still released even though an unreadable one sits beside it.
+    expect(result.released).toEqual([expect.objectContaining({ cardId: "T-0001" })]);
+    expect(await listActiveReservations({ runsDir })).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("corrupt.reservation.json"));
+
+    // The malformed file itself is left exactly as it was -- never deleted or rewritten.
+    const corruptContents = await fs.readFile(path.join(runsDir, ".launch-reservations", "corrupt.reservation.json"), "utf8");
+    expect(corruptContents).toBe("{not json");
+  });
+
+  it("logs and continues, reconciling nothing, when the reservation directory itself can't be listed", async () => {
+    const readdirFn = async () => {
+      throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    };
+    const store = { get: async () => null };
+    const errorSpy = vi.fn();
+    const logger = { log: vi.fn(), error: errorSpy };
+
+    const result = await reconcileReservationsOnStartup({ runsDir, store, logger, readdirFn });
+
+    expect(result.released).toEqual([]);
+    expect(errorSpy).toHaveBeenCalled();
   });
 });
