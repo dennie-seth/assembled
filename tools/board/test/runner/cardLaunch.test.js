@@ -445,6 +445,64 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     }
   });
 
+  it("T-0370 (Codex finding 2): defaults to enforcement OFF -- a fresh launchCardRun never refuses on the admission hold alone", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("T-0370 (Codex finding 2): under the enforcement flag, an explicit admission hold refuses the launch and releases the reservation it provisionally wrote", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    // No unit-conversion evidence exists in this test's default config, so the real admission
+    // pipeline always holds (units_not_comparable) -- the intended fail-safe, not a bug.
+    await expect(launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true })).rejects.toMatchObject({
+      name: "CardLaunchError",
+      statusCode: 409
+    });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+    expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+  });
+
+  it("T-0370 (Codex finding 2): under enforcement, an active overrun stop refuses a brand-new admission", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const buildLaunchDecideFn = () => async () => ({
+      estimate: { value: 0.1, unit: "usd" },
+      telemetryReadings: {},
+      reason: "stub",
+      admission: { admitted: true, windows: {} }
+    });
+    const evaluateOverrunPolicyFn = vi.fn(async () => ({ overrun: true, reason: "estimate overrun: 5/5 exceeded" }));
+
+    await expect(
+      launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn, evaluateOverrunPolicyFn })
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/overrun/i) });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("T-0370 (Codex finding 2): under enforcement, an overrun stop still allows a bounded continuation of an already-admitted execution", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const buildLaunchDecideFn = () => async () => ({
+      estimate: { value: 0.1, unit: "usd" },
+      telemetryReadings: {},
+      reason: "stub",
+      admission: { admitted: true, windows: {} }
+    });
+    const evaluateOverrunPolicyFn = vi.fn(async () => ({ overrun: true, reason: "estimate overrun" }));
+    const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+    const listCardUsageEntriesFn = vi.fn(async () => [{ executionId: "exec-1", costUsd: 0.2, complete: true, outcome: "success" }]);
+
+    await launchCardRun({
+      orchestrator,
+      id: "T-0001",
+      enforcementEnabledFn: () => true,
+      buildLaunchDecideFn,
+      evaluateOverrunPolicyFn,
+      ensureExecutionIdFn,
+      listCardUsageEntriesFn
+    });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
   it("T-0370 (Codex finding 1): two DIFFERENT launches through the real launchCardRun boundary are serialized -- the pool is never overbooked by the recorded decisions", async () => {
     const orchestrator = makeAdvisoryOrchestrator([
       makeTask({ id: "T-0001", agent: "infra" }),
