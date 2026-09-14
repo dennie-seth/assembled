@@ -316,6 +316,28 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
   });
 
+  it("T-0370 (Codex finding 7): reserves against the card's own max_attempts override, not the fixed MAX_AUTO_RETRY_ATTEMPTS", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra", max_attempts: 20 })]);
+    let passedMaxAttempts = null;
+    const buildLaunchDecideFn = vi.fn((args) => {
+      passedMaxAttempts = args.maxAttempts;
+      return async () => ({ estimate: { value: null, unit: "usd" }, telemetryReadings: {}, reason: "stub", admission: null });
+    });
+    await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+    expect(passedMaxAttempts).toBe(20);
+  });
+
+  it("T-0370 (Codex finding 7): falls back to the runner's own MAX_AUTO_RETRY_ATTEMPTS default when the card carries no override", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    let passedMaxAttempts = null;
+    const buildLaunchDecideFn = vi.fn((args) => {
+      passedMaxAttempts = args.maxAttempts;
+      return async () => ({ estimate: { value: null, unit: "usd" }, telemetryReadings: {}, reason: "stub", admission: null });
+    });
+    await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+    expect(passedMaxAttempts).toBe(5);
+  });
+
   it("two simultaneous controlled launches (different cards) cannot reserve the same remaining capacity -- each gets its own lease, and the sum reflects both", async () => {
     const orchestrator = makeAdvisoryOrchestrator([
       makeTask({ id: "T-0001", agent: "infra" }),
