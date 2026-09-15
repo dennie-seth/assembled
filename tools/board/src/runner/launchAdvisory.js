@@ -1,7 +1,7 @@
 import { decideLaunchAdvisory, recordAdvisoryDecision } from "./advisoryLogger.js";
 import { estimateCost, DEFAULT_COVERAGE_TARGET, indeterminateEstimate } from "./costEstimator.js";
 import { readUsageTelemetry, WINDOW_KINDS } from "./usageTelemetry.js";
-import { evaluateAdmission } from "./admissionDecision.js";
+import { evaluateAdmission as defaultEvaluateAdmission } from "./admissionDecision.js";
 import { listCardUsageEntries, executionTotal } from "./usageLedger.js";
 import { listActiveReservations, remainingReservedCostUsd, reserveLaunchSlot } from "./launchReservation.js";
 import { withTimeout } from "./boundedAwait.js";
@@ -47,7 +47,11 @@ export async function sumActiveReservedRemainingCostUsd({ runsDir, reservations,
       return null;
     }
     const spent = executionTotal(entries, reservation.executionId).knownCostUsd;
-    total += remainingReservedCostUsd(reservation, spent);
+    const remaining = remainingReservedCostUsd(reservation, spent);
+    // T-0370 fix round 2 finding 5: a single reservation with an unknown own cost makes the WHOLE
+    // sum an explicit unknown -- never silently treated as 0 (see remainingReservedCostUsd).
+    if (remaining === null) return null;
+    total += remaining;
   }
   return total;
 }
@@ -210,6 +214,7 @@ export function buildLaunchDecide({
   listCardUsageEntriesFn = listCardUsageEntries,
   listActiveReservationsFn = listActiveReservations,
   sumActiveReservedRemainingCostUsdFn = sumActiveReservedRemainingCostUsd,
+  evaluateAdmissionFn = defaultEvaluateAdmission,
   reserveLaunchSlotFn = reserveLaunchSlot,
   decideLaunchAdvisoryFn = decideLaunchAdvisory,
   estimateCostFn = estimateCost,
@@ -243,7 +248,14 @@ export function buildLaunchDecide({
       alreadyChargedUsd = 0;
     }
 
-    const reservedCostUsd = typeof reservedCycle.value === "number" ? Math.max(0, reservedCycle.value - alreadyChargedUsd) : 0;
+    // T-0370 fix round 2 finding 3/5: the lease stores the REMAINING (future) cost -- already net
+    // of what this execution has charged so far -- alongside the `chargedAtReservationUsd`
+    // baseline it was computed against, so a later reader (`remainingReservedCostUsd`) subtracts
+    // only spend charged AFTER this point, never this same prior spend a second time. An unknown
+    // reserved-cycle estimate publishes as an explicit `null` cost, never a fabricated `0` --
+    // finding 5: a launch whose own cost is unknown must count as unknown, not free, to every
+    // later admission.
+    const reservedCostUsd = typeof reservedCycle.value === "number" ? Math.max(0, reservedCycle.value - alreadyChargedUsd) : null;
 
     // T-0370 fix round (Codex review, finding 1): read-other-reservations, evaluate admission,
     // and write THIS launch's own lease as one atomic turn -- see `withCapacityLock`'s docstring.
@@ -273,9 +285,15 @@ export function buildLaunchDecide({
           ? null
           : await sumActiveReservedRemainingCostUsdFn({ runsDir, reservations: otherActiveReservations, listCardUsageEntriesFn });
 
-      const admission = evaluateAdmission({
+      // T-0370 fix round 2 finding 3: the candidate's OWN admission input is its future
+      // (remaining) cost -- the same `reservedCostUsd` this launch is about to reserve/publish --
+      // not the full, gross `reservedCycle`, which would double-count usage this execution has
+      // already charged (spec §4: "predicted_remaining_cost_upper_bound is FUTURE consumption").
+      const candidateEstimate = typeof reservedCostUsd === "number" ? { ...reservedCycle, value: reservedCostUsd } : reservedCycle;
+
+      const admission = evaluateAdmissionFn({
         telemetryReadings: implementerAdvisory.telemetryReadings,
-        estimate: reservedCycle,
+        estimate: candidateEstimate,
         reservedUnspentCostUsd,
         config: admissionConfig
       });
@@ -295,6 +313,7 @@ export function buildLaunchDecide({
           invocationId,
           owner,
           reservedCostUsd,
+          chargedAtReservationUsd: alreadyChargedUsd,
           windows: [...WINDOW_KINDS],
           reason: `reserved execution cycle (implementer+review x${maxAttempts}) for ${cardId}`,
           now
