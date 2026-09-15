@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
-import { DEFAULT_ADMISSION_CONFIG, HOLD_REASON } from "../../src/runner/admissionDecision.js";
+import { DEFAULT_ADMISSION_CONFIG, HOLD_REASON, evaluateAdmission } from "../../src/runner/admissionDecision.js";
 import { decideLaunchAdvisory } from "../../src/runner/advisoryLogger.js";
 import {
   DEFAULT_ADVISORY_TIMEOUT_MS,
@@ -128,6 +128,7 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
       })),
       listCardUsageEntriesFn: vi.fn(async () => []),
       listActiveReservationsFn: vi.fn(async () => []),
+      evaluateAdmissionFn: vi.fn((args) => evaluateAdmission(args)),
       reserveLaunchSlotFn: vi.fn(async (args) => ({ ...args, released: false })),
       recordAdvisoryDecisionFn: vi.fn(async (args) => ({ ...args, outcome: null })),
       ...overrides
@@ -393,6 +394,53 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
         })
       });
       expect(total).toBeNull();
+    });
+
+    // T-0370 fix round 2 finding 5: "in every helper that sums lease costs, never 0".
+    it("returns null the instant any single active reservation's own reservedCostUsd is unknown", async () => {
+      const total = await sumActiveReservedRemainingCostUsd({
+        runsDir: "/irrelevant",
+        reservations: [{ cardId: "T-0001", executionId: "e1", reservedCostUsd: null }],
+        listCardUsageEntriesFn: vi.fn(async () => [])
+      });
+      expect(total).toBeNull();
+    });
+  });
+
+  describe("T-0370 fix round 2 finding 3 -- prior spend is subtracted exactly once, under the documented convention", () => {
+    it("writes the lease with a chargedAtReservationUsd baseline equal to what this execution had already charged", async () => {
+      const deps = baseDeps({
+        listCardUsageEntriesFn: vi.fn(async () => [
+          { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.3, complete: true, outcome: "quota_stop" }
+        ])
+      });
+      await buildLaunchDecide(deps)();
+      const reserveCall = deps.reserveLaunchSlotFn.mock.calls[0][0];
+      expect(reserveCall.chargedAtReservationUsd).toBeCloseTo(0.3);
+    });
+
+    it("the candidate's own admission input is the future (remaining) cost, not the full reserved cycle", async () => {
+      const deps = baseDeps({
+        listCardUsageEntriesFn: vi.fn(async () => [
+          { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.3, complete: true, outcome: "quota_stop" }
+        ]),
+        evaluateAdmissionFn: vi.fn((args) => evaluateAdmission(args))
+      });
+      await buildLaunchDecide(deps)();
+      const call = deps.evaluateAdmissionFn.mock.calls[0][0];
+      // reserved execution cycle (0.5+0.75)*5=6.25, minus 0.3 already charged -> the candidate's
+      // OWN admission input must be 5.95, never the full, gross 6.25.
+      expect(call.estimate.value).toBeCloseTo(6.25 - 0.3);
+    });
+  });
+
+  describe("T-0370 fix round 2 finding 5 -- a launch's own unknown cost estimate publishes as an explicit unknown, never 0", () => {
+    it("writes the lease with reservedCostUsd: null (not 0) when the reserved execution cycle estimate is itself unknown", async () => {
+      const deps = baseDeps({ type: null });
+      const record = await buildLaunchDecide(deps)();
+      const reserveCall = deps.reserveLaunchSlotFn.mock.calls[0][0];
+      expect(reserveCall.reservedCostUsd).toBeNull();
+      expect(record.estimate.value).toBeNull();
     });
   });
 });
