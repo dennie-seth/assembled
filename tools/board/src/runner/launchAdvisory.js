@@ -141,7 +141,19 @@ export function reservedExecutionCycleEstimate({ implementerEstimate, reviewEsti
  *     `reconcileLaunchOutcome` always finds a decision to attach an outcome to, even one that
  *     never got past a timeout.
  */
-export function withBoundedDecide(decideFn, { timeoutMs = DEFAULT_ADVISORY_TIMEOUT_MS, fallback, onFallback, logger = console } = {}) {
+/**
+ * Bounds `onFallback`'s OWN persistence write (T-0370 fix round 2 finding 1: "the whole bounded
+ * advisory path -- the decision, the timeout/error fallback AND the fallback's own persistence --
+ * settles within a finite, injectable bound"). Defaults to the same bound as the decide() call
+ * itself -- there is no principled reason the fallback's own write needs a longer allowance than
+ * the work it stands in for.
+ */
+export const DEFAULT_FALLBACK_PERSIST_TIMEOUT_MS = DEFAULT_ADVISORY_TIMEOUT_MS;
+
+export function withBoundedDecide(
+  decideFn,
+  { timeoutMs = DEFAULT_ADVISORY_TIMEOUT_MS, fallbackTimeoutMs = DEFAULT_FALLBACK_PERSIST_TIMEOUT_MS, fallback, onFallback, logger = console } = {}
+) {
   return function boundedDecide() {
     const cancelToken = { cancelled: false };
     return withTimeout(() => decideFn(cancelToken), {
@@ -152,10 +164,17 @@ export function withBoundedDecide(decideFn, { timeoutMs = DEFAULT_ADVISORY_TIMEO
         cancelToken.cancelled = true;
         const fallbackRecord = fallback(reason, err);
         if (!onFallback) return fallbackRecord;
-        return Promise.resolve()
-          .then(() => onFallback(fallbackRecord))
-          .catch(() => {})
-          .then(() => fallbackRecord);
+        // T-0370 fix round 2 finding 1: `withTimeout`'s own `resolve(fallback(...))` would
+        // otherwise wait on whatever `onFallback` returns forever -- the outer timeout has
+        // already fired by this point and supplies no further deadline of its own. Wrapping this
+        // call in its OWN `withTimeout` gives it one: a hung or throwing `onFallback` still lets
+        // this whole chain settle with `fallbackRecord`, it just couldn't get it persisted.
+        return withTimeout(() => onFallback(fallbackRecord), {
+          timeoutMs: fallbackTimeoutMs,
+          logger,
+          label: "wip-gate advisory: onFallback() persistence",
+          fallback: () => undefined
+        }).then(() => fallbackRecord);
       }
     });
   };
