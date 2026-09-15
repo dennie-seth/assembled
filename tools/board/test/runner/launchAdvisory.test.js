@@ -93,6 +93,56 @@ describe("withBoundedDecide -- failure isolation", () => {
     expect(DEFAULT_ADVISORY_TIMEOUT_MS).toBeGreaterThan(0);
     expect(DEFAULT_ADVISORY_TIMEOUT_MS).toBeLessThan(60_000);
   });
+
+  describe("T-0370 fix round 2 finding 1 -- the fallback's OWN persistence (onFallback) is itself bounded", () => {
+    it("resolves with the fallback record once onFallback completes, when it settles within its own bound", async () => {
+      const onFallback = vi.fn(async () => {});
+      const bounded = withBoundedDecide(
+        async () => {
+          throw new Error("boom");
+        },
+        { timeoutMs: 1000, fallbackTimeoutMs: 1000, fallback: (reason) => `fallback:${reason}`, onFallback }
+      );
+      await expect(bounded()).resolves.toBe("fallback:error");
+      expect(onFallback).toHaveBeenCalled();
+    });
+
+    it("still resolves with the fallback record, at a finite bound, when onFallback itself never settles -- a hung persistence write can never hang a launch", async () => {
+      vi.useFakeTimers();
+      try {
+        const bounded = withBoundedDecide(() => new Promise(() => {}), {
+          timeoutMs: 50,
+          fallbackTimeoutMs: 30,
+          fallback: (reason) => `fallback:${reason}`,
+          onFallback: () => new Promise(() => {})
+        });
+        const promise = bounded();
+        await vi.advanceTimersByTimeAsync(50 + 30 + 10);
+        await expect(promise).resolves.toBe("fallback:timeout");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("still resolves with the fallback record, at a finite bound, when onFallback itself throws", async () => {
+      vi.useFakeTimers();
+      try {
+        const bounded = withBoundedDecide(() => new Promise(() => {}), {
+          timeoutMs: 50,
+          fallbackTimeoutMs: 30,
+          fallback: (reason) => `fallback:${reason}`,
+          onFallback: () => {
+            throw new Error("disk full");
+          }
+        });
+        const promise = bounded();
+        await vi.advanceTimersByTimeAsync(50 + 30 + 10);
+        await expect(promise).resolves.toBe("fallback:timeout");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });
 
 function telemetryReadings(overrides = {}) {
