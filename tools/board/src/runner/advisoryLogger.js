@@ -135,6 +135,19 @@ async function writeAtomic(filePath, data, { writeFileFn, mkdirFn, renameFn, unl
  * hold-for-sizing/indeterminate decision) nor a finite, non-negative number -- the write-time twin
  * of `isScoreablePredictionValue`, so the logger itself can never persist a malformed prediction
  * for `measureRecordedCoverage` to later have to fail safe against (Codex review 2026-09-14).
+ *
+ * Written via exclusive create (`fs.link`, mirroring `launchReservation.js`'s `reserveLaunchSlot`),
+ * not an unconditional overwrite (T-0370 fix round 2 finding 2: "a write already in flight when
+ * cancellation happens leaves nothing behind ... a late advisory-decision write never replaces the
+ * fallback record or an outcome already attached"). `launchAdvisory.js`'s `buildLaunchDecide` can
+ * race two writes for the SAME launch identity -- its own happy-path persist, and
+ * `withBoundedDecide`'s timeout/error fallback persist -- with no coordination between them beyond
+ * whichever one's write actually lands on disk first; exclusive create makes that race safe by
+ * construction: the FIRST write to actually complete wins, and every later one for the same key
+ * (whatever its content) is silently discarded in favor of what's already there, so an outcome
+ * `recordAdvisoryOutcome` later attaches to the winning record can never be clobbered by a
+ * straggler. Returns the WINNING on-disk record either way -- the caller cannot tell, and does not
+ * need to tell, whether it was the write that landed or one that already existed.
  */
 export async function recordAdvisoryDecision({
   runsDir,
@@ -149,8 +162,9 @@ export async function recordAdvisoryDecision({
   now = () => new Date(),
   writeFileFn = fs.writeFile,
   mkdirFn = fs.mkdir,
-  renameFn = fs.rename,
-  unlinkFn = fs.unlink
+  linkFn = fs.link,
+  unlinkFn = fs.unlink,
+  readFileFn = fs.readFile
 }) {
   if (estimate.value !== null && !isScoreablePredictionValue(estimate.value)) {
     throw new Error(
@@ -172,7 +186,20 @@ export async function recordAdvisoryDecision({
     recordedAt,
     updatedAt: recordedAt
   };
-  await writeAtomic(advisoryLogPath(runsDir, { cardId, executionId, invocationId }), entry, { writeFileFn, mkdirFn, renameFn, unlinkFn });
+  const filePath = advisoryLogPath(runsDir, { cardId, executionId, invocationId });
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  await mkdirFn(path.dirname(filePath), { recursive: true });
+  await writeFileFn(tmpPath, JSON.stringify(entry, null, 2), "utf8");
+  try {
+    await linkFn(tmpPath, filePath);
+  } catch (err) {
+    if (err && err.code === "EEXIST") {
+      return JSON.parse(await readFileFn(filePath, "utf8"));
+    }
+    throw err;
+  } finally {
+    await unlinkFn(tmpPath).catch(() => {});
+  }
   return entry;
 }
 

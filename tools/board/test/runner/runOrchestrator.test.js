@@ -10,7 +10,8 @@ import {
   INACTIVITY_TIMEOUT_MS_BY_AGENT,
   PR_OPEN_GRAPHQL_MAX_ATTEMPTS,
   PR_OPEN_REST_MAX_ATTEMPTS,
-  PR_OPEN_BACKOFF_BASE_MS
+  PR_OPEN_BACKOFF_BASE_MS,
+  effectiveMaxAttempts
 } from "../../src/runner/runOrchestrator.js";
 import { crossCheckVerdict } from "../../src/runner/verdictCrossCheck.js";
 
@@ -573,6 +574,14 @@ describe("RunOrchestrator.runCard — auto-retry loop on reviewer FAIL (bounded)
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.attempts).toBe(MAX_AUTO_RETRY_ATTEMPTS);
     expect(archivedText(orchestrator, "T-0001")).toContain(`run ${MAX_AUTO_RETRY_ATTEMPTS} of ${MAX_AUTO_RETRY_ATTEMPTS}`);
+  });
+
+  it("T-0370: effectiveMaxAttempts is exported standalone so the launch boundary can share the runner's own retry allowance rule, not a fixed constant", () => {
+    expect(effectiveMaxAttempts({ max_attempts: 2 })).toBe(2);
+    expect(effectiveMaxAttempts({ max_attempts: 20 })).toBe(20);
+    expect(effectiveMaxAttempts({})).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+    expect(effectiveMaxAttempts({ max_attempts: null })).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+    expect(effectiveMaxAttempts({ max_attempts: 0 })).toBe(MAX_AUTO_RETRY_ATTEMPTS);
   });
 
   it("T-0343: a card's own max_attempts overrides MAX_AUTO_RETRY_ATTEMPTS downward -- blocks after 2 runs, not 5", async () => {

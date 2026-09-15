@@ -114,6 +114,67 @@ describe("recordAdvisoryDecision -- acceptance 6", () => {
   });
 });
 
+describe("recordAdvisoryDecision -- T-0370 fix round 2 finding 2: exclusive record creation, so a late write can never clobber an earlier one", () => {
+  it("a second call for the same launch identity does not overwrite the first -- the first recorded decision wins", async () => {
+    const first = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-race",
+      invocationId: "inv-1",
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "first (the fallback that already landed)"
+    });
+    const second = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-race",
+      invocationId: "inv-1",
+      estimate: { value: 9, unit: "usd" },
+      telemetryReadings: {},
+      reason: "second (a late write that outlived the timeout)"
+    });
+
+    expect(second.reason).toBe(first.reason);
+    const onDisk = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, { cardId: "T-0369", executionId: "exec-race", invocationId: "inv-1" }), "utf8"));
+    expect(onDisk.reason).toBe("first (the fallback that already landed)");
+  });
+
+  it("a late write never erases an outcome already attached to the first-recorded decision", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-race2",
+      invocationId: "inv-1",
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "first"
+    });
+    await recordAdvisoryOutcome({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-race2",
+      invocationId: "inv-1",
+      outcome: { actualCostUsd: 2, costKind: "exact" }
+    });
+
+    const late = await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0369",
+      executionId: "exec-race2",
+      invocationId: "inv-1",
+      estimate: { value: 9, unit: "usd" },
+      telemetryReadings: {},
+      reason: "late"
+    });
+
+    expect(late.outcome).toEqual({ actualCostUsd: 2, costKind: "exact" });
+    const onDisk = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, { cardId: "T-0369", executionId: "exec-race2", invocationId: "inv-1" }), "utf8"));
+    expect(onDisk.outcome).toEqual({ actualCostUsd: 2, costKind: "exact" });
+    expect(onDisk.reason).toBe("first");
+  });
+});
+
 describe("recordAdvisoryOutcome -- eventual outcome is attached after the fact", () => {
   it("updates a previously recorded decision with its eventual outcome", async () => {
     await recordAdvisoryDecision({
