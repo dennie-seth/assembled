@@ -97,6 +97,12 @@ export async function reserveLaunchSlot({
   reservedCostUsd,
   windows = [],
   reason = null,
+  // T-0370 fix round 2 finding 3: "prior spend subtracted exactly once, under one documented
+  // convention" -- this lease stores the REMAINING (already net of prior spend) `reservedCostUsd`,
+  // alongside the lifetime-charged baseline it was computed against. A reader (`remainingReservedCostUsd`)
+  // subtracts only spend charged AFTER this baseline, never the lifetime spend a second time. See
+  // docs/wip-gate-admission.md.
+  chargedAtReservationUsd = 0,
   now = () => new Date(),
   writeFileFn = fs.writeFile,
   mkdirFn = fs.mkdir,
@@ -111,6 +117,7 @@ export async function reserveLaunchSlot({
     invocationId,
     owner,
     reservedCostUsd,
+    chargedAtReservationUsd,
     windows,
     reason,
     released: false,
@@ -172,6 +179,24 @@ export async function releaseReservation({
 }
 
 /**
+ * Whether a parsed lease is a shape `listActiveReservations` can trust (T-0370 fix round 2 finding
+ * 5: "the admission-time lease reader validates every parsed lease"). Rejects a non-object (JSON
+ * `null`, a number, an array/string), a missing or non-string identity field, an identity that
+ * doesn't match the file it was read from (the file name IS the lease's key -- a mismatch means
+ * either corruption or a lease that was copied/renamed into place, neither of which this reader
+ * can trust), and a `released` that isn't a boolean. Deliberately silent on `reservedCostUsd`'s
+ * own validity -- that is a SEPARATE concern (`isKnownReservedCostUsd`, handled by the cost-summing
+ * helpers), since an unreleased lease with an unknown cost is still a structurally valid lease.
+ */
+function isValidLeaseShape(entry, fileName) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+  if (typeof entry.cardId !== "string" || typeof entry.executionId !== "string" || typeof entry.invocationId !== "string") return false;
+  if (typeof entry.released !== "boolean") return false;
+  const expectedFileName = `${entry.cardId}-exec${entry.executionId}-inv${entry.invocationId}.reservation.json`;
+  return expectedFileName === fileName;
+}
+
+/**
  * Shared directory walk behind both `listActiveReservations` and
  * `reconcileReservationsOnStartup` -- the two callers differ only in what they do when the pool
  * can't be fully read, never in how they read it. `onListError`/`onEntryError` decide that: throw
@@ -192,13 +217,17 @@ async function readReservationEntries({ runsDir, readdirFn, readFileFn, onListEr
     if (!name.endsWith(".reservation.json")) continue;
     let entry;
     try {
-      entry = JSON.parse(await readFileFn(path.join(reservationDir(runsDir), name), "utf8"));
+      const parsed = JSON.parse(await readFileFn(path.join(reservationDir(runsDir), name), "utf8"));
+      if (!isValidLeaseShape(parsed, name)) {
+        throw new Error(`lease has an invalid or mismatched shape`);
+      }
+      entry = parsed;
     } catch (err) {
       const fallback = onEntryError(name, err);
       if (fallback !== undefined) active.push(fallback);
       continue;
     }
-    if (entry && entry.released !== true) active.push(entry);
+    if (entry.released !== true) active.push(entry);
   }
   return active;
 }
@@ -226,25 +255,50 @@ export async function listActiveReservations({ runsDir, readdirFn = fs.readdir, 
   });
 }
 
-/** Total unspent reserved cost (USD) across a set of active reservations -- `reserved_unspent_cost` in spec §4's formula. */
-export function sumActiveReservedCostUsd(reservations) {
-  return reservations.reduce((sum, r) => sum + (typeof r.reservedCostUsd === "number" ? r.reservedCostUsd : 0), 0);
+/** Whether a lease's own `reservedCostUsd` is a validly-recorded amount -- finite and non-negative. Anything else (missing, a string, negative, `NaN`/`Infinity`) is an explicit UNKNOWN cost, never a silent 0 (T-0370 fix round 2 finding 5). */
+function isKnownReservedCostUsd(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 /**
- * A single active reservation's REMAINING future cost -- its raw `reservedCostUsd` minus what
- * its own execution has already charged in the T-A ledger (T-0370 fix round, Codex review
- * finding 6: "active reservations are counted at their remaining future cost"). Never negative
- * (an execution that ran over its own reservation still contributes 0 more to what's held back
- * from everyone else, not a negative "freed up" amount), and never lets a non-numeric input
- * fabricate a number: an unknown `reservedCostUsd` reserves nothing, an unknown spend assumes
- * nothing spent yet (the conservative direction for THIS quantity -- see `spentUsd`'s caller,
- * which itself goes indeterminate rather than 0 on a read failure).
+ * Total unspent reserved cost (USD) across a set of active reservations -- `reserved_unspent_cost`
+ * in spec §4's formula. Returns `null` -- never a silently-under-counted number -- the instant any
+ * ONE active reservation's own `reservedCostUsd` is unknown (T-0370 fix round 2 finding 5: "in
+ * every helper that sums lease costs, never 0" -- a launch whose own cost estimate was unknown at
+ * reservation time still counts as unknown, not free, to every later admission).
+ */
+export function sumActiveReservedCostUsd(reservations) {
+  let total = 0;
+  for (const r of reservations) {
+    if (!isKnownReservedCostUsd(r.reservedCostUsd)) return null;
+    total += r.reservedCostUsd;
+  }
+  return total;
+}
+
+/**
+ * A single active reservation's REMAINING future cost -- its raw `reservedCostUsd` minus whatever
+ * has been charged AFTER the baseline (`chargedAtReservationUsd`) it was written against (T-0370
+ * fix round, Codex review finding 6, and fix round 2 finding 3: "prior spend subtracted exactly
+ * once" -- `reservedCostUsd` is already net of the spend known at write time, so subtracting the
+ * execution's full lifetime spend again here would double-count it; only spend charged SINCE the
+ * lease was written reduces it further). Never negative (an execution that ran over its own
+ * reservation still contributes 0 more to what's held back from everyone else, not a negative
+ * "freed up" amount).
+ *
+ * Returns `null` -- never a silently-substituted 0 -- when `reservedCostUsd` itself is not a
+ * known amount (T-0370 fix round 2 finding 5): a launch whose own estimate was unknown at
+ * reservation time must count as an explicit unknown to every later admission, not as free
+ * capacity. An unknown `spentUsd` (a read failure upstream) assumes nothing spent yet -- the
+ * conservative direction for THIS quantity; the caller reading that spend itself goes
+ * indeterminate rather than substituting 0 on its own read failure.
  */
 export function remainingReservedCostUsd(reservation, spentUsd) {
-  const reserved = typeof reservation.reservedCostUsd === "number" ? reservation.reservedCostUsd : 0;
+  if (!isKnownReservedCostUsd(reservation.reservedCostUsd)) return null;
+  const baseline = typeof reservation.chargedAtReservationUsd === "number" ? reservation.chargedAtReservationUsd : 0;
   const spent = typeof spentUsd === "number" ? spentUsd : 0;
-  return Math.max(0, reserved - spent);
+  const spentSinceBaseline = Math.max(0, spent - baseline);
+  return Math.max(0, reservation.reservedCostUsd - spentSinceBaseline);
 }
 
 /**
