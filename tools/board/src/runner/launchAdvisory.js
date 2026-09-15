@@ -3,7 +3,7 @@ import { estimateCost, DEFAULT_COVERAGE_TARGET, indeterminateEstimate } from "./
 import { readUsageTelemetry, WINDOW_KINDS } from "./usageTelemetry.js";
 import { evaluateAdmission as defaultEvaluateAdmission } from "./admissionDecision.js";
 import { listCardUsageEntries, executionTotal } from "./usageLedger.js";
-import { listActiveReservations, remainingReservedCostUsd, reserveLaunchSlot } from "./launchReservation.js";
+import { listActiveReservations, remainingReservedCostUsd, reserveLaunchSlot, releaseReservation } from "./launchReservation.js";
 import { withTimeout } from "./boundedAwait.js";
 
 /**
@@ -235,6 +235,7 @@ export function buildLaunchDecide({
   sumActiveReservedRemainingCostUsdFn = sumActiveReservedRemainingCostUsd,
   evaluateAdmissionFn = defaultEvaluateAdmission,
   reserveLaunchSlotFn = reserveLaunchSlot,
+  releaseReservationFn = releaseReservation,
   decideLaunchAdvisoryFn = decideLaunchAdvisory,
   estimateCostFn = estimateCost,
   recordAdvisoryDecisionFn = recordAdvisoryDecision
@@ -337,6 +338,19 @@ export function buildLaunchDecide({
           reason: `reserved execution cycle (implementer+review x${maxAttempts}) for ${cardId}`,
           now
         });
+        // T-0370 fix round 2 finding 2: the write above awaited the filesystem, so the timeout
+        // could have fired -- and a hypothetical reconcileLaunchOutcome already run and found
+        // nothing to release -- while it was still in flight. A lease that lands ONLY after this
+        // decide() was already superseded would otherwise outlive the run it was for; self-release
+        // it immediately rather than leaving it dangling for nothing to ever reconcile.
+        if (cancelToken?.cancelled) {
+          logger.log(
+            `wip-gate advisory: lease for ${cardId}/${executionId}/${invocationId} landed after this decide() was already superseded -- releasing it immediately`
+          );
+          await releaseReservationFn({ runsDir, cardId, executionId, invocationId, outcome: { status: "reconciled_after_timeout" }, now }).catch(
+            () => {}
+          );
+        }
       } catch (err) {
         logger.log(`wip-gate advisory: reservation failed for ${cardId}/${executionId}/${invocationId} -- launch proceeds unaffected: ${err.message}`);
       }
