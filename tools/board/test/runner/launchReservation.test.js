@@ -101,6 +101,15 @@ describe("listActiveReservations / sumActiveReservedCostUsd", () => {
     expect(await listActiveReservations({ runsDir: missing })).toEqual([]);
     expect(sumActiveReservedCostUsd(await listActiveReservations({ runsDir: missing }))).toBe(0);
   });
+
+  // T-0370 fix round 2 finding 5: "in every helper that sums lease costs, never 0" for an unknown cost.
+  it("is an explicit unknown (null), never 0, when any active reservation's own reservedCostUsd is unknown", async () => {
+    await reserveLaunchSlot({ runsDir, ...key({ cardId: "T-0001" }), owner: "a", reservedCostUsd: 2 });
+    await reserveLaunchSlot({ runsDir, ...key({ cardId: "T-0002" }), owner: "b", reservedCostUsd: null });
+
+    const active = await listActiveReservations({ runsDir });
+    expect(sumActiveReservedCostUsd(active)).toBeNull();
+  });
 });
 
 describe("remainingReservedCostUsd -- T-0370 fix round finding 6: a live reservation is counted at its REMAINING future cost", () => {
@@ -112,9 +121,56 @@ describe("remainingReservedCostUsd -- T-0370 fix round finding 6: a live reserva
     expect(remainingReservedCostUsd({ reservedCostUsd: 10 }, 15)).toBe(0);
   });
 
-  it("treats a non-numeric reservedCostUsd as nothing reserved, and a non-numeric spend as nothing spent", () => {
-    expect(remainingReservedCostUsd({ reservedCostUsd: null }, 4)).toBe(0);
+  it("treats a non-numeric spend as nothing spent", () => {
     expect(remainingReservedCostUsd({ reservedCostUsd: 10 }, null)).toBe(10);
+  });
+
+  // T-0370 fix round 2 finding 5: a non-numeric reservedCostUsd is an explicit UNKNOWN cost, never
+  // "nothing reserved" -- this assertion changes from the round-1 value (0) because round 1's
+  // "nothing reserved" reading is exactly the unknown-as-zero bug round 2 requires fixed (a launch
+  // with an unknown cost estimate must count as unknown, not free, to every later admission).
+  it("is an explicit unknown (null), never 0, when reservedCostUsd is not a finite non-negative number", () => {
+    expect(remainingReservedCostUsd({ reservedCostUsd: null }, 4)).toBeNull();
+    expect(remainingReservedCostUsd({ reservedCostUsd: "10" }, 4)).toBeNull();
+    expect(remainingReservedCostUsd({ reservedCostUsd: -1 }, 4)).toBeNull();
+    expect(remainingReservedCostUsd({ reservedCostUsd: NaN }, 4)).toBeNull();
+  });
+});
+
+describe("remainingReservedCostUsd / reserveLaunchSlot -- T-0370 fix round 2 finding 3: prior spend subtracted exactly once", () => {
+  it("a lease written with a charged-usage baseline subtracts only spend AFTER that baseline, not the full lifetime spend again", async () => {
+    // The lease already nets out the $4 spent before it was written (cycle $7 - prior spend $4 =
+    // remaining $3, stored alongside the $4 baseline it was computed against).
+    const entry = await reserveLaunchSlot({
+      runsDir,
+      ...key(),
+      owner: "a",
+      reservedCostUsd: 3,
+      chargedAtReservationUsd: 4
+    });
+    expect(entry.chargedAtReservationUsd).toBe(4);
+
+    // A later reader passing the execution's TOTAL lifetime spend ($4 -- nothing new since the
+    // lease was written) must count the full $3 remaining, not $3 - $4 clamped to 0.
+    expect(remainingReservedCostUsd(entry, 4)).toBe(3);
+  });
+
+  it("subtracts only the spend that happened after the baseline once more usage is charged", async () => {
+    const entry = await reserveLaunchSlot({
+      runsDir,
+      ...key(),
+      owner: "a",
+      reservedCostUsd: 3,
+      chargedAtReservationUsd: 4
+    });
+    // $2 more was charged since the lease was written (total lifetime spend now $6).
+    expect(remainingReservedCostUsd(entry, 6)).toBe(1);
+  });
+
+  it("defaults chargedAtReservationUsd to 0 for a lease written without one (backward compatible with round-1 leases)", async () => {
+    const entry = await reserveLaunchSlot({ runsDir, ...key(), owner: "a", reservedCostUsd: 10 });
+    expect(entry.chargedAtReservationUsd).toBe(0);
+    expect(remainingReservedCostUsd(entry, 4)).toBe(6);
   });
 });
 
@@ -132,6 +188,62 @@ describe("listActiveReservations -- T-0370 fix round finding 1: an unreadable/ma
       throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
     };
     await expect(listActiveReservations({ runsDir, readdirFn })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+});
+
+describe("listActiveReservations -- T-0370 fix round 2 finding 5: every parsed lease is validated, not just JSON-parseable", () => {
+  async function writeRawLease(name, content) {
+    await fs.mkdir(path.join(runsDir, ".launch-reservations"), { recursive: true });
+    await fs.writeFile(path.join(runsDir, ".launch-reservations", name), content, "utf8");
+  }
+
+  it("throws ReservationPoolReadError for a lease that parses to JSON null", async () => {
+    await writeRawLease("T-0001-execexec-1-invinv-1.reservation.json", "null");
+    await expect(listActiveReservations({ runsDir })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+
+  it("throws ReservationPoolReadError for a lease that parses to a bare number", async () => {
+    await writeRawLease("T-0001-execexec-1-invinv-1.reservation.json", "42");
+    await expect(listActiveReservations({ runsDir })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+
+  it("throws ReservationPoolReadError for a lease that parses to an array", async () => {
+    await writeRawLease("T-0001-execexec-1-invinv-1.reservation.json", "[]");
+    await expect(listActiveReservations({ runsDir })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+
+  it("throws ReservationPoolReadError when the lease identity does not match its file name", async () => {
+    await writeRawLease(
+      "T-0001-execexec-1-invinv-1.reservation.json",
+      JSON.stringify({ cardId: "T-9999", executionId: "exec-1", invocationId: "inv-1", released: false, reservedCostUsd: 1 })
+    );
+    await expect(listActiveReservations({ runsDir })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+
+  it("throws ReservationPoolReadError when an identity field is missing", async () => {
+    await writeRawLease(
+      "T-0001-execexec-1-invinv-1.reservation.json",
+      JSON.stringify({ cardId: "T-0001", invocationId: "inv-1", released: false, reservedCostUsd: 1 })
+    );
+    await expect(listActiveReservations({ runsDir })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+
+  it("throws ReservationPoolReadError when released is not a boolean", async () => {
+    await writeRawLease(
+      "T-0001-execexec-1-invinv-1.reservation.json",
+      JSON.stringify({ cardId: "T-0001", executionId: "exec-1", invocationId: "inv-1", released: "no", reservedCostUsd: 1 })
+    );
+    await expect(listActiveReservations({ runsDir })).rejects.toBeInstanceOf(ReservationPoolReadError);
+  });
+
+  it("accepts a validly-shaped lease with an unknown (null) reservedCostUsd -- shape validation is independent of cost validation", async () => {
+    await writeRawLease(
+      "T-0001-execexec-1-invinv-1.reservation.json",
+      JSON.stringify({ cardId: "T-0001", executionId: "exec-1", invocationId: "inv-1", released: false, reservedCostUsd: null })
+    );
+    const active = await listActiveReservations({ runsDir });
+    expect(active).toHaveLength(1);
+    expect(active[0].reservedCostUsd).toBeNull();
   });
 });
 
@@ -255,5 +367,27 @@ describe("reconcileReservationsOnStartup -- T-0370 follow-up: board startup is n
 
     expect(result.released).toEqual([]);
     expect(errorSpy).toHaveBeenCalled();
+  });
+
+  // T-0370 fix round 2 finding 5: the new valid-JSON-but-malformed-shape cases (null, identity
+  // mismatch, non-boolean released) must be just as tolerated at startup as an unparseable file --
+  // logged and left untouched, never stopping reconciliation of a valid lease beside them.
+  it("logs and leaves a valid-JSON but malformed-shape lease untouched, and still reconciles a valid lease -- including one with an unknown cost -- beside it", async () => {
+    await reserveLaunchSlot({ runsDir, ...key({ cardId: "T-0001" }), owner: "a", reservedCostUsd: null });
+    await fs.mkdir(path.join(runsDir, ".launch-reservations"), { recursive: true });
+    await fs.writeFile(path.join(runsDir, ".launch-reservations", "T-9999-execexec-1-invinv-1.reservation.json"), "null", "utf8");
+    const store = { get: async (id) => (id === "T-0001" ? { id, status: "blocked" } : null) };
+    const errorSpy = vi.fn();
+    const logger = { log: vi.fn(), error: errorSpy };
+
+    const result = await reconcileReservationsOnStartup({ runsDir, store, logger });
+
+    expect(result.released).toEqual([expect.objectContaining({ cardId: "T-0001" })]);
+    const leaseOnDisk = JSON.parse(await fs.readFile(reservationLeasePath(runsDir, key({ cardId: "T-0001" })), "utf8"));
+    expect(leaseOnDisk.released).toBe(true);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("T-9999-execexec-1-invinv-1.reservation.json"));
+
+    const untouched = await fs.readFile(path.join(runsDir, ".launch-reservations", "T-9999-execexec-1-invinv-1.reservation.json"), "utf8");
+    expect(untouched).toBe("null");
   });
 });
