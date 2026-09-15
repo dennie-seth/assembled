@@ -420,6 +420,51 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
     });
   });
 
+  describe("T-0370 fix round 2 finding 2 -- a reserveLaunchSlotFn write already in flight at cancellation is released once it lands", () => {
+    it("releases the lease immediately once a reserveLaunchSlotFn call that outlived the timeout finally resolves", async () => {
+      vi.useFakeTimers();
+      try {
+        let resolveReserve;
+        const releaseReservationFn = vi.fn(async () => {});
+        const deps = baseDeps({
+          timeoutMs: 50,
+          reserveLaunchSlotFn: vi.fn(
+            () =>
+              new Promise((resolve) => {
+                resolveReserve = resolve;
+              })
+          ),
+          releaseReservationFn
+        });
+        const decide = buildLaunchDecide(deps);
+        const decidePromise = decide();
+
+        // Flush the microtask chain up to (and including) the reserveLaunchSlotFn call -- every
+        // step ahead of it in innerDecide resolves on microtasks, not macrotask timers.
+        await vi.advanceTimersByTimeAsync(0);
+        // Now let the outer timeout fire while reserveLaunchSlotFn is still pending.
+        await vi.advanceTimersByTimeAsync(60);
+        const timedOutRecord = await decidePromise;
+        expect(timedOutRecord.reason).toMatch(/timeout/);
+        expect(releaseReservationFn).not.toHaveBeenCalled();
+
+        // The write finally lands, well after the caller (and a hypothetical reconcileLaunchOutcome
+        // for the now-settled run, which would have found nothing to release) already moved on.
+        resolveReserve({ cardId: deps.cardId, executionId: deps.executionId, invocationId: deps.invocationId, released: false });
+        await vi.advanceTimersByTimeAsync(0);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(releaseReservationFn).toHaveBeenCalledWith(
+          expect.objectContaining({ runsDir: deps.runsDir, cardId: deps.cardId, executionId: deps.executionId, invocationId: deps.invocationId })
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe("sumActiveReservedRemainingCostUsd -- the pure orchestration this card's admission check consumes", () => {
     it("sums the remaining cost across several active reservations", async () => {
       const total = await sumActiveReservedRemainingCostUsd({
