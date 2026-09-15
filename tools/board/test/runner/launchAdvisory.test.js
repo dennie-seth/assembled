@@ -200,6 +200,8 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
     expect(reserveCall.reservedCostUsd).toBeCloseTo(6.25 - 0.3);
     expect(record.estimate).toBeDefined();
     expect(record.telemetryReadings).toBeDefined();
+    // T-0370 fix round 2 finding 4/5: a successful publish is visible in the admission decision.
+    expect(record.admission.reservationPublished).toBe(true);
   });
 
   it("never counts usage already charged in the ledger as still-unspent reservation", async () => {
@@ -285,6 +287,10 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
     });
     const record = await buildLaunchDecide(deps)();
     expect(record).toBeDefined();
+    // T-0370 fix round 2 finding 4/5: "a reservation that fails to publish is visible in the
+    // decision" -- the enforcement check at the shared boundary reads this to refuse the launch,
+    // instead of an unchanged admitted decision.
+    expect(record.admission.reservationPublished).toBe(false);
   });
 
   it("falls back to the registered type's indeterminate/hold estimate for an unregistered cost-estimator type", async () => {

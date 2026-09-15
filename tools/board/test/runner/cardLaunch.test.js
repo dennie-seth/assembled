@@ -560,4 +560,119 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
 
     resolvers.forEach((resolve) => resolve());
   });
+
+  describe("T-0370 fix round 2 finding 4 -- under enforcement, the shared launch boundary never falls through to a launch", () => {
+    it("a throwing buildLaunchDecideFn (a setup/policy error) refuses the launch under enforcement -- no runCard call, no active lease", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => {
+        throw new Error("setup failed");
+      };
+      await expect(
+        launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
+      ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    });
+
+    it("the same throwing buildLaunchDecideFn still launches exactly once with the flag off", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => {
+        throw new Error("setup failed");
+      };
+      await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+    });
+
+    it("a throwing decide() refuses the launch under enforcement", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => {
+        throw new Error("decide blew up");
+      };
+      await expect(
+        launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
+      ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    });
+
+    it("the same throwing decide() still launches exactly once with the flag off", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => {
+        throw new Error("decide blew up");
+      };
+      await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+    });
+
+    it("a hung decide() refuses the launch under enforcement once the bound elapses", async () => {
+      vi.useFakeTimers();
+      try {
+        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+        // ensureExecutionIdFn is stubbed to resolve immediately -- real fs I/O under fake timers
+        // doesn't reliably settle via advanceTimersByTimeAsync, and this test is only about
+        // bounding decide() itself, not the (separately tested) ensureExecutionId bound.
+        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+        const buildLaunchDecideFn = () => () => new Promise(() => {});
+        const launchPromise = launchCardRun({
+          orchestrator,
+          id: "T-0001",
+          enforcementEnabledFn: () => true,
+          buildLaunchDecideFn,
+          ensureExecutionIdFn
+        });
+        const assertion = expect(launchPromise).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await assertion;
+        expect(orchestrator.runCard).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("the same hung decide() still launches exactly once, at the bound, with the flag off", async () => {
+      vi.useFakeTimers();
+      try {
+        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+        const buildLaunchDecideFn = () => () => new Promise(() => {});
+        const launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await launchPromise;
+        expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a failing reserveLaunchSlotFn (a reservation that fails to publish) refuses the launch under enforcement, through the real buildLaunchDecide path", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, reserveLaunchSlotFn: async () => { throw new Error("disk full"); } });
+      await expect(
+        launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
+      ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    });
+
+    it("the same failing reserveLaunchSlotFn still launches exactly once with the flag off", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, reserveLaunchSlotFn: async () => { throw new Error("disk full"); } });
+      await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+    });
+
+    it("a reservation that failed to publish is visible in the admission decision itself -- refused under enforcement even when every window admitted", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => ({
+        estimate: { value: 0.1, unit: "usd" },
+        telemetryReadings: {},
+        reason: "stub",
+        admission: { admitted: true, windows: {}, reservationPublished: false }
+      });
+      await expect(
+        launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
+      ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409, message: expect.stringMatching(/reservation/i) });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+    });
+  });
 });
