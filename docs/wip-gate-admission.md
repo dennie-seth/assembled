@@ -41,6 +41,49 @@ what the code actually did. All seven are fixed on this branch; this doc reflect
    exported helper shared by the runner's own auto-retry loop and the launch boundary, so the
    reservation always covers a card's actual `max_attempts` override, not a fixed default.
 
+## Fix round 2 (2026-09-15, Codex round-2 review of #387)
+
+Codex re-reviewed the fix-round branch and found five further gaps, all fixed on this branch;
+verified-good from round 1 (the effective retry allowance, lower-bound stopped/failed outcomes, the
+serialization lock through the real path, startup recovery, and the bounded identity/poller waits)
+is unchanged:
+
+1. **Bound the fallback's own persistence.** `withBoundedDecide`'s timeout/error `fallback`
+   callback awaits `onFallback` (the fallback record's own durable write) with its own
+   `withTimeout` (`fallbackTimeoutMs`, defaults to the same bound as `decide()` itself) — a hung or
+   throwing persistence write can no longer keep the whole bounded pipeline pending indefinitely.
+2. **Late writes reconcile themselves.** `buildLaunchDecide` re-checks its cancellation token after
+   `reserveLaunchSlotFn` resolves and self-releases a lease that landed only after this `decide()`
+   was already superseded. `advisoryLogger.js`'s `recordAdvisoryDecision` now writes via exclusive
+   create (`fs.link`, mirroring `reserveLaunchSlot`) instead of an unconditional overwrite: the
+   FIRST write to actually land for a given launch identity wins, so a late happy-path write can
+   never clobber the timeout/error fallback record or an outcome already attached to it.
+3. **Prior spend subtracted exactly once — the documented convention.** A lease stores the
+   REMAINING cost (`reservedCostUsd`, already net of what this execution had charged when the
+   lease was written) *plus* the `chargedAtReservationUsd` baseline it was computed against.
+   `remainingReservedCostUsd(reservation, totalSpentUsd)` subtracts only `max(0, totalSpentUsd -
+   chargedAtReservationUsd)` — spend charged AFTER the baseline — never `totalSpentUsd` outright,
+   which would subtract the same prior spend a second time. The candidate's own admission input
+   (`evaluateAdmissionFn`'s `estimate`) uses this same future-cost `reservedCostUsd`, not the full,
+   gross `reservedExecutionCycleEstimate`.
+4. **Enforcement never falls through to a launch.** `buildLaunchDecide`'s returned `admission` now
+   carries `reservationPublished` (`false` on a failed or duplicate reserve), and
+   `cardLaunch.js`'s `describeAdmissionRefusal` refuses on that alone regardless of the per-window
+   verdict. `cardLaunch.js` also bounds the `decide()` call itself (on top of `buildLaunchDecide`'s
+   own internal bound), and its catch around building/running the decision refuses under
+   enforcement — releasing any lease already created — instead of falling through to the
+   unconditional launch at the bottom of `launchCardRun`.
+5. **Unknown lease costs and shapes are never zero.** `remainingReservedCostUsd` and
+   `sumActiveReservedCostUsd` return `null` — never a substituted `0` — the instant any active
+   lease's own `reservedCostUsd` isn't a finite, non-negative number (an unknown-cost launch counts
+   as unknown, not free, to every later admission); `buildLaunchDecide` publishes `reservedCostUsd:
+   null` rather than `0` when its own estimate is itself unknown. `listActiveReservations` now
+   validates every parsed lease's shape (a plain object, string `cardId`/`executionId`/
+   `invocationId` matching the file it was read from, boolean `released`) — a JSON `null`, an
+   array, a bare scalar, a missing/mismatched identity, or a non-boolean `released` raises
+   `ReservationPoolReadError` exactly like an unparseable file. Startup's separate tolerant reader
+   is unaffected — it already logs and skips per-file, whatever the failure.
+
 ## The shared launch boundary
 
 `launchCardRun` (`tools/board/src/runner/cardLaunch.js`) is the one path both the Run button
@@ -91,16 +134,29 @@ stop) also releases the reservation it had provisionally written, rather than or
 bounded retry count into one reservation: `(implementer estimate + reviewer estimate) ×
 effectiveMaxAttempts(task)` — `runOrchestrator.js`'s own exported retry-allowance helper, shared
 by the auto-retry loop and the launch boundary, so a card's `max_attempts` override (1-20) is
-reserved for exactly, not the fixed `MAX_AUTO_RETRY_ATTEMPTS` default. Usage already metered in
-the T-A ledger for *this* execution id is subtracted before reserving (`usageLedger.js`'s
-`executionTotal(...).knownCostUsd`), so a resumed/retried launch never double-counts spend it has
-already made as still-unspent reservation.
+reserved for exactly, not the fixed `MAX_AUTO_RETRY_ATTEMPTS` default.
+
+**Cost convention (fix round 2, finding 3) — the lease stores the REMAINING cost plus the baseline
+it was computed against; a reader never subtracts prior spend twice.** `buildLaunchDecide` nets the
+full reserved-execution-cycle estimate against what THIS execution has already charged in the T-A
+ledger for this launch identity (`usageLedger.js`'s `executionTotal(...).knownCostUsd`) and writes
+the result as `reservedCostUsd`, alongside that same charged amount as `chargedAtReservationUsd` —
+`launchReservation.js`'s `reserveLaunchSlot` persists both fields. A later reader
+(`remainingReservedCostUsd(reservation, totalSpentUsd)`) computes `max(0, reservedCostUsd -
+max(0, totalSpentUsd - chargedAtReservationUsd))`: only spend charged AFTER the baseline reduces
+the lease further, so the prior spend already netted out at write time is never subtracted a
+second time. The candidate's own admission input follows the identical convention — it's the same
+future-cost `reservedCostUsd`, never the full, gross `reservedExecutionCycleEstimate`. An unknown
+reserved-cycle estimate (an indeterminate/hold-for-sizing implementer or reviewer estimate)
+publishes `reservedCostUsd: null` — an explicit unknown, never a fabricated `0` — so it still counts
+as unknown, not free, capacity to every later admission.
 
 **Other active reservations are counted at their REMAINING future cost, not their raw reserved
-amount.** `sumActiveReservedRemainingCostUsd` subtracts what each active reservation's own
-execution has already charged in the ledger before summing it into `reserved_unspent_cost` — an
-unreadable ledger for any one of them makes the whole sum indeterminate (never a silent
-under-count).
+amount.** `sumActiveReservedRemainingCostUsd` calls `remainingReservedCostUsd` per reservation
+before summing into `reserved_unspent_cost` — an unreadable ledger for any one of them, OR any one
+reservation's own `reservedCostUsd` being unknown, makes the WHOLE sum indeterminate (`null`),
+never a silent under-count or a substituted zero. `sumActiveReservedCostUsd` (the simple raw sum)
+carries the same "unknown never becomes zero" rule.
 
 ## The admission formula (spec §4) — `runner/admissionDecision.js`
 
@@ -164,10 +220,20 @@ external burn allowance.
   launch (`CardLaunchError`, 409) with a reason naming every non-admitting window, and releases
   the reservation the advisory pipeline had provisionally written. A missing `admission` (the
   advisory pipeline itself timed out or errored) is ALSO a hold — unknown capacity is never "not
-  blocked". **Because no USD-to-utilization conversion has been derived yet (see "What this card
-  deliberately does not do" below), every real launch's admission holds `units_not_comparable` —
-  so turning this flag on today holds every launch. That is the intended fail-safe, not a bug**;
-  it is also exactly why this card does not enable it on the live board.
+  blocked". A reservation that failed to publish (`admission.reservationPublished === false`,
+  fix round 2 finding 4) refuses on that alone, regardless of what the per-window formula
+  concluded — this launch's own capacity was never actually reserved. **Because no
+  USD-to-utilization conversion has been derived yet (see "What this card deliberately does not
+  do" below), every real launch's admission holds `units_not_comparable` — so turning this flag on
+  today holds every launch. That is the intended fail-safe, not a bug**; it is also exactly why
+  this card does not enable it on the live board.
+- **The boundary never falls through to an unconditional launch under the flag (fix round 2 finding
+  4).** `decide()` is bounded at `cardLaunch.js` itself (on top of `buildLaunchDecide`'s own
+  internal bound), so a throwing or never-settling decide resolves to `advisory: null` — an
+  explicit hold — rather than hanging or silently succeeding. A failure building or running the
+  decision at all (e.g. a throwing `buildLaunchDecideFn`, never reaching `decide()`/`launch()`)
+  is itself a refusal under the flag, releasing any lease this launch had already created, instead
+  of reaching the last-resort unconditional launch that only ever runs with the flag off.
 - No poller-side check can admit what the shared decision holds: the poller's own
   `evaluateWindowAwareUsageGate` pre-check (below) may only be MORE conservative (skip a tick
   the shared decision would have allowed), and any `CardLaunchError` the shared decision raises
@@ -206,9 +272,14 @@ path and aren't covered by it: the poller's `readUsageTelemetry` read, and `laun
 
 `withBoundedDecide` also passes `decideFn` a cancellation token that flips true the instant it
 commits to a timeout/error fallback, and persists that fallback itself (via
-`recordAdvisoryDecisionFn`) before resolving — so a late-settling `decide()` can never write a
-reservation lease nothing will release, or leave a second, outcome-less advisory record behind
-once the run it was for has already settled.
+`recordAdvisoryDecisionFn`) before resolving — itself bounded by its own `withTimeout`
+(`fallbackTimeoutMs`, fix round 2 finding 1), so a hung or throwing persistence write can't keep
+the whole pipeline pending past a finite deadline either. `recordAdvisoryDecision` writes via
+exclusive create (fix round 2 finding 2), so whichever write for a given launch identity actually
+lands on disk FIRST wins; a late-settling `decide()`'s own happy-path write can never write a
+reservation lease nothing will release (`buildLaunchDecide` self-releases a lease that lands after
+cancellation), or clobber the fallback record — or an outcome already attached to it — once the run
+it was for has already settled.
 
 Once `orchestrator.runCard(id)` settles, `cardLaunch.js`'s `reconcileLaunchOutcome` attaches the
 realized outcome via T-0369's `recordAdvisoryOutcome` — `exact` only when `runCard` ended in a
