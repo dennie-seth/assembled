@@ -322,9 +322,15 @@ export function buildLaunchDecide({
       // still in flight.
       if (cancelToken?.cancelled) {
         logger.log(`wip-gate advisory: decide() for ${cardId}/${executionId}/${invocationId} timed out/failed while evaluating admission -- skipping the late reservation write`);
-        return { reservedUnspentCostUsd, admission };
+        return { reservedUnspentCostUsd, admission: { ...admission, reservationPublished: false } };
       }
 
+      // T-0370 fix round 2 findings 4/5: "a reservation that fails to publish is visible in the
+      // decision" -- the enforcement check at the shared boundary (cardLaunch.js's
+      // `describeAdmissionRefusal`) reads this flag to refuse a launch whose own capacity was
+      // never actually reserved, rather than trusting an admission decision that no longer
+      // reflects reality.
+      let reservationPublished = false;
       try {
         await reserveLaunchSlotFn({
           runsDir,
@@ -338,6 +344,7 @@ export function buildLaunchDecide({
           reason: `reserved execution cycle (implementer+review x${maxAttempts}) for ${cardId}`,
           now
         });
+        reservationPublished = true;
         // T-0370 fix round 2 finding 2: the write above awaited the filesystem, so the timeout
         // could have fired -- and a hypothetical reconcileLaunchOutcome already run and found
         // nothing to release -- while it was still in flight. A lease that lands ONLY after this
@@ -355,7 +362,7 @@ export function buildLaunchDecide({
         logger.log(`wip-gate advisory: reservation failed for ${cardId}/${executionId}/${invocationId} -- launch proceeds unaffected: ${err.message}`);
       }
 
-      return { reservedUnspentCostUsd, admission };
+      return { reservedUnspentCostUsd, admission: { ...admission, reservationPublished } };
     });
 
     // The timeout/error fallback already recorded (and persisted) ITS OWN decision for this

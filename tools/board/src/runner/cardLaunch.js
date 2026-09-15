@@ -21,6 +21,10 @@ import { evaluateOverrunPolicy, isBoundedContinuation } from "./overrunPolicy.js
  */
 function describeAdmissionRefusal(admission) {
   if (!admission) return "advisory decision unavailable (timeout/error) -- unknown capacity";
+  // T-0370 fix round 2 finding 4/5: a reservation that failed to publish means this launch's own
+  // capacity was never actually reserved, regardless of what the per-window formula concluded --
+  // refuse on that alone rather than trusting a now-stale "admitted" decision.
+  if (admission.reservationPublished === false) return "reservation failed to publish -- capacity not actually reserved for this launch";
   if (admission.admitted === true) return null;
   const reasons = Object.entries(admission.windows ?? {})
     .filter(([, decision]) => decision.admitted !== true)
@@ -233,10 +237,22 @@ export async function launchCardRun({
       // closure rather than threaded through `withAdvisoryLoggingFn`'s own return, so `launch()`
       // can see what `decide()` produced without weakening `withAdvisoryLogging`'s own structural
       // guarantee that `launch()` always runs (see advisoryLogger.js).
+      //
+      // T-0370 fix round 2 finding 4: `decide()` itself is bounded HERE too, on top of whatever
+      // bound `buildLaunchDecide`'s own `withBoundedDecide` already applies internally -- a
+      // throwing or (in a test double) never-settling `decide` must never keep `withAdvisoryLogging`
+      // from reaching `launch()`, under enforcement OR the default config alike. A timeout/error
+      // here resolves to `advisory: null`, which `describeAdmissionRefusal` already treats as an
+      // explicit hold under enforcement -- never a silent fall-through to an unconditional launch.
       let advisory = null;
       await withAdvisoryLoggingFn({
         decide: async () => {
-          advisory = await decide();
+          advisory = await withTimeout(() => decide(), {
+            timeoutMs: DEFAULT_BOUND_MS,
+            fallback: () => null,
+            logger,
+            label: `wip-gate advisory: launchCardRun decide() for ${id}`
+          });
           return advisory;
         },
         launch: async () => {
@@ -273,14 +289,32 @@ export async function launchCardRun({
     } catch (err) {
       if (err instanceof CardLaunchError) throw err;
       logger.log(`wip-gate advisory: launch-boundary advisory pipeline failed for ${id} -- launch proceeds unaffected: ${err.message}`);
+      // T-0370 fix round 2 finding 4: under enforcement, a failure BUILDING or RUNNING the
+      // decision (e.g. a throwing buildLaunchDecideFn -- a setup/policy error, never reaching
+      // withAdvisoryLoggingFn's own decide()/launch() at all) is itself a refusal, exactly like an
+      // explicit admission hold. Falling through to the unconditional launch below would let a
+      // pipeline error bypass enforcement entirely -- the one thing the flag exists to prevent.
+      if (enforcementEnabled) {
+        if (runsDir && executionId !== null && invocationId !== null) {
+          await releaseReservationFn({
+            runsDir,
+            cardId: id,
+            executionId,
+            invocationId,
+            outcome: { status: "refused_enforcement", reason: `advisory pipeline error: ${err.message}` }
+          }).catch(() => {});
+        }
+        throw new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- advisory/admission pipeline failed: ${err.message}`, 409);
+      }
     }
   }
 
   // The advisory branch above always reaches `launch()` in every failure mode it itself
   // anticipates (withAdvisoryLoggingFn's own contract guarantees `launch()` runs regardless of
-  // what `decide()` does). This is the true last resort: `runCardPromise` is still unset only if
-  // something upstream of `launch()` itself threw synchronously (e.g. building the decide
-  // function) -- constraint 6 requires the launch to proceed even then.
+  // what `decide()` does), and the catch above already refuses under enforcement before ever
+  // reaching here. This is the true last resort, reachable only with enforcement OFF: `runCardPromise`
+  // is still unset only if something upstream of `launch()` itself threw synchronously (e.g.
+  // building the decide function) -- constraint 6 requires the launch to proceed even then.
   if (!runCardPromise) {
     runCardPromise = orchestrator.runCard(id);
   }
