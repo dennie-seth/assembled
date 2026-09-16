@@ -84,6 +84,40 @@ is unchanged:
    `ReservationPoolReadError` exactly like an unparseable file. Startup's separate tolerant reader
    is unaffected — it already logs and skips per-file, whatever the failure.
 
+## Fix round 3 (2026-09-16, Codex round-3 review of #387)
+
+Codex re-reviewed the round-2 branch and confirmed every round-2 fix (bounded fallback
+persistence, late lease writes releasing themselves, exclusive-create decisions, the
+charged-usage baseline, enforcement refusal, lease shape validation) — the ONE remaining gap:
+
+`cardLaunch.js` wraps the whole `decide()` call in its own 8s bound (`withTimeout`), on top of
+`buildLaunchDecide`'s own separate 8s bound around `innerDecide`/its timeout fallback. The OUTER
+bound can fire and let `launch()` (and so `orchestrator.runCard`) proceed while the INNER
+fallback's own persistence write is still in flight — `withBoundedDecide`'s `onFallback` is bounded
+against hanging forever (round 2 finding 1), but nothing stops it finishing strictly *after* the
+run it was for has already completed and been reconciled. When that happens,
+`reconcileLaunchOutcome`'s `recordAdvisoryOutcome` call finds no decision record yet (ENOENT),
+and the outcome used to be logged as a failure and discarded — the fallback record then publishes
+moments later with `outcome: null`, and nothing left to attach it.
+
+**Fix: retain, don't discard.** `advisoryLogger.js`'s `recordAdvisoryOutcome` now throws a
+distinguishable `AdvisoryDecisionMissingError` (not a generic `Error`) when no decision exists yet.
+`cardLaunch.js`'s `reconcileLaunchOutcome` catches specifically that and calls the new
+`retainOutcomeUntilDecisionRecorded`, which writes a durable marker keyed to the launch identity
+(`pendingOutcomePath` — a `.outcome-pending.json` suffix, deliberately different from
+`.advisory.json` so `measureRecordedCoverage`'s glob never mistakes a marker for a scoreable
+decision) and immediately re-checks whether the decision has landed concurrently. `recordAdvisoryDecision`
+performs the identical re-check right after establishing its own record — whether that's the
+normal happy-path write or the timeout fallback's write, either one now looks for a pending marker
+and attaches it. Both call sites share one `consumePendingOutcome` helper whose **unlink-as-ownership-token**
+makes the coordination race-safe: only the caller that actually succeeds at deleting the marker file
+attaches the outcome, so a marker read/attach racing between `retainOutcomeUntilDecisionRecorded`'s
+own re-check and `recordAdvisoryDecision`'s converges on exactly one attach, regardless of which
+order the two land in. A decision record that already carries a non-null outcome is never
+overwritten — the marker is still cleared in that case (it's served its purpose, or was always
+stray), so it never outlives its use. Coordination is independent of any timeout — it holds
+whichever write lands first, not just the specific 8s/8s race Codex reproduced.
+
 ## The shared launch boundary
 
 `launchCardRun` (`tools/board/src/runner/cardLaunch.js`) is the one path both the Run button
@@ -287,8 +321,11 @@ successful terminal state AND every contributing ledger entry for this execution
 successful, complete, known-cost entry (`usageLedger.js`'s `executionEndedSuccessfully`); a
 terminal quota stop, a reviewer FAIL that lands the card on `blocked`, and a cancellation all
 report the known subtotal as a LOWER BOUND instead — `runCard` merely resolving (or rejecting) is
-not itself proof of success. `measureRecordedCoverage` accumulates this real predicted-vs-actual
-evidence over time.
+not itself proof of success. If no decision record exists yet for this launch identity (fix round
+3 — the outer bound can beat the inner fallback's own persistence), the outcome is retained
+durably rather than discarded and attaches to whichever decision eventually publishes — see "Fix
+round 3" above. `measureRecordedCoverage` accumulates this real predicted-vs-actual evidence over
+time.
 
 ## Window-aware evidence in the poller (launch-time contracts, 2026-09-14)
 
