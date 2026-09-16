@@ -3,7 +3,7 @@ import { assertCanMoveToInProgress, UnmetDependencyError, DependencyCycleError }
 import { assertRoundCapClear, RoundCapExceededError } from "../lib/roundCap.js";
 import { appendNote, effectiveMaxAttempts } from "./runOrchestrator.js";
 import { ensureExecutionId, executionTotal, executionEndedSuccessfully, listCardUsageEntries } from "./usageLedger.js";
-import { withAdvisoryLogging, recordAdvisoryOutcome } from "./advisoryLogger.js";
+import { withAdvisoryLogging, recordAdvisoryOutcome, retainOutcomeUntilDecisionRecorded, AdvisoryDecisionMissingError } from "./advisoryLogger.js";
 import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
 import { loadAdmissionConfigFromEnv, admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
 import { releaseReservation } from "./launchReservation.js";
@@ -65,6 +65,7 @@ export async function reconcileLaunchOutcome({
   logger = console,
   listCardUsageEntriesFn = listCardUsageEntries,
   recordAdvisoryOutcomeFn = recordAdvisoryOutcome,
+  retainOutcomeUntilDecisionRecordedFn = retainOutcomeUntilDecisionRecorded,
   releaseReservationFn = releaseReservation
 }) {
   let outcome;
@@ -80,7 +81,19 @@ export async function reconcileLaunchOutcome({
   try {
     await recordAdvisoryOutcomeFn({ runsDir, cardId, executionId, invocationId, outcome });
   } catch (err) {
-    logger.error(`Agent Runner: failed to record advisory outcome for ${cardId}:`, err.message);
+    if (err instanceof AdvisoryDecisionMissingError) {
+      // T-0370 round 3: the outer launch timeout can beat buildLaunchDecide's own (separately
+      // bounded) fallback persistence -- retain the outcome durably rather than discard it, so
+      // whichever decision record eventually publishes (the normal write or the fallback) still
+      // gets it attached.
+      try {
+        await retainOutcomeUntilDecisionRecordedFn({ runsDir, cardId, executionId, invocationId, outcome });
+      } catch (err2) {
+        logger.error(`Agent Runner: failed to retain outcome pending a decision record for ${cardId}:`, err2.message);
+      }
+    } else {
+      logger.error(`Agent Runner: failed to record advisory outcome for ${cardId}:`, err.message);
+    }
   }
   try {
     await releaseReservationFn({ runsDir, cardId, executionId, invocationId, outcome: { status, errorMessage } });

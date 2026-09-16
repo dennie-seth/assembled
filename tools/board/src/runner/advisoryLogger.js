@@ -83,6 +83,19 @@ export function advisoryLogPath(runsDir, { cardId, executionId, invocationId }) 
   return path.join(runsDir, `${cardId}-exec${executionId}-inv${invocationId}.advisory.json`);
 }
 
+/**
+ * Path to a launch identity's durably-retained outcome, awaiting a decision record to attach to
+ * (T-0370 round 3). Deliberately a DIFFERENT suffix than `advisoryLogPath` -- `measureRecordedCoverage`
+ * only ever globs `.advisory.json`, so a pending marker can never be mistaken for a scoreable
+ * decision record.
+ */
+export function pendingOutcomePath(runsDir, { cardId, executionId, invocationId }) {
+  return path.join(runsDir, `${cardId}-exec${executionId}-inv${invocationId}.outcome-pending.json`);
+}
+
+/** Thrown by `recordAdvisoryOutcome` when no decision has been recorded yet for a launch identity -- distinguishable from any other failure so callers can route it to `retainOutcomeUntilDecisionRecorded` instead of just logging a discard. */
+export class AdvisoryDecisionMissingError extends Error {}
+
 const VALID_OUTCOME_COST_KINDS = new Set(["exact", "lower_bound"]);
 
 /**
@@ -122,6 +135,69 @@ async function writeAtomic(filePath, data, { writeFileFn, mkdirFn, renameFn, unl
     await unlinkFn(tmpPath).catch(() => {});
     throw err;
   }
+}
+
+async function writeExclusive(filePath, data, { writeFileFn, mkdirFn, linkFn, unlinkFn, readFileFn }) {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  await mkdirFn(path.dirname(filePath), { recursive: true });
+  await writeFileFn(tmpPath, JSON.stringify(data, null, 2), "utf8");
+  try {
+    await linkFn(tmpPath, filePath);
+  } catch (err) {
+    if (err && err.code === "EEXIST") {
+      return JSON.parse(await readFileFn(filePath, "utf8"));
+    }
+    throw err;
+  } finally {
+    await unlinkFn(tmpPath).catch(() => {});
+  }
+  return data;
+}
+
+/**
+ * Attaches a durably-retained outcome marker (if one exists for this launch identity) to the
+ * decision record now on disk (T-0370 round 3: "a finished launch's terminal outcome is never
+ * discarded because its advisory decision was not yet on disk"). Deleting the marker file IS the
+ * ownership token -- whichever caller (`recordAdvisoryDecision`'s own post-write check, or
+ * `retainOutcomeUntilDecisionRecorded`'s own re-check right after it writes the marker) actually
+ * succeeds at unlinking it is the one that applies the outcome, so both orderings -- and the case
+ * where they race -- converge on exactly one attach. A decision record that already carries a
+ * non-null outcome is never overwritten; the marker is still cleared either way, so it never
+ * outlives its use.
+ */
+async function consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn }) {
+  const markerPath = pendingOutcomePath(runsDir, { cardId, executionId, invocationId });
+  let marker;
+  try {
+    marker = JSON.parse(await readFileFn(markerPath, "utf8"));
+  } catch {
+    return null;
+  }
+  const filePath = advisoryLogPath(runsDir, { cardId, executionId, invocationId });
+  let existing;
+  try {
+    existing = JSON.parse(await readFileFn(filePath, "utf8"));
+  } catch {
+    // No decision published yet -- leave the marker exactly as it is for a future check (this
+    // one's own re-check, or `recordAdvisoryDecision`'s, whichever comes next) to find.
+    return null;
+  }
+  if (existing.outcome !== null && existing.outcome !== undefined) {
+    // Someone else already attached an outcome -- never overwrite it, but the marker has served
+    // its purpose (or was always stray); clear it so it doesn't outlive its use.
+    await unlinkFn(markerPath).catch(() => {});
+    return null;
+  }
+  // Ownership token: only the caller that actually succeeds at unlinking the marker attaches the
+  // outcome -- a concurrent caller racing the same check backs off instead of double-attaching.
+  try {
+    await unlinkFn(markerPath);
+  } catch {
+    return null;
+  }
+  const updated = { ...existing, outcome: marker.outcome, updatedAt: now().toISOString() };
+  await writeAtomic(filePath, updated, { writeFileFn, mkdirFn, renameFn, unlinkFn });
+  return updated;
 }
 
 /**
@@ -164,7 +240,8 @@ export async function recordAdvisoryDecision({
   mkdirFn = fs.mkdir,
   linkFn = fs.link,
   unlinkFn = fs.unlink,
-  readFileFn = fs.readFile
+  readFileFn = fs.readFile,
+  renameFn = fs.rename
 }) {
   if (estimate.value !== null && !isScoreablePredictionValue(estimate.value)) {
     throw new Error(
@@ -190,23 +267,38 @@ export async function recordAdvisoryDecision({
   const tmpPath = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
   await mkdirFn(path.dirname(filePath), { recursive: true });
   await writeFileFn(tmpPath, JSON.stringify(entry, null, 2), "utf8");
+  let winning;
   try {
     await linkFn(tmpPath, filePath);
+    winning = entry;
   } catch (err) {
     if (err && err.code === "EEXIST") {
-      return JSON.parse(await readFileFn(filePath, "utf8"));
+      winning = JSON.parse(await readFileFn(filePath, "utf8"));
+    } else {
+      throw err;
     }
-    throw err;
   } finally {
     await unlinkFn(tmpPath).catch(() => {});
   }
-  return entry;
+
+  // T-0370 round 3: an outcome may already be durably retained for this launch identity (it
+  // arrived before any decision existed -- see `retainOutcomeUntilDecisionRecorded`). Whichever
+  // decision write actually wins above, attach it now rather than leaving the outcome stranded.
+  let attached = null;
+  try {
+    attached = await consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn });
+  } catch {
+    attached = null;
+  }
+  return attached ?? winning;
 }
 
 /**
  * Attaches the eventual outcome to a previously recorded advisory decision (spec §10 step 3: "and
- * the eventual outcome"). Throws if the decision was never recorded -- an outcome with nothing to
- * attach to is a caller bug, not a record this module should silently invent.
+ * the eventual outcome"). Throws `AdvisoryDecisionMissingError` if the decision was never recorded
+ * (yet) -- an outcome with nothing to attach to. Callers on the launch path (`cardLaunch.js`'s
+ * `reconcileLaunchOutcome`) catch that specific error and retain the outcome durably instead of
+ * discarding it (T-0370 round 3) -- see `retainOutcomeUntilDecisionRecorded`.
  *
  * Also throws, writing nothing, if `outcome` isn't a scoreable shape (`isScoreableOutcome`) -- the
  * logger itself must never produce a malformed outcome (recorded coverage fail-safe round,
@@ -231,7 +323,9 @@ export async function recordAdvisoryOutcome({
   try {
     existing = JSON.parse(await readFileFn(filePath, "utf8"));
   } catch (err) {
-    throw new Error(`advisory logger: no decision recorded for ${cardId}/${executionId}/${invocationId}, cannot attach outcome (${err.message})`);
+    throw new AdvisoryDecisionMissingError(
+      `advisory logger: no decision recorded for ${cardId}/${executionId}/${invocationId}, cannot attach outcome (${err.message})`
+    );
   }
   if (!isScoreableOutcome(outcome)) {
     throw new Error(
@@ -241,6 +335,44 @@ export async function recordAdvisoryOutcome({
   const updated = { ...existing, outcome, updatedAt: now().toISOString() };
   await writeAtomic(filePath, updated, { writeFileFn, mkdirFn, renameFn, unlinkFn });
   return updated;
+}
+
+/**
+ * Retains an outcome durably when `reconcileLaunchOutcome` runs before any decision record exists
+ * yet for this launch identity (T-0370 round 3: the outer launch timeout, `cardLaunch.js`'s own
+ * bound around `decide()`, can fire and let the run proceed before `buildLaunchDecide`'s own
+ * (separately bounded) timeout fallback has finished persisting ITS decision record). Writes a
+ * marker keyed to the launch identity -- distinct from an advisory record, so it is never mistaken
+ * for one by `measureRecordedCoverage` -- then immediately re-checks whether the decision has
+ * landed concurrently (right after `recordAdvisoryOutcome`'s own read failed but before this
+ * marker existed for `recordAdvisoryDecision`'s own check to find), attaching right away rather
+ * than leaving the outcome stranded until nothing ever rechecks. Coordination is independent of
+ * any timeout: it holds whichever write lands first, and the two orderings converging concurrently
+ * (see `consumePendingOutcome`'s unlink-as-ownership-token) are both race-safe.
+ */
+export async function retainOutcomeUntilDecisionRecorded({
+  runsDir,
+  cardId,
+  executionId,
+  invocationId,
+  outcome,
+  now = () => new Date(),
+  writeFileFn = fs.writeFile,
+  mkdirFn = fs.mkdir,
+  linkFn = fs.link,
+  unlinkFn = fs.unlink,
+  readFileFn = fs.readFile,
+  renameFn = fs.rename
+}) {
+  if (!isScoreableOutcome(outcome)) {
+    throw new Error(
+      `advisory logger: malformed outcome for ${cardId}/${executionId}/${invocationId} -- requires costKind "exact" or "lower_bound" and a finite, non-negative actualCostUsd, got ${JSON.stringify(outcome)}`
+    );
+  }
+  const markerPath = pendingOutcomePath(runsDir, { cardId, executionId, invocationId });
+  const recordedAt = now().toISOString();
+  await writeExclusive(markerPath, { cardId, executionId, invocationId, outcome, recordedAt }, { writeFileFn, mkdirFn, linkFn, unlinkFn, readFileFn });
+  return consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn });
 }
 
 /**

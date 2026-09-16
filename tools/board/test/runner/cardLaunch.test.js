@@ -744,156 +744,153 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
 
   describe("T-0370 round 3 -- a finished launch's terminal outcome is never lost when the outer launch timeout beats the inner decision's own persistence", () => {
     it("a never-settling estimator plus a gated fallback-persistence write still launches exactly once at the bound, and the eventually persisted decision carries the terminal outcome, not outcome: null", async () => {
-      vi.useFakeTimers();
-      try {
-        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
-        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
-        let releaseGate;
-        const gate = new Promise((resolve) => {
-          releaseGate = resolve;
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+      let releaseGate;
+      const gate = new Promise((resolve) => {
+        releaseGate = resolve;
+      });
+      const buildLaunchDecideFn = (args) =>
+        realBuildLaunchDecide({
+          ...args,
+          // Never resolves on its own -- both cardLaunch's own outer bound and
+          // buildLaunchDecide's inner bound must fire their own fallbacks.
+          decideLaunchAdvisoryFn: () => new Promise(() => {}),
+          // Stands in for a decision write (the happy path AND the timeout fallback both funnel
+          // through this) that lands only once the test releases it -- well after the run has
+          // already resolved and been reconciled.
+          recordAdvisoryDecisionFn: async (recordArgs) => {
+            await gate;
+            return realRecordAdvisoryDecision(recordArgs);
+          }
         });
-        const buildLaunchDecideFn = (args) =>
-          realBuildLaunchDecide({
-            ...args,
-            // Never resolves on its own -- both cardLaunch's own outer bound and
-            // buildLaunchDecide's inner bound must fire their own fallbacks.
-            decideLaunchAdvisoryFn: () => new Promise(() => {}),
-            // Stands in for a decision write (the happy path AND the timeout fallback both funnel
-            // through this) that lands only once the test releases it -- well after the run has
-            // already resolved and been reconciled.
-            recordAdvisoryDecisionFn: async (recordArgs) => {
-              await gate;
-              return realRecordAdvisoryDecision(recordArgs);
-            }
-          });
 
-        const launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+      vi.useFakeTimers();
+      let launchPromise;
+      try {
+        launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
         await vi.advanceTimersByTimeAsync(10_000);
-        await launchPromise;
-        expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
-
-        // The default mocked runCard resolves immediately, so the fire-and-forget reconciliation
-        // chain runs well before the still-gated fallback persistence lands -- give it real turns
-        // of the event loop (interleaved with the fake-timer advance) to actually complete.
-        await vi.advanceTimersByTimeAsync(100);
-
-        const beforeRelease = await fs.readdir(runsDir);
-        expect(beforeRelease.some((f) => f.endsWith(".advisory.json"))).toBe(false);
-        expect(beforeRelease.some((f) => f.endsWith(".outcome-pending.json"))).toBe(true);
-
-        releaseGate();
-        await vi.advanceTimersByTimeAsync(100);
-
-        const afterRelease = await fs.readdir(runsDir);
-        const advisoryFile = afterRelease.find((f) => f.endsWith(".advisory.json"));
-        expect(advisoryFile).toBeDefined();
-        const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
-        expect(record.outcome).not.toBeNull();
-        expect(afterRelease.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
-        expect(await listActiveReservations({ runsDir })).toHaveLength(0);
       } finally {
+        // Only the initial 8s bound needs fake time -- everything from here on is driven by the
+        // manually-controlled gate, not a timer, so real timers (and the real-fs-backed `waitFor`
+        // helper) are what let the rest of the chain actually settle.
         vi.useRealTimers();
       }
+      await launchPromise;
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+
+      // The default mocked runCard resolves immediately, so the fire-and-forget reconciliation
+      // chain runs well before the still-gated fallback persistence lands -- it must retain the
+      // outcome rather than discard it.
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".outcome-pending.json")));
+      expect((await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json"))).toBe(false);
+
+      releaseGate();
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json")));
+
+      const afterRelease = await fs.readdir(runsDir);
+      const advisoryFile = afterRelease.find((f) => f.endsWith(".advisory.json"));
+      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      expect(record.outcome).not.toBeNull();
+      expect(afterRelease.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
     });
 
     it("proves the ordering explicitly: reconciliation (and the outcome retention it triggers) completes before the fallback's own late persistence lands, and the two still converge", async () => {
-      vi.useFakeTimers();
-      try {
-        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
-        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
-        let releaseGate;
-        const gate = new Promise((resolve) => {
-          releaseGate = resolve;
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+      let releaseGate;
+      const gate = new Promise((resolve) => {
+        releaseGate = resolve;
+      });
+      let decisionWritesObserved = 0;
+      const buildLaunchDecideFn = (args) =>
+        realBuildLaunchDecide({
+          ...args,
+          decideLaunchAdvisoryFn: () => new Promise(() => {}),
+          recordAdvisoryDecisionFn: async (recordArgs) => {
+            await gate;
+            decisionWritesObserved += 1;
+            return realRecordAdvisoryDecision(recordArgs);
+          }
         });
-        let decisionWritesObserved = 0;
-        const buildLaunchDecideFn = (args) =>
-          realBuildLaunchDecide({
-            ...args,
-            decideLaunchAdvisoryFn: () => new Promise(() => {}),
-            recordAdvisoryDecisionFn: async (recordArgs) => {
-              await gate;
-              decisionWritesObserved += 1;
-              return realRecordAdvisoryDecision(recordArgs);
-            }
-          });
 
-        const launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+      vi.useFakeTimers();
+      let launchPromise;
+      try {
+        launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
         await vi.advanceTimersByTimeAsync(10_000);
-        await launchPromise;
-        await vi.advanceTimersByTimeAsync(100);
-
-        // The run has already "finished and been reconciled" (its lease released) while the
-        // fallback's own persistence is still gated -- the ordering Codex's round-3 finding named.
-        expect(await listActiveReservations({ runsDir })).toHaveLength(0);
-        expect(decisionWritesObserved).toBe(0);
-
-        releaseGate();
-        await vi.advanceTimersByTimeAsync(100);
-
-        expect(decisionWritesObserved).toBe(1);
-        const advisoryFile = (await fs.readdir(runsDir)).find((f) => f.endsWith(".advisory.json"));
-        const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
-        expect(record.outcome).not.toBeNull();
       } finally {
         vi.useRealTimers();
       }
+      await launchPromise;
+
+      // The run has already "finished and been reconciled" (its lease released) while the
+      // fallback's own persistence is still gated -- the ordering Codex's round-3 finding named.
+      await waitFor(async () => (await listActiveReservations({ runsDir })).length === 0);
+      expect(decisionWritesObserved).toBe(0);
+
+      releaseGate();
+      await waitFor(async () => decisionWritesObserved === 1);
+
+      const advisoryFile = (await fs.readdir(runsDir)).find((f) => f.endsWith(".advisory.json"));
+      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      expect(record.outcome).not.toBeNull();
     });
 
     it("a terminal marker never outlives its use -- a NORMAL (non-fallback) decision write also consumes it, and the marker is gone afterward", async () => {
-      vi.useFakeTimers();
-      try {
-        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
-        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
-        let resolveEstimate;
-        const estimateGate = new Promise((resolve) => {
-          resolveEstimate = resolve;
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+      let resolveEstimate;
+      const estimateGate = new Promise((resolve) => {
+        resolveEstimate = resolve;
+      });
+      const buildLaunchDecideFn = (args) =>
+        realBuildLaunchDecide({
+          ...args,
+          // A generous inner bound so the fixed 8s outer bound (cardLaunch.js's own, not
+          // injectable) fires first and lets the run proceed while this real decide() is still
+          // genuinely in flight -- its eventual, real (non-fallback) publish is what this test
+          // exercises, as distinct from the fallback-publish tests above.
+          timeoutMs: 20_000,
+          decideLaunchAdvisoryFn: async () => {
+            await estimateGate;
+            return {
+              estimate: { value: 0.5, unit: "usd", classification: "prior", estimatorVersion: "v1" },
+              telemetryReadings: {},
+              type: args.type,
+              fitDate: null,
+              reason: "genuine, just slow"
+            };
+          }
         });
-        const buildLaunchDecideFn = (args) =>
-          realBuildLaunchDecide({
-            ...args,
-            // A generous inner bound so the fixed 8s outer bound (cardLaunch.js's own, not
-            // injectable) fires first and lets the run proceed while this real decide() is still
-            // genuinely in flight -- its eventual, real (non-fallback) publish is what this test
-            // exercises, as distinct from the fallback-publish tests above.
-            timeoutMs: 20_000,
-            decideLaunchAdvisoryFn: async () => {
-              await estimateGate;
-              return {
-                estimate: { value: 0.5, unit: "usd", classification: "prior", estimatorVersion: "v1" },
-                telemetryReadings: {},
-                type: args.type,
-                fitDate: null,
-                reason: "genuine, just slow"
-              };
-            }
-          });
 
-        const launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+      vi.useFakeTimers();
+      let launchPromise;
+      try {
+        launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
         await vi.advanceTimersByTimeAsync(9_000);
-        await launchPromise;
-        expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
-
-        // The mocked runCard resolves immediately -- reconciliation runs now, before any decision
-        // exists yet, and must retain the outcome rather than discard it.
-        await vi.advanceTimersByTimeAsync(100);
-        let files = await fs.readdir(runsDir);
-        expect(files.some((f) => f.endsWith(".advisory.json"))).toBe(false);
-        expect(files.some((f) => f.endsWith(".outcome-pending.json"))).toBe(true);
-
-        // The real (non-fallback) estimate finally resolves and gets recorded normally.
-        resolveEstimate();
-        await vi.advanceTimersByTimeAsync(100);
-
-        files = await fs.readdir(runsDir);
-        const advisoryFile = files.find((f) => f.endsWith(".advisory.json"));
-        expect(advisoryFile).toBeDefined();
-        const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
-        expect(record.outcome).not.toBeNull();
-        expect(record.reason).toMatch(/genuine, just slow/);
-        expect(files.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
       } finally {
         vi.useRealTimers();
       }
+      await launchPromise;
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+
+      // Reconciliation runs now, before any decision exists yet, and must retain the outcome
+      // rather than discard it.
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".outcome-pending.json")));
+      expect((await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json"))).toBe(false);
+
+      // The real (non-fallback) estimate finally resolves and gets recorded normally.
+      resolveEstimate();
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json")));
+
+      const files = await fs.readdir(runsDir);
+      const advisoryFile = files.find((f) => f.endsWith(".advisory.json"));
+      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      expect(record.outcome).not.toBeNull();
+      expect(record.reason).toMatch(/genuine, just slow/);
+      expect(files.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
     });
   });
 });
