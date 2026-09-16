@@ -13,7 +13,10 @@ import {
   withAdvisoryLogging,
   decideLaunchAdvisory,
   measureRecordedCoverage,
-  advisoryLogPath
+  advisoryLogPath,
+  retainOutcomeUntilDecisionRecorded,
+  pendingOutcomePath,
+  AdvisoryDecisionMissingError
 } from "../../src/runner/advisoryLogger.js";
 
 let runsDir;
@@ -257,6 +260,77 @@ describe("recordAdvisoryOutcome -- validates the outcome shape before writing (r
       outcome: { actualCostUsd: 3, costKind: "lower_bound" }
     });
     expect(updated.outcome).toEqual({ actualCostUsd: 3, costKind: "lower_bound" });
+  });
+});
+
+describe("recordAdvisoryOutcome / retainOutcomeUntilDecisionRecorded -- T-0370 round 3: a finished launch's outcome is never lost to the decision's own timing", () => {
+  it("recordAdvisoryOutcome throws a distinguishable AdvisoryDecisionMissingError when no decision exists yet, not a generic Error", async () => {
+    const rejection = recordAdvisoryOutcome({
+      runsDir,
+      cardId: "T-0370",
+      executionId: "round3-missing",
+      invocationId: "inv-1",
+      outcome: { actualCostUsd: 1, costKind: "exact" }
+    });
+    await expect(rejection).rejects.toThrow(/no decision recorded/);
+    await expect(rejection).rejects.toBeInstanceOf(AdvisoryDecisionMissingError);
+  });
+
+  it("outcome-before-decision: a retained outcome is attached once a decision is later recorded for the same launch identity", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round3-outcome-first", invocationId: "inv-1" };
+    await retainOutcomeUntilDecisionRecorded({ ...key, outcome: { actualCostUsd: 2.5, costKind: "lower_bound" } });
+
+    // Nothing scoreable exists yet -- the marker is not mistaken for a decision.
+    expect((await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json") && f.includes("round3-outcome-first"))).toBe(false);
+
+    const published = await recordAdvisoryDecision({
+      ...key,
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "published after the outcome was already retained"
+    });
+
+    expect(published.outcome).toEqual({ actualCostUsd: 2.5, costKind: "lower_bound" });
+    const onDisk = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, key), "utf8"));
+    expect(onDisk.outcome).toEqual({ actualCostUsd: 2.5, costKind: "lower_bound" });
+    // The marker is cleared once consumed -- it never outlives its use.
+    await expect(fs.readFile(pendingOutcomePath(runsDir, key), "utf8")).rejects.toThrow();
+  });
+
+  it("decision-landed-concurrently: retainOutcomeUntilDecisionRecorded's own re-check attaches immediately when the decision already exists", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round3-decision-first", invocationId: "inv-1" };
+    await recordAdvisoryDecision({ ...key, estimate: SAMPLE_ESTIMATE, telemetryReadings: SAMPLE_TELEMETRY, reason: "published first" });
+
+    const result = await retainOutcomeUntilDecisionRecorded({ ...key, outcome: { actualCostUsd: 4, costKind: "exact" } });
+
+    expect(result.outcome).toEqual({ actualCostUsd: 4, costKind: "exact" });
+    const onDisk = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, key), "utf8"));
+    expect(onDisk.outcome).toEqual({ actualCostUsd: 4, costKind: "exact" });
+    await expect(fs.readFile(pendingOutcomePath(runsDir, key), "utf8")).rejects.toThrow();
+  });
+
+  it("a decision record that already carries an outcome is never overwritten by a stray pending marker", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round3-already-attached", invocationId: "inv-1" };
+    await recordAdvisoryDecision({ ...key, estimate: SAMPLE_ESTIMATE, telemetryReadings: SAMPLE_TELEMETRY, reason: "published" });
+    await recordAdvisoryOutcome({ ...key, outcome: { actualCostUsd: 1, costKind: "exact" } });
+
+    // A stray/late marker for the same identity, carrying a DIFFERENT outcome, must never clobber
+    // the outcome already attached -- but it is still cleared, never left behind.
+    await retainOutcomeUntilDecisionRecorded({ ...key, outcome: { actualCostUsd: 99, costKind: "exact" } });
+
+    const onDisk = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, key), "utf8"));
+    expect(onDisk.outcome).toEqual({ actualCostUsd: 1, costKind: "exact" });
+    await expect(fs.readFile(pendingOutcomePath(runsDir, key), "utf8")).rejects.toThrow();
+  });
+
+  it("a pending marker with no decision ever recorded is invisible to measureRecordedCoverage -- never counted as pending or scored", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round3-orphan-marker", invocationId: "inv-1" };
+    await retainOutcomeUntilDecisionRecorded({ ...key, outcome: { actualCostUsd: 1, costKind: "exact" } });
+
+    const coverage = await measureRecordedCoverage({ runsDir });
+    expect(coverage.pending).toBe(0);
+    expect(coverage.unreadable).toBe(0);
+    expect(Object.keys(coverage.groups)).toHaveLength(0);
   });
 });
 

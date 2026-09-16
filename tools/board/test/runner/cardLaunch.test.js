@@ -6,6 +6,7 @@ import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES, reconcileLaunchOutco
 import { ROUND_CAP } from "../../src/lib/roundCap.js";
 import { listActiveReservations } from "../../src/runner/launchReservation.js";
 import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
+import { recordAdvisoryDecision as realRecordAdvisoryDecision, AdvisoryDecisionMissingError } from "../../src/runner/advisoryLogger.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -285,6 +286,71 @@ describe("reconcileLaunchOutcome -- T-0370 fix round finding 4: honest outcome c
     const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
     expect(outcome.costKind).toBe("lower_bound");
     expect(outcome.actualCostUsd).toBeCloseTo(0.2);
+  });
+});
+
+describe("reconcileLaunchOutcome -- T-0370 round 3: a finished launch's outcome is retained, never discarded, when no decision record exists yet", () => {
+  function baseArgs(overrides = {}) {
+    return {
+      runsDir: "/irrelevant",
+      cardId: "T-0001",
+      executionId: "exec-1",
+      invocationId: "inv-1",
+      status: "completed",
+      logger: { log: vi.fn(), error: vi.fn() },
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.4, complete: true, outcome: "success" }
+      ]),
+      recordAdvisoryOutcomeFn: vi.fn(async () => {
+        throw new AdvisoryDecisionMissingError("no decision recorded for T-0001/exec-1/inv-1");
+      }),
+      retainOutcomeUntilDecisionRecordedFn: vi.fn(async () => {}),
+      releaseReservationFn: vi.fn(async () => {}),
+      ...overrides
+    };
+  }
+
+  it("retains the outcome instead of just logging a discard when recordAdvisoryOutcomeFn reports the decision is missing", async () => {
+    const args = baseArgs();
+    await reconcileLaunchOutcome(args);
+    expect(args.retainOutcomeUntilDecisionRecordedFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runsDir: "/irrelevant",
+        cardId: "T-0001",
+        executionId: "exec-1",
+        invocationId: "inv-1",
+        outcome: expect.objectContaining({ costKind: "exact", actualCostUsd: 0.4 })
+      })
+    );
+    // The old discard message never fires for this specific, now-handled failure mode.
+    expect(args.logger.error).not.toHaveBeenCalledWith(expect.stringContaining("failed to record advisory outcome"), expect.anything());
+  });
+
+  it("still logs and swallows any OTHER recordAdvisoryOutcomeFn failure exactly as before -- retention is scoped to the missing-decision case", async () => {
+    const args = baseArgs({
+      recordAdvisoryOutcomeFn: vi.fn(async () => {
+        throw new Error("disk full");
+      })
+    });
+    await reconcileLaunchOutcome(args);
+    expect(args.retainOutcomeUntilDecisionRecordedFn).not.toHaveBeenCalled();
+    expect(args.logger.error).toHaveBeenCalledWith(expect.stringContaining("failed to record advisory outcome"), "disk full");
+  });
+
+  it("still releases the reservation even when the outcome had to be retained", async () => {
+    const args = baseArgs();
+    await reconcileLaunchOutcome(args);
+    expect(args.releaseReservationFn).toHaveBeenCalled();
+  });
+
+  it("a retainOutcomeUntilDecisionRecordedFn failure is itself logged and swallowed -- never surfaces past reconcileLaunchOutcome", async () => {
+    const args = baseArgs({
+      retainOutcomeUntilDecisionRecordedFn: vi.fn(async () => {
+        throw new Error("disk full");
+      })
+    });
+    await expect(reconcileLaunchOutcome(args)).resolves.toBeUndefined();
+    expect(args.releaseReservationFn).toHaveBeenCalled();
   });
 });
 
@@ -673,6 +739,161 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
         launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
       ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409, message: expect.stringMatching(/reservation/i) });
       expect(orchestrator.runCard).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("T-0370 round 3 -- a finished launch's terminal outcome is never lost when the outer launch timeout beats the inner decision's own persistence", () => {
+    it("a never-settling estimator plus a gated fallback-persistence write still launches exactly once at the bound, and the eventually persisted decision carries the terminal outcome, not outcome: null", async () => {
+      vi.useFakeTimers();
+      try {
+        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+        let releaseGate;
+        const gate = new Promise((resolve) => {
+          releaseGate = resolve;
+        });
+        const buildLaunchDecideFn = (args) =>
+          realBuildLaunchDecide({
+            ...args,
+            // Never resolves on its own -- both cardLaunch's own outer bound and
+            // buildLaunchDecide's inner bound must fire their own fallbacks.
+            decideLaunchAdvisoryFn: () => new Promise(() => {}),
+            // Stands in for a decision write (the happy path AND the timeout fallback both funnel
+            // through this) that lands only once the test releases it -- well after the run has
+            // already resolved and been reconciled.
+            recordAdvisoryDecisionFn: async (recordArgs) => {
+              await gate;
+              return realRecordAdvisoryDecision(recordArgs);
+            }
+          });
+
+        const launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await launchPromise;
+        expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+
+        // The default mocked runCard resolves immediately, so the fire-and-forget reconciliation
+        // chain runs well before the still-gated fallback persistence lands -- give it real turns
+        // of the event loop (interleaved with the fake-timer advance) to actually complete.
+        await vi.advanceTimersByTimeAsync(100);
+
+        const beforeRelease = await fs.readdir(runsDir);
+        expect(beforeRelease.some((f) => f.endsWith(".advisory.json"))).toBe(false);
+        expect(beforeRelease.some((f) => f.endsWith(".outcome-pending.json"))).toBe(true);
+
+        releaseGate();
+        await vi.advanceTimersByTimeAsync(100);
+
+        const afterRelease = await fs.readdir(runsDir);
+        const advisoryFile = afterRelease.find((f) => f.endsWith(".advisory.json"));
+        expect(advisoryFile).toBeDefined();
+        const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+        expect(record.outcome).not.toBeNull();
+        expect(afterRelease.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
+        expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("proves the ordering explicitly: reconciliation (and the outcome retention it triggers) completes before the fallback's own late persistence lands, and the two still converge", async () => {
+      vi.useFakeTimers();
+      try {
+        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+        let releaseGate;
+        const gate = new Promise((resolve) => {
+          releaseGate = resolve;
+        });
+        let decisionWritesObserved = 0;
+        const buildLaunchDecideFn = (args) =>
+          realBuildLaunchDecide({
+            ...args,
+            decideLaunchAdvisoryFn: () => new Promise(() => {}),
+            recordAdvisoryDecisionFn: async (recordArgs) => {
+              await gate;
+              decisionWritesObserved += 1;
+              return realRecordAdvisoryDecision(recordArgs);
+            }
+          });
+
+        const launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await launchPromise;
+        await vi.advanceTimersByTimeAsync(100);
+
+        // The run has already "finished and been reconciled" (its lease released) while the
+        // fallback's own persistence is still gated -- the ordering Codex's round-3 finding named.
+        expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+        expect(decisionWritesObserved).toBe(0);
+
+        releaseGate();
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(decisionWritesObserved).toBe(1);
+        const advisoryFile = (await fs.readdir(runsDir)).find((f) => f.endsWith(".advisory.json"));
+        const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+        expect(record.outcome).not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a terminal marker never outlives its use -- a NORMAL (non-fallback) decision write also consumes it, and the marker is gone afterward", async () => {
+      vi.useFakeTimers();
+      try {
+        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+        let resolveEstimate;
+        const estimateGate = new Promise((resolve) => {
+          resolveEstimate = resolve;
+        });
+        const buildLaunchDecideFn = (args) =>
+          realBuildLaunchDecide({
+            ...args,
+            // A generous inner bound so the fixed 8s outer bound (cardLaunch.js's own, not
+            // injectable) fires first and lets the run proceed while this real decide() is still
+            // genuinely in flight -- its eventual, real (non-fallback) publish is what this test
+            // exercises, as distinct from the fallback-publish tests above.
+            timeoutMs: 20_000,
+            decideLaunchAdvisoryFn: async () => {
+              await estimateGate;
+              return {
+                estimate: { value: 0.5, unit: "usd", classification: "prior", estimatorVersion: "v1" },
+                telemetryReadings: {},
+                type: args.type,
+                fitDate: null,
+                reason: "genuine, just slow"
+              };
+            }
+          });
+
+        const launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+        await vi.advanceTimersByTimeAsync(9_000);
+        await launchPromise;
+        expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+
+        // The mocked runCard resolves immediately -- reconciliation runs now, before any decision
+        // exists yet, and must retain the outcome rather than discard it.
+        await vi.advanceTimersByTimeAsync(100);
+        let files = await fs.readdir(runsDir);
+        expect(files.some((f) => f.endsWith(".advisory.json"))).toBe(false);
+        expect(files.some((f) => f.endsWith(".outcome-pending.json"))).toBe(true);
+
+        // The real (non-fallback) estimate finally resolves and gets recorded normally.
+        resolveEstimate();
+        await vi.advanceTimersByTimeAsync(100);
+
+        files = await fs.readdir(runsDir);
+        const advisoryFile = files.find((f) => f.endsWith(".advisory.json"));
+        expect(advisoryFile).toBeDefined();
+        const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+        expect(record.outcome).not.toBeNull();
+        expect(record.reason).toMatch(/genuine, just slow/);
+        expect(files.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
