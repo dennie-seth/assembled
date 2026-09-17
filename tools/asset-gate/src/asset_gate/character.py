@@ -252,8 +252,11 @@ TORSO_ANCHOR_POINTS_NORM: dict[int, tuple[float, float]] = {
 #: it at exactly 0.0 distance. These joint groups are the NAMED regions
 #: `determine_character_part_identity` evaluates independently, each
 #: derived from that frame's OWN rig-commanded keypoints (unlike the torso
-#: box, limbs move, so their region must move with them) via
-#: `asset_gate.art.check_region_identity_stability`.
+#: box, limbs move, so their region must move with them), each compared
+#: against a REAL reference frame's own same-named region via
+#: `asset_gate.art.check_region_identity_against_reference` (2026-09-17
+#: Codex fix -- see `_recompute_part_identity_from_frames`'s own docstring
+#: for why the original binary-rig-silhouette reference was wrong).
 #:
 #: "near"/"far" is this module's own shorthand for the two limb clusters
 #: (right-side vs left-side) -- it does not claim depth/camera semantics,
@@ -269,8 +272,10 @@ FAR_LIMB_JOINT_INDICES: tuple[int, ...] = (5, 6, 7, 11, 12, 13)  # left arm + le
 PART_IDENTITY_REGION_PAD_PX = 3
 
 #: T-0361: cap for the worst NAMED region's palette-histogram distance
-#: (actual sheet pixels vs. the rig's own predicted silhouette for that same
-#: frame), for the same three motion classes T-0340 already applies its own
+#: (a frame's actual per-part pixels vs. the sheet's own reference frame's
+#: real per-part pixels for that same named region -- 2026-09-17 Codex fix;
+#: never a rendered rig silhouette, see `_recompute_part_identity_from_frames`),
+#: for the same three motion classes T-0340 already applies its own
 #: two measures to. Deliberately a NEW, separate constant from
 #: `IDENTITY_STABILITY_HISTOGRAM_CAP` (0.15) -- this card does not change
 #: that value, or `POSE_FIDELITY_IOU_FLOOR` (0.70); see this module's own
@@ -1388,33 +1393,28 @@ def determine_character_motion_fidelity(
 # ---- T-0361: spatial / part-aware identity recompute ----
 
 
-def _recompute_part_identity_from_frames(
+#: T-0361 (2026-09-17 Codex fix): which frame of the sheet serves as the
+#: per-part appearance REFERENCE `_recompute_part_identity_from_frames`
+#: compares every frame against -- see that function's own docstring for
+#: why frame 0 and what it does and does not catch.
+PART_IDENTITY_REFERENCE_FRAME_INDEX = 0
+
+
+def _resolve_frame_regions(
     frames: list[Image.Image],
-    provenance: dict,
+    frame_generation: list,
     *,
     cell_px: int,
-    repo_root: Path | str,
-    background_index: int,
+    repo_root_path: Path,
     sheet_name: str,
-) -> CheckResult:
-    """The part-identity analogue of `_recompute_motion_fidelity_from_frames`:
-    for each frame, render the rig's own predicted silhouette from its
-    versioned keypoints file (same as the motion-fidelity recompute), wrap it
-    as an indexed image, then compare it against the frame's REAL pixels
-    independently over four NAMED regions
-    (`asset_gate.art.check_region_identity_stability`) instead of one
-    whole-frame or fixed-torso measure. Kept as its own, separate loop from
-    `_recompute_motion_fidelity_from_frames` (rather than folded into it)
-    deliberately -- that function's exact messages/behaviour are pinned by
-    T-0357's own regression tests and this card must not risk perturbing
-    them.
-
-    Caller (`determine_character_part_identity`) has already established
-    `motion_class` is one of the higher-cap classes and rig evidence exists.
+) -> list[dict[str, tuple[int, int, int, int]]] | CheckResult:
+    """Per-frame named-region boxes (T-0361), resolved from each frame's own
+    versioned rig keypoints. Returns a `CheckResult` (always failing) the
+    moment any frame's rig evidence cannot be resolved -- shared by
+    `_recompute_part_identity_from_frames` so every frame's boxes are known
+    up front, before any frame is compared against the reference frame's own
+    boxes.
     """
-    repo_root_path = Path(repo_root)
-    frame_generation = provenance["frame_generation"]
-
     if len(frame_generation) != len(frames):
         return CheckResult(
             check="character_part_identity",
@@ -1430,12 +1430,9 @@ def _recompute_part_identity_from_frames(
             },
         )
 
-    worst_distance_per_frame: list[float] = []
-    per_region_worst: dict[str, list[float]] = {}
-    for i, (frame, frame_info) in enumerate(zip(frames, frame_generation, strict=True)):
-        rel_keypoints = (
-            frame_info.get("pose_keypoints_file") if isinstance(frame_info, dict) else None
-        )
+    regions_per_frame: list[dict[str, tuple[int, int, int, int]]] = []
+    for i, frame_info in enumerate(frame_generation):
+        rel_keypoints = frame_info.get("pose_keypoints_file") if isinstance(frame_info, dict) else None
         if not rel_keypoints:
             return CheckResult(
                 check="character_part_identity",
@@ -1458,24 +1455,99 @@ def _recompute_part_identity_from_frames(
                 details={"frame_index": i, "pose_keypoints_file": rel_keypoints},
             )
         points = _load_rig_keypoints(keypoints_path)
-        predicted = art.render_rig_silhouette(
-            size=cell_px,
-            limbs=_rig_limbs_px(points, cell_px),
-            radius=MOTION_FIDELITY_CAPSULE_RADIUS_PX,
-        )
-        predicted_image = Image.new("P", (cell_px, cell_px))
-        predicted_image.putdata(predicted.astype("uint8").flatten().tolist())
+        regions_per_frame.append(_named_region_boxes_px(points, cell_px))
 
-        regions = _named_region_boxes_px(points, cell_px)
+    return regions_per_frame
+
+
+def _recompute_part_identity_from_frames(
+    frames: list[Image.Image],
+    provenance: dict,
+    *,
+    cell_px: int,
+    repo_root: Path | str,
+    background_index: int,
+    sheet_name: str,
+) -> CheckResult:
+    """The part-identity analogue of `_recompute_motion_fidelity_from_frames`
+    (T-0361, redesigned 2026-09-17 per Codex review): for each frame,
+    compare its own four NAMED regions (head/torso/near_limb/far_limb, each
+    positioned from THAT frame's own rig-commanded keypoints) against a
+    REAL per-part appearance REFERENCE -- another frame of this same sheet
+    (`PART_IDENTITY_REFERENCE_FRAME_INDEX`, frame 0), never a rendered rig
+    silhouette.
+
+    **Why not the rig silhouette (the pre-fix design).**
+    `art.render_rig_silhouette` draws pose geometry only, always at a fixed
+    foreground palette index -- comparing a frame's real pixels against it
+    therefore measures "does this region use that ONE hard-coded index",
+    not identity. A character drawn consistently at ANY other palette index
+    failed this check on colour alone (Codex's `identity-probe.py`: the
+    identical rig silhouette passed recoloured at index 1 and failed
+    recoloured at index 2). Comparing against another REAL frame's own
+    region content is colour-index-agnostic the same way
+    `check_identity_stability`'s torso comparison already is: whatever
+    colour the reference frame actually uses for a part is what this
+    frame's same part is checked against, whatever that colour is.
+
+    **Why frame 0, and its documented limit.** An anchor frame of the SAME
+    sheet is always available whenever there is more than one frame (no
+    extra input, no extra generation step) and needs no assumption about
+    what "correct" looks like beyond "this sheet is internally consistent
+    with itself" -- which is exactly the DL-31 finding this check exists
+    for (a swap/misplacement makes a sheet inconsistent with its own other
+    frames). Its documented blind spot: a defect present identically in
+    EVERY frame, including frame 0 itself, is invisible to this design,
+    because the reference frame carries the same defect and so agrees with
+    it (see docs/character-motion-negative-controls-T0361.md's own
+    "documented limit" section, and
+    `test_swap_present_uniformly_in_every_frame_is_invisible_to_the_anchor_reference`
+    in `test_character_part_identity_T0361.py`). A single-frame sheet
+    (`len(frames) == 1`) is the extreme case of this: frame 0 is both the
+    only frame under test AND its own reference, so the comparison is
+    always trivially self-consistent (distance 0 for every region) --
+    documented, not a silent bypass: the check still runs and still
+    reports a real (if vacuous) result, `single_frame_trivial_pass=True` in
+    its details, rather than skipping.
+
+    Kept as its own, separate loop from `_recompute_motion_fidelity_from_frames`
+    (rather than folded into it) deliberately -- that function's exact
+    messages/behaviour are pinned by T-0357's own regression tests and this
+    card must not risk perturbing them.
+
+    Caller (`determine_character_part_identity`) has already established
+    `motion_class` is one of the higher-cap classes and rig evidence exists.
+    """
+    repo_root_path = Path(repo_root)
+    frame_generation = provenance["frame_generation"]
+
+    regions_per_frame = _resolve_frame_regions(
+        frames,
+        frame_generation,
+        cell_px=cell_px,
+        repo_root_path=repo_root_path,
+        sheet_name=sheet_name,
+    )
+    if isinstance(regions_per_frame, CheckResult):
+        return regions_per_frame
+
+    reference_index = PART_IDENTITY_REFERENCE_FRAME_INDEX
+    reference_frame = frames[reference_index]
+    reference_regions = regions_per_frame[reference_index]
+
+    worst_distance_per_frame: list[float] = []
+    per_region_worst: dict[str, list[float]] = {}
+    for frame, regions in zip(frames, regions_per_frame, strict=True):
         # max_histogram_distance=1.0: only the per-region distance itself is
         # used (aggregated below); the real cap is applied once, on the
         # aggregate range, below -- mirrors the motion-fidelity recompute's
         # own min_iou=0.0/max_histogram_distance=1.0 usage.
-        region_result = art.check_region_identity_stability(
+        region_result = art.check_region_identity_against_reference(
             frame,
-            predicted_image,
+            regions,
+            reference_frame,
+            reference_regions,
             background_index=background_index,
-            regions=regions,
             max_histogram_distance=1.0,
         )
         worst_distance_per_frame.append(region_result.details["worst_distance"])
@@ -1489,16 +1561,19 @@ def _recompute_part_identity_from_frames(
         check="character_part_identity",
         passed=passed,
         reason=(
-            f"{sheet_name}: worst per-region palette-histogram distance "
-            f"{part_identity_range[1]:.4f} {'<=' if passed else '>'} cap "
-            f"{PART_IDENTITY_HISTOGRAM_CAP} [recomputed live from the sheet's own pixels + "
-            "versioned rig keypoints, per named region (head/torso/near_limb/far_limb)]"
+            f"{sheet_name}: worst per-region palette-histogram distance vs frame "
+            f"{reference_index}'s own per-part pixels {part_identity_range[1]:.4f} "
+            f"{'<=' if passed else '>'} cap {PART_IDENTITY_HISTOGRAM_CAP} [recomputed live "
+            "from the sheet's own pixels + versioned rig keypoints, per named region "
+            "(head/torso/near_limb/far_limb), each frame compared against frame "
+            f"{reference_index}'s own real per-part pixels -- never a rig silhouette]"
         ),
         details={
             "part_identity_range": part_identity_range,
             "per_region_max": {name: max(vals) for name, vals in per_region_worst.items()},
             "recomputed_from_pixels": True,
-            "rig_config_version": RIG_CONFIG_VERSION,
+            "reference_frame_index": reference_index,
+            "single_frame_trivial_pass": len(frames) == 1,
         },
     )
 
