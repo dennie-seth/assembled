@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.lfs_pointer import is_lfs_pointer
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WEIGHTS_PATH = REPO_ROOT / "assets" / "final" / "lora" / "player_identity_profile_v1.safetensors"
 PROVENANCE_PATH = (
@@ -58,6 +60,8 @@ def provenance() -> dict:
 
 def test_weights_file_is_valid_safetensors() -> None:
     assert WEIGHTS_PATH.exists(), f"trained profile identity LoRA not found: {WEIGHTS_PATH}"
+    if is_lfs_pointer(WEIGHTS_PATH):
+        pytest.skip(f"{WEIGHTS_PATH} is an un-fetched Git LFS pointer, not the real weights file")
     assert WEIGHTS_PATH.stat().st_size > 0, f"weights file is empty: {WEIGHTS_PATH}"
     header = _read_safetensors_header(WEIGHTS_PATH)
     tensor_keys = [k for k in header if k != "__metadata__"]
@@ -65,6 +69,8 @@ def test_weights_file_is_valid_safetensors() -> None:
 
 
 def test_weights_hash_matches_provenance(provenance: dict) -> None:
+    if is_lfs_pointer(WEIGHTS_PATH):
+        pytest.skip(f"{WEIGHTS_PATH} is an un-fetched Git LFS pointer, not the real weights file")
     got = hashlib.sha256(WEIGHTS_PATH.read_bytes()).hexdigest()
     expected = provenance.get("weights_hash")
     assert expected, "provenance missing 'weights_hash'"

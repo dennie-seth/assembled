@@ -64,6 +64,18 @@ jobs:
       # own pytest run exactly (17 failed + 131 errors = 148 lines), so a
       # future card can pick any one up individually instead of this job
       # quietly widening or silently dropping coverage it doesn't need to.
+      #
+      # CI fix round (2026-09-17): this checkout's actions/checkout@v4 step
+      # deliberately does not set `lfs: true` (no LFS fetch bandwidth spent
+      # on every run), so assets/final/lora/*.safetensors are un-fetched Git
+      # LFS pointer files here. The six tests that read those bytes
+      # (test_weights_file_is_valid_safetensors / test_weights_hash_matches_
+      # provenance across T0229/T0248/profile_T0274) detect the pointer via
+      # tests/lfs_pointer.py and SKIP rather than fail -- they are not in
+      # T0363_KNOWN_FAILING_IDS.txt and are not deselected; they still run
+      # and assert in full wherever the real weights file is present (a
+      # local run, or the reviewer's own checkout). Fetching LFS objects in
+      # CI to get full coverage here is a separate decision for a human.
       - name: pytest -q
         run: |
           mapfile -t deselect < <(sed 's/^/--deselect=/' tests/T0363_KNOWN_FAILING_IDS.txt)
