@@ -155,6 +155,11 @@ int NoteClient::fetch_anchor_snapshot(int archetype_id, int tag) {
     return enqueue_request(url, "GET", "", RequestKind::FETCH_ANCHOR_SNAPSHOT);
 }
 
+int NoteClient::fetch_vocabulary() {
+    std::string url = base_url_ + "/v1/vocabulary";
+    return enqueue_request(url, "GET", "", RequestKind::FETCH_VOCABULARY);
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
@@ -287,6 +292,9 @@ void NoteClient::complete_request(const InFlight &req, CURLcode result) {
     case RequestKind::FETCH_ANCHOR_SNAPSHOT:
         emit_signal("anchor_snapshot_fetched", req.request_id, state, status_int, body);
         break;
+    case RequestKind::FETCH_VOCABULARY:
+        emit_signal("vocabulary_fetched", req.request_id, state, status_int, body);
+        break;
     }
 }
 
@@ -345,6 +353,7 @@ void NoteClient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("request_identity"), &NoteClient::request_identity);
     ClassDB::bind_method(D_METHOD("fetch_anchor_snapshot", "archetype_id", "tag"),
                          &NoteClient::fetch_anchor_snapshot);
+    ClassDB::bind_method(D_METHOD("fetch_vocabulary"), &NoteClient::fetch_vocabulary);
 
     // Signals
     ADD_SIGNAL(MethodInfo("notes_fetched", PropertyInfo(Variant::INT, "request_id"),
@@ -362,6 +371,10 @@ void NoteClient::_bind_methods() {
                           PropertyInfo(Variant::INT, "http_status"),
                           PropertyInfo(Variant::STRING, "phrase")));
     ADD_SIGNAL(MethodInfo("anchor_snapshot_fetched", PropertyInfo(Variant::INT, "request_id"),
+                          PropertyInfo(Variant::INT, "state"),
+                          PropertyInfo(Variant::INT, "http_status"),
+                          PropertyInfo(Variant::STRING, "body")));
+    ADD_SIGNAL(MethodInfo("vocabulary_fetched", PropertyInfo(Variant::INT, "request_id"),
                           PropertyInfo(Variant::INT, "state"),
                           PropertyInfo(Variant::INT, "http_status"),
                           PropertyInfo(Variant::STRING, "body")));

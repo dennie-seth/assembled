@@ -318,6 +318,10 @@ async function handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir
     [REQUIRES_APPROVAL_FIELD]: body[REQUIRES_APPROVAL_FIELD] === true,
     approved_by: null,
     approved_at: null,
+    // T-0368: a human planning signal only, never read by any launch/admission/cost path (see
+    // test/complexityPointsLaunchIsolation.test.js) -- validateTask (via store.create) rejects
+    // anything but null or a legal Fibonacci value.
+    complexity_points: body.complexity_points ?? null,
     body: body.body ?? DEFAULTS.body
   };
 
@@ -1064,6 +1068,9 @@ function formatBacklogExport(tasks, date) {
     lines.push(`- Phase: ${t.phase}`);
     lines.push(`- Status: ${t.status}`);
     lines.push(`- Depends on: ${t.depends_on.length > 0 ? t.depends_on.join(", ") : "none"}`);
+    // T-0368: a human planning signal only -- shown for backlog grooming, never fed into any
+    // launch/admission/cost decision.
+    lines.push(`- Complexity: ${Number.isInteger(t.complexity_points) ? t.complexity_points : "unscored"}`);
     lines.push(``);
   }
   return lines.join("\n");

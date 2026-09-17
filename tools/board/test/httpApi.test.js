@@ -154,6 +154,38 @@ describe("POST /api/tasks", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("accepts an explicit complexity_points Fibonacci value at create time (T-0368)", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody({ complexity_points: 8 }))
+    });
+    expect(res.status).toBe(201);
+    const task = await res.json();
+    expect(task.complexity_points).toBe(8);
+  });
+
+  it("defaults complexity_points to null when not provided -- existing/plain create flows keep working unchanged", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody())
+    });
+    const task = await res.json();
+    expect(task.complexity_points).toBeNull();
+  });
+
+  it("returns 400 with a clear error for a non-Fibonacci complexity_points value", async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validTaskBody({ complexity_points: 4 }))
+    });
+    expect(res.status).toBe(400);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/complexity_points/i);
+  });
 });
 
 describe("GET /api/tasks/:id", () => {
@@ -343,6 +375,30 @@ describe("PATCH /api/tasks/:id", () => {
       body: JSON.stringify({ id: "T-9999" })
     });
     expect(res.status).toBe(400);
+  });
+
+  it("applies a valid complexity_points update (T-0368)", async () => {
+    const task = await createTask();
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ complexity_points: 13 })
+    });
+    expect(res.status).toBe(200);
+    const updated = await res.json();
+    expect(updated.complexity_points).toBe(13);
+  });
+
+  it("returns 400 with a clear error for a non-Fibonacci complexity_points update", async () => {
+    const task = await createTask();
+    const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ complexity_points: 6 })
+    });
+    expect(res.status).toBe(400);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/complexity_points/i);
   });
 });
 
@@ -750,6 +806,20 @@ describe("GET /api/tasks/export/backlog", () => {
     const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
     const text = await res.text();
     expect(text).toContain("Status: backlog");
+  });
+
+  it("includes complexity_points in the export when set (T-0368)", async () => {
+    await createTask({ title: "Scored task", status: "backlog", complexity_points: 8 });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    expect(text).toMatch(/Complexity:.*8/);
+  });
+
+  it("shows complexity_points as unscored when absent from the export (T-0368) -- existing cards keep working unchanged", async () => {
+    await createTask({ title: "Unscored task", status: "backlog" });
+    const res = await fetch(`${baseUrl}/api/tasks/export/backlog`);
+    const text = await res.text();
+    expect(text).toMatch(/Complexity: unscored/);
   });
 
   it("includes depends_on in the export listing dependency ids when present", async () => {

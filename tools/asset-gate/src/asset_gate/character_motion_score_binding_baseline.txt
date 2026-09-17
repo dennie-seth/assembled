@@ -1,0 +1,23 @@
+# Documented pre-T-0360 motion-score-binding gaps for the character
+# motion-score-binding sweep (Codex review 2026-09-11 finding 2c, T-0360).
+#
+# Paths are relative to the assets/final/ root, forward slashes.
+#
+# T-0360 requires that a locomotion/transition/loop character sheet's
+# recorded pose_fidelity_range/identity_stability_range be bound to the
+# sheet's own content hash, the rig/config version, the palette file's
+# content hash and the evaluator version -- checked only once
+# determine_character_motion_fidelity has actually recomputed successfully
+# from pixels. A sheet that cannot be recomputed at all (missing/malformed
+# rig evidence) is T-0357's own fail-closed concern and, where a legacy gap
+# is explicitly exempted, character_motion_class_baseline.txt's job -- not
+# this file's.
+#
+# No committed character sidecar declares a locomotion/transition/loop
+# motion_class today (see character_motion_class_baseline.txt's own
+# docstring), so this list is empty: nothing in the tree needs a binding
+# exemption yet. A genuinely unrecomputable legacy sheet may be added here
+# in the future, but only with an explicit, path-exact entry and a written
+# reason directly above it, in the same style as the walk entry in
+# character_motion_class_baseline.txt -- never silently, and never to
+# silence a fresh violation.

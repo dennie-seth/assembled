@@ -20,6 +20,8 @@ import { createRunAwareTaskStore } from "../lib/runAwareTaskStore.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 import { createAutoPullPoller } from "../runner/autoPullPoller.js";
 import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
+import { drainPendingUsageWrites } from "../runner/usageLedger.js";
+import { reconcileReservationsOnStartup } from "../runner/launchReservation.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -35,6 +37,35 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
  * board to "db" is a deliberate BOARD_TASK_STORE env change at deploy time, not something this
  * function decides on its own.
  */
+/**
+ * Best-effort drain of any usage-ledger write still in flight when the board shuts down (T-0367
+ * fix round 3, 2026-09-12). Before this, only `RunOrchestrator.runCard()`'s own `finally` drained
+ * pending writes -- there was no call site at all for an actual board-process shutdown, so a
+ * terminal write dispatched fire-and-forget (`void this._recordUsage(...)`) could be lost mid-write
+ * on exactly the quota-stop/crash/restart shutdowns this ticket exists to measure. Bounded by
+ * `timeoutMs` so a hung or merely slow drain can never hold up the rest of shutdown past systemd's
+ * stop timeout; a timeout or a rejection is logged and swallowed here, never thrown -- this is
+ * instrumentation, and it must never block or fail shutdown, or change any card's verdict.
+ */
+async function drainUsageWritesBestEffort({ drainPendingUsageWritesFn, timeoutMs }) {
+  let timer;
+  const timedOut = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("timed-out"), timeoutMs);
+  });
+  try {
+    const outcome = await Promise.race([drainPendingUsageWritesFn().then(() => "drained"), timedOut]);
+    if (outcome === "timed-out") {
+      console.warn(
+        `Board: usage-ledger drain exceeded ${timeoutMs}ms on shutdown -- continuing without waiting further.`
+      );
+    }
+  } catch (err) {
+    console.warn("Board: usage-ledger drain failed on shutdown (ignoring):", err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function createTaskStoreAndAllocator({ tasksDir, taskStoreKind }) {
   if (taskStoreKind === "fs") {
     return { store: new FsTaskStore(tasksDir), idAllocator: new IdAllocator(tasksDir), db: null };
@@ -50,7 +81,11 @@ export async function startBoardServer({
   tasksDir,
   port = 0,
   host = "127.0.0.1",
-  taskStoreKind = process.env.BOARD_TASK_STORE || "fs"
+  taskStoreKind = process.env.BOARD_TASK_STORE || "fs",
+  // Injectable for tests only (a hung/rejecting drain, a short bound); production always gets the
+  // real drainPendingUsageWrites and a bound comfortably inside systemd's 90s final-SIGTERM timeout.
+  drainPendingUsageWritesFn = drainPendingUsageWrites,
+  usageDrainTimeoutMs = Number(process.env.BOARD_USAGE_DRAIN_TIMEOUT_MS) || 3000
 }) {
   if (host !== "127.0.0.1") {
     throw new Error("Board server must bind to 127.0.0.1 only");
@@ -186,6 +221,24 @@ export async function startBoardServer({
   // before resetting anything, and only reaps what it can't corroborate as still alive.
   await orphanReaper.reapOnStartup();
   orphanReaper.start();
+  // WIP gate T-D (spec §5): releases a launch-boundary reservation left dangling by a crash or
+  // an ungraceful restart. Runs AFTER the reaper above so it reconciles against each card's
+  // already-corrected status -- a card the reaper just reset from in-progress to blocked must
+  // have its stranded reservation released too, not left counted as still-unspent forever.
+  // Gated on the same cross-process ownership as the reaper (see its own docstring): a
+  // non-owner process reads a different runs directory and must never release another live
+  // board's reservations.
+  if (ownership.owned) {
+    // reconcileReservationsOnStartup already tolerates an unreadable/malformed lease file or an
+    // unlistable reservation directory internally (T-0370 follow-up) -- this try/catch is a
+    // backstop for anything else that call could still throw (e.g. a release write failing), so
+    // that reservation reconciliation can never be the reason a board process fails to start.
+    try {
+      await reconcileReservationsOnStartup({ runsDir: path.join(tasksDir, ".runs"), store: guardedStore });
+    } catch (err) {
+      console.error(`launch-reservation: startup reconciliation failed -- continuing startup: ${err.message}`);
+    }
+  }
   selfImprovementLoop.start();
   autoPullPoller.start();
   autoLaunchPoller.start();
@@ -219,6 +272,9 @@ export async function startBoardServer({
       hub.close();
       ptyBridge.close();
       if (watcher) await watcher.close();
+      // Drain BEFORE the server/db close -- a terminal usage-ledger write racing shutdown must
+      // land on disk while the process is still able to do I/O, not after.
+      await drainUsageWritesBestEffort({ drainPendingUsageWritesFn, timeoutMs: usageDrainTimeoutMs });
       await new Promise((resolve) => server.close(resolve));
       if (db) db.close();
     }

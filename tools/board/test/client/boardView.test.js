@@ -229,6 +229,45 @@ describe("renderBoard", () => {
     expect(column.querySelector('.card[data-id="T-0099"] .card-run')).toBeNull();
   });
 
+  describe("column header complexity_points summary (T-0368)", () => {
+    it("shows the sum of complexity_points for the cards in a column", () => {
+      const root = document.createElement("div");
+      renderBoard(
+        root,
+        [
+          task({ id: "T-0001", status: "backlog", complexity_points: 3 }),
+          task({ id: "T-0002", status: "backlog", complexity_points: 5 })
+        ],
+        { onDrop: vi.fn(), onCardClick: vi.fn() }
+      );
+      const header = root.querySelector('.column[data-status="backlog"] .column-header');
+      expect(header.textContent).toMatch(/8 pts/);
+    });
+
+    it("shows a count of cards with no score alongside the sum", () => {
+      const root = document.createElement("div");
+      renderBoard(
+        root,
+        [
+          task({ id: "T-0001", status: "backlog", complexity_points: 3 }),
+          task({ id: "T-0002", status: "backlog" })
+        ],
+        { onDrop: vi.fn(), onCardClick: vi.fn() }
+      );
+      const header = root.querySelector('.column[data-status="backlog"] .column-header');
+      expect(header.textContent).toMatch(/3 pts/);
+      expect(header.textContent).toMatch(/1 unscored/);
+    });
+
+    it("shows 0 pts and no unscored count for an empty column", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn() });
+      const header = root.querySelector('.column[data-status="backlog"] .column-header');
+      expect(header.textContent).toMatch(/0 pts/);
+      expect(header.textContent).not.toMatch(/unscored/);
+    });
+  });
+
   // The display half of the RUN-3 / LC-5 dependency guard (docs/board-invariants.md).
   // The backend already 409s a run whose own dependencies are not done/retired
   // (test/httpApi.test.js, "dependency guard on run (RUN-3 / LC-5)"); these pin down that

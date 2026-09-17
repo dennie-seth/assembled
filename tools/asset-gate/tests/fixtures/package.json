@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Scopes generate_negative_controls_T0361.js to ESM (.claude/rules/js.md: 'ESM only'), without adding a package.json to the Python package this directory otherwise belongs to."
+}

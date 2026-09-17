@@ -14,6 +14,7 @@ function task(overrides = {}) {
     created: "2026-07-31",
     body: "## Context\nsome context\n\n## Acceptance\n- [ ] do it",
     max_attempts: null,
+    complexity_points: null,
     ...overrides
   };
 }
@@ -290,6 +291,72 @@ describe("renderDetailPanel editable max_attempts (T-0343)", () => {
     renderDetailPanel(root, task({ id: "T-0001", attempts: 1 }), baseOpts());
 
     expect(root.querySelector(".detail-max-attempts").value).toBe("4");
+    document.body.removeChild(root);
+  });
+});
+
+describe("renderDetailPanel editable complexity_points (T-0368: human planning signal only)", () => {
+  it("renders the complexity_points field empty (no score) when the card carries no value", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    expect(root.querySelector(".detail-complexity-points").value).toBe("");
+  });
+
+  it("renders the card's own complexity_points value in the field", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ complexity_points: 8 }), baseOpts());
+    expect(root.querySelector(".detail-complexity-points").value).toBe("8");
+  });
+
+  it("offers only the legal Fibonacci values as options, plus the empty no-score option", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    const values = Array.from(root.querySelectorAll(".detail-complexity-points option")).map((opt) => opt.value);
+    expect(values).toEqual(["", "1", "2", "3", "5", "8", "13", "21"]);
+  });
+
+  it("includes complexity_points in the Save patch when edited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts({ onSave }));
+
+    const select = root.querySelector(".detail-complexity-points");
+    select.value = "5";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { complexity_points: 5 });
+  });
+
+  it("maps the cleared (no score) option back to null on save", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001", complexity_points: 5 }), baseOpts({ onSave }));
+
+    const select = root.querySelector(".detail-complexity-points");
+    select.value = "";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { complexity_points: null });
+  });
+
+  it("does not call onSave when complexity_points is left unedited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts({ onSave }));
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unsaved complexity_points edit across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts());
+
+    root.querySelector(".detail-complexity-points").value = "13";
+
+    renderDetailPanel(root, task({ id: "T-0001", attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-complexity-points").value).toBe("13");
     document.body.removeChild(root);
   });
 });

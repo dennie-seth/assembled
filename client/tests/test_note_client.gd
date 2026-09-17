@@ -51,6 +51,16 @@ class SignalCapture:
 			"http_status": http_status,
 		})
 
+	func on_vocabulary_fetched(
+			req_id: int, state: int, http_status: int, body: String) -> void:
+		events.append({
+			"signal": "vocabulary_fetched",
+			"req_id": req_id,
+			"state": state,
+			"http_status": http_status,
+			"body": body,
+		})
+
 
 ## Minimal TCP-backed HTTP mock server.  Queues canned responses; each
 ## accepted connection reads (and discards) the request then sends the next
@@ -132,6 +142,7 @@ func _init() -> void:
 	failures += _test_fetch_success(mock)
 	failures += _test_post_note_success(mock)
 	failures += _test_rate_note_success(mock)
+	failures += _test_fetch_vocabulary_success(mock)
 
 	mock.stop()
 
@@ -163,10 +174,22 @@ func _drive(
 
 
 ## ── Test: timeout ────────────────────────────────────────────────────────────
-## Connects to a port with nothing listening; expects STATE_TIMEOUT.
+## Connects to a server that accepts the TCP connection but never sends a
+## response, so curl's own transfer timeout (CURLE_OPERATION_TIMEDOUT) is what
+## fires. A port with nothing listening at all is the wrong fixture for this:
+## on Linux, connecting to a closed local port is refused immediately
+## (ECONNREFUSED / CURLE_COULDNT_CONNECT -> STATE_NETWORK_ERROR), it never
+## reaches the timeout path this test means to exercise.
 
 func _test_timeout() -> Array[String]:
 	var failures: Array[String] = []
+
+	var hang: MockHttpServer = MockHttpServer.new()
+	if not hang.listen(TIMEOUT_PORT):
+		failures.append(
+			"timeout: could not start hang server on port %d" % TIMEOUT_PORT
+		)
+		return failures
 
 	var client: NoteClient = NoteClient.new()
 	client.set_base_url("http://127.0.0.1:%d" % TIMEOUT_PORT)
@@ -178,8 +201,12 @@ func _test_timeout() -> Array[String]:
 	client.notes_fetched.connect(cap.on_notes_fetched)
 
 	client.fetch_notes(1, 1, 10)
-	var completed: bool = _drive(client, cap, null, 3000.0)
+	# Never queue a response: MockHttpServer.pump() accepts the connection
+	# into _pending but only replies once _queue is non-empty, so it holds
+	# the socket open and unresponsive for the life of this test.
+	var completed: bool = _drive(client, cap, hang, 3000.0)
 	client.free()
+	hang.stop()
 
 	if not completed:
 		failures.append("timeout: no signal received within 3 s wall time")
@@ -375,5 +402,46 @@ func _test_rate_note_success(mock: MockHttpServer) -> Array[String]:
 	if ev.http_status != 204:
 		failures.append(
 			"rate_success: expected http_status=204, got %d" % ev.http_status
+		)
+	return failures
+
+
+## ── Test: fetch vocabulary (success) ──────────────────────────────────────────
+## Mock returns 200 with a JSON array of unlocked word ids; expects STATE_OK on
+## vocabulary_fetched (T-0065: the note composer filters its slot dropdowns to
+## exactly this set).
+
+func _test_fetch_vocabulary_success(mock: MockHttpServer) -> Array[String]:
+	var failures: Array[String] = []
+
+	var client: NoteClient = NoteClient.new()
+	client.set_base_url("http://127.0.0.1:%d" % MOCK_PORT)
+	client.set_auth_token("tok")
+
+	var cap: SignalCapture = SignalCapture.new()
+	client.vocabulary_fetched.connect(cap.on_vocabulary_fetched)
+
+	mock.queue(200, "[1,9,21]")
+	client.fetch_vocabulary()
+	var completed: bool = _drive(client, cap, mock, 5000.0)
+	client.free()
+
+	if not completed:
+		failures.append("vocabulary_success: no vocabulary_fetched signal received")
+		return failures
+
+	var ev: Dictionary = cap.events[0]
+	if ev.state != NoteClient.STATE_OK:
+		failures.append(
+			"vocabulary_success: expected STATE_OK (%d), got %d"
+			% [NoteClient.STATE_OK, ev.state]
+		)
+	if ev.http_status != 200:
+		failures.append(
+			"vocabulary_success: expected http_status=200, got %d" % ev.http_status
+		)
+	if ev.body != "[1,9,21]":
+		failures.append(
+			"vocabulary_success: expected body '[1,9,21]', got '%s'" % ev.body
 		)
 	return failures

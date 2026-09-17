@@ -7,7 +7,8 @@ import {
   computeBlockerCounts,
   computeDependencyStatus,
   computeUnmetDependencies,
-  sortTasks
+  sortTasks,
+  summarizeComplexityPoints
 } from "../../src/client/board.js";
 
 function task(overrides = {}) {
@@ -173,6 +174,30 @@ describe("computeBlockerCounts", () => {
     const counts = computeBlockerCounts(tasks);
     expect(counts.get("T-0001")).toBe(1);
     expect(counts.get("T-0002")).toBe(1);
+  });
+});
+
+describe("summarizeComplexityPoints (T-0368: per-column planning-signal totals)", () => {
+  it("sums complexity_points across the given tasks", () => {
+    const tasks = [
+      task({ id: "T-0001", complexity_points: 3 }),
+      task({ id: "T-0002", complexity_points: 5 })
+    ];
+    expect(summarizeComplexityPoints(tasks)).toEqual({ total: 8, unscored: 0 });
+  });
+
+  it("counts a task with no complexity_points as unscored, not zero", () => {
+    const tasks = [task({ id: "T-0001", complexity_points: 3 }), task({ id: "T-0002" })];
+    expect(summarizeComplexityPoints(tasks)).toEqual({ total: 3, unscored: 1 });
+  });
+
+  it("treats an explicit null the same as an absent field", () => {
+    const tasks = [task({ id: "T-0001", complexity_points: null })];
+    expect(summarizeComplexityPoints(tasks)).toEqual({ total: 0, unscored: 1 });
+  });
+
+  it("returns zero totals for an empty task list", () => {
+    expect(summarizeComplexityPoints([])).toEqual({ total: 0, unscored: 0 });
   });
 });
 

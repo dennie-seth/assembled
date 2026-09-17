@@ -69,7 +69,8 @@ describe("runMigrations", () => {
       "0004_add_dispatch_agent.sql",
       "0005_add_card_events_body_snapshot.sql",
       "0006_add_max_attempts.sql",
-      "0007_add_round_cap.sql"
+      "0007_add_round_cap.sql",
+      "0008_add_complexity_points.sql"
     ]);
   });
 });

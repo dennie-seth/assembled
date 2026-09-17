@@ -504,6 +504,26 @@ describe("buildPlannerPrompt -- edge cases as an explicit, verified part of Acce
   });
 });
 
+describe("buildPlannerPrompt -- complexity_points authoring guidance (T-0368)", () => {
+  it("instructs the planner to consider setting a complexity_points value while authoring/expanding a card", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toContain("complexity_points");
+  });
+
+  it("gives a one-line rubric for every Fibonacci step (1, 2, 3, 5, 8, 13, 21)", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    for (const step of ["1", "2", "3", "5", "8", "13", "21"]) {
+      expect(prompt).toMatch(new RegExp("`" + step + "`\\s*[-—]"));
+    }
+  });
+
+  it("is explicit that complexity_points is a human planning signal only, never read by launch/admission/cost paths", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("planning signal only");
+    expect(prompt.toLowerCase()).toContain("never");
+  });
+});
+
 describe("buildMergeConflictPrompt", () => {
   const CONFLICTED_FILES = ["tools/board/src/lib/fsTaskStore.js", "tools/board/src/runner/gitOps.js"];
   const HUNKS = {

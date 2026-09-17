@@ -2,6 +2,20 @@
 
 Every subcommand prints a PASS/FAIL report (`result.format_report`) and
 exits 0 if every check passed, 1 otherwise -- the shape CI needs.
+
+The `soundfile`/`asset_gate.audio` imports are deferred into
+`_cmd_audio_gate` (the only subcommand that needs them) rather than done at
+module level: `audio.py` itself unconditionally imports `pyloudnorm` and
+`scipy.signal`, so an unconditional top-level import here would require the
+full audio dependency stack just to import this module at all, for any
+subcommand. That's real hardening on its own terms -- a caller that only
+needs the non-audio checks no longer needs the audio stack installed just
+to import this module -- but it is NOT a fix for the 2026-09-11
+"soundfile-related import failure" report against the character package's
+test suite: nothing under assets/src/character/tests/ imports
+asset_gate.cli, so that report's actual trigger is still unidentified. See
+assets/src/character/CI_KNOWN_FAILURES_T0363.md and
+tools/asset-gate/tests/test_cli_lazy_audio_import_T0363.py (T-0363).
 """
 
 from __future__ import annotations
@@ -11,10 +25,9 @@ import json
 import sys
 from pathlib import Path
 
-import soundfile as sf
 from PIL import Image
 
-from asset_gate import art, audio
+from asset_gate import art
 from asset_gate import character as character_mod
 from asset_gate import generator as generator_mod
 from asset_gate import palette as palette_mod
@@ -134,11 +147,13 @@ def _cmd_character_gate_report(args: argparse.Namespace) -> int:
 def _cmd_character_gate(args: argparse.Namespace) -> int:
     baseline = character_mod.load_character_arm_c_baseline()
     motion_class_baseline = character_mod.load_character_motion_class_baseline()
+    motion_score_binding_baseline = character_mod.load_character_motion_score_binding_baseline()
     results = character_mod.sweep_character_gate(
         args.root,
         repo_root=args.repo_root,
         baseline=baseline,
         motion_class_baseline=motion_class_baseline,
+        motion_score_binding_baseline=motion_score_binding_baseline,
     )
     if not results:
         print(f"no *.provenance.json files found under {args.root}")
@@ -176,6 +191,10 @@ def _cmd_visibility_sweep(args: argparse.Namespace) -> int:
 
 
 def _cmd_audio_gate(args: argparse.Namespace) -> int:
+    import soundfile as sf
+
+    from asset_gate import audio
+
     samples, sample_rate = sf.read(args.audio, always_2d=False)
     targets = audio.load_loudness_targets(args.loudness_targets)
     results = [

@@ -33,18 +33,36 @@ with, and adding escalation there was out of scope).
 A run that failed because the `claude` CLI hit an Anthropic usage/weekly/rate limit is a
 transient environmental stop, not evidence of a real blocker -- escalating it would create a
 misleading permanent-looking card for a problem that resolves itself once the limit resets.
-`usageLimitDetector.js`'s `eventsContainUsageLimitSignature` scans every attempt's raw NDJSON
-events (not just the reviewer's verdict notes) for a broad set of phrasings ("usage limit", "rate
-limit(ed)", "quota exceeded", `429`, "weekly limit", "limit will reset", ...), deliberately
-excluding a bare "limit" so ordinary text doesn't false-positive. If any of the five attempts
-carries the signature, `_escalateIfGenuineBlocker` is a no-op: no report, no remediation card --
-the card is simply left `blocked`, same as today, for a normal later re-run once headroom returns.
+`usageLimitDetector.js`'s `eventsContainUsageLimitSignature` (via `usageLimitSignatureForEvents`)
+scans every attempt's parsed NDJSON events (not just the reviewer's verdict notes), but recognises
+a stop only from structured signals, never from prose: a `rate_limit_event` whose
+`rate_limit_info.status` is `"rejected"`, a terminal `result` event with `is_error: true`,
+`terminal_reason: "api_error"` and `api_error_status: 429`, or an explicit `error` code on an
+event (`usageLimitSignatureForEvent` in `usageLimitDetector.js`). Prose that merely quotes a
+rate-limit/session-limit phrase -- in assistant text, tool output, reviewer verdicts, or a
+`result` event whose own `terminal_reason` is `"completed"` -- never counts on its own, no matter
+how many times it's quoted. If any of the five attempts carries a structured signal,
+`_escalateIfGenuineBlocker` is a no-op: no report, no remediation card -- the card is simply left
+`blocked`, same as today, for a normal later re-run once headroom returns. The escalation-skip log
+line (`runOrchestrator.js`'s `_escalateIfGenuineBlocker`) names which structured signal fired, via
+`usageLimitSignatureForEvents`'s return value, e.g. `"Escalation skipped: usage/rate-limit
+signature detected in the run output (result.is_error=true,terminal_reason=api_error,api_error_status=429)
+-- treated as a transient stop, card left blocked for a normal later re-run."` -- a future false
+positive is diagnosable from the log alone, rather than requiring a re-read of the raw NDJSON.
 
-**Judgment call:** the exact field a live `claude` CLI surfaces a limit-hit on isn't pinned down by
-any confirmed live behavior (see `project_assembled_agent_runner` memory's confirmed-flags note,
-which doesn't cover this case) -- the detector serializes and scans the whole event payload rather
-than one specific field, and the pattern list should be revisited against a real limit-hit's raw
-NDJSON output the first time one is actually observed live.
+**Observed evidence (T-0377):** the field this detector keys off of *was* pinned down by a real
+refusal -- `tasks/.runs/T-0366-2026-09-11T18-15-10-554Z.jsonl` line 237 is a terminal `result`
+event with `is_error: true`, `terminal_reason: "api_error"`, `api_error_status: 429`, alongside a
+`rate_limit_event` whose `rate_limit_info.status` is `"rejected"`. That structured shape is what
+`usageLimitSignatureForEvent` now matches. Before T-0377, the detector instead matched prose, and
+that produced two confirmed false positives: T-0233, where `eventsContainUsageLimitSignature`
+serialized every event with `JSON.stringify` and matched the regex against the result, so a
+healthy `rate_limit_event`'s own `type`/`rateLimitType` discriminators (which contain the literal
+text `rate_limit`) tripped it on every run, silently suppressing escalation board-wide; and
+T-0367/PR #381, where a run whose six `result` events all ended `terminal_reason: "completed"`
+(no `api_error_status`) and whose `rate_limit_event` telemetry all read `status: "allowed"` had
+its three genuine reviewer FAILs swallowed as a quota pause, because its own docs, fixtures and
+reviewer notes quoted the T-0366 refusal line "You've hit your session limit" 39 times.
 
 ## Blocker report: deterministic, not a 6th `claude` call
 

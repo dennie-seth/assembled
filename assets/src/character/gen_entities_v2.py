@@ -43,7 +43,9 @@ from PIL.Image import Resampling
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONCEPT_SHEET = REPO_ROOT / "assets" / "src" / "concept" / "entities_concept_sheet_v1.png"
-CONCEPT_PROV = REPO_ROOT / "assets" / "src" / "concept" / "entities_concept_sheet_v1.provenance.json"
+CONCEPT_PROV = (
+    REPO_ROOT / "assets" / "src" / "concept" / "entities_concept_sheet_v1.provenance.json"
+)
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 ENTITY_OUT = REPO_ROOT / "assets" / "final" / "entity"
 OUT_RAW = REPO_ROOT / "assets" / "out" / "entity_v2_raw"
@@ -536,7 +538,9 @@ def _load_concept_hash() -> str:
     return prov["concept_hash"]
 
 
-def generate_entity_sheet(spec: dict, palette: list[tuple[int, int, int]], concept_hash: str) -> None:
+def generate_entity_sheet(
+    spec: dict, palette: list[tuple[int, int, int]], concept_hash: str
+) -> None:
     entity = spec["entity"]
     state = spec["state"]
     cols = spec["cols"]
@@ -647,7 +651,10 @@ def generate_entity_sheet(spec: dict, palette: list[tuple[int, int, int]], conce
             f"Generator: assets/src/character/gen_entities_v2.py"
         ),
         "img2img_denoise": denoise,
-        "init_tiled_dims": f"{cols}x{rows} ({cols * CELL_GEN}x{rows * CELL_GEN}px per sheet, {CELL_GEN}x{CELL_GEN}px per cell)",
+        "init_tiled_dims": (
+            f"{cols}x{rows} ({cols * CELL_GEN}x{rows * CELL_GEN}px per sheet, "
+            f"{CELL_GEN}x{CELL_GEN}px per cell)"
+        ),
         "concept_crop_box": list(CONCEPT_CROPS[(entity, state)]),
         "lora_name": LORA_NAME,
         "lora_weight": LORA_WEIGHT,
@@ -656,7 +663,10 @@ def generate_entity_sheet(spec: dict, palette: list[tuple[int, int, int]], conce
         "comfyui_prompt_id": prompt_id,
         "generator": "assets/src/character/gen_entities_v2.py",
         "card": "T-0214",
-        "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class) §6.11 (concept conditioning)",
+        "spec": (
+            "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class) "
+            "§6.11 (concept conditioning)"
+        ),
         "layout": {
             "sheet_px": [cols * CELL_NATIVE, rows * CELL_NATIVE],
             "cell_px": CELL_NATIVE,

@@ -26,15 +26,14 @@ Measures real, on-disk artifacts against the new
     `check_frame_consistency` XOR/union measure -- reproduces the "perfect
     pose, zero drift" budget-consumption figure DL-31 cites as the reason
     the old gate was retired, instead of only quoting the review's number.
-  - Session 13's sequential-chained negative control
-    (`assets/out/hybrid_walk/attempt_5/` on `feature/T-0259`). That
-    candidate's pixels live under a gitignored `assets/out/` path in a
-    DIFFERENT worktree from this one (`assets/out/` is
-    reproducible-not-committed by design; see `.claude/rules/assets.md`),
-    so this is guarded to degrade to an "unavailable" report -- not
-    fabricated numbers -- when that sibling worktree isn't present on the
-    machine running this script. When it *is* present (as it was when this
-    was last run and DL-31's table was written), the real sheet is measured
+  - Session 13's sequential-chained negative control. Originally
+    `assets/out/hybrid_walk/attempt_5/` on the (now retired) sibling
+    `feature/T-0259` worktree; T-0361 rescued both files into this repo's
+    own tracked fixtures
+    (`tools/asset-gate/tests/fixtures/session13_negative_control/`,
+    sha256-verified), so this no longer depends on that worktree. Still
+    guarded to degrade to an "unavailable" report -- not fabricated
+    numbers -- if the fixture is ever missing. The real sheet is measured
     the same way as the committed walk sheet above, using the same rig
     keypoints (`pose_source` in its own `provenance_candidate.json` records
     it was driven by the identical `pose_rig_walk_T0259.py` script).
@@ -71,15 +70,18 @@ WALK_SHEET = _CHARACTER_FINAL_DIR / "player_walk_sheet_hybrid.png"
 IDLE_SHEET = _CHARACTER_FINAL_DIR / "player_idle_sheet_hybrid_T0252.png"
 IDLE_PROVENANCE = _CHARACTER_FINAL_DIR / "player_idle_sheet_hybrid_T0252.provenance.json"
 
-# Session 13's sequential-chained negative control -- a sibling worktree of
-# THIS repo (`feature/T-0259`), not this checkout. Its `assets/out/` is
-# gitignored there just as it is here; the point of pointing at it directly
-# (rather than treating it as unreachable) is that a machine that ran both
-# T-0259 session 13 and this card still has it on disk. `_REPO_ROOT.parent`
-# is the shared `worktrees/` directory this checkout and that one both live
-# under -- see `git worktree list`.
+# Session 13's sequential-chained negative control. Originally only reachable
+# via a sibling worktree's gitignored `assets/out/` (`feature/T-0259`, now
+# retired); T-0361 copied both files into this repo's own tracked fixtures
+# (sha256-verified against the card's "PRESERVED COPY" table) so this no
+# longer depends on that worktree still existing on the machine running it.
 _SESSION13_ATTEMPT_DIR = (
-    _REPO_ROOT.parent / "T-0259" / "assets" / "out" / "hybrid_walk" / "attempt_5"
+    _REPO_ROOT
+    / "tools"
+    / "asset-gate"
+    / "tests"
+    / "fixtures"
+    / "session13_negative_control"
 )
 SESSION13_SHEET = _SESSION13_ATTEMPT_DIR / "sheet_192x96_indexed.png"
 SESSION13_PROVENANCE = _SESSION13_ATTEMPT_DIR / "provenance_candidate.json"
@@ -209,18 +211,17 @@ def calibrate_capsule_budget() -> dict:
 
 def calibrate_session13_drift_candidate() -> dict:
     """Session 13's sequential-chained negative control (docs/decision-log.md
-    DL-31, T-0340 acceptance criterion 4). Its pixels live in a sibling
-    worktree's gitignored `assets/out/`, not this checkout -- degrades to an
-    'available: False' report instead of fabricating numbers when that
-    worktree isn't present on the machine running this script."""
+    DL-31, T-0340 acceptance criterion 4; rescued as a committed fixture by
+    T-0361). Still degrades to an 'available: False' report instead of
+    fabricating numbers if the fixture is ever missing."""
     if not SESSION13_SHEET.exists():
         return {
             "sheet": str(SESSION13_SHEET),
             "available": False,
-            "note": "the feature/T-0259 worktree (or its gitignored "
-            "assets/out/hybrid_walk/attempt_5) is not present on this "
-            "machine -- see docs/decision-log.md DL-31 for the last "
-            "measured numbers, recorded when it was.",
+            "note": "the committed fixture "
+            "(tools/asset-gate/tests/fixtures/session13_negative_control/) is "
+            "missing -- see docs/decision-log.md DL-31 for the last measured "
+            "numbers, recorded when it was present.",
         }
 
     sheet = Image.open(SESSION13_SHEET)

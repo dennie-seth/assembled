@@ -51,6 +51,20 @@ func is_server_reachable() -> bool:
 	return _reachable
 
 
+## Seed the baseline this controller tracks transitions from, without
+## emitting server_reachable_changed. Needed because this controller and
+## whatever else independently tracks reachability (e.g. FirstRunSequence,
+## which knows about a launch-time identity-request outcome this controller
+## never observes) can otherwise start out of sync — this controller always
+## boots optimistic (`_reachable = true`), so if the caller already knows
+## the true state was false, the first fetch that happens to also be true
+## looks like "no change" and server_reachable_changed never fires, leaving
+## the caller's own reachability tracking wrong for the rest of the session.
+## @param reachable  The reachability state to seed, with no signal emitted.
+func seed_reachable(reachable: bool) -> void:
+	_reachable = reachable
+
+
 ## Check whether the completion condition is reachable.
 ##
 ## Returns false and emits completion_blocked (with a player-readable reason)

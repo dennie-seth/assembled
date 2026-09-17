@@ -41,6 +41,7 @@ function taskRowToTask(db, row) {
     round: row.round,
     rescoped_by: row.rescoped_by,
     rescoped_at: row.rescoped_at,
+    complexity_points: row.complexity_points,
     comments,
     attachments,
     body: row.body
@@ -114,10 +115,11 @@ export class DbTaskStore extends TaskStore {
         `INSERT INTO tasks
            (id, title, status, priority, phase, agent, created, branch, commit_sha, pr,
             deliverable_type, requires_approval, approved_by, approved_at, attempts,
-            max_attempts, round, rescoped_by, rescoped_at, body)
+            max_attempts, round, rescoped_by, rescoped_at, complexity_points, body)
          VALUES (@id, @title, @status, @priority, @phase, @agent, @created, @branch, @commit_sha,
                  @pr, @deliverable_type, @requires_approval, @approved_by, @approved_at,
-                 @attempts, @max_attempts, @round, @rescoped_by, @rescoped_at, @body)`
+                 @attempts, @max_attempts, @round, @rescoped_by, @rescoped_at,
+                 @complexity_points, @body)`
       )
       .run({
         id: task.id,
@@ -139,6 +141,7 @@ export class DbTaskStore extends TaskStore {
         round: task.round ?? 0,
         rescoped_by: task.rescoped_by ?? null,
         rescoped_at: task.rescoped_at ?? null,
+        complexity_points: task.complexity_points ?? null,
         body: task.body
       });
 
@@ -170,7 +173,7 @@ export class DbTaskStore extends TaskStore {
            requires_approval = @requires_approval, approved_by = @approved_by,
            approved_at = @approved_at, attempts = @attempts, max_attempts = @max_attempts,
            round = @round, rescoped_by = @rescoped_by, rescoped_at = @rescoped_at,
-           body = @body
+           complexity_points = @complexity_points, body = @body
          WHERE id = @id`
       ).run({
         id,
@@ -192,6 +195,7 @@ export class DbTaskStore extends TaskStore {
         round: merged.round ?? 0,
         rescoped_by: merged.rescoped_by ?? null,
         rescoped_at: merged.rescoped_at ?? null,
+        complexity_points: merged.complexity_points ?? null,
         body: merged.body
       });
 

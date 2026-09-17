@@ -23,6 +23,7 @@ export function makeTask(overrides = {}) {
     round: 0,
     rescoped_by: null,
     rescoped_at: null,
+    complexity_points: null,
     comments: [],
     attachments: [],
     body: "## Context\n...\n## Acceptance\n- [ ] ...\n",
@@ -106,6 +107,12 @@ export function runTaskStoreContractTests(label, setup) {
 
     it("persists the round cap counter and rescope record (T-0344) and reads them back", async () => {
       const task = makeTask({ round: 2, rescoped_by: "@DennieSeth", rescoped_at: "2026-09-10T12:00:00.000Z" });
+      await store.create(task);
+      expect(await store.get(task.id)).toEqual(task);
+    });
+
+    it("persists a complexity_points value (T-0368: human planning signal only) and reads it back", async () => {
+      const task = makeTask({ complexity_points: 5 });
       await store.create(task);
       expect(await store.get(task.id)).toEqual(task);
     });

@@ -67,6 +67,14 @@ function captureDirtyFields(root, previousTask) {
     }
   }
 
+  const complexityPointsEl = root.querySelector(".detail-complexity-points");
+  if (complexityPointsEl) {
+    const previousValue = previousTask.complexity_points != null ? String(previousTask.complexity_points) : "";
+    if (complexityPointsEl.value !== previousValue) {
+      dirty.complexityPoints = complexityPointsEl.value;
+    }
+  }
+
   const chipIds = Array.from(root.querySelectorAll(".detail-deps-edit .deps-chip")).map(
     (chip) => chip.dataset.id
   );
@@ -165,6 +173,29 @@ function selectFor(options, selected) {
     const opt = document.createElement("option");
     opt.value = value;
     opt.textContent = value;
+    select.appendChild(opt);
+  }
+  select.value = selected;
+  return select;
+}
+
+// Mirrors COMPLEXITY_POINTS_VALUES in src/lib/taskParser.js (server-only module, not importable
+// from the client bundle) -- the Fibonacci planning-only scale (T-0368, spec §2/§10 step 2).
+const COMPLEXITY_POINTS_VALUES = [1, 2, 3, 5, 8, 13, 21];
+const NO_SCORE_VALUE = "";
+
+function complexityPointsSelectFor(selected) {
+  const select = document.createElement("select");
+
+  const noScore = document.createElement("option");
+  noScore.value = NO_SCORE_VALUE;
+  noScore.textContent = "No score";
+  select.appendChild(noScore);
+
+  for (const value of COMPLEXITY_POINTS_VALUES) {
+    const opt = document.createElement("option");
+    opt.value = String(value);
+    opt.textContent = String(value);
     select.appendChild(opt);
   }
   select.value = selected;
@@ -457,6 +488,20 @@ export function renderDetailPanel(
         : "";
   maxAttemptsInput.dataset.detailField = "maxAttempts";
 
+  // T-0368: complexity_points is a human planning signal only -- see
+  // test/complexityPointsLaunchIsolation.test.js for the guarantee that nothing in the
+  // launch/admission/cost path ever reads it. "No score" (null) is a first-class option, not
+  // just an unset default.
+  const complexityPointsSelect = complexityPointsSelectFor(
+    dirty.complexityPoints !== undefined
+      ? dirty.complexityPoints
+      : task.complexity_points != null
+        ? String(task.complexity_points)
+        : NO_SCORE_VALUE
+  );
+  complexityPointsSelect.className = "detail-complexity-points";
+  complexityPointsSelect.dataset.detailField = "complexityPoints";
+
   const depsEl = document.createElement("div");
   depsEl.className = "detail-deps";
   depsEl.textContent =
@@ -493,7 +538,9 @@ export function renderDetailPanel(
       agent: agentSelect.value === UNASSIGNED_AGENT_VALUE ? null : agentSelect.value,
       phase: Number(phaseInput.value),
       depends_on: depsPicker.getSelected(),
-      max_attempts: maxAttemptsInput.value.trim() === "" ? null : Number(maxAttemptsInput.value)
+      max_attempts: maxAttemptsInput.value.trim() === "" ? null : Number(maxAttemptsInput.value),
+      complexity_points:
+        complexityPointsSelect.value === NO_SCORE_VALUE ? null : Number(complexityPointsSelect.value)
     };
     const patch = buildUpdateBody(task, edited);
     if (Object.keys(patch).length > 0) {
@@ -509,6 +556,7 @@ export function renderDetailPanel(
     labeledField("Agent", agentSelect),
     labeledField("Phase", phaseInput),
     labeledField("Max attempts", maxAttemptsInput),
+    labeledField("Complexity points", complexityPointsSelect),
     depsEl,
     labeledField("Depends on (edit)", depsPicker.element)
   );

@@ -9,6 +9,9 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { IdAllocatorDb } from "../src/lib/db/idAllocatorDb.js";
+import { recordAttemptUsage, readAttemptUsage } from "../src/runner/usageLedger.js";
+import { reserveLaunchSlot, listActiveReservations } from "../src/runner/launchReservation.js";
+import { writeRunState } from "../src/runner/runState.js";
 
 let tmpDir;
 let board;
@@ -296,6 +299,127 @@ describe("orphaned run recovery", () => {
   });
 });
 
+describe("launch reservation reconciliation on startup (WIP gate T-D)", () => {
+  it("releases a dangling reservation left by a previous process's crash", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-reservation-"));
+    await fs.writeFile(
+      path.join(dir, "T-0060.md"),
+      makeTaskRaw({ id: "T-0060", status: "blocked", title: "Crashed mid-launch" }),
+      "utf8"
+    );
+    const runsDir = path.join(dir, ".runs");
+    await reserveLaunchSlot({
+      runsDir,
+      cardId: "T-0060",
+      executionId: "exec-crashed",
+      invocationId: "inv-crashed",
+      owner: "cardLaunch:T-0060",
+      reservedCostUsd: 3
+    });
+    expect(await listActiveReservations({ runsDir })).toHaveLength(1);
+
+    const reconcileBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+    try {
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    } finally {
+      await reconcileBoard.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a reservation alone whose card is still genuinely in-progress", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-reservation-"));
+    await fs.writeFile(
+      path.join(dir, "T-0061.md"),
+      makeTaskRaw({ id: "T-0061", status: "in-progress", title: "Still running" }),
+      "utf8"
+    );
+    const runsDir = path.join(dir, ".runs");
+    // Genuine liveness evidence (a confirmed-alive pid -- this test process's own) so
+    // orphanReaper's own startup sweep does not itself reset the card to blocked before the
+    // reservation reconciliation below ever gets to see its status.
+    await writeRunState({ runsDir, taskId: "T-0061", pid: process.pid, runLogPath: path.join(runsDir, "T-0061-live.jsonl") });
+    await reserveLaunchSlot({
+      runsDir,
+      cardId: "T-0061",
+      executionId: "exec-live",
+      invocationId: "inv-live",
+      owner: "cardLaunch:T-0061",
+      reservedCostUsd: 3
+    });
+
+    const reconcileBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+    try {
+      expect(await listActiveReservations({ runsDir })).toHaveLength(1);
+    } finally {
+      await reconcileBoard.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T-0370 follow-up: starts successfully with a malformed lease file in .launch-reservations, logs the problem, and still releases a well-formed dangling lease beside it", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-reservation-malformed-"));
+    await fs.writeFile(
+      path.join(dir, "T-0062.md"),
+      makeTaskRaw({ id: "T-0062", status: "blocked", title: "Crashed mid-launch" }),
+      "utf8"
+    );
+    const runsDir = path.join(dir, ".runs");
+    await reserveLaunchSlot({
+      runsDir,
+      cardId: "T-0062",
+      executionId: "exec-crashed",
+      invocationId: "inv-crashed",
+      owner: "cardLaunch:T-0062",
+      reservedCostUsd: 3
+    });
+    await fs.writeFile(path.join(runsDir, ".launch-reservations", "corrupt.reservation.json"), "{trunc", "utf8");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let malformedBoard;
+    try {
+      malformedBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("corrupt.reservation.json"));
+      // The well-formed dangling lease is still reconciled even though a malformed one sits beside
+      // it -- read its lease file directly, since listActiveReservations itself would still throw
+      // with the malformed file left (on purpose) in the pool.
+      const leasePath = path.join(runsDir, ".launch-reservations", "T-0062-execexec-crashed-invinv-crashed.reservation.json");
+      const leaseOnDisk = JSON.parse(await fs.readFile(leasePath, "utf8"));
+      expect(leaseOnDisk.released).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+      if (malformedBoard) await malformedBoard.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T-0370 follow-up: starts successfully when the reservation directory itself can't be listed, and logs the problem", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-reservation-unlistable-"));
+    await fs.writeFile(
+      path.join(dir, "T-0063.md"),
+      makeTaskRaw({ id: "T-0063", status: "blocked", title: "Unreadable pool" }),
+      "utf8"
+    );
+    const runsDir = path.join(dir, ".runs");
+    await fs.mkdir(runsDir, { recursive: true });
+    // A regular file where the reservation directory should be -- readdir fails with ENOTDIR
+    // (not ENOENT), exercising "the directory itself can't be listed" without depending on
+    // platform-specific permission bits.
+    await fs.writeFile(path.join(runsDir, ".launch-reservations"), "not a directory", "utf8");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let unlistableBoard;
+    try {
+      unlistableBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      if (unlistableBoard) await unlistableBoard.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("auto-pull poller wiring", () => {
   it("constructs an auto-pull poller wired to the orchestrator and restart coordinator, exposed on the returned board object", () => {
     expect(board.autoPullPoller).toBeDefined();
@@ -401,5 +525,120 @@ describe("pty terminal integration", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(board.ptyBridge.sessions.size).toBe(0);
+  });
+});
+
+describe("usage-ledger drain on shutdown (T-0367 fix round 3)", () => {
+  // Before this round, only runCard()'s own `finally` drained pending usage-ledger writes --
+  // there was no call site at all for a board-process shutdown (a quota-stop/crash/restart is
+  // exactly when a terminal write racing process exit matters most; see docs/usage-telemetry.md).
+  const usageKey = (runsDir) => ({
+    runsDir,
+    cardId: "T-CLOSE-DRAIN",
+    executionId: "exec-close-1",
+    invocationId: "inv-close-1",
+    attempt: 1,
+    phase: "implementer",
+    retry: 0
+  });
+
+  it("drains an in-flight terminal usage write before close() resolves", async () => {
+    const runsDir = path.join(tmpDir, ".runs");
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    // Fire-and-forget on purpose, matching how the orchestrator itself dispatches a terminal
+    // record (`void this._recordUsage(...)`) -- close() is what's under test for whether it waits.
+    recordAttemptUsage({
+      ...usageKey(runsDir),
+      events: [
+        {
+          type: "result",
+          usage: { input_tokens: 42, output_tokens: 7 },
+          total_cost_usd: 0.01
+        }
+      ],
+      outcome: "success",
+      complete: true,
+      writeFileFn: async (...args) => {
+        await gate;
+        // A real timing gap between "gate released" and "write actually lands" -- if close()
+        // does not itself await the drain, closePromise resolves before this elapses and the
+        // assertion below catches it reading a not-yet-written (null) entry.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return fs.writeFile(...args);
+      }
+    }).catch(() => {});
+
+    const closePromise = board.close();
+    release();
+    await closePromise;
+
+    const entry = await readAttemptUsage(usageKey(runsDir));
+    expect(entry).not.toBeNull();
+    expect(entry.tokens.input).toBe(42);
+    expect(entry.outcome).toBe("success");
+    expect(entry.complete).toBe(true);
+  });
+
+  it("a hung usage-ledger drain still lets close() finish within its bound", async () => {
+    const localTasksDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-drain-hang-"));
+    const localBoard = await startBoardServer({
+      tasksDir: localTasksDir,
+      port: 0,
+      usageDrainTimeoutMs: 50
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const runsDir = path.join(localTasksDir, ".runs");
+    const write = recordAttemptUsage({
+      ...usageKey(runsDir),
+      events: [{ type: "result", usage: { input_tokens: 5, output_tokens: 1 }, total_cost_usd: 0 }],
+      outcome: "success",
+      complete: true,
+      writeFileFn: async (...args) => {
+        await gate; // held past the drain bound below on purpose
+        return fs.writeFile(...args);
+      }
+    });
+
+    const start = Date.now();
+    await localBoard.close();
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(1000);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("usage-ledger drain"));
+
+    release();
+    await write;
+    warnSpy.mockRestore();
+    await fs.rm(localTasksDir, { recursive: true, force: true });
+  });
+
+  it("a rejecting usage-ledger drain is logged and never blocks close() or throws", async () => {
+    const localTasksDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-drain-fail-"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const localBoard = await startBoardServer({
+      tasksDir: localTasksDir,
+      port: 0,
+      drainPendingUsageWritesFn: async () => {
+        throw new Error("simulated drain failure");
+      }
+    });
+
+    await expect(localBoard.close()).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("usage-ledger drain"),
+      expect.anything()
+    );
+
+    warnSpy.mockRestore();
+    await fs.rm(localTasksDir, { recursive: true, force: true });
   });
 });
