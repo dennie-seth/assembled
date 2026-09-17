@@ -9,7 +9,7 @@ import {
   DEFAULT_AUTO_LAUNCH_INTERVAL_MS,
   DEFAULT_AUTO_LAUNCH_USAGE_MAX
 } from "../../src/runner/autoLaunchPoller.js";
-import { CardLaunchError } from "../../src/runner/cardLaunch.js";
+import { CardLaunchError, LAUNCH_TRIGGERS } from "../../src/runner/cardLaunch.js";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
 
 function makeTask(overrides = {}) {
@@ -352,6 +352,13 @@ describe("createAutoLaunchPoller — gate 4/5: eligibility and launch", () => {
     expect(launchFn).toHaveBeenCalledWith(expect.objectContaining({ orchestrator, id: "T-0001" }));
   });
 
+  it("T-0379: always launches with trigger 'auto' -- the poller has no config surface to pass anything else, so it can never reach the manual-override path", async () => {
+    const { poller, launchFn } = makePoller();
+    await poller.tick();
+    expect(launchFn).toHaveBeenCalledWith(expect.objectContaining({ trigger: LAUNCH_TRIGGERS.AUTO }));
+    expect(launchFn).not.toHaveBeenCalledWith(expect.objectContaining({ trigger: LAUNCH_TRIGGERS.MANUAL }));
+  });
+
   it("does NOT start a card with an unmet dependency even if selection mistakenly offers it -- the guarded path refuses it", async () => {
     const runCard = vi.fn();
     const orchestrator = {
@@ -401,6 +408,78 @@ describe("createAutoLaunchPoller — gate 4/5: eligibility and launch", () => {
     expect(await poller.tick()).toBeNull();
     expect(launchFn).toHaveBeenCalledTimes(1);
     expect(logLines(logger)).toMatch(/already has an active run/);
+  });
+
+  describe("T-0379: queue behaviour -- a capacity-fit hold on the head of the queue tries the next eligible card", () => {
+    function capacityFitError(id, reason = "five_hour: units_not_comparable") {
+      const err = new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- ${reason}`, 409);
+      err.capacityFitHold = true;
+      return err;
+    }
+
+    it("falls through past a non-fitting head-of-queue card to a smaller fitting one behind it, and logs the pass-over", async () => {
+      const launchFn = vi.fn(async ({ id }) => {
+        if (id === "T-0001") throw capacityFitError("T-0001");
+        return makeTask({ id });
+      });
+      const { poller, logger } = makePoller({
+        tasks: [makeTask({ id: "T-0001", priority: "P0" }), makeTask({ id: "T-0002", priority: "P1" })],
+        launchFn
+      });
+
+      const launched = await poller.tick();
+      expect(launchFn).toHaveBeenCalledTimes(2);
+      expect(launchFn.mock.calls[0][0]).toMatchObject({ id: "T-0001", trigger: LAUNCH_TRIGGERS.AUTO });
+      expect(launchFn.mock.calls[1][0]).toMatchObject({ id: "T-0002", trigger: LAUNCH_TRIGGERS.AUTO });
+      expect(launched.id).toBe("T-0002");
+      expect(logLines(logger)).toMatch(/T-0001.*does not fit/is);
+      expect(logLines(logger)).toMatch(/units_not_comparable/);
+    });
+
+    it("does not fall through for a refusal that is NOT a capacity-fit hold, even alongside a fitting card behind it", async () => {
+      const launchFn = vi.fn(async ({ id }) => {
+        if (id === "T-0001") throw new CardLaunchError("Task T-0001 already has an active run", 409);
+        return makeTask({ id });
+      });
+      const { poller, logger } = makePoller({
+        tasks: [makeTask({ id: "T-0001", priority: "P0" }), makeTask({ id: "T-0002", priority: "P1" })],
+        launchFn
+      });
+      expect(await poller.tick()).toBeNull();
+      expect(launchFn).toHaveBeenCalledTimes(1);
+      expect(logLines(logger)).toMatch(/already has an active run/);
+    });
+
+    it("exhausts every candidate and skips the tick, logging each one's hold reason, when none fit", async () => {
+      const launchFn = vi.fn(async ({ id }) => {
+        throw capacityFitError(id, id === "T-0001" ? "five_hour: units_not_comparable" : "seven_day: no_measured_window_reading");
+      });
+      const { poller, logger } = makePoller({
+        tasks: [makeTask({ id: "T-0001", priority: "P0" }), makeTask({ id: "T-0002", priority: "P1" })],
+        launchFn
+      });
+      expect(await poller.tick()).toBeNull();
+      expect(launchFn).toHaveBeenCalledTimes(2);
+      expect(logLines(logger)).toMatch(/T-0001/);
+      expect(logLines(logger)).toMatch(/T-0002/);
+      expect(logLines(logger)).toMatch(/units_not_comparable/);
+      expect(logLines(logger)).toMatch(/no_measured_window_reading/);
+    });
+
+    it("names a permanently oversized estimate's own reason when passing over it", async () => {
+      const launchFn = vi.fn(async ({ id }) => {
+        if (id === "T-0001") throw capacityFitError("T-0001", "five_hour: oversized_estimate_never_fits -- never fits this window even at full headroom; launch manually or split the card");
+        return makeTask({ id });
+      });
+      const { poller, logger } = makePoller({
+        tasks: [makeTask({ id: "T-0001", priority: "P0" }), makeTask({ id: "T-0002", priority: "P1" })],
+        launchFn
+      });
+      const launched = await poller.tick();
+      expect(launched.id).toBe("T-0002");
+      expect(logLines(logger)).toMatch(/oversized_estimate_never_fits/);
+      expect(logLines(logger)).toMatch(/launch manually or split/);
+    });
   });
 });
 
