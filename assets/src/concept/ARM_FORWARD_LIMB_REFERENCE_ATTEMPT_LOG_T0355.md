@@ -47,3 +47,59 @@ attempt was run; no half-compliant image is promoted to `player_profile_forward_
 in place of a genuinely compliant one. The gate tests in `tests/test_forward_limb_reference_gate_T0355.py`
 are expected to remain RED -- there is no committed deliverable for this card, by design, not
 by omission.
+
+## Board-action needed: checkDeliverable.js cannot recognize this stop-and-report
+
+This is not a further generation attempt (the 4-attempt hard cap is spent and grinding past it is
+explicitly out of scope) -- it is a diagnosis of why the mechanical gate keeps FAILing a card whose
+own acceptance criteria call this exact outcome a valid PASS, and what a human needs to do about it,
+since no implementer-agent grant can do it from inside this worktree.
+
+**Diagnosis.** `checkDeliverable.js` (routed for this card because `deliverable_type: artifact`)
+has two ways to pass a card with no committed deliverable: (1) an attachment whose content matches
+a file `git` has committed *outside* `docs/assets/evidence/` (`deliverableCheck.js`'s
+`findCommittedAttachmentMatches` / `isUnderEvidenceRoot`) -- not applicable here, since promoting
+attempt 4 to a non-evidence path would misrepresent a non-compliant image as the deliverable, which
+is exactly what this stop-and-report refuses to do; or (2) the pre-registered-finding route
+(`preRegisteredFinding.js`): the card's body *before this run* (`beforeBody`, read from
+`card_events` in db-mode) must contain a literal `"## Pre-registered experiment"` heading, and the
+card's *current* body must contain a literal `"## Finding"` heading that states "decisive" and
+cites existing evidence paths. This card's body has neither heading, in any historical state --
+its stop condition is written as a bullet under `## Acceptance` ("Pre-registered alternative
+outcome: if the forward-limb profile cannot be generated within a hard cap of 4 attempts, stop and
+report...") which reads as pre-registration to a human but does not match either literal heading
+route (2) requires. That's why the harness cross-check downgraded the reviewer's self-reported PASS
+after the 2026-09-17T16:47:03Z validation, and it will keep doing so on every future validation
+pass, regardless of how much genuine attempt evidence is committed -- **`beforeBody` is fixed at
+"before this run" and can never be edited retroactively, and no implementer-agent tool grant
+(`agentCurl.js` refuses every mutating call against the task API except attachments) can write to
+`task.body` at all.** This is a board-side fix, not something a 5th generation attempt or more
+evidence commits can resolve.
+
+**What would unblock it.** A human (or an agent with DB/task-body write access) adding the following
+two sections to T-0355's card body, *before* the next validation run starts, would satisfy route (2):
+
+```
+## Pre-registered experiment
+
+If the forward-limb green-costume side profile (near arm + near leg extended ~90 degrees, a single
+visible arm silhouette, a single visible goggle lens) cannot be generated within a hard cap of 4
+generation attempts, stop and report with evidence naming what the generator produced instead and
+which constraint it violated. Grinding past 4 attempts is not a valid outcome; a clean stop-and-report is.
+
+## Finding
+
+Decisive: all 4 attempts under the pre-registered hard cap are spent and none produced a compliant
+single-profile forward-limb reference. Attempt 4 (`docs/assets/evidence/T-0355/attempt_4_main_1024.png`)
+is the closest result -- correct pose, coat length, and identity -- but close-up evidence
+(`docs/assets/evidence/T-0355/attempt_4_head_crop.png`, `docs/assets/evidence/T-0355/attempt_4_far_arm_crop.png`)
+shows both eye lenses and a second arm genuinely visible, a three-quarter twist rather than the
+required strict profile. Full per-attempt reasoning:
+`assets/src/concept/ARM_FORWARD_LIMB_REFERENCE_ATTEMPT_LOG_T0355.md`. No reference is promoted to
+`assets/src/concept/player_profile_forward_limb_reference_T0355.png`.
+```
+
+(Every backtick-quoted path above already exists, committed, in this branch.) Absent that board-side
+edit, this card will keep reading as a harness FAIL to automation on every future run no matter what
+an implementer does next -- the generation work described above is already complete and matches the
+card's own acceptance criteria.
