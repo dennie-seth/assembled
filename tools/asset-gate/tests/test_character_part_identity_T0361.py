@@ -18,6 +18,21 @@ own pixels + versioned rig keypoints, exactly like
 self-reported score, and FAILING (not skipping) a locomotion/transition/loop
 asset that does not record enough rig evidence to recompute from.
 
+**2026-09-17 Codex fix.** The first cut compared each frame against a
+RENDERED RIG SILHOUETTE (`asset_gate.art.render_rig_silhouette`, always a
+fixed foreground palette index) -- Codex's `identity-probe.py` found this
+measures agreement with that ONE hard-coded index, not identity: the same
+exact rig silhouette passed recoloured at index 1 and failed recoloured at
+index 2. The fix (`asset_gate.art.check_region_identity_against_reference`)
+compares each frame's own named regions against a REAL reference frame's own
+same-named regions -- this sheet's own frame 0 -- which is colour-agnostic
+the same way `check_identity_stability`'s torso comparison already is, at
+the cost of a documented blind spot: a defect present identically in every
+frame (including frame 0) is invisible, since the reference agrees with it
+too. See `test_swap_present_uniformly_in_every_frame_is_invisible_to_the_anchor_reference`
+and `test_part_identity_is_colour_index_agnostic` below, and
+`docs/character-motion-negative-controls-T0361.md`.
+
 This card does not change `POSE_FIDELITY_IOU_FLOOR` (0.70) or
 `IDENTITY_STABILITY_HISTOGRAM_CAP` (0.15, T-0340) -- `PART_IDENTITY_HISTOGRAM_CAP`
 is a NEW, separate, provisional threshold for this NEW check; T-0362 (the
@@ -31,7 +46,6 @@ from __future__ import annotations
 import json
 
 import numpy as np
-from PIL import Image
 
 from asset_gate import art
 from asset_gate.character import (
@@ -200,24 +214,123 @@ def test_recompute_passes_when_the_sheet_pixels_actually_match_the_rig(tmp_path)
     assert "part_identity_range" in result.details
 
 
+def _two_frame_sheet(frame0_arr, frame1_arr):
+    return make_indexed_image(np.hstack([frame0_arr, frame1_arr]), TEST_PALETTE_HEX)
+
+
+def _two_frame_provenance(keypoints_rel_0, keypoints_rel_1):
+    return {
+        "motion_class": "locomotion",
+        "layout": {"cols": 2, "rows": 1, "cell_px": CELL_PX},
+        "frame_generation": [
+            {"frame_index": 0, "pose_keypoints_file": keypoints_rel_0},
+            {"frame_index": 1, "pose_keypoints_file": keypoints_rel_1},
+        ],
+        # STALE recorded values -- deliberately still "passing" so the test
+        # proves recompute overrides them rather than trusting them.
+        "part_identity_range": [0.0, 0.0],
+    }
+
+
 def test_stale_sidecar_score_does_not_survive_an_image_change(tmp_path):
-    """Same STALE recorded (perfect, passing) `part_identity_range` as the
-    good case -- but the image now has nothing rendered on it at all. Recompute
-    must catch this; trusting the sidecar's own recorded range would not."""
+    """Frame 0 (this sheet's own reference frame, T-0361 2026-09-17 design)
+    renders correctly; frame 1 has nothing rendered on it at all. Recompute
+    must catch frame 1 disagreeing with frame 0's own real per-part pixels;
+    trusting the sidecar's own recorded (stale, passing) range would not."""
+    keypoints_rel_0 = "rig/frame_0_keypoints.json"
+    keypoints_rel_1 = "rig/frame_1_keypoints.json"
+    _write_keypoints_file(tmp_path / keypoints_rel_0, _BASE_POSE_NORM)
+    _write_keypoints_file(tmp_path / keypoints_rel_1, _BASE_POSE_NORM)
+    provenance = _two_frame_provenance(keypoints_rel_0, keypoints_rel_1)
+
+    good_frame = np.array(_rendered_rig_image(_BASE_POSE_NORM, CELL_PX))
+    blank_frame = np.zeros((CELL_PX, CELL_PX), dtype=np.uint8)
+    sheet = _two_frame_sheet(good_frame, blank_frame)
+
+    result = determine_character_part_identity(
+        provenance, sheet=sheet, repo_root=tmp_path, sheet_name="bad"
+    )
+
+    assert not result.passed
+    assert result.details.get("recomputed_from_pixels") is True
+    assert result.details.get("single_frame_trivial_pass") is False
+
+
+def test_single_frame_sheet_trivially_passes_part_identity_self_comparison(tmp_path):
+    """A single-frame sheet has no OTHER frame to serve as a reference, so
+    frame 0 is both the frame under test and its own reference -- the
+    comparison is always self-consistent (distance 0 for every region)
+    regardless of content. This is a documented, explicit limit
+    (`single_frame_trivial_pass=True` in the details, never a silent skip
+    the caller can't tell apart from a real evaluation) -- not a defect: a
+    blank single-frame sheet still fails `character_motion_fidelity`'s own
+    pose-fidelity floor, which does not have this blind spot."""
     keypoints_rel = "rig/frame_0_keypoints.json"
     _write_keypoints_file(tmp_path / keypoints_rel, _BASE_POSE_NORM)
     provenance = _base_provenance(keypoints_rel)
-
     blank_sheet = make_indexed_image(
         np.zeros((CELL_PX, CELL_PX), dtype=np.uint8), TEST_PALETTE_HEX
     )
 
     result = determine_character_part_identity(
-        provenance, sheet=blank_sheet, repo_root=tmp_path, sheet_name="bad"
+        provenance, sheet=blank_sheet, repo_root=tmp_path, sheet_name="blank-single-frame"
     )
 
-    assert not result.passed
-    assert result.details.get("recomputed_from_pixels") is True
+    assert result.passed
+    assert result.details.get("single_frame_trivial_pass") is True
+    assert result.details["part_identity_range"] == [0.0, 0.0]
+
+
+def test_swap_present_uniformly_in_every_frame_is_invisible_to_the_anchor_reference(tmp_path):
+    """Documents the anchor-frame reference's own limit (2026-09-17 Codex
+    fix, docs/character-motion-negative-controls-T0361.md): comparing every
+    frame against frame 0's own per-part pixels cannot see a defect that is
+    ALREADY present in frame 0 itself and repeated identically in every
+    other frame -- frame 0 agrees with itself, and every other frame agrees
+    with frame 0, so nothing ever disagrees. A real committed control for
+    this check (T-0361 Codex fix) instead keeps frame 0 correct and injects
+    the defect only into later frames -- see
+    `test_character_negative_controls_T0361.py`."""
+    keypoints_rel_0 = "rig/frame_0_keypoints.json"
+    keypoints_rel_1 = "rig/frame_1_keypoints.json"
+    _write_keypoints_file(tmp_path / keypoints_rel_0, _BASE_POSE_NORM)
+    _write_keypoints_file(tmp_path / keypoints_rel_1, _BASE_POSE_NORM)
+    provenance = _two_frame_provenance(keypoints_rel_0, keypoints_rel_1)
+
+    # Both frames render the SAME (wrong) uniform colour -- a defect present
+    # identically everywhere, including the reference frame itself.
+    uniformly_wrong = np.array(_rendered_rig_image(_BASE_POSE_NORM, CELL_PX).point(lambda x: 2 if x else 0))
+    sheet = _two_frame_sheet(uniformly_wrong, uniformly_wrong)
+
+    result = determine_character_part_identity(
+        provenance, sheet=sheet, repo_root=tmp_path, sheet_name="uniformly-wrong"
+    )
+
+    assert result.passed
+    assert result.details["part_identity_range"] == [0.0, 0.0]
+
+
+def test_part_identity_is_colour_index_agnostic(tmp_path):
+    """The 2026-09-17 Codex fix's own proof: the identical rig silhouette,
+    recoloured at two different palette indices, must pass EITHER way --
+    the pre-fix design (compare against a fixed-index rig silhouette)
+    failed index 2 while passing index 1 for the exact same geometry."""
+    keypoints_rel_0 = "rig/frame_0_keypoints.json"
+    keypoints_rel_1 = "rig/frame_1_keypoints.json"
+    _write_keypoints_file(tmp_path / keypoints_rel_0, _BASE_POSE_NORM)
+    _write_keypoints_file(tmp_path / keypoints_rel_1, _BASE_POSE_NORM)
+    provenance = _two_frame_provenance(keypoints_rel_0, keypoints_rel_1)
+
+    base = _rendered_rig_image(_BASE_POSE_NORM, CELL_PX)
+    for index in (1, 2):
+        recoloured = np.array(base.point(lambda x, index=index: index if x else 0))
+        sheet = _two_frame_sheet(recoloured, recoloured)
+
+        result = determine_character_part_identity(
+            provenance, sheet=sheet, repo_root=tmp_path, sheet_name=f"index-{index}"
+        )
+
+        assert result.passed, f"palette index {index} unexpectedly failed: {result.reason}"
 
 
 def test_fails_naming_missing_frame_generation_when_layout_present_but_no_frame_generation():
@@ -296,19 +409,28 @@ def test_sweep_character_gate_includes_character_part_identity_check_name(tmp_pa
 
 
 def test_sweep_character_gate_fails_character_part_identity_on_a_blank_render(tmp_path):
-    keypoints_rel = "character/rig/frame_0_keypoints.json"
-    _write_keypoints_file(tmp_path / keypoints_rel, _BASE_POSE_NORM)
+    keypoints_rel_0 = "character/rig/frame_0_keypoints.json"
+    keypoints_rel_1 = "character/rig/frame_1_keypoints.json"
+    _write_keypoints_file(tmp_path / keypoints_rel_0, _BASE_POSE_NORM)
+    _write_keypoints_file(tmp_path / keypoints_rel_1, _BASE_POSE_NORM)
     _write_prov(
         tmp_path / "character" / "regression.provenance.json",
         frame_delta_range=[0.05, 0.09],
         arm_c_benchmark=[0.072, 0.112],
         beats_arm_c_benchmark=True,
         motion_class="locomotion",
-        layout={"cols": 1, "rows": 1, "cell_px": CELL_PX},
-        frame_generation=[{"frame_index": 0, "pose_keypoints_file": keypoints_rel}],
+        layout={"cols": 2, "rows": 1, "cell_px": CELL_PX},
+        frame_generation=[
+            {"frame_index": 0, "pose_keypoints_file": keypoints_rel_0},
+            {"frame_index": 1, "pose_keypoints_file": keypoints_rel_1},
+        ],
     )
-    blank_sheet = Image.new("P", (CELL_PX, CELL_PX), 0)
-    blank_sheet.save(tmp_path / "character" / "regression.png", transparency=0)
+    # Frame 0 (this sheet's own reference frame) renders correctly; frame 1
+    # (the regression under test) renders nothing at all.
+    good_frame = np.array(_rendered_rig_image(_BASE_POSE_NORM, CELL_PX))
+    blank_frame = np.zeros((CELL_PX, CELL_PX), dtype=np.uint8)
+    sheet = make_indexed_image(np.hstack([good_frame, blank_frame]), TEST_PALETTE_HEX)
+    sheet.save(tmp_path / "character" / "regression.png", transparency=0)
 
     results = sweep_character_gate(tmp_path, repo_root=tmp_path)
 
