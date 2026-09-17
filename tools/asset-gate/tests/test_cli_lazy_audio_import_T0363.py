@@ -13,14 +13,22 @@ Before this fix, `asset_gate/cli.py` did `import soundfile as sf` and
 `from asset_gate import art, audio` unconditionally at module level --
 `audio.py` itself unconditionally imports `pyloudnorm` and
 `scipy.signal` -- so importing `asset_gate.cli` at all, for *any*
-subcommand (including the character/art/palette/provenance/
-transparency/visibility ones char-gen tests actually use), required the
-full audio dependency stack to be installed. That's a real hazard: the
-first uninstalled import (`soundfile`, since it's the first third-party
-import statement in the file) is exactly what a clean char-gen venv would
-hit the moment anything imports `asset_gate.cli` -- reported 2026-09-11 as
-"a soundfile-related import failure" but never reproduced/root-caused at
-the time.
+subcommand, required the full audio dependency stack to be installed. That
+is a real hazard for any caller of `asset_gate.cli` specifically that does
+not need the audio stack.
+
+It is NOT, however, a reproduction of the 2026-09-11 "soundfile-related
+import failure" report against the character package's own test suite:
+nothing under `assets/src/character/tests/` imports `asset_gate.cli` (only
+`asset_gate.art`/`.character`/`.palette`/`.determinism`/`.transparency`,
+none of which import soundfile/pyloudnorm/scipy), confirmed by actually
+collecting that suite in a clean venv built from the package's own
+pyproject.toml: 1174 items collected, zero collection errors. See
+assets/src/character/CI_KNOWN_FAILURES_T0363.md for the full trace -- that
+report's actual trigger is still unidentified. This test still stands on
+its own merits: `asset_gate.cli` genuinely should not require the audio
+stack to import for a non-audio subcommand, independent of whether it
+explains the original report.
 
 RED (pre-fix cli.py): importing asset_gate.cli with soundfile/pyloudnorm/
 scipy unavailable raises ImportError, because the module-level

@@ -8,11 +8,13 @@ The `soundfile`/`asset_gate.audio` imports are deferred into
 module level: `audio.py` itself unconditionally imports `pyloudnorm` and
 `scipy.signal`, so an unconditional top-level import here would require the
 full audio dependency stack just to import this module at all, for any
-subcommand. That breaks callers that only need the non-audio checks (e.g.
-the character package's conftest.py sys.path-injects this package's src/
-without installing its declared audio deps, specifically so a plain pytest
-run against a venv built only from char-gen's own [dev] deps -- pillow +
-numpy, no soundfile/pyloudnorm/scipy -- still collects cleanly). See
+subcommand. That's real hardening on its own terms -- a caller that only
+needs the non-audio checks no longer needs the audio stack installed just
+to import this module -- but it is NOT a fix for the 2026-09-11
+"soundfile-related import failure" report against the character package's
+test suite: nothing under assets/src/character/tests/ imports
+asset_gate.cli, so that report's actual trigger is still unidentified. See
+assets/src/character/CI_KNOWN_FAILURES_T0363.md and
 tools/asset-gate/tests/test_cli_lazy_audio_import_T0363.py (T-0363).
 """
 
