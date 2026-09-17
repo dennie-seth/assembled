@@ -1,5 +1,19 @@
 # T-0380 evidence -- forward-limb reference via ControlNet/OpenPose img2img
 
+## Proposed finding (for the card's own Finding section)
+
+Decisive confirmation of the pose-follows-the-skeleton hypothesis: conditioning img2img on an
+OpenPose ControlNet skeleton, rather than prompt wording, produced a strict-profile forward-limb
+green reference passing every acceptance check on attempt 2 of the 4-attempt cap, committed as
+`assets/src/concept/player_profile_forward_limb_reference_controlnet.png` with provenance at
+`assets/src/concept/player_profile_forward_limb_reference_controlnet.provenance.json`. Attempt 1
+(`docs/assets/evidence/T-0380/attempt_1_main_1024.png`) proved the skeleton reliably drives strict
+profile framing and single-arm/single-lens silhouette on the very first try, but at denoise 0.78
+the base image's own straight coat silhouette survived unchanged and concealed the raised leg
+entirely (`docs/assets/evidence/T-0380/attempt_1_torso_leg_crop_no_leg_visible.png`); raising
+denoise to 0.87 and adding a coat-drape prompt clause for attempt 2 resolved it decisively
+(`docs/assets/evidence/T-0380/attempt_2_raised_leg_crop.png`).
+
 ## Status: PASS, attempt 2 of a 4-attempt cap
 
 T-0355's stop-and-report decisively falsified the prompt-only route for this exact pose (near
