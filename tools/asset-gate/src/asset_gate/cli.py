@@ -2,6 +2,18 @@
 
 Every subcommand prints a PASS/FAIL report (`result.format_report`) and
 exits 0 if every check passed, 1 otherwise -- the shape CI needs.
+
+The `soundfile`/`asset_gate.audio` imports are deferred into
+`_cmd_audio_gate` (the only subcommand that needs them) rather than done at
+module level: `audio.py` itself unconditionally imports `pyloudnorm` and
+`scipy.signal`, so an unconditional top-level import here would require the
+full audio dependency stack just to import this module at all, for any
+subcommand. That breaks callers that only need the non-audio checks (e.g.
+the character package's conftest.py sys.path-injects this package's src/
+without installing its declared audio deps, specifically so a plain pytest
+run against a venv built only from char-gen's own [dev] deps -- pillow +
+numpy, no soundfile/pyloudnorm/scipy -- still collects cleanly). See
+tools/asset-gate/tests/test_cli_lazy_audio_import_T0363.py (T-0363).
 """
 
 from __future__ import annotations
@@ -11,10 +23,9 @@ import json
 import sys
 from pathlib import Path
 
-import soundfile as sf
 from PIL import Image
 
-from asset_gate import art, audio
+from asset_gate import art
 from asset_gate import character as character_mod
 from asset_gate import generator as generator_mod
 from asset_gate import palette as palette_mod
@@ -176,6 +187,10 @@ def _cmd_visibility_sweep(args: argparse.Namespace) -> int:
 
 
 def _cmd_audio_gate(args: argparse.Namespace) -> int:
+    import soundfile as sf
+
+    from asset_gate import audio
+
     samples, sample_rate = sf.read(args.audio, always_2d=False)
     targets = audio.load_loudness_targets(args.loudness_targets)
     results = [
