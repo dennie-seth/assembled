@@ -101,6 +101,47 @@ def test_real_weights_file_runs_and_passes_as_before(tmp_path: Path) -> None:
     assert "skipped" not in combined, f"a real file must not be treated as a pointer:\n{combined}"
 
 
+def test_header_only_weights_file_still_fails(tmp_path: Path) -> None:
+    """Codex review 2026-09-17: a header with no oid/size is a corrupt file,
+    not a genuine un-fetched pointer -- it must FAIL like any other bad
+    weights file, not silently skip."""
+    root = _build_temp_repo(
+        tmp_path,
+        weights_bytes=b"version https://git-lfs.github.com/spec/v1",
+        weights_hash="unused",
+    )
+
+    result = _run_pytest_in(root)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, (
+        f"a header-only file must not be treated as a pointer:\n{combined}"
+    )
+    assert "skipped" not in combined, f"a header-only file must not skip:\n{combined}"
+
+
+def test_malformed_pointer_weights_file_still_fails(tmp_path: Path) -> None:
+    """A pointer-shaped file with a bad oid must FAIL, not skip -- only a
+    complete, well-formed pointer is trusted to mean "un-fetched"."""
+    root = _build_temp_repo(
+        tmp_path,
+        weights_bytes=(
+            b"version https://git-lfs.github.com/spec/v1\n"
+            b"oid sha256:not-a-real-hash\n"
+            b"size 151097032\n"
+        ),
+        weights_hash="unused",
+    )
+
+    result = _run_pytest_in(root)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, (
+        f"a malformed pointer must not be treated as a genuine pointer:\n{combined}"
+    )
+    assert "skipped" not in combined, f"a malformed pointer must not skip:\n{combined}"
+
+
 def test_real_weights_file_with_wrong_hash_still_fails(tmp_path: Path) -> None:
     real_bytes = _fake_safetensors_bytes()
     root = _build_temp_repo(tmp_path, weights_bytes=real_bytes, weights_hash="deadbeef")
