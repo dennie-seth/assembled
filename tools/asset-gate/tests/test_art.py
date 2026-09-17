@@ -10,6 +10,7 @@ from asset_gate.art import (
     check_indexed_preservation,
     check_orphan_pixels,
     check_pose_fidelity,
+    check_region_identity_against_reference,
     check_region_identity_stability,
     check_tile_seamlessness,
     check_transition_adjacency,
@@ -421,6 +422,100 @@ def test_region_identity_stability_reason_names_the_worst_region():
     assert not result.passed
     assert result.details["worst_region"] in {"near", "far"}
     assert result.reason.count(result.details["worst_region"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# check_region_identity_against_reference (T-0361, 2026-09-17 Codex fix): the
+# per-region comparator used by character_part_identity's redesign -- two
+# INDEPENDENT sets of regions (frame's own, reference's own), so a moving
+# part's box can differ in position/size from the reference frame's own box
+# for that same named part. Fixes the false positive a binary rig-silhouette
+# reference produced: the same geometry, recoloured, must not fail on colour
+# alone -- see identity-probe.py's own finding, reproduced here directly on
+# the art-level primitive.
+# ---------------------------------------------------------------------------
+
+
+def test_region_identity_against_reference_is_colour_index_agnostic():
+    """The same shape, recoloured, compared against ITSELF as the reference
+    -- passes regardless of which palette index it uses, unlike a fixed-index
+    rig-silhouette reference (identity-probe.py's own finding)."""
+    shape = np.zeros((20, 20), dtype=np.uint8)
+    shape[2:6, 2:6] = 1
+    region = {"near": (2, 2, 6, 6)}
+
+    for index in (1, 2, 3):
+        recoloured = np.where(shape == 1, index, 0).astype(np.uint8)
+        frame = make_indexed_image(recoloured, TEST_PALETTE_HEX)
+
+        result = check_region_identity_against_reference(
+            frame, region, frame, region, background_index=0, max_histogram_distance=0.0
+        )
+
+        assert result.passed, f"index {index} unexpectedly failed: {result.reason}"
+        assert result.details["per_region_distance"]["near"] == 0.0
+
+
+def test_region_identity_against_reference_fails_when_the_colour_actually_differs():
+    reference = np.zeros((20, 20), dtype=np.uint8)
+    reference[2:6, 2:6] = 1
+    reference_frame = make_indexed_image(reference, TEST_PALETTE_HEX)
+
+    actual = np.zeros((20, 20), dtype=np.uint8)
+    actual[2:6, 2:6] = 2  # same shape, different palette index
+    actual_frame = make_indexed_image(actual, TEST_PALETTE_HEX)
+
+    region = {"near": (2, 2, 6, 6)}
+    result = check_region_identity_against_reference(
+        actual_frame,
+        region,
+        reference_frame,
+        region,
+        background_index=0,
+        max_histogram_distance=0.15,
+    )
+
+    assert not result.passed
+    assert result.details["per_region_distance"]["near"] == 1.0
+
+
+def test_region_identity_against_reference_allows_independent_box_positions():
+    """The frame's own region and the reference's own region for the SAME
+    named part need not be the same box -- a moving part's box tracks its
+    own frame's position while the reference's box tracks whatever the
+    reference frame commands."""
+    reference = np.zeros((20, 20), dtype=np.uint8)
+    reference[2:6, 2:6] = 1  # part sits top-left in the reference frame
+    reference_frame = make_indexed_image(reference, TEST_PALETTE_HEX)
+
+    actual = np.zeros((20, 20), dtype=np.uint8)
+    actual[12:16, 12:16] = 1  # SAME part, moved bottom-right in this frame
+    actual_frame = make_indexed_image(actual, TEST_PALETTE_HEX)
+
+    result = check_region_identity_against_reference(
+        actual_frame,
+        {"part": (12, 12, 16, 16)},
+        reference_frame,
+        {"part": (2, 2, 6, 6)},
+        background_index=0,
+        max_histogram_distance=0.0,
+    )
+
+    assert result.passed
+    assert result.details["per_region_distance"]["part"] == 0.0
+
+
+def test_region_identity_against_reference_raises_on_region_name_mismatch():
+    frame = make_indexed_image(np.zeros((10, 10), dtype=np.uint8), TEST_PALETTE_HEX)
+    with pytest.raises(ValueError, match="region name mismatch"):
+        check_region_identity_against_reference(
+            frame,
+            {"a": (0, 0, 4, 4)},
+            frame,
+            {"b": (0, 0, 4, 4)},
+            background_index=0,
+            max_histogram_distance=0.0,
+        )
 
 
 def test_identity_stability_catches_drift_that_frame_consistency_missed():
