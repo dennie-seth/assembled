@@ -384,6 +384,62 @@ def check_identity_stability(
     )
 
 
+def check_region_identity_stability(
+    frame_a: Image.Image,
+    frame_b: Image.Image,
+    background_index: int,
+    regions: dict[str, tuple[int, int, int, int]],
+    max_histogram_distance: float,
+) -> CheckResult:
+    """Per-region generalisation of `check_identity_stability` (T-0361): run
+    the same palette-histogram-distance measure independently over several
+    NAMED boxes (e.g. head/torso/near-limb/far-limb) instead of one fixed
+    torso box, and fail if ANY of them drifts past the cap.
+
+    `check_identity_stability`'s own fixed torso box is deliberately blind to
+    a left/right limb swap -- limbs are outside the torso box by
+    construction, so swapping their content changes nothing inside it. A
+    swap is invisible to a WHOLE-frame comparison for the same reason at a
+    larger scale: swapping two regions' content changes WHERE pixels of each
+    palette index sit, never how many of each index exist in total, so a
+    single aggregate histogram (whole-frame or one box that doesn't itself
+    sit inside the swap) scores it at exactly 0.0 distance -- the finding
+    that motivates this check (docs/decision-log.md DL-31, T-0361). Evaluating
+    each named region on its own catches a mismatch confined to a single part
+    that an aggregate comparison dilutes away or never sees to begin with.
+    """
+    per_region_distance: dict[str, float] = {}
+    worst_name: str | None = None
+    worst_distance = -1.0
+    for name, region in regions.items():
+        result = check_identity_stability(
+            frame_a,
+            frame_b,
+            background_index=background_index,
+            region=region,
+            max_histogram_distance=max_histogram_distance,
+        )
+        distance = result.details["distance"]
+        per_region_distance[name] = distance
+        if distance > worst_distance:
+            worst_name, worst_distance = name, distance
+
+    passed = worst_distance <= max_histogram_distance
+    return CheckResult(
+        check="region_identity_stability",
+        passed=passed,
+        reason=(
+            f"worst region {worst_name!r} palette-histogram distance {worst_distance:.4f} "
+            f"{'<=' if passed else '>'} cap {max_histogram_distance}"
+        ),
+        details={
+            "per_region_distance": per_region_distance,
+            "worst_region": worst_name,
+            "worst_distance": worst_distance,
+        },
+    )
+
+
 def check_background_growth(
     frames: Sequence[Image.Image],
     background_index: int,
