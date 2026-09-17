@@ -118,6 +118,48 @@ overwritten — the marker is still cleared in that case (it's served its purpos
 stray), so it never outlives its use. Coordination is independent of any timeout — it holds
 whichever write lands first, not just the specific 8s/8s race Codex reproduced.
 
+## Fix round 4 (2026-09-17, Codex review of #387)
+
+Codex confirmed the round-3 timeout race fixed and found one remaining gap in the retention
+mechanism it added: `consumePendingOutcome` claimed ownership of the pending-outcome marker by
+**unlinking** it, then wrote the updated advisory record. If that write (or the rename inside it)
+failed, or the process crashed in between, the marker was already gone — the outcome's only copy
+was destroyed before it was durably attached anywhere, and a retry had nothing left to recover.
+
+**Fix: claim by rename, clear only after the write succeeds.** `consumePendingOutcome` now acquires
+ownership of a pending marker by atomically **renaming** it to a claim file
+(`<launch-identity>.outcome-pending.json.claim`, kept out of `measureRecordedCoverage`'s
+`.advisory.json` glob exactly like the marker itself) instead of deleting it. The claim is cleared
+— unlinked — only *after* `writeAtomic` has durably written the record with the outcome attached.
+A failure at any point leaves the outcome recoverable on disk:
+
+- If the claiming rename itself fails, the marker is untouched (an atomic rename either fully
+  happens or doesn't) — it's still there under its original name for the next attempt.
+- If the record write fails after a successful claim, the claim file is left exactly as it is —
+  the next attempt finds it, recognizes it as a stranded claim, and finishes the attach.
+
+A claim file found already on disk at the *start* of a call — left behind by a previous attempt
+that crashed between claiming and clearing — is treated identically to one just claimed: read,
+attach, clear. This is what makes recovery a *repeated* call to `recordAdvisoryDecision` or
+`retainOutcomeUntilDecisionRecorded` rather than a distinct recovery code path — the existing
+happy-path re-check already does the work.
+
+**Concurrency.** Claiming a *live* marker is still exclusive by construction (the rename can only
+succeed once — a second renamer gets `ENOENT`). Recovering a *stranded* claim is not
+mutually-exclusive across concurrent callers by itself, but is safe anyway: every consumer that
+reads the same claim file reads the identical retained outcome, so even if two callers both reach
+the write step, both write the same content and the record ends up with that outcome attached
+exactly once, never a conflicting value.
+
+**Failures are surfaced, not swallowed.** `recordAdvisoryDecision` and
+`retainOutcomeUntilDecisionRecorded` both take an optional `logger` (default `console`), threaded
+through from `cardLaunch.js`/`launchAdvisory.js`'s own logger at every call site. A claim or write
+failure logs an explicit message naming the launch identity rather than silently returning a
+decision record that looks complete with `outcome: null`. The one exception is the ordinary,
+overwhelmingly common case of "no marker was ever pending" (`ENOENT` on the claim rename) — that is
+not a failure and stays silent, so real failures aren't drowned out in the log of every launch that
+never needed retention at all.
+
 ## The shared launch boundary
 
 `launchCardRun` (`tools/board/src/runner/cardLaunch.js`) is the one path both the Run button
