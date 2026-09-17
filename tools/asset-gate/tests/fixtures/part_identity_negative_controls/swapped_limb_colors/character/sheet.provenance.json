@@ -1,0 +1,54 @@
+{
+  "model": "synthetic-part-identity-rig/v1",
+  "seed": 0,
+  "motion_class": "locomotion",
+  "negative_control_description": "Frame 0 is byte-identical to positive_controls/multi_color_identity's own frame 0 (correct: near_limb=index 3, far_limb=index 4). Frames 1-7 swap which colour near_limb/far_limb use (near_limb=4, far_limb=3) -- geometry/motion is unperturbed (matches the correct rig keypoints exactly, same as the positive fixture), so pose-fidelity IoU is unaffected by the swap; near_limb/far_limb boxes are always equal-area (mirror construction), so the swap exactly preserves the whole-frame palette histogram every frame. Rig evidence records the correct, unswapped per-frame keypoints. Caught by character_part_identity, which compares each frame against frame 0's own real per-part pixels.",
+  "layout": {
+    "cols": 4,
+    "rows": 2,
+    "cell_px": 40
+  },
+  "frame_generation": [
+    {
+      "frame_index": 0,
+      "pose_keypoints_file": "character/rig/frame_0.json"
+    },
+    {
+      "frame_index": 1,
+      "pose_keypoints_file": "character/rig/frame_1.json"
+    },
+    {
+      "frame_index": 2,
+      "pose_keypoints_file": "character/rig/frame_2.json"
+    },
+    {
+      "frame_index": 3,
+      "pose_keypoints_file": "character/rig/frame_3.json"
+    },
+    {
+      "frame_index": 4,
+      "pose_keypoints_file": "character/rig/frame_4.json"
+    },
+    {
+      "frame_index": 5,
+      "pose_keypoints_file": "character/rig/frame_5.json"
+    },
+    {
+      "frame_index": 6,
+      "pose_keypoints_file": "character/rig/frame_6.json"
+    },
+    {
+      "frame_index": 7,
+      "pose_keypoints_file": "character/rig/frame_7.json"
+    }
+  ],
+  "frame_delta_range": [
+    0.05,
+    0.09
+  ],
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "beats_arm_c_benchmark": true
+}

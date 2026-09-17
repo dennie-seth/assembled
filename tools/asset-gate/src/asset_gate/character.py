@@ -1432,7 +1432,9 @@ def _resolve_frame_regions(
 
     regions_per_frame: list[dict[str, tuple[int, int, int, int]]] = []
     for i, frame_info in enumerate(frame_generation):
-        rel_keypoints = frame_info.get("pose_keypoints_file") if isinstance(frame_info, dict) else None
+        rel_keypoints = (
+            frame_info.get("pose_keypoints_file") if isinstance(frame_info, dict) else None
+        )
         if not rel_keypoints:
             return CheckResult(
                 check="character_part_identity",

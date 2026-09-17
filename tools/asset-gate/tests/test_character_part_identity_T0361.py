@@ -299,7 +299,8 @@ def test_swap_present_uniformly_in_every_frame_is_invisible_to_the_anchor_refere
 
     # Both frames render the SAME (wrong) uniform colour -- a defect present
     # identically everywhere, including the reference frame itself.
-    uniformly_wrong = np.array(_rendered_rig_image(_BASE_POSE_NORM, CELL_PX).point(lambda x: 2 if x else 0))
+    wrong_colour = _rendered_rig_image(_BASE_POSE_NORM, CELL_PX).point(lambda x: 2 if x else 0)
+    uniformly_wrong = np.array(wrong_colour)
     sheet = _two_frame_sheet(uniformly_wrong, uniformly_wrong)
 
     result = determine_character_part_identity(
