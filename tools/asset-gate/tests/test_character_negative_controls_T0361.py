@@ -47,10 +47,21 @@ _SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 # why their exact metric VALUES differ); see
 # docs/character-motion-negative-controls-T0361.md for the full table of
 # measured values vs threshold.
+#
+# `swapped_limbs` (2026-09-17 Codex fix): `character_part_identity` now also
+# names this control, an ACCURATE expectation the real gate now produces on
+# its own (T-0361 acceptance criterion "swapped_limbs is either converted
+# into this case or kept with an accurate expectation") -- comparing each
+# frame against a REAL reference frame (this sheet's own frame 0, replacing
+# the pre-fix binary rig silhouette) makes this control's worst region
+# (near_limb) measure 0.4148, just over `PART_IDENTITY_HISTOGRAM_CAP` (0.40).
 _EXPECTED_FAILING_CHECKS = {
     "frozen_frame": {"character_motion_fidelity"},
     "wrong_phase": {"character_motion_fidelity"},
-    "swapped_limbs": {"character_motion_fidelity"},
+    "swapped_limbs": {
+        "character_motion_fidelity",
+        "character_part_identity",
+    },
     "detached_joint": {"character_motion_fidelity"},
     "foot_sliding": {"character_motion_fidelity"},
     "loop_seam_jump": {
@@ -72,36 +83,42 @@ _EXPECTED_FAILING_CHECKS = {
 # silhouette -- does match exactly. These values are the real gate's own
 # output, transcribed into `docs/character-motion-negative-controls-T0361.md`;
 # this test pins them so the two cannot drift apart again.
+#
+# `part_identity_range` (2026-09-17 Codex fix): every control's own numbers
+# changed here -- `character_part_identity` now compares each frame against
+# a REAL reference frame (this sheet's own frame 0), never the pre-fix
+# binary rig silhouette. `pose_fidelity_range`/`identity_stability_range`
+# are UNCHANGED -- `character_motion_fidelity` was not touched by this fix.
 _EXPECTED_METRIC_RANGES = {
     "frozen_frame": {
         "pose_fidelity_range": [0.4814, 0.9274],
         "identity_stability_range": [0.0, 0.0],
-        "part_identity_range": [0.0143, 0.1455],
+        "part_identity_range": [0.0, 0.3184],
     },
     "wrong_phase": {
         "pose_fidelity_range": [0.4330, 0.8028],
         "identity_stability_range": [0.0, 0.0],
-        "part_identity_range": [0.0625, 0.1764],
+        "part_identity_range": [0.0, 0.3179],
     },
     "swapped_limbs": {
         "pose_fidelity_range": [0.6217, 0.8142],
         "identity_stability_range": [0.0, 0.0],
-        "part_identity_range": [0.0571, 0.1057],
+        "part_identity_range": [0.0, 0.4148],
     },
     "detached_joint": {
         "pose_fidelity_range": [0.6155, 0.6524],
         "identity_stability_range": [0.0, 0.008],
-        "part_identity_range": [0.1962, 0.3750],
+        "part_identity_range": [0.0, 0.2646],
     },
     "foot_sliding": {
         "pose_fidelity_range": [0.5836, 0.6837],
         "identity_stability_range": [0.0, 0.234],
-        "part_identity_range": [0.0571, 0.2656],
+        "part_identity_range": [0.0, 0.2266],
     },
     "loop_seam_jump": {
         "pose_fidelity_range": [0.1901, 0.9280],
         "identity_stability_range": [0.0, 0.664],
-        "part_identity_range": [0.0143, 0.8000],
+        "part_identity_range": [0.0, 0.7857],
     },
 }
 
