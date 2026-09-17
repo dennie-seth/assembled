@@ -87,7 +87,7 @@ export async function reconcileLaunchOutcome({
       // whichever decision record eventually publishes (the normal write or the fallback) still
       // gets it attached.
       try {
-        await retainOutcomeUntilDecisionRecordedFn({ runsDir, cardId, executionId, invocationId, outcome });
+        await retainOutcomeUntilDecisionRecordedFn({ runsDir, cardId, executionId, invocationId, outcome, logger });
       } catch (err2) {
         logger.error(`Agent Runner: failed to retain outcome pending a decision record for ${cardId}:`, err2.message);
       }

@@ -402,7 +402,7 @@ export function buildLaunchDecide({
     // reserving or LOGGING"), so it happens inside this same envelope, ahead of `launch()` --
     // never after, and never able to throw or hang past `withBoundedDecide`'s own timeout.
     try {
-      await recordAdvisoryDecisionFn({ runsDir, cardId, executionId, invocationId, type, fitDate, estimate: reservedCycle, telemetryReadings: implementerAdvisory.telemetryReadings, reason: record.reason });
+      await recordAdvisoryDecisionFn({ runsDir, cardId, executionId, invocationId, type, fitDate, estimate: reservedCycle, telemetryReadings: implementerAdvisory.telemetryReadings, reason: record.reason, logger });
     } catch (err) {
       logger.log(`wip-gate advisory: failed to record advisory decision for ${cardId}/${executionId}/${invocationId} -- launch proceeds unaffected: ${err.message}`);
     }
@@ -427,7 +427,8 @@ export function buildLaunchDecide({
         fitDate,
         estimate: fallbackRecord.estimate,
         telemetryReadings: fallbackRecord.telemetryReadings,
-        reason: fallbackRecord.reason
+        reason: fallbackRecord.reason,
+        logger
       })
   });
 }

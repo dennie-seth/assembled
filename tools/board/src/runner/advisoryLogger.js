@@ -155,48 +155,111 @@ async function writeExclusive(filePath, data, { writeFileFn, mkdirFn, linkFn, un
 }
 
 /**
+ * Path to a claim on a pending outcome marker (T-0370 fix round 4, Codex review 2026-09-17).
+ * `consumePendingOutcome` acquires ownership of a marker by RENAMING it here -- never by
+ * unlinking it -- so the outcome's only copy stays on disk under this name for as long as
+ * attaching it to a decision record is still in progress. Deliberately not matched by
+ * `measureRecordedCoverage`'s `.advisory.json` glob, same reasoning as `pendingOutcomePath`
+ * itself: a claim in progress (or stranded by a crash) must never be mistaken for a decision.
+ */
+function pendingOutcomeClaimPath(markerPath) {
+  return `${markerPath}.claim`;
+}
+
+/**
  * Attaches a durably-retained outcome marker (if one exists for this launch identity) to the
  * decision record now on disk (T-0370 round 3: "a finished launch's terminal outcome is never
- * discarded because its advisory decision was not yet on disk"). Deleting the marker file IS the
- * ownership token -- whichever caller (`recordAdvisoryDecision`'s own post-write check, or
- * `retainOutcomeUntilDecisionRecorded`'s own re-check right after it writes the marker) actually
- * succeeds at unlinking it is the one that applies the outcome, so both orderings -- and the case
- * where they race -- converge on exactly one attach. A decision record that already carries a
- * non-null outcome is never overwritten; the marker is still cleared either way, so it never
- * outlives its use.
+ * discarded because its advisory decision was not yet on disk").
+ *
+ * Ownership of the marker is acquired by an atomic RENAME to a claim file, never by deleting it
+ * (T-0370 fix round 4, Codex review 2026-09-17: the previous unlink-as-ownership-token design
+ * destroyed the outcome's only copy before the updated record was durably written -- a failed or
+ * interrupted write after that point lost it for good). The claim is only cleared AFTER
+ * `writeAtomic` has durably written the record carrying the outcome. A failure at any point --
+ * the claiming rename itself, or the record write -- leaves the outcome recoverable on disk
+ * (either still under its original marker name, if the claim never happened, or under the claim
+ * name, if it did) for a later call to this same function to pick up and finish; that later call
+ * is a repeated `recordAdvisoryDecision`/`retainOutcomeUntilDecisionRecorded`, exactly like the
+ * happy path already is. A claim file found already on disk at the START of a call (left behind
+ * by a crash between claiming and clearing) is treated exactly like a freshly claimed one.
+ *
+ * A decision record that already carries a non-null outcome is never overwritten; the claim is
+ * still cleared in that case (it has served its purpose, or was always stray), so it never
+ * outlives its use. Every failure along the way is logged rather than silently discarded -- a
+ * caller must never end up with a record that looks complete (`outcome: null`) while the reason
+ * it isn't complete goes unreported.
  */
-async function consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn }) {
+async function consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn, logger = console }) {
+  const identity = `${cardId}/${executionId}/${invocationId}`;
   const markerPath = pendingOutcomePath(runsDir, { cardId, executionId, invocationId });
+  const claimPath = pendingOutcomeClaimPath(markerPath);
+
   let marker;
+  let holdingClaim = false;
   try {
-    marker = JSON.parse(await readFileFn(markerPath, "utf8"));
+    // Recover a claim stranded by a previous attempt that failed or crashed between acquiring
+    // ownership and clearing it -- its data is still there, untouched, for exactly this reason.
+    marker = JSON.parse(await readFileFn(claimPath, "utf8"));
+    holdingClaim = true;
   } catch {
-    return null;
+    // No stranded claim. Try to claim the live marker via an atomic RENAME (never an unlink) --
+    // if this throws, the marker (if any) is untouched and still recoverable under its own name.
+    try {
+      await renameFn(markerPath, claimPath);
+    } catch (err) {
+      // ENOENT (no marker pending) is the overwhelmingly common, benign case -- every launch's
+      // decision write reaches here whether or not an outcome was ever retained for it, and
+      // logging that non-event for every one of them would drown out real failures. Any OTHER
+      // rename failure means a marker genuinely exists but couldn't be claimed -- that is a real
+      // attachment failure and must be surfaced, not swallowed.
+      if (err && err.code !== "ENOENT") {
+        logger?.error?.(`Agent Runner: failed to claim pending outcome for ${identity} (still recoverable under its original name): ${err.message}`);
+      }
+      return null;
+    }
+    try {
+      marker = JSON.parse(await readFileFn(claimPath, "utf8"));
+      holdingClaim = true;
+    } catch (err) {
+      logger?.error?.(`Agent Runner: claimed pending outcome for ${identity} is unreadable: ${err.message}`);
+      return null;
+    }
   }
+
   const filePath = advisoryLogPath(runsDir, { cardId, executionId, invocationId });
   let existing;
   try {
     existing = JSON.parse(await readFileFn(filePath, "utf8"));
   } catch {
-    // No decision published yet -- leave the marker exactly as it is for a future check (this
-    // one's own re-check, or `recordAdvisoryDecision`'s, whichever comes next) to find.
+    // No decision published yet -- give the claim back its marker name so a normal pending check
+    // (this one's own re-check, or a later call, whichever comes next) finds it again. The
+    // outcome's data is never deleted here, only renamed back.
+    try {
+      await renameFn(claimPath, markerPath);
+    } catch (err) {
+      logger?.error?.(`Agent Runner: failed to restore pending outcome marker for ${identity} (still recoverable under its claim name): ${err.message}`);
+    }
     return null;
   }
   if (existing.outcome !== null && existing.outcome !== undefined) {
-    // Someone else already attached an outcome -- never overwrite it, but the marker has served
+    // Someone else already attached an outcome -- never overwrite it, but the claim has served
     // its purpose (or was always stray); clear it so it doesn't outlive its use.
-    await unlinkFn(markerPath).catch(() => {});
+    await unlinkFn(claimPath).catch(() => {});
     return null;
   }
-  // Ownership token: only the caller that actually succeeds at unlinking the marker attaches the
-  // outcome -- a concurrent caller racing the same check backs off instead of double-attaching.
-  try {
-    await unlinkFn(markerPath);
-  } catch {
-    return null;
-  }
+
   const updated = { ...existing, outcome: marker.outcome, updatedAt: now().toISOString() };
-  await writeAtomic(filePath, updated, { writeFileFn, mkdirFn, renameFn, unlinkFn });
+  try {
+    await writeAtomic(filePath, updated, { writeFileFn, mkdirFn, renameFn, unlinkFn });
+  } catch (err) {
+    // The write failed -- the claim still holds the only copy of the outcome, so leave it in
+    // place for a later attempt to recover, and surface the failure rather than returning a
+    // record that silently still shows `outcome: null`.
+    logger?.error?.(`Agent Runner: failed to attach retained outcome to advisory decision for ${identity} (outcome still recoverable): ${err.message}`);
+    return null;
+  }
+  // Only clear the claim AFTER the record carrying the outcome is durably written.
+  if (holdingClaim) await unlinkFn(claimPath).catch(() => {});
   return updated;
 }
 
@@ -241,7 +304,8 @@ export async function recordAdvisoryDecision({
   linkFn = fs.link,
   unlinkFn = fs.unlink,
   readFileFn = fs.readFile,
-  renameFn = fs.rename
+  renameFn = fs.rename,
+  logger = console
 }) {
   if (estimate.value !== null && !isScoreablePredictionValue(estimate.value)) {
     throw new Error(
@@ -284,10 +348,14 @@ export async function recordAdvisoryDecision({
   // T-0370 round 3: an outcome may already be durably retained for this launch identity (it
   // arrived before any decision existed -- see `retainOutcomeUntilDecisionRecorded`). Whichever
   // decision write actually wins above, attach it now rather than leaving the outcome stranded.
+  // `consumePendingOutcome` itself already logs and fails safe (T-0370 fix round 4) -- this
+  // catch is a backstop for anything it doesn't, so a bug there can never surface as a thrown
+  // decision write.
   let attached = null;
   try {
-    attached = await consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn });
-  } catch {
+    attached = await consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn, logger });
+  } catch (err) {
+    logger?.error?.(`Agent Runner: failed to attach retained outcome while recording advisory decision for ${cardId}/${executionId}/${invocationId}: ${err.message}`);
     attached = null;
   }
   return attached ?? winning;
@@ -348,7 +416,8 @@ export async function recordAdvisoryOutcome({
  * marker existed for `recordAdvisoryDecision`'s own check to find), attaching right away rather
  * than leaving the outcome stranded until nothing ever rechecks. Coordination is independent of
  * any timeout: it holds whichever write lands first, and the two orderings converging concurrently
- * (see `consumePendingOutcome`'s unlink-as-ownership-token) are both race-safe.
+ * (see `consumePendingOutcome`'s claim-by-rename ownership token, T-0370 fix round 4) are both
+ * race-safe.
  */
 export async function retainOutcomeUntilDecisionRecorded({
   runsDir,
@@ -362,7 +431,8 @@ export async function retainOutcomeUntilDecisionRecorded({
   linkFn = fs.link,
   unlinkFn = fs.unlink,
   readFileFn = fs.readFile,
-  renameFn = fs.rename
+  renameFn = fs.rename,
+  logger = console
 }) {
   if (!isScoreableOutcome(outcome)) {
     throw new Error(
@@ -372,7 +442,7 @@ export async function retainOutcomeUntilDecisionRecorded({
   const markerPath = pendingOutcomePath(runsDir, { cardId, executionId, invocationId });
   const recordedAt = now().toISOString();
   await writeExclusive(markerPath, { cardId, executionId, invocationId, outcome, recordedAt }, { writeFileFn, mkdirFn, linkFn, unlinkFn, readFileFn });
-  return consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn });
+  return consumePendingOutcome({ runsDir, cardId, executionId, invocationId, now, readFileFn, unlinkFn, writeFileFn, mkdirFn, renameFn, logger });
 }
 
 /**
