@@ -289,20 +289,23 @@ external burn allowance.
 - **With the flag unset (the live board's configuration), `cardLaunch.js` never refuses or delays
   a launch.** The advisory pipeline still runs (bounded, failure-isolated) and still writes its
   reservation/record, but nothing inspects `admission` to gate the launch.
-- **With the flag on, the shared decision at `launchCardRun` is authoritative for both callers.**
-  `launchCardRun` inspects the `admission` its own `decide()` call recorded before calling
-  `launch()`: an explicit hold on any window (`no_measured_window_reading`, `estimate_unknown`,
-  `units_not_comparable`, `reserved_cost_unknown`, or an outright `admitted: false`) refuses the
-  launch (`CardLaunchError`, 409) with a reason naming every non-admitting window, and releases
-  the reservation the advisory pipeline had provisionally written. A missing `admission` (the
-  advisory pipeline itself timed out or errored) is ALSO a hold — unknown capacity is never "not
-  blocked". A reservation that failed to publish (`admission.reservationPublished === false`,
-  fix round 2 finding 4) refuses on that alone, regardless of what the per-window formula
-  concluded — this launch's own capacity was never actually reserved. **Because no
-  USD-to-utilization conversion has been derived yet (see "What this card deliberately does not
-  do" below), every real launch's admission holds `units_not_comparable` — so turning this flag on
-  today holds every launch. That is the intended fail-safe, not a bug**; it is also exactly why
-  this card does not enable it on the live board.
+- **With the flag on, the shared decision at `launchCardRun` is authoritative for both callers —
+  except for the capacity-fit limit itself, which only ever binds an `auto` launch (T-0379, see
+  "Auto vs. manual: the capacity-fit limit" below).** `launchCardRun` inspects the `admission` its
+  own `decide()` call recorded before calling `launch()`: an explicit hold on any window
+  (`no_measured_window_reading`, `estimate_unknown`, `units_not_comparable`,
+  `reserved_cost_unknown`, `oversized_estimate_never_fits`, or an outright `admitted: false`)
+  refuses an `auto` launch (`CardLaunchError`, 409, `capacityFitHold: true`) with a reason naming
+  every non-admitting window, and releases the reservation the advisory pipeline had provisionally
+  written. A missing `admission` (the advisory pipeline itself timed out or errored) is ALSO a hold
+  — unknown capacity is never "not blocked". A reservation that failed to publish
+  (`admission.reservationPublished === false`, fix round 2 finding 4) refuses on that alone,
+  regardless of what the per-window formula concluded, this launch's own capacity was never
+  actually reserved, and regardless of `trigger` — this one guard is never overridable. **Because
+  no USD-to-utilization conversion has been derived yet (see "What this card deliberately does not
+  do" below), every real `auto` launch's admission holds `units_not_comparable` — so turning this
+  flag on today holds every automated launch. That is the intended fail-safe, not a bug**; it is
+  also exactly why this card does not enable it on the live board.
 - **The boundary never falls through to an unconditional launch under the flag (fix round 2 finding
   4).** `decide()` is bounded at `cardLaunch.js` itself (on top of `buildLaunchDecide`'s own
   internal bound), so a throwing or never-settling decide resolves to `advisory: null` — an
@@ -318,6 +321,80 @@ external burn allowance.
 - The one OTHER place this flag currently changes behaviour: `autoLaunchPoller.js`'s window-aware
   usage comparison (below) replaces the legacy newest-event usage gate only when this flag is on.
 - The flag still defaults OFF and is not enabled on the live board by this card.
+
+## Auto vs. manual: the capacity-fit limit (T-0379)
+
+T-0370 built the admission/reservation/enforcement machinery; T-0379 is the enforcement *flip* on
+the auto-launch path specifically — the poller admits a card only when it fits the remaining 5-hour
+window, while a human can still launch a heavier card manually.
+
+- **`launchCardRun` (`runner/cardLaunch.js`) takes an explicit `trigger`**, one of
+  `LAUNCH_TRIGGERS.AUTO` or `LAUNCH_TRIGGERS.MANUAL`. It defaults to `AUTO` — fail-safe by
+  construction, so a caller that forgets to opt in gets the strict, poller-equivalent behaviour,
+  never an accidental bypass.
+  - `autoLaunchPoller.js`'s `tick()` always passes `trigger: LAUNCH_TRIGGERS.AUTO`, hard-coded —
+    there is no configuration surface on the poller to pass anything else, so it can never reach
+    the manual-override path (`autoLaunchPoller.test.js` asserts this directly).
+  - `POST /api/tasks/:id/run` (the Run button, `server/httpApi.js`'s `handleRunTask`) always passes
+    `trigger: LAUNCH_TRIGGERS.MANUAL` — every other operator-initiated launch should do the same.
+- **The shared admission refusal splits into two, only one of which `trigger` affects:**
+  - `reservationIntegrityRefusal` — `admission.reservationPublished === false`. This launch's own
+    cost was never actually recorded against the shared reservation pool, so admitting it would
+    silently understate what every OTHER launch's own admission check sees. **Never bypassable by
+    `trigger`** — it is a ledger-integrity guarantee (T-0370's own), not a capacity/fit policy call.
+  - `capacityFitRefusal` — everything else the shared `admission` decision holds on: an explicit
+    per-window `admitted: false`/hold reason, or the whole `admission` being `null` (the advisory
+    pipeline itself timed out or errored — unknown capacity, not proof of either fit or overrun). A
+    refused `auto` launch's `CardLaunchError` carries `capacityFitHold: true`.
+- **Manual override.** When `capacityFitRefusal` would hold and `trigger === LAUNCH_TRIGGERS.MANUAL`,
+  `launchCardRun` logs the bypass, calls `advisoryLogger.js`'s `recordManualOverride` to mark the
+  decision record with a `manualOverride: { overriddenAt, reason, admission }` field (best-effort —
+  a failure here is logged, never blocks the launch, since by this point the launch has already been
+  allowed to proceed), and falls through to `orchestrator.runCard(id)` exactly as an unenforced
+  launch would. The reservation this launch's own `decide()` already wrote is untouched — it still
+  publishes, so a later `auto` admission's `reservedUnspentCostUsd` still counts it. A broken
+  advisory/admission pipeline (a throwing `buildLaunchDecideFn`, or a never-settling `decide()`
+  reaching `cardLaunch.js`'s own outer bound) is treated the same way under `MANUAL`: logged,
+  launch proceeds unaffected — the same "unknown is still overridable" rule as an explicit hold.
+- **Unchanged by `trigger`, for both `auto` and `manual`:** every other Run-button guard
+  (`RUNNABLE_STATUSES`, the `dispatch` sentinel, the already-running check, dependency/cycle guard,
+  round cap) and T-0370's overrun stop (spec §11) — an active overrun stop still refuses a
+  brand-new admission regardless of `trigger`; only a bounded continuation of an already-admitted
+  execution is exempt, exactly as before this card.
+- **A permanently oversized estimate** — one that would still exceed a window's budget even at 0%
+  utilization — gets its own hold reason, `admissionDecision.js`'s
+  `HOLD_REASON.OVERSIZED_ESTIMATE_NEVER_FITS`, distinct from an ordinary `admitted: false` (which
+  just means "not right now, try again once usage frees up"). `capacityFitRefusal`'s message names
+  it explicitly and points at the fix: "launch manually or split the card". Bounded waiting, aging,
+  and any other oversized-card handling beyond naming the reason are T-0372's scope, not this
+  card's.
+- **Queue behaviour.** `autoLaunchPoller.js`'s `selectEligibleCardsInOrder` exposes the FULL
+  priority-ordered candidate list (`selectNextCard` is now a thin wrapper returning its head).
+  `tick()` tries each eligible candidate through `launchFn` in turn: a `capacityFitHold` refusal is
+  logged and passed over in favour of the next candidate, so a smaller card further back in the
+  queue can still be admitted the same tick, rather than the whole tick stalling behind a
+  head-of-queue card that doesn't fit. Every OTHER refusal (an unmet dependency the guard alone
+  caught, an already-active run, a round-cap trip, an overrun stop) is unrelated to whether THIS
+  card fits and still ends the tick immediately, exactly as before this card — at most one
+  **launch** per tick still holds; only the number of refused *attempts* on the way to it can now be
+  more than one.
+- **Units.** No USD-to-5-hour-utilization conversion is derived or shipped by this card (see "What
+  this card deliberately does not do" — this was already true of T-0370, and remains true here):
+  `admissionDecision.js`'s `evaluateAdmission`/`evaluateWindowAdmission` still default
+  `unitConversion` to `null` everywhere in this repo. Concretely, today, this means the auto path
+  holds every real card as `units_not_comparable` rather than ever computing a fit — the intended
+  fail-safe (acceptance: "Without a usable conversion the auto path holds every card as
+  UNITS_NOT_COMPARABLE"), proven in `cardLaunch.test.js` through the real (unstubbed) admission
+  pipeline. A conversion is never a hard-coded rate; a later card may derive one from recorded
+  evidence (the usage ledger's cost vs. measured utilization change over matched intervals),
+  carrying its own sample count, fit date, and measured coverage, with an explicit minimum-evidence
+  threshold below which it is not used.
+- **Turning enforcement on**, once ready: set `WIP_GATE_ENFORCEMENT_ENABLED=1` (or `true`/`on`/`yes`)
+  on the board process. With no unit conversion shipped, every `auto` launch will hold
+  `units_not_comparable` until one is derived — manual (Run button) launches are unaffected by the
+  capacity-fit limit either way, but still subject to the overrun stop and every other existing
+  guard. This card does not flip the flag on the live board; that remains @DennieSeth's call,
+  informed by T-0370's predicted-vs-actual advisory evidence.
 
 ## Advisory evidence collection (spec §10) — `launchAdvisory.js` + T-0369's `advisoryLogger.js`
 
