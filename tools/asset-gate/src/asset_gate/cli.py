@@ -147,11 +147,13 @@ def _cmd_character_gate_report(args: argparse.Namespace) -> int:
 def _cmd_character_gate(args: argparse.Namespace) -> int:
     baseline = character_mod.load_character_arm_c_baseline()
     motion_class_baseline = character_mod.load_character_motion_class_baseline()
+    motion_score_binding_baseline = character_mod.load_character_motion_score_binding_baseline()
     results = character_mod.sweep_character_gate(
         args.root,
         repo_root=args.repo_root,
         baseline=baseline,
         motion_class_baseline=motion_class_baseline,
+        motion_score_binding_baseline=motion_score_binding_baseline,
     )
     if not results:
         print(f"no *.provenance.json files found under {args.root}")
