@@ -334,6 +334,141 @@ describe("recordAdvisoryOutcome / retainOutcomeUntilDecisionRecorded -- T-0370 r
   });
 });
 
+describe("recordAdvisoryDecision / retainOutcomeUntilDecisionRecorded -- T-0370 fix round 4 (Codex review 2026-09-17): a retained outcome survives a failed or interrupted attachment", () => {
+  const PROBE_ESTIMATE = Object.freeze({ value: 1, unit: "usd", estimatorVersion: "probe" });
+
+  it("Codex's outcome-probe.mjs: a renameFn failure during attach leaves the outcome recoverable on disk, attached on a later attempt", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round4-failed-attach", invocationId: "inv-1" };
+    await retainOutcomeUntilDecisionRecorded({ ...key, outcome: { actualCostUsd: 2, costKind: "exact" } });
+
+    const before = await fs.readdir(runsDir);
+    expect(before.some((f) => f.includes("round4-failed-attach"))).toBe(true);
+
+    const failingRename = async () => {
+      throw Object.assign(new Error("simulated EIO"), { code: "EIO" });
+    };
+
+    const first = await recordAdvisoryDecision({
+      ...key,
+      estimate: PROBE_ESTIMATE,
+      telemetryReadings: {},
+      reason: "probe",
+      renameFn: failingRename
+    });
+
+    // The failed attach never fabricates a completed-looking record -- outcome stays null...
+    expect(first.outcome).toBeNull();
+    const afterFailedAttach = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, key), "utf8"));
+    expect(afterFailedAttach.outcome).toBeNull();
+
+    // ...but the outcome itself is still recoverable on disk -- never destroyed before it is
+    // durably attached.
+    const filesAfterFailure = await fs.readdir(runsDir);
+    expect(filesAfterFailure.some((f) => f.includes("round4-failed-attach") && f !== path.basename(advisoryLogPath(runsDir, key)))).toBe(true);
+
+    // A later attempt (recording the same decision again, without the failing renameFn) recovers
+    // and attaches the exact retained outcome.
+    const second = await recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "probe retry" });
+    expect(second.outcome).toEqual({ actualCostUsd: 2, costKind: "exact" });
+    const onDisk = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, key), "utf8"));
+    expect(onDisk.outcome).toEqual({ actualCostUsd: 2, costKind: "exact" });
+
+    // Fully consumed -- no marker/claim left behind.
+    const filesAfterRecovery = await fs.readdir(runsDir);
+    expect(filesAfterRecovery.filter((f) => f.includes("round4-failed-attach"))).toEqual([path.basename(advisoryLogPath(runsDir, key))]);
+  });
+
+  it("a writeFileFn failure during attach also leaves the outcome recoverable, attached on a later attempt", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round4-write-failure", invocationId: "inv-1" };
+    await retainOutcomeUntilDecisionRecorded({ ...key, outcome: { actualCostUsd: 5, costKind: "lower_bound" } });
+
+    let calls = 0;
+    const flakyWrite = async (...args) => {
+      calls += 1;
+      // Let the decision record's own creation write through (call 1); only the attach's own
+      // write (call 2, inside consumePendingOutcome) fails.
+      if (calls > 1) throw Object.assign(new Error("simulated ENOSPC"), { code: "ENOSPC" });
+      return fs.writeFile(...args);
+    };
+
+    const first = await recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "probe", writeFileFn: flakyWrite });
+    expect(first.outcome).toBeNull();
+
+    const recovered = await recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "probe retry" });
+    expect(recovered.outcome).toEqual({ actualCostUsd: 5, costKind: "lower_bound" });
+  });
+
+  it("a simulated crash after ownership is acquired but before the record is written is recovered by a later consumer", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round4-crash-after-claim", invocationId: "inv-1" };
+    await recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "published first" });
+
+    // Hand-author the claim file exactly as a crashed `consumePendingOutcome` would leave it --
+    // ownership already acquired (the marker renamed away), but the record never written.
+    const markerPath = pendingOutcomePath(runsDir, key);
+    const claimPath = `${markerPath}.claim`;
+    await fs.writeFile(claimPath, JSON.stringify({ ...key, outcome: { actualCostUsd: 3, costKind: "exact" }, recordedAt: new Date().toISOString() }), "utf8");
+
+    const recovered = await recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "recovery attempt" });
+
+    expect(recovered.outcome).toEqual({ actualCostUsd: 3, costKind: "exact" });
+    await expect(fs.readFile(claimPath, "utf8")).rejects.toThrow();
+    await expect(fs.readFile(markerPath, "utf8")).rejects.toThrow();
+  });
+
+  it("concurrent consumers -- a live claim versus one left behind by a crash -- end with exactly one attached outcome", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round4-concurrent", invocationId: "inv-1" };
+    await recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "published first" });
+
+    const markerPath = pendingOutcomePath(runsDir, key);
+    const claimPath = `${markerPath}.claim`;
+    await fs.writeFile(claimPath, JSON.stringify({ ...key, outcome: { actualCostUsd: 7, costKind: "exact" }, recordedAt: new Date().toISOString() }), "utf8");
+
+    const results = await Promise.all([
+      recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "consumer A" }),
+      recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "consumer B" })
+    ]);
+
+    for (const result of results) {
+      expect(result.outcome).toEqual({ actualCostUsd: 7, costKind: "exact" });
+    }
+    const onDisk = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, key), "utf8"));
+    expect(onDisk.outcome).toEqual({ actualCostUsd: 7, costKind: "exact" });
+    await expect(fs.readFile(claimPath, "utf8")).rejects.toThrow();
+  });
+
+  it("an attachment failure is surfaced through the logger, never silently swallowed into a record that looks complete with outcome: null", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round4-logged-failure", invocationId: "inv-1" };
+    await retainOutcomeUntilDecisionRecorded({ ...key, outcome: { actualCostUsd: 2, costKind: "exact" } });
+
+    const errors = [];
+    const logger = { log() {}, error: (...args) => errors.push(args.join(" ")) };
+
+    await recordAdvisoryDecision({
+      ...key,
+      estimate: PROBE_ESTIMATE,
+      telemetryReadings: {},
+      reason: "probe",
+      renameFn: async () => {
+        throw Object.assign(new Error("simulated EIO"), { code: "EIO" });
+      },
+      logger
+    });
+
+    expect(errors.some((message) => message.includes("round4-logged-failure"))).toBe(true);
+  });
+
+  it("a stranded claim file is invisible to measureRecordedCoverage -- never mistaken for a scoreable decision", async () => {
+    const key = { runsDir, cardId: "T-0370", executionId: "round4-claim-invisible", invocationId: "inv-1" };
+    await recordAdvisoryDecision({ ...key, estimate: PROBE_ESTIMATE, telemetryReadings: {}, reason: "published" });
+    const markerPath = pendingOutcomePath(runsDir, key);
+    await fs.writeFile(`${markerPath}.claim`, JSON.stringify({ ...key, outcome: { actualCostUsd: 1, costKind: "exact" } }), "utf8");
+
+    const coverage = await measureRecordedCoverage({ runsDir });
+    expect(coverage.pending).toBe(1); // the decision record itself, outcome still null
+    expect(coverage.unreadable).toBe(0);
+  });
+});
+
 describe("decideLaunchAdvisory -- consumer contract 1 wired into the advisory logger itself", () => {
   const readUsageTelemetryFn = async () => SAMPLE_TELEMETRY;
 
