@@ -406,6 +406,53 @@ export async function recordAdvisoryOutcome({
 }
 
 /**
+ * Marks a previously recorded decision as bypassed by an operator-initiated (manual) launch (T-0379:
+ * the auto-launch poller's capacity-fit limit applies only to its own automated launches -- the Run
+ * button, and any other manual launch, may override it). `admission` is the shared decision
+ * (`admissionDecision.js`'s `evaluateAdmission` result, or `null` when the advisory pipeline itself
+ * was unavailable) that the launch overrode, so a later reader can see exactly what was bypassed and
+ * why, distinguishing this record from an ordinary auto admission.
+ *
+ * Fires at LAUNCH time, describing why enforcement was bypassed -- distinct from
+ * `recordAdvisoryOutcome`, which fires afterward with what the run actually cost. Throws
+ * `AdvisoryDecisionMissingError`, same as `recordAdvisoryOutcome`, when no decision was ever
+ * recorded for this launch identity: there is nothing to mark as overridden. Callers on the launch
+ * path treat a failure here as best-effort (logged, never blocking) -- by the time this runs the
+ * launch has already been allowed to proceed.
+ */
+export async function recordManualOverride({
+  runsDir,
+  cardId,
+  executionId,
+  invocationId,
+  admission,
+  reason,
+  now = () => new Date(),
+  readFileFn = fs.readFile,
+  writeFileFn = fs.writeFile,
+  mkdirFn = fs.mkdir,
+  renameFn = fs.rename,
+  unlinkFn = fs.unlink
+}) {
+  const filePath = advisoryLogPath(runsDir, { cardId, executionId, invocationId });
+  let existing;
+  try {
+    existing = JSON.parse(await readFileFn(filePath, "utf8"));
+  } catch (err) {
+    throw new AdvisoryDecisionMissingError(
+      `advisory logger: no decision recorded for ${cardId}/${executionId}/${invocationId}, cannot record manual override (${err.message})`
+    );
+  }
+  const updated = {
+    ...existing,
+    manualOverride: { overriddenAt: now().toISOString(), reason, admission: admission ?? null },
+    updatedAt: now().toISOString()
+  };
+  await writeAtomic(filePath, updated, { writeFileFn, mkdirFn, renameFn, unlinkFn });
+  return updated;
+}
+
+/**
  * Retains an outcome durably when `reconcileLaunchOutcome` runs before any decision record exists
  * yet for this launch identity (T-0370 round 3: the outer launch timeout, `cardLaunch.js`'s own
  * bound around `decide()`, can fire and let the run proceed before `buildLaunchDecide`'s own

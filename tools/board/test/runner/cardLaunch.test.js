@@ -534,12 +534,31 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
 
   it("T-0370 (Codex finding 2): under the enforcement flag, an explicit admission hold refuses the launch and releases the reservation it provisionally wrote", async () => {
     const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
-    // No unit-conversion evidence exists in this test's default config, so the real admission
-    // pipeline always holds (units_not_comparable) -- the intended fail-safe, not a bug. T-0379:
-    // this is also the "no conversion shipped" proof -- through the real pipeline (no
-    // evaluateAdmissionFn stub), a default-trigger (auto) launch always holds on units alone, and
-    // the refusal is marked capacityFitHold so the poller's queue behaviour can skip past it.
+    // No telemetry and no unit-conversion evidence exist in this test's real, empty runsDir, so
+    // the real admission pipeline always holds -- the intended fail-safe, not a bug. T-0379: a
+    // default-trigger (auto) launch through the real pipeline (no evaluateAdmissionFn stub) always
+    // holds this way, and the refusal is marked capacityFitHold so the poller's queue behaviour can
+    // skip past it (see the dedicated units_not_comparable proof below, which stubs a comparable
+    // admission directly, and admissionDecision.test.js for the pure per-window fail-safe).
     const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true });
+    await expect(rejection).rejects.toMatchObject({
+      name: "CardLaunchError",
+      statusCode: 409,
+      capacityFitHold: true
+    });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+    expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+  });
+
+  it("T-0379 Units: with a real MEASURED window reading but no shipped USD-to-utilization conversion, the real pipeline holds units_not_comparable, never a fabricated fit", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const readUsageTelemetryFn = async () => ({
+      five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0.1, resetElapsed: false },
+      seven_day: { windowKind: "seven_day", classification: "measured", utilization: 0.1, resetElapsed: false }
+    });
+    const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
+
+    const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
     await expect(rejection).rejects.toMatchObject({
       name: "CardLaunchError",
       statusCode: 409,
@@ -547,7 +566,6 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
       message: expect.stringMatching(/units_not_comparable/)
     });
     expect(orchestrator.runCard).not.toHaveBeenCalled();
-    expect(await listActiveReservations({ runsDir })).toHaveLength(0);
   });
 
   it("T-0370 (Codex finding 2): under enforcement, an active overrun stop refuses a brand-new admission", async () => {

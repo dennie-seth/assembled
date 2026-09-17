@@ -10,7 +10,7 @@ import {
 } from "../lib/dependencyGuard.js";
 import { listAssignableAgents } from "../lib/agentCatalog.js";
 import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
-import { launchCardRun, CardLaunchError } from "../runner/cardLaunch.js";
+import { launchCardRun, CardLaunchError, LAUNCH_TRIGGERS } from "../runner/cardLaunch.js";
 import { artifactCacheRootFor, clearPreservedArtifacts } from "../runner/artifactPreservation.js";
 import {
   actorFromHeaders,
@@ -612,9 +612,12 @@ async function handleRunTask(orchestrator, id, res) {
   // status, the non-executable `dispatch` sentinel, the already-running check, and
   // `assertCanMoveToInProgress` -- lives there, so the in-process auto-launch poller starts a
   // card through the exact same code this endpoint does rather than a parallel implementation.
+  // T-0379: this is an operator-initiated (manual) launch -- under the WIP gate's enforcement
+  // flag it may bypass the auto-launch poller's own capacity-fit limit; every other guard still
+  // applies unchanged.
   let task;
   try {
-    task = await launchCardRun({ orchestrator, id });
+    task = await launchCardRun({ orchestrator, id, trigger: LAUNCH_TRIGGERS.MANUAL });
   } catch (err) {
     if (err instanceof CardLaunchError) {
       throw new HttpError(err.statusCode, err.message);
