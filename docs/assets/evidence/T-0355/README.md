@@ -16,6 +16,19 @@ Hard cap: 4 attempts total.
   panels; low centred-crop green px reflects the small, off-centre side thumbnail, not a
   coat-colour failure. Not promoted.
 
-Attempt 3 reworks the prompt to drop "reference sheet"/"concept sheet" framing (the likely
-trigger for the neutral multi-view convention) in favour of a single dynamic action-pose
-illustration, with negative-prompt terms added against turnaround/sheet/swatch layouts.
+- **Attempt 3** (`attempt_3_main_1024.png`), seed 52091, reworked prompt that drops
+  "reference sheet"/"concept sheet" framing (the trigger for the neutral multi-view
+  convention) in favour of a single dynamic action-pose illustration, with negative-prompt
+  terms added against turnaround/sheet/swatch layouts. This worked: single isolated figure,
+  genuine side-on mid-stride pose, near arm and near leg both clearly extended forward at
+  roughly the requested angle, no multi-panel drift, coat correctly full-length past the
+  knee. Centred-crop green px 26,617, comfortably clearing the 6,000-6,900 benchmark band.
+  Not promoted because the identity is wrong: no hooded mask / eye lenses (the card's own
+  acceptance criterion needs "a single visible goggle lens"), bare green head/hands/feet
+  instead of the canonical hooded mask + white gloves + boots (`gen_master_sheet_T0336.py`'s
+  own `build_single_pose_positive_prompt` head clause) -- this generator's prompt had never
+  carried that clause at all, on any attempt.
+- **Attempt 4** (final attempt under the hard cap): reuses attempt 3's winning pose/framing
+  verbatim and adds the canonical hooded-mask/eye-lens clause, white gloves, and boots, plus
+  negative-prompt terms against bare head/hands/feet and against two visible eye lenses or
+  two visible arms (a three-quarter-view tell). See the attempt log for the outcome.
