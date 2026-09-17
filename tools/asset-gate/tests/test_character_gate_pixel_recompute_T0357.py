@@ -313,6 +313,7 @@ def test_sweep_character_gate_passes_idle_sheet_with_full_fields(tmp_path):
         "character_frame_delta_cap",
         "character_motion_class_declared",
         "character_motion_fidelity",
+        "character_part_identity",
     }
 
 

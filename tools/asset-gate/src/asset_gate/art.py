@@ -333,6 +333,39 @@ def check_pose_fidelity(
     )
 
 
+def _region_histogram_distance(
+    image_a: Image.Image,
+    region_a: tuple[int, int, int, int],
+    image_b: Image.Image,
+    region_b: tuple[int, int, int, int],
+    background_index: int,
+) -> float:
+    """Total-variation distance between two regions' own palette-index
+    histograms -- the core arithmetic `check_identity_stability` (one
+    shared region, two frames) and `check_region_identity_against_reference`
+    (T-0361: one region per side, positions independently derived) both
+    reduce to. `region_a`/`region_b` need not be the same size or position
+    -- a histogram is a distribution over palette index, not a per-pixel
+    comparison, so differently-shaped crops are still comparable.
+    """
+    a, b = _to_array(image_a), _to_array(image_b)
+    x0, y0, x1, y1 = region_a
+    cropped_a = a[y0:y1, x0:x1]
+    if cropped_a.size == 0:
+        raise ValueError(f"region {region_a} is empty")
+    x0, y0, x1, y1 = region_b
+    cropped_b = b[y0:y1, x0:x1]
+    if cropped_b.size == 0:
+        raise ValueError(f"region {region_b} is empty")
+
+    depth = max(int(cropped_a.max()), int(cropped_b.max()), background_index) + 1
+    hist_a = np.bincount(cropped_a.ravel(), minlength=depth).astype(float)
+    hist_b = np.bincount(cropped_b.ravel(), minlength=depth).astype(float)
+    hist_a /= hist_a.sum()
+    hist_b /= hist_b.sum()
+    return 0.5 * float(np.abs(hist_a - hist_b).sum())
+
+
 def check_identity_stability(
     frame_a: Image.Image,
     frame_b: Image.Image,
@@ -357,20 +390,10 @@ def check_identity_stability(
     interior pairs because colour drift was shrinking the silhouette, not
     because it walked.
     """
-    a, b = _to_array(frame_a), _to_array(frame_b)
-    if a.shape != b.shape:
-        raise ValueError(f"frame shapes differ: {a.shape} vs {b.shape}")
-    x0, y0, x1, y1 = region
-    region_a, region_b = a[y0:y1, x0:x1], b[y0:y1, x0:x1]
-    if region_a.size == 0:
-        raise ValueError(f"region {region} is empty")
-
-    depth = max(int(region_a.max()), int(region_b.max()), background_index) + 1
-    hist_a = np.bincount(region_a.ravel(), minlength=depth).astype(float)
-    hist_b = np.bincount(region_b.ravel(), minlength=depth).astype(float)
-    hist_a /= hist_a.sum()
-    hist_b /= hist_b.sum()
-    distance = 0.5 * float(np.abs(hist_a - hist_b).sum())
+    shape_a, shape_b = _to_array(frame_a).shape, _to_array(frame_b).shape
+    if shape_a != shape_b:
+        raise ValueError(f"frame shapes differ: {shape_a} vs {shape_b}")
+    distance = _region_histogram_distance(frame_a, region, frame_b, region, background_index)
 
     passed = distance <= max_histogram_distance
     return CheckResult(
@@ -381,6 +404,127 @@ def check_identity_stability(
             f"{'<=' if passed else '>'} cap {max_histogram_distance}"
         ),
         details={"distance": distance, "region": region},
+    )
+
+
+def check_region_identity_stability(
+    frame_a: Image.Image,
+    frame_b: Image.Image,
+    background_index: int,
+    regions: dict[str, tuple[int, int, int, int]],
+    max_histogram_distance: float,
+) -> CheckResult:
+    """Per-region generalisation of `check_identity_stability` (T-0361): run
+    the same palette-histogram-distance measure independently over several
+    NAMED boxes (e.g. head/torso/near-limb/far-limb) instead of one fixed
+    torso box, and fail if ANY of them drifts past the cap.
+
+    `check_identity_stability`'s own fixed torso box is deliberately blind to
+    a left/right limb swap -- limbs are outside the torso box by
+    construction, so swapping their content changes nothing inside it. A
+    swap is invisible to a WHOLE-frame comparison for the same reason at a
+    larger scale: swapping two regions' content changes WHERE pixels of each
+    palette index sit, never how many of each index exist in total, so a
+    single aggregate histogram (whole-frame or one box that doesn't itself
+    sit inside the swap) scores it at exactly 0.0 distance -- the finding
+    that motivates this check (docs/decision-log.md DL-31, T-0361). Evaluating
+    each named region on its own catches a mismatch confined to a single part
+    that an aggregate comparison dilutes away or never sees to begin with.
+    """
+    per_region_distance: dict[str, float] = {}
+    worst_name: str | None = None
+    worst_distance = -1.0
+    for name, region in regions.items():
+        result = check_identity_stability(
+            frame_a,
+            frame_b,
+            background_index=background_index,
+            region=region,
+            max_histogram_distance=max_histogram_distance,
+        )
+        distance = result.details["distance"]
+        per_region_distance[name] = distance
+        if distance > worst_distance:
+            worst_name, worst_distance = name, distance
+
+    passed = worst_distance <= max_histogram_distance
+    return CheckResult(
+        check="region_identity_stability",
+        passed=passed,
+        reason=(
+            f"worst region {worst_name!r} palette-histogram distance {worst_distance:.4f} "
+            f"{'<=' if passed else '>'} cap {max_histogram_distance}"
+        ),
+        details={
+            "per_region_distance": per_region_distance,
+            "worst_region": worst_name,
+            "worst_distance": worst_distance,
+        },
+    )
+
+
+def check_region_identity_against_reference(
+    frame: Image.Image,
+    regions: dict[str, tuple[int, int, int, int]],
+    reference_frame: Image.Image,
+    reference_regions: dict[str, tuple[int, int, int, int]],
+    background_index: int,
+    max_histogram_distance: float,
+) -> CheckResult:
+    """Per-region identity check against a REAL reference frame (T-0361,
+    2026-09-17 Codex fix), instead of `check_region_identity_stability`'s
+    two-real-frames-same-box shape: `regions`/`reference_regions` are two
+    INDEPENDENT sets of boxes (`frame`'s own, `reference_frame`'s own),
+    since a moving part's box tracks its own frame's rig-commanded position
+    while the reference frame's box tracks whatever pose IT commands --
+    `frame` and `reference_frame` need not be the same size in each region.
+
+    This is the fix for the false positive a binary RIG SILHOUETTE reference
+    produced: comparing a frame's actual per-part pixels against a
+    hand-drawn capsule silhouette measures agreement with that silhouette's
+    fixed foreground colour, not identity, so a consistently-coloured
+    character using any OTHER palette index failed on colour alone (the same
+    exact rig geometry passed at palette index 1 and failed at index 2).
+    Comparing against another REAL frame's own region content is
+    colour-index-agnostic in the same way `check_identity_stability`
+    already is for the torso: whatever colour the reference frame actually
+    uses for a part, that is what this frame's same part is checked
+    against.
+
+    Callers choose what `reference_frame`/`reference_regions` are -- see
+    `asset_gate.character.determine_character_part_identity`'s own
+    docstring for the production choice (an anchor frame of the same sheet)
+    and its documented limits.
+    """
+    if set(regions) != set(reference_regions):
+        raise ValueError(
+            f"region name mismatch: {sorted(regions)} vs {sorted(reference_regions)}"
+        )
+
+    per_region_distance: dict[str, float] = {}
+    worst_name: str | None = None
+    worst_distance = -1.0
+    for name, region in regions.items():
+        distance = _region_histogram_distance(
+            frame, region, reference_frame, reference_regions[name], background_index
+        )
+        per_region_distance[name] = distance
+        if distance > worst_distance:
+            worst_name, worst_distance = name, distance
+
+    passed = worst_distance <= max_histogram_distance
+    return CheckResult(
+        check="region_identity_against_reference",
+        passed=passed,
+        reason=(
+            f"worst region {worst_name!r} palette-histogram distance vs reference "
+            f"{worst_distance:.4f} {'<=' if passed else '>'} cap {max_histogram_distance}"
+        ),
+        details={
+            "per_region_distance": per_region_distance,
+            "worst_region": worst_name,
+            "worst_distance": worst_distance,
+        },
     )
 
 
