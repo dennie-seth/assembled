@@ -514,17 +514,16 @@ def test_sweep_frame_delta_cap_of_empty_tree_returns_no_results(tmp_path):
 # reports idle (and any unrecognised/missing class) as not-applicable.
 
 # Session 13's sequential-chained candidate, REAL measured numbers -- not a
-# synthetic stand-in. The pixels themselves live under a gitignored
+# synthetic stand-in. The pixels originally lived only under a gitignored
 # `assets/out/` path in the sibling `feature/T-0259` worktree (never
-# committed to any branch -- see docs/decision-log.md DL-31), but that
-# worktree existed on the machine that ran
-# `assets/src/character/calibrate_motion_fidelity_T0340.py`, and its
-# `calibrate_session13_drift_candidate()` measured these exact numbers
-# against the real sheet with the real gate functions
-# (`check_pose_fidelity` / `check_identity_stability`). Recorded here so
-# this test is not itself dependent on that worktree still being present;
-# `test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available`
-# below re-derives them live and cross-checks against these when it is.
+# committed to any branch -- see docs/decision-log.md DL-31); T-0361 rescued
+# them into `tools/asset-gate/tests/fixtures/session13_negative_control/`,
+# sha256-verified, so `calibrate_session13_drift_candidate()` now measures
+# these exact numbers against the committed sheet with the real gate
+# functions (`check_pose_fidelity` / `check_identity_stability`). Recorded
+# here so this test is not itself dependent on re-deriving them;
+# `test_negative_control_session13_drift_candidate_reproduces_from_real_artifact`
+# below re-derives them live and cross-checks against these.
 _SESSION13_DRIFT_CANDIDATE = {
     "pose_fidelity_range": [0.19249394673123488, 0.4546684709066306],
     "identity_stability_range": [0.140625, 0.8359375],
@@ -685,22 +684,52 @@ def test_negative_control_session13_drift_candidate_fails_motion_fidelity():
     assert not result.details["identity_ok"]
 
 
-def test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available():
+#: T-0361: the committed rescue path (card body, "PRESERVED COPY of the
+#: session-13 negative control") -- both files copied from the *retired*
+#: `feature/T-0259` worktree's gitignored `assets/out/hybrid_walk/attempt_5/`
+#: into this repo, sha256-verified against the values the card records, so
+#: this acceptance test no longer depends on that sibling worktree (which
+#: could be cleaned up at any time) still existing on the machine running it.
+#: `calibrate_motion_fidelity_T0340.SESSION13_SHEET`/`SESSION13_PROVENANCE`
+#: point at this same committed path (T-0361 repointed them), so there is no
+#: unavailable/skip branch left to exercise here -- the fixture is always on
+#: disk once this branch is checked out.
+_SESSION13_FIXTURES_DIR = (
+    Path(__file__).resolve().parent / "fixtures" / "session13_negative_control"
+)
+_SESSION13_SHEET_FIXTURE = _SESSION13_FIXTURES_DIR / "sheet_192x96_indexed.png"
+_SESSION13_PROVENANCE_FIXTURE = _SESSION13_FIXTURES_DIR / "provenance_candidate.json"
+_SESSION13_SHEET_SHA256 = "f3441daab4fe471437becdaa5a3c8ed9cbe6d8b0fb3ffc0f9ac7b1d9d32dcf8c"
+_SESSION13_PROVENANCE_SHA256 = "1247a0692331b7804bf5f74979d497796266f1510a2961595e59671ece2f3470"
+
+
+def test_negative_control_session13_drift_candidate_reproduces_from_real_artifact():
     """Cross-checks `_SESSION13_DRIFT_CANDIDATE` against a live re-measurement
-    of the actual sheet, when the sibling `feature/T-0259` worktree that
-    holds it (gitignored `assets/out/`, never committed to any branch) is
-    present on the machine running this suite. Skips rather than fabricates
-    or silently passes when it isn't -- this is a bonus regression check on
-    the recorded numbers above, not the acceptance test itself (that one,
-    above, does not depend on this worktree existing)."""
+    of the REAL session-13 sheet, read from the committed rescue fixture
+    (`tools/asset-gate/tests/fixtures/session13_negative_control/`, T-0361)
+    via the production `calibrate_session13_drift_candidate()` helper itself
+    (T-0361 repointed its `SESSION13_SHEET`/`SESSION13_PROVENANCE` at this
+    committed path) -- a bonus regression check on the recorded numbers
+    above, not the acceptance test itself (that one, above, does not depend
+    on this fixture existing at all)."""
+    import hashlib
+
+    sheet_sha256 = hashlib.sha256(_SESSION13_SHEET_FIXTURE.read_bytes()).hexdigest()
+    provenance_sha256 = hashlib.sha256(_SESSION13_PROVENANCE_FIXTURE.read_bytes()).hexdigest()
+    assert sheet_sha256 == _SESSION13_SHEET_SHA256, (
+        "committed session13 sheet fixture does not match the card's verified sha256"
+    )
+    assert provenance_sha256 == _SESSION13_PROVENANCE_SHA256, (
+        "committed session13 provenance fixture does not match the card's verified sha256"
+    )
+
     character_dir = _REPO_ROOT / "assets" / "src" / "character"
     if str(character_dir) not in sys.path:
         sys.path.insert(0, str(character_dir))
     from calibrate_motion_fidelity_T0340 import calibrate_session13_drift_candidate
 
     calibrated = calibrate_session13_drift_candidate()
-    if not calibrated["available"]:
-        pytest.skip(calibrated["note"])
+    assert calibrated["available"], calibrated.get("note")
 
     assert calibrated["pose_fidelity_range"] == pytest.approx(
         _SESSION13_DRIFT_CANDIDATE["pose_fidelity_range"]

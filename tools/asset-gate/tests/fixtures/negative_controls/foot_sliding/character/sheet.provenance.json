@@ -1,0 +1,55 @@
+{
+  "model": "synthetic-rig-capsule/v1",
+  "seed": 0,
+  "motion_class": "locomotion",
+  "negative_control": "foot_sliding",
+  "negative_control_description": "The right hip/knee/ankle (joints 8/9/10) are pinned to a single fixed position (frame 0s commanded position, shifted an extra 10px further back in x) on every frame -- the right foot never leaves that spot while the left leg, arms, torso and head all follow the normal gait. Rig evidence records the correct, fully-animated per-frame keypoints (right leg included).",
+  "layout": {
+    "cols": 4,
+    "rows": 2,
+    "cell_px": 48
+  },
+  "frame_generation": [
+    {
+      "frame_index": 0,
+      "pose_keypoints_file": "character/rig/frame_0.json"
+    },
+    {
+      "frame_index": 1,
+      "pose_keypoints_file": "character/rig/frame_1.json"
+    },
+    {
+      "frame_index": 2,
+      "pose_keypoints_file": "character/rig/frame_2.json"
+    },
+    {
+      "frame_index": 3,
+      "pose_keypoints_file": "character/rig/frame_3.json"
+    },
+    {
+      "frame_index": 4,
+      "pose_keypoints_file": "character/rig/frame_4.json"
+    },
+    {
+      "frame_index": 5,
+      "pose_keypoints_file": "character/rig/frame_5.json"
+    },
+    {
+      "frame_index": 6,
+      "pose_keypoints_file": "character/rig/frame_6.json"
+    },
+    {
+      "frame_index": 7,
+      "pose_keypoints_file": "character/rig/frame_7.json"
+    }
+  ],
+  "frame_delta_range": [
+    0.05,
+    0.09
+  ],
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "beats_arm_c_benchmark": true
+}

@@ -1,0 +1,55 @@
+{
+  "model": "synthetic-rig-capsule/v1",
+  "seed": 0,
+  "motion_class": "locomotion",
+  "negative_control": "loop_seam_jump",
+  "negative_control_description": "Frames 0-6 render their own commanded pose correctly. Frame 7 shifts the whole rendered body +8px in x / +5px in y -- an abrupt pop concentrated exactly at the pair (7 -> 0) the loop must match itself back up across. Rig evidence records the correct, unshifted keypoints for every frame including 7.",
+  "layout": {
+    "cols": 4,
+    "rows": 2,
+    "cell_px": 48
+  },
+  "frame_generation": [
+    {
+      "frame_index": 0,
+      "pose_keypoints_file": "character/rig/frame_0.json"
+    },
+    {
+      "frame_index": 1,
+      "pose_keypoints_file": "character/rig/frame_1.json"
+    },
+    {
+      "frame_index": 2,
+      "pose_keypoints_file": "character/rig/frame_2.json"
+    },
+    {
+      "frame_index": 3,
+      "pose_keypoints_file": "character/rig/frame_3.json"
+    },
+    {
+      "frame_index": 4,
+      "pose_keypoints_file": "character/rig/frame_4.json"
+    },
+    {
+      "frame_index": 5,
+      "pose_keypoints_file": "character/rig/frame_5.json"
+    },
+    {
+      "frame_index": 6,
+      "pose_keypoints_file": "character/rig/frame_6.json"
+    },
+    {
+      "frame_index": 7,
+      "pose_keypoints_file": "character/rig/frame_7.json"
+    }
+  ],
+  "frame_delta_range": [
+    0.05,
+    0.09
+  ],
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "beats_arm_c_benchmark": true
+}

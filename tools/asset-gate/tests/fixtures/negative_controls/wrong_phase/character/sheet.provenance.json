@@ -1,0 +1,55 @@
+{
+  "model": "synthetic-rig-capsule/v1",
+  "seed": 0,
+  "motion_class": "locomotion",
+  "negative_control": "wrong_phase",
+  "negative_control_description": "Cell i renders frame (i + 3) mod 8's commanded pose instead of frame i own -- a constant timing offset, as if the sheet were exported one-and-a-half beats early. Rig evidence records the correct, unshifted per-frame keypoints.",
+  "layout": {
+    "cols": 4,
+    "rows": 2,
+    "cell_px": 48
+  },
+  "frame_generation": [
+    {
+      "frame_index": 0,
+      "pose_keypoints_file": "character/rig/frame_0.json"
+    },
+    {
+      "frame_index": 1,
+      "pose_keypoints_file": "character/rig/frame_1.json"
+    },
+    {
+      "frame_index": 2,
+      "pose_keypoints_file": "character/rig/frame_2.json"
+    },
+    {
+      "frame_index": 3,
+      "pose_keypoints_file": "character/rig/frame_3.json"
+    },
+    {
+      "frame_index": 4,
+      "pose_keypoints_file": "character/rig/frame_4.json"
+    },
+    {
+      "frame_index": 5,
+      "pose_keypoints_file": "character/rig/frame_5.json"
+    },
+    {
+      "frame_index": 6,
+      "pose_keypoints_file": "character/rig/frame_6.json"
+    },
+    {
+      "frame_index": 7,
+      "pose_keypoints_file": "character/rig/frame_7.json"
+    }
+  ],
+  "frame_delta_range": [
+    0.05,
+    0.09
+  ],
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "beats_arm_c_benchmark": true
+}
