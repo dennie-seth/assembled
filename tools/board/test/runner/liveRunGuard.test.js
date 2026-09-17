@@ -49,6 +49,97 @@ describe("hasLiveClaudeProcess", () => {
 
     expect(await hasLiveClaudeProcess({ execFn })).toBe(true);
   });
+
+  it("without boardDirs, counts any matching claude -p process system-wide (old unscoped behavior)", async () => {
+    const execFn = vi.fn().mockResolvedValue({ stdout: "614677 claude -p some unrelated repro\n" });
+
+    expect(await hasLiveClaudeProcess({ execFn })).toBe(true);
+  });
+
+  it("with boardDirs, ignores a matching process whose cwd is outside every board dir", async () => {
+    const execFn = vi.fn().mockResolvedValue({ stdout: "614677 claude -p some unrelated repro\n" });
+    const readlinkFn = vi.fn().mockResolvedValue("/tmp/tmp.v4px2IfToT");
+
+    const result = await hasLiveClaudeProcess({
+      execFn,
+      readlinkFn,
+      boardDirs: ["/home/dennieseth/dev/assembled-board"]
+    });
+
+    expect(result).toBe(false);
+    expect(readlinkFn).toHaveBeenCalledWith("/proc/614677/cwd");
+  });
+
+  it("with boardDirs, counts a matching process running from the board repo root itself", async () => {
+    const execFn = vi.fn().mockResolvedValue({ stdout: "1 claude -p prompt\n" });
+    const readlinkFn = vi.fn().mockResolvedValue("/home/dennieseth/dev/assembled-board");
+
+    const result = await hasLiveClaudeProcess({
+      execFn,
+      readlinkFn,
+      boardDirs: ["/home/dennieseth/dev/assembled-board"]
+    });
+
+    expect(result).toBe(true);
+  });
+
+  it("with boardDirs, counts a matching process running from a worktree under a board dir", async () => {
+    const execFn = vi.fn().mockResolvedValue({ stdout: "1 claude -p prompt\n" });
+    const readlinkFn = vi.fn().mockResolvedValue("/home/dennieseth/dev/assembled-board/worktrees/T-0210");
+
+    const result = await hasLiveClaudeProcess({
+      execFn,
+      readlinkFn,
+      boardDirs: ["/home/dennieseth/dev/assembled-board"]
+    });
+
+    expect(result).toBe(true);
+  });
+
+  it("with boardDirs, does not treat a board dir as a prefix match of an unrelated sibling dir", async () => {
+    const execFn = vi.fn().mockResolvedValue({ stdout: "1 claude -p prompt\n" });
+    const readlinkFn = vi.fn().mockResolvedValue("/home/dennieseth/dev/assembled-board-other");
+
+    const result = await hasLiveClaudeProcess({
+      execFn,
+      readlinkFn,
+      boardDirs: ["/home/dennieseth/dev/assembled-board"]
+    });
+
+    expect(result).toBe(false);
+  });
+
+  it("with boardDirs, drops a candidate pid whose cwd can't be read instead of counting it", async () => {
+    const execFn = vi.fn().mockResolvedValue({ stdout: "614677 claude -p prompt\n" });
+    const readlinkFn = vi.fn().mockRejectedValue(Object.assign(new Error("no such process"), { code: "ENOENT" }));
+
+    const result = await hasLiveClaudeProcess({
+      execFn,
+      readlinkFn,
+      boardDirs: ["/home/dennieseth/dev/assembled-board"]
+    });
+
+    expect(result).toBe(false);
+  });
+
+  it("with boardDirs, checks each candidate pid until one is confirmed in-scope", async () => {
+    const execFn = vi.fn().mockResolvedValue({
+      stdout: "111 claude -p stray\n222 claude -p real-card-run\n"
+    });
+    const readlinkFn = vi
+      .fn()
+      .mockResolvedValueOnce("/tmp/tmp.stray")
+      .mockResolvedValueOnce("/home/dennieseth/dev/assembled-board/worktrees/T-0210");
+
+    const result = await hasLiveClaudeProcess({
+      execFn,
+      readlinkFn,
+      boardDirs: ["/home/dennieseth/dev/assembled-board"]
+    });
+
+    expect(result).toBe(true);
+    expect(readlinkFn).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("hasRecentlyGrowingRunLog", () => {

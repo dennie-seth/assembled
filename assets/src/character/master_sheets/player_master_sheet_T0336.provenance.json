@@ -1,0 +1,73 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (identity, chained, weight 0.5) + IP-Adapter ip-adapter-plus_sdxl_vit-h.safetensors (weight 0.35)",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "style_lora_name": "soviet_brutalism_style_v1.safetensors",
+  "style_lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "style_lora_weight": 0.7,
+  "style_lora_license": "CreativeML OpenRAIL++-M",
+  "identity_lora_name": "player_identity_v2.safetensors",
+  "identity_lora_hash": "fc447cfb886cb6a694c52ae21c9d172bae696ebc175f8daa7d6ecfd22eac36b4",
+  "identity_lora_weight": 0.5,
+  "identity_lora_provenance": "assets/final/lora/player_identity_v2.provenance.json",
+  "ip_adapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
+  "ip_adapter_weight": 0.35,
+  "concept_crop_box": [
+    0,
+    0,
+    615,
+    615
+  ],
+  "controlnet": null,
+  "controlnet_note": "deliberately omitted (DL-30 / this card's own scope)",
+  "prompt": "sbrutalistplayer, exploded parts diagram, disassembled equipment breakdown sheet, institutional green coat, hooded, white gloves, same uniform and same equipment loadout, consistent identity, the exact same institutional green coat costume in every single panel, flat uniform neutral grey background, flat even lighting, no cast shadow, no perspective, clean readable outline, three whole-figure turnaround views at the top -- front view, side view, back view -- each figure's head fully visible in frame, wearing a hooded mask with two dark round visible eye lenses, not a blank void, and below them separate disassembled equipment pieces laid flat side by side with empty space between each piece so nothing overlaps or touches: a severed upper arm sleeve piece by itself, a severed lower arm and glove piece by itself, a severed upper leg piece by itself, a severed lower leg and boot piece by itself, a hood and mask head piece with visible eye lenses by itself, a torso and coat piece by itself, no text, no UI, no watermark",
+  "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe, cropped limbs, cropped figure, overlapping panels, panels touching, different costume between panels, different colour between panels, blank head, faceless, featureless mannequin head, missing face, no face, headless, blank white head, cropped head, head cut off, head out of frame, armor plating, plate armor, heavy armor, bulky armor, mecha armor, sci-fi armor, helmet, robot legs, robotic legs, mechanical legs, cyborg, exoskeleton, robot parts, machine parts, different silhouette between panels",
+  "seed": 314159265,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "entity": "player",
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "comfyui_prompt_id": "be011c82-3b17-4e84-aacd-02e9916951c8",
+  "method": "Single 1024x1024 txt2img generation: LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(identity, chained) -> IPAdapterUnifiedLoader + IPAdapterAdvanced (concept sheet) -> KSampler -> VAEDecode -> SaveImage. No ControlNet. The prompt itself requests front/side/back whole-figure views plus separated limb reference parts on a flat background; layout is not script-composited at this tier. Promotion appends a script-composited row below the generation (compose_master_sheet_with_parts, ['head', 'lower_arm_hand', 'lower_leg_boot', 'torso_coat', 'upper_arm']), cropping genuinely-isolated regions straight out of this same coherent image rather than relying on the model to render isolated limbs (DL-30 sanctions script arrangement of diffusion-sampled pixels).",
+  "generator": "assets/src/character/gen_master_sheet_T0336.py",
+  "card": "T-0336",
+  "spec": "docs/decision-log.md DL-30",
+  "attempt": 5,
+  "gpu_seconds": 30.1,
+  "promoted": true,
+  "limb_crop_boxes": {
+    "head": [
+      355,
+      0,
+      545,
+      230
+    ],
+    "upper_arm": [
+      0,
+      220,
+      150,
+      440
+    ],
+    "lower_arm_hand": [
+      0,
+      420,
+      150,
+      580
+    ],
+    "torso_coat": [
+      100,
+      220,
+      300,
+      650
+    ],
+    "lower_leg_boot": [
+      30,
+      760,
+      220,
+      1000
+    ]
+  }
+}

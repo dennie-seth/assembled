@@ -10,6 +10,7 @@
 #include "assembled_ping.h"
 #include "curl_pump.h"
 #include "item_client.h"
+#include "note_catalog.h"
 #include "note_client.h"
 #include "note_renderer.h"
 
@@ -24,6 +25,7 @@ void initialize_assembled_module(ModuleInitializationLevel p_level) {
     GDREGISTER_CLASS(AssembledPing);
     GDREGISTER_CLASS(CurlPump);
     GDREGISTER_CLASS(ItemClient);
+    GDREGISTER_CLASS(NoteCatalog);
     GDREGISTER_CLASS(NoteClient);
     GDREGISTER_CLASS(NoteRenderer);
 }

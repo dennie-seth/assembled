@@ -7,13 +7,13 @@ namespace assembled_server {
 RateLimiter::RateLimiter(size_t maxRequests, std::chrono::seconds window)
     : maxRequests_(maxRequests), window_(window) {}
 
-bool RateLimiter::allow(const std::string &ip) {
+bool RateLimiter::allow(const std::string &key) {
     const auto now = Clock::now();
     const auto cutoff = now - window_;
 
     std::lock_guard<std::mutex> lock(mu_);
 
-    auto &timestamps = buckets_[ip];
+    auto &timestamps = buckets_[key];
 
     // Prune timestamps outside the sliding window.
     timestamps.erase(std::remove_if(timestamps.begin(), timestamps.end(),

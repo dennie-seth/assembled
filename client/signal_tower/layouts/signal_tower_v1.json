@@ -1,0 +1,65 @@
+{
+	"archetype": "signal_tower",
+	"tile_size_px": 16,
+	"entry_room": "signal_tower.ground_relay",
+	"tear_room": "signal_tower.broadcast_deck",
+	"rooms": [
+		{
+			"anchor_tag": "signal_tower.ground_relay",
+			"display_name": "Ground Relay",
+			"origin": { "x": 0, "y": 0 },
+			"size": { "w": 30, "h": 9 },
+			"shape_reasoning": "Widest room in the archetype (30 tiles) — 14-vertical-slice.md §10: 'wide, single-height, open floor'. The entry room establishes scale before any hazard is introduced."
+		},
+		{
+			"anchor_tag": "signal_tower.records_room",
+			"display_name": "Records Room",
+			"origin": { "x": 30, "y": 2 },
+			"size": { "w": 12, "h": 7 },
+			"shape_reasoning": "Smaller footprint than Ground Relay (12x7) reached through a single door — §10: 'smaller, dense shelving rows'. Dead-ends back to Ground Relay per the branch rule (11-moment-to-moment.md §5)."
+		},
+		{
+			"anchor_tag": "signal_tower.power_substation",
+			"display_name": "Power Substation",
+			"origin": { "x": 0, "y": 9 },
+			"size": { "w": 20, "h": 10 },
+			"shape_reasoning": "Rectangular, wider than tall (20x10) — §10: 'rectangular, breaker panel along the back wall, 2-3 transformer housings as cover'. Reached by ladder straight down from Ground Relay."
+		},
+		{
+			"anchor_tag": "signal_tower.equipment_floor",
+			"display_name": "Equipment Floor",
+			"origin": { "x": 0, "y": 19 },
+			"size": { "w": 24, "h": 10 },
+			"shape_reasoning": "Largest square-ish footprint on the critical path (24x10) — §10: 'cluttered, maze-like rack layout'; the Sound entity has no fixed patrol and needs room to roam toward noise."
+		},
+		{
+			"anchor_tag": "signal_tower.storage_cache",
+			"display_name": "Storage Cache",
+			"origin": { "x": 24, "y": 24 },
+			"size": { "w": 6, "h": 5 },
+			"shape_reasoning": "Smallest room in the archetype (6x5 = 30 tiles^2) — §10: 'small, cramped closet'. A dead-end door branch off Equipment Floor, no entity."
+		},
+		{
+			"anchor_tag": "signal_tower.antenna_shaft",
+			"display_name": "Antenna Shaft",
+			"origin": { "x": 0, "y": 29 },
+			"size": { "w": 6, "h": 28 },
+			"shape_reasoning": "Tallest and narrowest room by a wide margin (6x28 — height more than 4x width) — §10: 'narrow vertical shaft, winding ladder path'. Authored as a single straight ladder for this pass (T-0328 edge case: a winding path is acceptable to simplify on the first geometry pass)."
+		},
+		{
+			"anchor_tag": "signal_tower.broadcast_deck",
+			"display_name": "Broadcast Deck",
+			"origin": { "x": 0, "y": 57 },
+			"size": { "w": 22, "h": 10 },
+			"shape_reasoning": "Open deck (22x10), sized to give the chain-tear room to read as a centerpiece — §10: 'open deck, tear as a chroma-lit centerpiece'. Terminates the chain (16-level-design.md §5 — Tear role)."
+		}
+	],
+	"connections": [
+		{ "from": "signal_tower.ground_relay", "to": "signal_tower.records_room", "type": "door", "branch": true },
+		{ "from": "signal_tower.ground_relay", "to": "signal_tower.power_substation", "type": "ladder", "branch": false },
+		{ "from": "signal_tower.power_substation", "to": "signal_tower.equipment_floor", "type": "ladder", "branch": false },
+		{ "from": "signal_tower.equipment_floor", "to": "signal_tower.storage_cache", "type": "door", "branch": true },
+		{ "from": "signal_tower.equipment_floor", "to": "signal_tower.antenna_shaft", "type": "ladder", "branch": false },
+		{ "from": "signal_tower.antenna_shaft", "to": "signal_tower.broadcast_deck", "type": "ladder", "branch": false }
+	]
+}

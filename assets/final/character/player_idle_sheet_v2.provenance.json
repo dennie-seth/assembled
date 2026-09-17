@@ -1,0 +1,64 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "prompt": "pixel art idle animation sprite sheet, Soviet brutalist soldier in standard military uniform, flat side-on orthographic side view, nine frame cells arranged in a 3x3 grid, same single character in every cell, subtle idle motion between frames, slight weight shift and natural breathing pose variation, both feet on ground, arms relaxed at sides, upright standing posture, consistent character identity across all cells, institutional grey concrete background, muted olive-green and grey military palette, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no different costumes per panel, no multiple characters, no action poses, no UI, no text",
+  "negative_prompt": "costume turnaround sheet, character design sheet, different outfits per cell, multiple costume variants, jacket closeup, clothing detail sheet, perspective, three-quarter view, vanishing point, diagonal composition, depth of field, atmospheric haze, blurry, low quality, photorealistic, watermark, text, UI, running, jumping, action pose, background clutter, bright colours, neon, multiple different characters",
+  "seed": 31416,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1152,
+  "height": 1152,
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "concept_card": "T-0209",
+  "method": "img2img concept-conditioned via ComfyUI HTTP API (SDXL KSampler, euler/normal, denoise=0.7); single figure cropped from T-0209 concept sheet (crop (5, 740, 205, 1020)), tiled 3x3 to 1152x1152 as img2img template so character identity is preserved across all 9 cells while diffusion introduces subtle idle-pose variation (breathing, weight shift) per frame. ComfyUI workflow: assets/src/character/gen_idle_v3_tiled.py",
+  "img2img_denoise": 0.7,
+  "figure_crop": [
+    5,
+    740,
+    205,
+    1020
+  ],
+  "tile_grid": "3x3 (9 copies of cropped figure at 384x384 each)",
+  "lora_name": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.7,
+  "lora_license": "CreativeML OpenRAIL++-M",
+  "comfyui_prompt_id": "54584bf0-1368-4bd5-8039-36325cd1bbc1",
+  "generator": "assets/src/character/gen_idle_v3_tiled.py",
+  "card": "T-0212",
+  "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters \u2014 the hard class) + \u00a76 (archetype-first coherence guard)",
+  "layout": {
+    "sheet_px": [
+      144,
+      144
+    ],
+    "cell_px": 48,
+    "cols": 3,
+    "rows": 3,
+    "figure_height_px": 40,
+    "frame_cells": [
+      {
+        "cell": "(0,0)"
+      },
+      {
+        "cell": "(0,1)"
+      },
+      {
+        "cell": "(0,2)"
+      },
+      {
+        "cell": "(1,0)"
+      }
+    ],
+    "spare_cells": [
+      "(1,1)",
+      "(1,2)",
+      "(2,0)",
+      "(2,1)",
+      "(2,2)"
+    ]
+  },
+  "palette_source": "assets/final/palette/home_palette.json"
+}

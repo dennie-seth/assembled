@@ -65,6 +65,11 @@ class TrainingConfig:
     dataset_dir: str
     shuffle: bool
     cache_latents: bool
+    # Checkpoint cadence. Defaults to every epoch so a training run that is cut short
+    # resumes from the last epoch instead of restarting at step 0 -- T-0229 lost ~117
+    # minutes of training (killed at step 65/72) precisely because nothing intermediate
+    # was written. Opt-out is possible per config, but the safe value is the default.
+    save_every_n_epochs: int = 1
 
     def __post_init__(self) -> None:
         if not self.base_checkpoint.strip():
@@ -84,6 +89,11 @@ class TrainingConfig:
             raise ValueError(f"batch_size must be > 0, got {self.batch_size}")
         if self.num_epochs <= 0:
             raise ValueError(f"num_epochs must be > 0, got {self.num_epochs}")
+        if self.save_every_n_epochs <= 0:
+            raise ValueError(
+                f"save_every_n_epochs must be > 0, got {self.save_every_n_epochs} -- "
+                "training must stay resumable"
+            )
         if self.learning_rate <= 0:
             raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
         if self.network_rank <= 0:
@@ -136,4 +146,6 @@ def load_config(path: pathlib.Path | str) -> TrainingConfig:
         dataset_dir=data["dataset"]["dir"],
         shuffle=data["dataset"]["shuffle"],
         cache_latents=data["dataset"]["cache_latents"],
+        # Optional: absent configs get the resumable default rather than no checkpoints.
+        save_every_n_epochs=data["train"].get("save_every_n_epochs", 1),
     )

@@ -59,22 +59,60 @@ function parseToolPattern(pattern) {
   return { tool: match[1], arg: match[2] ?? null };
 }
 
+/** The only tools whose argument is a filesystem path rather than a command string. */
+const PATH_ARG_TOOLS = new Set(["Edit", "Write"]);
+
 /**
- * Whether a requested tool call (e.g. "Bash(git:status)") is covered by a
- * resolved allowlist (e.g. ["Read", "Bash(git:*)"]). Everything not
- * explicitly matched is denied.
+ * Whether `requestedPath` resolves to somewhere under a `.claude/` directory, after collapsing
+ * `./` and `..` segments -- an absolute path inside any worktree, a leading `./`, and traversal
+ * (`tools/../.claude/settings.json`) all normalize to have `.claude` as an exact path segment. A
+ * path that merely contains the text `.claude` elsewhere (`docs/notes-on-.claude.md`) normalizes
+ * to a segment that is not an exact match, so it is left alone.
  */
-export function isToolAllowed(requestedTool, allowedTools) {
-  const requested = parseToolPattern(requestedTool);
-  if (!requested) {
+function isUnderClaudeDir(requestedPath) {
+  if (typeof requestedPath !== "string" || requestedPath.length === 0) {
     return false;
   }
-  return allowedTools.some((pattern) => {
-    const allowed = parseToolPattern(pattern);
-    if (!allowed || allowed.tool !== requested.tool) {
+  return path
+    .normalize(requestedPath)
+    .split(path.sep)
+    .filter(Boolean)
+    .includes(".claude");
+}
+
+/**
+ * Why a `.claude/` Edit/Write is denied regardless of grant: the Claude Code CLI's own
+ * sensitive-file protection blocks it outright in an unattended run (T-0374 tried seven
+ * mechanisms live; all denied with `decision_reason_type: safetyCheck`). The board's allowlist
+ * model has to agree, or anything that reasons from it is wrong about `.claude/`.
+ */
+export const CLAUDE_DIR_DENIAL_REASON =
+  "Denied: the Claude Code CLI's built-in sensitive-file protection blocks every Edit/Write " +
+  "under .claude/ in an unattended run, regardless of the agent's tool grant.";
+
+/**
+ * Whether a requested tool call (e.g. "Bash(git:status)") is covered by a resolved allowlist
+ * (e.g. ["Read", "Bash(git:*)"]), plus -- for Edit/Write -- why it was denied when the target
+ * path resolves under .claude/. This is the single source of truth `isToolAllowed` delegates to.
+ *
+ * @returns {{allowed: boolean, reason: string|null}}
+ */
+export function checkToolPermission(requestedTool, allowedTools) {
+  const requested = parseToolPattern(requestedTool);
+  if (!requested) {
+    return { allowed: false, reason: null };
+  }
+
+  if (PATH_ARG_TOOLS.has(requested.tool) && requested.arg !== null && isUnderClaudeDir(requested.arg)) {
+    return { allowed: false, reason: CLAUDE_DIR_DENIAL_REASON };
+  }
+
+  const allowed = allowedTools.some((pattern) => {
+    const allowedPattern = parseToolPattern(pattern);
+    if (!allowedPattern || allowedPattern.tool !== requested.tool) {
       return false;
     }
-    if (allowed.arg === null) {
+    if (allowedPattern.arg === null) {
       return true;
     }
     if (requested.arg === null) {
@@ -84,9 +122,20 @@ export function isToolAllowed(requestedTool, allowedTools) {
     // A bare trailing `*` (no colon) is required for prefixes that end by gluing a value
     // directly on with no word boundary, e.g. inline env-var assignment (`DATABASE_URL=*`):
     // the live Claude Code CLI does not honor `:*` for that shape (verified v2.1.78).
-    if (allowed.arg.endsWith("*")) {
-      return requested.arg.startsWith(allowed.arg.slice(0, -1));
+    if (allowedPattern.arg.endsWith("*")) {
+      return requested.arg.startsWith(allowedPattern.arg.slice(0, -1));
     }
-    return requested.arg === allowed.arg;
+    return requested.arg === allowedPattern.arg;
   });
+
+  return { allowed, reason: null };
+}
+
+/**
+ * Whether a requested tool call (e.g. "Bash(git:status)") is covered by a
+ * resolved allowlist (e.g. ["Read", "Bash(git:*)"]). Everything not
+ * explicitly matched is denied.
+ */
+export function isToolAllowed(requestedTool, allowedTools) {
+  return checkToolPermission(requestedTool, allowedTools).allowed;
 }

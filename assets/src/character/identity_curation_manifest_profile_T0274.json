@@ -1,0 +1,47 @@
+{
+  "curation_version": "1.0",
+  "card": "T-0274",
+  "source_card": "T-0273",
+  "source_summary": "assets/src/concept/player_profile_reference_SUMMARY.md",
+  "trigger_token": "sbrutalistprofilepose",
+  "generator": "assets/src/character/prepare_profile_refs_T0274.py",
+  "selection_rationale": "T-0273 already curated (fetched 7, kept 6) -- this card's only job is square-letterbox preprocessing (char_gen.prepare_profile_refs.letterbox_to_square) for sd-scripts' non-bucketed dataset path, and caption assignment. No further images dropped; all six kept T-0273 sources are used. These are anonymous pose/form reference, not a costume match -- T-0209 remains the identity authority for costume; this trigger token is distinct from player_identity_v2's sbrutalistplayer and is meant to be stacked with it at generation time.",
+  "refs": [
+    {
+      "id": "ref_001",
+      "source_file": "assets/src/concept/player_profile_reference_0817eaf501.jpg",
+      "source_sha256": "0817eaf501e4c49d55cffabf55cfe0568db82f3d78b724cadef302aa44643a94",
+      "caption": "sbrutalistprofilepose, side view, walking pose, black and white photographic reference, multi-frame gait study, old man walking"
+    },
+    {
+      "id": "ref_002",
+      "source_file": "assets/src/concept/player_profile_reference_b13423a1f5.jpg",
+      "source_sha256": "b13423a1f59e03116dfd93ac7842fc1dca75fafe5613500f32ac227edb567efe",
+      "caption": "sbrutalistprofilepose, side view, walking pose, black and white photographic reference, multi-frame gait study, man walking, different subject and build"
+    },
+    {
+      "id": "ref_003",
+      "source_file": "assets/src/concept/player_profile_reference_4ef2fcbe5b.jpg",
+      "source_sha256": "4ef2fcbe5b11b6fef2a7b75ef6ac2a93ef5a9c826d38ce45af220aadb6af9af6",
+      "caption": "sbrutalistprofilepose, side view, walking pose, black and white photographic reference, multi-frame gait study, man walking with a cane"
+    },
+    {
+      "id": "ref_004",
+      "source_file": "assets/src/concept/player_profile_reference_3b9ee3bc20.jpg",
+      "source_sha256": "3b9ee3bc209c591799f2389f9e7d7b33a50fbfdaca8afa4531040a91bcc84f5b",
+      "caption": "sbrutalistprofilepose, side view, walking pose, flat black silhouette illustration, man walking, mid-stride"
+    },
+    {
+      "id": "ref_005",
+      "source_file": "assets/src/concept/player_profile_reference_09511dbc54.jpg",
+      "source_sha256": "09511dbc54f887dabda50b806d8de7ec48a04cc55730767448f6a8c0821b63d5",
+      "caption": "sbrutalistprofilepose, side view, walking pose, flat black silhouette illustration, man walking, distinct leg phase"
+    },
+    {
+      "id": "ref_006",
+      "source_file": "assets/src/concept/player_profile_reference_8b5318f88e.jpg",
+      "source_sha256": "8b5318f88e58969e349f43ad936f0558b4b89f46a543e80aef375c0fcc93919a",
+      "caption": "sbrutalistprofilepose, side view, walking pose, flat black silhouette illustration, man walking, distinct leg phase"
+    }
+  ]
+}

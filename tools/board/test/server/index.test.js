@@ -40,3 +40,63 @@ describe("board server entry point: last-resort crash guard", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("board server entry point: orderly shutdown on SIGTERM/SIGINT (T-0367 fix round 3)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    vi.doUnmock("../../src/server/boardServer.js");
+  });
+
+  it("installs SIGTERM/SIGINT handlers that await board.close() then exit -- deploys and auto-restart stop the unit with SIGTERM, and nothing calls close() without this", async () => {
+    const closeMock = vi.fn(async () => {});
+    vi.doMock("../../src/server/boardServer.js", () => ({
+      startBoardServer: vi.fn(async () => ({
+        server: { address: () => ({ port: 4173 }) },
+        close: closeMock
+      }))
+    }));
+
+    const onSpy = vi.spyOn(process, "on");
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await import("../../src/server/index.js");
+
+    const sigtermHandler = onSpy.mock.calls.find(([event]) => event === "SIGTERM")?.[1];
+    const sigintHandler = onSpy.mock.calls.find(([event]) => event === "SIGINT")?.[1];
+    expect(typeof sigtermHandler).toBe("function");
+    expect(typeof sigintHandler).toBe("function");
+
+    await sigtermHandler();
+
+    expect(closeMock).toHaveBeenCalledTimes(1);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("still exits after a rejecting board.close() during shutdown -- a shutdown-time instrumentation failure must never wedge the process", async () => {
+    const closeMock = vi.fn(async () => {
+      throw new Error("simulated close failure");
+    });
+    vi.doMock("../../src/server/boardServer.js", () => ({
+      startBoardServer: vi.fn(async () => ({
+        server: { address: () => ({ port: 4173 }) },
+        close: closeMock
+      }))
+    }));
+
+    const onSpy = vi.spyOn(process, "on");
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await import("../../src/server/index.js");
+
+    const sigintHandler = onSpy.mock.calls.find(([event]) => event === "SIGINT")?.[1];
+    await sigintHandler();
+
+    expect(closeMock).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+});

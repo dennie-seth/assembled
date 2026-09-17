@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { rmTemp } from "./helpers/rmTemp.js";
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -183,8 +184,19 @@ describe("PATCH /api/tasks/:id — commits the card update to git", () => {
     const res = await patchTask(task.id, { status: "done" });
     expect(res.status).toBe(200);
 
+    // Search all of history for the merged-in commit rather than a fixed-size window. The
+    // property under test is "the Done pull brought origin's commit into repoRoot's history",
+    // and how many commits sit above it is not part of that: the two card-update commits plus
+    // the merge commit itself already push it to depth 4, so `log --oneline -3` reported a
+    // failure while the merge it was checking for had demonstrably happened. That was a CI
+    // flake, not a regression -- the observed failure output contained
+    // "Merge branch 'develop' of /tmp/board-httpapi-update-origin-... into develop" on the
+    // very line that proved the pull succeeded.
     await vi.waitFor(async () => {
-      const { stdout: log } = await git(["log", "--oneline", "-3"], repoRoot);
+      const { stdout: log } = await git(
+        ["log", "--oneline", "--grep=unrelated origin commit"],
+        repoRoot
+      );
       expect(log).toContain("unrelated origin commit");
     });
 
@@ -193,7 +205,7 @@ describe("PATCH /api/tasks/:id — commits the card update to git", () => {
     const { stdout: status } = await git(["status", "--porcelain", "--", `tasks/${task.id}.md`], repoRoot);
     expect(status.trim()).toBe("");
 
-    await fs.rm(originDir, { recursive: true, force: true });
-    await fs.rm(otherClone, { recursive: true, force: true });
+    await rmTemp(originDir);
+    await rmTemp(otherClone);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveVerifyRoutes, resolveDeliverableRoute, GODOT_HEADLESS_TIMEOUT_SECONDS } from "../../src/runner/verifyRouter.js";
+import { CHARACTER_GATE_CLI_ARGS } from "../../src/lib/characterGateCommand.js";
 
 describe("resolveVerifyRoutes", () => {
   it("routes a tasks/-only diff to the backlog validator AND the planner diff guard, and nothing else", () => {
@@ -26,9 +27,22 @@ describe("resolveVerifyRoutes", () => {
     expect(routes.map((r) => r.id)).toEqual(["board-suite"]);
   });
 
+  it("board-suite command is self-contained (includes cd tools/board) so the harness can run it from the repo root without a manual directory change", () => {
+    const routes = resolveVerifyRoutes(["tools/board/src/lib/fsTaskStore.js"]);
+    const route = routes.find((r) => r.id === "board-suite");
+    expect(route.command).toContain("cd tools/board");
+    expect(route.command).toContain("npm test");
+    expect(route.command).toContain("npx eslint .");
+  });
+
   it("routes a diff touching both tasks/** and tools/board/** to all three checks", () => {
     const routes = resolveVerifyRoutes(["tasks/T-0200.md", "tools/board/src/lib/fsTaskStore.js"]);
     expect(routes.map((r) => r.id).sort()).toEqual(["backlog-validate", "board-suite", "planner-diff-guard"]);
+  });
+
+  it("T-0303: routes a .claude/agents/*.md-only diff to the board suite -- grant scoping (e.g. an ambiguous npm-run wildcard, T-0295) is only checked by tools/board's own test suite, so an agent-definition-only diff must trigger it too, not just a diff that happens to also touch tools/board/**", () => {
+    const routes = resolveVerifyRoutes([".claude/agents/client.md"]);
+    expect(routes.map((r) => r.id)).toEqual(["board-suite"]);
   });
 
   it("routes a diff outside tasks/**, tools/board/**, a Python package root, and server/**/shared/** to neither -- other subsystems keep their own verify-skill routing", () => {
@@ -72,12 +86,38 @@ describe("resolveVerifyRoutes", () => {
       "tools/sim",
       "assets/src/audio",
       "assets/src/lora",
-      "assets/src/tiles"
+      "assets/src/tiles",
+      "assets/src/ambience_synth",
+      "assets/src/character"
     ];
     for (const root of roots) {
       const routes = resolveVerifyRoutes([`${root}/tests/test_smoke.py`]);
       expect(routes.map((r) => r.id)).toEqual([`python-verify:${root}`]);
     }
+  });
+
+  it("routes an assets/src/character/** diff to python-verify -- T-0264's package, missing from PYTHON_PACKAGE_ROOTS so no route fired on a character-package diff", () => {
+    const routes = resolveVerifyRoutes(["assets/src/character/src/character/gen_entities_v2.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:assets/src/character"]);
+    const route = routes[0];
+    expect(route.command).toContain("cd assets/src/character");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check --fix .");
+    expect(route.command).toContain(".venv/bin/ruff check .");
+  });
+
+  it("routes an assets/src/ambience_synth/** diff to python-verify -- T-0202's package, added after three consecutive runs blocked on a missing reviewer grant", () => {
+    const routes = resolveVerifyRoutes(["assets/src/ambience_synth/src/ambience_synth/pipeline.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:assets/src/ambience_synth"]);
+    const route = routes[0];
+    expect(route.command).toContain("cd assets/src/ambience_synth");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(".venv/bin/pytest");
+    expect(route.command).toContain(".venv/bin/ruff check --fix .");
+    expect(route.command).toContain(".venv/bin/ruff check .");
   });
 
   it("routes an assets/src/lora/** diff to python-verify -- T-0072's package, added after it blocked on a missing reviewer grant", () => {
@@ -132,6 +172,156 @@ describe("resolveVerifyRoutes", () => {
   it("leaves a non-Python diff (e.g. server/**) unaffected by python-verify routing -- routes to server-db-verify only", () => {
     const routes = resolveVerifyRoutes(["server/src/main.cpp"]);
     expect(routes.map((r) => r.id)).toEqual(["server-db-verify"]);
+  });
+});
+
+describe("resolveVerifyRoutes -- reference-batch-summary-provenance (T-0282: assetId/sourceUrl must survive quarantine reclamation)", () => {
+  it("routes a diff touching a batch-fetch summary file to the provenance check, naming that file", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/T-0300-profile-summary.md"]);
+    expect(routes.map((r) => r.id)).toEqual(["reference-batch-summary-provenance"]);
+    expect(routes[0].command).toBe(
+      "node tools/board/scripts/checkReferenceBatchSummary.js assets/src/reference/T-0300-profile-summary.md"
+    );
+  });
+
+  it("names every matching summary file when a diff touches more than one", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/src/reference/T-0300-profile-summary.md",
+      "assets/src/reference/T-0300-sitting-summary.md"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["reference-batch-summary-provenance"]);
+    expect(routes[0].command).toBe(
+      "node tools/board/scripts/checkReferenceBatchSummary.js " +
+        "assets/src/reference/T-0300-profile-summary.md assets/src/reference/T-0300-sitting-summary.md"
+    );
+  });
+
+  it("does not route a quarantine-directory change -- quarantine is gitignored and never part of a diff, and this route only concerns the committed summary", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/quarantine/abc123.provenance.json"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("does not route an unrelated file under assets/src/reference/ that isn't a *-summary.md", () => {
+    const routes = resolveVerifyRoutes(["assets/src/reference/README.md"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("does not route a summary-shaped filename outside assets/src/reference/", () => {
+    const routes = resolveVerifyRoutes(["assets/src/other/T-0300-profile-summary.md"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("composes with an unrelated route on the same diff (tools/board diff + a summary file)", () => {
+    const routes = resolveVerifyRoutes([
+      "tools/board/src/lib/fsTaskStore.js",
+      "assets/src/reference/T-0300-profile-summary.md"
+    ]);
+    expect(routes.map((r) => r.id).sort()).toEqual(["board-suite", "reference-batch-summary-provenance"]);
+  });
+});
+
+describe("resolveVerifyRoutes -- gate-report-pointer (T-0349: point the reviewer at the machine-readable gate report instead of hand-deriving pixel counts)", () => {
+  it("routes a diff touching a committed *.gate_report.json to a pointer route naming that file", () => {
+    const routes = resolveVerifyRoutes(["assets/final/character/player_walk_sheet_hybrid.gate_report.json"]);
+    expect(routes.map((r) => r.id)).toEqual(["gate-report-pointer"]);
+    expect(routes[0].command).toBe("cat assets/final/character/player_walk_sheet_hybrid.gate_report.json");
+  });
+
+  it("names every matching gate report when a diff touches more than one", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/final/character/player_walk_sheet_hybrid.gate_report.json",
+      "assets/final/character/player_idle_sheet_v1.gate_report.json"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["gate-report-pointer"]);
+    expect(routes[0].command).toBe(
+      "cat assets/final/character/player_walk_sheet_hybrid.gate_report.json " +
+        "assets/final/character/player_idle_sheet_v1.gate_report.json"
+    );
+  });
+
+  it("does not route an unrelated file under assets/final/character/", () => {
+    const routes = resolveVerifyRoutes(["assets/final/character/player_walk_sheet_hybrid.png"]);
+    expect(routes.map((r) => r.id)).not.toContain("gate-report-pointer");
+  });
+
+  it("composes with an unrelated route on the same diff (a Python package diff + a committed gate report)", () => {
+    // T-0357: touching character.py also routes to character-gate-verify now --
+    // the whole point of this card is that the authoritative validator fires
+    // whenever the code it enforces changes, not just python-verify's generic
+    // pytest/ruff pass.
+    const routes = resolveVerifyRoutes([
+      "tools/asset-gate/src/asset_gate/character.py",
+      "assets/final/character/player_walk_sheet_hybrid.gate_report.json"
+    ]);
+    expect(routes.map((r) => r.id).sort()).toEqual([
+      "character-gate-verify",
+      "gate-report-pointer",
+      "python-verify:tools/asset-gate"
+    ]);
+  });
+});
+
+describe("resolveVerifyRoutes -- character-gate-verify (T-0357: one authoritative character validator, same command CI runs)", () => {
+  it("routes a diff touching character.py to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/character.py"]);
+    expect(routes.map((r) => r.id).sort()).toEqual(["character-gate-verify", "python-verify:tools/asset-gate"]);
+  });
+
+  it("routes a diff touching cli.py to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/cli.py"]);
+    expect(routes.map((r) => r.id)).toContain("character-gate-verify");
+  });
+
+  it("routes a diff touching art.py to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/art.py"]);
+    expect(routes.map((r) => r.id)).toContain("character-gate-verify");
+  });
+
+  it("routes a diff touching either baseline exemption file to character-gate-verify", () => {
+    const arm_c = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/character_arm_c_baseline.txt"]);
+    expect(arm_c.map((r) => r.id)).toContain("character-gate-verify");
+    const motionClass = resolveVerifyRoutes([
+      "tools/asset-gate/src/asset_gate/character_motion_class_baseline.txt"
+    ]);
+    expect(motionClass.map((r) => r.id)).toContain("character-gate-verify");
+  });
+
+  it("routes a diff touching a character provenance sidecar to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/final/character/player_walk_sheet_hybrid.provenance.json"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["character-gate-verify"]);
+  });
+
+  it("routes a diff touching a character sheet PNG to character-gate-verify", () => {
+    const routes = resolveVerifyRoutes(["assets/final/character/player_walk_sheet_hybrid.png"]);
+    expect(routes.map((r) => r.id)).toEqual(["character-gate-verify"]);
+  });
+
+  it("does not route a diff touching only a committed *.gate_report.json -- that's gate-report-pointer's own job, not the enforcement path", () => {
+    const routes = resolveVerifyRoutes([
+      "assets/final/character/player_walk_sheet_hybrid.gate_report.json"
+    ]);
+    expect(routes.map((r) => r.id)).toEqual(["gate-report-pointer"]);
+  });
+
+  it("does not route an unrelated tools/asset-gate file (e.g. an audio check module)", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/checks/loudness.py"]);
+    expect(routes.map((r) => r.id)).toEqual(["python-verify:tools/asset-gate"]);
+  });
+
+  it("does not route an unrelated asset class under assets/final/** (e.g. a prop)", () => {
+    const routes = resolveVerifyRoutes(["assets/final/props/crate_stack_v1.png"]);
+    expect(routes).toEqual([]);
+  });
+
+  it("is self-contained (cd tools/asset-gate, builds its own venv) and runs the exact same character-gate subcommand+args CI runs", () => {
+    const routes = resolveVerifyRoutes(["tools/asset-gate/src/asset_gate/character.py"]);
+    const route = routes.find((r) => r.id === "character-gate-verify");
+    expect(route.command).toContain("cd tools/asset-gate");
+    expect(route.command).toContain("python3 -m venv .venv");
+    expect(route.command).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(route.command).toContain(`.venv/bin/python -m ${CHARACTER_GATE_CLI_ARGS}`);
   });
 });
 
@@ -264,5 +454,81 @@ describe("resolveDeliverableRoute -- task-driven, not diff-path-driven (T-0136 g
     const route = resolveDeliverableRoute({ id: "T-0136", deliverable_type: "artifact" });
     expect(route.id).toBe("deliverable-check");
     expect(route.command).toBe("node tools/board/scripts/checkDeliverable.js T-0136");
+  });
+});
+
+describe("resolveDeliverableRoute -- diff-detected artifact backstop (T-0198/T-0209/T-0202 gap: real art/audio committed under deliverable_type: 'code')", () => {
+  it("routes a code-deliverable card when the diff adds a PNG under assets/final/**", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0198", deliverable_type: "code" },
+      ["assets/final/character/player_idle_sheet_v1.png"]
+    );
+    expect(route).not.toBeNull();
+    expect(route.id).toBe("deliverable-check");
+  });
+
+  it("routes a code-deliverable card when the diff adds a concept sheet PNG under assets/src/concept/**", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0209", deliverable_type: "code" },
+      ["assets/src/concept/player_concept_sheet_v1.png"]
+    );
+    expect(route).not.toBeNull();
+  });
+
+  it("routes a code-deliverable card when the diff adds key art under assets/src/keyart/**", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0155", deliverable_type: "code" },
+      ["assets/src/keyart/signal_tower_keyart_v1.png"]
+    );
+    expect(route).not.toBeNull();
+  });
+
+  it("routes a code-deliverable card when the diff adds an ogg under assets/final/audio/**", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0202", deliverable_type: "code" },
+      ["assets/final/audio/signal_tower_ambience.ogg"]
+    );
+    expect(route).not.toBeNull();
+  });
+
+  it("adds a --require-artifact flag to the command when routed only by the diff signal, not by deliverable_type", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0198", deliverable_type: "code" },
+      ["assets/final/character/player_idle_sheet_v1.png"]
+    );
+    expect(route.command).toBe("node tools/board/scripts/checkDeliverable.js T-0198 --require-artifact");
+  });
+
+  it("does NOT add --require-artifact when deliverable_type is already 'artifact' -- unchanged command shape", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0136", deliverable_type: "artifact" },
+      ["assets/final/whatever.png"]
+    );
+    expect(route.command).toBe("node tools/board/scripts/checkDeliverable.js T-0136");
+  });
+
+  it("does not route a code-deliverable card for a non-artifact extension under assets/final/** (e.g. a workflow JSON or provenance doc)", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0201", deliverable_type: "code" },
+      ["assets/final/props/signal_tower/_comfyui_workflow.json", "ASSET_PROVENANCE.md"]
+    );
+    expect(route).toBeNull();
+  });
+
+  it("does not route a code-deliverable card for a Python/script change under assets/src/** outside concept/keyart (pure pipeline code)", () => {
+    const route = resolveDeliverableRoute(
+      { id: "T-0073", deliverable_type: "code" },
+      ["assets/src/lora/src/lora/train.py", "tools/asset-gate/src/asset_gate/checks/loudness.py"]
+    );
+    expect(route).toBeNull();
+  });
+
+  it("does not route a code-deliverable card whose diff is entirely outside assets/**", () => {
+    const route = resolveDeliverableRoute({ id: "T-0001", deliverable_type: "code" }, ["tools/board/src/lib/thing.js"]);
+    expect(route).toBeNull();
+  });
+
+  it("still returns null for a code-deliverable card with no changedPaths given (default [])", () => {
+    expect(resolveDeliverableRoute({ id: "T-0001", deliverable_type: "code" })).toBeNull();
   });
 });

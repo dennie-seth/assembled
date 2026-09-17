@@ -1,0 +1,61 @@
+# T-0229 — Player-identity SDXL LoRA training configuration
+#
+# Arm B of the T-0227 character-pipeline bake-off (HANDOFF §23-e, DL-21).
+# Committed for reproducibility, same as T-0072's training_config.toml, and
+# loaded/validated by the same assets/src/lora/src/lora_train/config.py
+# (dataset_dir/output_dir constraints, checkpoint-license allowlist, etc.)
+# and driven by the same assets/src/lora/src/lora_train/train.py --
+# no changes to that shared WSL-native training stack were needed; this
+# arm only supplies its own config + curated dataset.
+#
+# Run (from the repo root, training venv per assets/src/lora/setup-training-env.sh):
+#   PYTHONPATH=assets/src/lora/src /home/dennieseth/dev/lora-train-venv/bin/python3 \
+#     -m lora_train.train --config assets/src/character/training_config_player_identity_T0229.toml
+#
+# Dataset: assets/src/character/identity_refs/ (12 images: 6 curated figure
+# panels from T-0209's approved concept sheet + their horizontal mirrors --
+# see curate_identity_panels_T0229.py and identity_curation_manifest_T0229.json).
+#
+# num_epochs is deliberately small: 12 refs x 6 epochs = 72 steps. Curation
+# and training time both count against this arm's cost row (DL-21 criterion
+# 3), and a 12-image curated set has no headroom for a T-0072-sized run
+# (10 epochs x 40 refs = 400 steps, ~3h wall-clock on this GPU) without
+# overfitting a set this small long before it converges. See
+# ARM_B_BAKEOFF_REPORT_T0229.md for the actual measured GPU/wall-clock cost.
+
+[model]
+base_checkpoint = "sd_xl_base_1.0.safetensors"
+checkpoint_license = "CreativeML Open RAIL++-M"
+
+[output]
+name = "player_identity_v1"
+dir = "assets/final/lora"
+format = "safetensors"
+
+[train]
+resolution = 1024
+batch_size = 1
+mixed_precision = "fp16"
+num_epochs = 6
+learning_rate = 1.0e-4
+optimizer = "AdamW8bit"
+
+[network]
+# Lower rank/alpha than the style LoRA (16/8): identity is a narrower target
+# than full style transfer, and a smaller network converges faster on a
+# 12-image set without overfitting as quickly.
+rank = 8
+alpha = 4
+type = "lora"
+target_modules = [
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+]
+
+[dataset]
+dir = "assets/src/character/identity_refs"
+caption_ext = ".txt"
+shuffle = true
+cache_latents = true

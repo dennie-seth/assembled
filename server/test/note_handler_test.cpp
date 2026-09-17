@@ -9,6 +9,12 @@
 ///   2003 SLOT_CATEGORY_MISMATCH — slot word wrong category      -> 400
 ///   4002 VOCAB_TIER_LOCKED     — word not in caller's vocab     -> 403
 ///   valid request              — all checks pass                -> 201 {id}
+///
+/// T-0049: per-token rate limiting on the note-creation route group.
+///   5001 RATE_LIMITED          — burst above the configured per-token
+///                                ceiling is rejected; steady-state usage
+///                                under the ceiling is unaffected
+///                                (03-net-protocol.md §7).
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
@@ -24,6 +30,8 @@
 
 #include "assembled_server/Database.h"
 #include "assembled_server/MigrationRunner.h"
+#include "assembled_server/NoteController.h"
+#include "assembled_server/RateLimiter.h"
 
 #ifndef ASSEMBLED_MIGRATIONS_DIR
 #error "ASSEMBLED_MIGRATIONS_DIR must be defined by CMake"
@@ -90,6 +98,18 @@ TEST_CASE("POST /v1/notes HTTP integration") {
     db->getClient()->execSqlSync(
         "INSERT INTO vocabulary (token, word_id) VALUES ('test-token-notes-ok', 21) "
         "ON CONFLICT DO NOTHING");
+
+    // Third identity, dedicated to the rate-limit burst test below.
+    db->getClient()->execSqlSync(
+        "INSERT INTO identity (token) VALUES ('test-token-notes-burst') ON CONFLICT DO NOTHING");
+    db->getClient()->execSqlSync(
+        "INSERT INTO vocabulary (token, word_id) VALUES ('test-token-notes-burst', 21) "
+        "ON CONFLICT DO NOTHING");
+
+    // T-0049: configure a small per-token note-creation ceiling for this run
+    // so the burst test below can actually trip it over HTTP. Must happen
+    // before drogon::app().run() starts (see setNoteRateLimiterForTesting doc).
+    assembled_server::NoteController::setNoteRateLimiterForTesting(5, std::chrono::seconds(60));
 
     // ── Server ────────────────────────────────────────────────────────────
     std::thread serverThread([]() {
@@ -180,7 +200,81 @@ TEST_CASE("POST /v1/notes HTTP integration") {
         CHECK(!j["id"].asString().empty());
     }
 
+    // ── Test 6: burst above the per-token note-creation rate limit → 429 ──
+    // The limiter was configured above to 5 requests / 60 s. Uses a
+    // dedicated token so this burst doesn't interact with the budget
+    // 'test-token-notes-ok' already spent in test 5.
+    {
+        Json::Value body;
+        body["archetype"] = 1;
+        body["tag"] = 1;
+        body["template_id"] = 6; // {ACTION}
+        Json::Value slots(Json::arrayValue);
+        slots.append(21); // word 21 = "wait" = ACTION — in burst token's vocab
+        body["slots"] = slots;
+
+        for (int i = 0; i < 5; ++i) {
+            auto [code, j] = sendNotePost(httpClient, body, "test-token-notes-burst");
+            CHECK(code == drogon::k201Created);
+        }
+
+        // Sixth request in the same window exceeds the configured ceiling.
+        auto [code, j] = sendNotePost(httpClient, body, "test-token-notes-burst");
+        CHECK(code == drogon::k429TooManyRequests);
+        CHECK(j["error"].asInt() == 5001);
+    }
+
+    // ── Test 7: a different token's steady-state usage is unaffected ──────
+    // 'test-token-notes-ok' has only spent 1 of its 5-request budget (test
+    // 5); the burst above against a different token must not affect it.
+    {
+        Json::Value body;
+        body["archetype"] = 1;
+        body["tag"] = 1;
+        body["template_id"] = 6;
+        Json::Value slots(Json::arrayValue);
+        slots.append(21);
+        body["slots"] = slots;
+
+        auto [code, j] = sendNotePost(httpClient, body, "test-token-notes-ok");
+        CHECK(code == drogon::k201Created);
+    }
+
     // ── Teardown ──────────────────────────────────────────────────────────
     drogon::app().getLoop()->queueInLoop([]() { drogon::app().quit(); });
     serverThread.join();
+}
+
+// ── Note-creation rate limit: RateLimiter class, white-box ────────────────────
+//
+// The T-0049 acceptance criteria (burst rejected with 429, steady-state
+// unaffected) are verified over real HTTP in tests 6-7 of the integration
+// suite above. drogon::app() is a process-global singleton that can only run
+// once per binary, so it can't host a second HTTP run here; these cases give
+// supplementary white-box coverage of NoteController::noteRateLimiter()'s
+// bucket-isolation behavior directly.
+
+TEST_CASE("Note-creation rate limiter allows steady-state usage under the limit") {
+    assembled_server::NoteController::setNoteRateLimiterForTesting(3, std::chrono::seconds(60));
+    assembled_server::RateLimiter &limiter =
+        assembled_server::NoteController::noteRateLimiterForTesting();
+
+    const std::string key = "note-create-tok-steady";
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+}
+
+TEST_CASE("Note-creation rate limiter rejects a burst above the configured limit") {
+    assembled_server::NoteController::setNoteRateLimiterForTesting(2, std::chrono::seconds(60));
+    assembled_server::RateLimiter &limiter =
+        assembled_server::NoteController::noteRateLimiterForTesting();
+
+    const std::string key = "note-create-tok-burst";
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == true);
+    CHECK(limiter.allow(key) == false); // third request in the same window is rejected
+
+    // A different token's bucket is independent of tok-burst's usage.
+    CHECK(limiter.allow("note-create-tok-other") == true);
 }

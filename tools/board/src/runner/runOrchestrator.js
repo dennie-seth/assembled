@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { NdjsonEventParser } from "./streamParser.js";
 import { buildPrompt, buildPlannerPrompt, buildMergeConflictPrompt, resolveRulesForPaths } from "./promptBuilder.js";
 import { buildReviewerPrompt } from "./reviewerPrompt.js";
@@ -8,8 +9,12 @@ import { loadAgentDef, loadRules } from "./configLoader.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { createRunLog } from "./runLog.js";
 import { writeRunState, clearRunState } from "./runState.js";
+import { probeLivenessMtime, DEFAULT_LIVENESS_PROBE_INTERVAL_MS } from "./filesystemLiveness.js";
 import * as gitOps from "./gitOps.js";
 import * as githubOps from "./githubOps.js";
+import { regenerateApprovalLedgerIfChanged } from "./approvalLedgerRegen.js";
+import { promoteEvidenceForCard } from "../lib/evidencePromotion.js";
+import { appendVerdictEntry, readVerdictEntries, buildVerdictDigest } from "../lib/verdictArchive.js";
 import { buildPrTitle, buildPrBody } from "./prBuilder.js";
 import {
   materializePlannerFileView,
@@ -17,20 +22,67 @@ import {
   diffPlannerFileView,
   applyPlannerFileViewDiff
 } from "./plannerFileView.js";
-import { eventsContainUsageLimitSignature } from "./usageLimitDetector.js";
+import { eventsContainUsageLimitSignature, usageLimitSignatureForEvents } from "./usageLimitDetector.js";
+import { recordAttemptUsage, ensureExecutionId, clearExecutionId, drainPendingUsageWrites } from "./usageLedger.js";
+import { computeFailureSignature } from "./failureSignature.js";
 import { buildBlockerReport, formatBlockerReportComment } from "./blockerReport.js";
-import { findExistingRemediationCard, draftRemediationCard } from "../lib/escalationRemediation.js";
+import {
+  findOpenRemediationCard,
+  findRemediationCardsFor,
+  findMostRecentClosedRemediationCard,
+  isClosedRemediationStatus,
+  draftRemediationCard
+} from "../lib/escalationRemediation.js";
 import { createCard as createCardDefault } from "./cardCreation.js";
+import { checkAcceptancePreflight } from "./acceptancePreflight.js";
+import { checkCapabilityPreflight } from "./capabilityPreflight.js";
+import { checkImpossibleAcceptancePreflight } from "./impossibleAcceptancePreflight.js";
+import { checkHostStatePreflight } from "./hostStatePreflight.js";
+import { KNOWN_HOST_ISSUES } from "./knownHostIssues.js";
+import { assertRunnerMayApply, needsApproval, parkedForApprovalComment } from "../lib/approvalGate.js";
+import { roundsSinceDeliverable, roundCapParkedComment, ROUND_CAP } from "../lib/roundCap.js";
 
 /**
- * Hard cap on total implementer/reviewer runs a card can consume across its bounded
+ * Default hard cap on total implementer/reviewer runs a card can consume across its bounded
  * FAIL -> auto-retry -> FAIL -> ... loop before it's left `blocked` for a human. Persisted
  * per-card as the `attempts` frontmatter field (see taskParser.js); reset to 0 at the start
  * of every human/API-initiated runCard() call (see runCard's fresh-allowance reset) and on
- * PASS (see _handlePass), so a card that exhausts its 5 auto-retries and gets manually
- * re-run always gets a full new allowance rather than staying permanently capped.
+ * PASS (see _handlePass), so a card that exhausts its auto-retries and gets manually re-run
+ * always gets a full new allowance rather than staying permanently capped.
+ *
+ * T-0343: this is now only the DEFAULT, not the sole authority -- a card may carry its own
+ * `max_attempts` frontmatter field (taskParser.js, 1-20) that overrides it. See
+ * `_effectiveMaxAttempts`, the only place that reconciles the two: absent/non-integer
+ * `max_attempts` (every card that predates this field) falls back to this constant unchanged,
+ * which is the compatibility guarantee this field's acceptance criteria calls for.
  */
 export const MAX_AUTO_RETRY_ATTEMPTS = 5;
+
+/**
+ * T-0343: resolves a card's own attempt budget, falling back to MAX_AUTO_RETRY_ATTEMPTS for
+ * every card that carries no explicit override -- absent, null, or (defensively) anything not a
+ * positive integer. taskParser.js's validateTask already rejects a malformed or out-of-range
+ * value at the point a card is written, so this never needs to reject anything itself; it only
+ * has to tell "an explicit override is present" apart from "it isn't".
+ *
+ * T-0370 (Codex review finding 7, 2026-09-14): exported standalone, not just as the class's own
+ * `_effectiveMaxAttempts` method, so the shared launch boundary (`cardLaunch.js`) reserves
+ * against the SAME retry allowance the runner's own auto-retry loop actually honours, instead of
+ * a separately-hardcoded `MAX_AUTO_RETRY_ATTEMPTS` that silently drifts from a card's real
+ * `max_attempts` override.
+ */
+export function effectiveMaxAttempts(task) {
+  return Number.isInteger(task.max_attempts) && task.max_attempts > 0 ? task.max_attempts : MAX_AUTO_RETRY_ATTEMPTS;
+}
+
+/**
+ * How often the owning run refreshes its liveness marker, for the whole runCard span and
+ * independent of phase boundaries (fix-plan item #3,
+ * docs/reviews/2026-09-03-run-lifecycle-state-management.md). Comfortably under runState.js's
+ * DEFAULT_HEARTBEAT_STALE_MS (60s) so several beats are missed before anything judges the run
+ * dead -- one slow write must never make a healthy run look abandoned.
+ */
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 
 /**
  * Wall-clock cap on a single run phase (implementer, reviewer, planner, or merge-conflict
@@ -46,13 +98,76 @@ export const MAX_AUTO_RETRY_ATTEMPTS = 5;
  */
 export const DEFAULT_PHASE_TIMEOUT_MS = 40 * 60 * 1000;
 
+/**
+ * Per-agent phase budgets, for agents whose legitimate work does not fit the default.
+ * One entry per agent; adding or tuning one is a one-line change.
+ *
+ * `assets` (240 min) -- GPU generation and LoRA training. T-0228 (Arm A) was killed
+ * twice at exactly 40 minutes while making steady progress: 1136 and 661 logged events,
+ * max inter-event gap 120s / 287s (nowhere near the 8-minute inactivity threshold), and
+ * 26/26 ComfyUI executions succeeded with no errors and no OOM. Its stack (SDXL + style
+ * LoRA + IP-Adapter + OpenPose ControlNet) measured ~240s per generation, and the card's
+ * own acceptance criteria mandate up to 8 attempts -- ~32 minutes of GPU alone, before
+ * setup, tests, image inspection, descend/index and provenance. The card was
+ * unsatisfiable inside the default bound.
+ *
+ * 120 was not enough. T-0229 (Arm B) trains a per-character LoRA before it generates, and
+ * that was measured at ~7 min to load the 6.94 GB SDXL checkpoint (~32 MB/s over the WSL 9p
+ * /mnt/f mount), ~3 min to build the network and cache latents, and ~117 min of training
+ * (72 steps at ~98 s/step) -- ~127 min before generation starts, ~175 min for the whole arm.
+ * It was killed at step 65/72. 240 clears that with ~65 min of slack, which matters because
+ * the checkpoint read rate varies run to run; 180 would have left about five minutes.
+ *
+ * Raising the bound is much safer than it once was: §23-a's no-progress abort escalates
+ * a repeating failure without burning the budget (and since T-0229 it compares the worktree's
+ * git state rather than the reviewer's prose, so it actually fires), and
+ * DEFAULT_INACTIVITY_TIMEOUT_MS still catches a genuine hang in 8 minutes regardless of what
+ * this says. The phase timeout is no longer the load-bearing hang defence -- it is a cost
+ * ceiling.
+ *
+ * Note this keys on the agent the PHASE runs as, not the card's agent: an assets card's
+ * reviewer phase runs as `reviewer` and keeps the default, since it verifies output
+ * rather than generating it.
+ */
+export const PHASE_TIMEOUT_MS_BY_AGENT = Object.freeze({
+  assets: 240 * 60 * 1000
+});
+
 const PHASE_TIMEOUT_ENV_VAR = "PHASE_TIMEOUT_MS";
 
-/** PHASE_TIMEOUT_MS env var: overrides DEFAULT_PHASE_TIMEOUT_MS when set to a positive number. */
-function phaseTimeoutMsFromEnv() {
+/**
+ * Phase budget for *agent*, in precedence order:
+ *   1. `override` -- the process-wide PHASE_TIMEOUT_MS escape hatch (or an injected
+ *      value in tests). Applies to every agent, deliberately: it exists to override.
+ *   2. `byAgent` -- the per-agent budget above.
+ *   3. `fallback` -- DEFAULT_PHASE_TIMEOUT_MS.
+ *
+ * A non-positive or unparseable override is ignored rather than trusted, so a typo in the
+ * env var cannot silently disable the watchdog.
+ */
+export function resolvePhaseTimeoutMs(
+  agent,
+  { override = null, byAgent = PHASE_TIMEOUT_MS_BY_AGENT, fallback = DEFAULT_PHASE_TIMEOUT_MS } = {}
+) {
+  const parsedOverride = Number(override);
+  if (override !== null && override !== undefined && Number.isFinite(parsedOverride) && parsedOverride > 0) {
+    return parsedOverride;
+  }
+  // Own-property check only: an agent literally named "constructor" or "toString" must
+  // not pick up a function off Object.prototype and be compared as a number.
+  const perAgent =
+    typeof agent === "string" && byAgent && Object.prototype.hasOwnProperty.call(byAgent, agent)
+      ? Number(byAgent[agent])
+      : NaN;
+  if (Number.isFinite(perAgent) && perAgent > 0) return perAgent;
+  return fallback;
+}
+
+/** PHASE_TIMEOUT_MS env var: a global override across every agent, or null when unset/invalid. */
+function phaseTimeoutOverrideFromEnv() {
   const raw = process.env[PHASE_TIMEOUT_ENV_VAR];
   const parsed = Number(raw);
-  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PHASE_TIMEOUT_MS;
+  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 /**
@@ -83,13 +198,79 @@ function phaseTimeoutMsFromEnv() {
  */
 export const DEFAULT_INACTIVITY_TIMEOUT_MS = 8 * 60 * 1000;
 
+/**
+ * Per-agent inactivity budgets (T-0309), a structural copy of PHASE_TIMEOUT_MS_BY_AGENT --
+ * see resolveInactivityTimeoutMs for the shared override -> byAgent -> fallback precedence.
+ *
+ * `assets` (20 min) -- DEFAULT_INACTIVITY_TIMEOUT_MS's own docstring justifies 8 minutes
+ * against this repo's `cmake --build` / `pip install -e ".[dev]"` quiet stretches; it never
+ * considered GPU training. T-0229 (see PHASE_TIMEOUT_MS_BY_AGENT's docstring) measured a
+ * ~7-minute SDXL checkpoint load (6.94 GB at ~32 MB/s over the WSL 9p /mnt/f mount) before
+ * training -- or generation -- even starts, and noted the checkpoint read rate varies run to
+ * run. That is close enough to the unmodified 8-minute default that a slower-than-usual load
+ * alone could trip the watchdog on a run that was never stuck, purely from disk I/O variance
+ * unrelated to any hang. Once training is underway the ~98s/step cadence (T-0229) keeps the
+ * default well fed regardless -- it's specifically the monolithic, no-progress-signal load
+ * phase this widens for.
+ *
+ * 20 minutes leaves ~13 minutes of headroom above the measured ~7-minute load -- real slack
+ * for read-rate variance, not a token bump -- while staying an order of magnitude under
+ * PHASE_TIMEOUT_MS_BY_AGENT.assets (240 min), so a genuinely wedged assets run is still
+ * caught in well under a third of its phase budget.
+ *
+ * This is a cost ceiling, same spirit as PHASE_TIMEOUT_MS_BY_AGENT -- not the hang defence.
+ * The mtime-liveness card is what actually tells a working run apart from a wedged one (see
+ * probeLivenessMtime / the filesystem-liveness reprieve in _runPhase, which already re-arms
+ * this same deadline on observed disk progress); this only sizes the residual silent-stdout
+ * budget per agent class once that evidence is available. Nothing stops a future per-agent
+ * entry here from exceeding that same agent's PHASE_TIMEOUT_MS_BY_AGENT entry -- the two
+ * budgets are independent axes (one bounds silence, the other bounds wall-clock), so that
+ * would be an unusual configuration, not an invalid one.
+ *
+ * Note this keys on the agent the PHASE runs as, not the card's agent, exactly like
+ * PHASE_TIMEOUT_MS_BY_AGENT: an assets card's reviewer phase runs as `reviewer` and keeps
+ * the default.
+ */
+export const INACTIVITY_TIMEOUT_MS_BY_AGENT = Object.freeze({
+  assets: 20 * 60 * 1000
+});
+
 const INACTIVITY_TIMEOUT_ENV_VAR = "INACTIVITY_TIMEOUT_MS";
 
-/** INACTIVITY_TIMEOUT_MS env var: overrides DEFAULT_INACTIVITY_TIMEOUT_MS when set to a positive number. */
-function inactivityTimeoutMsFromEnv() {
+/**
+ * Inactivity budget for *agent*, in precedence order -- identical shape to
+ * resolvePhaseTimeoutMs:
+ *   1. `override` -- the process-wide INACTIVITY_TIMEOUT_MS escape hatch (or an injected
+ *      value in tests). Applies to every agent, deliberately: it exists to override.
+ *   2. `byAgent` -- the per-agent budget above.
+ *   3. `fallback` -- DEFAULT_INACTIVITY_TIMEOUT_MS.
+ *
+ * A non-positive or unparseable override is ignored rather than trusted, so a typo in the
+ * env var cannot silently disable the watchdog.
+ */
+export function resolveInactivityTimeoutMs(
+  agent,
+  { override = null, byAgent = INACTIVITY_TIMEOUT_MS_BY_AGENT, fallback = DEFAULT_INACTIVITY_TIMEOUT_MS } = {}
+) {
+  const parsedOverride = Number(override);
+  if (override !== null && override !== undefined && Number.isFinite(parsedOverride) && parsedOverride > 0) {
+    return parsedOverride;
+  }
+  // Own-property check only: an agent literally named "constructor" or "toString" must
+  // not pick up a function off Object.prototype and be compared as a number.
+  const perAgent =
+    typeof agent === "string" && byAgent && Object.prototype.hasOwnProperty.call(byAgent, agent)
+      ? Number(byAgent[agent])
+      : NaN;
+  if (Number.isFinite(perAgent) && perAgent > 0) return perAgent;
+  return fallback;
+}
+
+/** INACTIVITY_TIMEOUT_MS env var: a global override across every agent, or null when unset/invalid. */
+function inactivityTimeoutOverrideFromEnv() {
   const raw = process.env[INACTIVITY_TIMEOUT_ENV_VAR];
   const parsed = Number(raw);
-  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INACTIVITY_TIMEOUT_MS;
+  return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 /**
@@ -156,8 +337,12 @@ export class RunOrchestrator {
     github = githubOps,
     autoOpenPr = autoOpenPrFromEnv(),
     autoCaptureUncommitted = autoCaptureUncommittedFromEnv(),
-    phaseTimeoutMs = phaseTimeoutMsFromEnv(),
-    inactivityTimeoutMs = inactivityTimeoutMsFromEnv(),
+    phaseTimeoutMs = phaseTimeoutOverrideFromEnv(),
+    phaseTimeoutsByAgent = PHASE_TIMEOUT_MS_BY_AGENT,
+    inactivityTimeoutMs = inactivityTimeoutOverrideFromEnv(),
+    inactivityTimeoutsByAgent = INACTIVITY_TIMEOUT_MS_BY_AGENT,
+    livenessProbeIntervalMs = DEFAULT_LIVENESS_PROBE_INTERVAL_MS,
+    probeLivenessMtimeFn = probeLivenessMtime,
     repoRoot,
     worktreesDir = path.join(repoRoot, "worktrees"),
     runsDir = path.join(repoRoot, "tasks", ".runs"),
@@ -176,10 +361,20 @@ export class RunOrchestrator {
     buildMergeConflictPromptFn = buildMergeConflictPrompt,
     extractVerdictFn = extractVerdictFromEvents,
     crossCheckVerdictFn = crossCheckVerdict,
+    readVerdictEntriesFn = readVerdictEntries,
+    appendVerdictEntryFn = appendVerdictEntry,
+    recordAttemptUsageFn = recordAttemptUsage,
+    ensureExecutionIdFn = ensureExecutionId,
+    clearExecutionIdFn = clearExecutionId,
+    drainPendingUsageWritesFn = drainPendingUsageWrites,
+    generateInvocationIdFn = randomUUID,
+    buildVerdictDigestFn = buildVerdictDigest,
     createRunLogFn = createRunLog,
     writeRunStateFn = writeRunState,
+    heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
     clearRunStateFn = clearRunState,
     createCardFn = createCardDefault,
+    hostIssueRegistry = KNOWN_HOST_ISSUES,
     now = () => new Date(),
     sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     onIdle = () => {}
@@ -191,8 +386,14 @@ export class RunOrchestrator {
     this.github = github;
     this.autoOpenPr = autoOpenPr;
     this.autoCaptureUncommitted = autoCaptureUncommitted;
-    this.phaseTimeoutMs = phaseTimeoutMs;
-    this.inactivityTimeoutMs = inactivityTimeoutMs;
+    // Global escape hatch (PHASE_TIMEOUT_MS, or injected). null = defer to the per-agent map.
+    this.phaseTimeoutOverrideMs = phaseTimeoutMs ?? null;
+    this.phaseTimeoutsByAgent = phaseTimeoutsByAgent;
+    // Same shape (INACTIVITY_TIMEOUT_MS, or injected). null = defer to the per-agent map.
+    this.inactivityTimeoutMs = inactivityTimeoutMs ?? null;
+    this.inactivityTimeoutsByAgent = inactivityTimeoutsByAgent;
+    this.livenessProbeIntervalMs = livenessProbeIntervalMs;
+    this.probeLivenessMtimeFn = probeLivenessMtimeFn;
     this.repoRoot = repoRoot;
     this.worktreesDir = worktreesDir;
     this.runsDir = runsDir;
@@ -211,10 +412,26 @@ export class RunOrchestrator {
     this.buildMergeConflictPromptFn = buildMergeConflictPromptFn;
     this.extractVerdictFn = extractVerdictFn;
     this.crossCheckVerdictFn = crossCheckVerdictFn;
+    this.readVerdictEntriesFn = readVerdictEntriesFn;
+    this.appendVerdictEntryFn = appendVerdictEntryFn;
+    this.recordAttemptUsageFn = recordAttemptUsageFn;
+    this.ensureExecutionIdFn = ensureExecutionIdFn;
+    this.clearExecutionIdFn = clearExecutionIdFn;
+    this.drainPendingUsageWritesFn = drainPendingUsageWritesFn;
+    this.generateInvocationIdFn = generateInvocationIdFn;
+    /** taskId -> the current runCard() span's unique execution id (usageLedger.js). */
+    this._executionIds = new Map();
+    this.buildVerdictDigestFn = buildVerdictDigestFn;
     this.createRunLogFn = createRunLogFn;
     this.writeRunStateFn = writeRunStateFn;
+    this.heartbeatIntervalMs = heartbeatIntervalMs;
+    /** taskId -> {pid, runLogPath} most recently recorded, so the heartbeat can rewrite them. */
+    this._lastRunMarker = new Map();
+    /** taskIds whose branch a successful PASS already pushed, so the finally block does not re-push. */
+    this._branchPushed = new Set();
     this.clearRunStateFn = clearRunStateFn;
     this.createCardFn = createCardFn;
+    this.hostIssueRegistry = hostIssueRegistry;
     this.now = now;
     this.sleepFn = sleepFn;
     this.onIdle = onIdle;
@@ -257,6 +474,15 @@ export class RunOrchestrator {
    * depended on the commit in the first place.
    */
   async _updateAndBroadcast(taskId, patch) {
+    // The runner half of the human direction-approval gate (approvalGate.js): no automated
+    // write may complete a card whose deliverable a human still has to sign off on. This is
+    // the chokepoint every orchestrator write passes through, which is why the check lives
+    // here rather than at each call site -- a future run path that sets `done` gets the guard
+    // for free instead of having to remember it. See docs/board-invariants.md AP-2.
+    if (patch && patch.status === "done") {
+      assertRunnerMayApply(await this.store.get(taskId), patch);
+    }
+
     const updated = await this.store.update(taskId, patch);
     this.hub.broadcast({ type: "changed", id: taskId, task: updated });
 
@@ -275,6 +501,60 @@ export class RunOrchestrator {
     }
 
     return updated;
+  }
+
+  /**
+   * Fix-plan item #3. Refreshes the run's liveness marker every `heartbeatIntervalMs` for the
+   * whole runCard span -- crucially including the gaps BETWEEN phases, where no child process
+   * exists and nothing appends to the run log, and where a healthy run therefore used to look
+   * dead to anything reading the filesystem. Returns a stop function; the timer is unref'd so it
+   * can never hold the process open, and every write is best-effort for the same reason
+   * writeRunState itself is: liveness bookkeeping must never fail a run.
+   */
+  _startHeartbeat(taskId) {
+    if (!this.heartbeatIntervalMs || this.heartbeatIntervalMs <= 0) return () => {};
+    const beat = () => {
+      const marker = this._lastRunMarker.get(taskId) ?? { pid: null, runLogPath: null };
+      Promise.resolve(
+        this.writeRunStateFn({
+          runsDir: this.runsDir,
+          taskId,
+          pid: marker.pid,
+          runLogPath: marker.runLogPath,
+          now: this.now
+        })
+      ).catch(() => {});
+    };
+    beat();
+    const timer = setInterval(beat, this.heartbeatIntervalMs);
+    if (typeof timer.unref === "function") timer.unref();
+    return () => {
+      clearInterval(timer);
+      this._lastRunMarker.delete(taskId);
+    };
+  }
+
+  /**
+   * Best-effort push so committed work outlives the worktree. Never throws, never re-blocks.
+   *
+   * Skips the push entirely when `branch` carries no commits ahead of `this.baseBranch` -- the
+   * same "no commits on branch" signal `_runAttempt` already uses via `diffNames` (T-0299 edge
+   * case: an empty branch on origin is noise, not a rescue). This covers both a run that crashed
+   * before its first commit and the explicit no-commits block, without having to distinguish
+   * them here.
+   */
+  async _preserveBranch(taskId, worktreeDir, branch) {
+    try {
+      const changedPaths = await this.git.diffNames({ worktreeDir, baseBranch: this.baseBranch });
+      if (changedPaths.length === 0) {
+        console.log(`assembled-board: nothing to preserve for ${taskId} -- ${branch} has no commits ahead of ${this.baseBranch}`);
+        return;
+      }
+      await this.git.push({ worktreeDir, branch });
+      console.log(`assembled-board: preserved ${taskId} -- pushed ${branch} after a non-PASS outcome`);
+    } catch (err) {
+      console.warn(`assembled-board: could not preserve ${taskId} by pushing ${branch}: ${err.message}`);
+    }
   }
 
   async runCard(taskId) {
@@ -305,23 +585,40 @@ export class RunOrchestrator {
     const worktreeDir = path.join(this.worktreesDir, taskId);
 
     this.activeCardIds.add(taskId);
+    // T-0367 fix round (Codex review 2026-09-12, P1): minted/persisted before ANY process is
+    // spawned (worktree setup, planner, implementer, reviewer, merge-conflict all follow this),
+    // so every usage-ledger entry this run produces carries the SAME id -- a rerun of this same
+    // card starts a fresh execution id rather than colliding with a previous launch's attempt-1
+    // ledger files. `ensureExecutionIdFn` reuses a persisted id instead of minting a new one only
+    // when one is already on disk -- i.e. a genuine replay/recovery of a run whose own cleanup
+    // never got to finish (see the `finally` block below, which clears it on every normal exit).
+    const executionId = await this.ensureExecutionIdFn({ runsDir: this.runsDir, cardId: taskId });
+    this._executionIds.set(taskId, executionId);
+    let worktreeReady = false;
+    const stopHeartbeat = this._startHeartbeat(taskId);
     try {
       // Human/API-initiated run: always grants a fresh auto-retry allowance, even if the
       // card was previously blocked for exhausting all MAX_AUTO_RETRY_ATTEMPTS auto-retries.
       await this._updateAndBroadcast(taskId, { attempts: 0 });
 
+      // Fix-plan item #4: the status write comes BEFORE worktree setup. It used to sit after
+      // addWorktree + linkBoardNodeModules, so a run that was already tracked in activeCardIds
+      // still displayed as `ready` for the whole of a cold worktree creation -- and `ready` is
+      // exactly what the auto-launch poller selects, which is what defeated its second idle
+      // condition. The card must never be launchable-looking once this run owns it.
+      await this._updateAndBroadcast(taskId, { status: "in-progress" });
+
       let reused = false;
       try {
         const result = await this.git.addWorktree({ repoRoot: this.repoRoot, worktreeDir, branch, baseBranch: this.baseBranch });
         reused = Boolean(result && result.reused);
+        worktreeReady = true;
       } catch (err) {
         await this._blocked(taskId, `worktree creation failed: ${err.message}`);
         return;
       }
 
       await this.git.linkBoardNodeModules({ worktreeDir, repoRoot: this.repoRoot });
-
-      await this._updateAndBroadcast(taskId, { status: "in-progress" });
 
       const runLog = await this.createRunLogFn({ runsDir: this.runsDir, taskId, now: this.now });
       try {
@@ -330,12 +627,42 @@ export class RunOrchestrator {
         await runLog.close();
       }
     } finally {
+      stopHeartbeat();
+      // Data-loss fix (docs/reviews/... section 4.0a; T-0299): persist committed work on ANY
+      // terminal outcome, not only PASS. _handlePass pushes (and only it opens a PR -- see its
+      // own git.push call above _openPullRequest -- so pushing here never implies "ready for
+      // review"); every other ending -- a FAIL that exhausts retries, a crash, a phase timeout --
+      // previously left the commits only in a worktree a later re-run is free to reclaim. On
+      // 2026-09-03 that stranded 1047 lines on T-0288 and 253 on T-0290, both recovered by hand.
+      // This `await` completing before runCard() returns, combined with the activeCardIds
+      // re-entrancy guard at the top of runCard(), is what guarantees the push always lands
+      // before either reclamation call site a later run of the same card could hit:
+      // gitOps.addWorktree()'s reclaimOrDetectExisting (discards a branch with no commits beyond
+      // baseBranch) and gitOps.removeWorktree (force-deletes the whole worktree directory).
+      // Best-effort by design: preservation must never change a run's outcome.
+      if (worktreeReady && !this._branchPushed.delete(taskId)) {
+        await this._preserveBranch(taskId, worktreeDir, branch);
+      }
       this.activeCardIds.delete(taskId);
       // Best-effort: the orphan reaper only ever trusts a *present* runstate file, so once
       // there's no more span of runCard() left to protect, clearing it (rather than leaving a
       // stale pid behind) keeps a future restart's liveness check from having to reason about
       // a runstate written by a run that's already fully finished.
       await this.clearRunStateFn({ runsDir: this.runsDir, taskId });
+      // T-0367 fix round (Codex review 2026-09-12, P2): every usage-ledger write this run
+      // dispatched was fire-and-forget (`void this._recordUsage(...)`) so it never added latency
+      // to the run itself -- but that also means one could still be in flight right here. Drain
+      // them before this runCard() span is considered over, so the run's own terminal write is
+      // guaranteed to have reached disk rather than racing the process's own exit. Best-effort:
+      // wrapped so a drain failure can never fail the run it's instrumenting.
+      await this.drainPendingUsageWritesFn().catch(() => {});
+      // Same posture as clearRunStateFn above: this run's own span is over, so the next
+      // runCard() call for this card (a genuinely new launch) must mint a fresh execution id
+      // rather than reusing this one. Only a runCard() call whose OWN cleanup never got to run
+      // (e.g. the whole board process died mid-run) leaves the persisted id behind for
+      // ensureExecutionIdFn to recover on the next call.
+      this._executionIds.delete(taskId);
+      await this.clearExecutionIdFn({ runsDir: this.runsDir, cardId: taskId });
       if (this.activeCardIds.size === 0) {
         this.onIdle();
       }
@@ -366,9 +693,83 @@ export class RunOrchestrator {
     }
     const effectiveAgent = task.agent ?? "generic";
 
+    // Pre-flight: verify the card has a parseable ## Acceptance checklist before running an
+    // implementer. For agent:null cards this runs after the planner has expanded the spec; for
+    // pre-assigned cards it runs immediately. Root cause from T-0186: 6 of 16 sampled rework
+    // cycles were caused solely by a missing Acceptance section — implementation correct but
+    // reviewer FAILed on the absent checklist. Catching this here saves one implementer LLM
+    // call + one reviewer LLM call per underspecified card (see acceptancePreflight.js).
+    //
+    // Skip for blocked re-runs: the card was already validated once; blocking it again on a
+    // missing Acceptance section would prevent legitimate recovery runs (the Blocked note
+    // appended to the body doesn't add an Acceptance section, so a previously-valid card
+    // that was blocked mid-run would be permanently un-runnable).
+    if (task.status !== "blocked") {
+      const preFlightTask = await this.store.get(taskId);
+      const preflight = checkAcceptancePreflight(preFlightTask);
+      if (!preflight.ok) {
+        await this._blocked(taskId, preflight.message);
+        return;
+      }
+
+      // Pre-flight (HANDOFF §23-b): checks the AC's actionable claims against the assigned
+      // agent's tool grants and against external capabilities/resources it names (a ComfyUI
+      // checkpoint/LoRA/custom node, a service endpoint) -- before the implementer child process
+      // is spawned. Precedents this exists to catch before burning implementer/GPU time: T-0212
+      // (assets.md tilde-vs-absolute python grant gap), T-0222 (AC required "open a PR", never
+      // satisfiable by any implementer agent), T-0193 (ten FAILs on a missing reviewer grant).
+      // Same fail-fast/blocked path as the acceptance-checklist preflight above -- a capability
+      // gap is exactly as much a genuine blocker as a missing Acceptance section is.
+      const capabilityPreflight = checkCapabilityPreflight(preFlightTask, effectiveAgent, {
+        agentsDir: this.agentsDir,
+        resolveAllowedToolsFn: this.resolveAllowedToolsFn
+      });
+      if (!capabilityPreflight.ok) {
+        await this._blocked(taskId, capabilityPreflight.message);
+        return;
+      }
+
+      // Preflight (T-0323): a card whose assigned agent matches a *known, already-diagnosed*
+      // unresolved host-side blocker (docs/design/host-action-escalation.md; ComfyUI determinism
+      // flags from T-0272/T-0317 are the worked example) is told immediately instead of spending
+      // MAX_AUTO_RETRY_ATTEMPTS rediscovering a wall someone already hit. Routes through the same
+      // structured-report/remediation-card machinery retry-exhaustion escalation uses, via
+      // _blockOnHostAction, so a human/Dispatch gets the identical actionable handoff either way.
+      const hostStatePreflight = checkHostStatePreflight(preFlightTask, effectiveAgent, {
+        registry: this.hostIssueRegistry
+      });
+      if (!hostStatePreflight.ok) {
+        await this._blockOnHostAction(taskId, preFlightTask, hostStatePreflight, runLog);
+        return;
+      }
+
+      // Warn-only pre-flight (T-0300): flags likely-agent-impossible AC phrasings -- a human-only
+      // observation, an ungranted ops/browser-driver tool, PR/CI-green circularity, named-human
+      // approval circularity, or an external reference-source "all must succeed" requirement (see
+      // impossibleAcceptancePreflight.js). Deliberately never blocks, unlike the two preflights
+      // above: these are heuristics over freeform English, not a definite grant lookup, so a false
+      // positive here must never stop a legitimate card from running (T-0300's own explicit
+      // acceptance criterion). Surfaced as a card comment and a run-log event for a human to read.
+      const impossibleAcceptance = checkImpossibleAcceptancePreflight(preFlightTask, effectiveAgent, {
+        agentsDir: this.agentsDir,
+        resolveAllowedToolsFn: this.resolveAllowedToolsFn
+      });
+      if (impossibleAcceptance.warnings.length > 0) {
+        await this._logImpossibleAcceptanceWarning(taskId, runLog, impossibleAcceptance.warnings);
+      }
+    }
+
     let currentReused = reused;
     const attemptRecords = [];
-    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+    // T-0343: this card's own attempt budget, falling back to MAX_AUTO_RETRY_ATTEMPTS when the
+    // card carries no explicit override -- see _effectiveMaxAttempts.
+    const maxAttempts = this._effectiveMaxAttempts(task);
+    // Tracks the previous attempt's failure signature (§23-a) so two consecutive attempts that
+    // fail for the identical, unfixable reason abort the loop immediately instead of burning the
+    // remaining maxAttempts slots on repeats -- see _handleFailValidation/
+    // _escalateIfGenuineBlocker below for how the abort is surfaced.
+    let previousSignature = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       // Re-fetch: a prior attempt in this same loop may have appended a FAIL note to the
       // body (read by the implementer's "continuing existing work" prompt on the retry).
       const liveTask = await this.store.get(taskId);
@@ -381,7 +782,8 @@ export class RunOrchestrator {
         worktreeDir,
         branch,
         runLog,
-        currentReused
+        currentReused,
+        attempt
       );
       if (stop) return;
 
@@ -390,58 +792,124 @@ export class RunOrchestrator {
         return;
       }
 
-      attemptRecords.push({ attempt, notes: verdict.notes, events });
+      // NEEDS_HUMAN_DECISION (T-0341, §23-b): the card's own acceptance criteria have become a
+      // scope or design question the reviewer cannot resolve -- not a fixable defect, so retrying
+      // cannot help. Halts unconditionally, before any signature/no-progress bookkeeping and
+      // regardless of attempts remaining -- this is the exact fix for the 2026-09-08 incident,
+      // where a reviewer's FAIL notes said outright "this must NOT be auto-retried" and the
+      // harness retried anyway because a FAIL verdict was a FAIL verdict.
+      if (verdict.verdict === "NEEDS_HUMAN_DECISION") {
+        await this._handleNeedsHumanDecision(taskId, verdict, attempt, maxAttempts);
+        return;
+      }
 
-      const isFinalAttempt = attempt >= MAX_AUTO_RETRY_ATTEMPTS;
-      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !isFinalAttempt);
-      if (isFinalAttempt) {
-        await this._escalateIfGenuineBlocker(taskId, attemptRecords, runLog);
+      // Inactivity timeouts are excluded from signature comparison (see _inactivityVerdict's
+      // `synthetic` docstring): their reason text is generic by construction, so two in a row
+      // isn't evidence of a repeating, unfixable blocker the way a genuine reviewer FAIL is.
+      //
+      // The signature is computed from the worktree's git state, not the reviewer's notes --
+      // see failureSignature.js for why (T-0229 burned all five slots on eight FAILs the
+      // reviewer itself called byte-identical, because its notes carry an attempt counter).
+      const treeState = verdict.synthetic ? null : await this._readTreeState(worktreeDir);
+      const signature = computeFailureSignature({
+        phase: verdict.phase,
+        verdict: verdict.verdict,
+        state: treeState
+      });
+      const noProgress = signature !== null && previousSignature !== null && signature === previousSignature;
+      attemptRecords.push({ attempt, notes: verdict.notes, events, signature });
+
+      const isFinalAttempt = attempt >= maxAttempts;
+      const stopping = isFinalAttempt || noProgress;
+      await this._handleFailValidation(taskId, verdict, attempt, /* retrying */ !stopping, { noProgress, signature, maxAttempts });
+      if (stopping) {
+        await this._escalateIfGenuineBlocker(taskId, attemptRecords, runLog, { noProgress, repeatedSignature: noProgress ? signature : null });
         return;
       }
 
       // Every attempt after the first resumes the same worktree/branch, regardless of
       // whether addWorktree itself had to reuse it (a first attempt can start fresh).
       currentReused = true;
+      if (signature !== null) previousSignature = signature;
+    }
+  }
+
+  /**
+   * Worktree git state for the no-progress signature, or null if it cannot be read.
+   *
+   * Never throws: a git failure here must not take down an otherwise-fine run. Returning null
+   * makes the signature null, which is never compared -- so the loop falls back to running the
+   * full retry cap rather than risking a false abort on a card that might be progressing.
+   */
+  async _readTreeState(worktreeDir) {
+    if (typeof this.git.readTreeState !== "function") return null;
+    try {
+      return await this.git.readTreeState({ worktreeDir });
+    } catch {
+      return null;
     }
   }
 
   /** Runs one implementer+reviewer cycle. Returns `{stop: true}` once the card has already been left in a terminal state (crash/blocked/cancelled) -- the caller must not act further -- or `{stop: false, verdict}` for the caller to grade. */
-  async _runAttempt(taskId, task, effectiveAgent, worktreeDir, branch, runLog, reused) {
+  async _runAttempt(taskId, task, effectiveAgent, worktreeDir, branch, runLog, reused, attempt) {
     const agentDef = this.loadAgentDefFn(effectiveAgent, { agentsDir: this.agentsDir });
     const rules = this.loadRulesFn({ rulesDir: this.rulesDir });
     const allowedTools = this.resolveAllowedToolsFn(effectiveAgent, { agentsDir: this.agentsDir });
+    const verdictEntries = await this.readVerdictEntriesFn(this.tasksDir, taskId);
     const prompt = this.buildPromptFn({
       task: { ...task, agent: effectiveAgent },
       agentDef,
       rules,
       continuing: reused,
-      comments: task.comments ?? []
+      comments: task.comments ?? [],
+      verdictDigest: this.buildVerdictDigestFn(verdictEntries)
     });
 
     const implementerResult = await this._runPhase({
       taskId,
       task,
       phase: "implementer",
+      agent: effectiveAgent,
       prompt,
       allowedTools,
       worktreeDir,
       model: agentDef.model,
-      runLog
+      runLog,
+      attempt
     });
     if (implementerResult.cancelled) {
       return { stop: true };
     }
     if (implementerResult.timedOut) {
       if (implementerResult.timeoutKind === "inactivity") {
-        return { stop: false, verdict: this._inactivityVerdict("implementer"), events: implementerResult.events };
+        return {
+          stop: false,
+          verdict: this._inactivityVerdict("implementer", effectiveAgent),
+          events: implementerResult.events
+        };
       }
-      await this._blocked(taskId, this._timeoutReason("implementer"));
+      await this._blocked(taskId, this._timeoutReason("implementer", "phase", effectiveAgent));
       return { stop: true };
     }
     if (implementerResult.exitCode !== 0) {
       await this._blocked(taskId, this._crashReason("implementer", implementerResult));
       return { stop: true };
     }
+
+    // T-0367: the implementer phase ran to completion. The only further classification this
+    // phase alone can carry is a genuine 429 quota stop mid-stream (usageLimitDetector.js) --
+    // distinct from `success` because its result event still carries a real cumulative total,
+    // not a lower bound (see docs/usage-telemetry.md). Fire-and-forget: instrumentation only,
+    // never a reason to add latency to the retry loop's own progress.
+    void this._recordUsage(taskId, {
+      attempt,
+      phase: "implementer",
+      invocationId: implementerResult.invocationId,
+      events: implementerResult.events,
+      outcome: eventsContainUsageLimitSignature(implementerResult.events) ? "quota_stop" : "success",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
 
     if (this.autoCaptureUncommitted) {
       await this._captureUncommittedImplementerWork(taskId, worktreeDir, runLog);
@@ -473,11 +941,13 @@ export class RunOrchestrator {
       taskId,
       task,
       phase: "reviewer",
+      agent: "reviewer",
       prompt: reviewerPrompt,
       allowedTools: reviewerAllowedTools,
       worktreeDir,
       model: reviewerAgentDef.model,
-      runLog
+      runLog,
+      attempt
     });
     if (reviewerResult.cancelled) {
       return { stop: true };
@@ -486,11 +956,11 @@ export class RunOrchestrator {
       if (reviewerResult.timeoutKind === "inactivity") {
         return {
           stop: false,
-          verdict: this._inactivityVerdict("reviewer"),
+          verdict: this._inactivityVerdict("reviewer", "reviewer"),
           events: [...implementerResult.events, ...reviewerResult.events]
         };
       }
-      await this._blocked(taskId, this._timeoutReason("reviewer"));
+      await this._blocked(taskId, this._timeoutReason("reviewer", "phase", "reviewer"));
       return { stop: true };
     }
     if (reviewerResult.exitCode !== 0) {
@@ -515,7 +985,26 @@ export class RunOrchestrator {
       await this._logCrossCheck(taskId, runLog, verdict.notes);
     }
 
-    return { stop: false, verdict, events: [...implementerResult.events, ...reviewerResult.events] };
+    // T-0367: reviewer_fail covers every non-PASS verdict (FAIL and NEEDS_HUMAN_DECISION alike)
+    // -- both are a completed, real reviewer verdict, not a truncation, so complete stays true.
+    // A quota-stop signature takes priority over the verdict itself: a self-reported PASS/FAIL
+    // alongside a 429 in the same event stream is still a quota stop, not a graded verdict.
+    // Fire-and-forget, same reasoning as the implementer's own record above.
+    void this._recordUsage(taskId, {
+      attempt,
+      phase: "reviewer",
+      invocationId: reviewerResult.invocationId,
+      events: reviewerResult.events,
+      outcome: eventsContainUsageLimitSignature(reviewerResult.events)
+        ? "quota_stop"
+        : verdict.verdict === "PASS"
+          ? "success"
+          : "reviewer_fail",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
+
+    return { stop: false, verdict: { ...verdict, phase: verdict.phase ?? "reviewer" }, events: [...implementerResult.events, ...reviewerResult.events] };
   }
 
   /**
@@ -578,6 +1067,19 @@ export class RunOrchestrator {
       await this._blocked(taskId, this._crashReason("planner", plannerResult));
       return false;
     }
+
+    // T-0367: the planner's own success/failure, keyed at attempt 0 -- it runs once, before the
+    // implementer/reviewer attempt loop even starts, so it never carries a loop attempt number.
+    // Fire-and-forget, same reasoning as the implementer/reviewer records above.
+    void this._recordUsage(taskId, {
+      attempt: 0,
+      phase: "planning",
+      invocationId: plannerResult.invocationId,
+      events: plannerResult.events,
+      outcome: eventsContainUsageLimitSignature(plannerResult.events) ? "quota_stop" : "success",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
 
     if (fileView) {
       const plan = await diffPlannerFileView({ tasksDir: fileView.tasksDir, before: fileView.before });
@@ -647,6 +1149,40 @@ export class RunOrchestrator {
   }
 
   /**
+   * Logs a filesystem-liveness reprieve (T-0308): the inactivity deadline was just re-armed
+   * because `observed.path` grew since the last check, even though stdout may have been silent
+   * the whole time. Names the path and its age so an incident is readable from the journal alone
+   * -- exactly the T-0274 gap this card exists to close.
+   */
+  async _logLivenessReprieve(taskId, runLog, phase, observed) {
+    const ageMs = Math.max(0, this.now().getTime() - observed.mtimeMs);
+    const message =
+      `${phase} inactivity deadline re-armed: ${observed.path} grew ${Math.round(ageMs / 1000)}s ago -- ` +
+      `filesystem progress, not stdout, is what kept this run alive (T-0308).`;
+    const event = { type: "liveness-reprieve", phase, message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase, event });
+  }
+
+  /**
+   * Logs what the filesystem-liveness probe last observed at the moment an inactivity kill
+   * fires, so a human reading the run log afterward never has to guess whether this was a
+   * genuine stdin-hang (no evidence anywhere) or a run that simply stopped producing filesystem
+   * progress one budget ago (see `_logLivenessReprieve`'s docstring for the re-arm side).
+   */
+  async _logLivenessAtKill(taskId, runLog, phase, lastObserved) {
+    const message = lastObserved
+      ? `${phase} inactivity kill: last filesystem progress was ${lastObserved.path}, ` +
+        `${Math.round(Math.max(0, this.now().getTime() - lastObserved.mtimeMs) / 1000)}s before the kill -- ` +
+        `older than the inactivity budget, treated as wedged.`
+      : `${phase} inactivity kill: no filesystem progress was ever observed on the watched set ` +
+        `(worktree/run log missing or never written) -- stdout was the only possible evidence and it went silent.`;
+    const event = { type: "liveness-kill", phase, message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase, event });
+  }
+
+  /**
    * Logs a harness-side verdict downgrade (crossCheckVerdictFn caught a self-reported PASS that
    * the reviewer's own required commands don't back up). The downgraded verdict's `notes` --
    * which already explain the mismatch -- flow into the card body through the normal FAIL path
@@ -659,6 +1195,58 @@ export class RunOrchestrator {
     this.hub.broadcast({ type: "run-event", id: taskId, phase: "crosscheck", event });
   }
 
+  /**
+   * Surfaces impossibleAcceptancePreflight.js's warnings (T-0300) in both places a human would
+   * look: the run log (for whoever is watching the run live) and a card comment (for whoever
+   * reads it later, the same "assembled-board" author convention formatBlockerReportComment and
+   * parkedForApprovalComment already use). Never calls _blocked -- a false positive here must
+   * never stop a legitimate card from running.
+   */
+  async _logImpossibleAcceptanceWarning(taskId, runLog, warnings) {
+    const message =
+      `Unsatisfiable-AC preflight (T-0300) flagged ${warnings.length} acceptance ` +
+      `criterion/criteria as likely agent-impossible -- this is a warning, not a block; ` +
+      `the implementer still runs:\n` +
+      warnings.map((w) => `- ${w}`).join("\n");
+    const event = { type: "impossible-acceptance-warning", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "preflight-warning", event });
+    await this._appendComment(taskId, "assembled-board", message);
+  }
+
+  /**
+   * Single chokepoint for T-0367's idempotent usage ledger (usageLedger.js): every call
+   * recomputes and overwrites the one sidecar for this (card, attempt, phase, retry) key, so
+   * an incremental mid-run call and a later terminal call for the same key never double-count --
+   * they simply overwrite with a fuller/more accurate picture. `retry` defaults to 0: this
+   * orchestrator has no sub-retry loop within a single phase execution today (see
+   * docs/usage-telemetry.md's "out of scope" section), only the outer attempt loop.
+   *
+   * Best-effort by design, same posture as `_preserveBranch`/the heartbeat: a usage-ledger
+   * write failure (disk full, permissions) is instrumentation, not a run outcome, and must
+   * never fail or alter the run it's recording.
+   */
+  async _recordUsage(taskId, { attempt, phase, retry = 0, invocationId = null, events, outcome, complete, sourceLogPath = null }) {
+    try {
+      await this.recordAttemptUsageFn({
+        runsDir: this.runsDir,
+        cardId: taskId,
+        executionId: this._executionIds.get(taskId) ?? null,
+        invocationId,
+        attempt,
+        phase,
+        retry,
+        events,
+        outcome,
+        complete,
+        sourceLogPath,
+        now: this.now
+      });
+    } catch (err) {
+      console.warn(`Board: failed to record usage ledger entry for ${taskId} (attempt ${attempt}, phase ${phase}, outcome ${outcome}): ${err.message}`);
+    }
+  }
+
   _crashReason(phase, result) {
     if (result.spawnError) {
       return `${phase} failed to start: ${result.spawnError.message}`;
@@ -667,23 +1255,57 @@ export class RunOrchestrator {
     return `${phase} process exited with code ${result.exitCode ?? "null"}${signalSuffix}`;
   }
 
-  async _runPhase({ taskId, task, phase, prompt, allowedTools, worktreeDir, model, runLog }) {
+  async _runPhase({ taskId, task, phase, agent, prompt, allowedTools, worktreeDir, model, runLog, attempt = 0 }) {
+    // T-0367 fix round (Codex review 2, 2026-09-12, finding 2): minted fresh for every NEWLY
+    // SPAWNED phase process, distinct from the card's own executionId. After a board crash, a
+    // restarted card reuses its persisted executionId (see ensureExecutionIdFn) -- that's what
+    // "recovery" means, the interrupted work is still logically the same launch -- but the
+    // restarted phase is a brand-new child process, and without a distinct id here it would
+    // silently overwrite the interrupted phase's own (executionId, attempt, phase, retry) ledger
+    // entry instead of leaving it in place alongside its own. Every `_recordUsage` call this
+    // phase's own run produces (the incremental one below, and the terminal one the caller makes
+    // once it knows the fuller classification) carries this SAME id, since they all describe one
+    // process's consumption.
+    const invocationId = this.generateInvocationIdFn();
     const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model });
     const entry = { phase, run, worktreeDir, cancelled: false };
     this.activeRuns.set(taskId, entry);
+    // run.child is null when start() itself failed to spawn (e.g. a synchronous E2BIG -- see
+    // ClaudeCliRunner.start()); run.spawnError carries the reason in that case, and the exitPromise
+    // check below resolves from it immediately without ever touching `child`.
+    const pid = run.child ? run.child.pid : null;
     // Persisted so the orphan reaper can tell a genuinely-dead run from one whose detached
     // `claude` child (see claudeCliRunner.js) survived a board restart with the same pid --
     // overwritten on every phase since the implementer and reviewer are separate child
     // processes within one runCard() span.
-    await this.writeRunStateFn({ runsDir: this.runsDir, taskId, pid: run.child.pid, runLogPath: runLog.path, now: this.now });
+    this._lastRunMarker.set(taskId, { pid, runLogPath: runLog.path });
+    await this.writeRunStateFn({ runsDir: this.runsDir, taskId, pid, runLogPath: runLog.path, now: this.now });
 
     const events = [];
     let appendChain = Promise.resolve();
     const parser = new NdjsonEventParser({
       onEvent: (event) => {
+        // T-0367 fix round (Codex review 2026-09-12, P1): a `rate_limit_event` carries no
+        // wall-clock field of its own, so `usageTelemetry.js`'s freshness check needs one
+        // stamped on arrival -- this is the instant the board actually saw the event, which
+        // `readWindowUsage` then trusts over the containing log file's mtime (a later, unrelated
+        // write to the same log otherwise makes an old reading look fresh; see
+        // docs/usage-telemetry.md).
+        if (event.type === "rate_limit_event" && typeof event.receivedAtMs !== "number") {
+          event.receivedAtMs = this.now().getTime();
+        }
         events.push(event);
         appendChain = appendChain.then(() => runLog.append(event));
         this.hub.broadcast({ type: "run-event", id: taskId, phase, event });
+        // T-0367 incremental usage recording: fired on every assistant turn (where token usage
+        // actually grows), never awaited -- a slow/failing ledger write must not add latency to
+        // the phase's own event loop. `complete: false` marks this a lower bound, overwritten by
+        // the terminal record below once the phase actually ends; if the process is killed by
+        // something this orchestrator never sees (a board crash, an OOM-kill), this is the most
+        // recent recorded figure and is what keeps that case from silently recording as zero.
+        if (event.type === "assistant") {
+          void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "in_progress", complete: false, sourceLogPath: runLog.path });
+        }
       }
     });
 
@@ -704,7 +1326,7 @@ export class RunOrchestrator {
       if (inactivityTimer) clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
         resolveInactivity({ exitCode: null, signal: null, spawnError: null, timedOut: true, timeoutKind: "inactivity" });
-      }, this.inactivityTimeoutMs);
+      }, this._inactivityTimeoutMsFor(agent));
       if (typeof inactivityTimer.unref === "function") inactivityTimer.unref();
     };
     armInactivityTimer();
@@ -713,9 +1335,62 @@ export class RunOrchestrator {
       armInactivityTimer();
       parser.push(chunk);
     };
-    if (child.stdout && typeof child.stdout.on === "function") {
+    if (child && child.stdout && typeof child.stdout.on === "function") {
       child.stdout.on("data", onStdoutData);
     }
+
+    // Filesystem-progress companion to the stdout-only watchdog above (T-0308): a subagent-owned
+    // tool call doesn't forward the CLI's `tool_progress` heartbeat up the parent stream, so a
+    // long subagent job (e.g. LoRA training, checkpointing every ~95s) can leave stdout silent
+    // for its entire span while still visibly alive on disk -- this is what killed T-0274's
+    // attempt 2. Polls the explicit, bounded watched set (filesystemLiveness.js: the worktree
+    // root, each artifact output subdir one level deep, and this phase's own run log -- never a
+    // recursive walk of the whole checkout) on a fixed cadence and, on observed mtime growth,
+    // re-arms the SAME deadline armInactivityTimer() already manages. This only ever extends the
+    // deadline, never kills on its own -- a run that stops producing filesystem progress is still
+    // caught by the unmodified deadline timer above, one full inactivityTimeoutMs after the last
+    // real progress (stdout or mtime), so the hang defence for a genuine stdin-hang (no stdout,
+    // no filesystem writes) is unweakened.
+    //
+    // Deliberately fire-and-forget, never awaited in this function's own control flow: the probe
+    // is real (async) filesystem I/O, and gating the exit/timeout race on it here would delay
+    // every single phase of every run by at least one I/O round-trip for no benefit. `lastLiveness`
+    // starts `null` (no evidence yet, same sentinel `probeLivenessMtimeFn` itself returns for "no
+    // evidence"). A tick that observes nothing (the watched output dir doesn't exist yet, e.g.)
+    // leaves `lastLiveness` exactly as it was -- it must NOT be latched to null, or every later
+    // tick's `!lastLiveness` check would treat that as "no baseline yet" forever and filesystem
+    // liveness would be permanently disabled for the rest of the phase the first time a probe
+    // came up empty (T-0308 review: the "output dir does not exist yet when the phase starts"
+    // edge case). The first REAL (non-null) observation only establishes a baseline (nothing to
+    // compare growth against yet, so no re-arm) -- otherwise the worktree's pre-existing mtime
+    // from setup would look like "growth" the instant the phase starts.
+    let lastLiveness = null;
+    const livenessProbeTimer = setInterval(() => {
+      Promise.resolve(this.probeLivenessMtimeFn({ worktreeDir, runLogPath: runLog.path }))
+        .then(async (observed) => {
+          if (!observed) return;
+          if (!lastLiveness) {
+            lastLiveness = observed;
+            return;
+          }
+          if (observed.mtimeMs <= lastLiveness.mtimeMs) return;
+          armInactivityTimer();
+          await this._logLivenessReprieve(taskId, runLog, phase, observed);
+          // T-0308 review round 2: runLogPath is itself part of the watched set, and the
+          // reprieve log line just written above bumps its mtime to ~now. Baselining on the
+          // pre-write `observed` here would make that self-inflicted bump look like fresh
+          // external growth on the very next tick -- re-arm, append, repeat -- a loop with zero
+          // real filesystem progress that never lets the inactivity deadline expire again.
+          // Re-probe AFTER the write and baseline off THAT instead, so the watchdog's own log
+          // entry is folded into the baseline rather than mistaken for new evidence.
+          const after = await Promise.resolve(
+            this.probeLivenessMtimeFn({ worktreeDir, runLogPath: runLog.path })
+          ).catch(() => null);
+          lastLiveness = after ?? observed;
+        })
+        .catch(() => {});
+    }, this.livenessProbeIntervalMs);
+    if (typeof livenessProbeTimer.unref === "function") livenessProbeTimer.unref();
 
     // Root-cause fix for T-0185: a hung grandchild (e.g. a headless Godot test that never calls
     // `get_tree().quit()`) previously kept this `await` pending forever, since the parent
@@ -737,7 +1412,7 @@ export class RunOrchestrator {
     const timeoutPromise = new Promise((resolve) => {
       timeoutTimer = setTimeout(
         () => resolve({ exitCode: null, signal: null, spawnError: null, timedOut: true, timeoutKind: "phase" }),
-        this.phaseTimeoutMs
+        this._phaseTimeoutMsFor(agent)
       );
       if (typeof timeoutTimer.unref === "function") timeoutTimer.unref();
     });
@@ -745,13 +1420,17 @@ export class RunOrchestrator {
     const result = await Promise.race([exitPromise, timeoutPromise, inactivityPromise]);
     clearTimeout(timeoutTimer);
     clearTimeout(inactivityTimer);
+    clearInterval(livenessProbeTimer);
 
     if (result.timedOut) {
       // Stop streaming further output into an event log for a phase that's already being
       // treated as over -- the kill below may take a moment (TERM-then-KILL escalation, see
       // ClaudeCliRunner.kill) and the child can keep writing to stdout in the meantime.
-      if (child.stdout && typeof child.stdout.off === "function") {
+      if (child && child.stdout && typeof child.stdout.off === "function") {
         child.stdout.off("data", onStdoutData);
+      }
+      if (result.timeoutKind === "inactivity") {
+        await this._logLivenessAtKill(taskId, runLog, phase, lastLiveness);
       }
       this.runner.kill(run);
     }
@@ -760,22 +1439,73 @@ export class RunOrchestrator {
     await appendChain;
 
     this.activeRuns.delete(taskId);
-    return { ...result, events, cancelled: entry.cancelled };
+
+    // T-0367: the three outcomes decidable here, without any verdict/classification the caller
+    // alone has (PASS/FAIL, quota-stop). A clean exit (exitCode 0) is deliberately NOT recorded
+    // here -- the caller (implementer/reviewer/planner/merge-conflict-specific code) records that
+    // case once it knows the fuller classification (success vs quota_stop vs reviewer_fail), so
+    // this phase's key ends up with exactly one terminal entry, not two disagreeing ones.
+    //
+    // Fire-and-forget, like the incremental record above: this is instrumentation, and must
+    // never add real disk-I/O latency to the phase-completion path a phase timeout/cancellation
+    // is already on (the run's own retry loop must not wait on a usage-ledger write to proceed).
+    if (entry.cancelled) {
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "cancelled", complete: false, sourceLogPath: runLog.path });
+    } else if (result.timedOut) {
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "phase_timeout", complete: false, sourceLogPath: runLog.path });
+    } else if (result.exitCode !== 0) {
+      void this._recordUsage(taskId, { attempt, phase, invocationId, events, outcome: "crashed", complete: false, sourceLogPath: runLog.path });
+    }
+
+    return { ...result, events, cancelled: entry.cancelled, invocationId };
+  }
+
+  /** Phase budget for the agent this phase runs as -- see resolvePhaseTimeoutMs for precedence. */
+  _phaseTimeoutMsFor(agent) {
+    return resolvePhaseTimeoutMs(agent, {
+      override: this.phaseTimeoutOverrideMs,
+      byAgent: this.phaseTimeoutsByAgent
+    });
+  }
+
+  /** Inactivity budget for the agent this phase runs as -- see resolveInactivityTimeoutMs for precedence. */
+  _inactivityTimeoutMsFor(agent) {
+    return resolveInactivityTimeoutMs(agent, {
+      override: this.inactivityTimeoutMs,
+      byAgent: this.inactivityTimeoutsByAgent
+    });
   }
 
   /** Human-readable reason for a phase terminated by the phase timeout or the inactivity watchdog. */
-  _timeoutReason(phase, kind = "phase") {
+  _timeoutReason(phase, kind = "phase", agent = null) {
     if (kind === "inactivity") {
-      const minutes = Math.round(this.inactivityTimeoutMs / 60_000);
-      return `${phase} run went silent for ${minutes} minute${minutes === 1 ? "" : "s"} with no new output and was terminated -- likely a stdin-hang or other hung child process (e.g. a bare grep/read/cat with no input redirect)`;
+      const minutes = Math.round(this._inactivityTimeoutMsFor(agent) / 60_000);
+      const forAgent = agent ? ` for the ${agent} agent` : "";
+      return `${phase} run went silent for ${minutes} minute${minutes === 1 ? "" : "s"}${forAgent} with no new output and was terminated -- likely a stdin-hang or other hung child process (e.g. a bare grep/read/cat with no input redirect). If this agent's legitimate work needs longer quiet stretches, raise its entry in INACTIVITY_TIMEOUT_MS_BY_AGENT.`;
     }
-    const minutes = Math.round(this.phaseTimeoutMs / 60_000);
-    return `${phase} run exceeded ${minutes} minute${minutes === 1 ? "" : "s"} and was terminated -- likely a hung subprocess`;
+    // Deliberately does NOT claim a hang. The phase watchdog fires on elapsed wall-clock
+    // alone and cannot tell a slow-but-progressing run from a stuck one -- T-0228 was
+    // killed twice as a "likely hung subprocess" while 26/26 of its GPU generations were
+    // succeeding, and that wording is what sent the diagnosis down the wrong path. The
+    // inactivity watchdog above and §23-a's no-progress abort are the hang defences; this
+    // one is a budget ceiling, so it reports the budget and leaves the cause open.
+    const minutes = Math.round(this._phaseTimeoutMsFor(agent) / 60_000);
+    const forAgent = agent ? ` for the ${agent} agent` : "";
+    return `${phase} run exceeded its ${minutes}-minute phase budget${forAgent} and was terminated. This is a budget ceiling, not a diagnosis -- the run may simply need longer than the budget allows. Check the run log for steady output before assuming it was stuck; if the work legitimately needs more time, raise this agent's entry in PHASE_TIMEOUT_MS_BY_AGENT.`;
   }
 
-  /** Synthetic FAIL verdict for an inactivity-timed-out implementer/reviewer phase -- feeds the normal auto-retry loop instead of hard-blocking, since a stdin-hang is a one-off tool-call incident, not evidence the whole attempt is unrecoverable. */
-  _inactivityVerdict(phase) {
-    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity") };
+  /**
+   * Synthetic FAIL verdict for an inactivity-timed-out implementer/reviewer phase -- feeds the
+   * normal auto-retry loop instead of hard-blocking, since a stdin-hang is a one-off tool-call
+   * incident, not evidence the whole attempt is unrecoverable. `synthetic: true` opts this out of
+   * §23-a's no-progress signature comparison (see _runCardInWorktree): its reason text is the
+   * same generic string every time by construction (same phase + same configured timeout), so
+   * treating repeats as "no progress" would defeat the whole point of retrying it -- a stdin-hang
+   * is exactly the kind of flaky, non-reproducible failure that's likely to clear on a plain
+   * retry, unlike a deterministic reviewer FAIL repeating the same finding.
+   */
+  _inactivityVerdict(phase, agent = null) {
+    return { verdict: "FAIL", notes: this._timeoutReason(phase, "inactivity", agent), phase, synthetic: true };
   }
 
   async cancelRun(taskId) {
@@ -815,30 +1545,110 @@ export class RunOrchestrator {
     await this._updateAndBroadcast(taskId, { status: "blocked", body: appendNote(current.body, "Blocked", reason) });
   }
 
-  /** `(run N of MAX)` suffix on every FAIL note -- the attempt-count visibility the auto-retry loop needs on the card. */
-  _failNoteText(verdict, attempt, capped) {
-    const progress = `(run ${attempt} of ${MAX_AUTO_RETRY_ATTEMPTS})`;
-    const capSuffix = capped ? " Auto-retry limit reached -- blocked for human review." : "";
-    return `${verdict.notes}\n\n${progress}${capSuffix}`;
+  /** Delegates to the module-level `effectiveMaxAttempts` -- see its own docstring (T-0370). */
+  _effectiveMaxAttempts(task) {
+    return effectiveMaxAttempts(task);
   }
 
   /**
-   * Records a FAIL verdict. `retrying` (true for every attempt but the last) keeps the card
-   * at `status: "in-progress"` -- the same status a live run shows -- since the auto-retry
-   * loop is about to re-invoke the implementer itself; the final attempt instead moves the
-   * card to `blocked` for a human, with a note explaining the cap was reached.
+   * Records a NEEDS_HUMAN_DECISION verdict (T-0341): parks the card `blocked` -- the same status
+   * every other human-actionable stop uses -- under its own note heading, "Needs Human Decision",
+   * so a human scanning the card can tell this apart at a glance from "Validation: FAIL" (retries
+   * exhausted or no-progress-aborted, see `_failNoteText`) and from "Blocked"/"Run Failed" (a
+   * crash, see `_blocked`/`_crashReason`/`cardLaunch.js`). Never routes through
+   * `_escalateIfGenuineBlocker`: that machinery drafts a blocker report and remediation card for a
+   * genuine bug or environmental blocker, which this deliberately is not -- the reviewer already
+   * named the open question in `verdict.notes`, and a human reading the card is the entire
+   * resolution path, not another auto-retry attempt or an escalation card.
    */
-  async _handleFailValidation(taskId, verdict, attempt, retrying) {
+  async _handleNeedsHumanDecision(taskId, verdict, attempt, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS) {
     const current = await this.store.get(taskId);
     await this._updateAndBroadcast(taskId, {
-      status: retrying ? "in-progress" : "blocked",
-      body: appendNote(current.body, "Validation: FAIL", this._failNoteText(verdict, attempt, !retrying))
+      status: "blocked",
+      body: appendNote(
+        current.body,
+        "Needs Human Decision",
+        `${verdict.notes}\n\n(run ${attempt} of ${maxAttempts}) Reviewer verdict: NEEDS_HUMAN_DECISION -- this is a scope or design question for a human, not a fixable FAIL. Auto-retry loop halted immediately; no further attempt was made.`
+      )
     });
+    await this._recordRoundWithoutDeliverable(taskId);
+  }
+
+  /**
+   * Records that this run's round -- the full re-launch that just settled `blocked`, not the
+   * intra-run `attempts` loop -- ended without a promoted deliverable (T-0344, roundCap.js).
+   * Called exactly once per settled run from the two places a run can end blocked with no
+   * deliverable: `_handleFailValidation`'s stopping branch (exhausted retries or a no-progress
+   * abort) and `_handleNeedsHumanDecision`. Deliberately NOT called from preflight refusals
+   * (`_blocked` for a capability/host-state preflight, a push failure, etc.) -- those never even
+   * started an attempt, so they are not a round in this sense; and NOT called from a retrying
+   * FAIL, which leaves the card `in-progress` for the loop's own next attempt, not settled.
+   *
+   * Composes with the intra-run attempts loop and NEEDS_HUMAN_DECISION without double-counting:
+   * each is a distinct, mutually exclusive way a single run can settle, so each fires this
+   * exactly once per run, and the `round` counter -- unlike `attempts` -- persists across
+   * separate re-launches until a PASS or a human re-scope resets it.
+   */
+  async _recordRoundWithoutDeliverable(taskId) {
+    const current = await this.store.get(taskId);
+    const round = roundsSinceDeliverable(current) + 1;
+    await this._updateAndBroadcast(taskId, { round });
+    if (round >= ROUND_CAP) {
+      await this._appendComment(taskId, "assembled-board", roundCapParkedComment(taskId, round));
+    }
+  }
+
+  /**
+   * `(run N of MAX)` suffix on every FAIL note -- the attempt-count visibility the auto-retry loop
+   * needs on the card. `noProgress` (§23-a) takes priority over the plain cap-reached suffix: it
+   * names the repeated failure signature and states outright that the loop stopped itself early,
+   * not because attempts ran out -- distinct wording from the exhausted-cap case on purpose, so a
+   * human reading the card never has to guess which one happened.
+   */
+  _failNoteText(verdict, attempt, capped, { noProgress = false, signature, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS } = {}) {
+    const progress = `(run ${attempt} of ${maxAttempts})`;
+    let suffix = "";
+    if (noProgress) {
+      suffix =
+        ` Auto-retry loop aborted: no progress -- this attempt's failure signature (${signature}) matches ` +
+        "the previous attempt's. Blocked for human review; retries were not exhausted.";
+    } else if (capped) {
+      suffix = " Auto-retry limit reached -- blocked for human review.";
+    }
+    return `${verdict.notes}\n\n${progress}${suffix}`;
+  }
+
+  /**
+   * Records a FAIL verdict. `retrying` (true for every attempt but the last, and false for a
+   * no-progress abort regardless of attempt count) keeps the card at `status: "in-progress"` --
+   * the same status a live run shows -- since the auto-retry loop is about to re-invoke the
+   * implementer itself; a stopping attempt instead moves the card to `blocked` for a human, with
+   * a note explaining why the loop stopped (cap reached, or no progress -- see `_failNoteText`).
+   */
+  async _handleFailValidation(taskId, verdict, attempt, retrying, { noProgress = false, signature, maxAttempts = MAX_AUTO_RETRY_ATTEMPTS } = {}) {
+    // T-0345: the reviewer's FAIL notes are archived (see verdictArchive.js), not appended to
+    // the body -- appendNote's old unbounded-growth behavior is exactly what fed a monotonically
+    // growing prompt back into every subsequent run and once crashed a run outright (spawn
+    // E2BIG, T-0243).
+    await this.appendVerdictEntryFn(this.tasksDir, taskId, {
+      heading: "Validation: FAIL",
+      timestamp: this.now().toISOString(),
+      text: this._failNoteText(verdict, attempt, !retrying, { noProgress, signature, maxAttempts })
+    });
+    await this._updateAndBroadcast(taskId, { status: retrying ? "in-progress" : "blocked" });
+    if (!retrying) {
+      await this._recordRoundWithoutDeliverable(taskId);
+    }
   }
 
   /**
    * Escalation step, fired once at the exhaustion boundary of the auto-retry loop (the 5th
    * consecutive FAIL that just set the card to `blocked` -- see docs/design/escalation-workflow.md).
+   * Also fires early, before the cap is reached, when the retry loop detects no progress (§23-a):
+   * two consecutive attempts hashed to the identical failure signature (`noProgress`/
+   * `repeatedSignature`, threaded through from `_runCardInWorktree`) -- buildBlockerReport folds
+   * that into the report's `abortReason` so the comment/remediation card name the repeated
+   * signature and say explicitly the loop stopped for no progress, not exhaustion.
    *
    * First checks whether the run(s) failed because of an Anthropic token/usage/weekly/rate limit
    * -- a transient environmental stop, not a genuine blocker -- by scanning every attempt's raw
@@ -848,38 +1658,109 @@ export class RunOrchestrator {
    * Otherwise, deterministically builds a structured blocker report from the reviewer FAIL
    * verdicts the card actually accumulated across its exhausted attempts (blockerReport.js -- no
    * extra `claude` invocation; see that module's docstring for why), appends it to the card as a
-   * comment, then hands off to remediation-card creation: de-dupes against an already-open
-   * remediation card for this same blocked card (escalationRemediation.js), creates a new one in
-   * `ready` status owned by the non-executable `agent: "dispatch"` sentinel when none exists yet
-   * (reusing cardCreation.js's `createCard`, the same direct-to-store path flow-stats
-   * self-improvement uses -- not a live planner agent run, since that would require its own
-   * worktree/branch/PR and could never land a `ready` card on the live board immediately), and
-   * wires the original card's `depends_on` to the remediation card either way (idempotent).
+   * comment, then hands off to remediation-card creation: de-dupes against an already-OPEN
+   * remediation card for this same blocked card (escalationRemediation.js's
+   * `findOpenRemediationCard` -- status, not mere existence, is the dedupe key; see T-0310). A
+   * `done` or especially `retired` remediation card is never re-linked -- retiring it was the
+   * explicit human call that it wasn't the way forward, and reviving it as a live gate would
+   * invert that. When the only matches are closed, a fresh remediation card is created in `ready`
+   * status owned by the non-executable `agent: "dispatch"` sentinel, carrying the *current*
+   * blocker report and naming the most recent closed card it supersedes (reusing cardCreation.js's
+   * `createCard`, the same direct-to-store path flow-stats self-improvement uses -- not a live
+   * planner agent run, since that would require its own worktree/branch/PR and could never land a
+   * `ready` card on the live board immediately). Either way the original card's `depends_on` is
+   * wired to the winning remediation card, with any stale closed-card entry replaced rather than
+   * left alongside it (idempotent).
    *
    * Best-effort end to end: any failure here (a missing store.list in a lightweight caller, a
    * create failure) is caught and logged, never rethrown -- the card is already correctly
    * `blocked` by the time this runs, and escalation is additive, not load-bearing for that.
    */
-  async _escalateIfGenuineBlocker(taskId, attemptRecords, runLog) {
-    try {
-      const allEvents = attemptRecords.flatMap((r) => r.events ?? []);
-      if (eventsContainUsageLimitSignature(allEvents)) {
-        await this._logEscalation(
-          taskId,
-          runLog,
-          "Escalation skipped: usage/rate-limit signature detected in the run output -- treated as a transient stop, card left blocked for a normal later re-run."
-        );
-        return;
-      }
+  async _escalateIfGenuineBlocker(taskId, attemptRecords, runLog, { noProgress = false, repeatedSignature = null } = {}) {
+    const allEvents = attemptRecords.flatMap((r) => r.events ?? []);
+    const usageLimitSignature = usageLimitSignatureForEvents(allEvents);
+    if (usageLimitSignature) {
+      await this._logEscalation(
+        taskId,
+        runLog,
+        `Escalation skipped: usage/rate-limit signature detected in the run output (${usageLimitSignature}) -- treated as a transient stop, card left blocked for a normal later re-run.`
+      );
+      return;
+    }
 
-      const task = await this.store.get(taskId);
-      const report = buildBlockerReport({ task, attemptRecords, attemptCount: attemptRecords.length });
+    const task = await this.store.get(taskId);
+    const report = buildBlockerReport({ task, attemptRecords, attemptCount: attemptRecords.length, noProgress, repeatedSignature });
+    await this._recordBlockerReport(taskId, task, report, runLog, attemptRecords.length);
+  }
+
+  /**
+   * Fires when checkHostStatePreflight (T-0323) finds a known, unresolved host-side blocker
+   * before the implementer is ever even spawned -- the preflight half of the host-action
+   * escalation category (docs/design/host-action-escalation.md). Blocks the card immediately, the
+   * same as checkCapabilityPreflight, then routes through the identical structured-report/
+   * remediation-card machinery `_escalateIfGenuineBlocker` uses at retry exhaustion, via
+   * `_recordBlockerReport` -- the whole point is never spending a single auto-retry attempt on a
+   * wall someone already diagnosed.
+   */
+  async _blockOnHostAction(taskId, task, preflight, runLog) {
+    await this._blocked(taskId, preflight.message);
+    const report = {
+      attempted: `${taskId} (${task.title}) failed host-state preflight before any implementer attempt was spent.`,
+      failureSignature: `Preflight: ${preflight.message}`,
+      lacks: { category: "host-action", detail: preflight.hostAction.reason, hostAction: preflight.hostAction },
+      noProgress: false,
+      repeatedSignature: null,
+      abortReason: "Preflight detected a known, unresolved host-state blocker (knownHostIssues.js) -- no implementer attempt was spent.",
+      preflight: true
+    };
+    await this._recordBlockerReport(taskId, task, report, runLog, 0);
+  }
+
+  /**
+   * Shared tail of both escalation paths (retry-exhaustion `_escalateIfGenuineBlocker` and
+   * preflight `_blockOnHostAction`): appends the structured blocker-report comment, de-dupes
+   * against an already-OPEN remediation card for this same blocked card
+   * (escalationRemediation.js's `findOpenRemediationCard` -- status, not mere existence, is the
+   * dedupe key; see T-0310). A `done` or especially `retired` remediation card is never re-linked
+   * -- retiring it was the explicit human call that it wasn't the way forward, and reviving it as
+   * a live gate would invert that. When the only matches are closed, a fresh remediation card is
+   * created in `ready` status owned by the non-executable `agent: "dispatch"` sentinel, carrying
+   * the *current* blocker report and naming the most recent closed card it supersedes (reusing
+   * cardCreation.js's `createCard`, the same direct-to-store path flow-stats self-improvement uses
+   * -- not a live planner agent run, since that would require its own worktree/branch/PR and could
+   * never land a `ready` card on the live board immediately). Either way the original card's
+   * `depends_on` is wired to the winning remediation card, with any stale closed-card entry
+   * replaced rather than left alongside it (idempotent).
+   *
+   * Best-effort end to end: any failure here (a missing store.list in a lightweight caller, a
+   * create failure) is caught and logged, never rethrown -- the card is already correctly
+   * `blocked` by the time this runs, and escalation is additive, not load-bearing for that.
+   */
+  async _recordBlockerReport(taskId, task, report, runLog, attemptCount) {
+    try {
       await this._appendComment(taskId, "assembled-board", formatBlockerReportComment(report));
 
       const tasks = await this.store.list();
-      let remediation = findExistingRemediationCard(tasks, taskId);
-      if (!remediation) {
-        const fields = draftRemediationCard({ task, report, attemptCount: attemptRecords.length, now: this.now });
+      const priorRemediationCards = findRemediationCardsFor(tasks, taskId);
+      const openRemediation = findOpenRemediationCard(tasks, taskId);
+      let remediation;
+
+      if (openRemediation) {
+        remediation = openRemediation;
+        await this._logEscalation(
+          taskId,
+          runLog,
+          `Escalation: remediation card ${remediation.id} for ${taskId} is still open (status: ${remediation.status}) -- re-linking it, no new card created.`
+        );
+      } else {
+        const priorClosed = findMostRecentClosedRemediationCard(tasks, taskId);
+        const fields = draftRemediationCard({
+          task,
+          report,
+          attemptCount,
+          now: this.now,
+          supersedes: priorClosed ? { id: priorClosed.id, status: priorClosed.status } : null
+        });
         remediation = await this.createCardFn({
           store: this.store,
           idAllocator: this.idAllocator,
@@ -892,20 +1773,32 @@ export class RunOrchestrator {
         await this._logEscalation(
           taskId,
           runLog,
-          `Escalation: created remediation card ${remediation.id} (agent: dispatch) and linked it as a dependency.`
-        );
-      } else {
-        await this._logEscalation(
-          taskId,
-          runLog,
-          `Escalation: remediation card ${remediation.id} already exists for ${taskId} -- skipping creation, ensuring the dependency link.`
+          priorClosed
+            ? `Escalation: prior remediation card ${priorClosed.id} for ${taskId} is ${priorClosed.status} (closed) -- superseded it with new remediation card ${remediation.id} (agent: dispatch) and linked it as the dependency.`
+            : `Escalation: created remediation card ${remediation.id} (agent: dispatch) and linked it as a dependency.`
         );
       }
 
-      await this._linkDependsOn(taskId, remediation.id);
+      await this._linkDependsOn(taskId, remediation.id, priorRemediationCards);
     } catch (err) {
-      console.warn(`Board: escalation failed for ${taskId} (card remains blocked, no report/remediation created):`, err.message);
-      await this._logEscalation(taskId, runLog, `Escalation failed: ${err.message}`).catch(() => {});
+      // Escalation is additive -- the card is already `blocked` by the time this runs -- so a
+      // failure here must not throw and take the run down with it. But it must never be quiet
+      // either: T-0301 was exactly this failure firing repeatedly (the tasks.agent CHECK
+      // rejected the 'dispatch' sentinel, so no remediation card could ever be written) while
+      // the only outward sign was a warn line carrying `err.message` alone. Log the full error
+      // OBJECT at error level so the stack survives -- a bare message is what made this take so
+      // long to place -- and never discard a failure to record the failure.
+      console.error(
+        `Board: escalation failed for ${taskId} (card remains blocked, no report/remediation created):`,
+        err
+      );
+      await this._logEscalation(taskId, runLog, `Escalation failed: ${err.message}`).catch((logErr) => {
+        console.error(
+          `Board: also failed to record the escalation failure for ${taskId} to the run log -- ` +
+            `the original escalation error above is the one that matters:`,
+          logErr
+        );
+      });
     }
   }
 
@@ -915,11 +1808,23 @@ export class RunOrchestrator {
     return this._updateAndBroadcast(taskId, { comments });
   }
 
-  async _linkDependsOn(taskId, dependencyId) {
+  /**
+   * Wires `taskId`'s `depends_on` to `dependencyId`. `staleRemediationCandidates` (any other
+   * remediation cards previously filed against this same `taskId`) is used to drop entries that
+   * point at one of THOSE cards once it's closed -- a card superseding a retired/done remediation
+   * card must replace the stale dependency, never leave the parent depending on it alongside the
+   * new one (T-0310).
+   */
+  async _linkDependsOn(taskId, dependencyId, staleRemediationCandidates = []) {
     const current = await this.store.get(taskId);
     const existing = current.depends_on ?? [];
-    if (existing.includes(dependencyId)) return current;
-    return this._updateAndBroadcast(taskId, { depends_on: [...existing, dependencyId] });
+    const staleClosedIds = new Set(
+      staleRemediationCandidates.filter((card) => card.id !== dependencyId && isClosedRemediationStatus(card.status)).map((card) => card.id)
+    );
+    const next = existing.filter((id) => !staleClosedIds.has(id));
+    if (!next.includes(dependencyId)) next.push(dependencyId);
+    if (next.length === existing.length && next.every((id, i) => id === existing[i])) return current;
+    return this._updateAndBroadcast(taskId, { depends_on: next });
   }
 
   async _logEscalation(taskId, runLog, message) {
@@ -929,6 +1834,9 @@ export class RunOrchestrator {
   }
 
   async _handlePass(taskId, task, worktreeDir, branch, verdict, runLog, reused = false, effectiveAgent = task.agent ?? "generic") {
+    await this._regenerateApprovalLedger(taskId, worktreeDir);
+    await this._promoteEvidence(taskId, worktreeDir);
+
     let commit;
     try {
       await this.git.commitAll({
@@ -939,6 +1847,9 @@ export class RunOrchestrator {
       // (e.g. the implementer amended a commit while fixing an issue) -- force-with-lease it.
       const pushOptions = reused ? { worktreeDir, branch, force: true } : { worktreeDir, branch };
       await this.git.push(pushOptions);
+      // Tells runCard's finally that the work is already on origin, so the terminal-outcome
+      // preservation push below does not repeat it.
+      this._branchPushed.add(taskId);
       commit = await this.git.getHeadCommit({ worktreeDir });
     } catch (err) {
       await this._blocked(taskId, `push to review failed: ${err.message}`);
@@ -947,13 +1858,52 @@ export class RunOrchestrator {
 
     const prUrl = await this._openPullRequest({ taskId, task, worktreeDir, branch, verdict, runLog, commit });
 
+    // Persist the PASS verdict, PR link, commit and branch NOW -- before the develop-sync step
+    // below, which spawns yet another agent process and can fail for reasons that have nothing
+    // to do with whether review itself succeeded. T-0243: a spawn crash inside that step
+    // previously propagated uncaught all the way out of runCard(), discarding an
+    // already-pushed, already-reviewed PASS and a freshly-opened PR with nothing on the card to
+    // show for it -- a human had to read a stack trace out of the journal to learn any of this
+    // had happened. Everything the reviewer actually verified is durable on the card before any
+    // further risk is taken; the develop-sync step below can only ever downgrade this, never
+    // erase it.
+    const preSync = await this.store.get(taskId);
+    // T-0345: archived, not appended to the body -- see _handleFailValidation's note above.
+    await this.appendVerdictEntryFn(this.tasksDir, taskId, {
+      heading: "Validation: PASS",
+      timestamp: this.now().toISOString(),
+      text: verdict.notes
+    });
+    // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
+    // not carrying over how many attempts a previous round of FAILs consumed. It also clears the
+    // round cap (T-0344): a promoted deliverable is exactly what the cap exists to force a human
+    // look-up before, so reaching one resets the count of rounds settled without one.
+    const passPatch = { status: "review", branch, commit, body: preSync.body, attempts: 0, round: 0 };
+    if (prUrl) {
+      passPatch.pr = prUrl;
+      passPatch.body = appendNote(preSync.body, "PR", prUrl);
+    }
+    await this._updateAndBroadcast(taskId, passPatch);
+
     // Every card/flow that ends up with an open PR must keep that branch in sync with
     // origin/develop before it's left for a human -- see _syncBranchWithDevelop's docstring.
     // Scoped to prUrl truthy (a PR actually exists, whether freshly opened or reused) since a
     // card with no PR (gh unavailable, autoOpenPr disabled) has nothing to keep in sync yet.
-    const syncOutcome = prUrl
-      ? await this._syncBranchWithDevelop({ taskId, task, effectiveAgent, worktreeDir, branch, runLog })
-      : { ok: true };
+    //
+    // Wrapped here too, on top of _syncBranchWithDevelop's own internal handling of expected
+    // failure modes: this catches whatever THAT can't anticipate -- most notably a spawn-time
+    // exception thrown straight out of the merge-conflict-resolution phase's runner.start()
+    // call (T-0243's actual failure) -- so it can only ever downgrade the PASS state just
+    // persisted above, never discard it by escaping this method uncaught.
+    let syncOutcome;
+    try {
+      syncOutcome = prUrl
+        ? await this._syncBranchWithDevelop({ taskId, task, effectiveAgent, worktreeDir, branch, runLog })
+        : { ok: true };
+    } catch (err) {
+      await this._abortMergeBestEffort(worktreeDir);
+      syncOutcome = { ok: false, reason: `develop-sync crashed unexpectedly: ${err.message}` };
+    }
 
     if (syncOutcome.skip) {
       // A cancel fired mid conflict-resolution phase -- cancelRun() already finalized the
@@ -967,31 +1917,111 @@ export class RunOrchestrator {
       // best-effort cleanup -- the branch is already pushed, review can proceed regardless
     }
 
-    const current = await this.store.get(taskId);
-    let body = appendNote(current.body, "Validation: PASS", verdict.notes);
-    // PASS clears the auto-retry counter -- the card is starting a clean slate for review,
-    // not carrying over how many attempts a previous round of FAILs consumed.
-    const patch = { status: "review", branch, commit, body, attempts: 0 };
-    if (prUrl) {
-      patch.pr = prUrl;
-      patch.body = appendNote(body, "PR", prUrl);
-    }
-
     if (!syncOutcome.ok) {
       // The PR exists but the branch could not be brought in sync with develop -- surface it
       // explicitly rather than silently settling the card into review with a stale/conflicted
       // branch (see docs/design and the "many cards bounce back stale" motivation for this step).
-      patch.status = "blocked";
-      patch.body = appendNote(patch.body, "Blocked", `develop sync: ${syncOutcome.reason}`);
+      const beforeBlock = await this.store.get(taskId);
+      await this._updateAndBroadcast(taskId, {
+        status: "blocked",
+        body: appendNote(beforeBlock.body, "Blocked", `develop sync: ${syncOutcome.reason}`)
+      });
       await this._appendComment(
         taskId,
         "assembled-board",
         `Merge-develop enforcement could not complete automatically for ${branch}: ${syncOutcome.reason} ` +
           `The PR (${prUrl ?? "n/a"}) is still open but its branch has unresolved conflicts against origin/${this.baseBranch} -- manual resolution required before this card can proceed to review.`
       );
+      return;
     }
 
-    await this._updateAndBroadcast(taskId, patch);
+    // Human direction-approval gate (approvalGate.js, docs/board-invariants.md AP-1/AP-3): a
+    // card flagged `requires_approval` has now produced its artifact and passed review, but
+    // "produced" is not "approved". `review` is already where a PASS settles -- what was
+    // missing is any signal that this particular card is *parked* on a human verdict rather
+    // than waiting on a PR merge, and any record of the verdict when it comes. The comment is
+    // that signal, and it names both exits so a human never has to go looking for the ritual.
+    //
+    // Only reached once the card has actually settled into `review` (develop-sync succeeded,
+    // or never applied) -- a card that ended up `blocked` above has a different, more urgent
+    // thing to say, and is not parked on anything.
+    if (needsApproval(preSync)) {
+      await this._appendComment(taskId, "assembled-board", parkedForApprovalComment(taskId));
+    }
+  }
+
+  /**
+   * Refreshes the committed approval ledger from the live store before this card's branch is
+   * pushed (T-0313) -- see approvalLedgerRegen.js for the write-skip and merge-conflict rules.
+   * `_handlePass` calls this before `commitAll`, so a changed ledger simply rides along in the
+   * same commit; nothing here pushes or commits on its own.
+   *
+   * A failure here (a locked db, a full disk, a malformed existing ledger) must never cost an
+   * otherwise-good PASS: logged loudly and swallowed, same fail-safe posture as
+   * `_abortMergeBestEffort`. The freshness gate in checkApprovalProvenanceDrift.js is what
+   * actually catches a ledger that silently stops getting refreshed.
+   */
+  async _regenerateApprovalLedger(taskId, worktreeDir) {
+    try {
+      const tasks = await this.store.list();
+      const result = await regenerateApprovalLedgerIfChanged({ worktreeDir, tasks });
+      if (result.changed) {
+        console.log(`Board: regenerated approval ledger for ${taskId} (${result.path})`);
+      } else if (result.skipped) {
+        console.error(
+          `Board: approval ledger regeneration skipped for ${taskId} -- live store returned no tasks; ` +
+            `leaving the committed ledger untouched.`
+        );
+      }
+    } catch (err) {
+      console.error(`Board: approval ledger regeneration failed for ${taskId}, pushing without it: ${err.message}`);
+    }
+  }
+
+  /**
+   * Commits an asset run's decisive attempt frames into `docs/assets/evidence/<card>/` from
+   * inside this card's own worktree, before `commitAll` below -- so the promoted files ride the
+   * same commit/PR and survive `removeWorktree` a few lines further down `_handlePass` (T-0314;
+   * see evidencePromotion.js and docs/assets/evidence-promotion.md). Runs unconditionally on
+   * every PASS rather than only for cards assigned to `assets`/`audio`: discovery itself is
+   * already the cheap no-op for every other card (no `ARM_*_ATTEMPT_LOG_*.md` anywhere under
+   * `assets/src/` and no `assets/out/` tree to find), so gating on `task.agent` would only add a second thing that
+   * could drift out of sync with the discovery convention.
+   *
+   * Best-effort, matching `_regenerateApprovalLedger`'s posture immediately above: a discovery or
+   * copy failure (a locked file, a full disk, a malformed log) is logged and swallowed rather
+   * than costing an otherwise-good PASS -- evidence that fails to promote is exactly the T-0272
+   * data loss this exists to prevent, not a reason to add a new one.
+   */
+  async _promoteEvidence(taskId, worktreeDir) {
+    try {
+      const result = await promoteEvidenceForCard({ repoRoot: worktreeDir, cardId: taskId });
+      if (result.promoted.length > 0) {
+        console.log(
+          `Board: promoted ${result.promoted.length} evidence frame(s) for ${taskId} into ${path.relative(worktreeDir, result.evidenceDir)}`
+        );
+      }
+    } catch (err) {
+      console.error(`Board: evidence promotion failed for ${taskId}, continuing without it: ${err.message}`);
+    }
+  }
+
+  /**
+   * Best-effort `git merge --abort` for a worktree a crashed/timed-out merge-conflict-resolution
+   * phase may have left mid-merge (T-0291: `_syncBranchWithDevelop`'s own crash/timeout branches,
+   * and `_handlePass`'s outer catch for a failure that escapes it entirely). Swallows its own
+   * failure -- there may be nothing to abort (the crash happened before `mergeDevelop` ever ran),
+   * and either way the failure is already being recorded on the card by the caller; this is
+   * purely additional cleanup, never the only thing standing between a human and a silent
+   * conflict.
+   */
+  async _abortMergeBestEffort(worktreeDir) {
+    if (typeof this.git.abortMerge !== "function") return;
+    try {
+      await this.git.abortMerge({ worktreeDir });
+    } catch {
+      // Nothing to abort, or git itself unreachable -- best-effort, see docstring.
+    }
   }
 
   /**
@@ -1063,6 +2093,7 @@ export class RunOrchestrator {
       taskId,
       task,
       phase: "merge-conflict",
+      agent: effectiveAgent,
       prompt,
       allowedTools,
       worktreeDir,
@@ -1074,11 +2105,34 @@ export class RunOrchestrator {
       return { ok: true, skip: true };
     }
     if (result.timedOut) {
-      return { ok: false, reason: `${effectiveAgent} agent's ${this._timeoutReason("merge-conflict resolution", result.timeoutKind)}` };
+      // The phase never got a chance to finish resolving -- clean the mid-merge state
+      // (MERGE_HEAD/conflict markers) back up rather than leaving it on disk indefinitely
+      // (T-0291/T-0243). Best-effort: the failure is recorded on the card either way below.
+      await this._abortMergeBestEffort(worktreeDir);
+      return { ok: false, reason: `${effectiveAgent} agent's ${this._timeoutReason("merge-conflict resolution", result.timeoutKind, effectiveAgent)}` };
     }
     if (result.exitCode !== 0) {
+      // Same reasoning as the timeout branch above -- a crashed (or never-spawned, e.g.
+      // spawn E2BIG) resolution phase leaves nothing behind that's safe to keep mid-merge.
+      await this._abortMergeBestEffort(worktreeDir);
       return { ok: false, reason: `${effectiveAgent} agent's ${this._crashReason("merge-conflict resolution", result)}` };
     }
+
+    // T-0367: the merge-conflict phase ran to completion, same classification the
+    // implementer/reviewer/planner phases already record right after their own `_runPhase`
+    // call -- this is the phase's OWN process finishing cleanly, not yet the business-level
+    // "did it actually resolve everything" verdict checked below. Keyed at attempt 0, same as
+    // the planner: it runs once per develop-sync, outside the implementer/reviewer retry loop.
+    // Fire-and-forget, same reasoning as every other phase's own record.
+    void this._recordUsage(taskId, {
+      attempt: 0,
+      phase: "merge-conflict",
+      invocationId: result.invocationId,
+      events: result.events,
+      outcome: eventsContainUsageLimitSignature(result.events) ? "quota_stop" : "success",
+      complete: true,
+      sourceLogPath: runLog.path
+    });
 
     const stillUnresolved = await this.git.mergeStatus({ worktreeDir });
     const dirty = await this.git.hasUncommittedChanges({ worktreeDir });

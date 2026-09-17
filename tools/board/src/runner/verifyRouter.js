@@ -1,5 +1,15 @@
+import { CHARACTER_GATE_CLI_ARGS } from "../lib/characterGateCommand.js";
+
 const TASKS_PREFIX = "tasks/";
 const BOARD_PREFIX = "tools/board/";
+/**
+ * T-0303: a `.claude/agents/*.md` grant edit is only checked by code living under
+ * `tools/board/` (npmGrantAmbiguity.js et al.), so a diff that touches an agent definition but
+ * nothing else under `tools/board/**` must still trigger the board suite -- otherwise a card
+ * that only edits an agent's `tools:` line (exactly the T-0295 shape: a grant added without
+ * touching any other board file) gets no automated check on it at all.
+ */
+const AGENTS_PREFIX = ".claude/agents/";
 
 /**
  * Wall-clock bound (in seconds, for the `timeout` coreutil) on a single headless Godot test
@@ -75,7 +85,9 @@ const PYTHON_PACKAGE_ROOTS = [
   "tools/sim/",
   "assets/src/audio/",
   "assets/src/lora/",
-  "assets/src/tiles/"
+  "assets/src/tiles/",
+  "assets/src/ambience_synth/",
+  "assets/src/character/"
 ];
 
 function detectChangedGodotTests(changedPaths) {
@@ -85,6 +97,90 @@ function detectChangedGodotTests(changedPaths) {
     if (match) matches.push({ path, fileName: match[1] });
   }
   return matches.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * Directories where the `assets`/`audio` agents commit a real, shareable deliverable, per their
+ * own `.claude/agents/{assets,audio}.md` conventions: `assets/final/**` (curated finals,
+ * including `assets/final/audio/**`) and `assets/src/concept/**` / `assets/src/keyart/**`
+ * (concept sheets and key art -- human-reviewed pipeline deliverables in their own right, see
+ * `docs/design/13-asset-pipeline.md` §6.8-6.11, not "final" but still real produced files).
+ * A new or changed file with one of these extensions under one of these prefixes is a real
+ * produced artifact regardless of what the card's own `deliverable_type` frontmatter claims --
+ * the mechanical backstop for the observed failure mode where several art/audio cards
+ * (character sheets T-0198-T-0200, concept art T-0209-T-0211, an ambience bed T-0202) were
+ * committed straight to the repo tagged `deliverable_type: "code"` and never attached, so the
+ * plain `deliverable_type`-gated route below never even fired for them.
+ */
+const ARTIFACT_PRODUCING_PREFIXES = ["assets/final/", "assets/src/concept/", "assets/src/keyart/"];
+const ARTIFACT_FILE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".ogg", ".wav", ".mp3", ".flac"]);
+
+function touchesArtifactProducingPath(changedPaths) {
+  return changedPaths.some((changedPath) => {
+    if (!ARTIFACT_PRODUCING_PREFIXES.some((prefix) => changedPath.startsWith(prefix))) return false;
+    const dot = changedPath.lastIndexOf(".");
+    const ext = dot === -1 ? "" : changedPath.slice(dot).toLowerCase();
+    return ARTIFACT_FILE_EXTENSIONS.has(ext);
+  });
+}
+
+/**
+ * A committed batch-fetch reference summary (T-0282) -- `assets/src/reference/<slug>-summary.md`,
+ * never `assets/src/reference/quarantine/**` (gitignored, never part of a diff) and never some
+ * other markdown file under the same directory (a README, a design note).
+ */
+const REFERENCE_BATCH_SUMMARY_RE = /^assets\/src\/reference\/[^/]+-summary\.md$/;
+
+function detectReferenceBatchSummaryPaths(changedPaths) {
+  return changedPaths.filter((changedPath) => REFERENCE_BATCH_SUMMARY_RE.test(changedPath));
+}
+
+/**
+ * A committed machine-readable frame-delta gate report (T-0349) --
+ * `*.gate_report.json` anywhere in the diff. Deliberately not scoped to a
+ * single directory (unlike `REFERENCE_BATCH_SUMMARY_RE`): the gate is run
+ * against whichever sheet a card touches, and the report always sits next
+ * to that sheet under `assets/final/**`, so matching on the suffix alone is
+ * both sufficient and simpler than re-deriving the sheet's own path prefix
+ * rules here.
+ */
+function detectGateReportPaths(changedPaths) {
+  return changedPaths.filter((changedPath) => changedPath.endsWith(".gate_report.json"));
+}
+
+/**
+ * T-0357: the character asset-gate's own enforcement source -- changing any
+ * of these can change what `character-gate` decides, so a diff touching one
+ * must run it, not just the generic pytest/ruff pass `python-verify` already
+ * gives every file under `tools/asset-gate/**`. Scoped to these specific
+ * files (not the whole package) so an unrelated change elsewhere in
+ * `tools/asset-gate` -- e.g. `checks/loudness.py`, the audio gate -- doesn't
+ * pay for a second venv build and CLI run it has no bearing on.
+ */
+const CHARACTER_GATE_SOURCE_FILES = new Set([
+  "tools/asset-gate/src/asset_gate/character.py",
+  "tools/asset-gate/src/asset_gate/cli.py",
+  "tools/asset-gate/src/asset_gate/art.py",
+  "tools/asset-gate/src/asset_gate/character_arm_c_baseline.txt",
+  "tools/asset-gate/src/asset_gate/character_motion_class_baseline.txt"
+]);
+
+/**
+ * T-0357: the actual enforcement inputs under `assets/final/character/**` --
+ * a sidecar or the sheet it describes. Deliberately excludes
+ * `*.gate_report.json` (that's `gate-report-pointer`'s own route, a
+ * point-in-time report for a reviewer to read, not the enforcement path
+ * itself) and any other file under the same directory.
+ */
+function touchesCharacterGateAsset(changedPath) {
+  if (!changedPath.startsWith("assets/final/character/")) return false;
+  return changedPath.endsWith(".provenance.json") || changedPath.endsWith(".png");
+}
+
+function touchesCharacterGateInputs(changedPaths) {
+  return changedPaths.some(
+    (p) => CHARACTER_GATE_SOURCE_FILES.has(p) || touchesCharacterGateAsset(p)
+  );
 }
 
 function detectPythonPackageRoots(changedPaths) {
@@ -107,8 +203,11 @@ function detectPythonPackageRoots(changedPaths) {
  * (tasks/**) runs the backlog validator AND the planner diff guard (catches
  * a card's `status` changing or a card file being deleted -- the two
  * invariants `.claude/agents/planner.md` promises but a reviewer reading
- * prose can miss); a board diff (tools/board/**) runs the board's own
- * test/lint suite; a diff touching a Python package (see
+ * prose can miss); a board diff (tools/board/**), OR a diff touching any
+ * `.claude/agents/*.md` agent definition (grant scoping is checked by code
+ * living under tools/board/, so an agent-file-only diff must run it too --
+ * T-0303), runs the board's own test/lint suite; a diff touching a Python
+ * package (see
  * `PYTHON_PACKAGE_ROOTS`) runs a per-package `python-verify` step --
  * refresh the package's `.venv`, `pip install -e ".[dev]"`, then `pytest`
  * and `ruff check .` from that package's directory -- so the reviewer
@@ -130,14 +229,35 @@ function detectPythonPackageRoots(changedPaths) {
  * only, not every `client/**` diff -- there's no reliable way to infer which existing tests
  * cover an arbitrary changed scene/GDExtension source file from the diff alone, and running the
  * wrong ones would say nothing about what was actually changed (see this module's own docstring
- * principle at the top of the `verify` skill). A diff touching several of these routes at once
- * returns all of them, one route per package/test for a multi-match diff. Diffs outside all of
- * these prefixes (client/** godot-cpp, etc.) return no routes here -- their verification stays
- * qualitatively described by the `verify` skill's table, unchanged.
+ * principle at the top of the `verify` skill). A diff touching `assets/src/reference/*-summary.md`
+ * (a committed batch-fetch reference summary, T-0282) runs `checkReferenceBatchSummary.js` against
+ * every such file in the diff -- the mechanical backstop for T-0281, where a committed summary
+ * recorded sha256/licence/retrievedAt for each kept image but not the `assetId`/`sourceUrl` that
+ * let a human re-verify the licence claim after the gitignored quarantine directory backing it was
+ * reclaimed with the worktree. A diff touching a committed `*.gate_report.json` (T-0349, the
+ * machine-readable frame-delta gate report) runs `gate-report-pointer`: `cat` every such file so the
+ * reviewer's own required-verification output already contains the gate's own `grid`/per-frame
+ * numbers, closing the T-0259 gap where reviewers hand-re-derived pixel-delta ratios from the sheet
+ * image and did not always agree (one measurement on the wrong grid gave 1.29x where the true value
+ * on the 4x2 grid is 5.3077x). A diff touching the character asset-gate's own source
+ * (`character.py`/`cli.py`/`art.py`/either baseline exemption file) or a character sheet's
+ * provenance sidecar/PNG under `assets/final/character/**` runs `character-gate-verify` (T-0357):
+ * `asset_gate.cli character-gate` -- CHR-1 presence, the idle frame-delta cap, a validated
+ * `motion_class` declaration, and pixel-recomputed motion fidelity, all in one sweep. Built from
+ * the same `CHARACTER_GATE_CLI_ARGS` constant (`lib/characterGateCommand.js`) `ci-asset-gate.yml`'s
+ * `character-gate` job embeds verbatim, so the two enforcement paths cannot silently drift apart
+ * the way `character-motion-fidelity-sweep` did before this card -- implemented and unit-tested,
+ * but invoked by no workflow and no reviewer route at all (Codex review 2026-09-11 finding 1). A
+ * diff touching several of these routes at once returns all of
+ * them, one route per package/test for a multi-match diff. Diffs outside all of these prefixes
+ * (client/** godot-cpp, etc.) return no routes here -- their verification stays qualitatively
+ * described by the `verify` skill's table, unchanged.
  */
 export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" } = {}) {
   const touchesTasks = changedPaths.some((p) => p.startsWith(TASKS_PREFIX));
-  const touchesBoard = changedPaths.some((p) => p.startsWith(BOARD_PREFIX));
+  const touchesBoard = changedPaths.some(
+    (p) => p.startsWith(BOARD_PREFIX) || p.startsWith(AGENTS_PREFIX)
+  );
   const pythonRoots = detectPythonPackageRoots(changedPaths);
   const godotTests = detectChangedGodotTests(changedPaths);
 
@@ -158,7 +278,23 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
     routes.push({
       id: "board-suite",
       label: "Board test/lint suite",
-      command: "npm test && npx eslint . (run from tools/board)"
+      command: "cd tools/board && npm test && npx eslint ."
+    });
+  }
+  const referenceBatchSummaries = detectReferenceBatchSummaryPaths(changedPaths);
+  if (referenceBatchSummaries.length > 0) {
+    routes.push({
+      id: "reference-batch-summary-provenance",
+      label: "Reference batch-fetch summary provenance check (assetId/sourceUrl per kept image)",
+      command: `node tools/board/scripts/checkReferenceBatchSummary.js ${referenceBatchSummaries.join(" ")}`
+    });
+  }
+  const gateReportPaths = detectGateReportPaths(changedPaths);
+  if (gateReportPaths.length > 0) {
+    routes.push({
+      id: "gate-report-pointer",
+      label: "Committed gate report(s) -- read grid/per-frame numbers here, do not re-derive by hand",
+      command: `cat ${gateReportPaths.join(" ")}`
     });
   }
   if (touchesServerRoots(changedPaths)) {
@@ -189,6 +325,18 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
         `.venv/bin/pytest && .venv/bin/ruff check --fix . && .venv/bin/ruff check .`
     });
   }
+  if (touchesCharacterGateInputs(changedPaths)) {
+    routes.push({
+      id: "character-gate-verify",
+      label:
+        "Character gate (T-0357 authoritative validator -- CHR-1, idle frame-delta cap, " +
+        "motion-class declaration, pixel-recomputed motion fidelity; same command CI runs)",
+      command:
+        "cd tools/asset-gate && python3 -m venv .venv && " +
+        '.venv/bin/pip install -e ".[dev]" && ' +
+        `.venv/bin/python -m ${CHARACTER_GATE_CLI_ARGS}`
+    });
+  }
   for (const { path, fileName } of godotTests) {
     routes.push({
       id: `client-godot-verify:${path}`,
@@ -211,14 +359,31 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
  * failure mode -- an uploader CLI shipped with fully mocked tests, nothing
  * ever actually fetched or attached, and nothing in VALIDATION at the time
  * checked for the attachment itself.
+ *
+ * Also fires when `deliverable_type` is anything else (the default,
+ * "code") but `changedPaths` shows the diff adding/updating a file under
+ * `touchesArtifactProducingPath`'s known artifact directories -- a
+ * mechanical backstop for the observed pattern of the card's own
+ * `deliverable_type` field being set wrong (see this module's
+ * `ARTIFACT_PRODUCING_PREFIXES` docstring). In that diff-triggered case the
+ * generated command carries `--require-artifact`, telling
+ * `checkDeliverable.js` to treat the card as artifact-deliverable even
+ * though its own frontmatter says "code"; when `deliverable_type` is
+ * already "artifact" the flag is omitted since it would be a no-op.
  */
-export function resolveDeliverableRoute(task) {
-  if (!task || task.deliverable_type !== "artifact") {
+export function resolveDeliverableRoute(task, changedPaths = []) {
+  if (!task) {
     return null;
   }
+  const declaredArtifact = task.deliverable_type === "artifact";
+  const diffProducesArtifact = touchesArtifactProducingPath(changedPaths);
+  if (!declaredArtifact && !diffProducesArtifact) {
+    return null;
+  }
+  const forceFlag = declaredArtifact ? "" : " --require-artifact";
   return {
     id: "deliverable-check",
     label: `Deliverable artifact check (${task.id})`,
-    command: `node tools/board/scripts/checkDeliverable.js ${task.id}`
+    command: `node tools/board/scripts/checkDeliverable.js ${task.id}${forceFlag}`
   };
 }

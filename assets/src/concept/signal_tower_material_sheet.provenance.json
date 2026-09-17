@@ -11,7 +11,9 @@
   "height": 1024,
   "workflow_hash": "c2e72bba6601b0bb351d7b2d212628d576f2a6c32f72f109756d8d20c181409d",
   "prompt_id": "e04e18d1-c46d-4a05-ac90-3e88d6288af2",
-  "concept_hash": "61de4b16d30b8b61edc33109a4007ade5453565a183a67d195184371a8c13540",
+  "concept_hash": "9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460",
   "denoise": 0.9,
-  "conditioning_source": "assets/src/concept/signal_tower_material_template.png"
+  "conditioning_source": "assets/src/concept/signal_tower_material_template.png",
+  "generator": "assets/src/concept/signal_tower_material_sheet.recipe.json",
+  "_t0226_fix": "concept_hash previously held the sha256 of the conditioning_source template (61de4b16...), not the output sheet -- corrected to the actual sha256 of signal_tower_material_sheet.png, matching the value already cited by DL-15 and ASSET_PROVENANCE.md's palette_lineage field."
 }

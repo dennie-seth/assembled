@@ -1,0 +1,50 @@
+name: ci-concept-gate
+
+# The concept-sheet / prop-pack artifact gates in assets/src/concept/tests ran
+# in NO workflow until this file existed, so a real legibility regression
+# (T-0221's regenerated cover props coming out darker than the hiding-spot
+# props) sat green on develop. These are artifact gates like tools/asset-gate's
+# -- they assert on committed PNGs and their provenance sidecars -- so they run
+# on the same trigger surface: any change under assets/**.
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "assets/**"
+      - ".github/workflows/ci-concept-gate.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "assets/**"
+      - ".github/workflows/ci-concept-gate.yml"
+
+concurrency:
+  group: ci-concept-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: assets/src/concept
+
+jobs:
+  lint-test:
+    name: lint, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      - run: ruff check .
+
+      # Covers every concept artifact gate: player + entity + signal_tower
+      # concept sheets and the T-0201/T-0221 prop pack.  The xfail on the
+      # cover-vs-hiding 16px luminance gate was removed by T-0223 (decoder
+      # was mis-measuring, locker re-tuned to be correctly dark).  All tests
+      # are now fully enforced.
+      - run: pytest -q

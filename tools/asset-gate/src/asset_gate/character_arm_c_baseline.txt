@@ -1,0 +1,50 @@
+# Documented pre-existing CHR-1 gaps for the character Arm-C provenance sweep
+# (docs/board-invariants.md CHR-1, DL-25/PR #287, T-0258 item 5 option (b)).
+#
+# Paths are relative to the assets/final/ root, forward slashes.
+#
+# CHR-1 requires every character-generation output to record both its own
+# frame_delta_range and its Arm-C benchmark comparison (arm_c_benchmark +
+# beats_arm_c_benchmark). These 15 sidecars were committed before CHR-1
+# existed and are NOT backfilled by T-0258 -- a frame-delta that was never
+# measured must not be invented. This list is expected to shrink to ZERO as
+# each sheet is regenerated (picking up the fields on merit through
+# comfy_client.provenance_sidecar.apply_arm_c_benchmark_fields) or has its
+# CHR-1 fields genuinely backfilled by a dedicated follow-up card.
+#
+# Do NOT add a new entry here to silence a fresh violation, and do NOT add
+# any of the three round-2 arms below -- they record both fields on merit
+# and must never acquire an exemption:
+#   character/player_idle_sheet_pose_authority_T0249.provenance.json
+#   character/player_idle_sheet_chained_T0250.provenance.json
+#   character/player_idle_sheet_hybrid_T0252.provenance.json
+
+# ---------------------------------------------------------------------------
+# Round-1 bake-off arms (T-0228/T-0229/T-0230): record frame-delta alone, no
+# Arm-C comparison. Arm C (T-0230) IS the benchmark itself -- comparing it
+# against its own range was never meaningful, but the field was never added
+# either; it falls under this same historical-gap decision like any other.
+# ---------------------------------------------------------------------------
+character/player_idle_sheet_arm_a_T0228.provenance.json
+character/player_idle_sheet_arm_b_T0229.provenance.json
+character/player_idle_sheet_arm_c_T0230.provenance.json
+
+# ---------------------------------------------------------------------------
+# T-0198/T-0199/T-0218 sheets and the T-0252 hybrid source frame: record
+# neither field. The hybrid source frame is a single generated frame (no
+# adjacent-cell pairs of its own to measure a frame-delta from) rather than
+# an assembled sheet -- CHR-1 applies to the assembled sheet it feeds
+# (player_idle_sheet_hybrid_T0252, which DOES record both fields on merit).
+# ---------------------------------------------------------------------------
+character/player_crouch_hide_sheet_v1.provenance.json
+character/player_crouch_hide_sheet_v2.provenance.json
+character/player_die_sheet_v1.provenance.json
+character/player_die_sheet_v2.provenance.json
+character/player_idle_frame_hybrid_source_T0252.provenance.json
+character/player_idle_sheet_sdxl_T0218.provenance.json
+character/player_idle_sheet_stage3_sdxl_T0218.provenance.json
+character/player_idle_sheet_v1.provenance.json
+character/player_idle_sheet_v2.provenance.json
+character/player_move_sheet_v1.provenance.json
+character/player_move_sheet_v2.provenance.json
+character/pose_grid_stage3_T0218.provenance.json

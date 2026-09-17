@@ -15,7 +15,13 @@ import { RunOrchestrator } from "../runner/runOrchestrator.js";
 import { ClaudeCliRunner } from "../runner/claudeCliRunner.js";
 import { createRestartCoordinator } from "../runner/serviceRestart.js";
 import { createOrphanReaper } from "../runner/orphanReaper.js";
+import { acquireBoardOwnership, boardOwnerLockPath } from "../runner/boardOwnership.js";
+import { createRunAwareTaskStore } from "../lib/runAwareTaskStore.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
+import { createAutoPullPoller } from "../runner/autoPullPoller.js";
+import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
+import { drainPendingUsageWrites } from "../runner/usageLedger.js";
+import { reconcileReservationsOnStartup } from "../runner/launchReservation.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -31,6 +37,35 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
  * board to "db" is a deliberate BOARD_TASK_STORE env change at deploy time, not something this
  * function decides on its own.
  */
+/**
+ * Best-effort drain of any usage-ledger write still in flight when the board shuts down (T-0367
+ * fix round 3, 2026-09-12). Before this, only `RunOrchestrator.runCard()`'s own `finally` drained
+ * pending writes -- there was no call site at all for an actual board-process shutdown, so a
+ * terminal write dispatched fire-and-forget (`void this._recordUsage(...)`) could be lost mid-write
+ * on exactly the quota-stop/crash/restart shutdowns this ticket exists to measure. Bounded by
+ * `timeoutMs` so a hung or merely slow drain can never hold up the rest of shutdown past systemd's
+ * stop timeout; a timeout or a rejection is logged and swallowed here, never thrown -- this is
+ * instrumentation, and it must never block or fail shutdown, or change any card's verdict.
+ */
+async function drainUsageWritesBestEffort({ drainPendingUsageWritesFn, timeoutMs }) {
+  let timer;
+  const timedOut = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("timed-out"), timeoutMs);
+  });
+  try {
+    const outcome = await Promise.race([drainPendingUsageWritesFn().then(() => "drained"), timedOut]);
+    if (outcome === "timed-out") {
+      console.warn(
+        `Board: usage-ledger drain exceeded ${timeoutMs}ms on shutdown -- continuing without waiting further.`
+      );
+    }
+  } catch (err) {
+    console.warn("Board: usage-ledger drain failed on shutdown (ignoring):", err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function createTaskStoreAndAllocator({ tasksDir, taskStoreKind }) {
   if (taskStoreKind === "fs") {
     return { store: new FsTaskStore(tasksDir), idAllocator: new IdAllocator(tasksDir), db: null };
@@ -46,7 +81,11 @@ export async function startBoardServer({
   tasksDir,
   port = 0,
   host = "127.0.0.1",
-  taskStoreKind = process.env.BOARD_TASK_STORE || "fs"
+  taskStoreKind = process.env.BOARD_TASK_STORE || "fs",
+  // Injectable for tests only (a hung/rejecting drain, a short bound); production always gets the
+  // real drainPendingUsageWrites and a bound comfortably inside systemd's 90s final-SIGTERM timeout.
+  drainPendingUsageWritesFn = drainPendingUsageWrites,
+  usageDrainTimeoutMs = Number(process.env.BOARD_USAGE_DRAIN_TIMEOUT_MS) || 3000
 }) {
   if (host !== "127.0.0.1") {
     throw new Error("Board server must bind to 127.0.0.1 only");
@@ -77,14 +116,39 @@ export async function startBoardServer({
     idAllocator,
     onIdle: () => restartCoordinator.notifyIdle()
   });
-  const orphanReaper = createOrphanReaper({
+  // Store-boundary transition validation -- review item #5 (§2.3). Ownership is a CAPABILITY:
+  // the orchestrator above keeps the raw `store` and so may write any status for the runs it
+  // owns; every other consumer below gets this guarded view, which refuses a `blocked` write to
+  // a card the orchestrator is actively tracking. Liveness is read at write time from the same
+  // `activeCardIds` set the reaper already shares by reference, so it stays authoritative as
+  // runs start and finish. This needs no change to runOrchestrator.js.
+  const guardedStore = createRunAwareTaskStore({
     store,
+    isRunLive: (taskId) => orchestrator.activeCardIds.has(taskId)
+  });
+
+  // Cross-process reaping guard. `guardedStore` and the reaper's own ownership check both read
+  // THIS process's `activeCardIds`, so neither can see a second board instance bound to the same
+  // database -- which is precisely what reaped six live cards on 2026-09-04, when an agent's
+  // `npx vitest` inherited BOARD_TASK_STORE=db and every test that built a server ran
+  // reapOnStartup against the live DB. Only the lock holder gets the authority to declare
+  // someone else's run dead; everything else this server does is unaffected. See
+  // boardOwnership.js. In fs mode the tasks directory is already per-checkout, so the lock is
+  // keyed on it rather than on a database path.
+  const boardIdentityPath = taskStoreKind === "db" ? resolveDbPath() : path.join(tasksDir, ".board");
+  const ownership = await acquireBoardOwnership({ lockPath: boardOwnerLockPath(boardIdentityPath) });
+
+  const orphanReaper = createOrphanReaper({
+    store: guardedStore,
     hub,
     activeCardIds: orchestrator.activeCardIds,
     runsDir: path.join(tasksDir, ".runs"),
     repoRoot: REPO_ROOT,
     tasksDir,
-    taskStoreKind
+    taskStoreKind,
+    // Ownership gates reaping only -- `enabled` already carries the ORPHAN_RECOVERY env switch,
+    // and a non-owner keeps every other server capability.
+    owned: ownership.owned
   });
   const selfImprovementLoop = createSelfImprovementLoop({
     store,
@@ -93,6 +157,24 @@ export async function startBoardServer({
     tasksDir,
     taskStoreKind,
     hub
+  });
+  // Companion to the Done-triggered pull in httpApi.js's handlePatchTask: closes the gap where
+  // an idle board with no card reaching Done never catches up to origin/develop (see
+  // docs/board-invariants.md). Reuses the same restartCoordinator/orchestrator.hasActiveRuns()
+  // idle-guard as the Done path -- see autoPullPoller.js's docstring for the tick semantics.
+  const autoPullPoller = createAutoPullPoller({
+    repoRoot: REPO_ROOT,
+    orchestrator,
+    restartCoordinator
+  });
+  // Starts at most one ready card per tick when the board is idle and Claude usage is below
+  // threshold -- the in-process replacement for an external scheduler that could not reach the
+  // board. Default OFF (AUTO_LAUNCH_ENABLED), so deploying this does not switch it on; see
+  // autoLaunchPoller.js's docstring for the gate order and DEPLOY.md for the env vars.
+  const autoLaunchPoller = createAutoLaunchPoller({
+    store,
+    orchestrator,
+    runsDir: path.join(tasksDir, ".runs")
   });
 
   if (watcher) {
@@ -132,12 +214,34 @@ export async function startBoardServer({
     }
   });
 
-  // A fresh process has zero active runs by definition, so any card still sitting at
-  // in-progress/validation here belongs to a run that died with the previous process --
-  // reap those before anything else touches the store.
+  // A fresh process has zero *tracked* active runs by definition, but a card sitting at
+  // in-progress/validation here may still have a genuinely live child process behind it (see
+  // orphanReaper.js's own docstring -- a detached `claude` child survives a board restart with
+  // the same pid). reapOnStartup applies the same pid/run-log liveness check sweepOnce does
+  // before resetting anything, and only reaps what it can't corroborate as still alive.
   await orphanReaper.reapOnStartup();
   orphanReaper.start();
+  // WIP gate T-D (spec §5): releases a launch-boundary reservation left dangling by a crash or
+  // an ungraceful restart. Runs AFTER the reaper above so it reconciles against each card's
+  // already-corrected status -- a card the reaper just reset from in-progress to blocked must
+  // have its stranded reservation released too, not left counted as still-unspent forever.
+  // Gated on the same cross-process ownership as the reaper (see its own docstring): a
+  // non-owner process reads a different runs directory and must never release another live
+  // board's reservations.
+  if (ownership.owned) {
+    // reconcileReservationsOnStartup already tolerates an unreadable/malformed lease file or an
+    // unlistable reservation directory internally (T-0370 follow-up) -- this try/catch is a
+    // backstop for anything else that call could still throw (e.g. a release write failing), so
+    // that reservation reconciliation can never be the reason a board process fails to start.
+    try {
+      await reconcileReservationsOnStartup({ runsDir: path.join(tasksDir, ".runs"), store: guardedStore });
+    } catch (err) {
+      console.error(`launch-reservation: startup reconciliation failed -- continuing startup: ${err.message}`);
+    }
+  }
   selfImprovementLoop.start();
+  autoPullPoller.start();
+  autoLaunchPoller.start();
 
   if (watcher) {
     await watcher.start();
@@ -158,12 +262,19 @@ export async function startBoardServer({
     restartCoordinator,
     orphanReaper,
     selfImprovementLoop,
+    autoPullPoller,
+    autoLaunchPoller,
     async close() {
+      autoLaunchPoller.stop();
+      autoPullPoller.stop();
       selfImprovementLoop.stop();
       orphanReaper.stop();
       hub.close();
       ptyBridge.close();
       if (watcher) await watcher.close();
+      // Drain BEFORE the server/db close -- a terminal usage-ledger write racing shutdown must
+      // land on disk while the process is still able to do I/O, not after.
+      await drainUsageWritesBestEffort({ drainPendingUsageWritesFn, timeoutMs: usageDrainTimeoutMs });
       await new Promise((resolve) => server.close(resolve));
       if (db) db.close();
     }

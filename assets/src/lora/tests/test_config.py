@@ -191,3 +191,24 @@ def test_config_network_rank_reasonable(config: TrainingConfig):
 
 def test_config_learning_rate_in_reasonable_range(config: TrainingConfig):
     assert 1e-6 <= config.learning_rate <= 1e-2
+
+
+# Resumability (T-0237 / Arm B). Training runs ~117 minutes; without per-epoch
+# checkpoints a run cut short discards all of it and restarts at step 0, which is
+# exactly what happened to T-0229. Defaulting to 1 makes every LoRA run resumable
+# rather than leaving it to each card's config to remember.
+class TestSaveEveryNEpochs:
+    def test_defaults_to_every_epoch(self):
+        assert _make_config().save_every_n_epochs == 1
+
+    def test_honours_an_explicit_value(self):
+        assert _make_config(save_every_n_epochs=2).save_every_n_epochs == 2
+
+    def test_rejects_zero_or_negative(self):
+        for bad in (0, -1):
+            with pytest.raises(ValueError, match="save_every_n_epochs"):
+                _make_config(save_every_n_epochs=bad)
+
+    def test_the_committed_config_loads_with_a_usable_cadence(self, config: TrainingConfig):
+        # Real committed config: either it sets the key, or the default applies.
+        assert config.save_every_n_epochs >= 1

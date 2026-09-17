@@ -1,0 +1,86 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "lora_name": "soviet_brutalism_style_v1.safetensors",
+      "strength_model": 0.70,
+      "strength_clip": 0.70,
+      "model": ["1", 0],
+      "clip": ["1", 1]
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "pixel art sprite sheet, Soviet brutalist soldier standing idle, flat side-on orthographic view, 3x3 grid layout nine equal panels, single standing figure per panel, subtle breathing pose variation, upright standing pose, institutional concrete interior background, muted grey-green palette, value-separated silhouette, clean readable outline, no perspective, no vanishing point, no diagonal composition, no text, no UI",
+      "clip": ["2", 1]
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple characters per panel, action pose, background clutter, bright colours, photorealistic",
+      "clip": ["2", 1]
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 1008,
+      "width": 1008
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 31415,
+      "steps": 30,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+  "7": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["6", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "8": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "T0218_idle_sheet_1008",
+      "images": ["7", 0]
+    }
+  },
+  "9": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "upscale_method": "area",
+      "width": 144,
+      "height": 144,
+      "crop": "disabled",
+      "image": ["7", 0]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "T0218_idle_sheet_144",
+      "images": ["9", 0]
+    }
+  }
+}

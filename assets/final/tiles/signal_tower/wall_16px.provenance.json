@@ -1,0 +1,27 @@
+{
+  "model": "sd_xl_base_1.0.safetensors",
+  "model_license": "CreativeML Open RAIL++-M",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "prompt": "flat brutalist painted concrete interior wall texture, straight-on orthographic surface photograph, muted grey-green institutional paint, subtle weathering and expansion-joint shadow lines, even diffuse lighting, seamless tileable texture, no border, no perspective",
+  "negative_prompt": "perspective, three-quarter view, isometric, vanishing point, vignette, frame border, sky, character, creature, furniture, machinery, control panel, text, watermark, blurry, low quality, gradient, depth of field",
+  "seed": 232001,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "workflow_hash": "9636f1f378bafe58d9290d4dc673de48cccf0bc14cad118bc7ec51c64eaa1b3a",
+  "prompt_id": "5c4539a8-77ab-47d8-97a4-a1fb6023ca10",
+  "raw_path": "assets/out/tiles/signal_tower_wall_5c4539a8-77ab-47d8-97a4-a1fb6023ca10.png",
+  "border_forced_to_field_index": 8,
+  "concept_hash": "9660a2c64d5695cb8657c76cd4e29fb0fc4c992435140047f8b0dca910036460",
+  "concept_source": "assets/src/concept/signal_tower_material_sheet.png",
+  "palette_source": "assets/final/palette/home_palette.json",
+  "room_surfaces": "Ground Relay, Records Room, Power Substation, Equipment Floor, Broadcast Deck -- see assets/src/tiles/SIGNAL_TOWER_ROOM_SURFACES.md",
+  "gate_results": {
+    "tile_seamlessness": "PASS"
+  },
+  "generator": "assets/src/tiles/src/tile_gen/base_fields.py",
+  "comfyui_version": "0.29.0",
+  "card": "T-0232",
+  "_generator_note": "Circular-pad path (13-asset-pipeline.md \u00a73.4): SDXL txt2img 1024x1024, box-downscaled + Oklab-quantized to 16x16 (comfy_client.descend, T-0073), then the outer 1px ring deterministically forced to the flat home-palette field index (see base_fields.py module docstring) so the tile clears T-0102's pixel-exact seamlessness gate. Interior (rows/cols 1-14) is the real, unedited descended/quantized SDXL output."
+}

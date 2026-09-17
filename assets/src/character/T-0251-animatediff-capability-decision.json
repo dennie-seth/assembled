@@ -1,0 +1,57 @@
+{
+  "card": "T-0251",
+  "title": "Round 2 §24-d: evaluate AnimateDiff for temporal consistency (SDXL motion-module check first)",
+  "date": "2026-08-30",
+  "handoff_ref": "HANDOFF §24-d / §24.3",
+  "contingent_on": {
+    "card": "T-0248",
+    "outcome_checked": "T-0248 retrained the identity LoRA on a single canonical costume (player_identity_v2) and re-ran Arm B's generation against it. Result per ROUND2_BAKEOFF_REPORT_T0248.md / ASSET_PROVENANCE.md: partial improvement, not a full fix. Best measured attempt (identical recipe/seed to T-0229's promoted attempt): 0.083-0.273, all 8 transitions pass the 0.30 cap -- an improvement over v1's own 0.097-0.295, but still more than double Arm C's worst transition (0.112). Two of three tested seeds still FAIL the 0.30 cap outright (0.068-0.401 and 0.068-0.318). T-0248's own report states explicitly: 'the improvement is real but partial ... §24-b..§24-e are not rendered unnecessary by this card'.",
+    "renders_this_card_unnecessary": false
+  },
+  "outcome": "no_usable_motion_module",
+  "capability_check": {
+    "comfyui_url": "http://172.18.192.1:8188",
+    "reachable": true,
+    "comfyui_version": "0.29.0",
+    "tool_used": "node tools/board/scripts/agentCurl.js GET <url> (this agent's granted HTTP client; raw curl is not in its grant list)",
+    "checks": [
+      {
+        "method": "GET /system_stats",
+        "result": "ComfyUI 0.29.0 reachable from WSL via the gateway IP. Single CUDA device: NVIDIA GeForce RTX 3070 Ti Laptop GPU, vram_total 8589410304 bytes. Confirms the host used for every prior bake-off arm (T-0228/T-0229/T-0230/T-0248/T-0249/T-0250) is the same one being checked here -- this is not a check against a different or hypothetical environment."
+      },
+      {
+        "method": "GET /object_info, searched for node-type names matching /[Aa]nim.*/, /[Mm]otion.*/, /ADE_.*/, and /.*[Dd]iff.*/",
+        "result": "No AnimateDiff, AnimateDiff-Evolved, or any other motion-module loader/apply/context node type is registered under any of the four name patterns searched. The only 'Anim*' hits are SaveAnimatedWEBP / SaveAnimatedPNG (generic multi-frame image writers with no motion-module concept), WanAnimateToVideo and MeshyAnimateModelNode (unrelated cloud video / 3D-mesh nodes), and a generic 'animation'/'with_animation' widget field on an unrelated node. The only 'Motion*' hits are KlingMotionControl (a commercial cloud video API node, not a local SDXL motion module) and unrelated 'ref_motion'/'continue_motion' widget fields on video nodes. 'ADE_*' (the AnimateDiff-Evolved node-name prefix) has zero matches. Of 'diff' hits, none is an AnimateDiff node -- DiffControlNetLoader/DiffusersLoader/DifferentialDiffusion are all unrelated ComfyUI-core node types. Exactly one incidental prose mention of the literal string 'AnimateDiff' exists in the entire dump, inside an unrelated node's tooltip text, citing it only as a comparison example ('e.g. inplace-style I2V like LTXV, AnimateDiff') -- not an implementation."
+      },
+      {
+        "method": "GET /models (the full registered model-folder-type list)",
+        "result": "27 folder types are registered (checkpoints, configs, loras, vae, text_encoders, diffusion_models, clip_vision, style_models, embeddings, diffusers, vae_approx, controlnet, gligen, upscale_models, latent_upscale_models, custom_nodes, datasets, hypernetworks, photomaker, classifiers, model_patches, audio_encoders, background_removal, frame_interpolation, geometry_estimation, optical_flow, detection, ipadapter). None of them is 'animatediff_models' or 'motion_module' -- the folder type the ComfyUI-AnimateDiff-Evolved custom node pack itself registers on install. This is stronger evidence than an empty folder would be: it confirms the custom node pack that provides SDXL motion-module support is not installed at all, not merely that its models directory happens to be empty."
+      },
+      {
+        "method": "GET /models/animatediff_models, GET /models/motion_module",
+        "result": "HTTP 404 for both -- consistent with the folder-type registry above: these routes do not exist on this ComfyUI instance."
+      },
+      {
+        "method": "GET /models/checkpoints, GET /models/loras, GET /models/diffusion_models",
+        "result": "checkpoints: [\"sd_xl_base_1.0.safetensors\"] -- the same single base checkpoint every prior arm used, no motion-module-bundled checkpoint. loras: [\"player_identity_v1.safetensors\", \"player_identity_v2.safetensors\", \"player_identity_v2_checkpoint_demo.safetensors\", \"smoke_test_T0248.safetensors\", \"soviet_brutalism_style_v1.safetensors\"] -- all already-known project LoRAs from T-0072/T-0229/T-0248, none a motion module (motion modules are never distributed as standard LoRA-shape weights in any case -- they carry their own temporal-attention layer set). diffusion_models: [] (empty). No motion-module weight file exists under any model folder on this host, checked exhaustively across every folder type that could plausibly hold one."
+      }
+    ],
+    "ecosystem_context": "Not load-bearing for the conclusion above (which rests entirely on the live host evidence), recorded only because the acceptance criteria also ask about licence/obtainability: AnimateDiff (the original SD1.5-targeted method, guoyww/animatediff) and its actively-maintained ComfyUI port (ComfyUI-AnimateDiff-Evolved) are Apache-2.0 licensed and would clear this repo's allowlist on that basis alone. But the SDXL motion module specifically (mm_sdxl_v10_beta) was released by its own authors as an early, explicitly-labelled beta, with acknowledged materially lower motion quality than the mature SD1.5 modules -- consistent with this card's own framing ('SDXL motion-module support is weaker than SD1.5's'). This detail is carried over from this agent's own training-time knowledge, not independently re-verified by a live fetch -- the assets agent role has no WebFetch/WebSearch grant, only the scoped ComfyUI HTTP client -- and is flagged as such rather than stated as freshly-confirmed fact."
+  },
+  "conclusion": "No usable SDXL motion module exists on the installed ComfyUI host that every prior round-1/round-2 arm has used. This is not an absence of a downloaded weight file alone: the custom node pack that implements AnimateDiff support at all (ComfyUI-AnimateDiff-Evolved, which registers its own node types and its own 'animatediff_models'/'motion_module' model-folder type) is not installed, so there is no mechanism on this host to load a motion module even if one were present. Obtaining one would require (1) installing a new custom node extension on the shared Windows ComfyUI host -- a standing environment change in the same category docs/comfyui-setup.md's firewall fix flagged as something a human applies deliberately, not something an implementer agent does unattended to manufacture a pass for its own card -- and (2) downloading a motion module that, per its own upstream authors, is explicitly early/beta-quality for SDXL specifically (unlike the mature SD1.5 modules). Neither of those two steps is something this card's own instructions ask for; both are exactly the kind of forcing the task explicitly rules out.",
+  "decision": "STOP here, per this card's own acceptance criteria: 'If no usable SDXL motion module is available: record that finding, with evidence, and STOP. Do not force it. Do not switch the whole character pipeline to SD1.5 to make this card pass.' No generation attempt was made. The character pipeline stays on SDXL; nothing about T-0248/T-0249/T-0250's committed work or Arm C's benchmark is touched by this finding. A well-evidenced 'not available' is recorded here as a complete and successful outcome for this card, per its own Done-when clause (a).",
+  "generation_run": null,
+  "pipeline_model_switched_to_sd1_5": false,
+  "judging_conditions": {
+    "spec": "40px, in motion, inside the T-0192 blockout room",
+    "applicable": false,
+    "note": "Judging conditions are unchanged from DL-21/round 2 for the case where a sheet exists to judge. No sheet was produced by this card, so this condition does not apply -- recorded here only so its absence isn't mistaken for an oversight."
+  },
+  "cost": {
+    "attempts": 0,
+    "gpu_minutes": 0.0,
+    "wall_clock": "00:04",
+    "dollars": 0.0,
+    "notes": "Cost is recorded per §24.3, not deciding. The entire card is five read-only HTTP queries against the already-running ComfyUI host (GET /system_stats, /object_info, /models, /models/animatediff_models, /models/motion_module, /models/checkpoints, /models/loras, /models/diffusion_models) -- no checkpoint load, no sampling, no GPU time spent. This is by design: the card's own instructions are to do the capability check BEFORE spending a single generation attempt."
+  }
+}

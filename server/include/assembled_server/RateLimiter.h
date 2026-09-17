@@ -8,24 +8,28 @@
 
 namespace assembled_server {
 
-/// Sliding-window per-IP rate limiter (anti-brute-force, T-0094 S-5).
+/// Sliding-window rate limiter keyed by an arbitrary string (anti-brute-force,
+/// T-0094 S-5; per-identity-token route-group limiting, T-0049
+/// 03-net-protocol.md §7).
 ///
-/// Tracks request timestamps per client IP in memory.  On each `allow()`
-/// call old entries outside the window are pruned, then the counter for
-/// that IP is checked against the configured maximum.  Thread-safe.
+/// Tracks request timestamps per key in memory.  On each `allow()` call old
+/// entries outside the window are pruned, then the counter for that key is
+/// checked against the configured maximum.  Thread-safe.  Callers key by
+/// client IP (identity minting) or by derived identity token (notes,
+/// ratings, petitions) depending on what the route group is meant to bound.
 class RateLimiter {
   public:
-    /// @param maxRequests  maximum number of requests allowed per IP per
+    /// @param maxRequests  maximum number of requests allowed per key per
     ///                     window before `allow()` starts returning false.
     /// @param window       sliding window duration.
     RateLimiter(size_t maxRequests, std::chrono::seconds window);
 
-    /// Records a request attempt from @p ip and returns whether it should
+    /// Records a request attempt from @p key and returns whether it should
     /// be allowed.
-    /// @param ip  client IP address string (e.g. "127.0.0.1").
+    /// @param key  client IP address or identity token, depending on caller.
     /// @return true  if the request is within the rate limit.
     /// @return false if the request should be rejected with 429.
-    bool allow(const std::string &ip);
+    bool allow(const std::string &key);
 
   private:
     using Clock = std::chrono::steady_clock;

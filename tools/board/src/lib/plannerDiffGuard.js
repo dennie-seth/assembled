@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parseTask } from "./taskParser.js";
+import { APPROVAL_RECORD_FIELDS } from "./approvalGate.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,9 +13,19 @@ export function isCardFile(filePath) {
 }
 
 /**
- * Machine-checks the two guardrails a planner run must never violate: an
- * existing card's `status` frontmatter changing, or a card file being
- * deleted. `changes` is the set of tasks/** diff entries between a planner
+ * Machine-checks the guardrails a planner run must never violate: an existing
+ * card's `status` frontmatter changing, a card file being deleted, or an
+ * approval record (`approved_by`/`approved_at`) being written or altered.
+ *
+ * The approval rule is the fs-mode counterpart of `plannerFileView`'s
+ * `MUTABLE_FIELDS` allowlist, which drops those two fields in db mode: an
+ * approval says a *human* looked at a card's deliverable and said yes (see
+ * `approvalGate.js`), so it is only ever written by the server's own approval
+ * paths. A planner that writes one into a card file would be forging exactly
+ * the signal downstream cards unblock on. Setting `requires_approval` itself
+ * is fine and deliberately not checked -- adding a gate is spec work.
+ *
+ * `changes` is the set of tasks/** diff entries between a planner
  * run's base and its HEAD -- see `collectTasksDiff` for how the script
  * entrypoint builds this from git. Reuses `taskParser` so "status" means
  * exactly what the schema says, not a raw string comparison; a card that
@@ -65,6 +76,15 @@ export function checkPlannerDiffGuard(changes = []) {
         file,
         message: `status changed from "${oldTask.status}" to "${newTask.status}" on ${oldTask.id} -- planner runs must never touch status`
       });
+    }
+
+    for (const field of APPROVAL_RECORD_FIELDS) {
+      if ((oldTask[field] ?? null) !== (newTask[field] ?? null)) {
+        violations.push({
+          file,
+          message: `${field} changed on ${oldTask.id} -- the approval record is written only when a human approves the card, never by a planner run`
+        });
+      }
     }
   }
 

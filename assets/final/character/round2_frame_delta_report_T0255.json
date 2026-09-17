@@ -1,0 +1,511 @@
+{
+  "card": "T-0255",
+  "handle": "HANDOFF \u00a724-f",
+  "spec": "docs/decision-log.md DL-21 criterion 2 (mechanical half), unchanged for round 2 per DL-23",
+  "max_delta_ratio_030_cap": 0.3,
+  "arm_c_benchmark_min": 0.072,
+  "arm_c_benchmark_max": 0.112,
+  "arms": {
+    "arm_c_benchmark": {
+      "label": "Arm C (benchmark, round 1)",
+      "card": "T-0230",
+      "handle": "\u00a723-f",
+      "sheet": "assets/final/character/player_idle_sheet_arm_c_T0230.png",
+      "deltas": [
+        {
+          "pair": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "ratio": 0.07154471544715447,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ]
+          ],
+          "ratio": 0.11128775834658187,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              0
+            ]
+          ],
+          "ratio": 0.07177814029363784,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "ratio": 0.112,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              1
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "ratio": 0.07154471544715447,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              0
+            ]
+          ],
+          "ratio": 0.11128775834658187,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              2,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "ratio": 0.07177814029363784,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              2,
+              1
+            ],
+            [
+              2,
+              2
+            ]
+          ],
+          "ratio": 0.112,
+          "passed": true
+        }
+      ],
+      "num_failed": 0,
+      "clears_030_cap": true,
+      "beats_arm_c_benchmark": true
+    },
+    "pose_authority": {
+      "label": "Pose authority",
+      "card": "T-0249",
+      "handle": "\u00a724-b",
+      "sheet": "assets/final/character/player_idle_sheet_pose_authority_T0249.png",
+      "deltas": [
+        {
+          "pair": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "ratio": 0.2106299212598425,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ]
+          ],
+          "ratio": 0.23154362416107382,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              0
+            ]
+          ],
+          "ratio": 0.07032590051457976,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "ratio": 0.25734024179620035,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              1
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "ratio": 0.13745019920318724,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              0
+            ]
+          ],
+          "ratio": 0.1780821917808219,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              2,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "ratio": 0.05217391304347826,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              2,
+              1
+            ],
+            [
+              2,
+              2
+            ]
+          ],
+          "ratio": 0.17647058823529413,
+          "passed": true
+        }
+      ],
+      "num_failed": 0,
+      "clears_030_cap": true,
+      "beats_arm_c_benchmark": false
+    },
+    "chained": {
+      "label": "Chained img2img",
+      "card": "T-0250",
+      "handle": "\u00a724-c",
+      "sheet": "assets/final/character/player_idle_sheet_chained_T0250.png",
+      "deltas": [
+        {
+          "pair": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "ratio": 0.17625899280575538,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ]
+          ],
+          "ratio": 0.0,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              0
+            ]
+          ],
+          "ratio": 0.007722007722007722,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "ratio": 0.011583011583011582,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              1
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "ratio": 0.003861003861003861,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              0
+            ]
+          ],
+          "ratio": 0.011494252873563218,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              2,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "ratio": 0.019157088122605363,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              2,
+              1
+            ],
+            [
+              2,
+              2
+            ]
+          ],
+          "ratio": 0.011538461538461539,
+          "passed": true
+        }
+      ],
+      "num_failed": 0,
+      "clears_030_cap": true,
+      "beats_arm_c_benchmark": false
+    },
+    "hybrid": {
+      "label": "Hybrid (SDXL look + scripted motion)",
+      "card": "T-0252",
+      "handle": "\u00a724-e",
+      "sheet": "assets/final/character/player_idle_sheet_hybrid_T0252.png",
+      "deltas": [
+        {
+          "pair": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "ratio": 0.15757575757575756,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ]
+          ],
+          "ratio": 0.15757575757575756,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              0
+            ]
+          ],
+          "ratio": 0.18163672654690619,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "ratio": 0.18163672654690619,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              1
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "ratio": 0.15757575757575756,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              0
+            ]
+          ],
+          "ratio": 0.15757575757575756,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              2,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "ratio": 0.18163672654690619,
+          "passed": true
+        },
+        {
+          "pair": [
+            [
+              2,
+              1
+            ],
+            [
+              2,
+              2
+            ]
+          ],
+          "ratio": 0.18163672654690619,
+          "passed": true
+        }
+      ],
+      "num_failed": 0,
+      "clears_030_cap": true,
+      "beats_arm_c_benchmark": false
+    }
+  },
+  "skipped": {
+    "animatediff": {
+      "label": "AnimateDiff (temporal-consistency motion module)",
+      "card": "T-0251",
+      "handle": "\u00a724-d",
+      "reason": "No usable SDXL motion module on the installed ComfyUI host: zero AnimateDiff/AnimateDiff-Evolved node types under any of four search patterns, no animatediff_models/motion_module folder type registered, both motion-module model routes 404. Confirmed by 5 read-only HTTP queries against the host -- no checkpoint load, no sampling. Installing a new custom node pack on the shared host is a standing environment change outside an implementer agent's remit, not something this card does unattended to manufacture a pass. A complete, evidence-backed stop per the card's own instructions, not a missing input.",
+      "evidence": "assets/src/character/ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md"
+    }
+  }
+}

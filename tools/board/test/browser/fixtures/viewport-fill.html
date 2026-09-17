@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>viewport fill fixture</title>
+    <link rel="stylesheet" href="/src/client/style.css" />
+  </head>
+  <body>
+    <div id="toolbar">
+      <button type="button" id="new-card-btn">+ New Card</button>
+      <div id="git-status"></div>
+    </div>
+    <div id="create-form" hidden></div>
+    <div id="board"></div>
+    <div id="side-panel" hidden></div>
+    <div id="terminal-panel">
+      <div class="terminal-panel-header">
+        <span>Terminal</span>
+        <button type="button" id="terminal-toggle">Hide</button>
+      </div>
+      <div id="terminal"></div>
+    </div>
+    <script type="module" src="./viewportFillFixture.entry.js"></script>
+  </body>
+</html>

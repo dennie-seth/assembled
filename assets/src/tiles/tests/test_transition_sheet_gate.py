@@ -8,7 +8,10 @@ RED state:  signal_tower_concrete_wall_floor_transitions_16px.png absent →
 GREEN state: sheet is present and passes both gate checks.
 
 Install:
-    pip install -e ".[dev]" -e ../../../../tools/asset-gate
+    pip install -e ".[dev]"
+    (asset_gate itself is resolved via tests/conftest.py's sys.path shim
+    onto ../../../tools/asset-gate/src -- no separate editable install of
+    tools/asset-gate is required.)
 """
 
 from __future__ import annotations

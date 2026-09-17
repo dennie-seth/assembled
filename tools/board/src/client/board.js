@@ -32,6 +32,32 @@ export function applyTaskEvent(tasks, event) {
 }
 
 /**
+ * Per-task list of the dependency ids that are NOT yet satisfied, in the order the task
+ * lists them in depends_on. An empty array means every dependency is done/retired (or the
+ * task has none). Mirrors the server-side rule in src/lib/dependencyGuard.js exactly: a
+ * dependency counts as met only when its status is "done" or "retired", and a dependency id
+ * with no matching task counts as unmet.
+ *
+ * computeDependencyStatus below is derived from this, so the red/green dot and anything
+ * else keyed on blocked-ness (the disabled Run control in boardView.js) share one scan and
+ * one predicate -- they cannot drift apart the way two independent scans would.
+ */
+export function computeUnmetDependencies(tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const unmet = new Map();
+  for (const task of tasks) {
+    unmet.set(
+      task.id,
+      task.depends_on.filter((depId) => {
+        const dep = byId.get(depId);
+        return !dep || (dep.status !== "done" && dep.status !== "retired");
+      })
+    );
+  }
+  return unmet;
+}
+
+/**
  * Single derived dependency status per task, keyed on that task's OWN depends_on:
  * "blocked" if any dependency is missing or not done/retired, otherwise "ready"
  * (including tasks with no dependencies at all). Every task gets exactly one of
@@ -39,16 +65,29 @@ export function applyTaskEvent(tasks, event) {
  * showing both a "blocked" and a "ready" indicator on the same card.
  */
 export function computeDependencyStatus(tasks) {
-  const byId = new Map(tasks.map((t) => [t.id, t]));
   const status = new Map();
-  for (const task of tasks) {
-    const isBlocked = task.depends_on.some((depId) => {
-      const dep = byId.get(depId);
-      return !dep || (dep.status !== "done" && dep.status !== "retired");
-    });
-    status.set(task.id, isBlocked ? "blocked" : "ready");
+  for (const [id, unmetIds] of computeUnmetDependencies(tasks)) {
+    status.set(id, unmetIds.length > 0 ? "blocked" : "ready");
   }
   return status;
+}
+
+/**
+ * Per-column planning-signal total (T-0368): the sum of complexity_points across `tasks`, plus
+ * a count of how many of them carry no score at all. `null`/absent counts as unscored, never as
+ * zero -- a card nobody has sized yet is not the same as a card sized at zero points.
+ */
+export function summarizeComplexityPoints(tasks) {
+  let total = 0;
+  let unscored = 0;
+  for (const task of tasks) {
+    if (Number.isInteger(task.complexity_points)) {
+      total += task.complexity_points;
+    } else {
+      unscored += 1;
+    }
+  }
+  return { total, unscored };
 }
 
 /** Reverse-dependency counts: how many other tasks list each task id in their depends_on. */

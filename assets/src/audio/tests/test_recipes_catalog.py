@@ -3,9 +3,33 @@ import io
 import soundfile as sf
 
 from sfx_synth.pipeline import render_recipe_to_wav_bytes
-from sfx_synth.recipes import ALL_RECIPES, DOOR, FOOTSTEP_CONCRETE, ITEM_PICKUP, SWITCH_CLICK
+from sfx_synth.recipes import (
+    ALL_RECIPES,
+    DOOR,
+    FOOTSTEP_CONCRETE,
+    FOOTSTEP_RUN,
+    FOOTSTEP_WALK,
+    ITEM_LEAVE,
+    ITEM_PICKUP,
+    SWITCH_CLICK,
+    TELEGRAPH_SOUND,
+    TELEGRAPH_STILL_AIR,
+    TELEGRAPH_WATCHER,
+)
 
-CATALOG = (FOOTSTEP_CONCRETE, SWITCH_CLICK, DOOR, ITEM_PICKUP)
+# T-0101 originals + T-0204 additions.
+CATALOG = (
+    FOOTSTEP_CONCRETE,
+    SWITCH_CLICK,
+    DOOR,
+    ITEM_PICKUP,
+    FOOTSTEP_WALK,
+    FOOTSTEP_RUN,
+    ITEM_LEAVE,
+    TELEGRAPH_WATCHER,
+    TELEGRAPH_SOUND,
+    TELEGRAPH_STILL_AIR,
+)
 
 
 def test_all_recipes_registry_matches_catalog_names():

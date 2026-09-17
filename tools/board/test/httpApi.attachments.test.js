@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { rmTemp } from "./helpers/rmTemp.js";
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -7,6 +8,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { DEFAULT_HUMAN_ACTOR } from "../src/lib/approvalGate.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -56,7 +58,10 @@ afterEach(async () => {
   // instead of returning. Force them closed so cleanup is instant either way.
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(repoRoot, { recursive: true, force: true });
+  // rmTemp, not a bare fs.rm: git's background repacking can write into .git/objects/pack
+  // between this walk's readdir and its rmdir, which surfaced in CI as
+  // "ENOTEMPTY: directory not empty, rmdir '.../.git/objects/pack'" while passing locally.
+  await rmTemp(repoRoot);
 });
 
 async function createTask(overrides = {}) {
@@ -91,7 +96,9 @@ describe("POST /api/tasks/:id/attachments", () => {
       filename: "reference.png",
       size: TINY_PNG.length,
       mimetype: "image/png",
-      uploaded_by: "Anonymous"
+      // Was "Anonymous"; an unattributed upload is now the configured operator, matching how
+      // comments and approvals are attributed. See `humanActor.test.js`.
+      uploaded_by: DEFAULT_HUMAN_ACTOR
     });
     expect(typeof updated.attachments[0].uploaded_at).toBe("string");
 
@@ -99,7 +106,7 @@ describe("POST /api/tasks/:id/attachments", () => {
     expect(onDisk.equals(TINY_PNG)).toBe(true);
   });
 
-  it("uses the provided uploaded_by field instead of defaulting to Anonymous", async () => {
+  it("uses the provided uploaded_by field instead of the configured-operator default", async () => {
     const task = await createTask();
 
     const res = await fetch(`${baseUrl}/api/tasks/${task.id}/attachments`, {

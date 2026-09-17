@@ -642,6 +642,95 @@ output, so no visual error occurs at the chain tear.
 
 ---
 
+## DL-18 — One-room blockout: six measures, top-down M-2 voided (T-0193)
+
+**Date:** 2026-08-18
+**Raised by:** T-0193 (§20-a2 — measurement pass following the T-0192 side-on rebuild)
+
+### Six measures from the T-0192 side-on one-room blockout
+
+All values derived analytically from committed blockout constants
+(`blockout_room_sideon.gd`, `watcher_controller_sideon.gd`, `player_controller.gd`).
+Layout: 24 × 13 tiles at 16 px/tile. Player walk 64 px/s (4 tiles/s); Watcher
+patrol 32 px/s (2 tiles/s). Sight range 6 tiles = 96 px.
+
+| # | Measure | Value |
+|---|---|---|
+| M1 | Cross-room walk time (spawn col 2 → door col 21, no entity) | **4.75 s** (304 px / 64 px·s⁻¹) |
+| M2 | Seconds with the Watcher (one full patrol cycle) | **6 s** (3 s/direction, 0 s pause — see detail) |
+| M3 | Tiles of warning at spawn | **4 tiles** uncovered · **6.5 tiles** behind cover |
+| M4 | Any unavoidable detection on the crossing path | **Yes** — detection at t ≈ 0.83 s (see detail) |
+| M5 | Cover vs hiding read as two distinct guarantees | **Yes** — sound passes through cover; hiding blocks all three |
+| M6 | Floor plane reads as room or corridor | **Room** — 24:13 ≈ 1.85:1 aspect, objects distributed across 17 columns |
+
+### M2 detail — patrol cycle
+
+Patrol span: col 12 → col 18 = 6 tiles = 96 px.
+Speed: 2 tiles/s = 32 px/s.
+Time per direction: 96 / 32 = **3.0 s**.
+Pause at ends: **0 s** — `watcher_controller_sideon.gd` reverses direction
+immediately on reaching a patrol boundary; no pause timer.
+Full cycle: 3 + 3 = **6.0 s**.
+
+`14` §10 (pre-DL-18): "~4 s pass, ~2 s pause at each end" → implied 12 s cycle.
+**Void.** That was a top-down design estimate; the blockout code has no pause and
+the patrol distance at 2 tiles/s yields 3 s, not 4 s.
+
+### M4 detail — unavoidable detection on the crossing path
+
+The player must move from behind the cover (col 9 right edge, 160 px) to the door
+(col 21, 344 px). Once past the cover, there is no intervening obstacle.
+
+When the Watcher turns left at col 18 (296 px) and the player exits the hiding
+spot (col 7, 120 px) simultaneously:
+
+- Player rightward: P(t) = 120 + 64t px
+- Watcher leftward: W(t) = 296 − 32t px
+- Watcher sight left edge: W(t) − 96 = 200 − 32t
+- Player clears cover right edge (160 px) at t = 0.625 s
+- After that, cover is to the player's left → cover no longer occludes the sight line
+- Sight edge reaches player when 200 − 32t = 120 + 64t → **t = 0.833 s**
+
+At t ≈ 0.83 s: player at ≈ 173 px (col 10.8), Watcher at ≈ 269 px. Distance = 96 px
+(at the 6-tile sight boundary). Cover interval [144, 160] is entirely to the left of
+the player — does not occlude. Detection triggers.
+
+**No safe crossing exists** in the current layout. Any attempt to walk from the hiding
+spot to the door results in sight detection at col ≈ 10.8, ≈ 171 px short of the door.
+Proximity catch (1.5 tiles = 24 px) additionally prevents "following the Watcher"
+through the patrol zone: a walking player (64 px/s) overtakes the Watcher (32 px/s)
+and enters the 24 px catch radius at t ≈ 1.75 s.
+
+**Design consequence for `14` §10:** the blockout confirms the Power Substation room
+requires either (a) a mid-zone alcove or secondary cover between the cover pillar and
+the far patrol boundary, or (b) the Watcher redesigned as a **fixed-position entity
+with a timed sweep** (as described in `14` §3: "fixed on a short catwalk") rather
+than a physical patrol that the player must physically pass. The physical-patrol model
+has no safe crossing window without a mid-zone safe point.
+
+### M5 detail — cover vs hiding distinction
+
+| Position | Sensor | Watcher | Detected? |
+|---|---|---|---|
+| Hiding spot (120 px), cover registered | Sight | Left patrol (200 px) | No — cover [144, 160] occludes |
+| Hiding spot (120 px), cover registered | Sound (run, 5-tile radius) | Left patrol (200 px) | Yes — distance 80 px = boundary |
+| Inside HidingSpotV2 | All three | Any | No — HidingSpotV2 blocks all |
+
+Cover (mid-grey visual) and hiding spot (dark blue-grey visual) are perceptually and
+functionally distinct. A player behind cover can still be detected by running.
+A player inside the hiding spot is safe from all three sensors. The two mechanics
+read as clearly separate guarantees in the blockout prototype.
+
+### Changes made
+
+- `docs/decision-log.md` — this entry (DL-18)
+- `docs/design/14-vertical-slice.md` §10 — Watcher sweep timing voided and
+  patrol-cycle value re-derived; cone-angle note added; M4 finding noted
+- `client/tests/test_T0193_blockout_measures.gd` — M2/M4 assertions updated
+  from failing (top-down hypothesis) to passing (measured outcome)
+
+---
+
 ## DL-17 — Climax rooms independent of chain-key tier (closes DL-16)
 
 **Date:** 2026-08-17
@@ -683,3 +772,1269 @@ unmodified above; this entry is the closure record it called for.
 **Touched docs:**
 - None. This is a decision-log-only entry — `11`, `14`, `19`, and `20` are
   cited as already agreeing and require no edits; DL-13 is unmodified.
+
+---
+
+## DL-19 — Full-run traversal through the side-on Signal Tower chain (T-0195)
+
+**Date:** 2026-08-20
+**Raised by:** T-0195 (§20-a4 — full-run measurement following the T-0192/T-0193 side-on rebuild
+and T-0194 seven-room chain rebuild)
+
+### Context
+
+DL-16 (T-0185) measured the full Signal Tower chain using top-down estimates extrapolated
+from the T-0184 one-room blockout. T-0192 rebuilt the blockout on the side-on runtime;
+T-0193 (DL-18) measured that blockout and voided the top-down M-2 patrol estimate.
+This entry extends DL-18 to the full seven-room chain using the committed side-on constants.
+
+### Side-on constants (sources)
+
+| Constant | Value | Source |
+|---|---|---|
+| Walk speed | 64 px/s (4 tiles/s) | `player_controller.gd` / DL-18 M1 |
+| Room width | 24 tiles × 16 px = 384 px | `blockout_room_sideon.gd` |
+| Cross-room walk (spawn → door) | 304 px / 64 px·s⁻¹ = **4.75 s** | DL-18 M1 |
+| Watcher sweep model | SWEEP_PASS=4 s, SWEEP_PAUSE=2 s → 12 s cycle | `watcher_controller_sideon.gd` |
+| Watcher safe crossing window | PAUSE + 0.5 × PASS = 4 s per cycle | derived |
+| Sound walk/run radii | 24 px (1.5 tiles) / 80 px (5 tiles) | `sound_controller_sideon.gd` |
+| Still Air catch radius / lap | 24 px (1.5 tiles) / 25 s | `still_air_controller_sideon.gd` |
+
+### Watcher design note (DL-18 M4 consequence)
+
+DL-18 confirmed that the physical-patrol Watcher has **no safe crossing window** without
+a mid-zone alcove. The committed `WatcherControllerSideon` implements Option B from that
+finding: a **fixed-position sweep model** (4 s pass, 2 s pause at each end = 12 s cycle).
+This provides a traversable safe window (~4–6 s per cycle) without requiring a layout change.
+The T-0194 chain reflects this: Power Substation uses the sweep model.
+
+### Per-room traversal estimates
+
+| Room | Role / Entity | Sensor model | Time range | Notes |
+|---|---|---|---|---|
+| Ground Relay | Transit, no entity | — | 4.75 s | M1 measured |
+| Records Room | Climax + Gate, optional branch | — | 70–130 s | 2 × 4.75 s traverse + 60–120 s puzzle (first visit); ~10 s on repeat |
+| Power Substation | Gate + Hazard / Watcher | Sweep 12 s cycle | 5–13 s | Wait 0–8 s (average ~4 s) + 4.75 s cross; safe window exists |
+| Equipment Floor | Hazard / Sound | Walk-only, radial | 10–22 s | Player walks, maintaining > 24 px from entity; patrol-timing wait ~5–10 s |
+| Storage Cache | Transit, optional branch | — | ~10 s | 2 × 4.75 s round-trip (enter + exit) |
+| Antenna Shaft | Hazard / Still Air | Proximity patrol 25 s lap | 5–30 s | Wait 0–25 s (average 12.5 s) + 4.75 s cross |
+| Broadcast Deck | Tear, no entity | — | 6 s | 4.75 s cross + ~1 s key crossing |
+
+### Critical-path total (5 rooms, excluding optional branches)
+
+Ground Relay → Power Substation → Equipment Floor → Antenna Shaft → Broadcast Deck
+
+| Scenario | Time |
+|---|---|
+| Lucky (entity timing optimal) | ~30 s |
+| Midpoint (average entity timing) | ~49 s |
+| Unlucky (worst-case wait at every entity) | ~90 s |
+
+**Signal Tower critical path: 30–90 s (midpoint ~49 s, < 1 min)**
+
+### Full seven-room total (all branches, first attempt)
+
+Add Records Room (first visit, ~100 s mid) + Storage Cache (~10 s):
+= ~140–230 s ≈ **2.3–3.8 min** for Signal Tower alone (first visit to Records Room)
+
+Subsequent attempts (Records Room puzzle already solved): ~55–100 s ≈ 1–1.7 min
+
+### Comparison to DL-16 top-down estimates
+
+| Figure | DL-16 (top-down) | DL-19 (side-on measured) | Change |
+|---|---|---|---|
+| No-entity room traversal | 20–30 s | 4.75 s (M1, measured) | −5× |
+| Power Substation | 90–180 s (physical patrol, M4 no safe crossing) | 5–13 s (sweep model, safe crossing exists) | −10–15× |
+| Equipment Floor | 45–90 s | 10–22 s | −3–4× |
+| Antenna Shaft | 30–60 s | 5–30 s | 0.5–2× (lap duration is the same order of magnitude) |
+| Broadcast Deck | 20–30 s | 6 s | −4× |
+| Critical-path total (5 rooms) | ~290 s (~5 min) | ~49 s mid (~1 min) | −6× |
+| Signal Tower 7 rooms (first visit) | ~390 s (~6.5 min) | ~185 s mid (~3 min) | −2× |
+
+The dominant source of the difference is the **no-entity room traversal time**: DL-16 used
+20–30 s (from T-0184's top-down blockout with a longer route model), while M1 in the
+side-on blockout measures 4.75 s. Power Substation is also dramatically faster because the
+sweep model (DL-18 M4 Option B) was implemented, replacing the physical patrol that had
+no safe crossing.
+
+### 30–45 min target implications
+
+At 7 rooms / ~3 min (first-run Signal Tower), the full 18-room run extrapolates to:
+- Pure traversal: 18 × (185 s / 7) ≈ **475 s ≈ 8 min** (midpoint, all entity rooms visited)
+- Experienced speedrun: < 5 min
+
+This confirms and sharpens DL-16's finding: the 30–45 min target is **not about traversal
+time**. The traversal itself is 8 min (first run) to < 5 min (experienced). The remaining
+22–37 min must come from:
+- Note-reading and writing (social engagement)
+- Puzzle solving (Records Room, Power Substation timing)
+- Item pickup, management, and tear-key acquisition
+- Exploration of optional branches (Records Room, Storage Cache, Long Descent pocket)
+- Retries after entity detection and punishment
+
+No layout change is required; the timing model per DL-16 §Decision stands.
+
+**M-2 values retained.** The sensor parameters from `14` §10 (Watcher 4 s sweep, Sound
+1.5/5 tile radii, Still Air 25 s lap / 1.5-tile catch) produce the expected engagement
+pattern. Tuning is a playtest-gate task (11 M-2), not a design requirement here.
+
+### Changes made
+
+- `docs/decision-log.md` — this entry (DL-19)
+- `client/tests/test_T0195_full_run_traversal.gd` — RT1/RT2/RT3 updated from DL-16
+  top-down estimates to measured side-on values (see GREEN commit on feature/T-0195)
+
+---
+
+## DL-20 — E-1 settled: held bleed 60–75 min, world bleed 48–72 h (T-0195)
+
+**Date:** 2026-08-20
+**Raised by:** T-0195 (§20-a4) — settling open design question E-1 from `docs/GDD-OPEN.md`
+§4 ("Exact held / world bleed durations within 60–90 min / 48–72 h")
+**Evidence:** Sim Round 1 (`RESULTS.md`), T-0129 (done)
+
+### E-1 status before this entry
+
+`GDD-OPEN.md` §4 lists E-1 as Class D ("Do not decide by hand — the sim answers these").
+Sim Round 1 (`RESULTS.md` Finding 2) recommended **held bleed 60–75 min** based on a
+hoarder-stress sweep: the 60–75 min sub-range produced 5.9–9.2% INV-7 violations vs.
+~101–106% for the 75–90 min sub-range — an order-of-magnitude difference, directionally
+monotonic. World bleed showed byte-identical results across all sub-ranges.
+
+Round 2 (`RESULTS-round2.md` §10.5) marked the recommendation "directionally supported,
+not adopted" with two caveats: (a) single-seed, and (b) the sharper signal is
+`held_max ≤ 75 min`, not the sub-range midpoint. T-0129 was chartered to confirm the
+cliff with a multi-point sweep (held_max ∈ {75, 80, 85, 90}).
+
+**T-0129 is now done.** The cliff at `held_max = 75 min` is confirmed.
+
+### Decision
+
+**E-1 adopted:**
+- **Held bleed: 60–75 min** (recommended starting value: ~68 min = midpoint)
+- **World/escrow bleed: 48–72 h** (unchanged; no sim evidence to narrow)
+
+### Rationale
+
+1. **The held-bleed cliff is structurally explained, not a numerical coincidence.** `10` §2
+   states held bleed is the anti-hoarding lever: when a fifth of the population holds items
+   indefinitely, bleed must be fast enough to return gating types to the world within a
+   session. A 60–75 min held timer returns an item within ~1 session; a 75–90 min timer
+   creates windows where a gating type can be held through an entire session without
+   returning. The cliff at 75 min is ≈ 2× the target run length (30–45 min) — items return
+   to the world within two runs at the fast end; at the slow end, a hoarder can complete one
+   full run and be mid-session on a second before the item bleeds back.
+
+2. **World bleed has no measurable effect.** Byte-identical INV-7 counts across all three
+   world-bleed sub-ranges in both Round 1 scenarios (`hoarder_cohort` and
+   `unique_circulation`). The world-bleed timer's job (`10` §2: "lets exchange span
+   sessions") is architectural, not anti-hoarding; it operates on a different timescale and
+   is correctly insensitive to the held-bleed failure mode the sweep tests.
+
+3. **The remaining uncertainty is a playtest gate, not a design unknown.** The exact value
+   within 60–75 min (say, 60 vs. 68 vs. 75) is tunable on playtest. `GDD-OPEN.md` §4 lists
+   E-1 as sim-resolved; it is now. The playtest gate records any revision to the specific
+   midpoint; the range 60–75 min is the settled position.
+
+### Changes to make in docs
+
+- `docs/GDD-OPEN.md` §4 — mark E-1 as **resolved** (held 60–75 min, world 48–72 h)
+- `docs/design/10-time-and-progression.md` §2 — update held-bleed range from "60–90 min"
+  to "60–75 min" with a reference to this entry; world-bleed range unchanged
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-20)
+- `docs/GDD-OPEN.md` — E-1 marked resolved
+- `docs/design/10-time-and-progression.md` — held-bleed range narrowed
+
+---
+
+## DL-21 — Character-pipeline bake-off: pre-registered decision rule (T-0227)
+
+**Date:** 2026-08-27
+**Raised by:** HANDOFF §23, handle §23-c
+**Status:** **Pre-registered.** This entry was committed to git before any arm generated
+a single image. It is not to be amended — see this document's header. Any change to the
+clauses below after §23-d, §23-e or §23-f has generated anything invalidates the bake-off
+rather than refining it.
+**Applies to:** §23-d (Arm A), §23-e (Arm B), §23-f (Arm C — the script). The arms
+themselves are defined by their own cards; this entry defines only what they are judged on.
+**Cost template:** `docs/decisions/T-0227-bakeoff-cost-record-template.md`
+
+### Why pre-registration
+
+Three ways of producing the player's idle sheet are about to be raced against each other.
+A decision rule written once the results are in is not a decision rule, it is a
+rationalisation: whoever writes it can — without any intent to cheat — pick the weighting
+under which the sheet they already like wins. So the rule is committed to git before any
+arm generates a single image, and the winner is decided by a rule nobody was able to tune
+to the outcome.
+
+`docs/design/13-asset-pipeline.md` §6 already establishes the surrounding position that
+concept art precedes generation (DL-5); this entry does the same thing one level down, for
+the choice of generator.
+
+### Subject and state — fixed
+
+**Player character, idle state only.** Not move, not crouch-hide, not die: idle is the
+state every arm must produce and the only state that counts.
+
+All three arms are conditioned on **T-0209's approved player concept sheet**,
+`assets/src/concept/player_character_concept_sheet_v1.png`
+(concept_hash `4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b`). It is the
+shared reference; no arm substitutes its own.
+
+### Output spec — identically binding on all three arms, no exceptions
+
+| | |
+|---|---|
+| Grid | **3x3** |
+| Cell | **48x48** |
+| Native sheet | **144x144** |
+| Descent | per `docs/design/13-asset-pipeline.md` §3.1 |
+| Palette | indexed to the **locked 16-slot palette** (`assets/final/palette/home_palette.json`, T-0105) |
+| Provenance | **P-7-compliant** |
+
+P-7-compliant means: `generator` resolves to committed code in this repo tree,
+`model_hash` is non-null, and `concept_hash` resolves to T-0209's sheet (the gate landed
+in T-0219; see T-0222 for what non-compliance looks like).
+
+An arm that ships a sheet off this spec has not produced a comparable result and is
+re-run against its attempt budget, not judged as-is. The spec matches
+`13-asset-pipeline.md` §3.5's character class exactly; it is not a new constraint invented
+for the bake-off.
+
+### Judging conditions
+
+Judged **at 40px, in motion, inside the T-0192 blockout room** — the figure at the size
+and in the context a player will actually see it (`13-asset-pipeline.md` §3.5: at 384x216
+a figure is 40px tall, so the pipeline optimises for silhouette clarity, not detail).
+
+Explicitly **not at 1152**, and explicitly **not as a contact sheet**. A 1152 generation
+and a zoomed static grid both flatter detail that the descent destroys, and both hide the
+two failure modes that matter — an unreadable silhouette and identity drift between
+adjacent frames.
+
+### Criteria, in strict precedence
+
+Strict precedence, not a weighting. A later criterion never rescues an arm that failed an
+earlier one.
+
+**Criterion 1 — Silhouette readable at 40px in motion**
+
+Human pass/fail on three questions:
+is it a person, which way is it facing, what is it doing?
+A fail **eliminates** the arm — it is out of the bake-off entirely,
+not merely penalised in a score. This is the criterion the whole exercise exists to
+protect, and it is deliberately not tradeable against cost.
+
+**Criterion 2 — Identity stable across adjacent frames**
+
+Two parts, both required: a **frame-silhouette delta gate** (mechanical, over adjacent
+frames of the sheet) plus a **human drift verdict**. §3.5 is explicit that a player will
+catch 1px head drift between adjacent walk frames — this is where co-generation earns its
+keep, and where the T-0218 stage-3 spike already failed once (identity drift across rows).
+
+**Criterion 3 — Cost**
+
+Four columns, recorded identically by every arm: **GPU minutes**,
+**attempts-to-first-pass**, **wall-clock**, **$**.
+
+### Decision rule
+
+1. Arms failing criterion 1 are out. **Criterion-1 failures are out** regardless of how
+   they scored on anything else.
+2. Among the passers, **lowest cost wins**.
+3. **Tie → the script (Arm C) wins.**
+
+The tie-break is pre-committed and is not a coin toss: a script is deterministic,
+re-runnable, and reviewable as code, so where cost is genuinely equal the project takes
+the arm whose future re-runs are free and whose behaviour is inspectable.
+
+### Attempt cap
+
+**Attempt cap: 8 per arm.**
+
+An arm that cannot produce a gate-passing sheet in 8 attempts has *answered* criterion 3
+by failing it — that outcome is recorded as a **criterion-3 failure**, not as "no result"
+and not as grounds for a ninth attempt. Attempts are counted per arm and recorded in the
+cost template's attempts-to-first-pass column.
+
+### Recording
+
+Every arm fills in `docs/decisions/T-0227-bakeoff-cost-record-template.md` — the same
+template, the same columns, the same units — so §23-g's cost table is comparable by
+construction rather than by later reconciliation.
+
+### Note on grounding
+
+`docs/HANDOFF.md` in this repo ends at §13; §23 (like §22, cited by T-0219/T-0222) exists
+only in the card bodies the Agent Runner issues, not in the committed handoff document.
+The card body of T-0227 is therefore the authoritative statement of §23-c, and the rule
+above reproduces it clause for clause. Flagged rather than silently reconciled; the arm
+definitions (§23-d/e/f) are out of scope for this entry.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-21)
+- `docs/decisions/T-0227-bakeoff-cost-record-template.md` — the shared cost-recording template
+
+---
+
+## DL-22 — Character-pipeline bake-off: comparison assembled, verdict PENDING (T-0231)
+
+**Date:** 2026-08-28
+**Raised by:** HANDOFF §23, handle §23-g (the decision run)
+**Status:** **PENDING.** Everything DL-21's decision rule can settle mechanically is
+settled; the rule's human calls (criterion 1, criterion 2's drift verdict) are not. This
+entry records the mechanical state and stays PENDING until that sign-off lands — do not
+edit it to declare a winner without that sign-off; append a dated closing addendum instead,
+per this document's own header ("entries are permanent — do not remove or amend").
+**Applies to:** the outcome of DL-21, evaluating §23-d (Arm A, T-0228), §23-e (Arm B,
+T-0229/T-0237), and §23-f (Arm C, T-0230).
+**Full record:** `assets/src/character/BAKEOFF_DECISION_T0231.md`
+**Comparison artefact:** `assets/final/character/bakeoff_comparison_T0231.webp`
+**Frame-delta gate (re-run):** `assets/final/character/bakeoff_frame_delta_report_T0231.json`
+**Cost table (assembled):** `assets/src/character/BAKEOFF_COST_TABLE_T0231.md`
+
+### Mechanically settled
+
+- **Arm A is closed as a criterion-3 failure** — DL-21's 8-attempt cap was exhausted
+  without a sheet passing the mechanical half of criterion 2 (4/8 adjacent-cell
+  silhouette-delta ratios over the 0.30 cap, reconfirmed by an independent re-run for this
+  card). This closes Arm A's candidacy regardless of any criterion-1 read.
+- **Arm B and Arm C both mechanically pass criterion 2** — reconfirmed by an independent
+  re-run of `asset_gate.art.check_frame_consistency` against each arm's committed sheet,
+  matching each arm's own self-reported ratios exactly (Arm B 0.097–0.295; Arm C
+  0.072–0.112, all ≤ 0.30).
+- **Cost is not close.** Arm C: 0.0 GPU-min, 00:14 wall-clock. Arm B: 165.5 GPU-min, 02:48
+  wall-clock. Both $0.00. If both arms are confirmed as passers, DL-21 step 2 ("among the
+  passers, lowest cost wins") resolves to **Arm C** without needing the tie-break.
+
+### PENDING — not decided here
+
+Criterion 1 (silhouette readable at 40px in motion) and criterion 2's human drift verdict
+for Arm B and Arm C are **human pass/fail calls per DL-21**, attributed to **Dennie Seth**,
+requested 2026-08-28, not yet given. This card does not invent them — see
+`BAKEOFF_DECISION_T0231.md` for the full contingency table (what each possible verdict
+resolves to) and what changes in `docs/design/13-asset-pipeline.md` under each outcome.
+`docs/design/13-asset-pipeline.md` is **not edited by this entry** — the edit is deferred
+until the sign-off lands, so as not to pre-empt it.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-22)
+- `assets/src/character/BAKEOFF_DECISION_T0231.md` — the full decision record
+- `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` — the assembled §23-c cost table
+- `assets/final/character/bakeoff_comparison_T0231.webp` — the side-by-side comparison artefact
+- `assets/final/character/bakeoff_frame_delta_report_T0231.json` — the re-run mechanical gate
+
+---
+
+## DL-23 — DL-21 override: Arm C's mechanical win is overridden on authorship grounds, round 2 pursues Arms A/B, Arm C retained as benchmark (closes DL-22; T-0253)
+
+**Date:** 2026-08-30
+**Raised by:** HANDOFF §24, handle "DL-22" — see the numbering note below.
+**Resolved by:** T-0253 (actioned directly by Dispatch on behalf of @DennieSeth)
+**Status:** Closed. This entry closes DL-22's PENDING status.
+**Applies to:** the outcome of DL-21 as recorded by DL-22 (§23-d Arm A/T-0228, §23-e Arm
+B/T-0229/T-0237, §23-f Arm C/T-0230), and to HANDOFF §24 round 2 (§24-a..§24-e, T-0248,
+T-0249, and successor cards in that set).
+**Full record (round 1):** `assets/src/character/BAKEOFF_DECISION_T0231.md` (T-0231)
+
+### Numbering note
+
+HANDOFF §24 calls this handle "DL-22", but `DL-22` was already allocated by T-0231 for the
+comparison entry above. This entry takes the next free number, **DL-23**, and carries the
+HANDOFF §24 "DL-22" handle.
+
+### What DL-21's rule mechanically decided
+
+Both Arm B and Arm C passed criterion 2, and Arm C was lowest cost, so **Arm C won under
+DL-21's rule** — DL-21 step 2 ("among the passers, lowest cost wins") resolved to Arm C
+without needing the tie-break.
+
+Round-1 numbers, restated here so this entry stands on its own:
+
+- **Arm A** (T-0228) — **FAILED.** 4 of 8 adjacent-cell frame-silhouette deltas over the
+  0.30 cap, the 8-attempt cap exhausted without a pass. Also showed cross-row identity
+  drift and a green -> tan colour shift between rows. Closed as a **criterion-3 failure**
+  (the attempt cap answers criterion 3 by failing it, per DL-21).
+- **Arm B** (T-0229/T-0237) — **PASSED.** 0.097-0.295 frame-delta, 7 of 8 attempts,
+  165.5 GPU-min.
+- **Arm C** (T-0230) — **PASSED, best.** 0.072-0.112 frame-delta, 1 attempt, 0 GPU-min.
+
+### The override
+
+**That outcome is overridden on authorship grounds by @DennieSeth:** locally-generated art
+is part of this game's identity, and GPU time on hardware the project owns is not a real
+cost. **Cost is demoted from a deciding criterion to a recorded one** for round 2 — DL-21's
+step 2 no longer settles the question by itself.
+
+**Arms A/B are pursued in round 2** (HANDOFF §24, cards §24-a..§24-e), continuing the
+generative path rather than shipping the script.
+
+**Arm C is retained**, not discarded, as two things at once:
+
+1. The **benchmark** — every round-2 result is measured against Arm C's **0.072-0.112**
+   frame-delta result.
+2. The **shipping fallback** — if round 2 does not beat that benchmark, Arm C ships.
+
+Arm C's script and sheet stay committed and gate-passing; nothing in this entry, or in the
+round-2 card set, regresses them.
+
+### Unchanged for round 2
+
+**DL-21's criteria, the 0.30 frame-delta cap, and the judging conditions (40px, in motion,
+inside the T-0192 blockout room, not at 1152, not as a contact sheet) are unchanged for
+round 2.** Changing the measure would void the round-1 comparison round 2 is being measured
+against.
+
+### Closes DL-22
+
+This closes DL-22's PENDING status. DL-22 recorded everything DL-21's decision rule could
+settle mechanically and stayed PENDING for the human sign-off DL-21's criterion 1 and
+criterion 2 drift verdicts required, attributed to Dennie Seth. That sign-off has now been
+given, in the form of this override. DL-22 is left unmodified above; this entry is the
+closure record it called for — the same pattern as DL-17 closing DL-16.
+
+### Out of scope — flagged, not actioned
+
+DL-22 deferred the `docs/design/13-asset-pipeline.md` §3.5 edit until sign-off landed. **This
+entry does not make that edit.** What §3.5 should say depends on round 2's outcome
+(§24-a..§24-e), which has not run yet, so the edit **remains open, pending round 2**.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-23)
+- No other docs. `docs/design/13-asset-pipeline.md` §3.5 is explicitly not edited by this
+  entry — see "Out of scope" above.
+
+---
+
+## DL-24 — Character-pipeline round 2: comparison assembled, verdict PENDING (T-0255)
+
+**Date:** 2026-08-30
+**Raised by:** HANDOFF §24, handle §24-f (the round-2 decision run)
+**Status:** **PENDING.** Everything §24.3's pre-registered rule can settle mechanically is
+settled, including Arm C's own criterion-1 sign-off (already given via DL-23's closure of
+DL-22 — see "PENDING — not decided here" below); the rule's human call (criterion 1 —
+silhouette readable at 40px in motion) is still open for the three round-2 arms that ran
+(§24-b, §24-c, §24-e). This entry records the mechanical state and stays PENDING until that
+sign-off lands — do not edit it to declare a winner without that sign-off; append a
+dated closing addendum instead, per this document's own header ("entries are permanent — do
+not remove or amend").
+**Applies to:** the round-2 arms raised by DL-23 (§24-a..§24-e): T-0248 (§24-a, identity-LoRA
+retrain, diagnostic), T-0249 (§24-b, pose authority), T-0250 (§24-c, chained img2img), T-0251
+(§24-d, AnimateDiff — correctly skipped, no usable motion module), T-0252 (§24-e, hybrid),
+judged against Arm C (T-0230, round 1) as the retained benchmark and candidate shipping
+fallback.
+**Full record:** `assets/src/character/ROUND2_DECISION_T0255.md`
+**Comparison artefact:** `assets/final/character/round2_comparison_T0255.webp`
+**Frame-delta gate (re-run):** `assets/final/character/round2_frame_delta_report_T0255.json`
+**Cost table:** `assets/src/character/BAKEOFF_COST_TABLE_T0231.md` (round-2 sections, T-0248
+through T-0252) and the full record's own consolidated table (with attempts-to-first-pass).
+
+### Mechanically settled
+
+- **Every round-2 arm that ran clears the round-2-unchanged 0.30 pass/fail floor. None beats
+  Arm C's 0.072–0.112 benchmark** — the bar §24.3 set out to beat, not merely the gate to
+  clear — independently reconfirmed by this card's own re-run of
+  `asset_gate.art.check_frame_consistency` against each arm's committed sheet: §24-a (T-0248,
+  diagnostic) 0.083–0.273 best of 3 seeds; §24-b (T-0249) 0.0522–0.2573; §24-c (T-0250)
+  0.0000–0.1763; §24-e (T-0252) 0.1576–0.1816; Arm C (T-0230, benchmark) 0.072–0.112.
+- **§24-d (T-0251, AnimateDiff) is correctly closed as a skipped contingent arm, not a missing
+  input**: a 5-query, read-only capability check against the shared ComfyUI host found zero
+  AnimateDiff/AnimateDiff-Evolved node types, no `animatediff_models`/`motion_module` folder
+  type, and 404s on both motion-module model routes. Installing a new custom node pack on the
+  shared host is a standing environment change outside an implementer agent's remit. See
+  `ROUND2_ANIMATEDIFF_CAPABILITY_REPORT_T0251.md`.
+- **Cost is recorded, not deciding, per DL-23's override:**
+
+  | Card | Handle | Attempts-to-first-pass | GPU-min | Wall-clock | $ |
+  |---|---|---|---|---|---|
+  | T-0248 | §24-a | 1/3 (generation re-run; diagnostic, not a bake-off arm) | 117.9 | 02:02 | $0.00 |
+  | T-0249 | §24-b | 3/8 (measured; 5/8 used, incl. 2 incomplete) | 31.8 | 01:04 | $0.00 |
+  | T-0250 | §24-c | 8/8 (attempt cap exhausted) | 87.8 | 01:28 | $0.00 |
+  | T-0251 | §24-d | 0 (no generation attempted) | 0.0 | 00:04 | $0.00 |
+  | T-0252 | §24-e | 6/8 (3 source-frame + 3 sheet-assembly) | 3.70 | 00:07 (+ CPU-only cutout reprocess) | $0.00 |
+  | T-0230 | benchmark (round 1) | 1/8 | 0.0 | 00:14 | $0.00 |
+
+  Copied from each card's own attempt log / `BAKEOFF_COST_TABLE_T0231.md`'s own "Attempts"
+  columns; see that file for the full per-attempt breakdown. Even the cheapest round-2 arm
+  (§24-d, $0, never generated) does not change which arm beat the benchmark, because none did.
+- **Arm C's own criterion-1 read is already confirmed, via DL-23's closure of DL-22** (see
+  "PENDING — not decided here" below). **§24.3's own pre-registered contingency** ("if no
+  round-2 arm beats 0.072–0.112, designate Arm C") **therefore already resolves, on the
+  mechanical evidence above, to Arm C as the round-2 shipping fallback.** That designation is
+  not finalized in this entry — acceptance criterion 6 requires the round-2 arms' own
+  criterion-1 read recorded per arm first (see below), even though none of the three changes
+  this outcome.
+
+### PENDING — not decided here
+
+Criterion 1 (silhouette readable at 40px in motion) is a **human pass/fail call** under DL-21
+(unchanged for round 2 per DL-23), attributed to **Dennie Seth**, requested 2026-08-30, not yet
+given — **for the three round-2 arms that ran (§24-b/T-0249, §24-c/T-0250, §24-e/T-0252).**
+**Arm C's own criterion-1 read is not reopened here — it was already given.** DL-22 recorded it
+PENDING, and DL-23 explicitly closed that PENDING status: DL-23 states in its own words that
+DL-22 "stayed PENDING for the human sign-off DL-21's criterion 1 and criterion 2 drift verdicts
+required, attributed to Dennie Seth. That sign-off has now been given, in the form of this
+override," and records Arm C as "PASSED, best." §24.3's own contingency ("if no round-2 arm
+beats 0.072–0.112, designate Arm C") therefore already resolves, on the mechanical evidence
+above, to Arm C as the round-2 shipping fallback. What still parks this entry is acceptance
+criterion 6's own requirement that the round-2 arms' criterion-1 read be recorded per arm before
+that designation is finalized — even though, per the mechanical evidence, none of the three
+changes the outcome. This card does not invent that verdict — see `ROUND2_DECISION_T0255.md`
+for the full record and what changes in `docs/design/13-asset-pipeline.md` once it lands.
+`docs/design/13-asset-pipeline.md` is **not edited by this entry** — the edit is deferred until
+the round-2 arms' sign-off lands, so as not to pre-empt it. The reference-character promotion is
+likewise deferred — Arm C's committed sheet stays at its existing path
+(`assets/final/character/player_idle_sheet_arm_c_T0230.png`) until designation is finalized.
+
+**Touched docs (this card):**
+- `docs/decision-log.md` — this entry (DL-24)
+- `assets/src/character/ROUND2_DECISION_T0255.md` — the full round-2 decision record
+- `assets/final/character/round2_comparison_T0255.webp` — the side-by-side comparison artefact
+- `assets/final/character/round2_frame_delta_report_T0255.json` — the re-run mechanical gate
+
+## DL-25 — Round-2 character decision: §24-e (hybrid) chosen on direction; Arm C becomes the permanent quality reference, not a gate (closes DL-24; T-0255)
+
+**Date:** 2026-08-30
+**Raised by:** @DennieSeth — criterion-1 verdict on T-0255 (§24-f), given 2026-08-30 15:12 UTC
+**Status:** **DECIDED.** This entry closes DL-24's PENDING state by recording the human
+criterion-1 sign-off it was parked on. **DL-21, DL-22, DL-23 and DL-24 are not edited** —
+per this document's header ("entries are permanent — do not remove or amend"), the outcome
+is recorded here as the superseding entry, the same way DL-23 closed DL-22 and DL-17
+superseded DL-16.
+**Applies to:** the round-2 arms raised by DL-23 (§24-b..§24-e) and, going forward, **every**
+character-generation output in this repo.
+**Full record:** `assets/src/character/ROUND2_DECISION_T0255.md`
+**Comparison artefact:** `assets/final/character/round2_comparison_T0255.webp`
+**Frame-delta gate (re-run):** `assets/final/character/round2_frame_delta_report_T0255.json`
+
+### The decision
+
+**§24-e (T-0252, the hybrid arm) is the winning character-generation arm.**
+
+Verbatim verdict, recorded on T-0255: *"24-e looks best to me!"* — @DennieSeth,
+2026-08-30.
+
+The hybrid arm is one SDXL source frame (style LoRA `soviet_brutalism_style_v1` +
+identity LoRA `player_identity_v2` + IP-Adapter + OpenPose ControlNet, descended and
+palette-indexed, with the per-frame background cutout applied), with **every other animation
+frame derived from that one frame's own pixels** by
+`char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252`. It is the only round-2 arm
+in which a single diffusion call produces the whole sheet.
+
+**Chosen on direction and authorship grounds, not on the numbers** — consistent with, and a
+direct continuation of, the DL-21 → DL-22 → DL-23 override: locally generated art is part of
+this game's identity, and GPU time on hardware we own is not a real cost. Criterion 1
+(silhouette readable at 40px in motion) is a human pass/fail call under DL-21, unchanged for
+round 2 per DL-23, and this is that call.
+
+### Measured honestly — this is not a numbers win
+
+| Arm | Card | Frame-delta (re-run) | Clears 0.30 floor | Beats Arm C's 0.072–0.112 |
+|---|---|---|---|---|
+| §24-b pose authority | T-0249 | 0.0522–0.2573 | yes | **no** |
+| §24-c chained img2img | T-0250 | 0.0000–0.1763 | yes | **no** |
+| §24-d AnimateDiff | T-0251 | — (correctly skipped: no usable SDXL motion module) | — | — |
+| **§24-e hybrid (WINNER)** | **T-0252** | **0.1576–0.1816** | **yes** | **no** |
+| Arm C benchmark (round 1) | T-0230 | 0.072–0.112 | yes | — (is the benchmark) |
+
+**§24-e clears the round-2-unchanged 0.30 pass/fail floor at 0.1576–0.1816, and does NOT beat
+Arm C's deterministic 0.072–0.112 benchmark.** Its own committed sidecar records this as
+`"beats_arm_c_benchmark": false`.
+
+**This is expected and accepted.** DL-23 demoted cost from a deciding criterion to a recorded
+one; this entry does the same for the benchmark comparison. No round-2 arm beat Arm C, and
+DL-24 correctly recorded that none did. The choice of §24-e is made *in full knowledge of
+that*, on the same authorship grounds that created round 2 in the first place — not by
+re-reading the numbers until they favour a generative arm, and not by weakening the measure.
+DL-21's criteria, the 0.30 cap and the judging conditions (40px, in motion, in the T-0192
+blockout room) remain **unchanged**; nothing here redefines a gate to fit a result.
+
+### STANDING RULE — always verify against Arm C
+
+Recorded verbatim from @DennieSeth: *"Arm-C benchmark will never probably be beaten, but we
+should always verify against it."*
+
+As a standing rule, binding from this entry forward:
+
+- The deterministic **Arm-C benchmark (0.072–0.112 frame-delta) is NOT a gate** that the
+  chosen generative approach must clear. A character-generation output is not rejected for
+  failing to beat it — §24-e itself does not, and is the winner.
+- **Every character-generation output must ALWAYS record its own frame-delta AND its
+  comparison against the Arm-C benchmark**, as a permanent quality reference. The comparison
+  is *recorded, not deciding* — the same status DL-23 gave cost.
+- **Arm C is retained as the shipping fallback.** Its script, sheet and gate results stay
+  committed and passing (`assets/final/character/player_idle_sheet_arm_c_T0230.png`); nothing
+  regresses them.
+
+The rule exists because the benchmark's value is diagnostic, not gating: a generative sheet
+whose frame-delta drifts far from ~0.16 is telling us something broke, and that signal is only
+available if the number is on every sheet. Losing it silently is the failure mode this rule
+prevents.
+
+Pinned as invariants **CHR-1** and **CHR-2** in `docs/board-invariants.md` §9.
+
+### Consequence: the reference character
+
+**§24-e's committed sheet, `assets/final/character/player_idle_sheet_hybrid_T0252.png`
+(sidecar `player_idle_sheet_hybrid_T0252.provenance.json`), is the winning character
+reference.** It is the artifact **T-0235** (§23-l, the in-engine integration proof) consumes
+when it renders the T-0192 blockout room from pipeline output. DL-24 deferred the
+reference-character promotion pending this sign-off; this entry settles it.
+
+The `docs/design/13-asset-pipeline.md` §3.5 edit that DL-22 deferred and DL-24 left open is
+**still open** — it now has its answer (§3.5 describes the hybrid path, with the Arm-C
+benchmark recorded as a permanent quality reference per CHR-1/CHR-2 rather than as a gate),
+but making that edit is out of this entry's scope and belongs with the §24/`13` design pass.
+Recorded here so the loose end is not silently dropped.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-25)
+- `docs/board-invariants.md` — §9, invariants CHR-1 and CHR-2 (the standing rule)
+
+---
+
+## DL-26 — Motion-class-aware frame-delta cap: idle keeps DL-21's 0.30, locomotion/transition/loop get 0.50 (T-0271)
+
+**Date:** 2026-09-01
+**Raised by:** T-0271, drawing on T-0259's walk-cycle calibration trail
+**Resolved by:** T-0271 (`tools/asset-gate`,
+`asset_gate.character.frame_delta_cap_for_motion_class` /
+`check_character_frame_delta_cap`)
+
+### The problem
+
+DL-21 criterion 2's 0.30 frame-delta cap was pre-registered against **the player idle
+sheet only** — the subject-and-state section of that entry is explicit: "Player character,
+idle state only." DL-24 restated the constraint for round 2 as "same subject (the player
+idle sheet), same output spec, same criteria," carrying the number forward unchanged for
+another idle comparison. Neither entry considered locomotion; every character animation
+generated since — including walk cycles — has nonetheless inherited the idle-calibrated
+0.30 by default, because nothing distinguished the two.
+
+A walk cycle legitimately moves far more silhouette pixels per frame than an idle pose: the
+whole point of a stride is that limbs travel. Capping it at a bound sized for standing still
+does not measure identity drift — the failure mode the cap exists to catch — it measures
+motion amplitude, and penalizes a sheet for doing its job. This is not hypothetical: T-0259's
+four real ComfyUI attempts (~800 GPU-s each, seed 27182) show it directly.
+
+### The evidence — T-0259's calibration trail
+
+| Attempt | STRIDE / KNEE / ARM / CROSS | Denoise | Frame-delta | Pairs over 0.30 |
+|---|---|---|---|---|
+| 4 (committed) | 0.145 / 0.085 / 0.09 / — | 0.45 | 0.034–0.253 | 0/8 — motion barely visible |
+| 5 | 0.30 / 0.18 / 0.20 / 0.14 | 0.45 | 0.328–0.473 | 8/8 |
+| 6 | 0.22 / 0.13 / 0.15 / 0.05 | 0.45 | 0.212–0.375 | 6/8 |
+| 7 | 0.22 / 0.13 / 0.15 / 0.05 | 0.30 | 0.161–0.340 | 3/8 |
+| 8 | 0.22 / 0.13 / 0.15 / 0.02 | 0.24 | 0.109–0.302 | 1/8 |
+
+Chasing the 0.30 cap monotonically traded away the motion the card asked for: attempt 8
+missed by 0.00198 on a single pair, and only got that close after `CROSS_EXTENT_NORM` — the
+parameter controlling how far the legs visibly cross — was cut from 0.14 to 0.02, a 7x
+reduction from the value that actually read as a leg cross on human review. Attempts 5 and 6,
+the ones that read as an honest walk, measured 0.328–0.473 and 0.212–0.375 respectively — both
+partly or wholly outside the idle cap, precisely because they look like walking and attempt 4
+does not.
+
+### Decision
+
+**The frame-delta cap is now a function of the sheet's motion class, read from the
+provenance sidecar's `motion_class` field** (`idle` | `locomotion` | `transition` | `loop`).
+The sidecar was chosen over card metadata because it makes the sheet self-describing — a gate
+run against a committed `.provenance.json` needs no board lookup to know which cap applies,
+consistent with every other field this pipeline already treats as sidecar-owned
+(`frame_delta_range`, `arm_c_benchmark`, `beats_arm_c_benchmark`, per CHR-1).
+
+- **`idle` (and DL-21's original scope) keeps exactly 0.30.** This is not loosened. Every
+  committed idle sheet, including the round-1/round-2 arms DL-21/DL-24/DL-25 already judged,
+  keeps the bar it was measured against.
+- **`locomotion`, `transition`, and `loop` get 0.50.** Derived from the table above: the
+  sheets that read as a real walk on human review ran 0.328–0.473 (attempt 5) and
+  0.212–0.375 (attempt 6), and attempt 5's own upper bound of 0.473 is the highest measured
+  value that still reads as legitimate locomotion rather than drift — restoring the leg-cross
+  amplitude attempt 8 sacrificed would push a genuine walk higher still. 0.50 clears 0.473
+  with headroom (≈0.03, deliberately not a hairline the way 0.30 was for attempt 8), while
+  remaining well below the range that would read as gross drift rather than motion — this
+  package's own test suite pins a drift fixture at 0.55/0.58/0.61 for locomotion/loop/
+  transition respectively and confirms the cap still rejects it.
+- **A missing or unrecognised `motion_class` fails closed to the idle cap (0.30), never to
+  the permissive one.** An unlabelled sheet must not silently receive the loosest bar; this
+  is enforced by `frame_delta_cap_for_motion_class` falling through to 0.30 for anything not
+  literally `locomotion`, `transition`, or `loop`.
+- **CHR-1 and CHR-2 (DL-25, `docs/board-invariants.md` §9) are unchanged.** This entry adds
+  a new cap check (`check_character_frame_delta_cap`); it does not touch
+  `check_character_arm_c_provenance`, and the Arm-C benchmark comparison remains recorded,
+  not gating — `beats_arm_c_benchmark: false` continues to pass.
+- **No existing sheet is retro-fitted.** Committed sheets keep the grading they were produced
+  and judged under; this cap applies going forward, to sheets that record a `motion_class`.
+
+**This does not void DL-21's round-1 idle comparison, or DL-25's round-2 decision.** Both
+were judged with the idle cap against idle-state sheets, which is exactly the cap this entry
+keeps unchanged for that class. Nothing here re-opens or re-grades either verdict.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-26)
+
+---
+
+## DL-27 — Two approval records, one source of truth: the board wins (T-0286)
+
+**Date:** 2026-09-03
+**Raised by:** T-0286, following the T-0257/T-0243 drift incident
+**Resolved by:** T-0286 (`tools/board/src/lib/approvalGate.js`'s `approvalVerdict`,
+`GET /api/tasks/:id/approval` in `tools/board/src/server/httpApi.js`)
+
+### The problem
+
+A direction approval lived in two places: the board card's `requires_approval` /
+`approved_by` / `approved_at` (`docs/board-invariants.md` §10, AP-1..AP-9 --
+stamped only by a human AP-3/AP-4 gesture), and a prose approval line per asset
+in `ASSET_PROVENANCE.md`. Nothing propagated one to the other.
+
+T-0257 was approved on the board 2026-08-30 (`approved_by: "Anonymous"`,
+`approved_at: 2026-08-30T22:06:35.073Z`, PR #291). `ASSET_PROVENANCE.md`'s row
+for the concept sheet it gated kept reading "Not yet approved" for days.
+T-0243, and the T-0244/T-0245/T-0246 cards parked behind the same gate, stayed
+blocked on a decision that had already been made. Nobody was wrong by their
+own rules -- the human approved, the agent correctly refused to build against
+what its only source (the provenance file) called unapproved, and the reviewer
+correctly failed the card. **The system had two sources of truth and no
+reconciliation.** PR #307 fixed that one row by hand; it did not fix the class.
+
+### Options considered
+
+**Option A -- the board record is authoritative.** Any consumer resolves "is
+this approved?" by reading the card's `approved_by`/`approved_at` directly,
+never by parsing `ASSET_PROVENANCE.md` prose. The provenance file keeps its
+human-readable note, but the note stops being load-bearing.
+
+**Option B -- enforced propagation.** Keep both records, but make the
+approval stamp also write/refresh the `ASSET_PROVENANCE.md` row, plus a drift
+check that fails when a gated card is approved on the board while its
+provenance row still reads unapproved.
+
+### Decision: Option A
+
+`docs/board-invariants.md` §10 already states the project's taste on exactly
+this question, for the board's own `requires_approval` signal: *"Body
+detection was considered and rejected: which cards are gated has to be
+answerable without parsing English."* Option B deepens the very pattern that
+line rejects -- it would add a *second* place parsing English for a verdict,
+plus a writer to keep it superficially in sync and a sweep to catch the writer
+missing a case. Option A needs none of that: there is only one record, so
+there is nothing to keep in sync and nothing to drift.
+
+The cost the card names for Option A -- "the reviewer needs board access at
+validation time" -- is already paid: `GET /api/tasks/:id` already returns
+`requires_approval`/`approved_by`/`approved_at` for every task
+(`taskParser.js`), and the board already binds `127.0.0.1` for exactly this
+kind of local, scoped read. `approvalVerdict(task)` (pure, `approvalGate.js`)
+turns those three fields into one explicit verdict object rather than leaving
+every caller to re-derive `isApproved` logic for itself, and
+`GET /api/tasks/:id/approval` (`httpApi.js`) is the one HTTP surface that
+answers it. Both are read-only: `approvalVerdict` has no parameter or code
+path that writes `approved_by`/`approved_at`, so it can forward an existing
+human stamp but can never mint one -- the AP-3/AP-4 rule that only a human
+gesture records approval is untouched.
+
+`ASSET_PROVENANCE.md`'s prose stays exactly as written, including T-0257's
+already-propagated row from PR #307 -- this decision does not retro-edit any
+existing entry, and does not require the file to be touched at all going
+forward. It remains a human-readable note for a reader with no board access;
+it is simply never the thing a verdict is computed from.
+
+### What this does not change
+
+- **`approvalGate.js`'s AP-1..AP-9 are unchanged.** `approvalVerdict` is a new
+  pure function over the existing `requiresApproval`/`isApproved` predicates,
+  not a new way to grant or infer approval.
+- **No existing `ASSET_PROVENANCE.md` row is rewritten.** This is a
+  forward-looking resolution path, not a retro-edit of the record PR #307
+  already hand-fixed.
+- **Scope stays approval-record reconciliation.** This does not redesign
+  `requires_approval`, the AP-3/AP-4 gestures, or any other asset-gate check.
+
+### Addendum: instruction wiring blocked, two other backstops shipped instead
+
+`approvalVerdict`/`GET /api/tasks/:id/approval` only closes the class of bug once a real consumer
+resolves approval from them instead of `ASSET_PROVENANCE.md` prose. The natural place to say that
+is `.claude/rules/assets.md` (loaded by the `assets` agent before deciding whether to generate
+against a gated reference) — but editing anything under `.claude/**` was refused in this session,
+confirmed across four separate attempts on two different files in two different sessions (T-0286
+run-1's `.claude/rules/assets.md`/`.claude/agents/assets.md`, T-0286 run-2's re-confirmation on
+`.claude/rules/js.md`, an unrelated file, which ruled out a per-file cause), regardless of the
+`infra` agent's own documented scope. This reads as a session/harness-level guard on `.claude/**`
+itself, not a per-file or per-content check. See
+`docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` for the exact refusals and the exact
+edit text a session with `.claude/**` write access should apply.
+
+**Two backstops shipped instead, run-2, aimed at the two different environments a consumer could
+actually check this in:**
+
+1. **CI (`checkApprovalProvenanceDrift.js` / `ci-approval-provenance-drift.yml`).** Run-1 shipped
+   this against `FsTaskStore` reading `tasks/*.md`, which stops at T-0222 — every card in the real
+   incident (T-0243/44/45/46, T-0257) lives only in the board's own db
+   (`docs/design/cards-to-database.md`), which is deliberately kept outside git and is not
+   reachable from a fresh GitHub Actions checkout. Run-1's check silently printed "passed" for
+   exactly the cards it could not see — a missing data source rendering a reassuring pass, the
+   opposite of what a backstop is for. `findApprovalDrift` now reports a distinct
+   `unverifiable-approval-claim` drift kind for an approval-shaped provenance row naming a card
+   with no matching task at all, bounded (via the new `collectAddedLines` git-diff helper) to
+   rows the current PR's diff actually adds — never the ~200 pre-existing rows this repo's own
+   fs-mode task list has never been able to resolve, which would otherwise turn every future
+   unrelated PR permanently red. This makes the CI job loud instead of falsely green for the
+   T-0223+ gap, but does not close it: CI still cannot resolve a db-mode card's real verdict, only
+   refuse to pretend it can. Closing that gap for real would mean either exporting board approval
+   state into a git-committed, CI-reachable form, or making the workflow reachable to the live
+   db — both are a materially bigger change than approval-record reconciliation and are left as a
+   follow-up card if the team wants CI-side coverage for db-mode cards specifically.
+2. **The live board process itself (`approvalProvenanceStaleNotice`, wired into both
+   `handlePatchTask` and `handleAddComment` in `httpApi.js`).** This is the one place that never
+   has the CI gap: the board server holds the live, just-written approval record *and* a real git
+   checkout of `ASSET_PROVENANCE.md` in the same process, on the same machine, at the exact moment
+   a human's AP-3/AP-4 gesture stamps an approval. When the file's prose still contradicts what was
+   just recorded, the board posts an informational `assembled-board` comment on the same card,
+   live — the T-0257/T-0243 drift could have surfaced this way on 2026-08-30 itself, instead of
+   sitting unnoticed for days. Read-only against `ASSET_PROVENANCE.md` and never blocks the
+   approval; it does not, by itself, stop an agent from reading stale prose before generating (the
+   actual shape of the T-0243 incident) — that half of the fix is still the deferred instruction
+   edit above, which needs a human with `.claude/**` write access, not this session.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-27)
+- `docs/board-invariants.md` — new invariant AP-10
+- `docs/T-0286-claude-instruction-edit-blocked-attempt-log.md` — the blocked-edit attempt log
+
+### Addendum (run 4): "not consulted for the verdict" was wrong -- a write-through was added
+
+The run-3 VALIDATION verdict found that the claim above -- "`ASSET_PROVENANCE.md`'s prose ... is
+not consulted for the verdict" -- was false when it was written. Three plain pytest gates,
+`test_t0257_concept_sheet_is_approved()` in
+`assets/src/concept/tests/test_{power_substation,equipment_floor,antenna_shaft}_room_manifest.py`,
+each do exactly the `"APPROVED" in row` substring check against `ASSET_PROVENANCE.md` that this
+decision assumed nothing did. These are mechanical build gates, not agent instructions -- they run
+regardless of what any `.claude/**` file says, and they are outside `infra`'s own path scope to
+edit (`assets/src/concept/tests/**` belongs to a different implementer agent). Pointing
+`approvalVerdict`/`GET /api/tasks/:id/approval` at the board record, as this entry describes, closed
+the class for any *future* consumer that can reach the board -- but did nothing for these three
+existing, offline ones, which is exactly the shape the real T-0243 incident took (an agent/gate
+reading stale prose, not a missing API).
+
+Since the actual gating code cannot be redirected from `infra`'s scope, the fix is the other half of
+what Option B originally proposed and this entry rejected outright: `syncApprovalProvenanceText`
+and `refreshApprovalProvenanceFile`
+(`tools/board/src/lib/approvalProvenanceSync.js`), wired into both of `httpApi.js`'s approval write
+paths (`handlePatchTask`'s drag-to-Done, `handleAddComment`'s "APPROVED" comment). The moment a
+human's AP-3/AP-4 gesture stamps an approval on a gated card, the board now also rewrites the one
+`ASSET_PROVENANCE.md` row `findApprovalDrift` flags as `stale-unapproved-claim` for that card,
+forwarding only the `approved_by`/`approved_at` that gesture just wrote -- there is no parameter or
+code path that could set either field itself, so this can never mint an approval, only propagate one
+that already happened. Every other row, and the rest of the matching row's own text, is left
+byte-for-byte untouched; an already-agreeing row, a row for an unrelated card, or a gated-but-not-yet-approved
+card's row are all left completely alone.
+
+This is a **deliberate, narrow hybrid**, not a reversal of Option A: `approvalVerdict`/
+`GET /api/tasks/:id/approval` remain the one authoritative *read* path for anything that can reach
+the board, exactly as decided above. The write-through exists only because the specific offline
+consumers this incident actually blocked on (the three pytest gates) have no board access and are
+outside this card's own agent scope to redirect -- syncing the file is the only way, short of a
+different agent editing `assets/src/concept/tests/**`, to make those particular existing gates stop
+reading stale prose. `docs/board-invariants.md` AP-10 is corrected in the same commit to stop
+asserting the file "is not consulted for the verdict."
+
+### Addendum (T-0292): the run-2 CI gap is closed -- a committed approval ledger, Option A of that card
+
+Run-2's addendum above left one gap open by name: `checkApprovalProvenanceDrift.js` could refuse to
+falsely pass a db-mode card's approval claim (`unverifiable-approval-claim`), but could not verify
+one, because GitHub Actions has no path to the board's `BOARD_TASK_STORE=db` sqlite file and
+`FsTaskStore`'s `tasks/*.md` stops at T-0222. That turned the gate into an unconditional blocker on
+every PR touching `ASSET_PROVENANCE.md` for a card at or above T-0223 -- observed concretely on
+PR #315 (T-0243), 8 of 9 checks green, the ninth red on three `unverifiable-approval-claim`
+failures (T-0243, T-0220, T-0257) that no PR author could fix, because nothing in the diff can make
+CI reach a local file. Run-2 named exactly this as the follow-up: "exporting board approval state
+into a git-committed, CI-reachable form."
+
+**Options considered (T-0292):**
+
+- **A -- committed card snapshot.** Export the four fields the gate needs
+  (`id`/`requires_approval`/`approved_by`/`approved_at`) to a small committed JSON the gate reads in
+  CI, regenerated on the board.
+- **B -- skip-with-warning when the board is unreachable.** Fail on real drift; warn, don't fail,
+  when the data source can't be reached at all.
+- **C -- run the check board-side instead of in CI**, where the db is reachable (pre-push hook,
+  sweep, or run-time gate), giving up the PR-blocking property entirely.
+
+**Decision: Option A**, `tools/board/approval-ledger.json` (`approvalLedger.js`,
+`scripts/exportApprovalLedger.js`), landed ahead of this card's own branch (PR #316,
+`fix/approval-drift-ledger`) and confirmed here as this card's answer. C is the most honest read of
+"verify against a data source you can actually reach," and was rejected anyway: this gate's entire
+value is being a PR-time blocker, the thing that stopped T-0243/44/45/46 from staying blocked for
+days the way T-0257 did -- moving it board-side trades that away for a check nobody is forced to
+look at before merging. B was rejected as run-2 anticipated it would be: "warn, don't fail, when
+unreachable" is indistinguishable from disabling the gate for every db-mode card, which is all of
+them going forward, since fs-mode task files stop at T-0222 permanently.
+
+A's own named cost -- "a second copy that can itself drift" -- is accepted, not ignored: the ledger
+is consulted **only** for ids the live store cannot resolve (`mergeTasksWithLedger` -- a live task
+always wins), so on the board itself a stale ledger is inert and can never mask real state; and its
+own freshness is checked (`ledgerAgeDays` against `BOARD_APPROVAL_LEDGER_STALE_DAYS`, default 14
+days) and warned on loudly in the CI log when exceeded, so the snapshot cannot quietly become the
+next thing that drifts the way `ASSET_PROVENANCE.md`'s prose itself once did. This is a snapshot,
+never a second authority: it is a read-only projection of the board's own record
+(`exportApprovalLedger.js` refuses to write when the source store returns zero cards, and mints
+nothing), and if neither the live store nor the ledger resolves an id, the gate still reports
+`unverifiable-approval-claim` and still fails closed -- "couldn't check" still never reads as
+"passed."
+
+**Verified, not assumed:** `checkApprovalProvenanceDrift.js` run against this repo's real
+`ASSET_PROVENANCE.md` in fs mode (no db, as CI sees it) passes clean, 237 tasks cross-checked, the
+ledger supplying every id fs mode alone cannot see. `test/approvalLedger.test.js`'s "#315
+regression" suite reproduces the exact PR #315 failure with no ledger present, then shows it
+resolves once the ledger supplies T-0243/T-0220/T-0257, and separately proves real drift (a card
+gated but not board-approved, claimed approved in prose) still fails even when resolved through the
+ledger. `test/checkApprovalProvenanceDrift.e2e.test.js` (T-0292) adds the missing end-to-end layer
+those unit tests did not cover -- the real CLI subprocess, `BOARD_APPROVAL_LEDGER` env wiring, and
+default-path resolution -- proving the same five properties (resolves, still-unresolvable-fails,
+drift-still-caught, missing-ledger-fails-closed, stale-ledger-warns-but-still-checks) against the
+actual script CI invokes, not just the pure functions underneath it.
+
+**Touched (T-0292):** `.github/workflows/ci-approval-provenance-drift.yml` (comments and path
+triggers corrected to describe the ledger fallback instead of the pre-ledger "cannot resolve real
+verdict" state; `tools/board/approval-ledger.json`/`approvalLedger.js`/`exportApprovalLedger.js`
+added as trigger paths), `tools/board/test/checkApprovalProvenanceDrift.e2e.test.js` (the new
+end-to-end ledger-fallback suite), this addendum.
+
+## DL-28 — Empty-merge drift fix: existing empty merges on live `develop` are left alone, not rewritten (T-0304)
+
+### The problem
+
+Both writers that sync the live board's checkout with `origin/develop` -- the auto-pull poller's
+`pullDevelop` and `deploy.sh`'s merge step -- created a merge commit unconditionally instead of
+fast-forwarding when nothing local needed preserving. `deploy.sh` passed `--no-ff` outright;
+`pullDevelop` used `git pull`, which is sensitive to ambient `merge.ff`/`pull.ff`/`pull.rebase`
+config and reproducibly manufactures a merge commit under a `merge.ff=false`-style config even on
+a pure fast-forward. Every idle tick and every no-op deploy added one, and since `develop`'s SHA
+never actually converged with `origin/develop`'s, the next tick saw the same "not in sync" state
+and did it again -- unbounded growth, confirmed live on 2026-09-04 (`git log
+origin/develop..HEAD` showing two such commits, `git diff origin/develop HEAD` empty).
+
+### Decision: fix the writers, leave existing history alone
+
+Both writers now attempt `git merge --ff-only` first and fall back to `--no-ff` only when local
+genuinely has commits origin doesn't (`gitOps.js`'s `mergeOriginRef`, shared by `pullDevelop`,
+`mergeNoFF`, and `deploy.sh` via the new `mergeOriginRef.js` CLI wrapper). This stops the drift
+from this point forward: once local and origin converge to the same SHA, `isBehindOrigin` reports
+false and neither writer runs a merge at all.
+
+The empty merge commits already on the live checkout's `develop` are **not** rewritten. Squashing
+or dropping them would require force-pushing a rewritten `develop` to `origin` -- explicitly ruled
+out by this card's scope ("do not rewrite published history on origin"), and `develop` is a shared
+branch other clones and CI may have already fetched, so a rewrite risks the exact kind of
+release-branch confusion (v0.4.0/v0.5.0/v0.6.0) this card cites as the reason the drift matters in
+the first place. The cosmetic cost of a few extra bubble commits in old history is strictly smaller
+than the cost of force-pushing `develop`. `git diff origin/develop HEAD` stays the fast, reliable
+way to confirm content parity regardless of how many historical merge bubbles sit underneath it.
+
+### Consequence: "ahead by only empty merges" stays possible, by design
+
+If local is ever ahead of origin *only* by phantom merge commits like today's live state, a
+fast-forward from local to origin is impossible by definition (local has commits origin lacks) --
+`isBehindOrigin` would report `false` in that exact state (nothing to pull), so neither writer's
+merge step would even run. Nothing about this fix un-does that specific historical shape; it only
+guarantees no *new* instance of it going forward.
+
+## DL-29 — Host-action escalation: structured category + preflight, no new execution surface (T-0323)
+
+### The problem
+
+A board agent runs with no shell on the Windows host where ComfyUI/GPU/training live. When a
+card's failure is genuinely host-side, the agent can diagnose it in full and still cannot fix it,
+and had no way to say so except prose. T-0272/T-0317's profile keyframe took four escalation
+rounds to get from "doesn't reproduce" to a merged fix; round 9 named the exact remedy (a two-line
+edit to `F:\ComfyUI\start-comfyui.bat` plus a restart) and named why the agent couldn't apply it
+-- and that diagnosis sat unactioned for four rounds because the existing escalation taxonomy
+(`docs/design/escalation-workflow.md`'s `BLOCKER_CATEGORIES`) has no category between "code/test
+bug" and "external service" for "this needs a host shell." T-0321 shows the existing dispatch path
+firing and being closed as "nothing for Dispatch to do" for exactly this reason.
+
+### Options considered
+
+1. A host-action escalation category: extend the taxonomy with a structured `{host, action,
+   reason, verify}` payload instead of prose. Cheapest, no new execution surface, reuses the
+   entire existing dispatch-card machinery.
+2. A dispatch-runnable host action: a narrow allowlist of host operations a Dispatch card may
+   execute directly. More capable, but a privilege boundary into a Windows host from a WSL
+   sandbox is its own project, disproportionate to this card's worked example.
+3. A host-side agent/shim with its own grants over a local endpoint. Most capable, most to build
+   and secure -- a standing service on the one machine `CLAUDE.md`'s network-binding rule says
+   should never expose a shell.
+4. Preflight known host state: a small hand-maintained registry of already-diagnosed, unresolved
+   host problems, checked before the implementer spawns. Cheap and additive, but only helps once
+   an issue has already gone through option 1 at least once.
+
+Full writeup: `docs/design/host-action-escalation.md`.
+
+### Decision: options 1 + 4, both implemented; 2 and 3 deferred (not rejected)
+
+Option 1 gives an agent the vocabulary to name a host-only wall precisely the first time it's
+hit. Option 4 stops the *next* card that would hit the *same* wall from burning a full retry
+cycle to rediscover it -- the card brief's own framing ("preflight should ship with it -- the
+cheapest half of the value is telling the agent early that the wall is a wall"). Neither adds any
+execution surface: nothing here lets an agent or Dispatch touch the host, matching the card's
+explicit non-goals (no broad host shell access, no ad hoc SSH/`wsl.exe` out of the sandbox).
+Options 2/3 stay on the table if host issues start recurring often enough that the bottleneck
+shifts from "diagnose" to "a human has to go apply the two-line fix by hand" -- and this card's
+structured payload is exactly the input shape a future allowlisted executor would need, so
+choosing 1+4 now doesn't foreclose 2 later.
+
+### Implementation
+
+`tools/board/src/lib/hostActionRequest.js` (new): `formatHostActionRequest`/
+`parseHostActionRequest` for the fenced `host-action-request` block, all four fields required or
+the parse is `null` (never mistake a partial diagnosis for an actionable one).
+
+`tools/board/src/runner/blockerReport.js`: new `host-action` category, checked first in
+`categorizeFailure` (a structural match beats every keyword heuristic); `buildBlockerReport`
+carries the parsed payload as `report.lacks.hostAction`; `formatBlockerReportComment` renders it
+as labeled fields, never folded back into prose.
+
+`tools/board/src/lib/escalationRemediation.js`: `draftRemediationCard` renders a `## Host action
+requested` section and host-specific `## Acceptance` items when `report.lacks.hostAction` is
+present; a new `report.preflight` flag gets its own context line ("failed a host-state preflight
+check ... no auto-retry attempts were spent") distinct from the exhausted-retries/no-progress
+wording the card already had.
+
+`tools/board/src/runner/knownHostIssues.js` (new): the hand-maintained registry, seeded with the
+T-0272/T-0317 ComfyUI-determinism entry (`appliesToAgents: ["assets","audio"]`, `resolved:
+false`) as the worked example -- flipped to `resolved: true` once the sibling determinism-flags
+card lands and is verified, never deleted.
+
+`tools/board/src/runner/hostStatePreflight.js` (new): `checkHostStatePreflight`, same `{ok,
+message}` contract as `capabilityPreflight.js`, wired into `runOrchestrator.js`'s
+`_runCardInWorktree` in the same preflight slot. A match blocks immediately via the new
+`_blockOnHostAction`, which builds the same report shape retry-exhaustion escalation would have
+built and routes it through a `_recordBlockerReport` helper extracted from
+`_escalateIfGenuineBlocker` so both paths share one comment/remediation-card/dependency-wiring
+implementation.
+
+**Verified, not assumed:** `npx vitest run` green across the new/extended suites
+(`hostActionRequest.test.js`, `blockerReport.test.js`, `escalationRemediation.test.js`,
+`hostStatePreflight.test.js`, `runOrchestrator.hostStatePreflight.test.js`), plus the full
+existing `tools/board` suite to confirm the `_escalateIfGenuineBlocker` refactor changed no
+existing escalation behavior.
+
+---
+
+## DL-30 — Every shipped pixel originates from a diffusion sample; script arrangement is allowed (T-0335)
+
+**Date:** 2026-09-09
+**Raised by:** T-0335, actioned from the pipeline review at
+`asset-pipeline-review-2026-09-09.md` (Fable 5.1, 2026-09-09), approved by @DennieSeth
+2026-09-09.
+**Status:** DECIDED.
+**Applies to:** the Tier-2 compositor in the two-tier master-sheet pipeline (master sheets
+generated at 1024px; motion composited by script from parts, never re-scoped to 384px
+whole-figure per-frame generation), and every future card that arranges, transforms, cuts
+out, descends or composites already-sampled pixels by script.
+
+### The problem
+
+The two-tier pipeline depends on one rule being unambiguous, and it was not. There is no
+literal "NO SYNTHETIC ASSETS" heading anywhere in this repo (verified by grep). The rule
+that actually binds is **DL-23**, which overrode Arm C's mechanical bake-off win "on
+authorship grounds" and sent round 2 after Arms A/B "rather than shipping the script." Arm
+C was itself a script (band-translate). Read literally, DL-23 forbids exactly the Tier-2
+compositor the new pipeline is built on. But **DL-25** already shipped a hybrid arm that
+uses band-translate internally, and the **T-0239** incident (`docs/board-invariants.md`)
+forbids something narrower still: a sheet whose pixels were drawn by script over a
+background, with no diffusion sample behind them. Those three are not consistent as
+written, and an agent reading them cannot tell whether a compositor is allowed.
+
+### The rule
+
+> **Every shipped pixel originates from a diffusion sample. Arrangement, transformation,
+> cutout, descent and compositing by script are allowed.** What is forbidden is *inventing*
+> pixels procedurally — drawing a silhouette, a shape or a colour that no sampler produced.
+
+### Clarifies, not overturns, DL-23
+
+**DL-30 clarifies DL-23; it does not overturn it.** DL-23's override stands exactly as
+written: Arm C is not chosen as the primary generative arm, Arms A/B were pursued in round
+2, and cost stays demoted from a deciding criterion to a recorded one. DL-23's actual
+concern, read against the full bake-off record (DL-21/DL-22), was **shipping a figure no
+sampler drew** — a script standing in for generation entirely, producing every frame of a
+character sheet with zero diffusion calls behind it. DL-23 never said, and was never asked
+to decide, whether a script may *arrange* pixels a sampler already produced. That
+distinction is what DL-30 draws explicitly: authorship of the *pixels* must be a sampler's;
+authorship of their *arrangement* may be a script's. A Tier-2 compositor that assembles
+motion from a Tier-1 diffusion-sampled master sheet is the latter, not the former.
+
+### Reconciled
+
+- **DL-25** — the round-2 winner (§24-e, T-0252) is one diffusion-sampled frame with every
+  other frame in the sheet derived from that frame's own pixels by
+  `generate_player_idle_sheet_hybrid_T0252`, using band-translate internally. Every pixel in
+  the sheet traces back to the one sampled frame; only its arrangement across frames is
+  scripted. Consistent with DL-30 as worded — this is exactly the shipped precedent DL-30
+  generalizes into a standing rule.
+- **T-0239 incident** — the rejected sheet composited script-drawn labelled silhouettes over
+  an SDXL background: the silhouettes were invented, not sampled — no diffusion call
+  produced them at all. That is precisely what DL-30 forbids, so the rejection remains
+  correct and DL-30 does not weaken it.
+
+### Consequence for the two-tier pipeline
+
+The Tier-2 compositor arranges, transforms, cuts out, and composites pixels drawn from
+Tier-1's 1024px master-sheet diffusion samples; it never invents new pixels. This is
+permitted under DL-30. **Never re-scope any card in this set back to 384px whole-figure
+per-frame generation** — master sheets stay at 1024px, motion stays composited by script
+from parts.
+
+### Rule-text audit
+
+Grepped `.claude/rules/*.md`, `.claude/agents/*.md`, `docs/design/13-asset-pipeline.md` and
+`docs/board-invariants.md` for language that would contradict DL-30 (anything forbidding
+scripted arrangement/compositing of sampled pixels, or phrased as a blanket "no synthetic
+assets" / "no scripts" rule). **None found.** `.claude/rules/assets.md`'s "Never substitute
+a hand-made stand-in for a generated asset" and the T-0239 rejection both target *inventing*
+pixels with no sample behind them, not scripted arrangement of sampled pixels — already
+consistent with DL-30, no edit required.
+
+**Touched docs:**
+- `docs/decision-log.md` — this entry (DL-30)
+- `docs/design/13-asset-pipeline.md` — §1 cross-references DL-30 against P-1
+
+---
+
+## DL-31 — Motion-class frame-delta gate retired for locomotion/transition/loop: pose-fidelity IoU + identity-stability histogram replace it (T-0340)
+
+**Date:** 2026-09-09
+**Raised by:** Fable 5.1's asset-pipeline review (`walk_review/asset-pipeline-review-2026-09-09.md`),
+approved by @DennieSeth 2026-09-09; corroborated overnight by session 13's calibration run.
+Retires the open dispatch card T-0334.
+**Resolved by:** T-0340 (`tools/asset-gate`, `asset_gate.character.check_character_motion_fidelity` /
+`sweep_character_motion_fidelity`; `asset_gate.art.check_pose_fidelity` /
+`check_identity_stability` / `render_rig_silhouette`)
+
+### The problem
+
+DL-26 gave locomotion/transition/loop a higher whole-silhouette XOR/union cap
+(`MOTION_FRAME_DELTA_CAP`, 0.50) on the theory that a real gait legitimately moves more
+silhouette pixels per frame than an idle pose. The theory was right; the fix was not big
+enough. `check_frame_consistency` measures frame-to-frame delta — how much the silhouette
+changed since the previous frame — and a rig's own commanded motion already accounts for
+most of that change regardless of drift. Rendering the rig's own skeletons as capsules
+(perfect pose, zero drift, nothing to catch) and measuring the same XOR/union ratio between
+adjacent frames measures 0.23–0.49 of the same 0.50 cap consumed by legitimate motion alone —
+a legible gait can spend nearly the entire budget before a single pixel of real drift exists.
+(That 0.23–0.49 figure is the review's own; re-measured here against this repo's actual
+`render_rig_silhouette` + `check_frame_consistency` for the same 8-frame walk cycle, it comes
+out to **0.202–0.352** — same phenomenon, same conclusion, see the calibration table below.)
+The only sheets that reliably passed were the ones that barely moved (T-0259 attempt 4,
+DL-26's own table: "motion barely visible", frame-delta 0.034–0.253).
+
+Independently, session 13's overnight calibration run corroborated the same measure failing
+in the opposite direction: a sequential-chained walk candidate
+(`assets/out/hybrid_walk/attempt_5/` on `feature/T-0259`, never committed — `assets/out/` is
+gitignored by design) scored a deceptively even 1.4471x frame-delta and passed 7 of 8 interior
+pairs, because colour drift was shrinking the silhouette (green channel drifting 0.218 → 0.074
+across the sequence) rather than the figure walking. The same measure that punishes legitimate
+motion also rewards a specific failure that is not motion at all. `check_frame_consistency` is
+the wrong instrument for this motion class — not miscalibrated, wrong.
+
+### Decision
+
+**Locomotion/transition/loop are retired from the whole-silhouette XOR/union gate entirely.**
+`check_character_frame_delta_cap` / `sweep_character_frame_delta_cap` now report those three
+motion classes as not-applicable (skipped, passing) regardless of the recorded
+`frame_delta_range` — `idle` (and anything missing or unrecognised) is completely unaffected
+and keeps exactly DL-26's 0.30 cap. This does not reopen DL-26's idle decision or loosen
+anything for idle; it only removes a cap that was measurably unpassable for real motion.
+
+**Two new measures replace it, applied only to locomotion/transition/loop:**
+
+- **Pose fidelity** (`asset_gate.art.check_pose_fidelity`): IoU between the rendered frame's
+  own foreground silhouette and the rig's predicted silhouette for THAT frame's commanded pose
+  (rendered as capsules via `render_rig_silhouette`, reusing `gen_arm_a_idle_T0228.py`'s
+  `_POSE_LIMBS` topology unchanged). Comparing a frame against what it was told to draw, not
+  against the previous frame, is invariant to how far the pose itself swings — it cannot be
+  charged for the sheet's own legitimate motion the way frame-to-frame delta was.
+  **Floor: 0.70** (`POSE_FIDELITY_IOU_FLOOR`).
+- **Identity stability** (`asset_gate.art.check_identity_stability`): total-variation distance
+  between a fixed torso region's palette-index histograms across adjacent frames. A fixed torso
+  box never moves with the gait, so this isolates colour/identity drift from the pose's own
+  silhouette motion — exactly the failure whole-silhouette delta could not separate from a real
+  stride. **Cap: 0.15** (`IDENTITY_STABILITY_HISTOGRAM_CAP`).
+
+Both thresholds are the review's own proposals; they are kept, not adopted unexamined, because
+the calibration below supports them and the required negative control fails under them.
+
+### Calibration — what is actually on disk
+
+Measured by `assets/src/character/calibrate_motion_fidelity_T0340.py` against the real,
+committed artifacts (script output, not hand-entered):
+
+| Sheet | Measure | Range | Notes |
+|---|---|---|---|
+| T-0259 attempt 4 walk (`player_walk_sheet_hybrid.png`, committed) | pose-fidelity IoU (8 frames, own commanded pose) | **0.393 – 0.630** | Below the 0.70 floor on every frame — consistent with DL-26's own characterisation of this sheet as "motion barely visible"; this is a real, weak walk correctly failing the floor, not a contradiction of it. |
+| same sheet | identity-stability distance (8 adjacent pairs incl. loop seam) | **0.047 – 0.320** | Interior pairs: 0.047–0.070 (ordinary per-frame cutout-mask noise). The two pairs touching frame 0 spike to 0.297/0.320 — a real cutout-boundary artifact at that frame, not colour drift, and exactly the kind of fault 0.15 is tight enough to catch. |
+| T-0252 idle (`player_idle_sheet_hybrid_T0252.png`, shipped) | — | frame_delta_range **0.158 – 0.182** (unchanged) | Idle is band-translated from one SDXL frame (`char_gen.synth_entities`), not rig-authored — no rig-predicted silhouette exists to measure pose-fidelity against, and it stays out of scope for this gate entirely (below). |
+| Arm C benchmark (T-0230, DL-25/CHR-1's quality reference) | frame_delta_range | 0.072 – 0.112 | Reference point only, unaffected by this card — `beats_arm_c_benchmark` remains recorded, not gating (CHR-2). |
+| Pure rig capsules (perfect pose, zero drift), old `check_frame_consistency` XOR/union | frame-delta ratio (8 adjacent pairs) | **0.202 – 0.352** | Reproduces "The problem" above's budget-consumption claim with this repo's own code instead of only quoting the review's 0.23–0.49 — same conclusion (a legible gait alone eats most of the 0.50 cap with zero drift to catch), a different number because capsule radius/render resolution differ from whatever the review used, not a contradiction of it. |
+| **Session 13 drift candidate** (`assets/out/hybrid_walk/attempt_5/` on `feature/T-0259`, real pixels — see below) | pose-fidelity IoU (8 frames) | **0.192 – 0.455** | Below the 0.70 floor on every frame — fails outright, independent of identity-stability. |
+| same real sheet | identity-stability distance (8 adjacent pairs incl. loop seam) | **0.141 – 0.836** | Every pair exceeds the 0.15 cap; the loop-seam pair (frame 7 → frame 0) spikes to 0.836 — the accumulated drift from 7 rounds of sequential img2img-chaining landing hardest exactly where the cycle must match itself back up. |
+
+Session 13's candidate lives under a gitignored `assets/out/` path in the *sibling*
+`feature/T-0259` worktree, never committed to any branch (`.claude/rules/assets.md`) — but that
+worktree was present on this machine, so `calibrate_motion_fidelity_T0340.py`'s
+`calibrate_session13_drift_candidate()` loaded and measured the real
+`sheet_192x96_indexed.png` (same rig keypoints as the T-0259 attempt-4 walk above — its own
+`provenance_candidate.json` records `pose_source` as the identical `pose_rig_walk_T0259.py`
+script) with the same `check_pose_fidelity` / `check_identity_stability` functions, not a
+synthetic stand-in. It is guarded to report `available: False` rather than fabricate numbers
+on a machine where that sibling worktree isn't present; `tools/asset-gate/tests/test_character_gate.py`
+records the numbers above as a fixture for the acceptance test (so that test does not itself
+depend on the worktree existing) and separately cross-checks them live against the real
+artifact when it is reachable. `tools/asset-gate/tests/test_art.py`'s
+`test_identity_stability_catches_drift_that_frame_consistency_missed` is a separate, smaller
+synthetic unit test of the same qualitative failure mode (an 8px torso fade against a 280px
+silhouette) — it is not, and was never meant to be, the acceptance control; the real sheet
+above is.
+
+**0.15 sits between the two real populations measured on the committed walk** — comfortably
+above ordinary per-frame noise (0.047–0.070), comfortably below the cropping/drift fault
+(0.297–0.320) — which is the calibration argument for that cap, not merely the review's say-so.
+0.70 is not independently validated by a real *passing* locomotion example (none exists
+committed at full stride), but it correctly and honestly fails the one weak real walk on disk,
+which the same walk's own DL-26 characterisation already predicts it should.
+
+### Required controls (both confirmed)
+
+- **Negative control:** the real session-13 drift-candidate sheet FAILS
+  `check_character_motion_fidelity` on both measures (pose-fidelity IoU 0.192–0.455 < 0.70
+  floor; identity-stability 0.141–0.836 > 0.15 cap) —
+  `test_negative_control_session13_drift_candidate_fails_motion_fidelity` (fixture, always
+  runs) and `test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available`
+  (re-derives the fixture from the live artifact and cross-checks it, when the sibling
+  `feature/T-0259` worktree is present).
+- **Positive control:** the shipped T-0252 idle provenance sidecar still passes
+  `check_character_frame_delta_cap` unchanged, loaded from the real committed file, not a copy
+  of its numbers — `test_positive_control_shipped_T0252_idle_still_passes_unchanged`.
+
+### Not touched
+
+- **`idle`'s 0.30 XOR/union cap (DL-26).** Not contradicted, not loosened, not re-evaluated.
+- **CHR-1/CHR-2 (DL-25).** `check_character_arm_c_provenance` and the Arm-C benchmark
+  comparison are unrelated and unaffected.
+- **`MOTION_FRAME_DELTA_CAP` / `frame_delta_cap_for_motion_class`.** Left exported and
+  unchanged — existing generator scripts (e.g. `gen_hybrid_walk_T0259.py`) still call the
+  function for their own generation-time self-check, a different concern from this gate's
+  enforcement path, and editing those scripts is out of this card's scope.
+- **DL-30's two-tier pipeline (T-0335).** This card does not re-scope generation back to
+  384px whole-figure per-frame sampling; master sheets stay at 1024px, motion stays composited
+  by script from parts, unchanged.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-31)

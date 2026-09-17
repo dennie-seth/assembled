@@ -6,7 +6,9 @@ import {
   applyTaskEvent,
   computeBlockerCounts,
   computeDependencyStatus,
-  sortTasks
+  computeUnmetDependencies,
+  sortTasks,
+  summarizeComplexityPoints
 } from "../../src/client/board.js";
 
 function task(overrides = {}) {
@@ -172,6 +174,30 @@ describe("computeBlockerCounts", () => {
     const counts = computeBlockerCounts(tasks);
     expect(counts.get("T-0001")).toBe(1);
     expect(counts.get("T-0002")).toBe(1);
+  });
+});
+
+describe("summarizeComplexityPoints (T-0368: per-column planning-signal totals)", () => {
+  it("sums complexity_points across the given tasks", () => {
+    const tasks = [
+      task({ id: "T-0001", complexity_points: 3 }),
+      task({ id: "T-0002", complexity_points: 5 })
+    ];
+    expect(summarizeComplexityPoints(tasks)).toEqual({ total: 8, unscored: 0 });
+  });
+
+  it("counts a task with no complexity_points as unscored, not zero", () => {
+    const tasks = [task({ id: "T-0001", complexity_points: 3 }), task({ id: "T-0002" })];
+    expect(summarizeComplexityPoints(tasks)).toEqual({ total: 3, unscored: 1 });
+  });
+
+  it("treats an explicit null the same as an absent field", () => {
+    const tasks = [task({ id: "T-0001", complexity_points: null })];
+    expect(summarizeComplexityPoints(tasks)).toEqual({ total: 0, unscored: 1 });
+  });
+
+  it("returns zero totals for an empty task list", () => {
+    expect(summarizeComplexityPoints([])).toEqual({ total: 0, unscored: 0 });
   });
 });
 
@@ -342,5 +368,72 @@ describe("computeDependencyStatus", () => {
       task({ id: "T-0063", depends_on: ["T-0045"] })
     ];
     expect(computeDependencyStatus(tasks).get("T-0045")).toBe("ready");
+  });
+});
+
+// computeDependencyStatus is derived from this, so the two can never disagree about
+// whether a card is blocked -- the same class of divergence that once rendered a red
+// and a green dependency dot on the same card. This one additionally reports *which*
+// dependencies are unmet, which is what the disabled Run button names in its tooltip.
+describe("computeUnmetDependencies", () => {
+  it("reports an empty list for a task with no dependencies", () => {
+    const tasks = [task({ id: "T-0001", depends_on: [] })];
+    expect(computeUnmetDependencies(tasks).get("T-0001")).toEqual([]);
+  });
+
+  it("reports an empty list when every dependency is done or retired", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
+      task({ id: "T-0002", status: "done" }),
+      task({ id: "T-0003", status: "retired" })
+    ];
+    expect(computeUnmetDependencies(tasks).get("T-0001")).toEqual([]);
+  });
+
+  it("reports only the dependencies that are not done or retired", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0002", "T-0003", "T-0004"] }),
+      task({ id: "T-0002", status: "done" }),
+      task({ id: "T-0003", status: "in-progress" }),
+      task({ id: "T-0004", status: "ready" })
+    ];
+    expect(computeUnmetDependencies(tasks).get("T-0001")).toEqual(["T-0003", "T-0004"]);
+  });
+
+  it("reports a dependency id missing from the task list as unmet", () => {
+    const tasks = [task({ id: "T-0001", depends_on: ["T-0099"] })];
+    expect(computeUnmetDependencies(tasks).get("T-0001")).toEqual(["T-0099"]);
+  });
+
+  it("preserves depends_on order, so the tooltip names blockers in the order the card lists them", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: ["T-0009", "T-0002", "T-0005"] }),
+      task({ id: "T-0002", status: "backlog" }),
+      task({ id: "T-0005", status: "backlog" }),
+      task({ id: "T-0009", status: "backlog" })
+    ];
+    expect(computeUnmetDependencies(tasks).get("T-0001")).toEqual(["T-0009", "T-0002", "T-0005"]);
+  });
+
+  it("returns a Map with an entry for every task", () => {
+    const tasks = [task({ id: "T-0001" }), task({ id: "T-0002", depends_on: ["T-0001"] })];
+    const unmet = computeUnmetDependencies(tasks);
+    expect(unmet).toBeInstanceOf(Map);
+    expect(unmet.size).toBe(tasks.length);
+  });
+
+  it("agrees with computeDependencyStatus on every task -- a non-empty unmet list iff blocked", () => {
+    const tasks = [
+      task({ id: "T-0001", depends_on: [] }),
+      task({ id: "T-0002", depends_on: ["T-0001"] }),
+      task({ id: "T-0003", depends_on: ["T-0099"] }),
+      task({ id: "T-0004", status: "done", depends_on: [] }),
+      task({ id: "T-0005", depends_on: ["T-0004"] })
+    ];
+    const status = computeDependencyStatus(tasks);
+    const unmet = computeUnmetDependencies(tasks);
+    for (const t of tasks) {
+      expect(unmet.get(t.id).length > 0).toBe(status.get(t.id) === "blocked");
+    }
   });
 });

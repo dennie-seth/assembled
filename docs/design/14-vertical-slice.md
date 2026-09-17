@@ -153,16 +153,26 @@ All vertical connectors are ladders (`11` §5 — free, always-usable, ungated).
 | **Antenna Shaft** | Narrow vertical shaft, winding ladder path | Still Air on a fixed lap (~20–30s), no LOS — avoidance is pure timing, not routing | At least one hiding alcove partway up — the room's only reliable safety valve |
 | **Broadcast Deck** | Open deck, tear as a chroma-lit centerpiece | No entity — breathing room before the crossing | — |
 
-**Sensor parameters (first pass, tune on playtest — `11` M-2):**
+**Sensor parameters — updated from side-on blockout measurement (DL-18 / `11` M-2):**
 
-| Entity | Parameter | Value |
-|---|---|---|
-| Watcher (Power Substation) | Cone angle / range | 90° / 6 tiles |
-| Watcher (Power Substation) | Sweep timing | ~4s pass, ~2s pause at each end |
-| Sound | Detection radius, walk | ~1–2 tiles |
-| Sound | Detection radius, run | ~5 tiles |
-| Still Air | Patrol lap time | ~20–30s |
-| Still Air | Catch radius | ~1.5 tiles when passing through the player's segment |
+| Entity | Parameter | Value | Source |
+|---|---|---|---|
+| Watcher (Power Substation) | Range | **6 tiles** | T-0192 blockout constant (unchanged) |
+| Watcher (Power Substation) | Detection model | **1-D hemisphere** (facing direction + range on the floor plane) — not a 2-D cone | DL-18: SightConeSensorV2 is 1-D; cone visual is UX only |
+| ~~Watcher (Power Substation)~~ | ~~Cone angle~~ | ~~90°~~ | ~~**void** — top-down estimate; the T-0192 sensor has no angle parameter~~ |
+| Watcher (Power Substation) | Patrol cycle | **6 s** (3 s/direction, 0 s pause) | DL-18 measured (96 px / 32 px·s⁻¹ × 2) |
+| ~~Watcher (Power Substation)~~ | ~~Sweep timing~~ | ~~"~4 s pass, ~2 s pause at each end"~~ | ~~**void** — top-down estimate; blockout code has no pause; 3 s measured~~ |
+| Sound | Detection radius, walk | **1.5 tiles** | T-0192 blockout constant (was "~1–2 tiles") |
+| Sound | Detection radius, run | **5 tiles** | T-0192 blockout constant (confirmed) |
+| Still Air | Patrol lap time | ~20–30 s | Design estimate (no blockout yet) |
+| Still Air | Catch radius | **1.5 tiles** | T-0192 blockout constant (confirmed) |
+
+**DL-18 M4 finding — unavoidable detection on crossing path:**
+The T-0193 measurement confirmed that no safe crossing exists from the cover pillar
+(col 9) to the door (col 21) in the physical-patrol model: sight triggers at t ≈ 0.83 s
+(col 10.8), ≈ 171 px short of the door. The Power Substation room requires either
+a mid-zone hiding alcove or the Watcher redesigned as a fixed-position sweep entity
+(as described in §3 above: "fixed on a short catwalk") rather than a physical patrol.
 
 ---
 
@@ -189,3 +199,4 @@ None — VS-1 through VS-4 all resolved. `14` is complete for the vertical-slice
 | 2026-08-03 | Sample note updated: "I need \{ITEM_REF\}" → "Need \{item_ref\}" to match `02` §2's named-slot/telegraphic-register revision | Claude, rev. @DennieSeth |
 | 2026-08-03 | v4: **Climax made its own declared tag** (`signal_tower.climax`, co-located with `records_room`/`music_cue`), per `16` §1 — was previously an informal role description, not a lookup-able anchor | Claude, rev. @DennieSeth |
 | 2026-08-03 | v5: **Archetype-chain redesign.** Records Room switched from item-locked to **puzzle-locked** (resolves the entry circularity); its Climax reward renamed **Resonance Key**, which now opens Broadcast Deck's tear — reclassified as a **chain tear** to Hospital (`19`), not a foreign pocket. Dead Frequency Room and the foreign Watcher relocated to Long Descent (`20`) as the run's terminal pocket tear. Signal Tower now 7 rooms (was 8). Power Substation's gate made an explicit object (D). Scope note added (H) clarifying exit/multiplayer systems are deliberately untested solo. Raised by @DennieSeth against a full-playthrough review | Claude, rev. @DennieSeth |
+| 2026-08-18 | **DL-18 (T-0193): §10 sensor parameters updated from side-on blockout measurement.** Top-down estimates voided: "90° cone angle" (sensor is 1-D, no angle) and "~4 s pass, ~2 s pause" (measured: 3 s/direction, 0 s pause, 6 s cycle). Sound walk radius narrowed from "~1–2 tiles" to confirmed 1.5 tiles. M4 finding noted: no safe crossing from cover pillar to door in the physical-patrol model — Power Substation needs a mid-zone alcove or fixed-sweep Watcher redesign. | Claude, rev. pending |

@@ -36,6 +36,13 @@ TILE_SIZE: int = 16
 # PNG compress_level is fixed so byte-identical output is guaranteed across runs.
 _PNG_COMPRESS_LEVEL: int = 9
 
+#: P-4 slot 0 is the background/transparent key for every sprite in the game,
+#: and it is also what the unused gutters between packed rects hold. The atlas
+#: declares it transparent (P-6) so a packed sprite renders exactly as its
+#: source PNG does -- an opaque atlas would put a black box behind every sprite
+#: and fill the gutters with solid colour.
+_BACKGROUND_INDEX: int = 0
+
 # Godot resource header emitted at the top of every .tres file.
 _TRES_FORMAT_VERSION: int = 3
 
@@ -276,7 +283,15 @@ def pack_sprites(sprite_dir: Path, out_dir: Path, archetype: str) -> PackResult:
     tres_path = out_dir / f"{archetype}_atlas.tres"
 
     # Fixed compress_level ensures byte-identical PNG output across runs.
-    atlas_img.save(atlas_path, format="PNG", compress_level=_PNG_COMPRESS_LEVEL)
+    # `transparency` writes the tRNS chunk that makes the background index
+    # actually render transparent (P-6); it is deterministic metadata and does
+    # not affect the packed layout.
+    atlas_img.save(
+        atlas_path,
+        format="PNG",
+        compress_level=_PNG_COMPRESS_LEVEL,
+        transparency=_BACKGROUND_INDEX,
+    )
     _write_tres(tres_path, archetype, atlas_filename, regions)
 
     return PackResult(atlas_path=atlas_path, tres_path=tres_path, regions=regions)

@@ -7,9 +7,11 @@ import {
   MAX_AUTO_RETRY_ATTEMPTS,
   DEFAULT_PHASE_TIMEOUT_MS,
   DEFAULT_INACTIVITY_TIMEOUT_MS,
+  INACTIVITY_TIMEOUT_MS_BY_AGENT,
   PR_OPEN_GRAPHQL_MAX_ATTEMPTS,
   PR_OPEN_REST_MAX_ATTEMPTS,
-  PR_OPEN_BACKOFF_BASE_MS
+  PR_OPEN_BACKOFF_BASE_MS,
+  effectiveMaxAttempts
 } from "../../src/runner/runOrchestrator.js";
 import { crossCheckVerdict } from "../../src/runner/verdictCrossCheck.js";
 
@@ -96,14 +98,19 @@ function makeGithub(overrides = {}) {
   };
 }
 
-function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], ...overrides } = {}) {
+function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], verdictArchives, ...overrides } = {}) {
   const createRunLogFn = vi.fn(async () => {
     const log = makeRunLog();
     runLogs.push(log);
     return log;
   });
 
-  return new RunOrchestrator({
+  // In-memory stand-in for the on-disk verdict archive (tools/board/src/lib/verdictArchive.js)
+  // -- keeps these unit tests off the real filesystem while still letting a test assert what
+  // got archived via `orchestrator.testVerdictArchives.get(taskId)`.
+  const archives = verdictArchives ?? new Map();
+
+  const orchestrator = new RunOrchestrator({
     store,
     hub: hub ?? { broadcast: vi.fn() },
     runner,
@@ -124,8 +131,24 @@ function makeOrchestrator({ store, git, runner, hub, github, runLogs = [], ...ov
     // events here (which rarely include the real Bash tool_use/tool_result pairs a genuine
     // verify route would produce) don't get spuriously downgraded out from under unrelated tests.
     crossCheckVerdictFn: ({ verdict }) => verdict,
+    readVerdictEntriesFn: async (tasksDir, id) => archives.get(id) ?? [],
+    appendVerdictEntryFn: async (tasksDir, id, entry) => {
+      const list = archives.get(id) ?? [];
+      list.push(entry);
+      archives.set(id, list);
+    },
+    // T-0367 fix round: unlike recordAttemptUsageFn (fire-and-forget, never awaited by the main
+    // flow), ensureExecutionIdFn IS awaited directly at the top of runCard() before anything else
+    // happens -- the real implementation's filesystem I/O against this file's fake "/repo" paths
+    // has no business being on the critical path of tests that aren't about execution identity at
+    // all (and was observed to desync fake-timer-driven tests in this file). Fast in-memory
+    // defaults; individual tests can still override either via `overrides`.
+    ensureExecutionIdFn: vi.fn(async () => "exec-test"),
+    clearExecutionIdFn: vi.fn(async () => {}),
     ...overrides
   });
+  orchestrator.testVerdictArchives = archives;
+  return orchestrator;
 }
 
 function makeGit(overrides = {}) {
@@ -143,6 +166,7 @@ function makeGit(overrides = {}) {
     mergeDevelop: vi.fn(async () => ({ conflicted: false, changed: false })),
     mergeStatus: vi.fn(async () => []),
     hasUncommittedChanges: vi.fn(async () => false),
+    abortMerge: vi.fn(async () => {}),
     ...overrides
   };
 }
@@ -161,6 +185,15 @@ function makeRunner() {
 async function nthChild(runner, n) {
   await vi.waitFor(() => expect(runner.start).toHaveBeenCalledTimes(n));
   return runner.spawnedChildren[n - 1];
+}
+
+/** Concatenated text of every archived verdict entry for a card (see makeOrchestrator's testVerdictArchives). */
+function archivedText(orchestrator, taskId) {
+  return (orchestrator.testVerdictArchives.get(taskId) ?? []).map((e) => e.text).join("\n");
+}
+
+function archivedHeadings(orchestrator, taskId) {
+  return (orchestrator.testVerdictArchives.get(taskId) ?? []).map((e) => e.heading);
 }
 
 describe("RunOrchestrator.runCard — happy path (PASS)", () => {
@@ -188,7 +221,9 @@ describe("RunOrchestrator.runCard — happy path (PASS)", () => {
 
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
-    expect(finalTask.body).toContain("all green");
+    // T-0345: the PASS verdict's notes are archived, not appended to the body.
+    expect(finalTask.body).not.toContain("all green");
+    expect(archivedText(orchestrator, "T-0001")).toContain("all green");
     expect(finalTask.branch).toBe("feature/T-0001");
     expect(finalTask.commit).toBe("abc1234def5678abc1234def5678abc1234def5");
 
@@ -256,9 +291,10 @@ describe("RunOrchestrator.runCard — harness-side verdict cross-check (real cro
     const midRetryTask = await store.get("T-0001");
     expect(midRetryTask.status).toBe("in-progress");
     expect(midRetryTask.status).not.toBe("review");
-    expect(midRetryTask.body).toContain("## Validation: FAIL");
-    expect(midRetryTask.body).toMatch(/downgraded by harness verdict cross-check/);
-    expect(midRetryTask.body).toMatch(/Board test\/lint suite/);
+    expect(midRetryTask.body).not.toContain("## Validation: FAIL");
+    expect(archivedHeadings(orchestrator, "T-0001")).toContain("Validation: FAIL");
+    expect(archivedText(orchestrator, "T-0001")).toMatch(/downgraded by harness verdict cross-check/);
+    expect(archivedText(orchestrator, "T-0001")).toMatch(/Board test\/lint suite/);
     expect(git.push).not.toHaveBeenCalled();
 
     // Let the retry finish (as a crash, for simplicity) so runPromise resolves.
@@ -288,7 +324,8 @@ describe("RunOrchestrator.runCard — harness-side verdict cross-check (real cro
 
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
-    expect(finalTask.body).toContain("ran npm test + eslint, both green");
+    expect(finalTask.body).not.toContain("ran npm test + eslint, both green");
+    expect(archivedText(orchestrator, "T-0001")).toContain("ran npm test + eslint, both green");
     expect(git.push).toHaveBeenCalled();
   });
 
@@ -314,8 +351,9 @@ describe("RunOrchestrator.runCard — harness-side verdict cross-check (real cro
 
     const midRetryTask = await store.get("T-0001");
     expect(midRetryTask.status).toBe("in-progress");
-    expect(midRetryTask.body).toContain("unrelated lint nit in the diff");
-    expect(midRetryTask.body).not.toMatch(/downgraded by harness verdict cross-check/);
+    expect(midRetryTask.body).not.toContain("unrelated lint nit in the diff");
+    expect(archivedText(orchestrator, "T-0001")).toContain("unrelated lint nit in the diff");
+    expect(archivedText(orchestrator, "T-0001")).not.toMatch(/downgraded by harness verdict cross-check/);
 
     runner.spawnedChildren[2].emit("exit", 1, null);
     await runPromise;
@@ -417,7 +455,7 @@ describe("RunOrchestrator.runCard — routes the reviewer's changed paths throug
 });
 
 describe("RunOrchestrator.runCard — FAIL validation triggers a bounded auto-retry, not a dead end", () => {
-  it("on FAIL, appends the reviewer's reasons to the body but keeps the card running (not blocked) while it auto-retries the implementer", async () => {
+  it("on FAIL, archives the reviewer's reasons (not appended to the body) but keeps the card running (not blocked) while it auto-retries the implementer", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
     const runner = makeRunner();
@@ -441,9 +479,10 @@ describe("RunOrchestrator.runCard — FAIL validation triggers a bounded auto-re
     const midRetryTask = await store.get("T-0001");
     expect(midRetryTask.status).toBe("in-progress");
     expect(midRetryTask.status).not.toBe("blocked");
-    expect(midRetryTask.body).toContain("## Validation: FAIL");
-    expect(midRetryTask.body).toContain("missing test at src/foo.js:12");
-    expect(midRetryTask.body).toContain("run 1 of 5");
+    expect(midRetryTask.body).not.toContain("## Validation: FAIL");
+    expect(archivedHeadings(orchestrator, "T-0001")).toContain("Validation: FAIL");
+    expect(archivedText(orchestrator, "T-0001")).toContain("missing test at src/foo.js:12");
+    expect(archivedText(orchestrator, "T-0001")).toContain("run 1 of 5");
     expect(git.removeWorktree).not.toHaveBeenCalled();
     expect(git.push).not.toHaveBeenCalled();
 
@@ -486,9 +525,11 @@ describe("RunOrchestrator.runCard — auto-retry loop on reviewer FAIL (bounded)
 
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
-    // The retry resumes the same branch with the FAIL note (now in the body) injected.
+    // T-0345: the retry resumes the same branch with the prior FAIL archived (not re-appended
+    // to the body) and summarized into the digest passed to the next attempt's prompt instead.
     expect(buildPromptFn.mock.calls[1][0]).toMatchObject({ continuing: true });
-    expect(buildPromptFn.mock.calls[1][0].task.body).toContain("issue round 1");
+    expect(buildPromptFn.mock.calls[1][0].task.body).not.toContain("issue round 1");
+    expect(buildPromptFn.mock.calls[1][0].verdictDigest).toContain("issue round 1");
   });
 
   it(`caps auto-retry at ${MAX_AUTO_RETRY_ATTEMPTS} total runs -- the final consecutive FAIL blocks the card and stops retrying`, async () => {
@@ -508,10 +549,102 @@ describe("RunOrchestrator.runCard — auto-retry loop on reviewer FAIL (bounded)
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.attempts).toBe(MAX_AUTO_RETRY_ATTEMPTS);
-    expect(finalTask.body).toContain(`run ${MAX_AUTO_RETRY_ATTEMPTS} of ${MAX_AUTO_RETRY_ATTEMPTS}`);
-    expect(finalTask.body).toMatch(/auto-retry limit reached/i);
-    expect(finalTask.body).toContain("issue round 1");
-    expect(finalTask.body).toContain(`issue round ${MAX_AUTO_RETRY_ATTEMPTS}`);
+    expect(finalTask.body).not.toContain("issue round 1");
+    const archived = archivedText(orchestrator, "T-0001");
+    expect(archived).toContain(`run ${MAX_AUTO_RETRY_ATTEMPTS} of ${MAX_AUTO_RETRY_ATTEMPTS}`);
+    expect(archived).toMatch(/auto-retry limit reached/i);
+    expect(archived).toContain("issue round 1");
+    expect(archived).toContain(`issue round ${MAX_AUTO_RETRY_ATTEMPTS}`);
+  });
+
+  it("T-0343: a card with no max_attempts field behaves exactly like it did before the field existed -- the compatibility guarantee", async () => {
+    const store = makeStore([baseTask({ max_attempts: undefined })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= MAX_AUTO_RETRY_ATTEMPTS; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(MAX_AUTO_RETRY_ATTEMPTS * 2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.attempts).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+    expect(archivedText(orchestrator, "T-0001")).toContain(`run ${MAX_AUTO_RETRY_ATTEMPTS} of ${MAX_AUTO_RETRY_ATTEMPTS}`);
+  });
+
+  it("T-0370: effectiveMaxAttempts is exported standalone so the launch boundary can share the runner's own retry allowance rule, not a fixed constant", () => {
+    expect(effectiveMaxAttempts({ max_attempts: 2 })).toBe(2);
+    expect(effectiveMaxAttempts({ max_attempts: 20 })).toBe(20);
+    expect(effectiveMaxAttempts({})).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+    expect(effectiveMaxAttempts({ max_attempts: null })).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+    expect(effectiveMaxAttempts({ max_attempts: 0 })).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+  });
+
+  it("T-0343: a card's own max_attempts overrides MAX_AUTO_RETRY_ATTEMPTS downward -- blocks after 2 runs, not 5", async () => {
+    const store = makeStore([baseTask({ max_attempts: 2 })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= 2; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(2 * 2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.attempts).toBe(2);
+    expect(archivedText(orchestrator, "T-0001")).toContain("run 2 of 2");
+    expect(archivedText(orchestrator, "T-0001")).toMatch(/auto-retry limit reached/i);
+  });
+
+  it("T-0343: a card's own max_attempts overrides MAX_AUTO_RETRY_ATTEMPTS upward -- keeps retrying past the old 5-run cap", async () => {
+    const store = makeStore([baseTask({ max_attempts: 6 })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= 6; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    expect(runner.start).toHaveBeenCalledTimes(6 * 2);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.attempts).toBe(6);
+    expect(archivedText(orchestrator, "T-0001")).toContain("run 6 of 6");
+    expect(archivedText(orchestrator, "T-0001")).toMatch(/auto-retry limit reached/i);
+  });
+
+  it("T-0299: a run that ends FAIL/blocked still pushes its committed work to origin, without opening a PR -- the case that used to strand it in the worktree", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let n = 1; n <= MAX_AUTO_RETRY_ATTEMPTS; n++) {
+      await driveFailCycle(runner, n);
+    }
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    // The commits made across the FAILed attempts are still on origin -- not stranded in a
+    // worktree the next run (or a reclaim) is free to wipe.
+    expect(git.push).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001", branch: "feature/T-0001" });
+    // Pushing is decoupled from PR-opening: a FAIL/blocked run is not "ready for review".
+    expect(github.createPr).not.toHaveBeenCalled();
+    expect(finalTask.pr).toBeUndefined();
   });
 
   it('includes the attempt count ("run N of 5") in every FAIL note', async () => {
@@ -530,7 +663,8 @@ describe("RunOrchestrator.runCard — auto-retry loop on reviewer FAIL (bounded)
     await runPromise;
 
     const finalTask = await store.get("T-0001");
-    expect(finalTask.body).toContain("run 1 of 5");
+    expect(finalTask.body).not.toContain("run 1 of 5");
+    expect(archivedText(orchestrator, "T-0001")).toContain("run 1 of 5");
   });
 
   it("persists the attempts counter on the task after each attempt (visible in the task JSON for the UI)", async () => {
@@ -759,7 +893,10 @@ describe("RunOrchestrator.runCard — phase-level timeout (hung child protection
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.body).toMatch(/implementer/i);
     expect(finalTask.body).toMatch(/timed? ?out|exceeded/i);
-    expect(finalTask.body).toContain("hung subprocess");
+    // Deliberately NOT "hung subprocess" any more -- see the message describe block
+    // below. The phase watchdog cannot tell an overrun from a hang, and asserting a
+    // hang sent the T-0228 diagnosis down the wrong path for two runs.
+    expect(finalTask.body).not.toContain("hung subprocess");
 
     // A timeout is a hard stop, not a graded FAIL -- it must not feed the auto-retry loop.
     expect(runner.start).toHaveBeenCalledTimes(1);
@@ -869,9 +1006,10 @@ describe("RunOrchestrator.runCard — inactivity watchdog (stdin-hang hardening,
 
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
-    expect(finalTask.body).toMatch(/implementer run went silent/i);
-    expect(finalTask.body).toMatch(/stdin-hang/i);
-    expect(finalTask.body).toMatch(/run 1 of 5/i);
+    const archived = archivedText(orchestrator, "T-0001");
+    expect(archived).toMatch(/implementer run went silent/i);
+    expect(archived).toMatch(/stdin-hang/i);
+    expect(archived).toMatch(/run 1 of 5/i);
     expect(orchestrator.hasActiveRuns()).toBe(false);
   });
 
@@ -914,7 +1052,7 @@ describe("RunOrchestrator.runCard — inactivity watchdog (stdin-hang hardening,
 
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
-    expect(finalTask.body).toMatch(/reviewer run went silent/i);
+    expect(archivedText(orchestrator, "T-0001")).toMatch(/reviewer run went silent/i);
   });
 
   it("does not false-positive on a run that keeps producing output across multiple re-arm windows", async () => {
@@ -984,7 +1122,7 @@ describe("RunOrchestrator.runCard — inactivity watchdog (stdin-hang hardening,
     expect(runner.start).toHaveBeenCalledTimes(MAX_AUTO_RETRY_ATTEMPTS);
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("blocked");
-    expect(finalTask.body).toMatch(/auto-retry limit reached/i);
+    expect(archivedText(orchestrator, "T-0001")).toMatch(/auto-retry limit reached/i);
     expect(orchestrator.hasActiveRuns()).toBe(false);
   });
 
@@ -1393,6 +1531,33 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
     expect(finalTask.pr).toBe("https://github.com/example/repo/pull/55");
   });
 
+  it("(c2) when the card's recorded PR is stale/closed (findExistingPr correctly reports it absent), opens a fresh PR and overwrites the dead pr field -- T-0287", async () => {
+    const store = makeStore([baseTask({ pr: "https://github.com/example/repo/pull/271" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const github = makeGithub({
+      checkAvailability: vi.fn(async () => ({ available: true, reason: null })),
+      // A closed PR is not live for this branch -- githubOps.findExistingPr's liveness check
+      // (state === OPEN, headRefName matches) resolves this to null, same as no PR at all.
+      findExistingPr: vi.fn(async () => null),
+      createPr: vi.fn(async () => "https://github.com/example/repo/pull/312")
+    });
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    const implChild = await nthChild(runner, 1);
+    implChild.emit("exit", 0, null);
+    const reviewChild = await nthChild(runner, 2);
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("PASS", "suite green"))));
+    reviewChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(github.createPr).toHaveBeenCalledTimes(1);
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/312");
+    expect(finalTask.pr).not.toBe("https://github.com/example/repo/pull/271");
+  });
+
   it("(d) a FAIL verdict never opens a PR, even after the auto-retry loop exhausts its attempts and blocks the card", async () => {
     const store = makeStore([baseTask()]);
     const git = makeGit();
@@ -1405,7 +1570,10 @@ describe("RunOrchestrator.runCard — finalize: auto-open PR on PASS", () => {
       const implChild = await nthChild(runner, n * 2 - 1);
       implChild.emit("exit", 0, null);
       const reviewChild = await nthChild(runner, n * 2);
-      reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", "missing test"))));
+      // Distinct notes per attempt -- this test exercises the auto-retry cap itself, not
+      // the §23-a no-progress abort (see runOrchestrator.noProgressAbort.test.js for that),
+      // so every attempt must hash to a different failure signature to reach the cap.
+      reviewChild.stdout.emit("data", ndjson(assistantEvent(verdictBlock("FAIL", `missing test (round ${n})`))));
       reviewChild.emit("exit", 0, null);
     }
     await runPromise;
@@ -1806,6 +1974,89 @@ describe("RunOrchestrator.runCard — finalize: merge origin/develop into the br
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("blocked");
     expect(finalTask.pr).toBe("https://github.com/example/repo/pull/9");
+    // T-0291: a crashed conflict-resolution phase must not leave the worktree mid-merge
+    // (MERGE_HEAD/conflict markers on disk) -- the merge is cleaned up rather than silently
+    // abandoned, on top of the failure already being recorded on the card above.
+    expect(git.abortMerge).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001" });
+  });
+
+  it("also aborts the mid-merge state when the conflict-resolution phase's spawn crashes outright (a synchronous throw, not just a non-zero exit) -- and still preserves the PASS verdict, PR link, and commit rather than losing them (T-0243)", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    let call = 0;
+    runner.start.mockImplementation(async () => {
+      call += 1;
+      if (call === 3) {
+        // T-0243's actual failure mode: a spawn-time exception (e.g. `spawn E2BIG`) thrown
+        // out of the runner's start() before any child process ever exists -- not a child
+        // that exits non-zero.
+        throw Object.assign(new Error("spawn claude E2BIG"), { code: "E2BIG" });
+      }
+      const child = fakeChildProcess();
+      runner.spawnedChildren.push(child);
+      return { runId: "run", child };
+    });
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+
+    // Must resolve, not reject -- runCard() itself must never throw over a post-PASS crash.
+    await expect(runPromise).resolves.toBeUndefined();
+
+    const finalTask = await store.get("T-0001");
+    // The verdict, PR link, commit and branch the reviewer already earned are preserved --
+    // not discarded just because the later develop-sync step crashed.
+    expect(finalTask.pr).toBe("https://github.com/example/repo/pull/9");
+    expect(finalTask.commit).toBe("abc1234def5678abc1234def5678abc1234def5");
+    expect(finalTask.branch).toBe("feature/T-0001");
+    expect(archivedHeadings(orchestrator, "T-0001")).toContain("Validation: PASS");
+    expect(finalTask.status).toBe("blocked");
+    expect(finalTask.body).toMatch(/E2BIG|develop sync/i);
+    expect(git.abortMerge).toHaveBeenCalledWith({ worktreeDir: "/repo/worktrees/T-0001" });
+  });
+
+  it("persists the PASS verdict, PR link, commit and branch on the card BEFORE attempting develop-sync, so a crash mid-sync can only ever downgrade an already-durable state", async () => {
+    const store = makeStore([baseTask()]);
+    const conflictResult = {
+      conflicted: true,
+      conflictedFiles: ["tools/board/src/thing.js"],
+      hunks: { "tools/board/src/thing.js": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/develop\n" }
+    };
+    const git = makeGit({ mergeDevelop: vi.fn(async () => conflictResult) });
+    const runner = makeRunner();
+    let call = 0;
+    let taskAtConflictPhaseStart = null;
+    runner.start.mockImplementation(async () => {
+      call += 1;
+      if (call === 3) {
+        taskAtConflictPhaseStart = await store.get("T-0001");
+      }
+      const child = fakeChildProcess();
+      runner.spawnedChildren.push(child);
+      return { runId: "run", child };
+    });
+    const github = makeGithubWithPr();
+    const orchestrator = makeOrchestrator({ store, git, runner, github });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await driveToPass(runner);
+    const conflictChild = await nthChild(runner, 3);
+    conflictChild.emit("exit", 0, null);
+    await runPromise;
+
+    expect(taskAtConflictPhaseStart).not.toBeNull();
+    expect(taskAtConflictPhaseStart.status).toBe("review");
+    expect(taskAtConflictPhaseStart.pr).toBe("https://github.com/example/repo/pull/9");
+    expect(taskAtConflictPhaseStart.commit).toBe("abc1234def5678abc1234def5678abc1234def5");
+    expect(archivedHeadings(orchestrator, "T-0001")).toContain("Validation: PASS");
   });
 
   it("uses the card's own agent (not the reviewer) to resolve conflicts, loading its agent def and allowed tools", async () => {
@@ -2343,7 +2594,8 @@ describe("RunOrchestrator.runCard — unassigned cards (agent: null) route throu
 
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
-    expect(finalTask.body).toContain("generic agent delivered");
+    expect(finalTask.body).not.toContain("generic agent delivered");
+    expect(archivedText(orchestrator, "T-0001")).toContain("generic agent delivered");
     expect(git.push).toHaveBeenCalled();
   });
 });
@@ -2379,7 +2631,8 @@ describe("RunOrchestrator.runCard — a card explicitly assigned agent: 'generic
     expect(runner.start).toHaveBeenCalledTimes(2);
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).toBe("review");
-    expect(finalTask.body).toContain("generic ran directly");
+    expect(finalTask.body).not.toContain("generic ran directly");
+    expect(archivedText(orchestrator, "T-0001")).toContain("generic ran directly");
   });
 
   it("uses the generic agent def and model for the (only) implementation phase, loaded the same way a subsystem agent would be", async () => {
@@ -2663,13 +2916,15 @@ describe("RunOrchestrator — persists run liveness state for the orphan reaper"
 
     await runPromise;
 
-    expect(writeRunStateFn).toHaveBeenCalledTimes(2);
-    expect(writeRunStateFn).toHaveBeenNthCalledWith(
-      1,
+    // The heartbeat (fix-plan item #3) also writes run state on a timer, so the meaningful
+    // assertion is on the per-phase writes -- the ones carrying a spawned child's pid -- not on
+    // the total call count.
+    const phaseWrites = writeRunStateFn.mock.calls.filter(([args]) => typeof args.pid === "number");
+    expect(phaseWrites).toHaveLength(2);
+    expect(phaseWrites[0][0]).toEqual(
       expect.objectContaining({ runsDir: "/repo/tasks/.runs", taskId: "T-0001", pid: 4242 })
     );
-    expect(writeRunStateFn).toHaveBeenNthCalledWith(
-      2,
+    expect(phaseWrites[1][0]).toEqual(
       expect.objectContaining({ runsDir: "/repo/tasks/.runs", taskId: "T-0001", pid: 4242 })
     );
     expect(clearRunStateFn).toHaveBeenCalledTimes(1);
@@ -2690,7 +2945,8 @@ describe("RunOrchestrator — persists run liveness state for the orphan reaper"
     implChild.emit("exit", 1, null);
     await runPromise;
 
-    expect(writeRunStateFn).toHaveBeenCalledTimes(1);
+    // As above: only the pid-carrying writes are per-phase; the rest are heartbeat beats.
+    expect(writeRunStateFn.mock.calls.filter(([args]) => typeof args.pid === "number")).toHaveLength(1);
     expect(clearRunStateFn).toHaveBeenCalledTimes(1);
     expect((await store.get("T-0001")).status).toBe("blocked");
   });
@@ -2746,7 +3002,9 @@ describe("RunOrchestrator — commits every in-run status write to repoRoot", ()
       const implChild = await nthChild(runner, attempt * 2 - 1);
       implChild.emit("exit", 0, null);
       const reviewChild = await nthChild(runner, attempt * 2);
-      reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("FAIL", "nope")}`)));
+      // Distinct notes per attempt -- this test exercises the commit-on-every-status-write
+      // behavior through to cap exhaustion, not the §23-a no-progress abort.
+      reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("FAIL", `nope (round ${attempt})`)}`)));
       reviewChild.emit("exit", 0, null);
     }
     await runPromise;
@@ -2803,5 +3061,414 @@ describe("appendNote", () => {
     expect(result).toContain("## Context\nOriginal.");
     expect(result).toContain("## Validation: PASS");
     expect(result).toContain("all good");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Per-agent phase budgets, and telling an overrun apart from a hang (T-0228).
+//
+// T-0228 was killed twice at exactly 40 minutes while making steady progress --
+// 26/26 ComfyUI generations succeeded, max inter-event gap 287s, nowhere near the
+// 8-minute inactivity threshold. Arm A's stack measures ~240s per generation and
+// the card mandates up to 8 attempts, so it could not fit a 40-minute bound. The
+// kill message said "likely a hung subprocess", which is what made the diagnosis
+// take two runs instead of one.
+// ---------------------------------------------------------------------------
+
+describe("RunOrchestrator per-agent phase budgets", () => {
+  // Long enough that only the phase timer can fire in these tests -- the inactivity
+  // watchdog would otherwise trip first, since the fixture children emit no stdout.
+  const QUIET = 10 * 60 * 60 * 1000;
+
+  it("holds an assets phase to the assets budget rather than the shorter default", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutsByAgent: { assets: 5000 },
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // Well past the 40-minute default, still inside the assets budget: alive.
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+
+  it("still holds a non-assets phase to the default budget", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "server" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutsByAgent: { assets: 5000 },
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The assets budget must not leak onto another agent.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_PHASE_TIMEOUT_MS);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalled();
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+
+  it("holds the reviewer phase of an assets card to the reviewer budget, not the assets one", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutsByAgent: { assets: 60_000 },
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    runner.spawnedChildren[0].emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+
+    // The reviewer runs as the `reviewer` agent, so it gets the default budget --
+    // it verifies output, it does not generate it.
+    await vi.advanceTimersByTimeAsync(DEFAULT_PHASE_TIMEOUT_MS);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: reviewChild }));
+  });
+
+  it("lets an explicit phaseTimeoutMs override win even for an assets card", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 1000,
+      phaseTimeoutsByAgent: { assets: 60 * 60 * 1000 },
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalled();
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+});
+
+describe("RunOrchestrator timeout messages distinguish overrun from hang", () => {
+  it("the phase-timeout message names the budget and does not claim a hang", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutsByAgent: { assets: 120 * 60 * 1000 },
+      inactivityTimeoutMs: 10 * 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(120 * 60 * 1000);
+    await runPromise;
+
+    const body = (await store.get("T-0001")).body;
+    expect(body).toMatch(/implementer/i);
+    expect(body).toContain("120");
+    expect(body).toMatch(/assets/);
+    // The watchdog cannot distinguish a slow run from a stuck one, so it must not
+    // assert either. The inactivity watchdog and §23-a's no-progress abort are the
+    // actual hang defences.
+    expect(body).not.toMatch(/hung|hang/i);
+  });
+
+  it("the inactivity message still calls out silence and a likely hang", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      inactivityTimeoutMs: 1000,
+      phaseTimeoutsByAgent: { assets: 10 * 60 * 60 * 1000 },
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.runAllTimersAsync();
+    await runPromise;
+
+    const archived = archivedText(orchestrator, "T-0001");
+    expect(archived).toMatch(/no new output|went silent/i);
+    expect(archived).toMatch(/hang|hung/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-agent inactivity budgets (T-0309), a structural copy of the per-agent
+// phase budgets above. Keyed on the phase's running agent, same as phase
+// budgets -- an assets card's reviewer phase verifies output, it does not
+// generate it, and keeps the default.
+// ---------------------------------------------------------------------------
+
+describe("RunOrchestrator per-agent inactivity budgets", () => {
+  const ASSETS_INACTIVITY_MS = INACTIVITY_TIMEOUT_MS_BY_AGENT.assets;
+
+  it("holds an assets implementer phase to the assets inactivity budget rather than the shorter default", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // Well past the 8-minute default, still inside the assets inactivity budget: alive.
+    await vi.advanceTimersByTimeAsync(DEFAULT_INACTIVITY_TIMEOUT_MS + 60 * 1000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    // Now cross the assets budget itself.
+    await vi.advanceTimersByTimeAsync(ASSETS_INACTIVITY_MS);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    // Retryable (not a hard block): drive the retry through to a clean PASS.
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("still holds a non-assets implementer phase to the default inactivity budget", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "server" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // The assets budget must not leak onto another agent.
+    await vi.advanceTimersByTimeAsync(DEFAULT_INACTIVITY_TIMEOUT_MS);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("holds the reviewer phase of an assets card to the default inactivity budget, not the assets one", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    runner.spawnedChildren[0].emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[1];
+
+    // The reviewer runs as the `reviewer` agent, so it gets the default
+    // inactivity budget -- it verifies output, it does not generate it.
+    await vi.advanceTimersByTimeAsync(DEFAULT_INACTIVITY_TIMEOUT_MS);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: reviewChild }));
+
+    const secondImplChild = runner.spawnedChildren[2];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const secondReviewChild = runner.spawnedChildren[3];
+    secondReviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    secondReviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("lets an explicit inactivityTimeoutMs override win even for an assets card", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutMs: 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("accepts an injected per-agent map via the constructor, so future tuning is one line", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "audio" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      inactivityTimeoutsByAgent: { audio: 5000 },
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+
+    const secondImplChild = runner.spawnedChildren[1];
+    secondImplChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    const reviewChild = runner.spawnedChildren[2];
+    reviewChild.stdout.emit("data", ndjson(assistantEvent(`Reviewed. ${verdictBlock("PASS", "all green")}`)));
+    reviewChild.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect((await store.get("T-0001")).status).toBe("review");
+  });
+
+  it("the inactivity kill message reports the resolved budget and the agent it applied to", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "assets" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      phaseTimeoutMs: 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    for (let attempt = 1; attempt <= MAX_AUTO_RETRY_ATTEMPTS; attempt++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(ASSETS_INACTIVITY_MS);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await runPromise;
+
+    const finalTask = await store.get("T-0001");
+    expect(finalTask.status).toBe("blocked");
+    const archived = archivedText(orchestrator, "T-0001");
+    expect(archived).toMatch(new RegExp(`${Math.round(ASSETS_INACTIVITY_MS / 60_000)} minutes?`));
+    expect(archived).toMatch(/assets agent/i);
   });
 });

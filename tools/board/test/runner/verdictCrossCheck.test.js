@@ -22,6 +22,7 @@ function bashCall(id, command, { ok = true, text = "" } = {}) {
 
 const PASS = { verdict: "PASS", notes: "all green" };
 const FAIL = { verdict: "FAIL", notes: "found a real bug" };
+const NEEDS_HUMAN_DECISION = { verdict: "NEEDS_HUMAN_DECISION", notes: "scope question the card can't answer" };
 
 describe("crossCheckVerdict", () => {
   it("leaves a self-reported FAIL untouched, even with no Bash events at all -- never upgrades", () => {
@@ -32,6 +33,16 @@ describe("crossCheckVerdict", () => {
       task: { id: "T-0001" }
     });
     expect(result).toBe(FAIL);
+  });
+
+  it("leaves a self-reported NEEDS_HUMAN_DECISION untouched (T-0341) -- the cross-check only ever downgrades a self-reported PASS, so the new verdict can't use it to dodge required-verify enforcement the same way FAIL can't", () => {
+    const result = crossCheckVerdict({
+      verdict: NEEDS_HUMAN_DECISION,
+      events: [],
+      changedPaths: ["tools/board/src/thing.js"],
+      task: { id: "T-0001" }
+    });
+    expect(result).toBe(NEEDS_HUMAN_DECISION);
   });
 
   it("passes a null verdict through unchanged (the caller already treats null as a runner failure)", () => {
@@ -144,6 +155,35 @@ describe("crossCheckVerdict", () => {
     expect(result).toEqual(PASS);
   });
 
+  it("board-suite: npx vitest run counts as equivalent to npm test when reviewer lacks npm grant", () => {
+    const events = [
+      ...bashCall("1", "npx vitest run --reporter=verbose"),
+      ...bashCall("2", "npx eslint .")
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["tools/board/src/thing.js"],
+      task: { id: "T-0001" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
+  it("board-suite: npx vitest passed then npm test permission-denied still counts as PASS (any-wins)", () => {
+    const events = [
+      ...bashCall("1", "npx vitest run --reporter=verbose"),
+      ...bashCall("2", "cd tools/board && npm test", { ok: false }),
+      ...bashCall("3", "npx eslint .")
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["tools/board/src/thing.js"],
+      task: { id: "T-0001" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
   it("requires board-suite's test AND lint commands independently -- one present, one missing still downgrades", () => {
     const events = [...bashCall("1", "cd tools/board && npm test")];
     const result = crossCheckVerdict({
@@ -183,6 +223,63 @@ describe("crossCheckVerdict", () => {
     expect(result).toEqual(PASS);
   });
 
+  it("python-verify: pytest run bare in a later command, after an earlier cd into pkgDir, still counts as PASS", () => {
+    // Reproduces the live T-0203 failure: the Bash tool's shell persists cwd across calls (like
+    // any interactive shell), so a reviewer that `cd`s into pkgDir once, pokes around, then runs
+    // a bare `pytest` (no pkgDir text in that line) has genuinely satisfied the route -- the old
+    // single-group-with-both-regexes shape scored this "not_run".
+    const events = [
+      ...bashCall("1", "cd assets/src/ambience_synth && python3 --version"),
+      ...bashCall("2", "python3 -m venv .venv && echo venv OK"),
+      ...bashCall("3", ".venv/bin/pip install -e \".[dev]\""),
+      ...bashCall("4", ".venv/bin/pytest"),
+      ...bashCall("5", ".venv/bin/ruff check --fix . && .venv/bin/ruff check .")
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/src/ambience_synth/src/ambience_synth/collapse_crossfade.py"],
+      task: { id: "T-0203" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
+  it("python-verify: re-issuing the router's literal cd command from inside pkgDir (nonexistent nested dir) doesn't erase an earlier real pass", () => {
+    // The reviewer's own attempt to "run exactly" the registered command after already being
+    // inside pkgDir fails with ENOENT (cd pkgDir/pkgDir) -- that failed invocation must not
+    // retroactively downgrade the pytest run that already genuinely passed (any-wins, same
+    // principle as the board-suite vitest/npm-test case above).
+    const events = [
+      ...bashCall("1", "cd assets/src/ambience_synth && python3 --version"),
+      ...bashCall("2", ".venv/bin/pytest"),
+      ...bashCall("3", "cd assets/src/ambience_synth && python3 -m venv .venv && .venv/bin/pytest", {
+        ok: false,
+        text: "No such file or directory"
+      })
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/src/ambience_synth/src/ambience_synth/collapse_crossfade.py"],
+      task: { id: "T-0203" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
+  it("python-verify: pytest never run anywhere still downgrades, even with pkgDir referenced", () => {
+    const events = [...bashCall("1", "cd assets/src/ambience_synth && python3 --version")];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/src/ambience_synth/src/ambience_synth/collapse_crossfade.py"],
+      task: { id: "T-0203" }
+    });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.crossCheckFailures).toEqual([
+      expect.objectContaining({ id: "python-verify:assets/src/ambience_synth", status: "not_run" })
+    ]);
+  });
+
   it("cross-checks server-db-verify on the actual ctest invocation", () => {
     const events = [
       ...bashCall(
@@ -198,6 +295,67 @@ describe("crossCheckVerdict", () => {
       task: { id: "T-0001" }
     });
     expect(result).toEqual(PASS);
+  });
+
+  it("downgrades a self-reported PASS to FAIL when a code-deliverable card's diff adds an unattached art file (T-0198-style gap) and the reviewer never ran the deliverable check", () => {
+    const events = [
+      { type: "assistant", message: { content: [{ type: "text", text: "Tests pass, looks good." }] } }
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/final/character/player_idle_sheet_v1.png"],
+      task: { id: "T-0198", deliverable_type: "code" }
+    });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.downgraded).toBe(true);
+    // T-0357: a character sheet PNG also routes to character-gate-verify now, so
+    // BOTH required commands are missing here, not just deliverable-check.
+    expect(result.crossCheckFailures).toEqual([
+      expect.objectContaining({ id: "character-gate-verify", status: "not_run" }),
+      expect.objectContaining({ id: "deliverable-check", status: "not_run" })
+    ]);
+  });
+
+  it("keeps a self-reported PASS as PASS when the diff-triggered deliverable check (--require-artifact) AND character-gate-verify actually ran and exited zero", () => {
+    const events = [
+      ...bashCall(
+        "1",
+        "cd tools/asset-gate && python3 -m venv .venv && .venv/bin/pip install -e \".[dev]\" && " +
+          ".venv/bin/python -m asset_gate.cli character-gate ../../assets/final --repo-root ../../",
+        { ok: true }
+      ),
+      ...bashCall("2", "node tools/board/scripts/checkDeliverable.js T-0198 --require-artifact", { ok: true })
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/final/character/player_idle_sheet_v1.png"],
+      task: { id: "T-0198", deliverable_type: "code" }
+    });
+    expect(result).toEqual(PASS);
+  });
+
+  it("keys the deliverable-check cross-check on the actual task id, not the trailing --require-artifact flag (a run for a DIFFERENT task id must not satisfy this one)", () => {
+    const events = [
+      ...bashCall(
+        "1",
+        "cd tools/asset-gate && python3 -m venv .venv && .venv/bin/pip install -e \".[dev]\" && " +
+          ".venv/bin/python -m asset_gate.cli character-gate ../../assets/final --repo-root ../../",
+        { ok: true }
+      ),
+      ...bashCall("2", "node tools/board/scripts/checkDeliverable.js T-9999 --require-artifact", { ok: true })
+    ];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["assets/final/character/player_idle_sheet_v1.png"],
+      task: { id: "T-0198", deliverable_type: "code" }
+    });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.crossCheckFailures).toEqual([
+      expect.objectContaining({ id: "deliverable-check", status: "not_run" })
+    ]);
   });
 
   it("ignores non-Bash tool_use/tool_result pairs -- a Read/Grep of the test file is not evidence it ran", () => {

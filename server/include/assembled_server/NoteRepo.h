@@ -19,6 +19,28 @@ namespace assembled_server {
 /// Requests with a larger limit are silently clamped to this value.
 inline constexpr int kMaxNotesLimit = 100;
 
+/// Held-bleed bonus granted to a note's author by a single proven +1 vote,
+/// in minutes (T-0207, 02-notes-system.md §7). Exact curve is open (N-1);
+/// this is the starting shape — flat bonus, ceiling-clamped below.
+inline constexpr int kHeldBleedRatingBonusMinutes = 10;
+
+/// Ceiling on held-bleed extension: bleed_at is never pushed further into
+/// the future than this many minutes from now, matching the full
+/// held-bleed duration (07-items-economy.md §5) so a single note cannot
+/// bank bleed time indefinitely.
+inline constexpr int kHeldBleedCeilingMinutes = 90;
+
+/// Outcome of INoteRepo::rate.
+enum class RateError {
+    None,               ///< Vote accepted (including idempotent no-ops).
+    ProofOfPlayMissing, ///< Voter has no archetype_seen row for the note's archetype.
+};
+
+/// Result returned by INoteRepo::rate.
+struct RateResult {
+    RateError error{RateError::None};
+};
+
 /// A note as returned by the repository (read model).
 struct NoteRecord {
     std::string id;                      ///< UUID primary key (hex string).
@@ -94,18 +116,38 @@ class INoteRepo {
 
     /// Casts a +1 or -1 vote from voter on note_id.
     ///
+    /// Proof-of-play gate (docs/design/02-notes-system.md §7, T-0207): a
+    /// non-broadcast note is anchored to an archetype, and only a voter
+    /// whose archetype_seen set contains that archetype may rate it —
+    /// server-verifiable against the run's assembled archetype set. A voter
+    /// who hasn't actually played the archetype gets back
+    /// RateError::ProofOfPlayMissing and the vote is not recorded.
+    /// Broadcast notes (is_broadcast, no archetype) are exempt — there is no
+    /// archetype to prove.
+    ///
     /// One vote per (note_id, voter): resubmitting the same val is a no-op;
     /// a different val overwrites the existing vote.  notes.rating is updated
     /// atomically to reflect SUM(val) over note_votes for this note.
     ///
-    /// A clear seam is left after the DB write for a future bleed-timer hook
-    /// (docs/design/02-notes-system.md §7); see PgNoteRepo::rate.
+    /// Held-bleed slowdown (docs/design/02-notes-system.md §7,
+    /// docs/design/07-items-economy.md §5, T-0207): a vote that genuinely
+    /// changes the tally to +1 for this voter (a brand-new upvote, or a flip
+    /// from -1) extends bleed_at on every item_instance the note's author
+    /// currently holds by kHeldBleedRatingBonusMinutes, clamped so it never
+    /// exceeds kHeldBleedCeilingMinutes from now. This never touches
+    /// identity.collapse_expires_at (docs/design/10-time-and-progression.md
+    /// §5) — that clock is intentionally immune to rating, so a solo player
+    /// cannot extend their own collapse window indefinitely.
     ///
     /// @param note_id  UUID of the note being rated.
     /// @param voter    Identity token of the voter (must exist in identity).
     /// @param val      +1 or -1.
-    /// @throws drogon::orm::DrogonDbException if the note or voter does not exist.
-    virtual void rate(const std::string &note_id, const std::string &voter, int16_t val) = 0;
+    /// @return RateResult::error == RateError::None on success (including
+    ///         idempotent no-ops), or RateError::ProofOfPlayMissing if the
+    ///         voter hasn't proven play of the note's archetype.
+    /// @throws drogon::orm::DrogonDbException if the note or voter does not exist,
+    ///         or on other DB errors.
+    virtual RateResult rate(const std::string &note_id, const std::string &voter, int16_t val) = 0;
 };
 
 /// Postgres implementation of INoteRepo backed by a synchronous Drogon DbClient.
@@ -120,7 +162,7 @@ class PgNoteRepo : public INoteRepo {
                                         int limit) override;
     std::string createBroadcast(const CreateBroadcastParams &params) override;
     std::vector<NoteRecord> fetchBroadcast(int limit) override;
-    void rate(const std::string &note_id, const std::string &voter, int16_t val) override;
+    RateResult rate(const std::string &note_id, const std::string &voter, int16_t val) override;
 
   private:
     drogon::orm::DbClientPtr client_;

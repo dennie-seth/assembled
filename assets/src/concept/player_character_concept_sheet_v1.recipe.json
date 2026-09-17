@@ -1,0 +1,16 @@
+{
+  "prompt": "flat side-on character concept reference sheet, orthographic game asset, no perspective, no vanishing point, four reference panels: idle standing pose, walk mid-stride pose, crouch-hide pose, scale reference panel. Player character: 40px tall humanoid figure in a 48x48 cell, institutional green coat/clothing, concrete-grey head and skin tones, deep shadow values. Soviet brutalist interior aesthetic, muted desaturated palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, no background elements. Game asset reference sheet style, pixel art scale reference, figure silhouette study",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality",
+  "seed": 20900,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.70,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "name": "player_character_concept_sheet_v1",
+  "_note": "SDXL recipe for future replacement of the programmatic synth sheet (T-0209 fallback). Use generate_concept() from tools/comfy-client/src/comfy_client/concept.py once WSL→ComfyUI is accessible. Seed 20900 chosen for T-0209 card number. LoRA weight 0.70 matches T-0198 idle sheet recipe."
+}

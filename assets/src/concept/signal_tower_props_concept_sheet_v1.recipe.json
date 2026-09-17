@@ -1,0 +1,15 @@
+{
+  "prompt": "flat side-on prop concept reference sheet, orthographic game asset, no perspective, no vanishing point, Signal Tower interior environment props shown as flat elevation silhouettes arranged in labeled panels. LEFT HALF - COVER PROPS (partial protection, sight-cone block only): wide squat relay junction cabinet, equipment crate stack, low horizontal HVAC duct segment — opaque blocky solid forms, mid-value concrete grey, fully exposed from above and sides, no enclosure, player crouches behind but sound still detected. RIGHT HALF - HIDING SPOT PROPS (full sensor block, single-occupant enclosed, exposed entry only): tall narrow standing locker with closed door and handle, enclosed server rack cabinet with dark interior — dark-bodied contained forms, single-person width, fully sealed except entry point. Soviet brutalist Signal Tower interior, muted concrete grey and institutional green and near-black palette, hard value separation, flat unlit shading, no atmospheric haze, no depth of field, prop silhouette study, game asset reference sheet style, no background scene composition",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, player character, entities, watcher, sound, still air, face, portrait",
+  "seed": 21100,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_strength": 0.70,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "name": "signal_tower_props_concept_sheet_v1"
+}

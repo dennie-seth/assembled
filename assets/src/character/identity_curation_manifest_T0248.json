@@ -1,0 +1,301 @@
+{
+  "curation_version": "1.0",
+  "card": "T-0248",
+  "round": "2 (HANDOFF \u00a724-a)",
+  "selection_doc": "assets/src/character/CANONICAL_COSTUME_SELECTION_T0248.md",
+  "source_sheet": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "concept_card": "T-0209",
+  "anchor_ref": "assets/src/character/identity_refs/ref_002.png",
+  "anchor_ref_hash": "8258adfdfe83fa2a27f146c1058083584d08d03d664ada18c74a4cbe8e53a362",
+  "costume_id": "institutional_green_coat_v1",
+  "trigger_token": "sbrutalistplayer",
+  "generator": "assets/src/character/gen_identity_views_T0248.py",
+  "curator": "assets/src/character/curate_identity_views_T0248.py",
+  "selection_rationale": "34 candidates generated (IP-Adapter conditioned on the single fixed ref_002 anchor + style LoRA, varied prompt/seed per candidate, no ControlNet). All 34 held costume consistency (same green coat, white gloves, dark boots) -- the hypothesis this card tests. 5 were dropped: 3 near-duplicate front-view-idle repeats with no new view/pose information, and 2 for head-region rendering defects (a block-shaped head artifact, and a rigid visor/helmet that broke from the soft-hood silhouette established everywhere else). The kept 29 are not uniform camera angles -- IP-Adapter mostly kept generations front-facing regardless of the prompted angle -- but they are genuinely varied in pose, framing, and incidental detail (walking stride, arm gestures, hood up/down, close medium shots), which is real information the 12-image v1 set (2 camera angles x mirrors) did not have.",
+  "refs": [
+    {
+      "id": "ref_001",
+      "source_candidate": "v001",
+      "view": "front view, standing idle, arms at sides",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, arms at sides, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24801,
+      "generation_prompt_id": "339ec9fe-a07b-4205-b590-1d7d2dc5ce24"
+    },
+    {
+      "id": "ref_002",
+      "source_candidate": "v002",
+      "view": "front view, standing idle, arms at sides",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, arms at sides, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24802,
+      "generation_prompt_id": "2ca8caae-0969-4810-9471-9423b87882d9"
+    },
+    {
+      "id": "ref_003",
+      "source_candidate": "v004",
+      "view": "three-quarter front view, standing idle, belt strap detail",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, three-quarter front view, standing idle, belt strap detail, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24804,
+      "generation_prompt_id": "ecc03c4b-546e-4505-a62f-df5afe79590f"
+    },
+    {
+      "id": "ref_004",
+      "source_candidate": "v005",
+      "view": "three-quarter front view, standing idle, shoulder sling detail",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, three-quarter front view, standing idle, shoulder sling detail, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24805,
+      "generation_prompt_id": "2258e4c6-f3c7-4cf2-9991-06c3cec63982"
+    },
+    {
+      "id": "ref_005",
+      "source_candidate": "v006",
+      "view": "front view, standing idle, capped head",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, capped head, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24806,
+      "generation_prompt_id": "f14fbb32-096d-4e06-8a62-279a48426fbf"
+    },
+    {
+      "id": "ref_006",
+      "source_candidate": "v007",
+      "view": "front view, standing idle, hooded head",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, hooded head, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24807,
+      "generation_prompt_id": "d236c1e7-06e5-48ed-b784-33f1c276eab5"
+    },
+    {
+      "id": "ref_007",
+      "source_candidate": "v008",
+      "view": "front view, standing idle, goggled head",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, goggled head, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24808,
+      "generation_prompt_id": "179036cd-be67-4fc8-8cd7-3f766047af40"
+    },
+    {
+      "id": "ref_008",
+      "source_candidate": "v009",
+      "view": "front view, standing idle, patterned leg wrap",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, patterned leg wrap, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24809,
+      "generation_prompt_id": "384fa61a-ff89-49c1-9bf7-9a72eb9fb6d0"
+    },
+    {
+      "id": "ref_009",
+      "source_candidate": "v010",
+      "view": "front view, standing idle",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24810,
+      "generation_prompt_id": "84307e45-431d-4e58-90fb-42ce45f53f17"
+    },
+    {
+      "id": "ref_010",
+      "source_candidate": "v012",
+      "view": "front view, standing idle, visible face",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, visible face, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24812,
+      "generation_prompt_id": "bde1ce06-c37a-4e20-ad99-5cd93eeabefb"
+    },
+    {
+      "id": "ref_011",
+      "source_candidate": "v013",
+      "view": "front view, standing idle",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24813,
+      "generation_prompt_id": "673e122d-844c-483b-b569-fc4dae4523c1"
+    },
+    {
+      "id": "ref_012",
+      "source_candidate": "v015",
+      "view": "front view, standing idle, capped head with insignia",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, capped head with insignia, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24815,
+      "generation_prompt_id": "a9c3045b-b320-4f37-bdc5-4041f9929bf4"
+    },
+    {
+      "id": "ref_013",
+      "source_candidate": "v016",
+      "view": "front view, standing idle, low composition crop",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, low composition crop, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24816,
+      "generation_prompt_id": "7988a158-e391-4ab3-9a9d-0c68adf230d3"
+    },
+    {
+      "id": "ref_014",
+      "source_candidate": "v017",
+      "view": "front view, standing idle, cropped composition",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, cropped composition, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24817,
+      "generation_prompt_id": "1d637e7b-a308-44b4-8f3c-be91150e8ac1"
+    },
+    {
+      "id": "ref_015",
+      "source_candidate": "v018",
+      "view": "front view, standing idle, insignia patch",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, insignia patch, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24818,
+      "generation_prompt_id": "2671b0ad-5997-49b1-b6ff-89c901daeaf9"
+    },
+    {
+      "id": "ref_016",
+      "source_candidate": "v019",
+      "view": "front view, standing idle",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24819,
+      "generation_prompt_id": "d1a8b8de-6012-435e-9152-7c6c37175282"
+    },
+    {
+      "id": "ref_017",
+      "source_candidate": "v020",
+      "view": "front view, standing idle, arm extended in pointing gesture",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, arm extended in pointing gesture, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24820,
+      "generation_prompt_id": "3680a64b-e9a4-4624-8323-cec7e982e20a"
+    },
+    {
+      "id": "ref_018",
+      "source_candidate": "v021",
+      "view": "front view, standing idle, insignia patch",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, insignia patch, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24821,
+      "generation_prompt_id": "ee675bc3-5a36-4fe6-aeca-33ef19d599e3"
+    },
+    {
+      "id": "ref_019",
+      "source_candidate": "v022",
+      "view": "front view, standing idle, belt detail",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, belt detail, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24822,
+      "generation_prompt_id": "44d455a4-e5a3-453c-bf67-f6734dc3fcfe"
+    },
+    {
+      "id": "ref_020",
+      "source_candidate": "v023",
+      "view": "front view, standing idle, insignia patch, cropped composition",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, insignia patch, cropped composition, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24823,
+      "generation_prompt_id": "ab73d51c-c473-4b02-85de-5b80c8b78715"
+    },
+    {
+      "id": "ref_021",
+      "source_candidate": "v024",
+      "view": "front view, standing idle, capped head with visor detail",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, capped head with visor detail, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24824,
+      "generation_prompt_id": "1320573f-dd4e-4070-a761-b05e915a25ac"
+    },
+    {
+      "id": "ref_022",
+      "source_candidate": "v025",
+      "view": "front view, standing idle",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24825,
+      "generation_prompt_id": "bfd7d12c-237f-4514-bcd7-ff6d8c4d7ac4"
+    },
+    {
+      "id": "ref_023",
+      "source_candidate": "v026",
+      "view": "front view, standing idle, shoulder patch",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, shoulder patch, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24826,
+      "generation_prompt_id": "e18e954b-1e2c-4ce2-a4cb-74bc832dba53"
+    },
+    {
+      "id": "ref_024",
+      "source_candidate": "v027",
+      "view": "front view, standing idle",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24827,
+      "generation_prompt_id": "8e81fd37-a209-4d52-8290-1d769b10a0be"
+    },
+    {
+      "id": "ref_025",
+      "source_candidate": "v028",
+      "view": "front view, standing idle, visible eyes",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, visible eyes, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24828,
+      "generation_prompt_id": "f02cb341-aa30-4bdc-ae8d-191ae306307b"
+    },
+    {
+      "id": "ref_026",
+      "source_candidate": "v029",
+      "view": "front view, standing idle, coat hem detail",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, coat hem detail, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24829,
+      "generation_prompt_id": "36714544-a2b7-46b3-b731-78dc2e62e2cb"
+    },
+    {
+      "id": "ref_027",
+      "source_candidate": "v030",
+      "view": "front view, standing idle",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24830,
+      "generation_prompt_id": "4079f129-74e0-44d5-aac9-1cec94e861b0"
+    },
+    {
+      "id": "ref_028",
+      "source_candidate": "v032",
+      "view": "front view, standing idle, cropped waist-up composition",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, cropped waist-up composition, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24832,
+      "generation_prompt_id": "1e37bb06-87b4-405a-8f5b-976d8d589b04"
+    },
+    {
+      "id": "ref_029",
+      "source_candidate": "v033",
+      "view": "front view, standing idle, visible face, cropped waist-up composition",
+      "caption": "sbrutalistplayer character, Soviet brutalist institutional green hooded coat, white gloves, dark boots, front view, standing idle, visible face, cropped waist-up composition, flat colour concept illustration, grey background",
+      "costume_id": "institutional_green_coat_v1",
+      "seed": 24833,
+      "generation_prompt_id": "34b83649-9b45-44cf-8b2f-d482034fc330"
+    }
+  ],
+  "dropped": [
+    {
+      "id": "v003",
+      "reason": "near-duplicate of v001/v002 (same front-view-standing-idle prompt/costume, no new view or pose information) -- redundant, not a curation exception"
+    },
+    {
+      "id": "v011",
+      "reason": "near-duplicate of v010 (same prompt, no new view/pose information) -- redundant"
+    },
+    {
+      "id": "v014",
+      "reason": "head render artifact (rectangular block in place of a head) -- not costume-representative, would teach the LoRA a malformed head"
+    },
+    {
+      "id": "v031",
+      "reason": "head design drift: rendered a rigid rectangular visor/helmet instead of the soft hood established across every other candidate -- exactly the kind of silhouette drift this card's hard-curation pass exists to catch"
+    },
+    {
+      "id": "v034",
+      "reason": "near-duplicate of v001/v002 (same front-view-standing-idle prompt/costume, no new view or pose information) -- redundant"
+    }
+  ]
+}

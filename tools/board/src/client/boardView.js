@@ -1,8 +1,39 @@
-import { STATUSES, groupTasksByStatus, computeBlockerCounts, computeDependencyStatus, sortTasks, SORT_KEYS } from "./board.js";
+import {
+  STATUSES,
+  groupTasksByStatus,
+  computeBlockerCounts,
+  computeDependencyStatus,
+  computeUnmetDependencies,
+  sortTasks,
+  summarizeComplexityPoints,
+  SORT_KEYS
+} from "./board.js";
+import { createAutoScrollController } from "./dragAutoScroll.js";
 
 export const BATCH_SIZE = 20;
 
 let _batchObserver = null;
+
+// One controller shared across every column: only the column currently under the pointer
+// during a drag ever has anything to scroll. `_dragCardOffset` is `{grabOffsetY, height}`
+// captured on the most recent `dragstart` -- NOT a reference to the dragged element itself.
+// The source element never moves during an HTML5 drag (the drag image is a detached snapshot
+// with no queryable rect), so its own `getBoundingClientRect()` would report a stale position;
+// the offset lets dragAutoScroll.js derive the card's *visible* leading edge from the live
+// pointer position instead (see computeAutoScroll's doc comment).
+const _autoScroll = createAutoScrollController();
+let _dragCardOffset = null;
+
+// Registered once at module load, not per-render: `dragend` fires on the source card whenever
+// a drag operation concludes -- dropped, cancelled, or released outside the window -- so this
+// is what stops a leaked auto-scroll loop for every one of those cases in one place, rather than
+// requiring a matching listener on every drop target.
+if (typeof document !== "undefined") {
+  document.addEventListener("dragend", () => {
+    _autoScroll.detach();
+    _dragCardOffset = null;
+  });
+}
 
 const STATUS_LABELS = {
   backlog: "Backlog",
@@ -24,13 +55,28 @@ const SORT_LABELS = {
   newest: "Newest"
 };
 
-function actionButton(className, label, onClick) {
+function actionButton(className, label, onClick, { disabled = false, title } = {}) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
   button.textContent = label;
+  // title only, never aria-label: overriding the accessible name with the blocker list
+  // would cost the control its action name ("Run") in a screen reader. aria-disabled
+  // below is what conveys the state; the title is supplementary.
+  if (title) {
+    button.title = title;
+  }
+  if (disabled) {
+    button.disabled = true;
+    button.setAttribute("aria-disabled", "true");
+  }
   button.addEventListener("click", (event) => {
     event.stopPropagation();
+    // Re-checked here rather than relying on the disabled attribute alone: a disabled
+    // <button> suppresses real user clicks, but the handler is still wired and a
+    // programmatic dispatch reaches it. The requirement is that the run POST is inert,
+    // not merely greyed out, so the guard lives in the handler too.
+    if (button.disabled) return;
     onClick();
   });
   return button;
@@ -71,16 +117,18 @@ const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
 function attemptsBadgeFor(task) {
   if (!task.attempts) return null;
+  // T-0343: a card's own max_attempts overrides the default cap shown here.
+  const cap = Number.isInteger(task.max_attempts) ? task.max_attempts : MAX_AUTO_RETRY_ATTEMPTS;
   const badge = document.createElement("span");
   badge.className = "card-attempts-badge";
-  const label = `Auto-retry: run ${task.attempts} of ${MAX_AUTO_RETRY_ATTEMPTS}`;
-  badge.textContent = `↻ ${task.attempts}/${MAX_AUTO_RETRY_ATTEMPTS}`;
+  const label = `Auto-retry: run ${task.attempts} of ${cap}`;
+  badge.textContent = `↻ ${task.attempts}/${cap}`;
   badge.title = label;
   badge.setAttribute("aria-label", label);
   return badge;
 }
 
-function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, dependencyStatus) {
+function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, dependencyStatus, unmetDependencies) {
   const card = document.createElement("div");
   card.className = "card";
   card.draggable = true;
@@ -88,6 +136,8 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, depen
 
   card.addEventListener("dragstart", (event) => {
     event.dataTransfer.setData("text/plain", task.id);
+    const rect = card.getBoundingClientRect();
+    _dragCardOffset = { grabOffsetY: event.clientY - rect.top, height: rect.height };
   });
   card.addEventListener("click", () => onCardClick(task.id));
 
@@ -118,11 +168,20 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, depen
 
   card.append(titleRow, meta);
 
+  // Display half of the RUN-3 / LC-5 dependency guard (docs/board-invariants.md). The
+  // server already 409s a run whose own dependencies aren't done/retired
+  // (assertCanMoveToInProgress on the /run route, which stays as defence in depth); a
+  // control that looks live and then fails on the round trip is just a worse way to say
+  // no. Both controls post to the same /run route, so both are gated the same way --
+  // Cancel is not, it doesn't start a run.
+  const unmet = unmetDependencies?.get(task.id) ?? [];
+  const runOptions = unmet.length > 0 ? { disabled: true, title: `Blocked by ${unmet.join(", ")}` } : undefined;
+
   if (task.status === "ready" && onRun) {
-    card.appendChild(actionButton("card-run", "Run", () => onRun(task.id)));
+    card.appendChild(actionButton("card-run", "Run", () => onRun(task.id), runOptions));
   }
   if ((task.status === "review" || task.status === "blocked") && onRun) {
-    card.appendChild(actionButton("card-rerun", "Re-run", () => onRun(task.id)));
+    card.appendChild(actionButton("card-rerun", "Re-run", () => onRun(task.id), runOptions));
   }
   if ((task.status === "in-progress" || task.status === "validation") && onCancel) {
     card.appendChild(actionButton("card-cancel", "Cancel", () => onCancel(task.id)));
@@ -151,14 +210,18 @@ function sortSelectFor(status, sortKey, onSortChange) {
   return select;
 }
 
-function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus) {
+function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus, unmetDependencies) {
   const column = document.createElement("div");
   column.className = "column";
   column.dataset.status = status;
 
   const header = document.createElement("h2");
   header.className = "column-header";
-  header.textContent = `${STATUS_LABELS[status] ?? status} (${tasks.length})`;
+  // T-0368: the planning-signal summary is display-only -- it never feeds any launch/admission
+  // decision (see test/complexityPointsLaunchIsolation.test.js).
+  const { total, unscored } = summarizeComplexityPoints(tasks);
+  const unscoredSuffix = unscored > 0 ? ` · ${unscored} unscored` : "";
+  header.textContent = `${STATUS_LABELS[status] ?? status} (${tasks.length}) · ${total} pts${unscoredSuffix}`;
   column.appendChild(header);
 
   const sortKey = callbacks.columnSort?.get(status) ?? "id";
@@ -177,9 +240,29 @@ function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus)
 
   list.addEventListener("dragover", (event) => {
     event.preventDefault();
+    // Cheap: just latches the latest pointer/card state. The actual getBoundingClientRect()/
+    // scrollBy() work happens on the next animation frame (see dragAutoScroll.js), not here --
+    // dragover fires far too often to do that work per-event without jitter.
+    _autoScroll.attach(list);
+    _autoScroll.update(event.clientY, _dragCardOffset);
+  });
+  list.addEventListener("dragleave", (event) => {
+    // VALIDATION FAIL (run 3): dragover attaches this column whenever the pointer is over it,
+    // but with no dragleave counterpart the controller stayed latched onto -- and kept
+    // scrolling -- the last column even after the pointer left every column entirely (onto the
+    // side panel, the console, the inter-column gap, or the board's own padding), scrolling
+    // against a stale pointerY until it hit its scroll limit or dragend fired. `relatedTarget`
+    // is null when the drag leaves the window, and it's outside `list` for any genuine leave;
+    // the browser also fires dragleave when the pointer moves onto a *child* card within this
+    // same list, which `list.contains(...)` correctly does not treat as a leave.
+    if (!event.relatedTarget || !list.contains(event.relatedTarget)) {
+      _autoScroll.detach();
+    }
   });
   list.addEventListener("drop", (event) => {
     event.preventDefault();
+    _autoScroll.detach();
+    _dragCardOffset = null;
     const taskId = event.dataTransfer.getData("text/plain");
     if (taskId) {
       callbacks.onDrop(taskId, status);
@@ -189,7 +272,7 @@ function renderColumn(status, tasks, callbacks, blockerCounts, dependencyStatus)
   const visibleCount = callbacks.columnBatch?.get(status) ?? BATCH_SIZE;
   const sorted = sortTasks(tasks, sortKey);
   for (const task of sorted.slice(0, visibleCount)) {
-    list.appendChild(renderCard(task, callbacks, blockerCounts, dependencyStatus));
+    list.appendChild(renderCard(task, callbacks, blockerCounts, dependencyStatus, unmetDependencies));
   }
   if (sorted.length > visibleCount && callbacks.onShowMore) {
     const sentinel = document.createElement("div");
@@ -209,6 +292,7 @@ export function renderBoard(root, tasks, callbacks) {
   const grouped = groupTasksByStatus(tasks);
   const blockerCounts = computeBlockerCounts(tasks);
   const dependencyStatus = computeDependencyStatus(tasks);
+  const unmetDependencies = computeUnmetDependencies(tasks);
   root.replaceChildren();
 
   if (callbacks.error) {
@@ -222,7 +306,9 @@ export function renderBoard(root, tasks, callbacks) {
   board.className = "board";
 
   for (const status of STATUSES) {
-    board.appendChild(renderColumn(status, grouped.get(status) ?? [], callbacks, blockerCounts, dependencyStatus));
+    board.appendChild(
+      renderColumn(status, grouped.get(status) ?? [], callbacks, blockerCounts, dependencyStatus, unmetDependencies)
+    );
   }
 
   root.appendChild(board);

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   resolveAllowedTools,
   isToolAllowed,
+  checkToolPermission,
   parseToolsString,
   READ_ONLY_DEFAULT_TOOLS
 } from "../../src/runner/toolAllowlist.js";
@@ -248,6 +249,67 @@ describe("resolveAllowedTools", () => {
       )
     ).toBe(true);
   });
+
+  it("grants the assets agent both the tilde and absolute-path forms of the shared lora-train-venv interpreter", () => {
+    const resolved = resolveAllowedTools("assets", { agentsDir: REAL_AGENTS_DIR });
+
+    // T-0212 root cause: the pre-existing grant `Bash(~/dev/lora-train-venv/bin/python:*)` only
+    // covers commands that literally start with the string `~/dev/lora-train-venv/bin/python` --
+    // isToolAllowed does raw string-prefix matching with no `~` expansion, no path
+    // normalization, no realpath/symlink resolution (see the `isToolAllowed` block below). A
+    // live implementer run invoked the identical interpreter via its absolute path,
+    // `/home/dennieseth/dev/lora-train-venv/bin/python3 ...` (both a different path form *and*
+    // `python3` instead of `python`), and every attempt was denied with "This command requires
+    // approval" for the full remainder of the run -- confirmed directly in
+    // tasks/.runs/T-0212-2026-08-21T09-57-03-458Z.jsonl, where the implementer had already
+    // produced a real ComfyUI generation via the curl grant but could never run the
+    // palette-descent post-processing script, and the run was ultimately killed by the 40-minute
+    // phase timeout. Same failure class the audio agent hit on T-0202 (see git log
+    // .claude/agents/audio.md) -- a grant string that's technically correct for one invocation
+    // shape but silently fails to cover the equally-valid alternate shape.
+    expect(resolved).toContain("Bash(~/dev/lora-train-venv/bin/python:*)");
+    expect(resolved).toContain("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:*)");
+    expect(resolved).toContain("Bash(/home/dennieseth/dev/lora-train-venv/bin/python3:*)");
+    expect(resolved).toContain("Bash(~/dev/lora-train-venv/bin/python3:*)");
+    expect(resolved).toContain("Bash(/home/dennieseth/dev/lora-train-venv/bin/accelerate:*)");
+
+    expect(
+      isToolAllowed(
+        "Bash(/home/dennieseth/dev/lora-train-venv/bin/python3:assets/src/character/descent_final.py)",
+        resolved
+      )
+    ).toBe(true);
+    expect(
+      isToolAllowed("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:--version)", resolved)
+    ).toBe(true);
+  });
+
+  it("T-0295: an exact-match (no wildcard) grant for the browser harness script does not leak into its install script", () => {
+    // docs/browser-tests.md recommends this exact line for `assets`/`client` to run
+    // `npm run test:browser`. A wildcarded `Bash(npm run test:browser:*)` was considered and
+    // rejected: `isToolAllowed` strips only the trailing `*` and does a raw string-prefix
+    // compare (see below), so that pattern's stripped prefix is "npm run test:browser:" -- and
+    // because the npm script name itself is "test:browser" (colon, not space, before the next
+    // segment), the *literal* string "npm run test:browser:install" also starts with that same
+    // prefix. A wildcard grant meant to cover one script would silently also authorise a
+    // different script (`test:browser:install`, a ~390MB `playwright install chromium` download
+    // -- see "Browser binaries" above) that was never meant to be granted. No wildcard placement
+    // fixes this, because the ambiguity is a shared literal prefix between two distinct script
+    // names, not a missing argument/word boundary (contrast the `DATABASE_URL=*` case above,
+    // where a bare trailing `*` was the fix). An exact-match grant -- no trailing `*` at all --
+    // sidesteps it: `isToolAllowed` falls through to `requested.arg === allowed.arg`, a full
+    // string equality that only ever matches the literal, argument-less invocation this harness
+    // actually needs.
+    const grant = ["Bash(npm run test:browser)"];
+
+    expect(isToolAllowed("Bash(npm run test:browser)", grant)).toBe(true);
+    expect(isToolAllowed("Bash(npm run test:browser:install)", grant)).toBe(false);
+
+    // The wildcard form is demonstrably too broad -- kept here as a regression guard against
+    // ever "fixing" this by re-adding a trailing `:*`.
+    const wildcardGrant = ["Bash(npm run test:browser:*)"];
+    expect(isToolAllowed("Bash(npm run test:browser:install)", wildcardGrant)).toBe(true);
+  });
 });
 
 describe("isToolAllowed", () => {
@@ -293,6 +355,97 @@ describe("isToolAllowed", () => {
       )
     ).toBe(true);
     expect(isToolAllowed("Bash(SOMETHING_ELSE=x)", bareStarAllowed)).toBe(false);
+  });
+
+  it("does not treat a `~/`-prefixed grant as covering the equivalent absolute-path invocation", () => {
+    // T-0212: no `~` expansion or path normalization happens anywhere in this matcher (or in the
+    // real Claude Code CLI it models -- see the assets-agent test above). A grant authored with a
+    // tilde only ever matches commands that are themselves spelled with that literal tilde; the
+    // same binary invoked via its absolute path is a different string and must be granted
+    // separately.
+    const tildeOnly = ["Bash(~/dev/lora-train-venv/bin/python:*)"];
+    expect(isToolAllowed("Bash(~/dev/lora-train-venv/bin/python:script.py)", tildeOnly)).toBe(true);
+    expect(
+      isToolAllowed("Bash(/home/dennieseth/dev/lora-train-venv/bin/python:script.py)", tildeOnly)
+    ).toBe(false);
+  });
+});
+
+describe("isToolAllowed: .claude/ path guard (T-0376)", () => {
+  // Every implementer agent grants a plain, argument-less `Write`/`Edit` -- see the bare
+  // `allowed.arg === null` branch above. In reality the Claude Code CLI's own sensitive-file
+  // protection denies every Edit/Write under .claude/ in an unattended run regardless of that
+  // grant (T-0374, evidence quoted in this card's body). The board's own model has to agree,
+  // or anything that reasons from it is wrong about .claude/.
+  const bareWriteEdit = ["Read", "Write", "Edit", "Grep", "Glob"];
+
+  it("denies Edit/Write on .claude/settings.json and .claude/settings.local.json despite a plain Edit/Write grant", () => {
+    expect(isToolAllowed("Edit(.claude/settings.json)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Write(.claude/settings.json)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Edit(.claude/settings.local.json)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Write(.claude/settings.local.json)", bareWriteEdit)).toBe(false);
+  });
+
+  it("denies Edit/Write anywhere under .claude/agents/** and .claude/rules/**", () => {
+    expect(isToolAllowed("Edit(.claude/agents/infra.md)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Write(.claude/agents/infra.md)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Edit(.claude/rules/conduct.md)", bareWriteEdit)).toBe(false);
+  });
+
+  it("normalizes an absolute in-worktree path, a leading ./, and .. traversal before the check", () => {
+    expect(
+      isToolAllowed(
+        "Edit(/home/dennieseth/dev/assembled-board/worktrees/T-0376/.claude/settings.json)",
+        bareWriteEdit
+      )
+    ).toBe(false);
+    expect(isToolAllowed("Edit(./.claude/settings.json)", bareWriteEdit)).toBe(false);
+    expect(isToolAllowed("Edit(tools/../.claude/settings.json)", bareWriteEdit)).toBe(false);
+  });
+
+  it("does not flag a path that merely contains the text .claude elsewhere", () => {
+    expect(isToolAllowed("Edit(docs/notes-on-.claude.md)", bareWriteEdit)).toBe(true);
+    expect(isToolAllowed("Write(docs/notes-on-.claude.md)", bareWriteEdit)).toBe(true);
+  });
+
+  it("keeps today's behaviour for paths outside .claude/: a plain Edit/Write grant still allows them", () => {
+    expect(isToolAllowed("Edit(tools/board/src/runner/toolAllowlist.js)", bareWriteEdit)).toBe(true);
+    expect(isToolAllowed("Write(assets/final/palette/home_palette.json)", bareWriteEdit)).toBe(true);
+  });
+
+  it("still denies Edit/Write under .claude/ when there is no grant for the tool at all", () => {
+    expect(isToolAllowed("Edit(.claude/settings.json)", ["Read", "Grep", "Glob"])).toBe(false);
+  });
+
+  for (const agentName of ["infra", "server", "client", "assets"]) {
+    it(`resolved permissions for the ${agentName} agent no longer report .claude/settings.json as editable`, () => {
+      const resolved = resolveAllowedTools(agentName, { agentsDir: REAL_AGENTS_DIR });
+      expect(isToolAllowed("Edit(.claude/settings.json)", resolved)).toBe(false);
+      expect(isToolAllowed("Write(.claude/settings.json)", resolved)).toBe(false);
+      expect(isToolAllowed("Edit(.claude/settings.local.json)", resolved)).toBe(false);
+    });
+  }
+});
+
+describe("checkToolPermission", () => {
+  const bareWriteEdit = ["Read", "Write", "Edit", "Grep", "Glob"];
+
+  it("agrees with isToolAllowed's boolean verdict for an ordinary, non-.claude request", () => {
+    const result = checkToolPermission("Edit(tools/board/src/foo.js)", bareWriteEdit);
+    expect(result.allowed).toBe(true);
+    expect(result.reason).toBeNull();
+  });
+
+  it("agrees with isToolAllowed's boolean verdict for a denied request", () => {
+    const result = checkToolPermission("Bash(rm:*)", bareWriteEdit);
+    expect(result.allowed).toBe(false);
+  });
+
+  it("names the Claude Code CLI's sensitive-file protection as the reason for a .claude/ denial", () => {
+    const result = checkToolPermission("Edit(.claude/settings.json)", bareWriteEdit);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/sensitive-file protection/i);
+    expect(result.reason).toMatch(/claude code cli/i);
   });
 });
 

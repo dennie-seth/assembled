@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c6vqx6h7yl4tw"]
+
+[ext_resource type="Script" path="res://scenes/signal_tower_overview.gd" id="1_overview"]
+
+[node name="SignalTowerOverview" type="Node2D"]
+script = ExtResource("1_overview")

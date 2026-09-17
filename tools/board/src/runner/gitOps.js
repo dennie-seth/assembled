@@ -3,6 +3,12 @@ import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { schedulePush } from "./autoPush.js";
+import {
+  artifactCacheRootFor,
+  artifactPreservationEnabledFromEnv,
+  preserveArtifacts,
+  restoreArtifacts
+} from "./artifactPreservation.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,6 +43,59 @@ async function branchHasUniqueCommits({ repoRoot, branch, baseBranch }) {
   return stdout.trim().length > 0;
 }
 
+/** Default preservation cache for a card worktree: `<its worktrees dir>/.artifact-cache`. */
+function defaultArtifactCacheRoot(worktreeDir) {
+  return artifactCacheRootFor({ worktreesDir: path.dirname(worktreeDir) });
+}
+
+/**
+ * Moves a card's resumable, untracked artifacts out of the way of an imminent
+ * `git worktree remove --force`, which deletes the *entire* directory -- untracked and ignored
+ * files included -- and so, before this existed, destroyed everything a run had generated but not
+ * committed. `addWorktree` puts them back into the fresh checkout (see `restorePreservedArtifacts`).
+ *
+ * Deliberately non-throwing. Preservation is an optimisation on top of a reclaim that has to
+ * happen either way: a failure here degrades to exactly the previous behaviour (artifacts lost)
+ * rather than blocking the run that needed the worktree.
+ */
+async function preserveArtifactsBeforeRemoval({ worktreeDir, artifactCacheRoot }) {
+  if (!artifactPreservationEnabledFromEnv()) return;
+  try {
+    const { preserved } = await preserveArtifacts({
+      worktreeDir,
+      cacheRoot: artifactCacheRoot ?? defaultArtifactCacheRoot(worktreeDir)
+    });
+    if (preserved.length > 0) {
+      console.log(
+        `Board: preserved ${preserved.length} untracked artifact file(s) from ${worktreeDir} across worktree removal`
+      );
+    }
+  } catch (err) {
+    console.warn(`Board: could not preserve untracked artifacts from ${worktreeDir}: ${err.message}`);
+  }
+}
+
+/** Counterpart to `preserveArtifactsBeforeRemoval`, run once the fresh worktree exists. Non-throwing for the same reason. */
+async function restorePreservedArtifacts({ worktreeDir, artifactCacheRoot }) {
+  if (!artifactPreservationEnabledFromEnv()) return;
+  try {
+    const { restored, skippedTracked } = await restoreArtifacts({
+      worktreeDir,
+      cacheRoot: artifactCacheRoot ?? defaultArtifactCacheRoot(worktreeDir)
+    });
+    if (restored.length > 0) {
+      console.log(`Board: restored ${restored.length} preserved artifact file(s) into ${worktreeDir}`);
+    }
+    if (skippedTracked.length > 0) {
+      console.warn(
+        `Board: left ${skippedTracked.length} preserved path(s) out of ${worktreeDir} -- the fresh checkout tracks them: ${skippedTracked.join(", ")}`
+      );
+    }
+  } catch (err) {
+    console.warn(`Board: could not restore preserved artifacts into ${worktreeDir}: ${err.message}`);
+  }
+}
+
 /**
  * A dead/killed run -- or a card sent back for another pass after review -- can leave
  * `feature/T-XXXX` (and its worktree) behind, which makes every future addWorktree() for
@@ -46,11 +105,16 @@ async function branchHasUniqueCommits({ repoRoot, branch, baseBranch }) {
  * destroying it, reattach a worktree to the existing branch so the run continues on top of
  * it instead of starting over.
  */
-async function reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch }) {
+async function reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch, artifactCacheRoot }) {
   if (!(await branchExists({ repoRoot, branch }))) {
     return false;
   }
   if (await pathExists(worktreeDir)) {
+    // Must happen before the removal, not after: `remove --force` deletes the whole directory,
+    // untracked and ignored files and all. T-0248 lost ~86 minutes of LoRA training here, its
+    // per-epoch `--save_state` checkpoint dirs going down with the worktree so the re-run's
+    // `find_resume_state` had nothing to resume from and retrained from step 0.
+    await preserveArtifactsBeforeRemoval({ worktreeDir, artifactCacheRoot });
     try {
       await git(["worktree", "remove", "--force", worktreeDir], repoRoot);
     } catch {
@@ -65,25 +129,168 @@ async function reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBran
   return true;
 }
 
+async function revParse({ repoRoot, ref }) {
+  try {
+    const { stdout } = await git(["rev-parse", "--verify", "--quiet", ref], repoRoot);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The branch repoRoot itself has checked out, or null when it is on a detached HEAD. */
+async function currentBranch({ repoRoot }) {
+  try {
+    const { stdout } = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], repoRoot);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether some worktree *other than repoRoot* has `branch` checked out. Moving a ref out from
+ * under a checked-out worktree desyncs its index against HEAD, so that case is reported rather
+ * than forced.
+ */
+async function branchCheckedOutElsewhere({ repoRoot, branch }) {
+  const { stdout } = await git(["worktree", "list", "--porcelain"], repoRoot);
+  return stdout.split(/\n\s*\n/).some((entry) => {
+    const dir = /^worktree (.*)$/m.exec(entry)?.[1];
+    const head = /^branch (.*)$/m.exec(entry)?.[1];
+    return head === `refs/heads/${branch}` && dir && path.resolve(dir) !== path.resolve(repoRoot);
+  });
+}
+
+/**
+ * Fast-forwards repoRoot's local `<branch>` ref to origin's, so that whatever is cut from it
+ * next is the code that is actually deployed.
+ *
+ * Why this is needed at all: `addWorktree` cuts every card branch from the *local* `develop`
+ * ref, and nothing in the board reliably advances that ref. `pullDevelop` and `mergeNoFF` both
+ * act on repoRoot's *checked-out* branch, and `isBehindOrigin` compares `HEAD..origin/develop`
+ * -- so a repoRoot parked on any other branch (a deploy or a hotfix left on `fix/...`, say)
+ * keeps reporting "up to date" while `refs/heads/develop` silently stays wherever it was.
+ *
+ * That is not hypothetical. On 2026-08-23 the live board started T-0218 five minutes after PR
+ * #240 merged: repoRoot's checkout was at #240's code -- so the runner read #240's agent
+ * definitions and emitted its grants -- while `develop` was still at PR #221 from two days
+ * earlier. #240 had replaced the `assets`/`audio` blanket `Bash(curl:*)` with
+ * `Bash(node tools/board/scripts/agentCurl.js:*)`, and the worktree cut from the frozen ref did
+ * not contain that file: "Cannot find module .../worktrees/T-0218/tools/board/scripts/
+ * agentCurl.js". The card had no HTTP client at all and burned all five auto-retries reporting
+ * ComfyUI unreachable.
+ *
+ * Deliberately non-throwing. A fetch failure (offline, no origin, a fixture repo with no
+ * remote) degrades to "cut from whatever the local ref is" -- exactly the previous behaviour --
+ * rather than stopping every run on the board. Divergence is likewise reported, never resolved:
+ * merging is `pullDevelop`'s job, and doing it silently here could rewrite work.
+ *
+ * @returns {Promise<{status: "current"|"fast-forwarded"|"created"|"diverged"|"checked-out-elsewhere"|"unavailable",
+ *                    before: string|null, after: string|null, reason: string|null}>}
+ */
+export async function syncBaseBranch({ repoRoot, branch = "develop" }) {
+  const before = await revParse({ repoRoot, ref: `refs/heads/${branch}` });
+  const unchanged = (status, reason) => ({ status, before, after: before, reason });
+
+  try {
+    await git(["fetch", "origin", branch], repoRoot);
+  } catch (err) {
+    return unchanged("unavailable", `fetch failed: ${err.message}`);
+  }
+
+  const originSha = await revParse({ repoRoot, ref: `refs/remotes/origin/${branch}` });
+  if (!originSha) {
+    return unchanged("unavailable", `origin/${branch} could not be resolved after fetch`);
+  }
+  if (before === originSha) {
+    return { status: "current", before, after: originSha, reason: null };
+  }
+
+  if (before !== null) {
+    const { stdout } = await git(
+      ["rev-list", "--count", `${originSha}..refs/heads/${branch}`],
+      repoRoot
+    );
+    if (Number(stdout.trim()) > 0) {
+      return unchanged(
+        "diverged",
+        `local ${branch} has commits origin/${branch} does not; leaving it for pullDevelop to reconcile`
+      );
+    }
+  }
+
+  if ((await currentBranch({ repoRoot })) === branch) {
+    try {
+      await git(["merge", "--ff-only", `origin/${branch}`], repoRoot);
+    } catch (err) {
+      return unchanged("unavailable", `fast-forward of checked-out ${branch} failed: ${err.message}`);
+    }
+  } else if (await branchCheckedOutElsewhere({ repoRoot, branch })) {
+    return unchanged(
+      "checked-out-elsewhere",
+      `${branch} is checked out in another worktree; not moving its ref`
+    );
+  } else {
+    await git(["update-ref", `refs/heads/${branch}`, originSha], repoRoot);
+  }
+
+  return {
+    status: before === null ? "created" : "fast-forwarded",
+    before,
+    after: originSha,
+    reason: null
+  };
+}
+
 /**
  * Creates a worktree for a card. If `branch` already exists with unique commits ahead of
  * baseBranch (a card being continued after review, or a resumed crashed run), reattaches a
  * worktree to that existing branch instead of cutting a fresh one -- returns `{ reused: true }`
  * so the caller can prompt the implementer to fix outstanding issues rather than start over.
  * Otherwise cuts a new branch from baseBranch as before -- returns `{ reused: false }`.
+ *
+ * baseBranch is fast-forwarded to origin first (see `syncBaseBranch`); the resulting
+ * `{ baseSync }` says whether that succeeded, so a run cut from a lagging base is at least
+ * visible rather than silent.
+ *
+ * Untracked/ignored artifacts a previous run left in this card's worktree -- LoRA training
+ * checkpoints above all -- are carried across the reclaim and restored into the fresh checkout,
+ * so a re-run resumes from them instead of regenerating them (see `artifactPreservation.js`, and
+ * `restorePreservedArtifacts` for the rule that a tracked file in the new tree always wins).
+ * `artifactCacheRoot` overrides where they are parked; it defaults to a `.artifact-cache` dir
+ * alongside the card worktrees.
  */
-export async function addWorktree({ repoRoot, worktreeDir, branch, baseBranch = "develop" }) {
-  const reused = await reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch });
+export async function addWorktree({ repoRoot, worktreeDir, branch, baseBranch = "develop", artifactCacheRoot }) {
+  const baseSync = await syncBaseBranch({ repoRoot, branch: baseBranch });
+  if (baseSync.status !== "current" && baseSync.status !== "fast-forwarded" && baseSync.status !== "created") {
+    // Not fatal -- the worktree is still cut, just from a base that may lag origin. Loud,
+    // because a card silently running against stale code is what T-0218 spent five attempts on.
+    console.warn(
+      `Board: ${baseBranch} was not synced to origin before cutting ${branch} (${baseSync.status}): ${baseSync.reason}`
+    );
+  }
+  const reused = await reclaimOrDetectExisting({ repoRoot, worktreeDir, branch, baseBranch, artifactCacheRoot });
   if (reused) {
     await git(["worktree", "add", worktreeDir, branch], repoRoot);
   } else {
     await git(["worktree", "add", "-b", branch, worktreeDir, baseBranch], repoRoot);
   }
-  return { reused };
+  await restorePreservedArtifacts({ worktreeDir, artifactCacheRoot });
+  return { reused, baseSync };
 }
 
-/** Force-removes a worktree, even if it has uncommitted changes. Never deletes the branch. */
-export async function removeWorktree({ repoRoot, worktreeDir }) {
+/**
+ * Force-removes a worktree, even if it has uncommitted changes. Never deletes the branch.
+ *
+ * Preserves the card's untracked/ignored artifacts first, for the same reason the reclaim path
+ * does: this is the *other* door onto the same wipe. The orchestrator calls this on a PASS (once
+ * the branch is pushed and the PR opened) and on a cancel, so without it a card that passed
+ * review once and was then re-run would still find its checkpoints gone -- the reclaim would have
+ * nothing left to preserve, because this call already deleted them.
+ */
+export async function removeWorktree({ repoRoot, worktreeDir, artifactCacheRoot }) {
+  await preserveArtifactsBeforeRemoval({ worktreeDir, artifactCacheRoot });
   await git(["worktree", "remove", "--force", worktreeDir], repoRoot);
 }
 
@@ -139,60 +346,123 @@ export async function getHeadCommit({ worktreeDir }) {
 }
 
 /**
+ * A deterministic snapshot of what a worktree currently holds: `{ head, tree, dirty }`.
+ *
+ * - `head`  -- the HEAD commit sha
+ * - `tree`  -- HEAD's tree object sha, so two different commits with identical content (a
+ *              reworded or re-authored commit) still compare equal on content
+ * - `dirty` -- `git status --porcelain`, catching staged/unstaged/untracked work that has not
+ *              been committed yet
+ *
+ * This is the basis for the retry loop's no-progress signature (failureSignature.js): if all
+ * three are unchanged across two attempts, the attempt left nothing behind and retrying it again
+ * cannot help. Ignored files are deliberately excluded -- `--porcelain` without `--ignored` --
+ * because the reviewer judges committed/tracked deliverables, and pulling in ignored build
+ * output would make the signature churn on noise the gate does not care about.
+ */
+export async function readTreeState({ worktreeDir }) {
+  const [head, tree, status] = await Promise.all([
+    git(["rev-parse", "HEAD"], worktreeDir),
+    git(["rev-parse", "HEAD^{tree}"], worktreeDir),
+    git(["status", "--porcelain"], worktreeDir)
+  ]);
+  return {
+    head: head.stdout.trim(),
+    tree: tree.stdout.trim(),
+    dirty: status.stdout.trim()
+  };
+}
+
+/**
  * Pulls the latest commits for `branch` (default "develop") into repoRoot from origin. Reports
  * whether HEAD moved, so callers know whether there's new code to pick up.
  *
- * `--no-rebase --no-edit` are explicit rather than relying on ambient git config: card-on-create
- * commits (see `commitTaskFile`) can leave repoRoot's local branch with commits origin doesn't
- * have yet, and a `pull.ff=only` or `pull.rebase=true` global default would otherwise turn a
- * perfectly normal divergence into a failed/rewritten pull. A plain three-way merge is what we
- * want here: it's predictable and, since card files are new/unique paths, essentially
- * conflict-free in practice -- but not guaranteed conflict-free (two runs touching the same
- * card, or a card reworked on both sides, are real cases), so on failure this runs `merge
- * --abort` before rethrowing, the same as `mergeNoFF` below: a caller that only logs the
- * error (as the Done-triggered call in httpApi.js does) must never be left with repoRoot mid-
- * merge -- conflict markers on disk block every subsequent commit and pull until someone
- * resolves it by hand.
+ * Delegates entirely to `mergeNoFF` (see below) plus before/after SHA tracking: fast-forwards
+ * when repoRoot has nothing local to preserve, falling back to a real merge only for genuine
+ * divergence -- card-on-create commits (see `commitTaskFile`) can leave repoRoot's local branch
+ * with commits origin doesn't have yet, which is exactly that divergent case. Explicit `git
+ * merge` calls, never `git pull`, so an ambient `pull.ff=only`/`pull.rebase=true`/`merge.ff=false`
+ * global config on the machine this runs on can't turn a perfectly normal fast-forward into a
+ * failed pull or a manufactured merge commit (T-0304 -- this is what was happening live).
  */
 export async function pullDevelop({ repoRoot, branch = "develop" }) {
   const { stdout: beforeOut } = await git(["rev-parse", "HEAD"], repoRoot);
   const before = beforeOut.trim();
-  try {
-    await git(["pull", "--no-rebase", "--no-edit", "origin", branch], repoRoot);
-  } catch (err) {
-    await git(["merge", "--abort"], repoRoot).catch(() => {
-      // Best-effort cleanup -- if there was nothing to abort (e.g. the pull failed before a
-      // merge ever started, such as the branch-doesn't-exist case), that's fine; the original
-      // error below is what matters to the caller.
-    });
-    throw err;
-  }
+
+  await mergeNoFF({ repoRoot, branch });
+
   const { stdout: afterOut } = await git(["rev-parse", "HEAD"], repoRoot);
   const after = afterOut.trim();
   return { advanced: before !== after, before, after };
 }
 
 /**
- * Fetches `branch` from origin and merges `origin/<branch>` into repoRoot's checkout with
- * `--no-ff` -- always a real merge commit, even on the (common, for a repo whose local
- * `develop` never diverges from origin) case where a plain fast-forward would apply. Used
- * both by the deploy script's pre-restart sync step and by the auto-push retry path
- * (`autoPush.js`) to reconcile before retrying a rejected push.
+ * Fetches `branch` from origin and reports whether origin has commits repoRoot's HEAD doesn't
+ * have yet -- the cheap check the periodic auto-pull poller (autoPullPoller.js) runs every tick
+ * before deciding whether `pullDevelop` is worth invoking at all. Deliberately a `rev-list
+ * --count HEAD..origin/<branch>` (commits reachable from origin not reachable from HEAD), not a
+ * plain SHA inequality check: repoRoot can be locally ahead of origin on its own (e.g. a
+ * card-on-create commit that hasn't been auto-pushed yet, see `commitPaths`), and that alone is
+ * not "behind" -- there's nothing new to pull. A truly diverged history (local ahead AND origin
+ * ahead) still correctly reports true here, since `pullDevelop`'s merge is what's needed to
+ * reconcile it.
+ */
+export async function isBehindOrigin({ repoRoot, branch = "develop" }) {
+  await git(["fetch", "origin", branch], repoRoot);
+  const { stdout } = await git(["rev-list", "--count", `HEAD..origin/${branch}`], repoRoot);
+  return Number(stdout.trim()) > 0;
+}
+
+/**
+ * Fetches `branch` from origin and merges `origin/<branch>` into repoRoot's checkout, preferring
+ * a fast-forward and falling back to `--no-ff` only when repoRoot genuinely has commits
+ * origin/<branch> doesn't (see `mergeOriginRef` below for the merge decision itself). Used both
+ * by the deploy script's pre-restart sync step (via the `mergeOriginRef` CLI wrapper, since
+ * deploy.sh fetches separately for its own distinct error message) and by the auto-push retry
+ * path (`autoPush.js`) to reconcile before retrying a rejected push.
  *
- * On conflict, runs `merge --abort` before rethrowing -- the caller gets a clean, mergeable
- * working tree back either way, never one left mid-merge with conflict markers on disk. That
- * property is what lets the deploy script "abort loudly" instead of leaving a broken tree for
- * `node --watch` (or the next deploy attempt) to trip over.
+ * Until T-0304 this unconditionally passed `--no-ff`, manufacturing a real merge commit even on
+ * the common case (a repo whose local `develop` hasn't diverged from origin) where a plain
+ * fast-forward would apply -- every idle auto-pull and every no-op deploy added one, and since
+ * develop never actually caught up to origin's SHA the next tick saw the same "behind" state and
+ * did it again, forever. `--no-ff` is still exactly right when local truly has unique commits to
+ * preserve (the board's own runtime commits -- attachments, card-status writes); that path is
+ * unchanged.
  */
 export async function mergeNoFF({ repoRoot, branch = "develop" }) {
   await git(["fetch", "origin", branch], repoRoot);
+  await mergeOriginRef({ repoRoot, branch });
+}
+
+/**
+ * Merges an already-fetched `origin/<branch>` into repoRoot's checkout: fast-forward when
+ * possible, falling back to a `--no-ff` merge commit only when repoRoot genuinely has commits
+ * origin/<branch> doesn't. Explicit `git merge --ff-only` rather than checking `git rev-list
+ * --count` first and branching in JS -- letting git itself decide is one fewer place for the
+ * "is this actually a fast-forward" logic to drift out of sync with git's own definition of one.
+ *
+ * On conflict (only reachable via the --no-ff fallback -- a pure fast-forward can't conflict),
+ * runs `merge --abort` before rethrowing -- the caller gets a clean, mergeable working tree back
+ * either way, never one left mid-merge with conflict markers on disk. That property is what lets
+ * the deploy script "abort loudly" instead of leaving a broken tree for `node --watch` (or the
+ * next deploy attempt) to trip over.
+ */
+export async function mergeOriginRef({ repoRoot, branch = "develop" }) {
+  try {
+    await git(["merge", "--ff-only", `origin/${branch}`], repoRoot);
+    return;
+  } catch {
+    // Not fast-forwardable -- repoRoot has commits origin/<branch> doesn't (a runtime commit
+    // not yet auto-pushed, or genuine divergence). Fall through to a real merge below.
+  }
+
   try {
     await git(["merge", "--no-ff", "--no-edit", `origin/${branch}`], repoRoot);
   } catch (err) {
     await git(["merge", "--abort"], repoRoot).catch(() => {
-      // Best-effort cleanup -- if there was nothing to abort (e.g. the fetch/ref-resolution
-      // itself failed before a merge ever started), that's fine; the original error below is
-      // what matters to the caller.
+      // Best-effort cleanup -- if there was nothing to abort (e.g. the ref-resolution itself
+      // failed before a merge ever started), that's fine; the original error below is what
+      // matters to the caller.
     });
     throw err;
   }
@@ -252,6 +522,21 @@ export async function mergeStatus({ worktreeDir }) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+/**
+ * Cleans up a worktree `mergeDevelop` deliberately left mid-merge (conflict markers on disk,
+ * `MERGE_HEAD` present) for an agent to resolve, in the specific case where that resolution
+ * phase never finished -- crashed, timed out, or the process spawning it failed outright
+ * (runOrchestrator.js's `_syncBranchWithDevelop`, T-0291). Without this, T-0243 left exactly
+ * that state on disk indefinitely: an unresolved `UU ASSET_PROVENANCE.md`, invisible until a
+ * human happened to look.
+ *
+ * Rejects (does not swallow) when there is nothing to abort -- callers treat this as
+ * best-effort cleanup, same posture as `mergeNoFF`'s own abort-on-failure branch.
+ */
+export async function abortMerge({ worktreeDir }) {
+  await git(["merge", "--abort"], worktreeDir);
 }
 
 /** Identity for commits the board tool makes on an agent's behalf rather than authored by the agent (see `commitAll`'s `author` param and `commitTaskFile`). */

@@ -476,6 +476,8 @@ The Board Assets database shows 1-asset folders for T-0070, T-0080, T-0081. **Th
 
 **The gap is not missing files, it is untested breadth.** One wall tile proves the chain runs. §12-c proves it produces a *tileset*.
 
+**T-0320 update (2026-09-08):** the counts above described the board-assets-stager's *old* semantics — a card's uploaded attachments, counted as if they were shipped assets. That basis was wrong: T-0315 showed 9 "assets" and T-0272 showed 6, with **nothing actually committed under `assets/final/` for either** (T-0315's promoted keyframe was later un-promoted; T-0272 never had one promoted at all). The stager now reports two separate, labelled numbers — `committedAssetCount` (files actually committed under `assets/final/`, attributed to the card via provenance) and `attachmentCount` (review material, unchanged in meaning from the old count above). Once the Notion sync next runs against the new `index.json`, expect the "T-0073 at 2 assets" example above to read as **1** — the `.provenance.json` sidecar no longer inflates the count alongside its own tile, per the new counting rule. This does not change §12-c's point (untested breadth is still the real gap); it only corrects what the number in the Board Assets database means.
+
 ---
 
 ## 13. Chain Keys × Population — a scale failure round 2 could not see

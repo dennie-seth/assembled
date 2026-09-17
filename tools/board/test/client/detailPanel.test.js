@@ -13,6 +13,8 @@ function task(overrides = {}) {
     depends_on: [],
     created: "2026-07-31",
     body: "## Context\nsome context\n\n## Acceptance\n- [ ] do it",
+    max_attempts: null,
+    complexity_points: null,
     ...overrides
   };
 }
@@ -224,6 +226,139 @@ describe("renderDetailPanel auto-retry attempt counter", () => {
     renderDetailPanel(root, task({ attempts: 0 }), baseOpts());
     expect(root.querySelector(".detail-attempts")).toBeNull();
   });
+
+  it("T-0343: shows the run count against the card's own max_attempts override, not the default", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ status: "in-progress", attempts: 2, max_attempts: 3 }), baseOpts());
+    const info = root.querySelector(".detail-attempts");
+    expect(info).not.toBeNull();
+    expect(info.textContent).toContain("2");
+    expect(info.textContent).toContain("3");
+    expect(info.textContent).not.toContain("5");
+  });
+});
+
+describe("renderDetailPanel editable max_attempts (T-0343)", () => {
+  it("renders the max attempts field empty when the card carries no override", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    expect(root.querySelector(".detail-max-attempts").value).toBe("");
+  });
+
+  it("renders the card's own max_attempts override in the field", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ max_attempts: 3 }), baseOpts());
+    expect(root.querySelector(".detail-max-attempts").value).toBe("3");
+  });
+
+  it("includes max_attempts in the Save patch when edited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts({ onSave }));
+
+    root.querySelector(".detail-max-attempts").value = "3";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { max_attempts: 3 });
+  });
+
+  it("maps a cleared max attempts field back to null on save -- back to the default", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001", max_attempts: 3 }), baseOpts({ onSave }));
+
+    root.querySelector(".detail-max-attempts").value = "";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { max_attempts: null });
+  });
+
+  it("does not call onSave when max_attempts is left unedited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts({ onSave }));
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unsaved max_attempts edit across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts());
+
+    root.querySelector(".detail-max-attempts").value = "4";
+
+    renderDetailPanel(root, task({ id: "T-0001", attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-max-attempts").value).toBe("4");
+    document.body.removeChild(root);
+  });
+});
+
+describe("renderDetailPanel editable complexity_points (T-0368: human planning signal only)", () => {
+  it("renders the complexity_points field empty (no score) when the card carries no value", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    expect(root.querySelector(".detail-complexity-points").value).toBe("");
+  });
+
+  it("renders the card's own complexity_points value in the field", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task({ complexity_points: 8 }), baseOpts());
+    expect(root.querySelector(".detail-complexity-points").value).toBe("8");
+  });
+
+  it("offers only the legal Fibonacci values as options, plus the empty no-score option", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    const values = Array.from(root.querySelectorAll(".detail-complexity-points option")).map((opt) => opt.value);
+    expect(values).toEqual(["", "1", "2", "3", "5", "8", "13", "21"]);
+  });
+
+  it("includes complexity_points in the Save patch when edited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts({ onSave }));
+
+    const select = root.querySelector(".detail-complexity-points");
+    select.value = "5";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { complexity_points: 5 });
+  });
+
+  it("maps the cleared (no score) option back to null on save", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001", complexity_points: 5 }), baseOpts({ onSave }));
+
+    const select = root.querySelector(".detail-complexity-points");
+    select.value = "";
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onSave).toHaveBeenCalledWith("T-0001", { complexity_points: null });
+  });
+
+  it("does not call onSave when complexity_points is left unedited", () => {
+    const root = document.createElement("div");
+    const onSave = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts({ onSave }));
+    root.querySelector(".detail-save").dispatchEvent(new Event("click", { bubbles: true }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unsaved complexity_points edit across a re-render of the same task", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderDetailPanel(root, task({ id: "T-0001" }), baseOpts());
+
+    root.querySelector(".detail-complexity-points").value = "13";
+
+    renderDetailPanel(root, task({ id: "T-0001", attempts: 1 }), baseOpts());
+
+    expect(root.querySelector(".detail-complexity-points").value).toBe("13");
+    document.body.removeChild(root);
+  });
 });
 
 describe("renderDetailPanel comments (Feature A: human feedback for iterative re-runs)", () => {
@@ -406,7 +541,17 @@ describe("renderDetailPanel draft preservation across live re-renders", () => {
     document.body.removeChild(root);
   });
 
-  it("does not restore a stale draft once the field has lost focus", () => {
+  // REVERSED deliberately. This previously asserted that a blurred draft is dropped,
+  // which made the comment box the one editable field on the panel that does NOT
+  // survive losing focus -- title, body, priority, status, agent, phase and the deps
+  // chips are all preserved by the T-0151 dirty-diff. The original b928575 fix was
+  // focus-scoped only, so the bug it was opened for ("comment draft erased") was still
+  // live the moment the user clicked away to check something: type a comment, click the
+  // body field, next run-event lands, draft gone with no undo. An un-submitted comment
+  // is user-authored data with no copy anywhere else, so it is now dirty-tracked like
+  // every other field. Bleed into a *different* card is still prevented -- dirty capture
+  // only runs when the task id is unchanged (see the test below).
+  it("preserves a comment draft even after the field has lost focus", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
     renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment: vi.fn() }));
@@ -417,6 +562,24 @@ describe("renderDetailPanel draft preservation across live re-renders", () => {
     input.blur();
 
     renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment: vi.fn() }));
+
+    expect(root.querySelector(".detail-comment-input").value).toBe("typed then blurred");
+    document.body.removeChild(root);
+  });
+
+  it("still clears the draft after the comment is submitted", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const onAddComment = vi.fn();
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment }));
+
+    const input = root.querySelector(".detail-comment-input");
+    input.value = "ship it";
+    root.querySelector(".detail-comment-add").dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(onAddComment).toHaveBeenCalledWith("T-0137", "ship it");
+
+    renderDetailPanel(root, task({ id: "T-0137" }), baseOpts({ onAddComment }));
 
     expect(root.querySelector(".detail-comment-input").value).toBe("");
     document.body.removeChild(root);

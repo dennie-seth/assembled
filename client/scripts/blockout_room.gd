@@ -20,6 +20,7 @@ extends Node2D
 ## before any type-hinted variable in this file is resolved.
 const _PlayerScript: GDScript = preload("res://scripts/player_controller.gd")
 const _WatcherScript: GDScript = preload("res://scripts/watcher_controller.gd")
+const _FirstRunControllerScript: GDScript = preload("res://scripts/first_run_controller.gd")
 
 ## Tile grid constants — single source of truth for authored layout.
 const TILE_SIZE: int = 16
@@ -51,6 +52,13 @@ var _door_body: StaticBody2D   ## kept to disable collision on open
 var _anchor_visual: ColorRect  ## toggled when item is picked up / placed
 var _alert_timer: float = 0.0
 
+## First-run gate (T-0120): the room's own gameplay does not build until the
+## player has cleared every blocking first-run screen — the calm entry room
+## is what the phrase-reveal/offline-notice sequence drops the player into,
+## not something running underneath it.
+var _first_run: Node
+var _room_built: bool = false
+
 ## Convert tile column/row to world-space pixel position (top-left of tile).
 func _px(col: int, row: int) -> Vector2:
 	return Vector2(col * TILE_SIZE, row * TILE_SIZE)
@@ -60,8 +68,26 @@ func _pxc(col: int, row: int) -> Vector2:
 	return _px(col, row) + Vector2(TILE_SIZE * 0.5, TILE_SIZE * 0.5)
 
 func _ready() -> void:
+	_first_run = _FirstRunControllerScript.new()
+	add_child(_first_run)
+	_first_run.entry_room_ready.connect(_on_first_run_entry_room_ready)
+	_first_run.start_new_game()
+
+## Called once the player has cleared the phrase-reveal screen (and the
+## offline notice, if shown) — only then does the calm entry room actually
+## build (T-0120: the room is what the first-run sequence drops the player
+## into, not something already running underneath its blocking screens).
+func _on_first_run_entry_room_ready() -> void:
 	_build_room()
 	_connect_signals()
+	_room_built = true
+
+## The FirstRunController constructed by this scene's own _ready() (T-0120).
+## Exposed for tests/test_main_scene_boot.gd, which loads this scene the way
+## a real launch does and needs to verify the controller actually exists
+## rather than reaching into a private field.
+func get_first_run_controller() -> Node:
+	return _first_run
 
 # ── Room construction ──────────────────────────────────────────────────────────
 
@@ -246,6 +272,9 @@ func _connect_signals() -> void:
 # ── Per-frame update ───────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
+	if not _room_built:
+		return
+
 	# Detection check (called every process frame for responsiveness).
 	var detected: bool = _watcher.check_player(_player.position, _player_is_hiding)
 

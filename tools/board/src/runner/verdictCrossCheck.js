@@ -61,14 +61,29 @@ function requirementGroupsForRoute(route) {
     return [[/tools\/board\/scripts\/checkPlannerDiffGuard\.js/]];
   }
   if (route.id === "board-suite") {
-    return [[/\bnpm\s+(run\s+)?test\b/], [/\beslint\b/]];
+    return [[/\bnpm\s+(run\s+)?test\b|\bnpx\s+vitest\b/], [/\beslint\b/]];
   }
   if (route.id === "server-db-verify") {
     return [[/\bctest\b/, /--output-on-failure\b/]];
   }
   if (route.id.startsWith("python-verify:")) {
+    // Two independent groups, not one group requiring both regexes on the same command line.
+    // The Bash tool's shell persists cwd across calls within a session (like any interactive
+    // shell), so a reviewer who `cd`s into pkgDir once and then pokes around (ls, cat
+    // pyproject.toml, python3 --version) before running a bare `pytest` is following completely
+    // normal, expected shell usage -- that `pytest` invocation's command text never repeats
+    // pkgDir. The old single-group-with-both-regexes shape scored that as "not_run" even though
+    // pytest genuinely ran against the right package, and was actively hostile to a reviewer who
+    // tried to recover by re-cd'ing: from inside pkgDir, re-issuing the router's own relative
+    // `cd ${pkgDir} && ...` command hunts for a nonexistent nested pkgDir/pkgDir and fails with
+    // "No such file or directory" (observed live blocking T-0203 3 runs in a row post-#214).
+    // Splitting into two groups -- pytest ran successfully *somewhere*, and pkgDir was
+    // referenced in *some* command -- keeps the original disambiguation signal (proves the
+    // reviewer was actually in/near this package, not just running an unrelated pytest) without
+    // requiring both facts to land on one command line. Mirrors board-suite's existing
+    // independent-groups shape above.
     const pkgDir = route.id.slice("python-verify:".length);
-    return [[/\bpytest\b/, new RegExp(escapeRegExp(pkgDir))]];
+    return [[/\bpytest\b/], [new RegExp(escapeRegExp(pkgDir))]];
   }
   if (route.id.startsWith("client-godot-verify:")) {
     const testPath = route.id.slice("client-godot-verify:".length);
@@ -76,7 +91,13 @@ function requirementGroupsForRoute(route) {
     return [[/\bgodot\b/, /--headless\b/, new RegExp(escapeRegExp(fileName))]];
   }
   if (route.id === "deliverable-check") {
-    const taskId = route.command.trim().split(/\s+/).pop();
+    // Extract the task id from the token right after `checkDeliverable.js` specifically --
+    // not the command's last token -- because a diff-triggered route (see
+    // verifyRouter.js's resolveDeliverableRoute) appends a trailing `--require-artifact`
+    // flag, which `.pop()` would wrongly capture as "the task id" and make this check
+    // task-id-agnostic (any checkDeliverable.js invocation would satisfy it).
+    const match = /checkDeliverable\.js\s+(\S+)/.exec(route.command);
+    const taskId = match?.[1] ?? "";
     return [[/checkDeliverable\.js/, new RegExp(escapeRegExp(taskId))]];
   }
   // Unknown future route id: fall back to matching on the command's first token (the binary/
@@ -92,9 +113,11 @@ function evaluateRoute(route, invocations) {
     if (matches.length === 0) {
       return "not_run";
     }
-    // Last matching invocation wins -- a reviewer that re-ran a flaky command and got a clean
-    // second result should not be penalized for a stale first failure.
-    if (!matches[matches.length - 1].ok) {
+    // Any matching invocation wins -- if any pass, the group is satisfied. This covers both the
+    // retry case (first run flaky, second clean) and the equivalent-command case (npx vitest
+    // passed, later npm test permission-denied): a subsequent blocked attempt doesn't erase a
+    // prior passing run of an equivalent command.
+    if (!matches.some((inv) => inv.ok)) {
       anyGroupFailed = true;
     }
   }
@@ -111,9 +134,10 @@ function evaluateRoute(route, invocations) {
  * on client-godot-verify) -- fail closed, per the #183 lesson that a confused/non-compliant
  * reviewer can claim PASS without ever having run the check. A self-reported FAIL is always left
  * as FAIL: the cross-check only ever downgrades, never upgrades. When there are no required
- * routes for this diff (nothing under a code-enforced prefix, and the task isn't
- * `deliverable_type: "artifact"`), the reviewer's verdict passes through unchanged -- there is
- * nothing here for the harness to verify independently.
+ * routes for this diff (nothing under a code-enforced prefix, the task isn't
+ * `deliverable_type: "artifact"`, and the diff doesn't touch a known artifact-producing path
+ * either -- see `resolveDeliverableRoute`'s diff-triggered backstop), the reviewer's verdict
+ * passes through unchanged -- there is nothing here for the harness to verify independently.
  */
 export function crossCheckVerdict({ verdict, events, changedPaths = [], task, baseBranch = "develop" }) {
   if (!verdict || verdict.verdict !== "PASS") {
@@ -121,7 +145,7 @@ export function crossCheckVerdict({ verdict, events, changedPaths = [], task, ba
   }
 
   const routes = [...resolveVerifyRoutes(changedPaths, { baseBranch })];
-  const deliverableRoute = resolveDeliverableRoute(task);
+  const deliverableRoute = resolveDeliverableRoute(task, changedPaths);
   if (deliverableRoute) {
     routes.push(deliverableRoute);
   }

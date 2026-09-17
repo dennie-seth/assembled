@@ -9,6 +9,8 @@ is hermetic and does not break when the real catalogue grows.
 
 from __future__ import annotations
 
+import pathlib
+
 from locale_gate.catalogue import parse_loc_ids, parse_seed_wordlist, parse_template_slots
 from locale_gate.checker import (
     check_l1_coverage,
@@ -16,7 +18,7 @@ from locale_gate.checker import (
     check_l3_no_positional,
     check_l4_no_seed_words,
 )
-from locale_gate.po_parser import parse_po
+from locale_gate.po_parser import PoFile, parse_po
 
 # ── Synthetic shared/note_templates.hpp fragment ───────────────────────────────
 # 2 words, 2 templates:
@@ -446,3 +448,107 @@ def test_l4_incomplete_locale_still_checked():
     locales = {"de": parse_po(bad_po)}
     results = check_l4_no_seed_words(words, locales)
     assert len(results) == 1
+
+
+# ── catalogue: item_ref slot detection ───────────────────────────────────────
+# Templates that reference ITEM_REF in their inline comment get "item_ref"
+# added to their slot set, so L-2 can verify locale parity.
+
+SAMPLE_HPP_ITEM_REF = """
+namespace assembled {
+
+enum class WordCategory : int16_t {
+    DIRECTION = 1,
+    HAZARD    = 2,
+    ACTION    = 3,
+    OBJECT    = 4,
+    QUALIFIER = 5,
+};
+
+struct WordDef { int16_t id; WordCategory category; };
+inline constexpr std::array<WordDef, 2> kWords = {{
+    {1, WordCategory::DIRECTION},
+    {2, WordCategory::OBJECT},
+}};
+
+struct TemplateDef { int16_t id; int16_t slots; int16_t slot_a_category; int16_t slot_b_category; };
+inline constexpr std::array<TemplateDef, 2> kTemplates = {{
+    {1, 0, 0, 0},   // "need {ITEM_REF}"                 — item_ref column only
+    {2, 1, 4, 0},   // "{OBJECT} opens with {ITEM_REF}"  — slot_a=OBJECT + item_ref
+}};
+
+} // namespace assembled
+"""
+
+
+def test_parse_template_slots_item_ref_only():
+    slots = parse_template_slots(SAMPLE_HPP_ITEM_REF)
+    assert slots["template:1"] == {"item_ref"}
+
+
+def test_parse_template_slots_word_slot_plus_item_ref():
+    slots = parse_template_slots(SAMPLE_HPP_ITEM_REF)
+    assert slots["template:2"] == {"object", "item_ref"}
+
+
+# ══ Integration tests — real .po files on disk ═══════════════════════════════
+# AC #6: "pytest exercising the full checker pipeline against the actual .po
+# files on disk (not mocked), confirming end-to-end correctness."
+#
+# These tests load the real client/locale/en.po, client/locale/ru.po, and
+# shared/note_templates.hpp from the repository and run L-1 through L-4
+# against them.  They are NOT hermetic (they break if the real files change
+# in an incompatible way), but that is exactly the point — they prove the
+# shipped vocabulary actually passes locale-gate.
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]  # tools/locale-gate/tests -> repo root
+_HPP_PATH = _REPO_ROOT / "shared" / "note_templates.hpp"
+_EN_PO_PATH = _REPO_ROOT / "client" / "locale" / "en.po"
+_RU_PO_PATH = _REPO_ROOT / "client" / "locale" / "ru.po"
+_SEED_CPP_PATH = _REPO_ROOT / "server" / "src" / "SeedPhrase.cpp"
+
+
+def _load_real_locales() -> dict[str, PoFile]:
+    """Load en.po and ru.po from the repository."""
+    return {
+        "en": parse_po(_EN_PO_PATH.read_text(encoding="utf-8")),
+        "ru": parse_po(_RU_PO_PATH.read_text(encoding="utf-8")),
+    }
+
+
+def _load_real_hpp() -> str:
+    return _HPP_PATH.read_text(encoding="utf-8")
+
+
+def test_integration_l1_real_locales_pass():
+    """L-1: both en.po and ru.po cover every LocId in note_templates.hpp."""
+    hpp = _load_real_hpp()
+    ids = parse_loc_ids(hpp)
+    locales = _load_real_locales()
+    results = check_l1_coverage(ids, locales)
+    assert results == [], f"L-1 failures: {[r.reason for r in results]}"
+
+
+def test_integration_l2_real_locales_pass():
+    """L-2: slot sets in en.po and ru.po match the reference from the hpp."""
+    hpp = _load_real_hpp()
+    slots = parse_template_slots(hpp)
+    locales = _load_real_locales()
+    results = check_l2_slot_consistency(slots, locales)
+    assert results == [], f"L-2 failures: {[r.reason for r in results]}"
+
+
+def test_integration_l3_real_locales_pass():
+    """L-3: no positional placeholders in en.po or ru.po."""
+    locales = _load_real_locales()
+    results = check_l3_no_positional(locales)
+    assert results == [], f"L-3 failures: {[r.reason for r in results]}"
+
+
+def test_integration_l4_real_locales_pass():
+    """L-4: no seed-phrase words appear as msgids in en.po or ru.po."""
+    seed_cpp = _SEED_CPP_PATH.read_text(encoding="utf-8")
+    words = parse_seed_wordlist(seed_cpp)
+    locales = _load_real_locales()
+    results = check_l4_no_seed_words(words, locales)
+    assert results == [], f"L-4 failures: {[r.reason for r in results]}"

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { rmTemp } from "../helpers/rmTemp.js";
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -13,10 +14,14 @@ import {
   push,
   getHeadCommit,
   pullDevelop,
+  isBehindOrigin,
+  syncBaseBranch,
   mergeNoFF,
+  mergeOriginRef,
   fetch,
   mergeDevelop,
   mergeStatus,
+  abortMerge,
   commitTaskFile,
   commitPaths,
   autoCommitCardsOnCreateFromEnv,
@@ -56,7 +61,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  // rmTemp, not a bare fs.rm: git's background repacking can write into .git/objects/pack
+  // between this walk's readdir and its rmdir, which surfaced in CI as
+  // "ENOTEMPTY: directory not empty, rmdir '.../.git/objects/pack'" while passing locally.
+  await rmTemp(tmpDir);
 });
 
 describe("addWorktree / removeWorktree", () => {
@@ -138,7 +146,7 @@ describe("addWorktree — stale branch/worktree recovery", () => {
 
     const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0111", baseBranch: "develop" });
 
-    expect(result).toEqual({ reused: true });
+    expect(result).toMatchObject({ reused: true });
     const { stdout: branchSha } = await git(["rev-parse", "feature/T-0111"], repoRoot);
     expect(branchSha.trim().length).toBe(40);
     const stat = await fs.stat(worktreeDir);
@@ -160,7 +168,7 @@ describe("addWorktree — stale branch/worktree recovery", () => {
 
     const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0112", baseBranch: "develop" });
 
-    expect(result).toEqual({ reused: true });
+    expect(result).toMatchObject({ reused: true });
     const { stdout: log } = await git(["log", "-1", "--pretty=%s"], worktreeDir);
     expect(log.trim()).toBe("feat: real work");
   });
@@ -169,7 +177,7 @@ describe("addWorktree — stale branch/worktree recovery", () => {
     const worktreeDir = path.join(tmpDir, "worktrees", "T-0199");
     const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0199", baseBranch: "develop" });
 
-    expect(result).toEqual({ reused: false });
+    expect(result).toMatchObject({ reused: false });
     const stat = await fs.stat(worktreeDir);
     expect(stat.isDirectory()).toBe(true);
     const { stdout: branch } = await git(["rev-parse", "--abbrev-ref", "HEAD"], worktreeDir);
@@ -182,7 +190,136 @@ describe("addWorktree — stale branch/worktree recovery", () => {
 
     const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0100b", baseBranch: "develop" });
 
-    expect(result).toEqual({ reused: false });
+    expect(result).toMatchObject({ reused: false });
+  });
+});
+
+/**
+ * T-0248: the reclaim's `git worktree remove --force` deletes the whole directory, untracked and
+ * ignored files included, so per-epoch LoRA training checkpoints were destroyed on every re-run
+ * and `find_resume_state` restarted training from step 0 (~86 minutes of GPU, once). addWorktree
+ * now carries the card's allowlisted untracked artifacts across the reclaim -- see
+ * artifactPreservation.js.
+ */
+describe("addWorktree / removeWorktree — untracked artifacts survive the worktree reset", () => {
+  const CHECKPOINT = "assets/final/lora/player_identity_v2-step00000024-state/optimizer.bin";
+  const WEIGHTS = "assets/final/lora/player_identity_v2-step00000024.safetensors";
+
+  async function writeIn(root, rel, contents) {
+    await fs.mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+    await fs.writeFile(path.join(root, rel), contents, "utf8");
+  }
+
+  async function exists(target) {
+    try {
+      await fs.lstat(target);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("a re-run finds the previous run's untracked checkpoints in the fresh worktree, so training can resume", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0248");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0248", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "training-glue.py"), "print('v1')\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: training glue" });
+    // Untracked training state, exactly as sd-scripts --save_state leaves it.
+    await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+    await writeIn(worktreeDir, WEIGHTS, "lora weights");
+
+    const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0248", baseBranch: "develop" });
+
+    expect(result).toMatchObject({ reused: true });
+    expect(await fs.readFile(path.join(worktreeDir, CHECKPOINT), "utf8")).toBe("optimizer state");
+    expect(await fs.readFile(path.join(worktreeDir, WEIGHTS), "utf8")).toBe("lora weights");
+    // Restored, not merely stashed: nothing is left behind holding a second copy.
+    expect(await exists(path.join(tmpDir, "worktrees", ".artifact-cache", "T-0248"))).toBe(false);
+  });
+
+  it("does not carry across untracked files outside the artifact allowlist", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0249");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0249", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "work.txt"), "x\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: work" });
+    await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+    await writeIn(worktreeDir, "assets/src/character/__pycache__/synth.pyc", "junk");
+    await writeIn(worktreeDir, "scratch-notes.md", "junk");
+
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0249", baseBranch: "develop" });
+
+    expect(await exists(path.join(worktreeDir, CHECKPOINT))).toBe(true);
+    expect(await exists(path.join(worktreeDir, "assets/src/character/__pycache__/synth.pyc"))).toBe(false);
+    expect(await exists(path.join(worktreeDir, "scratch-notes.md"))).toBe(false);
+  });
+
+  it("never overwrites a tracked file in the fresh checkout with a preserved stale copy", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0250");
+    const config = "assets/final/lora/training_config.toml";
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0250", baseBranch: "develop" });
+    // Untracked when captured...
+    await writeIn(worktreeDir, config, "stale = true\n");
+    await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+
+    // ...but committed on the base branch by the time the card is re-run. The card branch has no
+    // unique commits, so the reclaim discards it and cuts a fresh one from develop -- and the
+    // fresh checkout's version of that path is the one that must win.
+    await git(["checkout", "develop"], repoRoot);
+    await fs.mkdir(path.join(repoRoot, path.dirname(config)), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, config), "fresh = true\n", "utf8");
+    await git(["add", config], repoRoot);
+    await git(["commit", "-m", "feat: commit the training config"], repoRoot);
+
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0250", baseBranch: "develop" });
+
+    expect(await fs.readFile(path.join(worktreeDir, config), "utf8")).toBe("fresh = true\n");
+    // The genuinely untracked artifact alongside it still comes back.
+    expect(await fs.readFile(path.join(worktreeDir, CHECKPOINT), "utf8")).toBe("optimizer state");
+  });
+
+  it("leaves a fresh card with no prior worktree completely unaffected", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0251");
+
+    const result = await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0251", baseBranch: "develop" });
+
+    expect(result).toMatchObject({ reused: false });
+    expect((await fs.stat(worktreeDir)).isDirectory()).toBe(true);
+    expect(await exists(path.join(tmpDir, "worktrees", ".artifact-cache"))).toBe(false);
+  });
+
+  it("preserves artifacts through removeWorktree too, so a card re-run after review still resumes", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0252");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0252", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "work.txt"), "x\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: work" });
+    await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+
+    // The PASS path: branch pushed, PR opened, worktree torn down.
+    await removeWorktree({ repoRoot, worktreeDir });
+    expect(await exists(worktreeDir)).toBe(false);
+
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0252", baseBranch: "develop" });
+
+    expect(await fs.readFile(path.join(worktreeDir, CHECKPOINT), "utf8")).toBe("optimizer state");
+  });
+
+  it("honours BOARD_PRESERVE_ARTIFACTS=off by falling back to the old wipe-on-reclaim behaviour", async () => {
+    const previous = process.env.BOARD_PRESERVE_ARTIFACTS;
+    process.env.BOARD_PRESERVE_ARTIFACTS = "off";
+    try {
+      const worktreeDir = path.join(tmpDir, "worktrees", "T-0253");
+      await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0253", baseBranch: "develop" });
+      await fs.writeFile(path.join(worktreeDir, "work.txt"), "x\n", "utf8");
+      await commitAll({ worktreeDir, message: "feat: work" });
+      await writeIn(worktreeDir, CHECKPOINT, "optimizer state");
+
+      await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0253", baseBranch: "develop" });
+
+      expect(await exists(path.join(worktreeDir, CHECKPOINT))).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.BOARD_PRESERVE_ARTIFACTS;
+      else process.env.BOARD_PRESERVE_ARTIFACTS = previous;
+    }
   });
 });
 
@@ -319,7 +456,7 @@ describe("push", () => {
 });
 
 describe("pullDevelop", () => {
-  it("fast-forwards develop when origin has new commits", async () => {
+  it("fast-forwards develop when origin has new commits -- no merge commit when there's nothing local to preserve", async () => {
     // Push a new commit to origin's develop from a separate clone
     const cloneDir = path.join(tmpDir, "other-clone");
     await fs.mkdir(cloneDir, { recursive: true });
@@ -336,6 +473,33 @@ describe("pullDevelop", () => {
 
     const { stdout: log } = await git(["log", "--oneline", "develop"], repoRoot);
     expect(log).toContain("upstream: new commit");
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(1); // fast-forward, not a merge commit
+  });
+
+  // T-0304: this reproduces the live-board bug directly -- a `merge.ff=false`-style config
+  // (plausible on the deploy machine, distinct from this sandbox's default config) makes plain
+  // `git pull --no-rebase` manufacture a merge commit even when repoRoot is a pure ancestor of
+  // origin/develop with nothing local to preserve. The fix must not rely on ambient merge.ff/
+  // pull.ff config at all -- it has to check explicitly.
+  it("still fast-forwards with no merge commit under a merge.ff=false-style config", async () => {
+    await git(["config", "merge.ff", "false"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergeff-false");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream-mergeff.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream-mergeff.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: commit under merge.ff=false"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await pullDevelop({ repoRoot, branch: "develop" });
+
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(1); // still a fast-forward
   });
 
   it("resolves without error when develop is already up to date", async () => {
@@ -469,8 +633,61 @@ describe("pullDevelop", () => {
   });
 });
 
+describe("isBehindOrigin", () => {
+  it("returns false when repoRoot's develop already matches origin/develop", async () => {
+    await expect(isBehindOrigin({ repoRoot, branch: "develop" })).resolves.toBe(false);
+  });
+
+  it("returns true once origin/develop has commits repoRoot doesn't have yet", async () => {
+    const cloneDir = path.join(tmpDir, "other-clone-behind-check");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream-behind.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream-behind.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: commit repoRoot hasn't seen"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(isBehindOrigin({ repoRoot, branch: "develop" })).resolves.toBe(true);
+  });
+
+  it("returns false when repoRoot is only ahead of origin (local unpushed commit, nothing new upstream)", async () => {
+    await fs.writeFile(path.join(repoRoot, "local-only.txt"), "local\n", "utf8");
+    await git(["add", "local-only.txt"], repoRoot);
+    await git(["commit", "-m", "local: unpushed commit"], repoRoot);
+
+    await expect(isBehindOrigin({ repoRoot, branch: "develop" })).resolves.toBe(false);
+  });
+
+  it("returns true when histories diverged (repoRoot has an unpushed commit AND origin moved on)", async () => {
+    await fs.writeFile(path.join(repoRoot, "local-diverge.txt"), "local\n", "utf8");
+    await git(["add", "local-diverge.txt"], repoRoot);
+    await git(["commit", "-m", "local: unpushed commit"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-diverged");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream-diverge.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream-diverge.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: diverged commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await expect(isBehindOrigin({ repoRoot, branch: "develop" })).resolves.toBe(true);
+  });
+});
+
 describe("mergeNoFF", () => {
-  it("fetches and merges origin/<branch> with --no-ff, producing a merge commit", async () => {
+  // T-0304: this was the deploy.sh-shaped bug reproduced directly against the shared gitOps
+  // function autoPush.js also relies on -- mergeNoFF used to pass --no-ff unconditionally, so
+  // even a trivially fast-forwardable pull (nothing local to preserve) manufactured an empty
+  // merge commit every time. It must fast-forward here instead, and only fall back to --no-ff
+  // when local genuinely has commits origin doesn't (covered below).
+  it("fast-forwards -- no merge commit -- when there's nothing local to preserve", async () => {
     const cloneDir = path.join(tmpDir, "other-clone-mergenoff");
     await fs.mkdir(cloneDir, { recursive: true });
     await git(["clone", originDir, cloneDir]);
@@ -487,11 +704,40 @@ describe("mergeNoFF", () => {
     const { stdout: log } = await git(["log", "--oneline", "develop"], repoRoot);
     expect(log).toContain("upstream: new commit");
     const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
-    expect(parents.trim().split(" ").length).toBe(2); // merge commit has two parents
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(1); // fast-forward, not a merge commit
   });
 
-  it("merges cleanly (no-op merge commit) when already up to date", async () => {
+  it("falls back to a real --no-ff merge commit when local genuinely has commits origin doesn't -- the case --no-ff exists for", async () => {
+    await fs.writeFile(path.join(repoRoot, "local-only.txt"), "local\n", "utf8");
+    await git(["add", "local-only.txt"], repoRoot);
+    await git(["commit", "-m", "local: unpushed runtime commit"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergenoff-diverged");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream-diverged.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream-diverged.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: new commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await mergeNoFF({ repoRoot, branch: "develop" });
+
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(2); // real merge commit -- both sides preserved
+    const localFile = await fs.readFile(path.join(repoRoot, "local-only.txt"), "utf8");
+    expect(localFile).toBe("local\n");
+    const upstreamFile = await fs.readFile(path.join(repoRoot, "upstream-diverged.txt"), "utf8");
+    expect(upstreamFile).toBe("from upstream\n");
+  });
+
+  it("is a true no-op -- no commit at all -- when already up to date", async () => {
+    const { stdout: beforeSha } = await git(["rev-parse", "develop"], repoRoot);
     await expect(mergeNoFF({ repoRoot, branch: "develop" })).resolves.not.toThrow();
+    const { stdout: afterSha } = await git(["rev-parse", "develop"], repoRoot);
+    expect(afterSha.trim()).toBe(beforeSha.trim());
   });
 
   it("aborts the merge and rethrows on conflict, leaving a clean working tree behind", async () => {
@@ -525,6 +771,59 @@ describe("mergeNoFF", () => {
 
   it("rejects with a descriptive error when the branch does not exist on origin", async () => {
     await expect(mergeNoFF({ repoRoot, branch: "nonexistent-branch" })).rejects.toThrow(/nonexistent-branch|git/i);
+  });
+});
+
+// T-0304: deploy.sh runs its own explicit `git fetch` step first (so it can give a distinct
+// "fetch failed" error message), then merges the already-fetched origin/<branch> ref via this
+// function -- the no-fetch counterpart to mergeNoFF, which bundles the fetch in for callers
+// (the auto-pull poller via pullDevelop, and autoPush.js's push-retry path) that don't fetch
+// separately. Same ff-then-no-ff-fallback behavior either way.
+describe("mergeOriginRef", () => {
+  it("fast-forwards an already-fetched origin/<branch> when there's nothing local to preserve", async () => {
+    const cloneDir = path.join(tmpDir, "other-clone-mergeoriginref-ff");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "upstream.txt"), "from upstream\n", "utf8");
+    await git(["add", "upstream.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: new commit"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+    await git(["fetch", "origin", "develop"], repoRoot);
+
+    await mergeOriginRef({ repoRoot, branch: "develop" });
+
+    const { stdout: parents } = await git(["log", "-1", "--pretty=%P", "develop"], repoRoot);
+    expect(parents.trim().split(" ").filter(Boolean).length).toBe(1);
+  });
+
+  it("falls back to --no-ff when local genuinely has commits origin doesn't, and aborts+rethrows on conflict", async () => {
+    await fs.writeFile(path.join(repoRoot, "conflict.txt"), "local version\n", "utf8");
+    await git(["add", "conflict.txt"], repoRoot);
+    await git(["commit", "-m", "local: conflicting change"], repoRoot);
+
+    const cloneDir = path.join(tmpDir, "other-clone-mergeoriginref-conflict");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "conflict.txt"), "upstream version\n", "utf8");
+    await git(["add", "conflict.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: conflicting change"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+    await git(["fetch", "origin", "develop"], repoRoot);
+
+    await expect(mergeOriginRef({ repoRoot, branch: "develop" })).rejects.toThrow();
+
+    const { stdout: status } = await git(["status", "--porcelain"], repoRoot);
+    expect(status.trim()).toBe("");
+    const { stdout: mergeHead } = await git(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], repoRoot).catch(
+      (err) => ({ stdout: "", err })
+    );
+    expect(mergeHead.trim()).toBe("");
   });
 });
 
@@ -676,17 +975,61 @@ describe("mergeStatus", () => {
   });
 });
 
+describe("abortMerge", () => {
+  it("cleans a worktree left mid-merge (T-0291: a crashed conflict-resolution phase must not leave MERGE_HEAD/conflict markers on disk indefinitely)", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0207");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0207", baseBranch: "develop" });
+    await fs.writeFile(path.join(worktreeDir, "conflict.txt"), "branch version\n", "utf8");
+    await commitAll({ worktreeDir, message: "feat: branch change" });
+
+    const cloneDir = path.join(tmpDir, "other-clone-abortmerge-conflict");
+    await fs.mkdir(cloneDir, { recursive: true });
+    await git(["clone", originDir, cloneDir]);
+    await git(["config", "user.email", "test@example.com"], cloneDir);
+    await git(["config", "user.name", "Test"], cloneDir);
+    await git(["checkout", "develop"], cloneDir);
+    await fs.writeFile(path.join(cloneDir, "conflict.txt"), "upstream version\n", "utf8");
+    await git(["add", "conflict.txt"], cloneDir);
+    await git(["commit", "-m", "upstream: conflicting change"], cloneDir);
+    await git(["push", "origin", "develop"], cloneDir);
+
+    await fetch({ worktreeDir });
+    const result = await mergeDevelop({ worktreeDir, baseBranch: "develop" });
+    expect(result.conflicted).toBe(true);
+    await expect(mergeStatus({ worktreeDir })).resolves.toEqual(["conflict.txt"]);
+
+    await expect(abortMerge({ worktreeDir })).resolves.not.toThrow();
+
+    await expect(mergeStatus({ worktreeDir })).resolves.toEqual([]);
+    const { stdout: mergeHead } = await git(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], worktreeDir).catch(
+      (err) => ({ stdout: "", err })
+    );
+    expect(mergeHead.trim()).toBe("");
+    const { stdout: status } = await git(["status", "--porcelain"], worktreeDir);
+    expect(status.trim()).toBe("");
+  });
+
+  it("rejects when there is nothing to abort (no active merge) -- a caller must treat this as best-effort, not assume success", async () => {
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0208");
+    await addWorktree({ repoRoot, worktreeDir, branch: "feature/T-0208", baseBranch: "develop" });
+
+    await expect(abortMerge({ worktreeDir })).rejects.toThrow(/git/i);
+  });
+});
+
 describe("commitPaths — auto-push", () => {
   it("pushes the commit to origin's develop by default (AUTO_PUSH_ON_COMMIT unset)", async () => {
     await fs.mkdir(path.join(repoRoot, "tasks"), { recursive: true });
     await fs.writeFile(path.join(repoRoot, "tasks", "T-0030.md"), "card body\n", "utf8");
 
     await commitPaths({ repoRoot, filePaths: ["tasks/T-0030.md"], message: "chore(board): add card T-0030" });
-    // schedulePush is fire-and-forget -- give its microtask chain a tick to actually run.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
-    expect(log).toContain("chore(board): add card T-0030");
+    // schedulePush is fire-and-forget -- a real `git push` subprocess, whose completion time
+    // varies with host load (T-0304 review: a full-suite run under load took longer than a
+    // fixed 50ms sleep here, flaking this assertion). Poll instead of sleeping a fixed amount.
+    await vi.waitFor(async () => {
+      const { stdout: log } = await git(["log", "--oneline", "origin/develop"], repoRoot);
+      expect(log).toContain("chore(board): add card T-0030");
+    });
   });
 
   it("does not push when autoPush: false is passed", async () => {
@@ -933,5 +1276,131 @@ describe("autoCommitCardsOnCreateFromEnv", () => {
   it.each(["0", "false", "off", "no", "FALSE", "Off"])("is false when set to %s", (value) => {
     process.env.AUTO_COMMIT_CARDS_ON_CREATE = value;
     expect(autoCommitCardsOnCreateFromEnv()).toBe(false);
+  });
+});
+
+describe("syncBaseBranch — the worktree base must be the code that is deployed", () => {
+  /**
+   * Advances origin/develop by one commit adding `filename`, while leaving repoRoot's local
+   * `develop` ref exactly where it is -- the shape the live board was in on 2026-08-23.
+   */
+  async function advanceOriginDevelop(filename, cloneName = "publisher") {
+    const publisher = path.join(tmpDir, cloneName);
+    await git(["clone", "--branch", "develop", originDir, publisher]);
+    await git(["config", "user.email", "test@example.com"], publisher);
+    await git(["config", "user.name", "Test"], publisher);
+    await fs.writeFile(path.join(publisher, filename), "shipped\n", "utf8");
+    await git(["add", filename], publisher);
+    await git(["commit", "-m", `add ${filename}`], publisher);
+    await git(["push", "origin", "develop"], publisher);
+    const { stdout } = await git(["rev-parse", "HEAD"], publisher);
+    return stdout.trim();
+  }
+
+  it("fast-forwards a stale local develop while repoRoot sits on another branch", async () => {
+    // repoRoot parked on a feature branch is exactly what froze `develop`: `pullDevelop` and
+    // `isBehindOrigin` both operate on HEAD, so they report "up to date" and never touch the ref.
+    await git(["checkout", "-b", "fix/parked"], repoRoot);
+    const shipped = await advanceOriginDevelop("agentCurl.js");
+
+    const before = await git(["rev-parse", "refs/heads/develop"], repoRoot);
+    expect(before.stdout.trim()).not.toBe(shipped);
+
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+
+    expect(result.status).toBe("fast-forwarded");
+    expect(result.after).toBe(shipped);
+    const after = await git(["rev-parse", "refs/heads/develop"], repoRoot);
+    expect(after.stdout.trim()).toBe(shipped);
+    // The parked branch must not have been dragged along with it.
+    const head = await git(["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
+    expect(head.stdout.trim()).toBe("fix/parked");
+  });
+
+  it("fast-forwards develop when develop is the branch repoRoot has checked out", async () => {
+    const shipped = await advanceOriginDevelop("agentCurl.js", "publisher-checked-out");
+
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+
+    expect(result.status).toBe("fast-forwarded");
+    const head = await git(["rev-parse", "HEAD"], repoRoot);
+    expect(head.stdout.trim()).toBe(shipped);
+  });
+
+  it("reports 'current' and changes nothing when the ref already matches origin", async () => {
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+    expect(result.status).toBe("current");
+    expect(result.before).toBe(result.after);
+  });
+
+  it("reports 'diverged' and leaves the ref alone rather than merging behind the caller's back", async () => {
+    await advanceOriginDevelop("shipped.txt", "publisher-diverged");
+    // Local develop now has its own commit too -- resolving that is pullDevelop's job, not ours.
+    await fs.writeFile(path.join(repoRoot, "local-only.txt"), "local\n", "utf8");
+    await git(["add", "local-only.txt"], repoRoot);
+    await git(["commit", "-m", "local only"], repoRoot);
+    const localTip = (await git(["rev-parse", "refs/heads/develop"], repoRoot)).stdout.trim();
+
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+
+    expect(result.status).toBe("diverged");
+    expect((await git(["rev-parse", "refs/heads/develop"], repoRoot)).stdout.trim()).toBe(localTip);
+  });
+
+  it("degrades to 'unavailable' instead of throwing when origin cannot be reached", async () => {
+    await git(["remote", "set-url", "origin", path.join(tmpDir, "no-such-remote.git")], repoRoot);
+
+    const result = await syncBaseBranch({ repoRoot, branch: "develop" });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.reason).toMatch(/fetch failed/);
+  });
+});
+
+describe("addWorktree — cuts from the deployed tip, not a frozen local ref", () => {
+  async function advanceOriginDevelop(filename, cloneName) {
+    const publisher = path.join(tmpDir, cloneName);
+    await git(["clone", "--branch", "develop", originDir, publisher]);
+    await git(["config", "user.email", "test@example.com"], publisher);
+    await git(["config", "user.name", "Test"], publisher);
+    await fs.writeFile(path.join(publisher, filename), "shipped\n", "utf8");
+    await git(["add", filename], publisher);
+    await git(["commit", "-m", `add ${filename}`], publisher);
+    await git(["push", "origin", "develop"], publisher);
+  }
+
+  it("gives the card a worktree containing code merged to develop moments earlier", async () => {
+    // T-0218's failure, reduced: repoRoot on a feature branch, `develop` two days stale, and a
+    // card cut from it missing tools/board/scripts/agentCurl.js -- the very file its grant named.
+    await git(["checkout", "-b", "fix/parked"], repoRoot);
+    await advanceOriginDevelop("agentCurl.js", "publisher-wt");
+
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0218");
+    const result = await addWorktree({
+      repoRoot,
+      worktreeDir,
+      branch: "feature/T-0218",
+      baseBranch: "develop"
+    });
+
+    expect(result.reused).toBe(false);
+    expect(result.baseSync.status).toBe("fast-forwarded");
+    await expect(fs.stat(path.join(worktreeDir, "agentCurl.js"))).resolves.toBeTruthy();
+  });
+
+  it("still cuts a worktree when the base cannot be synced", async () => {
+    await git(["remote", "set-url", "origin", path.join(tmpDir, "no-such-remote.git")], repoRoot);
+
+    const worktreeDir = path.join(tmpDir, "worktrees", "T-0219");
+    const result = await addWorktree({
+      repoRoot,
+      worktreeDir,
+      branch: "feature/T-0219",
+      baseBranch: "develop"
+    });
+
+    expect(result.baseSync.status).toBe("unavailable");
+    const stat = await fs.stat(worktreeDir);
+    expect(stat.isDirectory()).toBe(true);
   });
 });

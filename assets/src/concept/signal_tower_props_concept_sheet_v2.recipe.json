@@ -1,0 +1,20 @@
+{
+  "name": "signal_tower_props_concept_sheet_v2",
+  "description": "T-0239 (§23-j-0) -- Signal Tower props concept sheet v2: the four prop classes the v1 sheet (T-0211) does not depict -- archive shelving row (Records Room), transformer housings x2-3 + breaker panel gate object (Power Substation), crawlspace opening (Equipment Floor), hiding alcove (Antenna Shaft). Two-stage pipeline: a real img2img+LoRA background-texture pass conditioned on signal_tower_props_concept_sheet_v1.png itself (not the material sheet) per the archetype-first coherence guard (13-asset-pipeline.md §6 lines 313-319), prompted for an empty wall/floor texture only; then `_composite_props_v2.py` deterministically composites the four prop classes as home-palette-exact silhouette icons with legible text labels on top. v1's five props are additive-only and are not redrawn.",
+  "prompt": "flat empty brutalist interior wall and floor background texture, Signal Tower reference sheet backdrop, no furniture, no cabinets, no lockers, no props, no equipment, no objects, blank surface panels only, muted concrete grey and institutional green and near-black palette, hard value separation, flat unlit shading, no atmospheric haze, no depth of field, abstract background texture study, empty reference sheet backdrop",
+  "negative_prompt": "furniture, cabinet, locker, crate, rack, duct, shelving, panel with switches, machinery, equipment, props, objects, perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, player character, entities, face, portrait",
+  "seed": 21120,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_strength": 0.70,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "denoise": 0.95,
+  "conditioning_source": "assets/src/concept/signal_tower_props_concept_sheet_v1.png",
+  "workflow": "assets/src/concept/_comfyui_props_v2_bg_workflow.json",
+  "compositing_script": "assets/src/concept/_composite_props_v2.py"
+}

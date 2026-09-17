@@ -1,0 +1,97 @@
+{
+  "card": "T-0218",
+  "title": "Method spike: one player idle sheet, generated properly & compared at game scale",
+  "date": "2026-08-24",
+  "outcome": "ambiguous",
+  "reason": "Stage-3 run completed with full conditions (SDXL + LoRA + IP-Adapter + ControlNet). ControlNet OpenPose SDXL (xinsir, strength=0.45) enforced front-facing orientation — major improvement over stage-1 which produced 8-angle multi-view reference sheet. IP-Adapter PLUS (concept reference T-0209, weight=0.65) conditioned character identity as military figure. However, cross-row equipment/costume variation prevents clean idle animation: rows 1+3 are internally consistent front-facing views; row 2 shows equipment drift and some angle variation. At game scale (48×48), rows 1+3 could each form 3-frame front-facing loops but a 9-cell idle sequence would show inconsistency. Decision: ambiguous → default to deterministic synthesis per the §6.14 decision tree.",
+  "prerequisite_check": {
+    "comfyui_url": "http://172.18.192.1:8188",
+    "result": "REACHABLE",
+    "detail": "ComfyUI 0.29.0 confirmed reachable via agentCurl.js wrapper. RTX 3070 Ti Laptop GPU, CUDA 12.1, PyTorch 2.5.1. Stage-3 dependencies confirmed installed: ControlNet (controlnet-openpose-sdxl-1.0_xinsir.safetensors), IP-Adapter (ip-adapter-plus_sdxl_vit-h.safetensors, ComfyUI_IPAdapter_plus custom nodes). Smoke test by ops confirmed (prompt_id ebc48c2e-0abe-4d01-92fc-0ecdf47e05df).",
+    "tools_attempted": ["node tools/board/scripts/agentCurl.js (succeeded)"]
+  },
+  "generation_run": {
+    "stage": "stage-3",
+    "stage_components": {
+      "lora": "soviet_brutalism_style_v1.safetensors (weight=0.70)",
+      "ip_adapter": "ip-adapter-plus_sdxl_vit-h.safetensors (PLUS preset, weight=0.65, ref=player_character_concept_sheet_v1.png)",
+      "controlnet": "controlnet-openpose-sdxl-1.0_xinsir.safetensors (strength=0.45, end=0.7)"
+    },
+    "skeleton_generation": {
+      "prompt_id": "a65b8383-9999-4795-babf-b29bb5953a89",
+      "note": "Pose grid generated via SDXL txt2img (seed=77777, cfg=3.5, steps=20). DWPose/OpenPose preprocessor not installed — skeleton is SDXL anatomical diagram approximation. Provided upright humanoid shape reference for ControlNet, not exact keypoint visualization.",
+      "output": "pose_grid_stage3_T0218.png (1008×1008, curated to assets/final/character/)"
+    },
+    "main_generation": {
+      "prompt_id": "d2c526a6-f395-4774-b674-988ebbd43d71",
+      "checkpoint": "sd_xl_base_1.0.safetensors",
+      "checkpoint_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+      "lora": "soviet_brutalism_style_v1.safetensors",
+      "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+      "lora_weight": 0.70,
+      "seed": 31415,
+      "steps": 30,
+      "cfg": 7.0,
+      "sampler": "euler",
+      "scheduler": "normal",
+      "width_gen": 1008,
+      "height_gen": 1008,
+      "width_final": 144,
+      "height_final": 144,
+      "generation_time_seconds": 50,
+      "output_144": "assets/final/character/player_idle_sheet_stage3_sdxl_T0218.png"
+    }
+  },
+  "questions": {
+    "silhouette_readable_at_40px": true,
+    "silhouette_detail": "At 2× scale (96×96 per cell in comparison image), the military figure is clearly readable: helmet, olive-green jacket/coat, trousers, boots. The IP-Adapter concept conditioning gave the figure real equipment detail (jacket pockets, belt) visible at display scale. Dramatically more characterful than the synthetic geometric placeholder. Descent (1008→144, area filter) did not destroy the figure. Q1: PASS.",
+    "identity_holds_across_frames": false,
+    "identity_detail": "Mixed result by row. Row 1 (top 3 cells): consistent front-facing olive-green jacket figure, same camera angle. Row 3 (bottom 3 cells): consistent front-facing heavy-armor figure, same camera angle. Row 2 (middle 3 cells): equipment variation and some angle deviation — more complex and less consistent. Cross-row: costume changes between rows (row 1 = trench coat style, row 2 = mixed, row 3 = heavy tactical armor). A 9-cell idle animation looping all frames would show jarring equipment changes. Q2: FAIL (for full 9-cell use; PASS for rows 1 or 3 as 3-frame loops).",
+    "beats_synthetic_at_game_scale": false,
+    "beats_synthetic_detail": "For complete idle animation use (9 frames, consistent): NO — the synthetic (player_idle_sheet_v1.png) has 4 correct animation frames with same camera angle, same costume, only subtle head-bob variation. Stage-3 cannot be used as-is as a 9-frame idle animation due to cross-row costume inconsistency. For visual quality per cell: YES — individual cells show rich military figure with correct style. For 3-frame animation (rows 1 or 3 only): POSSIBLY — would require manual curation, not a complete replacement. Q3: FAIL for complete pipeline use.",
+    "failure_mode": "identity_drift",
+    "failure_mode_detail": "The ControlNet successfully resolved stage-1's wrong_subject failure (multi-angle reference sheet). Stage-3 now shows predominantly front-facing figures — the ControlNet's structural conditioning worked. The remaining failure is identity_drift: costume/equipment inconsistency across rows, with row 2 showing the most deviation. Root cause: the SDXL-generated skeleton grid (no DWPose) provided rough body-shape guidance but did not constrain the diffusion model to a single consistent costume variant across all 9 cells. IP-Adapter conditioned character TYPE but not specific equipment loadout per cell. A true DWPose OpenPose grid (exact keypoints, same-pose repetition) would likely enforce tighter identity."
+  },
+  "existing_baseline": {
+    "synthetic_sheet": "assets/final/character/player_idle_sheet_v1.png",
+    "synthetic_provenance": "assets/final/character/player_idle_sheet_v1.provenance.json",
+    "description": "Programmatic 144×144 indexed PNG, 4-frame subtle head-bob idle animation, 40px humanoid silhouette drawn from home palette indices BG=0 / LEG=4 / BODY=6 / HEAD=10. Generated by synth_sheet.py (T-0198). Simple geometric blocks, very dark background.",
+    "stage1_sheet": "assets/final/character/player_idle_sheet_sdxl_T0218.png",
+    "stage1_outcome": "generation_loses (wrong_subject: 8-angle reference sheet, not animation frames)",
+    "stage3_sheet": "assets/final/character/player_idle_sheet_stage3_sdxl_T0218.png",
+    "stage3_outcome": "ambiguous (identity_drift: front-facing but cross-row costume inconsistency)",
+    "comparison_images": {
+      "room_scene": {
+        "image": "assets/final/character/T0218-stage3-room-comparison.png",
+        "prompt_id": "916a916a-db83-4cc4-82eb-509e53a18b8a",
+        "dimensions": "1184×768",
+        "description": "LEFT: synthetic idle sheet (player_idle_sheet_v1.png) at 2× scale (288×288), showing 4-frame head-bob animation against signal_tower room. RIGHT: stage-3 sheet (player_idle_sheet_stage3_sdxl_T0218.png) at 2× scale (288×288) in same room context. Shows all 9 cells of each sheet side by side for direct game-scale comparison."
+      },
+      "stage1_room_scene": {
+        "image": "assets/final/character/T0218-room-scene-comparison.png",
+        "description": "Previous stage-1 comparison: 4 synthetic frames + 1 stage-1 cell at 3× scale in room. Retained for comparison."
+      }
+    }
+  },
+  "stage3_quality_signals": {
+    "controlnet_effect": "CONFIRMED WORKING — xinsir OpenPose ControlNet with SDXL-generated skeleton grid successfully enforced front-facing orientation across most cells. Stage-1 produced 8-view turnaround; stage-3 produces predominantly front-facing figures. This is the key improvement.",
+    "ip_adapter_effect": "CONFIRMED WORKING — military figure type (jacket/coat, tactical equipment, helmet) is consistent across all 9 cells, matching the T-0209 concept reference character style.",
+    "lora_effect": "CONFIRMED WORKING — Soviet brutalist style applied, muted olive-green and grey palette, flat illustration style consistent with prior LoRA outputs.",
+    "descent_quality": "CONFIRMED WORKING — at 48×48 (144÷3), individual cells show recognizable military figures. At 2× review scale (96×96), character detail is readable. Descent is not the failure mode.",
+    "skeleton_grid_limitation": "SDXL-generated skeleton (approximate, not DWPose) was sufficient to enforce orientation but insufficient to enforce same-costume-per-cell. A true OpenPose DWPose grid with identical keypoints per cell would likely fix the identity_drift failure."
+  },
+  "decision": "ambiguous → default to deterministic synthesis (synth_sheet.py / T-0200 pattern) per the §6.14 decision tree rule: 'ambiguous ⇒ default to the script'. Stage-3 is technically viable (pipeline components all work) but the spike evaluation shows costume drift across cells, making the current output not immediately usable as an idle animation sheet without DWPose installation.",
+  "next_steps_to_reach_generation_wins": [
+    "Install DWPose/OpenPose preprocessor on ComfyUI Windows host to generate true OpenPose skeleton images (not SDXL approximation)",
+    "Generate a 3×3 DWPose skeleton grid with identical standing idle poses in all 9 cells",
+    "Re-run stage-3 with this true skeleton grid as ControlNet input — should enforce same-costume, same-angle across all cells",
+    "Alternatively: img2img approach with same-character tiled reference at denoise=0.7 (T-0212 method, already validated) — skip ControlNet, use IP-Adapter + LoRA + tiled concept crop"
+  ],
+  "blocker_history": [
+    "T-0198 (2026-08-18): SPIKE_REPORT.md — 'Python execution not approved; ComfyUI not reachable from WSL'",
+    "T-0212 (multiple prior attempts): recipe _note fields name WSL→ComfyUI HTTP access as recurring blocker",
+    "T-0218 runs 1-5 (2026-08-23): curl tool call denied by automated runner permission model",
+    "T-0218 (2026-08-24, prev run): agentCurl.js unblocked; ran; stage-3 blocked by missing ControlNet/IP-Adapter",
+    "T-0218 (2026-08-24, this run): stage-3 COMPLETED with ControlNet + IP-Adapter + LoRA. Outcome: ambiguous due to identity_drift (costume inconsistency across rows)"
+  ]
+}

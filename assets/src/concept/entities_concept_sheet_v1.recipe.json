@@ -1,0 +1,16 @@
+{
+  "name": "entities_concept_sheet_v1",
+  "prompt": "flat side-on entity concept reference sheet, orthographic game asset, no perspective, no vanishing point, three entity types in three pose states. Nine reference panels arranged 3x3 grid. The Watcher: wide compact surveillance orb silhouette, 20px tall 28px wide in 48x48 cell, horizontal scanning orientation, lens/sensor accent on lower body, concrete-grey values with institutional green tones. The Sound: wide flat wave-band silhouette, 12px tall 32px wide in 48x48 cell, horizontal ripple orientation, lighter crest accent on upper body, concrete-grey values. The Still Air: tall narrow atmospheric column silhouette, 32px tall 8px wide in 48x48 cell, vertical presence orientation, lighter cap accent on top, concrete-grey values. Three animation states shown: idle/rest (centred neutral), move/drift (horizontal offset showing direction), trapped/delayed (entity in place with containment indicator). All entities: Soviet brutalist interior aesthetic, muted desaturated home palette, hard value separation, dark darks and light lights, flat even lighting, no atmospheric haze, no depth of field, no scene composition, no background elements. Foreign entity roster — must read as a distinct coherent set from the player character. Pixel art scale reference, game asset reference sheet style",
+  "negative_prompt": "perspective, vanishing point, three-quarter view, isometric, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, bright saturated colors, cartoon, cheerful, text, watermark, signature, blurry, low quality, humanoid figure, player character, arms, legs, head on humanoid body",
+  "seed": 21000,
+  "steps": 30,
+  "cfg": 7.0,
+  "width": 1024,
+  "height": 1024,
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "lora": "soviet_brutalism_style_v1.safetensors",
+  "lora_weight": 0.70,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "_note": "SDXL recipe for future replacement of the programmatic synth entities concept sheet (T-0210 fallback). Use generate_concept() from tools/comfy-client/src/comfy_client/concept.py once WSL->ComfyUI is accessible. Seed 21000 chosen for T-0210 card number. LoRA weight 0.70 matches T-0198/T-0209 recipes. Covers Watcher (orb), Sound (wave-band), Still Air (column) -- three entities, three states (idle/move/trapped). All entities read as foreign/non-humanoid, distinct from the player silhouette."
+}

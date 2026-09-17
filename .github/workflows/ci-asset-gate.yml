@@ -5,11 +5,13 @@ on:
     branches: [develop, main]
     paths:
       - "tools/asset-gate/**"
+      - "assets/**"
       - ".github/workflows/ci-asset-gate.yml"
   push:
     branches: [develop, main]
     paths:
       - "tools/asset-gate/**"
+      - "assets/**"
       - ".github/workflows/ci-asset-gate.yml"
 
 concurrency:
@@ -36,3 +38,144 @@ jobs:
       - run: ruff check .
 
       - run: pytest -q
+
+  provenance-sweep:
+    name: model_hash provenance sweep (HANDOFF §21 / T-0151)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # Recursively validates every committed *.provenance.json under assets/,
+      # regardless of which script wrote it -- fails the PR if any *new or
+      # undocumented* sidecar carries a null/missing model_hash instead of
+      # letting it merge silently. Paths listed in provenance_baseline.txt
+      # are already-audited pre-existing gaps tracked for regeneration in a
+      # follow-up card (PR #221) and don't block this gate.
+      - run: python -m asset_gate.cli provenance-sweep ../../assets
+
+  generator-sweep:
+    name: generator resolvability sweep (T-0219/HANDOFF §22-c)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # Recursively validates that the generator field in every committed
+      # *.provenance.json under assets/ resolves to an existing file in the
+      # repo tree. A fabricated or ad-hoc-script generator string (e.g.
+      # "ComfyUI 0.29.0 via T-0215 (SolidMask + JoinImageWithAlpha)") fails
+      # because those nodes/scripts are not committed anywhere, making the
+      # asset unregeneraable (P-3 violation). Paths listed in
+      # generator_baseline.txt are pre-existing gaps tracked for remediation;
+      # the 5 signal_tower props are intentionally NOT in that baseline -- they
+      # were the motivating failure case, and since T-0221 regenerated them
+      # through the committed cutout path they pass this gate on merit.
+      - run: python -m asset_gate.cli generator-sweep ../../assets --repo-root ../../
+
+  generator-hash-sweep:
+    name: generator_hash correctness sweep (T-0238)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # Recursively validates that, for every committed *.provenance.json under
+      # assets/ that sets a generator_hash, the recorded value actually matches
+      # sha256(<the file its own "generator" field names>). T-0230 (37d6d80) and
+      # T-0232 (27fb50d, 7203d64) both shipped a model_hash/generator_hash that
+      # didn't match the real committed file, caught only by a human noticing on
+      # manual review -- this sweep is the mechanical backstop so a future
+      # fabricated or stale hash fails the PR instead of merging silently.
+      - run: python -m asset_gate.cli generator-hash-sweep ../../assets --repo-root ../../
+
+  transparency-sweep:
+    name: sprite background-transparency sweep (P-6 / T-0252 §24-e opaque sheet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # The §24-e character sheet shipped as mode 'P' with its background on a
+      # single palette index and NO tRNS chunk -- the cutout was applied, the
+      # file carried no alpha, and Godot rendered an opaque black rectangle.
+      # visibility-sweep below cannot catch that: it was built for the opposite
+      # failure (alpha=0 everywhere) and an opaque sheet passes it happily.
+      # This sweep requires every sprite under assets/final to declare a
+      # transparent background. Tiles and the palette LUT are exempt by asset
+      # class; individually documented exceptions -- assets that were never cut
+      # out and need regeneration, not a re-save -- live in
+      # src/asset_gate/transparency_baseline.txt.
+      - run: python -m asset_gate.cli transparency-sweep ../../assets/final
+
+  character-gate:
+    name: character asset gate (T-0357 -- CHR-1, idle frame-delta cap, motion-class declaration, pixel-recomputed motion fidelity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # T-0357 (Codex review 2026-09-11): the single authoritative character
+      # validator, and the one command both this job and the board's reviewer
+      # route run (verifyRouter.js's character-gate-verify route, built from the
+      # same asset_gate.cli character-gate ../../assets/final --repo-root ../../
+      # args via tools/board/src/lib/characterGateCommand.js's
+      # CHARACTER_GATE_CLI_ARGS constant -- see ciCharacterGateCommand.test.js).
+      # Supersedes the narrower character-arm-c-sweep (CHR-1 presence only): this
+      # sweep also enforces the idle frame-delta cap, requires every
+      # character-generation output to declare a validated motion_class (a
+      # missing/unrecognised class used to silently skip every downstream check,
+      # finding 2), and recomputes pose-fidelity/identity-stability live from
+      # each sheet's own PNG + versioned rig keypoints instead of trusting
+      # whatever range its sidecar happens to record (finding 3) -- so a stale
+      # sidecar score, or a locomotion sheet that genuinely fails, cannot merge
+      # silently the way T-0340's own motion-fidelity sweep did (implemented and
+      # unit-tested, but never invoked by any workflow -- finding 1).
+      # character_arm_c_baseline.txt / character_motion_class_baseline.txt list
+      # the documented pre-existing gaps this sweep exempts; anything not listed
+      # there must pass on merit.
+      - run: python -m asset_gate.cli character-gate ../../assets/final --repo-root ../../
+
+  visibility-sweep:
+    name: rendered-visibility sweep (PR #231 / T-0215 alpha-zero bug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]"
+
+      # PR #231 shipped 5 prop PNGs with alpha=0 on every pixel -- the
+      # provenance sweep above only checks model_hash, so it can't catch a
+      # PNG that never renders. This sweeps every committed *.png under
+      # assets/final and fails the PR if any is fully transparent or reads
+      # as blank/uniform.
+      - run: python -m asset_gate.cli visibility-sweep ../../assets/final

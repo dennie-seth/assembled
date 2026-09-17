@@ -21,7 +21,6 @@ key conditioning on.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -29,17 +28,29 @@ from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import assert_checkpoint_allowed
 
 from comfy_client.base_url import resolve_base_url
+from comfy_client.checkpoint_hash import hash_checkpoint_file
 from comfy_client.comfyui_client import ComfyUIClient
+from comfy_client.errors import MissingModelHashError
 from comfy_client.provenance import build_provenance_record
+from comfy_client.provenance_sidecar import package_repo_root, write_provenance_sidecar
 from comfy_client.recipe import Recipe
 from comfy_client.workflow import (
     render_img2img_lora_workflow,
     render_img2img_workflow,
+    render_txt2img_lora_workflow,
     render_workflow,
     workflow_hash,
 )
 
 DEFAULT_CONCEPT_DIR = Path("assets/src/concept")
+
+#: Repo-relative path to this module, written to every sidecar as `generator`.
+#: This module IS the committed recipe for a concept sheet generated through it,
+#: so the P-7 resolvability gate (T-0219, HANDOFF §22-c) can verify the sheet is
+#: regenerable.  Set structurally here rather than left to the caller: sheets
+#: generated before this had no `generator` key at all, and the field got
+#: hand-added afterwards as prose, which is exactly what broke T-0226.
+GENERATOR_ID = "tools/comfy-client/src/comfy_client/concept.py"
 
 
 @dataclass(frozen=True)
@@ -57,13 +68,21 @@ class ConceptProvenanceRecord:
     workflow_hash: str
     prompt_id: str
     concept_hash: str
+    #: Repo-relative path to the committed recipe (T-0219 resolvability).
+    generator: str
 
 
 def build_concept_provenance_record(
-    recipe: Recipe, workflow_hash: str, prompt_id: str, concept_hash: str
+    recipe: Recipe,
+    workflow_hash: str,
+    prompt_id: str,
+    concept_hash: str,
+    generator: str = GENERATOR_ID,
 ) -> ConceptProvenanceRecord:
     base = build_provenance_record(recipe, workflow_hash=workflow_hash, prompt_id=prompt_id)
-    return ConceptProvenanceRecord(**asdict(base), concept_hash=concept_hash)
+    return ConceptProvenanceRecord(
+        **asdict(base), concept_hash=concept_hash, generator=generator
+    )
 
 
 def concept_provenance_to_dict(record: ConceptProvenanceRecord) -> dict:
@@ -90,9 +109,14 @@ def build_conditioned_concept_provenance_record(
     prompt_id: str,
     concept_hash: str,
     conditioning_source: str,
+    generator: str = GENERATOR_ID,
 ) -> ConditionedConceptProvenanceRecord:
     base = build_concept_provenance_record(
-        recipe, workflow_hash=workflow_hash, prompt_id=prompt_id, concept_hash=concept_hash
+        recipe,
+        workflow_hash=workflow_hash,
+        prompt_id=prompt_id,
+        concept_hash=concept_hash,
+        generator=generator,
     )
     return ConditionedConceptProvenanceRecord(
         **asdict(base), denoise=recipe.denoise, conditioning_source=conditioning_source
@@ -113,6 +137,21 @@ class LoraConditionedConceptProvenanceRecord(ConditionedConceptProvenanceRecord)
     lora_weight: float
     lora_license: str
     base_concept_hash: str
+
+
+@dataclass(frozen=True)
+class LoraTxt2ImgConceptProvenanceRecord(ConceptProvenanceRecord):
+    """Extends `ConceptProvenanceRecord` for plain txt2img + LoRA runs (T-0209,
+    `13-asset-pipeline.md` §6.9).
+
+    No init image, no conditioning source -- pure txt2img generation with a
+    LoRA applied. `concept_hash` (inherited) is the sha256 of the generated
+    concept sheet's own bytes (same as `ConceptProvenanceRecord`).
+    """
+
+    lora_name: str
+    lora_weight: float
+    lora_license: str
 
 
 @dataclass(frozen=True)
@@ -156,7 +195,12 @@ def generate_concept(
         recipe, workflow_hash=graph_hash, prompt_id=job_id, concept_hash=concept_hash
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
-    provenance_path.write_text(json.dumps(concept_provenance_to_dict(provenance), indent=2))
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
 
     return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
 
@@ -212,7 +256,12 @@ def generate_concept_conditioned(
         conditioning_source=str(init_path),
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
-    provenance_path.write_text(json.dumps(concept_provenance_to_dict(provenance), indent=2))
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
 
     return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
 
@@ -285,6 +334,106 @@ def generate_concept_conditioned_lora(
         base_concept_hash=base_concept_hash,
     )
     provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
-    provenance_path.write_text(json.dumps(asdict(provenance), indent=2))
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
+
+    return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)
+
+
+def generate_concept_lora(
+    recipe: Recipe,
+    lora_name: str,
+    lora_weight: float,
+    lora_license: str,
+    out_dir: str | Path = DEFAULT_CONCEPT_DIR,
+    client: GenerationClient | None = None,
+    timeout: float = 300.0,
+    poll_interval: float = 1.0,
+    checkpoint_dir: Path | str | None = None,
+) -> ConceptResult:
+    """txt2img + LoRA concept-sheet generation (T-0209, `13-asset-pipeline.md` §6.9).
+
+    Like `generate_concept` but inserts a LoRA between the checkpoint and the
+    sampler/CLIP nodes -- pure txt2img (EmptyLatentImage) with LoRA conditioning,
+    no init image. Enforces the license gate via `assert_checkpoint_allowed`
+    before any network call. `concept_hash` in the provenance is the sha256 of
+    the generated sheet's own bytes (same as `generate_concept`).
+
+    Raises `MissingModelHashError` if neither `checkpoint_dir` is supplied nor
+    `recipe.model_hash` is already set (HANDOFF §21 / T-0151): a committed
+    concept sheet is exactly as unprovable with a null `model_hash` as a
+    shipped sprite is, LoRA output or not, so this mirrors
+    `pipeline.generate()`'s enforcement rather than special-casing concept
+    art as exempt.
+    """
+    # License gate -- raises CheckpointNotAllowedError before any network call;
+    # return value carries the entry's license string for the provenance record.
+    entry = assert_checkpoint_allowed(recipe.checkpoint)
+
+    # Resolve model_hash before any generation work (HANDOFF §21 / T-0151).
+    if checkpoint_dir is not None:
+        ckpt_path = Path(checkpoint_dir) / recipe.checkpoint
+        computed_hash = hash_checkpoint_file(ckpt_path)
+        from dataclasses import asdict as _asdict
+
+        recipe = Recipe(**{**_asdict(recipe), "model_hash": computed_hash})
+    elif recipe.model_hash is None:
+        raise MissingModelHashError(
+            f"recipe.model_hash is None and checkpoint_dir was not supplied "
+            f"(checkpoint: {recipe.checkpoint!r}). "
+            "Pass checkpoint_dir= so the file can be hashed, or set "
+            "recipe.model_hash to the known SHA-256 of the checkpoint."
+        )
+
+    graph = render_txt2img_lora_workflow(recipe, lora_name=lora_name, lora_weight=lora_weight)
+    graph_hash = workflow_hash(graph)
+
+    gen_client = client or ComfyUIClient(base_url=resolve_base_url())
+
+    job_id = gen_client.submit(graph)
+    job_result = gen_client.wait_for_completion(
+        job_id, timeout=timeout, poll_interval=poll_interval
+    )
+    raw_bytes = gen_client.fetch_output(job_result)
+    concept_hash_value = hashlib.sha256(raw_bytes).hexdigest()
+
+    out_dir_path = Path(out_dir)
+    out_dir_path.mkdir(parents=True, exist_ok=True)
+    image_path = out_dir_path / f"{recipe.name}.png"
+    image_path.write_bytes(raw_bytes)
+
+    # Built directly rather than via build_provenance_record because the LoRA
+    # is folded into `model`/`model_license` here; recipe.model_hash is
+    # guaranteed non-None by this point (resolved or raised above).
+    provenance = LoraTxt2ImgConceptProvenanceRecord(
+        model=f"{recipe.checkpoint} + LoRA {lora_name} (weight {lora_weight})",
+        model_license=f"{entry.license} (base) / {lora_license} (LoRA)",
+        model_hash=recipe.model_hash,
+        prompt=recipe.prompt,
+        negative_prompt=recipe.negative_prompt,
+        seed=recipe.seed,
+        steps=recipe.steps,
+        cfg=recipe.cfg,
+        width=recipe.width,
+        height=recipe.height,
+        workflow_hash=graph_hash,
+        prompt_id=job_id,
+        concept_hash=concept_hash_value,
+        generator=GENERATOR_ID,
+        lora_name=lora_name,
+        lora_weight=lora_weight,
+        lora_license=lora_license,
+    )
+    provenance_path = out_dir_path / f"{recipe.name}.provenance.json"
+    write_provenance_sidecar(
+        provenance_path,
+        provenance,
+        generator=provenance.generator,
+        repo_root=package_repo_root(),
+    )
 
     return ConceptResult(path=image_path, prompt_id=job_id, provenance=provenance)

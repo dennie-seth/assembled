@@ -1,13 +1,22 @@
 import numpy as np
+import pytest
 
 from asset_gate.art import (
     check_atlas_determinism,
+    check_background_growth,
     check_cell_fit,
     check_frame_consistency,
+    check_identity_stability,
     check_indexed_preservation,
     check_orphan_pixels,
+    check_pose_fidelity,
+    check_region_identity_against_reference,
+    check_region_identity_stability,
     check_tile_seamlessness,
     check_transition_adjacency,
+    count_pixel_deltas,
+    render_rig_silhouette,
+    slice_sheet_frames,
 )
 from conftest import TEST_PALETTE_HEX, make_indexed_image
 
@@ -108,6 +117,36 @@ def test_frame_consistency_fails_beyond_bound():
     assert not result.passed
 
 
+def test_background_growth_passes_when_stable():
+    """T-0250 HANDOFF §24-c human review: non-background pixel count
+    fluctuating frame to frame (pose-driven, no trend) must pass -- this is
+    the T-0249 baseline shape (421-566px, ratio 566/421 ~= 1.34)."""
+    counts = [10, 11, 9, 10, 13, 9, 10, 11, 9]
+    frames = [
+        make_indexed_image(np.array([[1] * c + [0] * (20 - c)], dtype=np.uint8), TEST_PALETTE_HEX)
+        for c in counts
+    ]
+    result = check_background_growth(frames, background_index=0, max_growth_ratio=1.35)
+    assert result.passed
+
+
+def test_background_growth_fails_when_accumulating():
+    """The failure this check exists to catch: each frame's non-background
+    pixel count grows past frame 0's by more than max_growth_ratio -- img2img
+    chaining feeding a frame's own noise into the next frame's init image
+    (T-0250 promoted attempt 6: 1024px -> 1472px, ratio ~1.44), invisible to
+    check_frame_consistency (which measures inter-frame delta, not absolute
+    growth against a fixed baseline)."""
+    counts = [10, 10, 12, 13, 14, 15, 16, 17, 18]  # baseline 10, ends at 1.8x
+    frames = [
+        make_indexed_image(np.array([[1] * c + [0] * (20 - c)], dtype=np.uint8), TEST_PALETTE_HEX)
+        for c in counts
+    ]
+    result = check_background_growth(frames, background_index=0, max_growth_ratio=1.35)
+    assert not result.passed
+    assert result.details["baseline"] == 10
+
+
 def test_atlas_determinism_passes_for_deterministic_packer():
     from PIL import Image
 
@@ -130,17 +169,20 @@ def test_atlas_determinism_passes_for_deterministic_packer():
 
 
 def test_atlas_determinism_fails_for_nondeterministic_packer():
-    import random
-
     from PIL import Image
 
     imgs = [make_indexed_image(np.full((2, 2), 1, dtype=np.uint8), TEST_PALETTE_HEX)]
 
+    _call_count = [0]
+
     def pack(images):
-        # Non-deterministic: embeds a random byte each call.
+        # Non-deterministic: increments a counter each call so the pixel value
+        # is guaranteed to differ between runs (avoids the 25% collision rate
+        # that `random.randint(...) % 4` produces, making the test flaky).
+        _call_count[0] += 1
         out = Image.new("P", (2, 2))
         out.putpalette(images[0].getpalette())
-        out.info["nonce"] = random.randint(0, 1_000_000)
+        out.info["nonce"] = _call_count[0]
         return out
 
     def produce_bytes():
@@ -181,3 +223,391 @@ def test_indexed_preservation_fails_when_palette_drifted(test_palette):
     result = check_indexed_preservation(image, test_palette)
     assert not result.passed
     assert 1 in result.details["mismatched"]
+
+
+# ---- render_rig_silhouette / check_pose_fidelity / check_identity_stability (T-0340) ----
+#
+# Replaces whole-silhouette XOR/union (check_frame_consistency) for the
+# locomotion/transition/loop motion classes -- see asset_gate.character's
+# T-0340 module note for the full rationale. Two independent measures:
+# pose fidelity (does the render match what the rig actually commanded for
+# THIS frame, not how much the previous frame differed) and identity
+# stability (does the torso's own colour stay put frame to frame,
+# independent of how far the limbs swing).
+
+
+def test_render_rig_silhouette_covers_limb_and_leaves_far_corners_clear():
+    silhouette = render_rig_silhouette(size=20, limbs=[((2, 10), (17, 10))], radius=2)
+    assert silhouette.shape == (20, 20)
+    assert silhouette.dtype == np.bool_
+    assert silhouette[10, 10]  # midpoint of the limb
+    assert not silhouette[0, 0]  # far corner, well clear of the capsule
+    assert not silhouette[19, 19]
+
+
+def test_pose_fidelity_passes_when_render_matches_the_commanded_pose():
+    silhouette = render_rig_silhouette(size=20, limbs=[((2, 10), (17, 10))], radius=3)
+    frame = make_indexed_image(silhouette.astype(np.uint8), TEST_PALETTE_HEX)
+    result = check_pose_fidelity(frame, silhouette, background_index=0, min_iou=0.7)
+    assert result.passed
+    assert result.details["iou"] == 1.0
+
+
+def test_pose_fidelity_fails_when_render_barely_shows_the_commanded_motion():
+    """The pathology DL-26's calibration trail already measured (T-0259
+    attempt 4, `_T0259_ATTEMPT_4_IDLE_LIKE` in test_character_gate.py):
+    the rig commands a real stride but the render barely moves at all.
+    check_frame_consistency cannot see this (there's nothing to compare it
+    to except the previous frame's own equally-timid render); comparing
+    against the rig's own predicted silhouette can."""
+    predicted = render_rig_silhouette(size=20, limbs=[((2, 10), (17, 10))], radius=3)
+    barely_moved = np.zeros_like(predicted)
+    barely_moved[1:4, 1:4] = True  # a tiny stub nowhere near the commanded limb
+    frame = make_indexed_image(barely_moved.astype(np.uint8), TEST_PALETTE_HEX)
+    result = check_pose_fidelity(frame, predicted, background_index=0, min_iou=0.7)
+    assert not result.passed
+    assert result.details["iou"] < 0.7
+
+
+def test_pose_fidelity_reason_reports_the_measured_iou():
+    predicted = render_rig_silhouette(size=10, limbs=[((1, 5), (8, 5))], radius=1)
+    frame = make_indexed_image(predicted.astype(np.uint8), TEST_PALETTE_HEX)
+    result = check_pose_fidelity(frame, predicted, background_index=0, min_iou=0.7)
+    assert "1.0000" in result.reason
+
+
+def test_pose_fidelity_invariant_to_the_rigs_own_pose_change_between_frames():
+    """The property that actually justifies replacing check_frame_consistency
+    for locomotion (T-0340): two rig-predicted poses that differ hugely from
+    each other -- perfect pose, zero drift -- fail check_frame_consistency's
+    whole-silhouette delta almost by construction, even though nothing is
+    wrong (docs/decision-log.md's capsule measurement: 0.23-0.49 of the old
+    0.50 cap consumed by legitimate motion alone). check_pose_fidelity
+    compares each frame to ITS OWN commanded pose, so it is indifferent to
+    how far the pose itself swings between frames."""
+    limb_a = render_rig_silhouette(size=30, limbs=[((5, 15), (14, 15))], radius=3)
+    limb_b = render_rig_silhouette(size=30, limbs=[((16, 15), (25, 15))], radius=3)
+
+    old_gate = check_frame_consistency(
+        make_indexed_image(limb_a.astype(np.uint8), TEST_PALETTE_HEX),
+        make_indexed_image(limb_b.astype(np.uint8), TEST_PALETTE_HEX),
+        background_index=0,
+        max_delta_ratio=0.50,
+    )
+    assert not old_gate.passed  # the exact pathology: perfect pose, zero drift, still fails
+
+    frame_a = make_indexed_image(limb_a.astype(np.uint8), TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(limb_b.astype(np.uint8), TEST_PALETTE_HEX)
+    fidelity_a = check_pose_fidelity(frame_a, limb_a, background_index=0, min_iou=0.7)
+    fidelity_b = check_pose_fidelity(frame_b, limb_b, background_index=0, min_iou=0.7)
+    assert fidelity_a.passed
+    assert fidelity_b.passed
+
+
+def test_identity_stability_passes_when_torso_colour_is_stable():
+    a = np.zeros((20, 20), dtype=np.uint8)
+    a[8:12, 8:12] = 1
+    b = a.copy()
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+    result = check_identity_stability(
+        frame_a, frame_b, background_index=0, region=(8, 8, 12, 12), max_histogram_distance=0.15
+    )
+    assert result.passed
+    assert result.details["distance"] == 0.0
+
+
+def test_identity_stability_fails_when_torso_colour_drifts():
+    a = np.zeros((20, 20), dtype=np.uint8)
+    a[8:12, 8:12] = 1
+    b = a.copy()
+    b[8:10, 8:12] = 0  # half the torso box fades to background between frames
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+    result = check_identity_stability(
+        frame_a, frame_b, background_index=0, region=(8, 8, 12, 12), max_histogram_distance=0.15
+    )
+    assert not result.passed
+    assert result.details["distance"] > 0.15
+
+
+# ---------------------------------------------------------------------------
+# check_region_identity_stability (T-0361) -- the spatial/part-aware
+# generalisation of check_identity_stability. DL-31's own negative-control
+# finding: a left/right limb swap scores the fixed torso-only histogram (and
+# any WHOLE-frame histogram) at 0.0, because swapping two regions' content
+# leaves total palette-index counts completely unchanged -- the torso is
+# untouched by construction, and the whole frame just has the same pixels in
+# different places. Evaluating several NAMED regions independently (instead
+# of one box, or the whole frame) catches a mismatch confined to a single
+# part that an aggregate comparison dilutes away or never sees to begin with.
+# ---------------------------------------------------------------------------
+
+
+def _swap_regions_fixture():
+    """Two 20x20 frames whose "near" (2,2,8,8) and "far" (12,12,18,18) boxes
+    have their CONTENTS swapped between frame A and frame B, with identical
+    total foreground pixel counts (24px either way) -- by construction, ANY
+    whole-frame or single-fixed-box histogram comparison that doesn't sit
+    inside both swapped boxes scores this at exactly 0.0 distance, the same
+    "torso histogram scored 0.0" finding the swap is calibrated to
+    reproduce."""
+    a = np.zeros((20, 20), dtype=np.uint8)
+    a[2:6, 2:6] = 1  # "near" box: 16px foreground
+    a[12:14, 12:16] = 1  # "far" box: 8px foreground
+
+    b = np.zeros((20, 20), dtype=np.uint8)
+    b[2:4, 2:6] = 1  # "near" box now holds the OLD "far" shape: 8px
+    b[12:16, 12:16] = 1  # "far" box now holds the OLD "near" shape: 16px
+
+    return a, b
+
+
+def test_region_identity_stability_passes_when_every_named_region_is_stable():
+    a, _ = _swap_regions_fixture()
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(a.copy(), TEST_PALETTE_HEX)
+
+    result = check_region_identity_stability(
+        frame_a,
+        frame_b,
+        background_index=0,
+        regions={"near": (2, 2, 8, 8), "far": (12, 12, 18, 18)},
+        max_histogram_distance=0.15,
+    )
+
+    assert result.passed
+    assert result.details["per_region_distance"] == {"near": 0.0, "far": 0.0}
+
+
+def test_region_identity_stability_fails_on_a_swap_the_whole_frame_misses():
+    """The whole-frame (and any fixed-box-outside-the-swap) comparison passes
+    at exactly 0.0 -- the swap is invisible to it -- while the per-region
+    check, evaluating the near/far boxes themselves, fails."""
+    a, b = _swap_regions_fixture()
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    whole_frame = check_identity_stability(
+        frame_a, frame_b, background_index=0, region=(0, 0, 20, 20), max_histogram_distance=0.15
+    )
+    assert whole_frame.passed
+    assert whole_frame.details["distance"] == 0.0
+
+    part_aware = check_region_identity_stability(
+        frame_a,
+        frame_b,
+        background_index=0,
+        regions={"near": (2, 2, 8, 8), "far": (12, 12, 18, 18)},
+        max_histogram_distance=0.15,
+    )
+    assert not part_aware.passed
+    assert part_aware.details["per_region_distance"]["near"] > 0.15
+    assert part_aware.details["per_region_distance"]["far"] > 0.15
+
+
+def test_region_identity_stability_reason_names_the_worst_region():
+    a, b = _swap_regions_fixture()
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    result = check_region_identity_stability(
+        frame_a,
+        frame_b,
+        background_index=0,
+        regions={"near": (2, 2, 8, 8), "far": (12, 12, 18, 18)},
+        max_histogram_distance=0.15,
+    )
+
+    assert not result.passed
+    assert result.details["worst_region"] in {"near", "far"}
+    assert result.reason.count(result.details["worst_region"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# check_region_identity_against_reference (T-0361, 2026-09-17 Codex fix): the
+# per-region comparator used by character_part_identity's redesign -- two
+# INDEPENDENT sets of regions (frame's own, reference's own), so a moving
+# part's box can differ in position/size from the reference frame's own box
+# for that same named part. Fixes the false positive a binary rig-silhouette
+# reference produced: the same geometry, recoloured, must not fail on colour
+# alone -- see identity-probe.py's own finding, reproduced here directly on
+# the art-level primitive.
+# ---------------------------------------------------------------------------
+
+
+def test_region_identity_against_reference_is_colour_index_agnostic():
+    """The same shape, recoloured, compared against ITSELF as the reference
+    -- passes regardless of which palette index it uses, unlike a fixed-index
+    rig-silhouette reference (identity-probe.py's own finding)."""
+    shape = np.zeros((20, 20), dtype=np.uint8)
+    shape[2:6, 2:6] = 1
+    region = {"near": (2, 2, 6, 6)}
+
+    for index in (1, 2, 3):
+        recoloured = np.where(shape == 1, index, 0).astype(np.uint8)
+        frame = make_indexed_image(recoloured, TEST_PALETTE_HEX)
+
+        result = check_region_identity_against_reference(
+            frame, region, frame, region, background_index=0, max_histogram_distance=0.0
+        )
+
+        assert result.passed, f"index {index} unexpectedly failed: {result.reason}"
+        assert result.details["per_region_distance"]["near"] == 0.0
+
+
+def test_region_identity_against_reference_fails_when_the_colour_actually_differs():
+    reference = np.zeros((20, 20), dtype=np.uint8)
+    reference[2:6, 2:6] = 1
+    reference_frame = make_indexed_image(reference, TEST_PALETTE_HEX)
+
+    actual = np.zeros((20, 20), dtype=np.uint8)
+    actual[2:6, 2:6] = 2  # same shape, different palette index
+    actual_frame = make_indexed_image(actual, TEST_PALETTE_HEX)
+
+    region = {"near": (2, 2, 6, 6)}
+    result = check_region_identity_against_reference(
+        actual_frame,
+        region,
+        reference_frame,
+        region,
+        background_index=0,
+        max_histogram_distance=0.15,
+    )
+
+    assert not result.passed
+    assert result.details["per_region_distance"]["near"] == 1.0
+
+
+def test_region_identity_against_reference_allows_independent_box_positions():
+    """The frame's own region and the reference's own region for the SAME
+    named part need not be the same box -- a moving part's box tracks its
+    own frame's position while the reference's box tracks whatever the
+    reference frame commands."""
+    reference = np.zeros((20, 20), dtype=np.uint8)
+    reference[2:6, 2:6] = 1  # part sits top-left in the reference frame
+    reference_frame = make_indexed_image(reference, TEST_PALETTE_HEX)
+
+    actual = np.zeros((20, 20), dtype=np.uint8)
+    actual[12:16, 12:16] = 1  # SAME part, moved bottom-right in this frame
+    actual_frame = make_indexed_image(actual, TEST_PALETTE_HEX)
+
+    result = check_region_identity_against_reference(
+        actual_frame,
+        {"part": (12, 12, 16, 16)},
+        reference_frame,
+        {"part": (2, 2, 6, 6)},
+        background_index=0,
+        max_histogram_distance=0.0,
+    )
+
+    assert result.passed
+    assert result.details["per_region_distance"]["part"] == 0.0
+
+
+def test_region_identity_against_reference_raises_on_region_name_mismatch():
+    frame = make_indexed_image(np.zeros((10, 10), dtype=np.uint8), TEST_PALETTE_HEX)
+    with pytest.raises(ValueError, match="region name mismatch"):
+        check_region_identity_against_reference(
+            frame,
+            {"a": (0, 0, 4, 4)},
+            frame,
+            {"b": (0, 0, 4, 4)},
+            background_index=0,
+            max_histogram_distance=0.0,
+        )
+
+
+def test_identity_stability_catches_drift_that_frame_consistency_missed():
+    """T-0340's whole reason for existing: the review corroborated that
+    session 13's sequential-chained walk candidate scored a deceptively low
+    whole-silhouette delta ratio and passed the old gate outright, because
+    colour drift was shrinking the silhouette rather than a real gait
+    moving it. Reproduced here at small scale (the real attempt is a
+    gitignored `assets/out/` generation artifact, not present in this
+    checkout): an 8px torso fade is under 3% of a 280px whole-frame
+    silhouette -- comfortably inside even the old MOTION_FRAME_DELTA_CAP --
+    but it is exactly the failure this gate exists to catch."""
+    a = np.zeros((20, 20), dtype=np.uint8)
+    a[0:14, 0:20] = 1  # 280px silhouette -- most of the frame, as if striding
+    b = a.copy()
+    b[8:10, 8:12] = 0  # 8px of the torso box fades to background
+
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    old_gate = check_frame_consistency(frame_a, frame_b, background_index=0, max_delta_ratio=0.50)
+    assert old_gate.passed  # the exact deceptive pass this card retires the metric over
+
+    new_gate = check_identity_stability(
+        frame_a, frame_b, background_index=0, region=(8, 8, 12, 12), max_histogram_distance=0.15
+    )
+    assert not new_gate.passed
+
+
+# ---------------------------------------------------------------------------
+# slice_sheet_frames / count_pixel_deltas (T-0349) -- the grid-slicing and
+# raw per-pixel delta primitives the machine-readable gate report is built
+# from. `count_pixel_deltas` is deliberately a different metric than
+# `check_frame_consistency`'s silhouette (fg/bg *state*) delta: it counts
+# ANY palette-index change, including a foreground pixel changing to a
+# *different* foreground index -- the number a reviewer eyeballing the raw
+# sheet by hand actually sees, per T-0349's motivating T-0259 review
+# disagreement.
+# ---------------------------------------------------------------------------
+
+
+def test_slice_sheet_frames_row_major_order():
+    arr = np.array(
+        [
+            [0, 0, 1, 1],
+            [0, 0, 1, 1],
+            [2, 2, 3, 3],
+            [2, 2, 3, 3],
+        ],
+        dtype=np.uint8,
+    )
+    sheet = make_indexed_image(arr, TEST_PALETTE_HEX)
+    frames = slice_sheet_frames(sheet, cell_width=2, cell_height=2, cols=2, rows=2)
+    assert len(frames) == 4
+    assert np.array(frames[0]).tolist() == [[0, 0], [0, 0]]
+    assert np.array(frames[1]).tolist() == [[1, 1], [1, 1]]
+    assert np.array(frames[2]).tolist() == [[2, 2], [2, 2]]
+    assert np.array(frames[3]).tolist() == [[3, 3], [3, 3]]
+
+
+def test_slice_sheet_frames_rejects_size_mismatch():
+    sheet = make_indexed_image(np.zeros((4, 4), dtype=np.uint8), TEST_PALETTE_HEX)
+    with pytest.raises(ValueError):
+        slice_sheet_frames(sheet, cell_width=3, cell_height=3, cols=2, rows=2)
+
+
+def test_count_pixel_deltas_counts_any_index_change_not_just_silhouette_state():
+    a = np.array([[1, 1], [0, 0]], dtype=np.uint8)
+    b = np.array([[2, 1], [0, 3]], dtype=np.uint8)
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    # (0,0): 1 -> 2, still foreground but a DIFFERENT index -- must count.
+    # (1,1): 0 -> 3, a real silhouette flip -- must also count.
+    assert count_pixel_deltas(frame_a, frame_b) == 2
+
+    # check_frame_consistency's silhouette-only metric only sees the (1,1)
+    # fg/bg flip -- confirms this is genuinely a different measurement.
+    silhouette = check_frame_consistency(
+        frame_a, frame_b, background_index=0, max_delta_ratio=1.0
+    )
+    assert silhouette.details["delta_pixels"] == 1
+
+
+def test_count_pixel_deltas_zero_for_identical_frames():
+    a = make_indexed_image(np.array([[1, 2], [3, 0]], dtype=np.uint8), TEST_PALETTE_HEX)
+    b = make_indexed_image(np.array([[1, 2], [3, 0]], dtype=np.uint8), TEST_PALETTE_HEX)
+    assert count_pixel_deltas(a, b) == 0
+
+
+def test_count_pixel_deltas_rejects_shape_mismatch():
+    a = make_indexed_image(np.zeros((2, 2), dtype=np.uint8), TEST_PALETTE_HEX)
+    b = make_indexed_image(np.zeros((3, 3), dtype=np.uint8), TEST_PALETTE_HEX)
+    with pytest.raises(ValueError):
+        count_pixel_deltas(a, b)

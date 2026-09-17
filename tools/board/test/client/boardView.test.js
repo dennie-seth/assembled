@@ -101,6 +101,78 @@ describe("renderBoard", () => {
     expect(onDrop).not.toHaveBeenCalled();
   });
 
+  // VALIDATION FAIL (run 3, T-0288): dragover attaches the shared auto-scroll controller to
+  // the column under the pointer, but with no dragleave counterpart the controller stayed
+  // latched onto the last column and kept scrolling it -- against a stale pointerY -- if the
+  // pointer left every column mid-drag (onto the side panel, the console, the inter-column
+  // gap, or the board's own padding). These pin the fix: a genuine leave (relatedTarget is
+  // null, or outside the list entirely) detaches immediately; a leave that lands on a child
+  // card within the same list (a spurious dragleave the browser fires when the pointer crosses
+  // a child element's bounds) does not.
+  describe("drag auto-scroll dragleave handling", () => {
+    afterEach(() => {
+      // The controller and its dragend listener are module-level singletons shared across
+      // every test in this file -- make sure a stray attach never survives past its own test.
+      document.dispatchEvent(new Event("dragend"));
+    });
+
+    it("stops auto-scrolling a column once the pointer leaves it for somewhere outside every column", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [task({ id: "T-0040", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn() });
+      const list = root.querySelector('.column-cards[data-status="backlog"]');
+      const outside = document.createElement("div");
+
+      const dragover = new Event("dragover", { bubbles: true, cancelable: true });
+      dragover.clientY = 5;
+      list.dispatchEvent(dragover);
+
+      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+      const dragleave = new Event("dragleave", { bubbles: true, cancelable: true });
+      dragleave.relatedTarget = outside;
+      list.dispatchEvent(dragleave);
+
+      expect(cancelSpy).toHaveBeenCalled();
+      cancelSpy.mockRestore();
+    });
+
+    it("stops auto-scrolling a column when the drag leaves the browser window entirely (relatedTarget null)", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [task({ id: "T-0041", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn() });
+      const list = root.querySelector('.column-cards[data-status="backlog"]');
+
+      const dragover = new Event("dragover", { bubbles: true, cancelable: true });
+      dragover.clientY = 5;
+      list.dispatchEvent(dragover);
+
+      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+      const dragleave = new Event("dragleave", { bubbles: true, cancelable: true });
+      dragleave.relatedTarget = null;
+      list.dispatchEvent(dragleave);
+
+      expect(cancelSpy).toHaveBeenCalled();
+      cancelSpy.mockRestore();
+    });
+
+    it("does not stop auto-scrolling when dragleave fires for a move onto a child card within the same column", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [task({ id: "T-0042", status: "backlog" })], { onDrop: vi.fn(), onCardClick: vi.fn() });
+      const list = root.querySelector('.column-cards[data-status="backlog"]');
+      const childCard = list.querySelector(".card");
+
+      const dragover = new Event("dragover", { bubbles: true, cancelable: true });
+      dragover.clientY = 5;
+      list.dispatchEvent(dragover);
+
+      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+      const dragleave = new Event("dragleave", { bubbles: true, cancelable: true });
+      dragleave.relatedTarget = childCard;
+      list.dispatchEvent(dragleave);
+
+      expect(cancelSpy).not.toHaveBeenCalled();
+      cancelSpy.mockRestore();
+    });
+  });
+
   it("shows a Run control on a ready card and invokes onRun without triggering onCardClick", () => {
     const root = document.createElement("div");
     const onRun = vi.fn();
@@ -155,6 +227,251 @@ describe("renderBoard", () => {
     const column = root.querySelector('.column[data-status="retired"]');
     expect(column.querySelector(".column-header").textContent).toContain("Retired");
     expect(column.querySelector('.card[data-id="T-0099"] .card-run')).toBeNull();
+  });
+
+  describe("column header complexity_points summary (T-0368)", () => {
+    it("shows the sum of complexity_points for the cards in a column", () => {
+      const root = document.createElement("div");
+      renderBoard(
+        root,
+        [
+          task({ id: "T-0001", status: "backlog", complexity_points: 3 }),
+          task({ id: "T-0002", status: "backlog", complexity_points: 5 })
+        ],
+        { onDrop: vi.fn(), onCardClick: vi.fn() }
+      );
+      const header = root.querySelector('.column[data-status="backlog"] .column-header');
+      expect(header.textContent).toMatch(/8 pts/);
+    });
+
+    it("shows a count of cards with no score alongside the sum", () => {
+      const root = document.createElement("div");
+      renderBoard(
+        root,
+        [
+          task({ id: "T-0001", status: "backlog", complexity_points: 3 }),
+          task({ id: "T-0002", status: "backlog" })
+        ],
+        { onDrop: vi.fn(), onCardClick: vi.fn() }
+      );
+      const header = root.querySelector('.column[data-status="backlog"] .column-header');
+      expect(header.textContent).toMatch(/3 pts/);
+      expect(header.textContent).toMatch(/1 unscored/);
+    });
+
+    it("shows 0 pts and no unscored count for an empty column", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [], { onDrop: vi.fn(), onCardClick: vi.fn() });
+      const header = root.querySelector('.column[data-status="backlog"] .column-header');
+      expect(header.textContent).toMatch(/0 pts/);
+      expect(header.textContent).not.toMatch(/unscored/);
+    });
+  });
+
+  // The display half of the RUN-3 / LC-5 dependency guard (docs/board-invariants.md).
+  // The backend already 409s a run whose own dependencies are not done/retired
+  // (test/httpApi.test.js, "dependency guard on run (RUN-3 / LC-5)"); these pin down that
+  // the control stops offering the action in the first place, instead of looking live and
+  // failing on the round trip. The red blocked dot and the disabled control are driven by
+  // the same dependency scan, so they can never disagree.
+  describe("Run control on a dependency-blocked card", () => {
+    it("renders the Run control disabled on a ready card whose dependency is not done", () => {
+      const root = document.createElement("div");
+      renderBoard(
+        root,
+        [task({ id: "T-0002", status: "backlog" }), task({ id: "T-0001", status: "ready", depends_on: ["T-0002"] })],
+        { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() }
+      );
+
+      const runBtn = root.querySelector('.card[data-id="T-0001"] .card-run');
+      expect(runBtn).not.toBeNull();
+      expect(runBtn.disabled).toBe(true);
+      expect(runBtn.getAttribute("aria-disabled")).toBe("true");
+    });
+
+    it("does not invoke onRun when a disabled Run control is clicked -- inert, not merely greyed", () => {
+      const root = document.createElement("div");
+      const onRun = vi.fn();
+      const onCardClick = vi.fn();
+      renderBoard(
+        root,
+        [task({ id: "T-0002", status: "backlog" }), task({ id: "T-0001", status: "ready", depends_on: ["T-0002"] })],
+        { onDrop: vi.fn(), onCardClick, onRun }
+      );
+
+      const runBtn = root.querySelector('.card[data-id="T-0001"] .card-run');
+      runBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+
+      expect(onRun).not.toHaveBeenCalled();
+      expect(onCardClick).not.toHaveBeenCalled();
+    });
+
+    it("renders the Run control enabled and clickable on a ready card whose dependencies are all done", () => {
+      const root = document.createElement("div");
+      const onRun = vi.fn();
+      renderBoard(
+        root,
+        [task({ id: "T-0002", status: "done" }), task({ id: "T-0001", status: "ready", depends_on: ["T-0002"] })],
+        { onDrop: vi.fn(), onCardClick: vi.fn(), onRun }
+      );
+
+      const runBtn = root.querySelector('.card[data-id="T-0001"] .card-run');
+      expect(runBtn.disabled).toBe(false);
+      expect(runBtn.hasAttribute("aria-disabled")).toBe(false);
+      runBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+
+      expect(onRun).toHaveBeenCalledWith("T-0001");
+    });
+
+    it("renders the Run control enabled on a ready card with no dependencies at all", () => {
+      const root = document.createElement("div");
+      const onRun = vi.fn();
+      renderBoard(root, [task({ id: "T-0001", status: "ready", depends_on: [] })], {
+        onDrop: vi.fn(),
+        onCardClick: vi.fn(),
+        onRun
+      });
+
+      const runBtn = root.querySelector('.card[data-id="T-0001"] .card-run');
+      expect(runBtn.disabled).toBe(false);
+      runBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      expect(onRun).toHaveBeenCalledWith("T-0001");
+    });
+
+    it("treats a retired dependency as met, matching the backend guard", () => {
+      const root = document.createElement("div");
+      renderBoard(
+        root,
+        [task({ id: "T-0002", status: "retired" }), task({ id: "T-0001", status: "ready", depends_on: ["T-0002"] })],
+        { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() }
+      );
+
+      expect(root.querySelector('.card[data-id="T-0001"] .card-run').disabled).toBe(false);
+    });
+
+    it("treats a dependency id missing from the board as unmet", () => {
+      const root = document.createElement("div");
+      renderBoard(root, [task({ id: "T-0001", status: "ready", depends_on: ["T-0099"] })], {
+        onDrop: vi.fn(),
+        onCardClick: vi.fn(),
+        onRun: vi.fn()
+      });
+
+      expect(root.querySelector('.card[data-id="T-0001"] .card-run').disabled).toBe(true);
+    });
+
+    it("names only the unmet dependencies in the control's tooltip", () => {
+      const root = document.createElement("div");
+      renderBoard(
+        root,
+        [
+          task({ id: "T-0002", status: "backlog" }),
+          task({ id: "T-0003", status: "done" }),
+          task({ id: "T-0004", status: "in-progress" }),
+          task({ id: "T-0001", status: "ready", depends_on: ["T-0002", "T-0003", "T-0004"] })
+        ],
+        { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() }
+      );
+
+      const runBtn = root.querySelector('.card[data-id="T-0001"] .card-run');
+      expect(runBtn.title).toBe("Blocked by T-0002, T-0004");
+      expect(runBtn.title).not.toContain("T-0003");
+    });
+
+    it("keeps the red blocked dependency badge on the card alongside the disabled control", () => {
+      const root = document.createElement("div");
+      renderBoard(
+        root,
+        [task({ id: "T-0002", status: "backlog" }), task({ id: "T-0001", status: "ready", depends_on: ["T-0002"] })],
+        { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() }
+      );
+
+      const card = root.querySelector('.card[data-id="T-0001"]');
+      expect(card.querySelector(".card-blocked-badge")).not.toBeNull();
+      expect(card.querySelector(".card-unblocked-badge")).toBeNull();
+      expect(card.querySelector(".card-run").disabled).toBe(true);
+    });
+
+    it("re-enables the Run control on the next render once the dependency reaches done", () => {
+      const root = document.createElement("div");
+      const onRun = vi.fn();
+      const callbacks = { onDrop: vi.fn(), onCardClick: vi.fn(), onRun };
+      const blocker = task({ id: "T-0002", status: "backlog" });
+      const blocked = task({ id: "T-0001", status: "ready", depends_on: ["T-0002"] });
+
+      renderBoard(root, [blocker, blocked], callbacks);
+      expect(root.querySelector('.card[data-id="T-0001"] .card-run').disabled).toBe(true);
+
+      renderBoard(root, [{ ...blocker, status: "done" }, blocked], callbacks);
+      const runBtn = root.querySelector('.card[data-id="T-0001"] .card-run');
+      expect(runBtn.disabled).toBe(false);
+      runBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      expect(onRun).toHaveBeenCalledWith("T-0001");
+    });
+
+    it("re-enables the Run control on the next render once the blocker is removed from depends_on", () => {
+      const root = document.createElement("div");
+      const callbacks = { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn() };
+      const blocker = task({ id: "T-0002", status: "backlog" });
+
+      renderBoard(root, [blocker, task({ id: "T-0001", status: "ready", depends_on: ["T-0002"] })], callbacks);
+      expect(root.querySelector('.card[data-id="T-0001"] .card-run').disabled).toBe(true);
+
+      renderBoard(root, [blocker, task({ id: "T-0001", status: "ready", depends_on: [] })], callbacks);
+      expect(root.querySelector('.card[data-id="T-0001"] .card-run').disabled).toBe(false);
+    });
+
+    // Re-run posts to the same /run route and is refused by the same backend guard
+    // (test/httpApi.test.js, "returns 409 re-running a blocked card whose own dependency
+    // is not done"), so it gets the same treatment as Run.
+    it("disables the Re-run control on a blocked card whose own dependency is not done", () => {
+      const root = document.createElement("div");
+      const onRun = vi.fn();
+      renderBoard(
+        root,
+        [task({ id: "T-0002", status: "backlog" }), task({ id: "T-0001", status: "blocked", depends_on: ["T-0002"] })],
+        { onDrop: vi.fn(), onCardClick: vi.fn(), onRun }
+      );
+
+      const rerunBtn = root.querySelector('.card[data-id="T-0001"] .card-rerun');
+      expect(rerunBtn.disabled).toBe(true);
+      expect(rerunBtn.title).toBe("Blocked by T-0002");
+      rerunBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      expect(onRun).not.toHaveBeenCalled();
+    });
+
+    it("leaves the Re-run control enabled on a blocked card whose dependencies are met", () => {
+      const root = document.createElement("div");
+      const onRun = vi.fn();
+      renderBoard(
+        root,
+        [task({ id: "T-0002", status: "done" }), task({ id: "T-0001", status: "blocked", depends_on: ["T-0002"] })],
+        { onDrop: vi.fn(), onCardClick: vi.fn(), onRun }
+      );
+
+      const rerunBtn = root.querySelector('.card[data-id="T-0001"] .card-rerun');
+      expect(rerunBtn.disabled).toBe(false);
+      rerunBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      expect(onRun).toHaveBeenCalledWith("T-0001");
+    });
+
+    it("does not disable the Cancel control, which does not post a run", () => {
+      const root = document.createElement("div");
+      const onCancel = vi.fn();
+      renderBoard(
+        root,
+        [
+          task({ id: "T-0002", status: "backlog" }),
+          task({ id: "T-0001", status: "in-progress", depends_on: ["T-0002"] })
+        ],
+        { onDrop: vi.fn(), onCardClick: vi.fn(), onRun: vi.fn(), onCancel }
+      );
+
+      const cancelBtn = root.querySelector('.card[data-id="T-0001"] .card-cancel');
+      expect(cancelBtn.disabled).toBe(false);
+      cancelBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      expect(onCancel).toHaveBeenCalledWith("T-0001");
+    });
   });
 
   it("does not show a Run control on a card that isn't ready", () => {
@@ -286,6 +603,16 @@ describe("renderBoard auto-retry attempts badge", () => {
     renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
 
     expect(root.querySelector('.card[data-id="T-0001"] .card-attempts-badge')).toBeNull();
+  });
+
+  it("T-0343: shows the card's own max_attempts override in the badge instead of the default of 5", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "in-progress", attempts: 2, max_attempts: 3 });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-attempts-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.title || badge.getAttribute("aria-label")).toMatch(/run 2 of 3/i);
   });
 });
 

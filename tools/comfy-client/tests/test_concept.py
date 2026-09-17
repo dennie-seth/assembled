@@ -10,14 +10,19 @@ from __future__ import annotations
 import json
 
 import pytest
+from asset_gate.generator import check_provenance_generator_resolvable
 from gen_client_base.client import GenerationClient
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
 
 from comfy_client.concept import (
+    GENERATOR_ID,
     generate_concept,
     generate_concept_conditioned,
     generate_concept_conditioned_lora,
+    generate_concept_lora,
 )
+from comfy_client.errors import MissingModelHashError
+from comfy_client.provenance_sidecar import package_repo_root
 from comfy_client.recipe import Recipe
 
 
@@ -300,3 +305,267 @@ def test_generate_concept_conditioned_lora_refuses_disallowed_checkpoint(tmp_pat
             client=client,
         )
     assert client.calls == []
+
+
+# ---- LoRA txt2img concept generation (T-0209) --------------------------------
+
+
+def test_generate_concept_lora_writes_png_and_provenance_sidecar(tmp_path, sample_recipe):
+    client = FakeClient()
+    result = generate_concept_lora(
+        sample_recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.70,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=client,
+    )
+    assert result.path.exists()
+    assert result.path.read_bytes() == b"PNGDATA"
+    sidecar = tmp_path / f"{sample_recipe.name}.provenance.json"
+    assert sidecar.exists()
+
+
+def test_generate_concept_lora_provenance_has_lora_and_concept_hash_keys(
+    tmp_path, sample_recipe
+):
+    import hashlib
+
+    client = FakeClient(image_bytes=b"PNGDATA")
+    result = generate_concept_lora(
+        sample_recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.70,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=client,
+    )
+    prov = result.provenance
+    assert prov.lora_name == "soviet_brutalism_style_v1.safetensors"
+    assert prov.lora_weight == 0.70
+    assert prov.lora_license == "Apache-2.0"
+    expected_hash = hashlib.sha256(b"PNGDATA").hexdigest()
+    assert prov.concept_hash == expected_hash
+
+    sidecar = tmp_path / f"{sample_recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["lora_name"] == "soviet_brutalism_style_v1.safetensors"
+    assert on_disk["lora_weight"] == 0.70
+    assert on_disk["concept_hash"] == expected_hash
+
+
+def test_generate_concept_lora_uses_lora_txt2img_workflow(tmp_path, sample_recipe):
+    client = FakeClient()
+    generate_concept_lora(
+        sample_recipe,
+        lora_name="my_lora.safetensors",
+        lora_weight=0.5,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=client,
+    )
+    submitted_graph = client.calls[0][1]  # ("submit", workflow)
+    assert "12" in submitted_graph
+    assert submitted_graph["12"]["class_type"] == "LoraLoader"
+    assert submitted_graph["12"]["inputs"]["lora_name"] == "my_lora.safetensors"
+    assert submitted_graph["12"]["inputs"]["strength_model"] == 0.5
+    # txt2img: must have EmptyLatentImage ("5"), must NOT have LoadImage ("10")
+    assert "5" in submitted_graph
+    assert "10" not in submitted_graph
+
+
+def test_generate_concept_lora_refuses_disallowed_checkpoint(tmp_path):
+    recipe = Recipe(prompt="x", seed=1, checkpoint="not_on_allowlist.safetensors")
+    client = FakeClient()
+    with pytest.raises(CheckpointNotAllowedError):
+        generate_concept_lora(
+            recipe,
+            lora_name="test_lora",
+            lora_weight=0.5,
+            lora_license="Apache-2.0",
+            out_dir=tmp_path,
+            client=client,
+        )
+    assert client.calls == []
+
+
+# ---- T-0151/HANDOFF §21: generate_concept_lora must not silently write a
+# null model_hash. This is the exact defect T-0209 shipped: a real,
+# successful generation whose recipe never had model_hash set (the caller
+# built a bare Recipe from a JSON file with no model_hash field), and this
+# function used to accept that and write model_hash: null to the sidecar. ----
+
+
+def test_generate_concept_lora_raises_without_model_hash_or_checkpoint_dir(tmp_path):
+    """Recipe with model_hash=None and no checkpoint_dir -- must refuse, not write null."""
+    recipe = Recipe(prompt="x", seed=1)  # model_hash defaults to None
+    client = FakeClient()
+    with pytest.raises(MissingModelHashError):
+        generate_concept_lora(
+            recipe,
+            lora_name="soviet_brutalism_style_v1.safetensors",
+            lora_weight=0.70,
+            lora_license="Apache-2.0",
+            out_dir=tmp_path,
+            client=client,
+        )
+    # The error must fire before any network call -- same guarantee as pipeline.generate().
+    assert client.calls == []
+    assert not (tmp_path / "assembled.provenance.json").exists()
+
+
+def test_generate_concept_lora_with_checkpoint_dir_populates_model_hash(tmp_path):
+    import hashlib
+
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir()
+    ckpt_file = ckpt_dir / "sd_xl_base_1.0.safetensors"
+    ckpt_file.write_bytes(b"FAKE_CHECKPOINT_BYTES")
+    expected_hash = hashlib.sha256(b"FAKE_CHECKPOINT_BYTES").hexdigest()
+
+    recipe = Recipe(prompt="x", seed=1)
+    client = FakeClient()
+    result = generate_concept_lora(
+        recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.70,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path / "out",
+        client=client,
+        checkpoint_dir=ckpt_dir,
+    )
+
+    assert result.provenance.model_hash == expected_hash
+    sidecar = (tmp_path / "out") / f"{recipe.name}.provenance.json"
+    on_disk = json.loads(sidecar.read_text())
+    assert on_disk["model_hash"] == expected_hash
+
+
+def test_generate_concept_lora_with_pre_set_model_hash_uses_it(tmp_path):
+    recipe = Recipe(prompt="x", seed=1, model_hash="c" * 64)
+    client = FakeClient()
+    result = generate_concept_lora(
+        recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.70,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=client,
+    )
+    assert result.provenance.model_hash == "c" * 64
+
+
+# ---- T-0215: confirm remaining concept writers also refuse null model_hash ----
+# generate_concept() and generate_concept_conditioned() both route through
+# build_provenance_record() which raises MissingModelHashError — this confirms
+# their coverage in addition to generate_concept_lora() (PR #221) and
+# pipeline.generate() (T-0151).  HANDOFF §21 inventory check.
+
+
+def test_generate_concept_raises_missing_model_hash_when_recipe_has_none(tmp_path):
+    """generate_concept() must raise MissingModelHashError (not write null) when
+    recipe.model_hash is None.  Routes through build_provenance_record().
+    (HANDOFF §21 / T-0215 acceptance §1)
+    """
+    recipe = Recipe(prompt="x", seed=1)  # model_hash defaults to None
+    client = FakeClient()
+    with pytest.raises(MissingModelHashError):
+        generate_concept(recipe, out_dir=tmp_path, client=client)
+
+
+def test_generate_concept_conditioned_raises_missing_model_hash_when_recipe_has_none(
+    tmp_path, init_image_path
+):
+    """generate_concept_conditioned() must raise MissingModelHashError (not write
+    null) when recipe.model_hash is None.  Routes through build_provenance_record().
+    (HANDOFF §21 / T-0215 acceptance §1)
+    """
+    recipe = Recipe(prompt="x", seed=1)  # model_hash defaults to None
+    client = FakeConditionedClient()
+    with pytest.raises(MissingModelHashError):
+        generate_concept_conditioned(
+            recipe, init_image_path=init_image_path, out_dir=tmp_path, client=client
+        )
+
+
+# ---- Adoption: every concept sheet gets a resolvable generator BY CONSTRUCTION ----
+#
+# The T-0226 root cause was that this path emitted sidecars with no `generator`
+# key at all, leaving whoever ran it to hand-add one -- which came out as prose
+# ("...json (ComfyUI 0.29.0 img2img+LoRA workflow, submitted via ...)") that the
+# P-7 gate could not resolve, and in one older sheet as nothing at all (T-0236).
+# These pin down that the field is now set structurally by the module and passes
+# the real gate, so no agent has to write it by hand again.
+
+
+def _sidecar(tmp_path, name):
+    return json.loads((tmp_path / f"{name}.provenance.json").read_text())
+
+
+def test_generate_concept_writes_a_resolvable_generator(tmp_path, sample_recipe):
+    generate_concept(sample_recipe, out_dir=tmp_path, client=FakeClient())
+
+    written = _sidecar(tmp_path, sample_recipe.name)
+    assert written["generator"] == GENERATOR_ID
+    result = check_provenance_generator_resolvable(written, repo_root=package_repo_root())
+    assert result.passed, result.reason
+
+
+def test_generate_concept_lora_writes_a_resolvable_generator(tmp_path, sample_recipe):
+    generate_concept_lora(
+        sample_recipe,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.7,
+        lora_license="Apache-2.0",
+        out_dir=tmp_path,
+        client=FakeClient(),
+    )
+
+    written = _sidecar(tmp_path, sample_recipe.name)
+    assert written["generator"] == GENERATOR_ID
+    assert check_provenance_generator_resolvable(written, repo_root=package_repo_root()).passed
+
+
+def test_generate_concept_conditioned_writes_a_resolvable_generator(tmp_path, sample_recipe):
+    init = tmp_path / "init.png"
+    init.write_bytes(b"INITPNG")
+
+    generate_concept_conditioned(
+        sample_recipe, init_image_path=init, out_dir=tmp_path, client=FakeConditionedClient()
+    )
+
+    written = _sidecar(tmp_path, sample_recipe.name)
+    assert written["generator"] == GENERATOR_ID
+    assert check_provenance_generator_resolvable(written, repo_root=package_repo_root()).passed
+
+
+def test_generate_concept_conditioned_lora_writes_a_resolvable_generator(tmp_path, sample_recipe):
+    init = tmp_path / "init.png"
+    init.write_bytes(b"INITPNG")
+    base_ref = tmp_path / "base_ref.png"
+    base_ref.write_bytes(b"BASEPNG")
+
+    generate_concept_conditioned_lora(
+        sample_recipe,
+        init_image_path=init,
+        lora_name="soviet_brutalism_style_v1.safetensors",
+        lora_weight=0.7,
+        lora_license="Apache-2.0",
+        base_concept_path=base_ref,
+        out_dir=tmp_path,
+        client=FakeConditionedClient(),
+    )
+
+    written = _sidecar(tmp_path, sample_recipe.name)
+    assert written["generator"] == GENERATOR_ID
+    assert check_provenance_generator_resolvable(written, repo_root=package_repo_root()).passed
+
+
+def test_the_generator_written_is_a_bare_path_with_no_prose(tmp_path, sample_recipe):
+    """Regression on the exact T-0226 shape: no spaces, no parenthetical."""
+    generate_concept(sample_recipe, out_dir=tmp_path, client=FakeClient())
+
+    generator = _sidecar(tmp_path, sample_recipe.name)["generator"]
+    assert " " not in generator
+    assert "(" not in generator and ")" not in generator
+    assert not generator.startswith("/")

@@ -1,0 +1,58 @@
+{
+  "card": "T-0231",
+  "spec": "docs/decision-log.md DL-21 criterion 2 (mechanical half)",
+  "max_delta_ratio": 0.3,
+  "arms": {
+    "arm_a": {
+      "label": "Arm A (§23-d)",
+      "card": "T-0228",
+      "sheet": "assets/final/character/player_idle_sheet_arm_a_T0228.png",
+      "deltas": [
+        { "pair": [[0, 0], [0, 1]], "ratio": 0.16266822703335285, "passed": true },
+        { "pair": [[0, 1], [0, 2]], "ratio": 0.17989417989417988, "passed": true },
+        { "pair": [[0, 2], [1, 0]], "ratio": 0.3211252653927813, "passed": false },
+        { "pair": [[1, 0], [1, 1]], "ratio": 0.1204954954954955, "passed": true },
+        { "pair": [[1, 1], [1, 2]], "ratio": 0.738274464389114, "passed": false },
+        { "pair": [[1, 2], [2, 0]], "ratio": 0.7192874692874693, "passed": false },
+        { "pair": [[2, 0], [2, 1]], "ratio": 0.12354570637119114, "passed": true },
+        { "pair": [[2, 1], [2, 2]], "ratio": 0.7795454545454545, "passed": false }
+      ],
+      "num_failed": 4,
+      "all_passed": false
+    },
+    "arm_b": {
+      "label": "Arm B (§23-e)",
+      "card": "T-0229",
+      "sheet": "assets/final/character/player_idle_sheet_arm_b_T0229.png",
+      "deltas": [
+        { "pair": [[0, 0], [0, 1]], "ratio": 0.15129151291512916, "passed": true },
+        { "pair": [[0, 1], [0, 2]], "ratio": 0.15151515151515152, "passed": true },
+        { "pair": [[0, 2], [1, 0]], "ratio": 0.22145328719723184, "passed": true },
+        { "pair": [[1, 0], [1, 1]], "ratio": 0.11387900355871886, "passed": true },
+        { "pair": [[1, 1], [1, 2]], "ratio": 0.09665427509293681, "passed": true },
+        { "pair": [[1, 2], [2, 0]], "ratio": 0.29473684210526313, "passed": true },
+        { "pair": [[2, 0], [2, 1]], "ratio": 0.1276595744680851, "passed": true },
+        { "pair": [[2, 1], [2, 2]], "ratio": 0.14893617021276595, "passed": true }
+      ],
+      "num_failed": 0,
+      "all_passed": true
+    },
+    "arm_c": {
+      "label": "Arm C (§23-f, the script)",
+      "card": "T-0230",
+      "sheet": "assets/final/character/player_idle_sheet_arm_c_T0230.png",
+      "deltas": [
+        { "pair": [[0, 0], [0, 1]], "ratio": 0.07154471544715447, "passed": true },
+        { "pair": [[0, 1], [0, 2]], "ratio": 0.11128775834658187, "passed": true },
+        { "pair": [[0, 2], [1, 0]], "ratio": 0.07177814029363784, "passed": true },
+        { "pair": [[1, 0], [1, 1]], "ratio": 0.112, "passed": true },
+        { "pair": [[1, 1], [1, 2]], "ratio": 0.07154471544715447, "passed": true },
+        { "pair": [[1, 2], [2, 0]], "ratio": 0.11128775834658187, "passed": true },
+        { "pair": [[2, 0], [2, 1]], "ratio": 0.07177814029363784, "passed": true },
+        { "pair": [[2, 1], [2, 2]], "ratio": 0.112, "passed": true }
+      ],
+      "num_failed": 0,
+      "all_passed": true
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "card": "T-0273",
+  "consumerCard": "T-0274",
+  "sourcedVia": "T-0276 referenceFetch.js (fetched fresh by T-0273 after PR #312's transport fix)",
+  "model_hash": "N/A — fetched open-licence reference photograph, not model-generated",
+  "generator": "tools/board/scripts/referenceFetch.js",
+  "sourceId": "wikimedia",
+  "assetId": "File:Animal Locomotion - side view of old man walking (pl. 555) LCCN2005697037.jpg",
+  "title": "File:Animal Locomotion - side view of old man walking (pl. 555) LCCN2005697037.jpg",
+  "sourceUrl": "https://upload.wikimedia.org/wikipedia/commons/a/aa/Animal_Locomotion_-_side_view_of_old_man_walking_%28pl._555%29_LCCN2005697037.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+  "license": "Public domain",
+  "licenseNormalized": "pdm",
+  "retrievedAt": "2026-09-03T17:06:14.867Z",
+  "promotedAt": "2026-09-03",
+  "mime": "image/jpeg",
+  "sha256": "0817eaf501e4c49d55cffabf55cfe0568db82f3d78b724cadef302aa44643a94",
+  "byteLength": 140929,
+  "verdict": "KEPT -- Eadweard Muybridge, Animal Locomotion pl. 555 (1887). Top row is a 12-frame true side-on walk cycle of an old man walking; unambiguous 90-degree profile throughout, ideal gait/pose reference."
+}

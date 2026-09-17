@@ -23,6 +23,8 @@ client/vendor/*.tar.gz
 client/vendor/curl/
 # One-off verify debug helpers, not part of the project.
 client/vendor_clean.py
+_attach_deliverables.mjs
+_attach_deliverables.py
 commit_msg.txt
 run_clang_format.sh
 run_clang_format.py
@@ -66,6 +68,10 @@ dist/
 coverage/
 npm-debug.log*
 
+# Playwright (tools/board's browser test harness, T-0295): local run artifacts, never source.
+tools/board/test-results/
+tools/board/playwright-report/
+
 # Python
 .venv/
 __pycache__/
@@ -80,6 +86,26 @@ __pycache__/
 assets/src/lora/refs/
 assets/src/lora/.train-scratch/
 
+# sd-scripts `--save_state` checkpoints (`<output_name>-step<N>-state/`): resumable
+# *intermediate* trainer state (optimizer, scheduler, RNG, a raw model.safetensors),
+# not a deliverable — the deliverable is the LoRA weights file beside them, which
+# .gitattributes routes through LFS. A single run leaves gigabytes of these, and
+# `assets/final/lora/*.safetensors` in .gitattributes matches only direct children,
+# so a state dir's own model.safetensors would go in as a raw blob. The runner
+# preserves these across worktree resets on disk instead (tools/board/src/runner/
+# artifactPreservation.js) — they never need to be in git to be resumable.
+assets/final/lora/*-state/
+
+# Per-epoch/per-step LoRA weight *snapshots* sd-scripts writes alongside the
+# state dirs above (`<output_name>-NNNNNN.safetensors`, `<output_name>-stepNNNNNNNN.safetensors`):
+# intermediate artifacts of an in-progress, resumable-across-sessions training
+# run (assets/src/lora/src/lora_train/train.py rule (b)), not a curated final —
+# only the unsuffixed `<output_name>.safetensors` written on completion is a
+# deliverable. Committing these was a mistake corrected in T-0274 (they are
+# reproducible from a resumed run, same as the state dirs).
+assets/final/lora/*-[0-9][0-9][0-9][0-9][0-9][0-9].safetensors
+assets/final/lora/*-step[0-9]*.safetensors
+
 # Board tool runtime state (not source)
 tasks/.id-allocator.json
 
@@ -89,6 +115,11 @@ tasks/.id-allocator.json
 # tools/comfy-client/assets/out/, tools/asset-gate test scratch). "**/"
 # matches at any depth, root included.
 **/assets/out/
+
+# Reference-sourcing quarantine (T-0276): fetched-but-unreviewed external references. Nothing
+# here is ever git-add-ed by tools/board/scripts/referenceFetch.js itself -- promotion out of
+# quarantine into a real assets/src/ location is a separate, deliberate, human-reviewed step.
+assets/src/reference/quarantine/
 
 # Packed sprite atlases: CI build artifacts, not authored source (T-0074).
 # docs/design/13-asset-pipeline.md §3.6: atlases are build artifacts, never committed.

@@ -1,0 +1,204 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "signal_tower_concrete_wall_16px.png" }
+  },
+  "2": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": ["1", 0],
+      "upscale_method": "nearest-exact",
+      "width": 720,
+      "height": 48,
+      "crop": "disabled"
+    }
+  },
+  "3": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "signal_tower_concrete_wall_floor_transitions_16px.png" }
+  },
+  "4": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": ["3", 0],
+      "upscale_method": "nearest-exact",
+      "width": 720,
+      "height": 48,
+      "crop": "disabled"
+    }
+  },
+  "5": {
+    "class_type": "EmptyImage",
+    "inputs": {
+      "width": 720,
+      "height": 240,
+      "batch_size": 1,
+      "color": 1710618
+    }
+  },
+  "6": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {
+      "destination": ["5", 0],
+      "source": ["2", 0],
+      "x": 0,
+      "y": 0,
+      "resize_source": false
+    }
+  },
+  "7": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {
+      "destination": ["6", 0],
+      "source": ["4", 0],
+      "x": 0,
+      "y": 192,
+      "resize_source": false
+    }
+  },
+  "8": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "player_idle_sheet_v1.png" }
+  },
+  "9": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": ["8", 0],
+      "upscale_method": "nearest-exact",
+      "width": 432,
+      "height": 432,
+      "crop": "disabled"
+    }
+  },
+  "10": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": ["9", 0],
+      "width": 144,
+      "height": 144,
+      "x": 0,
+      "y": 0
+    }
+  },
+  "11": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": ["9", 0],
+      "width": 144,
+      "height": 144,
+      "x": 144,
+      "y": 0
+    }
+  },
+  "12": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": ["9", 0],
+      "width": 144,
+      "height": 144,
+      "x": 288,
+      "y": 0
+    }
+  },
+  "13": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": ["9", 0],
+      "width": 144,
+      "height": 144,
+      "x": 0,
+      "y": 144
+    }
+  },
+  "14": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "player_idle_sheet_sdxl_T0218.png" }
+  },
+  "15": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": ["14", 0],
+      "upscale_method": "nearest-exact",
+      "width": 432,
+      "height": 432,
+      "crop": "disabled"
+    }
+  },
+  "16": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": ["15", 0],
+      "width": 144,
+      "height": 144,
+      "x": 0,
+      "y": 0
+    }
+  },
+  "17": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {
+      "destination": ["7", 0],
+      "source": ["10", 0],
+      "x": 0,
+      "y": 48,
+      "resize_source": false
+    }
+  },
+  "18": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {
+      "destination": ["17", 0],
+      "source": ["11", 0],
+      "x": 144,
+      "y": 48,
+      "resize_source": false
+    }
+  },
+  "19": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {
+      "destination": ["18", 0],
+      "source": ["12", 0],
+      "x": 288,
+      "y": 48,
+      "resize_source": false
+    }
+  },
+  "20": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {
+      "destination": ["19", 0],
+      "source": ["13", 0],
+      "x": 432,
+      "y": 48,
+      "resize_source": false
+    }
+  },
+  "21": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {
+      "destination": ["20", 0],
+      "source": ["16", 0],
+      "x": 576,
+      "y": 48,
+      "resize_source": false
+    }
+  },
+  "22": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": ["21", 0],
+      "upscale_method": "nearest-exact",
+      "width": 1440,
+      "height": 480,
+      "crop": "disabled"
+    }
+  },
+  "23": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["22", 0],
+      "filename_prefix": "T0218_room_scene"
+    }
+  }
+}

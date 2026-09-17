@@ -52,7 +52,9 @@ describe("patchTask", () => {
       "/api/tasks/T-0001",
       expect.objectContaining({
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        // The actor header identifies this as a human action to the server's approval gate
+        // (src/lib/approvalGate.js) -- it is what makes a drag to Done count as an approval.
+        headers: { "Content-Type": "application/json", "X-Board-Actor": "board-ui" },
         body: JSON.stringify({ status: "ready" })
       })
     );
@@ -125,7 +127,9 @@ describe("addComment", () => {
       "/api/tasks/T-0001/comments",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // Same actor header as patchTask: an "APPROVED" comment only approves when the server
+        // can see it came from a human (src/lib/approvalGate.js).
+        headers: { "Content-Type": "application/json", "X-Board-Actor": "board-ui" },
         body: JSON.stringify({ text: "hi" })
       })
     );

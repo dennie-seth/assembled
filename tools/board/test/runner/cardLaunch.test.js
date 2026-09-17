@@ -1,0 +1,896 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES, reconcileLaunchOutcome } from "../../src/runner/cardLaunch.js";
+import { ROUND_CAP } from "../../src/lib/roundCap.js";
+import { listActiveReservations } from "../../src/runner/launchReservation.js";
+import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
+import { recordAdvisoryDecision as realRecordAdvisoryDecision, AdvisoryDecisionMissingError } from "../../src/runner/advisoryLogger.js";
+
+function makeTask(overrides = {}) {
+  return {
+    id: "T-0001",
+    title: "A card",
+    status: "ready",
+    priority: "P1",
+    phase: "P1",
+    agent: "server",
+    depends_on: [],
+    created: "2026-08-29",
+    body: "",
+    ...overrides
+  };
+}
+
+function makeStore(tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  return {
+    byId,
+    get: vi.fn(async (id) => byId.get(id) ?? null),
+    list: vi.fn(async () => [...byId.values()]),
+    update: vi.fn(async (id, patch) => {
+      const merged = { ...byId.get(id), ...patch };
+      byId.set(id, merged);
+      return merged;
+    })
+  };
+}
+
+function makeOrchestrator(tasks, { running = new Set(), runCard } = {}) {
+  const store = makeStore(tasks);
+  return {
+    store,
+    hub: { broadcast: vi.fn() },
+    isRunning: vi.fn((id) => running.has(id)),
+    hasActiveRuns: vi.fn(() => running.size > 0),
+    runCard: runCard ?? vi.fn(async () => undefined)
+  };
+}
+
+/** Polls a real-filesystem-backed condition until it holds, for chains whose reconciliation crosses real fs I/O the setImmediate flush below doesn't wait long enough for. */
+async function waitFor(conditionFn, { timeoutMs = 2000, intervalMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await conditionFn()) return;
+    if (Date.now() >= deadline) throw new Error("waitFor: condition never became true");
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/** Lets a fire-and-forget `runCard().catch(...)` chain settle before assertions. */
+async function flush() {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+describe("launchCardRun — guards", () => {
+  it("exposes the same runnable statuses the Run button accepts", () => {
+    expect([...RUNNABLE_STATUSES].sort()).toEqual(["blocked", "ready", "review"]);
+  });
+
+  it("throws 501 when no orchestrator is configured", async () => {
+    await expect(launchCardRun({ orchestrator: null, id: "T-0001" })).rejects.toMatchObject({
+      name: "CardLaunchError",
+      statusCode: 501
+    });
+  });
+
+  it("throws 404 for an unknown card", async () => {
+    const orchestrator = makeOrchestrator([]);
+    await expect(launchCardRun({ orchestrator, id: "T-9999" })).rejects.toMatchObject({ statusCode: 404 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it.each(["backlog", "in-progress", "validation", "done", "retired"])(
+    "throws 409 for a non-runnable status (%s)",
+    async (status) => {
+      const orchestrator = makeOrchestrator([makeTask({ status })]);
+      await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+    }
+  );
+
+  it("throws 409 for a card assigned to the non-executable dispatch sentinel", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ agent: "dispatch" })]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("throws 409 when the card already has an active run", async () => {
+    const orchestrator = makeOrchestrator([makeTask()], { running: new Set(["T-0001"]) });
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("throws 409 and never runs the card when a dependency is unmet", async () => {
+    const orchestrator = makeOrchestrator([
+      makeTask({ id: "T-0001", depends_on: ["T-0002"] }),
+      makeTask({ id: "T-0002", status: "ready" })
+    ]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("throws 409 and never runs the card on a dependency cycle", async () => {
+    const orchestrator = makeOrchestrator([
+      makeTask({ id: "T-0001", depends_on: ["T-0002"] }),
+      makeTask({ id: "T-0002", depends_on: ["T-0001"] })
+    ]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("throws 409 for a card that has settled two rounds without a promoted deliverable (T-0344)", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ status: "blocked", round: ROUND_CAP })]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("409's round-cap message names the required human action", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ status: "blocked", round: ROUND_CAP })]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({
+      message: expect.stringMatching(/RESCOPED/)
+    });
+  });
+
+  it("still refuses above the cap, not just exactly at it", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ status: "blocked", round: ROUND_CAP + 3 })]);
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("rethrows a non-dependency store failure untouched rather than masking it as a 409", async () => {
+    const orchestrator = makeOrchestrator([makeTask()]);
+    orchestrator.store.get.mockImplementation(async (id) => {
+      if (orchestrator.store.get.mock.calls.length > 1) throw new Error("disk on fire");
+      return orchestrator.store.byId.get(id) ?? null;
+    });
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).rejects.toThrow("disk on fire");
+  });
+});
+
+describe("launchCardRun — launch", () => {
+  it.each(["ready", "review", "blocked"])("starts the run for a runnable card (%s) and returns it", async (status) => {
+    const orchestrator = makeOrchestrator([makeTask({ status })]);
+    const task = await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+    expect(task.id).toBe("T-0001");
+  });
+
+  it.each([0, 1])("launches a card below the round cap (round: %i)", async (round) => {
+    const orchestrator = makeOrchestrator([makeTask({ status: "blocked", round })]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("launches a card that was at the cap but has since been rescoped (round reset to 0)", async () => {
+    const orchestrator = makeOrchestrator([
+      makeTask({ status: "blocked", round: 0, rescoped_by: "@DennieSeth", rescoped_at: "2026-09-10T12:00:00.000Z" })
+    ]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("launches a card whose dependencies are all done or retired", async () => {
+    const orchestrator = makeOrchestrator([
+      makeTask({ id: "T-0001", depends_on: ["T-0002", "T-0003"] }),
+      makeTask({ id: "T-0002", status: "done" }),
+      makeTask({ id: "T-0003", status: "retired" })
+    ]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("returns without waiting for the run to finish", async () => {
+    let settle;
+    const runCard = vi.fn(() => new Promise((resolve) => (settle = resolve)));
+    const orchestrator = makeOrchestrator([makeTask()], { runCard });
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(runCard).toHaveBeenCalled();
+    settle();
+  });
+
+  it("persists a run failure as blocked with a Run Failed note and broadcasts it", async () => {
+    const runCard = vi.fn(async () => {
+      throw new Error("spawn failed");
+    });
+    const orchestrator = makeOrchestrator([makeTask()], { runCard });
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await launchCardRun({ orchestrator, id: "T-0001", logger });
+    await flush();
+
+    expect(orchestrator.store.update).toHaveBeenCalledWith(
+      "T-0001",
+      expect.objectContaining({ status: "blocked", body: expect.stringContaining("Run Failed") })
+    );
+    expect(orchestrator.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "changed", id: "T-0001" }));
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it("swallows a failure to persist the run failure rather than surfacing an unhandled rejection", async () => {
+    const runCard = vi.fn(async () => {
+      throw new Error("spawn failed");
+    });
+    const orchestrator = makeOrchestrator([makeTask()], { runCard });
+    orchestrator.store.update.mockRejectedValue(new Error("store is gone"));
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await launchCardRun({ orchestrator, id: "T-0001", logger });
+    await flush();
+    expect(logger.error).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("reconcileLaunchOutcome -- T-0370 fix round finding 4: honest outcome classification", () => {
+  function baseArgs(overrides = {}) {
+    return {
+      runsDir: "/irrelevant",
+      cardId: "T-0001",
+      executionId: "exec-1",
+      invocationId: "inv-1",
+      status: "completed",
+      logger: { log: vi.fn(), error: vi.fn() },
+      recordAdvisoryOutcomeFn: vi.fn(async () => {}),
+      releaseReservationFn: vi.fn(async () => {}),
+      ...overrides
+    };
+  }
+
+  it("records an EXACT outcome for a successful run whose every ledger entry is a successful, complete, known-cost entry", async () => {
+    const args = baseArgs({
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.3, complete: true, outcome: "success" },
+        { executionId: "exec-1", attempt: 1, phase: "reviewer", retry: 0, costUsd: 0.1, complete: true, outcome: "success" }
+      ])
+    });
+    await reconcileLaunchOutcome(args);
+    const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
+    expect(outcome.costKind).toBe("exact");
+    expect(outcome.actualCostUsd).toBeCloseTo(0.4);
+  });
+
+  it("records a LOWER BOUND for a terminal quota_stop, even with status: failed and a real known cost -- runCard resolving/rejecting is not treated as success", async () => {
+    const args = baseArgs({
+      status: "failed",
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 4, complete: true, outcome: "quota_stop" }
+      ])
+    });
+    await reconcileLaunchOutcome(args);
+    const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
+    expect(outcome.costKind).toBe("lower_bound");
+    expect(outcome.actualCostUsd).toBeCloseTo(4);
+  });
+
+  it("records a LOWER BOUND for a reviewer-FAIL run that resolves the card to blocked, even though runCard resolved without throwing", async () => {
+    const args = baseArgs({
+      status: "completed",
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.3, complete: true, outcome: "success" },
+        { executionId: "exec-1", attempt: 1, phase: "reviewer", retry: 0, costUsd: 0.1, complete: true, outcome: "reviewer_fail" }
+      ])
+    });
+    await reconcileLaunchOutcome(args);
+    const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
+    expect(outcome.costKind).toBe("lower_bound");
+    expect(outcome.actualCostUsd).toBeCloseTo(0.4);
+  });
+
+  it("records a LOWER BOUND for a cancellation", async () => {
+    const args = baseArgs({
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.2, complete: false, outcome: "cancelled" }
+      ])
+    });
+    await reconcileLaunchOutcome(args);
+    const outcome = args.recordAdvisoryOutcomeFn.mock.calls[0][0].outcome;
+    expect(outcome.costKind).toBe("lower_bound");
+    expect(outcome.actualCostUsd).toBeCloseTo(0.2);
+  });
+});
+
+describe("reconcileLaunchOutcome -- T-0370 round 3: a finished launch's outcome is retained, never discarded, when no decision record exists yet", () => {
+  function baseArgs(overrides = {}) {
+    return {
+      runsDir: "/irrelevant",
+      cardId: "T-0001",
+      executionId: "exec-1",
+      invocationId: "inv-1",
+      status: "completed",
+      logger: { log: vi.fn(), error: vi.fn() },
+      listCardUsageEntriesFn: vi.fn(async () => [
+        { executionId: "exec-1", attempt: 1, phase: "implementer", retry: 0, costUsd: 0.4, complete: true, outcome: "success" }
+      ]),
+      recordAdvisoryOutcomeFn: vi.fn(async () => {
+        throw new AdvisoryDecisionMissingError("no decision recorded for T-0001/exec-1/inv-1");
+      }),
+      retainOutcomeUntilDecisionRecordedFn: vi.fn(async () => {}),
+      releaseReservationFn: vi.fn(async () => {}),
+      ...overrides
+    };
+  }
+
+  it("retains the outcome instead of just logging a discard when recordAdvisoryOutcomeFn reports the decision is missing", async () => {
+    const args = baseArgs();
+    await reconcileLaunchOutcome(args);
+    expect(args.retainOutcomeUntilDecisionRecordedFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runsDir: "/irrelevant",
+        cardId: "T-0001",
+        executionId: "exec-1",
+        invocationId: "inv-1",
+        outcome: expect.objectContaining({ costKind: "exact", actualCostUsd: 0.4 })
+      })
+    );
+    // The old discard message never fires for this specific, now-handled failure mode.
+    expect(args.logger.error).not.toHaveBeenCalledWith(expect.stringContaining("failed to record advisory outcome"), expect.anything());
+  });
+
+  it("still logs and swallows any OTHER recordAdvisoryOutcomeFn failure exactly as before -- retention is scoped to the missing-decision case", async () => {
+    const args = baseArgs({
+      recordAdvisoryOutcomeFn: vi.fn(async () => {
+        throw new Error("disk full");
+      })
+    });
+    await reconcileLaunchOutcome(args);
+    expect(args.retainOutcomeUntilDecisionRecordedFn).not.toHaveBeenCalled();
+    expect(args.logger.error).toHaveBeenCalledWith(expect.stringContaining("failed to record advisory outcome"), "disk full");
+  });
+
+  it("still releases the reservation even when the outcome had to be retained", async () => {
+    const args = baseArgs();
+    await reconcileLaunchOutcome(args);
+    expect(args.releaseReservationFn).toHaveBeenCalled();
+  });
+
+  it("a retainOutcomeUntilDecisionRecordedFn failure is itself logged and swallowed -- never surfaces past reconcileLaunchOutcome", async () => {
+    const args = baseArgs({
+      retainOutcomeUntilDecisionRecordedFn: vi.fn(async () => {
+        throw new Error("disk full");
+      })
+    });
+    await expect(reconcileLaunchOutcome(args)).resolves.toBeUndefined();
+    expect(args.releaseReservationFn).toHaveBeenCalled();
+  });
+});
+
+describe("CardLaunchError", () => {
+  it("carries an HTTP-shaped status code the API layer can map directly", () => {
+    const err = new CardLaunchError("nope", 409);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("CardLaunchError");
+    expect(err.statusCode).toBe(409);
+  });
+});
+
+describe("launchCardRun — advisory + reservation at the shared launch boundary (WIP gate T-D)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "cardLaunch-advisory-test-"));
+  });
+
+  afterEach(async () => {
+    // A test's fire-and-forget reconciliation (runCardPromise.then(...) inside launchCardRun)
+    // can still be mid-write when the test itself returns -- retry rm across that real-fs race
+    // rather than letting a stray ENOTEMPTY fail an unrelated test.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        await fs.rm(runsDir, { recursive: true, force: true });
+        return;
+      } catch (err) {
+        if (err.code !== "ENOTEMPTY" || attempt === 9) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+  });
+
+  function makeAdvisoryOrchestrator(tasks, opts = {}) {
+    const orchestrator = makeOrchestrator(tasks, opts);
+    orchestrator.runsDir = runsDir;
+    return orchestrator;
+  }
+
+  it("reserves budget and records an advisory decision before launching, without refusing or delaying it", async () => {
+    // Held in flight (CI + startup follow-up, 2026-09-14): a mocked runCard that settles
+    // immediately can release its lease before this assertion runs, since the fire-and-forget
+    // reconciliation chain races the test's own await. Holding it open until after the
+    // assertions makes the lease/advisory-file counts deterministic by construction.
+    let resolveRun;
+    const runCard = vi.fn(() => new Promise((resolve) => (resolveRun = resolve)));
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })], { runCard });
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+
+    const reservations = await listActiveReservations({ runsDir });
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0].cardId).toBe("T-0001");
+
+    const advisoryFiles = (await fs.readdir(runsDir)).filter((f) => f.endsWith(".advisory.json"));
+    expect(advisoryFiles).toHaveLength(1);
+
+    resolveRun();
+  });
+
+  it("releases the reservation and attaches a completed outcome once the run finishes successfully", async () => {
+    let resolveRun;
+    const runCard = vi.fn(() => new Promise((resolve) => (resolveRun = resolve)));
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })], { runCard });
+    await launchCardRun({ orchestrator, id: "T-0001" });
+
+    expect(await listActiveReservations({ runsDir })).toHaveLength(1);
+
+    resolveRun();
+    await waitFor(async () => (await listActiveReservations({ runsDir })).length === 0);
+
+    const advisoryFile = (await fs.readdir(runsDir)).find((f) => f.endsWith(".advisory.json"));
+    const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+    expect(record.outcome).not.toBeNull();
+  });
+
+  it("releases the reservation, records a failed outcome, and still posts the existing Run Failed note when the run rejects", async () => {
+    const runCard = vi.fn(async () => {
+      throw new Error("spawn failed");
+    });
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })], { runCard });
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await launchCardRun({ orchestrator, id: "T-0001", logger });
+    await waitFor(async () => (await listActiveReservations({ runsDir })).length === 0);
+
+    expect(orchestrator.store.update).toHaveBeenCalledWith("T-0001", expect.objectContaining({ status: "blocked" }));
+    expect(orchestrator.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "changed", id: "T-0001" }));
+  });
+
+  it("never refuses or delays the launch even when the advisory pipeline itself is broken", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    // A file, not a directory, at the runsDir path -- every mkdir/readdir/writeFile the advisory
+    // and reservation machinery attempts underneath it fails with ENOTDIR.
+    const blockedPath = path.join(runsDir, "blocked-file");
+    await fs.writeFile(blockedPath, "x");
+    orchestrator.runsDir = blockedPath;
+
+    await expect(launchCardRun({ orchestrator, id: "T-0001" })).resolves.toBeDefined();
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("skips the advisory/reservation machinery entirely for an orchestrator with no runsDir (older/minimal test doubles)", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ agent: "infra" })]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("T-0370 (Codex finding 7): reserves against the card's own max_attempts override, not the fixed MAX_AUTO_RETRY_ATTEMPTS", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra", max_attempts: 20 })]);
+    let passedMaxAttempts = null;
+    const buildLaunchDecideFn = vi.fn((args) => {
+      passedMaxAttempts = args.maxAttempts;
+      return async () => ({ estimate: { value: null, unit: "usd" }, telemetryReadings: {}, reason: "stub", admission: null });
+    });
+    await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+    expect(passedMaxAttempts).toBe(20);
+  });
+
+  it("T-0370 (Codex finding 7): falls back to the runner's own MAX_AUTO_RETRY_ATTEMPTS default when the card carries no override", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    let passedMaxAttempts = null;
+    const buildLaunchDecideFn = vi.fn((args) => {
+      passedMaxAttempts = args.maxAttempts;
+      return async () => ({ estimate: { value: null, unit: "usd" }, telemetryReadings: {}, reason: "stub", admission: null });
+    });
+    await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+    expect(passedMaxAttempts).toBe(5);
+  });
+
+  it("two simultaneous controlled launches (different cards) cannot reserve the same remaining capacity -- each gets its own lease, and the sum reflects both", async () => {
+    // Held in flight (CI + startup follow-up, 2026-09-14): see the identical note on the
+    // single-launch test above -- a run that finishes and releases its lease before this
+    // assertion runs would undercount the pool. This is the exact test that flaked in CI.
+    const resolvers = [];
+    const runCard = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+    const orchestrator = makeAdvisoryOrchestrator(
+      [makeTask({ id: "T-0001", agent: "infra" }), makeTask({ id: "T-0002", agent: "infra" })],
+      { runCard }
+    );
+
+    await Promise.all([launchCardRun({ orchestrator, id: "T-0001" }), launchCardRun({ orchestrator, id: "T-0002" })]);
+
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0002");
+
+    const reservations = await listActiveReservations({ runsDir });
+    expect(reservations).toHaveLength(2);
+    const byCard = Object.fromEntries(reservations.map((r) => [r.cardId, r.reservedCostUsd]));
+    // Neither launch's reservation write clobbered the other's -- both are present with their
+    // own full reserved amount, and a later admission check reading `reservedUnspentCostUsd`
+    // sees the sum of both, never just one.
+    expect(byCard["T-0001"]).toBeGreaterThan(0);
+    expect(byCard["T-0002"]).toBeGreaterThan(0);
+    expect(byCard["T-0001"]).toBeCloseTo(byCard["T-0002"]);
+
+    resolvers.forEach((resolve) => resolve());
+  });
+
+  it("T-0370 (Codex finding 3): a never-settling ensureExecutionIdFn cannot hang the launch -- runCard is still called once the bound elapses", async () => {
+    vi.useFakeTimers();
+    try {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const ensureExecutionIdFn = vi.fn(() => new Promise(() => {}));
+
+      const launchPromise = launchCardRun({ orchestrator, id: "T-0001", ensureExecutionIdFn });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await launchPromise;
+
+      expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("T-0370 (Codex finding 2): defaults to enforcement OFF -- a fresh launchCardRun never refuses on the admission hold alone", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    await launchCardRun({ orchestrator, id: "T-0001" });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("T-0370 (Codex finding 2): under the enforcement flag, an explicit admission hold refuses the launch and releases the reservation it provisionally wrote", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    // No unit-conversion evidence exists in this test's default config, so the real admission
+    // pipeline always holds (units_not_comparable) -- the intended fail-safe, not a bug.
+    await expect(launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true })).rejects.toMatchObject({
+      name: "CardLaunchError",
+      statusCode: 409
+    });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+    expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+  });
+
+  it("T-0370 (Codex finding 2): under enforcement, an active overrun stop refuses a brand-new admission", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const buildLaunchDecideFn = () => async () => ({
+      estimate: { value: 0.1, unit: "usd" },
+      telemetryReadings: {},
+      reason: "stub",
+      admission: { admitted: true, windows: {} }
+    });
+    const evaluateOverrunPolicyFn = vi.fn(async () => ({ overrun: true, reason: "estimate overrun: 5/5 exceeded" }));
+
+    await expect(
+      launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn, evaluateOverrunPolicyFn })
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/overrun/i) });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("T-0370 (Codex finding 2): under enforcement, an overrun stop still allows a bounded continuation of an already-admitted execution", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const buildLaunchDecideFn = () => async () => ({
+      estimate: { value: 0.1, unit: "usd" },
+      telemetryReadings: {},
+      reason: "stub",
+      admission: { admitted: true, windows: {} }
+    });
+    const evaluateOverrunPolicyFn = vi.fn(async () => ({ overrun: true, reason: "estimate overrun" }));
+    const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+    const listCardUsageEntriesFn = vi.fn(async () => [{ executionId: "exec-1", costUsd: 0.2, complete: true, outcome: "success" }]);
+
+    await launchCardRun({
+      orchestrator,
+      id: "T-0001",
+      enforcementEnabledFn: () => true,
+      buildLaunchDecideFn,
+      evaluateOverrunPolicyFn,
+      ensureExecutionIdFn,
+      listCardUsageEntriesFn
+    });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+
+  it("T-0370 (Codex finding 1): two DIFFERENT launches through the real launchCardRun boundary are serialized -- the pool is never overbooked by the recorded decisions", async () => {
+    // Held in flight (CI + startup follow-up, 2026-09-14): see the identical note on the two
+    // tests above -- the second decision must see the first's still-active lease, which a run
+    // that's already finished and released by the time it runs would falsify.
+    const resolvers = [];
+    const runCard = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+    const orchestrator = makeAdvisoryOrchestrator(
+      [makeTask({ id: "T-0001", agent: "infra" }), makeTask({ id: "T-0002", agent: "infra" })],
+      { runCard }
+    );
+
+    // Wraps the REAL buildLaunchDecide (production logic, not hand-composed primitives -- see
+    // Codex's own note that the prior race probe overbooked by construction because it never
+    // went through this function) just to capture what it computed, for the assertion below.
+    const records = {};
+    const buildLaunchDecideFn = (args) => {
+      const decide = realBuildLaunchDecide(args);
+      return async () => {
+        const record = await decide();
+        records[args.cardId] = record;
+        return record;
+      };
+    };
+
+    await Promise.all([
+      launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn }),
+      launchCardRun({ orchestrator, id: "T-0002", buildLaunchDecideFn })
+    ]);
+
+    const a = records["T-0001"];
+    const b = records["T-0002"];
+    expect(a.reservedUnspentCostUsd).not.toBeNull();
+    expect(b.reservedUnspentCostUsd).not.toBeNull();
+    // The read-check-reserve section is serialized: exactly one of the two launches' admission
+    // reads happened BEFORE the other had written its own lease (sees 0 others), and the other
+    // happened after (sees the first's full reserved amount) -- never both computed against a
+    // shared, stale empty pool, which is what would let the combined demand overbook capacity.
+    const sawOthersReservation = [a, b].filter((r) => r.reservedUnspentCostUsd > 0);
+    expect(sawOthersReservation).toHaveLength(1);
+
+    resolvers.forEach((resolve) => resolve());
+  });
+
+  describe("T-0370 fix round 2 finding 4 -- under enforcement, the shared launch boundary never falls through to a launch", () => {
+    it("a throwing buildLaunchDecideFn (a setup/policy error) refuses the launch under enforcement -- no runCard call, no active lease", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => {
+        throw new Error("setup failed");
+      };
+      await expect(
+        launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
+      ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    });
+
+    it("the same throwing buildLaunchDecideFn still launches exactly once with the flag off", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => {
+        throw new Error("setup failed");
+      };
+      await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+    });
+
+    it("a throwing decide() refuses the launch under enforcement", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => {
+        throw new Error("decide blew up");
+      };
+      await expect(
+        launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
+      ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    });
+
+    it("the same throwing decide() still launches exactly once with the flag off", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => {
+        throw new Error("decide blew up");
+      };
+      await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+    });
+
+    it("a hung decide() refuses the launch under enforcement once the bound elapses", async () => {
+      vi.useFakeTimers();
+      try {
+        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+        // ensureExecutionIdFn is stubbed to resolve immediately -- real fs I/O under fake timers
+        // doesn't reliably settle via advanceTimersByTimeAsync, and this test is only about
+        // bounding decide() itself, not the (separately tested) ensureExecutionId bound.
+        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+        const buildLaunchDecideFn = () => () => new Promise(() => {});
+        const launchPromise = launchCardRun({
+          orchestrator,
+          id: "T-0001",
+          enforcementEnabledFn: () => true,
+          buildLaunchDecideFn,
+          ensureExecutionIdFn
+        });
+        const assertion = expect(launchPromise).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await assertion;
+        expect(orchestrator.runCard).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("the same hung decide() still launches exactly once, at the bound, with the flag off", async () => {
+      vi.useFakeTimers();
+      try {
+        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+        const buildLaunchDecideFn = () => () => new Promise(() => {});
+        const launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await launchPromise;
+        expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a failing reserveLaunchSlotFn (a reservation that fails to publish) refuses the launch under enforcement, through the real buildLaunchDecide path", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, reserveLaunchSlotFn: async () => { throw new Error("disk full"); } });
+      await expect(
+        launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
+      ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    });
+
+    it("the same failing reserveLaunchSlotFn still launches exactly once with the flag off", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, reserveLaunchSlotFn: async () => { throw new Error("disk full"); } });
+      await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+    });
+
+    it("a reservation that failed to publish is visible in the admission decision itself -- refused under enforcement even when every window admitted", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => ({
+        estimate: { value: 0.1, unit: "usd" },
+        telemetryReadings: {},
+        reason: "stub",
+        admission: { admitted: true, windows: {}, reservationPublished: false }
+      });
+      await expect(
+        launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn })
+      ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409, message: expect.stringMatching(/reservation/i) });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("T-0370 round 3 -- a finished launch's terminal outcome is never lost when the outer launch timeout beats the inner decision's own persistence", () => {
+    it("a never-settling estimator plus a gated fallback-persistence write still launches exactly once at the bound, and the eventually persisted decision carries the terminal outcome, not outcome: null", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+      let releaseGate;
+      const gate = new Promise((resolve) => {
+        releaseGate = resolve;
+      });
+      const buildLaunchDecideFn = (args) =>
+        realBuildLaunchDecide({
+          ...args,
+          // Never resolves on its own -- both cardLaunch's own outer bound and
+          // buildLaunchDecide's inner bound must fire their own fallbacks.
+          decideLaunchAdvisoryFn: () => new Promise(() => {}),
+          // Stands in for a decision write (the happy path AND the timeout fallback both funnel
+          // through this) that lands only once the test releases it -- well after the run has
+          // already resolved and been reconciled.
+          recordAdvisoryDecisionFn: async (recordArgs) => {
+            await gate;
+            return realRecordAdvisoryDecision(recordArgs);
+          }
+        });
+
+      vi.useFakeTimers();
+      let launchPromise;
+      try {
+        launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+        await vi.advanceTimersByTimeAsync(10_000);
+      } finally {
+        // Only the initial 8s bound needs fake time -- everything from here on is driven by the
+        // manually-controlled gate, not a timer, so real timers (and the real-fs-backed `waitFor`
+        // helper) are what let the rest of the chain actually settle.
+        vi.useRealTimers();
+      }
+      await launchPromise;
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+
+      // The default mocked runCard resolves immediately, so the fire-and-forget reconciliation
+      // chain runs well before the still-gated fallback persistence lands -- it must retain the
+      // outcome rather than discard it.
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".outcome-pending.json")));
+      expect((await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json"))).toBe(false);
+
+      releaseGate();
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json")));
+
+      const afterRelease = await fs.readdir(runsDir);
+      const advisoryFile = afterRelease.find((f) => f.endsWith(".advisory.json"));
+      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      expect(record.outcome).not.toBeNull();
+      expect(afterRelease.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    });
+
+    it("proves the ordering explicitly: reconciliation (and the outcome retention it triggers) completes before the fallback's own late persistence lands, and the two still converge", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+      let releaseGate;
+      const gate = new Promise((resolve) => {
+        releaseGate = resolve;
+      });
+      let decisionWritesObserved = 0;
+      const buildLaunchDecideFn = (args) =>
+        realBuildLaunchDecide({
+          ...args,
+          decideLaunchAdvisoryFn: () => new Promise(() => {}),
+          recordAdvisoryDecisionFn: async (recordArgs) => {
+            await gate;
+            decisionWritesObserved += 1;
+            return realRecordAdvisoryDecision(recordArgs);
+          }
+        });
+
+      vi.useFakeTimers();
+      let launchPromise;
+      try {
+        launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+        await vi.advanceTimersByTimeAsync(10_000);
+      } finally {
+        vi.useRealTimers();
+      }
+      await launchPromise;
+
+      // The run has already "finished and been reconciled" (its lease released) while the
+      // fallback's own persistence is still gated -- the ordering Codex's round-3 finding named.
+      await waitFor(async () => (await listActiveReservations({ runsDir })).length === 0);
+      expect(decisionWritesObserved).toBe(0);
+
+      releaseGate();
+      await waitFor(async () => decisionWritesObserved === 1);
+
+      const advisoryFile = (await fs.readdir(runsDir)).find((f) => f.endsWith(".advisory.json"));
+      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      expect(record.outcome).not.toBeNull();
+    });
+
+    it("a terminal marker never outlives its use -- a NORMAL (non-fallback) decision write also consumes it, and the marker is gone afterward", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+      let resolveEstimate;
+      const estimateGate = new Promise((resolve) => {
+        resolveEstimate = resolve;
+      });
+      const buildLaunchDecideFn = (args) =>
+        realBuildLaunchDecide({
+          ...args,
+          // A generous inner bound so the fixed 8s outer bound (cardLaunch.js's own, not
+          // injectable) fires first and lets the run proceed while this real decide() is still
+          // genuinely in flight -- its eventual, real (non-fallback) publish is what this test
+          // exercises, as distinct from the fallback-publish tests above.
+          timeoutMs: 20_000,
+          decideLaunchAdvisoryFn: async () => {
+            await estimateGate;
+            return {
+              estimate: { value: 0.5, unit: "usd", classification: "prior", estimatorVersion: "v1" },
+              telemetryReadings: {},
+              type: args.type,
+              fitDate: null,
+              reason: "genuine, just slow"
+            };
+          }
+        });
+
+      vi.useFakeTimers();
+      let launchPromise;
+      try {
+        launchPromise = launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, ensureExecutionIdFn });
+        await vi.advanceTimersByTimeAsync(9_000);
+      } finally {
+        vi.useRealTimers();
+      }
+      await launchPromise;
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+
+      // Reconciliation runs now, before any decision exists yet, and must retain the outcome
+      // rather than discard it.
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".outcome-pending.json")));
+      expect((await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json"))).toBe(false);
+
+      // The real (non-fallback) estimate finally resolves and gets recorded normally.
+      resolveEstimate();
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json")));
+
+      const files = await fs.readdir(runsDir);
+      const advisoryFile = files.find((f) => f.endsWith(".advisory.json"));
+      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      expect(record.outcome).not.toBeNull();
+      expect(record.reason).toMatch(/genuine, just slow/);
+      expect(files.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
+    });
+  });
+});

@@ -63,17 +63,34 @@ export async function checkAvailability({ worktreeDir }) {
 }
 
 /**
- * URL of an already-open PR for `branch`, or null if none exists. `gh pr view` goes through
- * GraphQL: if it fails transiently (GraphQL down, per the 2026-08-17 incident) that's not proof
- * no PR exists, so this falls back to the REST listing instead of reporting a false negative.
- * A genuine "not found" (or any other terminal failure) still just returns null, unchanged from
- * before.
+ * True when a `gh pr view --json url,state,headRefName` result is actually a live PR for
+ * `branch`: open, and its head is this branch (not just whatever PR gh happened to associate
+ * with the branch name). See findExistingPr's docstring for why both checks matter.
+ */
+function isLivePr(pr, branch) {
+  return typeof pr?.url === "string" && pr.state === "OPEN" && pr.headRefName === branch;
+}
+
+/**
+ * URL of an already-open PR for `branch`, or null if none is live. `gh pr view <branch>` returns
+ * whatever PR gh associates with the branch *regardless of state* -- a PR closed weeks ago (or
+ * merged, or belonging to a different head branch gh happened to match) comes back with a real
+ * url just like a currently-open one. Reusing that url produces a dead link: the card reports
+ * success with a PR reference nobody can review (T-0287, PR #271 on T-0243). So every result is
+ * checked for `state === "OPEN"` and a matching `headRefName` before its url is trusted; a
+ * closed/merged/mismatched PR is treated exactly like no PR at all, and the caller opens a fresh
+ * one.
+ *
+ * `gh pr view` goes through GraphQL: if it fails transiently (GraphQL down, per the 2026-08-17
+ * incident) that's not proof no PR exists, so this falls back to the REST listing instead of
+ * reporting a false negative. A genuine "not found" (or any other terminal failure) still just
+ * returns null, unchanged from before.
  */
 export async function findExistingPr({ worktreeDir, branch }) {
   try {
-    const { stdout } = await gh(["pr", "view", branch, "--json", "url"], worktreeDir);
+    const { stdout } = await gh(["pr", "view", branch, "--json", "url,state,headRefName"], worktreeDir);
     const data = JSON.parse(stdout);
-    return typeof data.url === "string" ? data.url : null;
+    return isLivePr(data, branch) ? data.url : null;
   } catch (err) {
     if (classifyGhError(err) === "transient") {
       return findExistingPrRest({ worktreeDir, branch });

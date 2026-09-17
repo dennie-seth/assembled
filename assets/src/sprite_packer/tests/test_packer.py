@@ -165,3 +165,61 @@ def test_check_atlas_mode_fails_on_mode_rgb():
         "check_atlas_mode must return passed=False for a mode-RGB image "
         "so silent Pillow conversions are caught at build time."
     )
+
+
+# ─── P-6: the atlas carries its sprites' transparency ────────────────────────
+
+
+@pytest.fixture()
+def cutout_sprite_dir(tmp_path: Path) -> Path:
+    """Two sprites shaped like real cutouts: an index-0 background around a blob."""
+    d = tmp_path / "cutouts"
+    d.mkdir()
+    for name, fill in [("alpha.png", 4), ("beta.png", 7)]:
+        sprite = _make_indexed_sprite(TILE_SIZE, TILE_SIZE, fill=0)
+        for y in range(4, TILE_SIZE - 4):
+            for x in range(4, TILE_SIZE - 4):
+                sprite.putpixel((x, y), fill)
+        sprite.save(d / name)
+    return d
+
+
+def test_packed_atlas_declares_the_background_index_transparent(
+    sprite_dir: Path, tmp_path: Path
+):
+    result = pack_sprites(sprite_dir, tmp_path / "out", archetype="test")
+    atlas = Image.open(result.atlas_path)
+    assert atlas.mode == "P"
+    assert atlas.info.get("transparency") == 0
+
+
+def test_atlas_transparency_survives_a_godot_style_rgba_expansion(
+    cutout_sprite_dir: Path, tmp_path: Path
+):
+    """What the engine sees: tRNS expands to a real alpha channel on load."""
+    result = pack_sprites(cutout_sprite_dir, tmp_path / "out", archetype="test")
+
+    rgba = Image.open(result.atlas_path).convert("RGBA")
+    alpha_min, alpha_max = rgba.getextrema()[3]
+    assert alpha_min == 0, "no transparent pixels -- the cutout background renders opaque"
+    assert alpha_max == 255, "no opaque pixels -- the atlas renders as nothing"
+
+
+def test_atlas_stays_byte_identical_across_runs_with_transparency(
+    sprite_dir: Path, tmp_path: Path
+):
+    """tRNS is deterministic metadata -- it must not break atlas determinism."""
+    first = pack_sprites(sprite_dir, tmp_path / "a", archetype="test").atlas_path.read_bytes()
+    second = pack_sprites(sprite_dir, tmp_path / "b", archetype="test").atlas_path.read_bytes()
+    assert first == second
+
+
+def test_packing_does_not_change_a_single_index(cutout_sprite_dir: Path, tmp_path: Path):
+    """Transparency is metadata: the packed indices are still the sprites' own."""
+    result = pack_sprites(cutout_sprite_dir, tmp_path / "out", archetype="test")
+    atlas = Image.open(result.atlas_path)
+
+    for name, (x, y, w, h) in result.regions.items():
+        source = Image.open(cutout_sprite_dir / f"{name}.png")
+        packed = atlas.crop((x, y, x + w, y + h))
+        assert list(packed.tobytes()) == list(source.tobytes()), name

@@ -2,6 +2,20 @@
 
 Every subcommand prints a PASS/FAIL report (`result.format_report`) and
 exits 0 if every check passed, 1 otherwise -- the shape CI needs.
+
+The `soundfile`/`asset_gate.audio` imports are deferred into
+`_cmd_audio_gate` (the only subcommand that needs them) rather than done at
+module level: `audio.py` itself unconditionally imports `pyloudnorm` and
+`scipy.signal`, so an unconditional top-level import here would require the
+full audio dependency stack just to import this module at all, for any
+subcommand. That's real hardening on its own terms -- a caller that only
+needs the non-audio checks no longer needs the audio stack installed just
+to import this module -- but it is NOT a fix for the 2026-09-11
+"soundfile-related import failure" report against the character package's
+test suite: nothing under assets/src/character/tests/ imports
+asset_gate.cli, so that report's actual trigger is still unidentified. See
+assets/src/character/CI_KNOWN_FAILURES_T0363.md and
+tools/asset-gate/tests/test_cli_lazy_audio_import_T0363.py (T-0363).
 """
 
 from __future__ import annotations
@@ -9,13 +23,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
-import soundfile as sf
 from PIL import Image
 
-from asset_gate import art, audio
+from asset_gate import art
+from asset_gate import character as character_mod
+from asset_gate import generator as generator_mod
 from asset_gate import palette as palette_mod
 from asset_gate import provenance as provenance_mod
+from asset_gate import transparency as transparency_mod
+from asset_gate import visibility as visibility_mod
 from asset_gate.result import CheckResult, all_passed, format_report
 
 
@@ -56,7 +74,127 @@ def _cmd_provenance_model_hash(args: argparse.Namespace) -> int:
     return _report_and_exit([provenance_mod.check_provenance_model_hash(prov)])
 
 
+def _cmd_provenance_sweep(args: argparse.Namespace) -> int:
+    baseline = provenance_mod.load_baseline()
+    results = provenance_mod.sweep_provenance_model_hash(args.root, baseline=baseline)
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
+def _cmd_generator_sweep(args: argparse.Namespace) -> int:
+    baseline = generator_mod.load_generator_baseline()
+    results = generator_mod.sweep_provenance_generator_resolvable(
+        args.root, repo_root=args.repo_root, baseline=baseline
+    )
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
+def _cmd_generator_hash_sweep(args: argparse.Namespace) -> int:
+    results = generator_mod.sweep_generator_hash_matches(args.root, repo_root=args.repo_root)
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
+def _cmd_character_arm_c_sweep(args: argparse.Namespace) -> int:
+    baseline = character_mod.load_character_arm_c_baseline()
+    results = character_mod.sweep_character_arm_c_provenance(args.root, baseline=baseline)
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
+def _cmd_character_frame_delta_cap_sweep(args: argparse.Namespace) -> int:
+    baseline = character_mod.load_character_arm_c_baseline()
+    results = character_mod.sweep_character_frame_delta_cap(args.root, baseline=baseline)
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
+def _cmd_character_motion_fidelity_sweep(args: argparse.Namespace) -> int:
+    results = character_mod.sweep_character_motion_fidelity(args.root)
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
+def _cmd_character_gate_report(args: argparse.Namespace) -> int:
+    sheet = Image.open(args.image)
+    provenance = json.loads(args.provenance.read())
+    report = character_mod.build_character_gate_report(
+        sheet,
+        provenance,
+        cols=args.cols,
+        rows=args.rows,
+        cell_px=args.cell_px,
+        background_index=args.background_index,
+        sheet_name=args.sheet_name if args.sheet_name else args.image,
+        repo_root=args.repo_root,
+    )
+    text = json.dumps(report, indent=2) + "\n"
+    if args.out:
+        Path(args.out).write_text(text)
+    else:
+        print(text)
+    passed = all(check["passed"] for check in report["checks"].values())
+    return 0 if passed else 1
+
+
+def _cmd_character_gate(args: argparse.Namespace) -> int:
+    baseline = character_mod.load_character_arm_c_baseline()
+    motion_class_baseline = character_mod.load_character_motion_class_baseline()
+    motion_score_binding_baseline = character_mod.load_character_motion_score_binding_baseline()
+    results = character_mod.sweep_character_gate(
+        args.root,
+        repo_root=args.repo_root,
+        baseline=baseline,
+        motion_class_baseline=motion_class_baseline,
+        motion_score_binding_baseline=motion_score_binding_baseline,
+    )
+    if not results:
+        print(f"no *.provenance.json files found under {args.root}")
+    return _report_and_exit(results)
+
+
+def _cmd_art_visibility(args: argparse.Namespace) -> int:
+    image = Image.open(args.image)
+    result = visibility_mod.check_rendered_visibility(
+        image, min_visible_colors=args.min_visible_colors
+    )
+    return _report_and_exit([result])
+
+
+def _cmd_art_transparency(args: argparse.Namespace) -> int:
+    image = Image.open(args.image)
+    return _report_and_exit([transparency_mod.check_background_transparency(image)])
+
+
+def _cmd_transparency_sweep(args: argparse.Namespace) -> int:
+    baseline = transparency_mod.load_transparency_baseline()
+    results = transparency_mod.sweep_sprite_transparency(args.root, baseline=baseline)
+    if not results:
+        print(f"no *.png files found under {args.root}")
+    return _report_and_exit(results)
+
+
+def _cmd_visibility_sweep(args: argparse.Namespace) -> int:
+    results = visibility_mod.sweep_rendered_visibility(
+        args.root, min_visible_colors=args.min_visible_colors
+    )
+    if not results:
+        print(f"no *.png files found under {args.root}")
+    return _report_and_exit(results)
+
+
 def _cmd_audio_gate(args: argparse.Namespace) -> int:
+    import soundfile as sf
+
+    from asset_gate import audio
+
     samples, sample_rate = sf.read(args.audio, always_2d=False)
     targets = audio.load_loudness_targets(args.loudness_targets)
     results = [
@@ -81,6 +219,145 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("provenance", type=argparse.FileType("r"), help=".provenance.json path")
     p.set_defaults(func=_cmd_provenance_model_hash)
 
+    p = sub.add_parser(
+        "provenance-sweep",
+        help=(
+            "recursively validate model_hash in every *.provenance.json under "
+            "a directory (T-0151/HANDOFF §21 -- catches gaps in any writer)"
+        ),
+    )
+    p.add_argument("root", help="directory to search recursively (e.g. assets/)")
+    p.set_defaults(func=_cmd_provenance_sweep)
+
+    p = sub.add_parser(
+        "generator-sweep",
+        help=(
+            "recursively validate that the generator field in every *.provenance.json "
+            "resolves to a committed repo file (T-0219/HANDOFF §22-c)"
+        ),
+    )
+    p.add_argument("root", help="directory to search recursively (e.g. assets/)")
+    p.add_argument(
+        "--repo-root",
+        default=".",
+        help="repository root used to resolve generator paths (default: current directory)",
+    )
+    p.set_defaults(func=_cmd_generator_sweep)
+
+    p = sub.add_parser(
+        "generator-hash-sweep",
+        help=(
+            "recursively validate that the generator_hash field in every "
+            "*.provenance.json (where present) matches the actual sha256 of its "
+            "generator file (T-0238 -- catches fabricated/stale hashes)"
+        ),
+    )
+    p.add_argument("root", help="directory to search recursively (e.g. assets/)")
+    p.add_argument(
+        "--repo-root",
+        default=".",
+        help="repository root used to resolve generator paths (default: current directory)",
+    )
+    p.set_defaults(func=_cmd_generator_hash_sweep)
+
+    p = sub.add_parser(
+        "character-arm-c-sweep",
+        help=(
+            "recursively validate that every character-class *.provenance.json under "
+            "a directory records frame_delta_range + the Arm-C benchmark comparison "
+            "(docs/board-invariants.md CHR-1, T-0258)"
+        ),
+    )
+    p.add_argument(
+        "root", help="directory whose subdirectories are asset classes (e.g. assets/final)"
+    )
+    p.set_defaults(func=_cmd_character_arm_c_sweep)
+
+    p = sub.add_parser(
+        "character-frame-delta-cap-sweep",
+        help=(
+            "recursively validate that every idle/unlabelled character-class "
+            "*.provenance.json under a directory stays within the 0.30 frame-delta cap "
+            "-- locomotion/transition/loop are retired from this sweep, see "
+            "character-motion-fidelity-sweep (docs/decision-log.md DL-26/DL-31, T-0271/T-0340)"
+        ),
+    )
+    p.add_argument(
+        "root", help="directory whose subdirectories are asset classes (e.g. assets/final)"
+    )
+    p.set_defaults(func=_cmd_character_frame_delta_cap_sweep)
+
+    p = sub.add_parser(
+        "character-motion-fidelity-sweep",
+        help=(
+            "recursively validate that every locomotion/transition/loop character-class "
+            "*.provenance.json under a directory clears the pose-fidelity IoU floor and "
+            "stays within the identity-stability histogram cap -- the replacement for the "
+            "retired whole-silhouette frame-delta cap (docs/decision-log.md DL-31, T-0340)"
+        ),
+    )
+    p.add_argument(
+        "root", help="directory whose subdirectories are asset classes (e.g. assets/final)"
+    )
+    p.set_defaults(func=_cmd_character_motion_fidelity_sweep)
+
+    p = sub.add_parser(
+        "character-gate-report",
+        help=(
+            "emit a machine-readable per-frame gate report (grid, motion class, "
+            "thresholds, per-pair pixel-delta counts, silhouette ratios, reused "
+            "PASS/FAIL) for a character sheet, so a reviewer reads it instead of "
+            "re-deriving frame deltas by hand (T-0349)"
+        ),
+    )
+    p.add_argument("image")
+    p.add_argument("--provenance", required=True, type=argparse.FileType("r"))
+    p.add_argument("--cols", type=int, required=True)
+    p.add_argument("--rows", type=int, required=True)
+    p.add_argument("--cell-px", type=int, required=True)
+    p.add_argument("--background-index", type=int, default=0)
+    p.add_argument(
+        "--sheet-name",
+        default=None,
+        help="identity recorded in the report's 'sheet' field (default: the image path as given)",
+    )
+    p.add_argument("--out", default=None, help="write the JSON report here instead of stdout")
+    p.add_argument(
+        "--repo-root",
+        default=".",
+        help=(
+            "repository root used to resolve each frame's versioned rig-keypoints file "
+            "(frame_generation[i].pose_keypoints_file) when recomputing motion fidelity "
+            "from pixels (T-0357; default: current directory)"
+        ),
+    )
+    p.set_defaults(func=_cmd_character_gate_report)
+
+    p = sub.add_parser(
+        "character-gate",
+        help=(
+            "the single authoritative character validator (T-0357): CHR-1 presence, the "
+            "idle frame-delta cap, a validated motion_class declaration, and -- recomputed "
+            "live from each sheet's own PNG + versioned rig keypoints, never trusted from "
+            "the sidecar -- pose-fidelity/identity-stability for locomotion/transition/loop. "
+            "This is the one command both ci-asset-gate.yml and the board's reviewer route "
+            "run, so there is exactly one enforcement path (docs/board-invariants.md CHR-1, "
+            "docs/decision-log.md DL-31)"
+        ),
+    )
+    p.add_argument(
+        "root", help="directory whose subdirectories are asset classes (e.g. assets/final)"
+    )
+    p.add_argument(
+        "--repo-root",
+        default=".",
+        help=(
+            "repository root used to resolve versioned rig-keypoints files "
+            "(default: current directory)"
+        ),
+    )
+    p.set_defaults(func=_cmd_character_gate)
+
     p = sub.add_parser("art-palette", help="palette membership + index semantics (P-4)")
     p.add_argument("image")
     p.add_argument("--palette", required=True)
@@ -100,6 +377,43 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("image")
     p.add_argument("--palette", required=True)
     p.set_defaults(func=_cmd_art_indexed_preservation)
+
+    p = sub.add_parser(
+        "art-visibility",
+        help="reject a fully-transparent or blank/uniform image (T-0215 alpha-zero bug)",
+    )
+    p.add_argument("image")
+    p.add_argument("--min-visible-colors", type=int, default=3)
+    p.set_defaults(func=_cmd_art_visibility)
+
+    p = sub.add_parser(
+        "visibility-sweep",
+        help=(
+            "recursively reject any fully-transparent or blank/uniform *.png "
+            "under a directory (e.g. assets/final -- catches PR #231-style regressions)"
+        ),
+    )
+    p.add_argument("root", help="directory to search recursively (e.g. assets/final)")
+    p.add_argument("--min-visible-colors", type=int, default=3)
+    p.set_defaults(func=_cmd_visibility_sweep)
+
+    p = sub.add_parser(
+        "art-transparency",
+        help="reject a sprite whose background is opaque (P-6, the T-0252 §24-e bug)",
+    )
+    p.add_argument("image")
+    p.set_defaults(func=_cmd_art_transparency)
+
+    p = sub.add_parser(
+        "transparency-sweep",
+        help=(
+            "recursively reject any sprite *.png under a directory whose background "
+            "is opaque (e.g. assets/final -- tiles and the palette LUT are exempt "
+            "by asset class, documented exceptions live in transparency_baseline.txt)"
+        ),
+    )
+    p.add_argument("root", help="directory to search recursively (e.g. assets/final)")
+    p.set_defaults(func=_cmd_transparency_sweep)
 
     p = sub.add_parser("audio-gate", help="run the standard single-file audio checks")
     p.add_argument("audio")

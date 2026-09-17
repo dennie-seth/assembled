@@ -2,7 +2,14 @@
 ## Uses PlayerState for the four animation states and binary walk/run noise flag.
 ## §11 §4: walk/run noise is a binary flag off movement state, not a meter.
 ## T-0184 §16-a one-room blockout.
-class_name PlayerController
+##
+## No class_name here — client/player_controller.gd (T-0173/T-0188) already
+## declares the global PlayerController class_name, and Godot does not allow
+## two scripts to declare the same one (see
+## tests/test_no_duplicate_class_names.gd). Every caller of this file already
+## loads it by path (preload("res://scripts/player_controller.gd")), never by
+## the global type name, so dropping the redundant declaration changes
+## nothing observable.
 extends CharacterBody2D
 
 const WALK_SPEED: float = 64.0  ## px/s — approx 4 tiles/s

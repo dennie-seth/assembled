@@ -7,7 +7,24 @@ import { checkPlannerDiffGuard } from "../lib/plannerDiffGuard.js";
 
 const execFileAsync = promisify(execFile);
 
-const MUTABLE_FIELDS = ["title", "priority", "phase", "agent", "depends_on", "created", "deliverable_type", "body"];
+// What a planner run is allowed to change on an existing card. `requires_approval` is here on
+// purpose: flagging a direction card as needing a human verdict is spec work, exactly what the
+// planner is for. `approved_by`/`approved_at` are deliberately absent -- the approval *record*
+// is written only by the server when a human actually approves. A planner that writes one into
+// a card file does not merely have it dropped here: `checkPlannerDiffGuard`, which
+// `diffPlannerFileView` runs first, fails the whole reconciliation on it, the same way it does
+// a status flip.
+const MUTABLE_FIELDS = [
+  "title",
+  "priority",
+  "phase",
+  "agent",
+  "depends_on",
+  "created",
+  "deliverable_type",
+  "requires_approval",
+  "body"
+];
 
 async function git(args, cwd) {
   return execFileAsync("git", args, { cwd });

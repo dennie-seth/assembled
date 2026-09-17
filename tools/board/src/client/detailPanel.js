@@ -59,6 +59,22 @@ function captureDirtyFields(root, previousTask) {
     dirty.phase = phaseEl.value;
   }
 
+  const maxAttemptsEl = root.querySelector(".detail-max-attempts");
+  if (maxAttemptsEl) {
+    const previousValue = previousTask.max_attempts != null ? String(previousTask.max_attempts) : "";
+    if (maxAttemptsEl.value !== previousValue) {
+      dirty.maxAttempts = maxAttemptsEl.value;
+    }
+  }
+
+  const complexityPointsEl = root.querySelector(".detail-complexity-points");
+  if (complexityPointsEl) {
+    const previousValue = previousTask.complexity_points != null ? String(previousTask.complexity_points) : "";
+    if (complexityPointsEl.value !== previousValue) {
+      dirty.complexityPoints = complexityPointsEl.value;
+    }
+  }
+
   const chipIds = Array.from(root.querySelectorAll(".detail-deps-edit .deps-chip")).map(
     (chip) => chip.dataset.id
   );
@@ -70,6 +86,22 @@ function captureDirtyFields(root, previousTask) {
   const bodyEl = root.querySelector(".detail-body-edit");
   if (bodyEl && bodyEl.value !== previousTask.body) {
     dirty.body = bodyEl.value;
+  }
+
+  // An un-submitted comment is user-authored data with no copy anywhere else --
+  // losing it is the worst outcome on this panel. The focus/caret restore below only
+  // covers it while it HAS focus; this covers a draft the user clicked away from.
+  const commentEl = root.querySelector(".detail-comment-input");
+  if (commentEl && commentEl.value.length > 0) {
+    dirty.comment = commentEl.value;
+  }
+
+  // Delete-confirm is pure DOM state. A rebuild silently reverts it, so a user who
+  // read the prompt and reached for "Yes, delete" ends up clicking a re-rendered
+  // "Delete" button instead -- their confirmed intent dropped with no signal.
+  const confirmEl = root.querySelector(".detail-delete-confirm");
+  if (confirmEl && confirmEl.hidden === false) {
+    dirty.deleteConfirmOpen = true;
   }
 
   return dirty;
@@ -147,6 +179,29 @@ function selectFor(options, selected) {
   return select;
 }
 
+// Mirrors COMPLEXITY_POINTS_VALUES in src/lib/taskParser.js (server-only module, not importable
+// from the client bundle) -- the Fibonacci planning-only scale (T-0368, spec §2/§10 step 2).
+const COMPLEXITY_POINTS_VALUES = [1, 2, 3, 5, 8, 13, 21];
+const NO_SCORE_VALUE = "";
+
+function complexityPointsSelectFor(selected) {
+  const select = document.createElement("select");
+
+  const noScore = document.createElement("option");
+  noScore.value = NO_SCORE_VALUE;
+  noScore.textContent = "No score";
+  select.appendChild(noScore);
+
+  for (const value of COMPLEXITY_POINTS_VALUES) {
+    const opt = document.createElement("option");
+    opt.value = String(value);
+    opt.textContent = String(value);
+    select.appendChild(opt);
+  }
+  select.value = selected;
+  return select;
+}
+
 function agentSelectFor(agentOptions, currentAgent) {
   const select = document.createElement("select");
 
@@ -184,9 +239,11 @@ const MAX_AUTO_RETRY_ATTEMPTS = 5;
 
 function attemptsInfoFor(task) {
   if (!task.attempts) return null;
+  // T-0343: a card's own max_attempts overrides the default cap shown here.
+  const cap = Number.isInteger(task.max_attempts) ? task.max_attempts : MAX_AUTO_RETRY_ATTEMPTS;
   const info = document.createElement("div");
   info.className = "detail-attempts";
-  info.textContent = `Auto-retry: run ${task.attempts} of ${MAX_AUTO_RETRY_ATTEMPTS}`;
+  info.textContent = `Auto-retry: run ${task.attempts} of ${cap}`;
   return info;
 }
 
@@ -415,6 +472,36 @@ export function renderDetailPanel(
   phaseInput.value = dirty.phase !== undefined ? dirty.phase : String(task.phase);
   phaseInput.dataset.detailField = "phase";
 
+  // T-0343: per-card override of MAX_AUTO_RETRY_ATTEMPTS. Empty means "no override" -- the
+  // orchestrator's own default applies -- so this never forces a value onto a card that hasn't
+  // been given one.
+  const maxAttemptsInput = document.createElement("input");
+  maxAttemptsInput.type = "number";
+  maxAttemptsInput.className = "detail-max-attempts";
+  maxAttemptsInput.min = "1";
+  maxAttemptsInput.placeholder = String(MAX_AUTO_RETRY_ATTEMPTS);
+  maxAttemptsInput.value =
+    dirty.maxAttempts !== undefined
+      ? dirty.maxAttempts
+      : task.max_attempts != null
+        ? String(task.max_attempts)
+        : "";
+  maxAttemptsInput.dataset.detailField = "maxAttempts";
+
+  // T-0368: complexity_points is a human planning signal only -- see
+  // test/complexityPointsLaunchIsolation.test.js for the guarantee that nothing in the
+  // launch/admission/cost path ever reads it. "No score" (null) is a first-class option, not
+  // just an unset default.
+  const complexityPointsSelect = complexityPointsSelectFor(
+    dirty.complexityPoints !== undefined
+      ? dirty.complexityPoints
+      : task.complexity_points != null
+        ? String(task.complexity_points)
+        : NO_SCORE_VALUE
+  );
+  complexityPointsSelect.className = "detail-complexity-points";
+  complexityPointsSelect.dataset.detailField = "complexityPoints";
+
   const depsEl = document.createElement("div");
   depsEl.className = "detail-deps";
   depsEl.textContent =
@@ -450,7 +537,10 @@ export function renderDetailPanel(
       body: bodyTextarea.value,
       agent: agentSelect.value === UNASSIGNED_AGENT_VALUE ? null : agentSelect.value,
       phase: Number(phaseInput.value),
-      depends_on: depsPicker.getSelected()
+      depends_on: depsPicker.getSelected(),
+      max_attempts: maxAttemptsInput.value.trim() === "" ? null : Number(maxAttemptsInput.value),
+      complexity_points:
+        complexityPointsSelect.value === NO_SCORE_VALUE ? null : Number(complexityPointsSelect.value)
     };
     const patch = buildUpdateBody(task, edited);
     if (Object.keys(patch).length > 0) {
@@ -465,6 +555,8 @@ export function renderDetailPanel(
     labeledField("Status", statusSelect),
     labeledField("Agent", agentSelect),
     labeledField("Phase", phaseInput),
+    labeledField("Max attempts", maxAttemptsInput),
+    labeledField("Complexity points", complexityPointsSelect),
     depsEl,
     labeledField("Depends on (edit)", depsPicker.element)
   );
@@ -489,6 +581,20 @@ export function renderDetailPanel(
   panel.append(preview, labeledField("Body (markdown)", bodyTextarea), saveBtn, deleteControlsFor(task, onDelete));
 
   root.appendChild(panel);
+
+  if (typeof dirty.comment === "string") {
+    const commentEl = root.querySelector(".detail-comment-input");
+    if (commentEl) commentEl.value = dirty.comment;
+  }
+  if (dirty.deleteConfirmOpen) {
+    const confirmEl = root.querySelector(".detail-delete-confirm");
+    const deleteEl = root.querySelector(".detail-delete");
+    if (confirmEl && deleteEl) {
+      confirmEl.hidden = false;
+      deleteEl.hidden = true;
+    }
+  }
+
   restoreFocusState(root, focusState);
   root.__lastTask = task;
 }

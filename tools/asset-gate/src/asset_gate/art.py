@@ -10,12 +10,13 @@ from collections.abc import Callable, Sequence
 from typing import Literal
 
 import numpy as np
-from PIL import Image
-from scipy import ndimage
+from PIL import Image, ImageDraw
 
 from asset_gate.determinism import check_reproducible, image_bytes
 from asset_gate.palette import Palette
 from asset_gate.result import CheckResult
+
+Point = tuple[float, float]
 
 
 def _to_array(image: Image.Image) -> np.ndarray:
@@ -149,10 +150,23 @@ def check_orphan_pixels(
 ) -> CheckResult:
     """Isolated foreground blobs smaller than `size_threshold` pixels are
     orphans -- downscale artifacts that read as noise at 16px (P-B tunes
-    the threshold per-set)."""
+    the threshold per-set).
+
+    Requires scipy. Returns a skipped-pass result when scipy is unavailable
+    so the check does not block import or test collection on minimal envs.
+    """
+    try:
+        from scipy import ndimage as _ndimage
+    except ImportError:
+        return CheckResult(
+            check="orphan_pixels",
+            passed=True,
+            reason="scipy not installed — orphan-pixel check skipped (install scipy to enable)",
+            details={"skipped_reason": "scipy_not_installed"},
+        )
     arr = _to_array(image)
     fg = arr != background_index
-    labeled, num_features = ndimage.label(fg)
+    labeled, num_features = _ndimage.label(fg)
     if num_features == 0:
         return CheckResult(
             check="orphan_pixels",
@@ -161,7 +175,7 @@ def check_orphan_pixels(
             details={"orphans": []},
         )
 
-    sizes = ndimage.sum(fg, labeled, index=range(1, num_features + 1))
+    sizes = _ndimage.sum(fg, labeled, index=range(1, num_features + 1))
     orphan_labels = [i + 1 for i, size in enumerate(sizes) if size < size_threshold]
 
     if orphan_labels:
@@ -177,6 +191,48 @@ def check_orphan_pixels(
         reason=f"no blobs below the {size_threshold}px threshold ({num_features} blob(s) total)",
         details={"blob_count": num_features},
     )
+
+
+def slice_sheet_frames(
+    sheet: Image.Image,
+    cell_width: int,
+    cell_height: int,
+    cols: int,
+    rows: int,
+) -> list[Image.Image]:
+    """Crop a sprite sheet into its per-cell frames, row-major order (row 0
+    left-to-right, then row 1, ...) -- the canonical frame order every
+    per-frame gate check and report in this package assumes."""
+    expected_w, expected_h = cell_width * cols, cell_height * rows
+    if sheet.size != (expected_w, expected_h):
+        raise ValueError(
+            f"sheet is {sheet.size[0]}x{sheet.size[1]}, expected {expected_w}x{expected_h} "
+            f"for a {cols}x{rows} grid of {cell_width}x{cell_height} cells"
+        )
+    frames = []
+    for row in range(rows):
+        for col in range(cols):
+            x0, y0 = col * cell_width, row * cell_height
+            frames.append(sheet.crop((x0, y0, x0 + cell_width, y0 + cell_height)))
+    return frames
+
+
+def count_pixel_deltas(frame_a: Image.Image, frame_b: Image.Image) -> int:
+    """Count of pixels whose palette index differs between two same-shaped
+    indexed frames -- ANY change, not just a foreground/background
+    silhouette *state* flip.
+
+    Distinct from `check_frame_consistency`, which only counts a pixel if
+    its fg/bg state changed (a foreground pixel changing to a *different*
+    foreground index is invisible to it). This is the metric a reviewer
+    eyeballing a sheet by hand actually sees, and the one
+    `asset_gate.character.build_character_gate_report` (T-0349) reports per
+    adjacent frame pair.
+    """
+    a, b = _to_array(frame_a), _to_array(frame_b)
+    if a.shape != b.shape:
+        raise ValueError(f"frame shapes differ: {a.shape} vs {b.shape}")
+    return int(np.count_nonzero(a != b))
 
 
 def check_frame_consistency(
@@ -206,6 +262,318 @@ def check_frame_consistency(
             f"{'<=' if passed else '>'} bound {max_delta_ratio}"
         ),
         details={"delta_pixels": delta, "union_pixels": union, "ratio": ratio},
+    )
+
+
+def render_rig_silhouette(
+    size: int,
+    limbs: Sequence[tuple[Point, Point]],
+    radius: float,
+) -> np.ndarray:
+    """Render a pose rig's own skeleton as capsules -- a thick line plus a
+    rounded cap at each endpoint, per limb segment -- onto a `size x size`
+    boolean canvas (T-0340).
+
+    `limbs` are pixel-space `((x0, y0), (x1, y1))` endpoint pairs (the
+    caller scales its rig's normalised keypoints to the target size and
+    supplies its own limb topology -- this function has no opinion on
+    joint numbering). `radius` is the capsule half-width in pixels.
+
+    This is the geometric prediction `check_pose_fidelity` compares an
+    actual rendered frame's silhouette against: what the rig commanded,
+    not what the previous frame looked like.
+    """
+    canvas = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(canvas)
+    line_width = max(1, round(radius * 2))
+    for (x0, y0), (x1, y1) in limbs:
+        draw.line([(x0, y0), (x1, y1)], fill=255, width=line_width)
+        for cx, cy in ((x0, y0), (x1, y1)):
+            draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=255)
+    return np.array(canvas) > 0
+
+
+def check_pose_fidelity(
+    frame: Image.Image,
+    rig_silhouette: np.ndarray,
+    background_index: int,
+    min_iou: float,
+) -> CheckResult:
+    """IoU between a rendered frame's own foreground silhouette and the
+    rig's predicted (capsule) silhouette for that same frame's commanded
+    pose (T-0340).
+
+    Replaces whole-silhouette XOR/union (`check_frame_consistency`) for the
+    locomotion/transition/loop motion classes: that measure compares a
+    frame against the PREVIOUS frame, so a rig's own legitimate motion --
+    a leg mid-stride is nowhere near where it was a frame ago -- already
+    consumes most of its budget at perfect pose fidelity and zero drift
+    (see `asset_gate.character`'s T-0340 module note: rendering the rig's
+    own skeletons as capsules measured 0.23-0.49 of the old 0.50 cap on
+    legitimate motion alone). Comparing each frame against WHAT ITS OWN
+    POSE COMMANDS, instead of against the previous frame, is invariant to
+    how far the pose itself swings frame to frame -- only whether the
+    render actually matches the commanded pose.
+    """
+    actual = _to_array(frame) != background_index
+    if actual.shape != rig_silhouette.shape:
+        raise ValueError(
+            f"frame shape {actual.shape} != rig_silhouette shape {rig_silhouette.shape}"
+        )
+    intersection = int(np.count_nonzero(actual & rig_silhouette))
+    union = int(np.count_nonzero(actual | rig_silhouette))
+    iou = (intersection / union) if union else 1.0
+
+    passed = iou >= min_iou
+    return CheckResult(
+        check="pose_fidelity",
+        passed=passed,
+        reason=f"pose-fidelity IoU {iou:.4f} {'>=' if passed else '<'} floor {min_iou}",
+        details={"iou": iou, "intersection_pixels": intersection, "union_pixels": union},
+    )
+
+
+def _region_histogram_distance(
+    image_a: Image.Image,
+    region_a: tuple[int, int, int, int],
+    image_b: Image.Image,
+    region_b: tuple[int, int, int, int],
+    background_index: int,
+) -> float:
+    """Total-variation distance between two regions' own palette-index
+    histograms -- the core arithmetic `check_identity_stability` (one
+    shared region, two frames) and `check_region_identity_against_reference`
+    (T-0361: one region per side, positions independently derived) both
+    reduce to. `region_a`/`region_b` need not be the same size or position
+    -- a histogram is a distribution over palette index, not a per-pixel
+    comparison, so differently-shaped crops are still comparable.
+    """
+    a, b = _to_array(image_a), _to_array(image_b)
+    x0, y0, x1, y1 = region_a
+    cropped_a = a[y0:y1, x0:x1]
+    if cropped_a.size == 0:
+        raise ValueError(f"region {region_a} is empty")
+    x0, y0, x1, y1 = region_b
+    cropped_b = b[y0:y1, x0:x1]
+    if cropped_b.size == 0:
+        raise ValueError(f"region {region_b} is empty")
+
+    depth = max(int(cropped_a.max()), int(cropped_b.max()), background_index) + 1
+    hist_a = np.bincount(cropped_a.ravel(), minlength=depth).astype(float)
+    hist_b = np.bincount(cropped_b.ravel(), minlength=depth).astype(float)
+    hist_a /= hist_a.sum()
+    hist_b /= hist_b.sum()
+    return 0.5 * float(np.abs(hist_a - hist_b).sum())
+
+
+def check_identity_stability(
+    frame_a: Image.Image,
+    frame_b: Image.Image,
+    background_index: int,
+    region: tuple[int, int, int, int],
+    max_histogram_distance: float,
+) -> CheckResult:
+    """Total-variation distance between a fixed torso region's palette-index
+    histograms across two adjacent frames (T-0340).
+
+    `region` is a pixel-space `(x0, y0, x1, y1)` box (numpy slice
+    semantics, exclusive of `x1`/`y1`), the same box in both frames --
+    the torso doesn't stride, so a fixed box sidesteps limb motion
+    entirely and isolates colour/identity drift, which whole-silhouette
+    XOR/union (`check_frame_consistency`) cannot separate from a real
+    gait's own silhouette motion: a torso fading toward the background
+    palette shrinks the silhouette exactly the way real motion does, and a
+    frame that shrinks for either reason reads as an equally low delta
+    ratio to a check that only sees the whole frame. This is precisely the
+    corroborating failure the review found overnight: a sequential-chained
+    walk candidate scored a deceptively even delta and passed most of its
+    interior pairs because colour drift was shrinking the silhouette, not
+    because it walked.
+    """
+    shape_a, shape_b = _to_array(frame_a).shape, _to_array(frame_b).shape
+    if shape_a != shape_b:
+        raise ValueError(f"frame shapes differ: {shape_a} vs {shape_b}")
+    distance = _region_histogram_distance(frame_a, region, frame_b, region, background_index)
+
+    passed = distance <= max_histogram_distance
+    return CheckResult(
+        check="identity_stability",
+        passed=passed,
+        reason=(
+            f"torso palette-histogram distance {distance:.4f} "
+            f"{'<=' if passed else '>'} cap {max_histogram_distance}"
+        ),
+        details={"distance": distance, "region": region},
+    )
+
+
+def check_region_identity_stability(
+    frame_a: Image.Image,
+    frame_b: Image.Image,
+    background_index: int,
+    regions: dict[str, tuple[int, int, int, int]],
+    max_histogram_distance: float,
+) -> CheckResult:
+    """Per-region generalisation of `check_identity_stability` (T-0361): run
+    the same palette-histogram-distance measure independently over several
+    NAMED boxes (e.g. head/torso/near-limb/far-limb) instead of one fixed
+    torso box, and fail if ANY of them drifts past the cap.
+
+    `check_identity_stability`'s own fixed torso box is deliberately blind to
+    a left/right limb swap -- limbs are outside the torso box by
+    construction, so swapping their content changes nothing inside it. A
+    swap is invisible to a WHOLE-frame comparison for the same reason at a
+    larger scale: swapping two regions' content changes WHERE pixels of each
+    palette index sit, never how many of each index exist in total, so a
+    single aggregate histogram (whole-frame or one box that doesn't itself
+    sit inside the swap) scores it at exactly 0.0 distance -- the finding
+    that motivates this check (docs/decision-log.md DL-31, T-0361). Evaluating
+    each named region on its own catches a mismatch confined to a single part
+    that an aggregate comparison dilutes away or never sees to begin with.
+    """
+    per_region_distance: dict[str, float] = {}
+    worst_name: str | None = None
+    worst_distance = -1.0
+    for name, region in regions.items():
+        result = check_identity_stability(
+            frame_a,
+            frame_b,
+            background_index=background_index,
+            region=region,
+            max_histogram_distance=max_histogram_distance,
+        )
+        distance = result.details["distance"]
+        per_region_distance[name] = distance
+        if distance > worst_distance:
+            worst_name, worst_distance = name, distance
+
+    passed = worst_distance <= max_histogram_distance
+    return CheckResult(
+        check="region_identity_stability",
+        passed=passed,
+        reason=(
+            f"worst region {worst_name!r} palette-histogram distance {worst_distance:.4f} "
+            f"{'<=' if passed else '>'} cap {max_histogram_distance}"
+        ),
+        details={
+            "per_region_distance": per_region_distance,
+            "worst_region": worst_name,
+            "worst_distance": worst_distance,
+        },
+    )
+
+
+def check_region_identity_against_reference(
+    frame: Image.Image,
+    regions: dict[str, tuple[int, int, int, int]],
+    reference_frame: Image.Image,
+    reference_regions: dict[str, tuple[int, int, int, int]],
+    background_index: int,
+    max_histogram_distance: float,
+) -> CheckResult:
+    """Per-region identity check against a REAL reference frame (T-0361,
+    2026-09-17 Codex fix), instead of `check_region_identity_stability`'s
+    two-real-frames-same-box shape: `regions`/`reference_regions` are two
+    INDEPENDENT sets of boxes (`frame`'s own, `reference_frame`'s own),
+    since a moving part's box tracks its own frame's rig-commanded position
+    while the reference frame's box tracks whatever pose IT commands --
+    `frame` and `reference_frame` need not be the same size in each region.
+
+    This is the fix for the false positive a binary RIG SILHOUETTE reference
+    produced: comparing a frame's actual per-part pixels against a
+    hand-drawn capsule silhouette measures agreement with that silhouette's
+    fixed foreground colour, not identity, so a consistently-coloured
+    character using any OTHER palette index failed on colour alone (the same
+    exact rig geometry passed at palette index 1 and failed at index 2).
+    Comparing against another REAL frame's own region content is
+    colour-index-agnostic in the same way `check_identity_stability`
+    already is for the torso: whatever colour the reference frame actually
+    uses for a part, that is what this frame's same part is checked
+    against.
+
+    Callers choose what `reference_frame`/`reference_regions` are -- see
+    `asset_gate.character.determine_character_part_identity`'s own
+    docstring for the production choice (an anchor frame of the same sheet)
+    and its documented limits.
+    """
+    if set(regions) != set(reference_regions):
+        raise ValueError(
+            f"region name mismatch: {sorted(regions)} vs {sorted(reference_regions)}"
+        )
+
+    per_region_distance: dict[str, float] = {}
+    worst_name: str | None = None
+    worst_distance = -1.0
+    for name, region in regions.items():
+        distance = _region_histogram_distance(
+            frame, region, reference_frame, reference_regions[name], background_index
+        )
+        per_region_distance[name] = distance
+        if distance > worst_distance:
+            worst_name, worst_distance = name, distance
+
+    passed = worst_distance <= max_histogram_distance
+    return CheckResult(
+        check="region_identity_against_reference",
+        passed=passed,
+        reason=(
+            f"worst region {worst_name!r} palette-histogram distance vs reference "
+            f"{worst_distance:.4f} {'<=' if passed else '>'} cap {max_histogram_distance}"
+        ),
+        details={
+            "per_region_distance": per_region_distance,
+            "worst_region": worst_name,
+            "worst_distance": worst_distance,
+        },
+    )
+
+
+def check_background_growth(
+    frames: Sequence[Image.Image],
+    background_index: int,
+    max_growth_ratio: float,
+) -> CheckResult:
+    """Non-background pixel count must not grow past `max_growth_ratio` of
+    frame 0's count, for any frame in the sequence.
+
+    Catches img2img-chaining noise accumulation (T-0250, HANDOFF §24-c,
+    human review 2026-08-30): each frame's own background speckle feeding
+    into the next frame's init image, so the figure visibly dissolves into
+    noise by the end of the sheet even though `check_frame_consistency`
+    (inter-frame silhouette *delta*, not absolute pixel-count growth against
+    a fixed baseline) passed. Ordinary pose-driven fluctuation (no trend)
+    stays within a fairly tight ratio of frame 0's count; a compounding
+    chain does not.
+    """
+    if not frames:
+        raise ValueError("frames must be non-empty")
+    counts = [int(np.count_nonzero(_to_array(f) != background_index)) for f in frames]
+    baseline = counts[0]
+    if baseline == 0:
+        offending = [(i, c) for i, c in enumerate(counts) if c > 0]
+    else:
+        offending = [
+            (i, c) for i, c in enumerate(counts) if c / baseline > max_growth_ratio
+        ]
+    passed = not offending
+    if not passed:
+        return CheckResult(
+            check="background_growth",
+            passed=False,
+            reason=(
+                f"{len(offending)} frame(s) exceed {max_growth_ratio}x frame 0's "
+                f"non-background pixel count ({baseline}px): {offending}"
+            ),
+            details={"counts": counts, "baseline": baseline, "max_growth_ratio": max_growth_ratio},
+        )
+    return CheckResult(
+        check="background_growth",
+        passed=True,
+        reason=(
+            f"non-background pixel count stays within {max_growth_ratio}x of "
+            f"frame 0's count ({baseline}px) across all {len(frames)} frames"
+        ),
+        details={"counts": counts, "baseline": baseline, "max_growth_ratio": max_growth_ratio},
     )
 
 

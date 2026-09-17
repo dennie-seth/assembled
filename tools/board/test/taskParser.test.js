@@ -14,7 +14,15 @@ const VALID_TASK = {
   commit: null,
   pr: null,
   deliverable_type: "code",
+  requires_approval: false,
+  approved_by: null,
+  approved_at: null,
   attempts: 0,
+  max_attempts: null,
+  round: 0,
+  rescoped_by: null,
+  rescoped_at: null,
+  complexity_points: null,
   comments: [],
   attachments: [],
   body: "## Context\nParse frontmatter.\n\n## Acceptance\n- [ ] round-trips\n"
@@ -226,6 +234,179 @@ describe("attempts (auto-retry counter for the bounded FAIL->auto-retry loop)", 
 
   it("throws when attempts is a non-integer number", () => {
     expect(() => parseTask(frontmatter({ attempts: 1.5 }))).toThrow(/attempts/i);
+  });
+});
+
+describe("max_attempts (T-0343: per-card override of the auto-retry budget)", () => {
+  it("round-trips a task with max_attempts set", () => {
+    const task = { ...VALID_TASK, max_attempts: 3 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("accepts max_attempts at the upper bound", () => {
+    const task = { ...VALID_TASK, max_attempts: 20 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults max_attempts to null when absent from the frontmatter -- the compatibility guarantee: no explicit override means the orchestrator's own default applies, unchanged", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.max_attempts).toBeNull();
+  });
+
+  it("throws when max_attempts is not an integer", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: "three" }))).toThrow(/max_attempts/i);
+  });
+
+  it("throws when max_attempts is a non-integer number", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: 2.5 }))).toThrow(/max_attempts/i);
+  });
+
+  it("throws when max_attempts is zero", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: 0 }))).toThrow(/max_attempts/i);
+  });
+
+  it("throws when max_attempts is negative", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: -1 }))).toThrow(/max_attempts/i);
+  });
+
+  it("throws when max_attempts exceeds the upper bound", () => {
+    expect(() => parseTask(frontmatter({ max_attempts: 21 }))).toThrow(/max_attempts/i);
+  });
+});
+
+describe("round (T-0344: experiment-round cap, distinct from the attempts/max_attempts intra-run retry loop)", () => {
+  it("round-trips a task with round set", () => {
+    const task = { ...VALID_TASK, round: 2 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults round to 0 when absent from the frontmatter -- never retroactive against pre-existing cards", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.round).toBe(0);
+  });
+
+  it("throws when round is not an integer", () => {
+    expect(() => parseTask(frontmatter({ round: "two" }))).toThrow(/round/i);
+  });
+
+  it("throws when round is negative", () => {
+    expect(() => parseTask(frontmatter({ round: -1 }))).toThrow(/round/i);
+  });
+
+  it("throws when round is a non-integer number", () => {
+    expect(() => parseTask(frontmatter({ round: 1.5 }))).toThrow(/round/i);
+  });
+});
+
+describe("complexity_points (T-0368: human planning signal only, Fibonacci scale)", () => {
+  it("round-trips a task with complexity_points set", () => {
+    const task = { ...VALID_TASK, complexity_points: 5 };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("accepts every legal Fibonacci value", () => {
+    for (const value of [1, 2, 3, 5, 8, 13, 21]) {
+      const task = { ...VALID_TASK, complexity_points: value };
+      expect(parseTask(serializeTask(task))).toEqual(task);
+    }
+  });
+
+  it("defaults complexity_points to null when absent from the frontmatter -- existing cards keep working unchanged", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.complexity_points).toBeNull();
+  });
+
+  it("throws a clear error when complexity_points is not a legal Fibonacci value", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: 4 }))).toThrow(/complexity_points/i);
+  });
+
+  it("throws when complexity_points is zero", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: 0 }))).toThrow(/complexity_points/i);
+  });
+
+  it("throws when complexity_points is negative", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: -1 }))).toThrow(/complexity_points/i);
+  });
+
+  it("throws when complexity_points is not an integer", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: "five" }))).toThrow(/complexity_points/i);
+  });
+
+  it("throws when complexity_points is a non-integer number", () => {
+    expect(() => parseTask(frontmatter({ complexity_points: 5.5 }))).toThrow(/complexity_points/i);
+  });
+});
+
+describe("rescoped_by / rescoped_at (T-0344: the human re-scope acknowledgment record)", () => {
+  it("round-trips a task with a rescope record set", () => {
+    const task = { ...VALID_TASK, rescoped_by: "@DennieSeth", rescoped_at: "2026-09-10T12:00:00.000Z" };
+    expect(parseTask(serializeTask(task))).toEqual(task);
+  });
+
+  it("defaults both fields to null when absent from the frontmatter", () => {
+    const raw = [
+      "---",
+      "id: T-0007",
+      "title: Implement TaskStore parser",
+      "status: backlog",
+      "priority: P1",
+      "phase: 1",
+      "agent: infra",
+      "depends_on: [T-0002]",
+      "created: 2026-07-31",
+      "---",
+      "body"
+    ].join("\n");
+    const parsed = parseTask(raw);
+    expect(parsed.rescoped_by).toBeNull();
+    expect(parsed.rescoped_at).toBeNull();
+  });
+
+  it("throws when rescoped_by is not a string or null", () => {
+    expect(() => parseTask(frontmatter({ rescoped_by: 42 }))).toThrow(/rescoped_by/i);
+  });
+
+  it("throws when rescoped_at is not a string or null", () => {
+    expect(() => parseTask(frontmatter({ rescoped_at: 42 }))).toThrow(/rescoped_at/i);
   });
 });
 

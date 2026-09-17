@@ -181,6 +181,42 @@ describe("diffPlannerFileView + applyPlannerFileViewDiff", () => {
     expect(stdout.trim()).toBe("");
   });
 
+  // AP-7 (docs/board-invariants.md §10), db-mode half. The fs-mode counterpart lives in
+  // plannerDiffGuard.test.js; here the enforcement is the MUTABLE_FIELDS allowlist.
+  it("applies a planner run ADDING the approval gate -- flagging a direction card is spec work", async () => {
+    const { tasksDir, before } = await setupWorktree("T-0014");
+    const raw = await fs.readFile(path.join(tasksDir, "T-0001.md"), "utf8");
+    await fs.writeFile(
+      path.join(tasksDir, "T-0001.md"),
+      raw.replace("requires_approval: false", "requires_approval: true"),
+      "utf8"
+    );
+
+    const plan = await diffPlannerFileView({ tasksDir, before });
+    expect(plan.ok).toBe(true);
+    expect(plan.updates).toEqual([{ id: "T-0001", patch: { requires_approval: true } }]);
+
+    await applyPlannerFileViewDiff({ store, plan });
+    expect(await store.get("T-0001")).toMatchObject({ requires_approval: true });
+  });
+
+  it("rejects a planner run that forges an approval record, and applies nothing", async () => {
+    const { tasksDir, before } = await setupWorktree("T-0015");
+    const raw = await fs.readFile(path.join(tasksDir, "T-0001.md"), "utf8");
+    await fs.writeFile(
+      path.join(tasksDir, "T-0001.md"),
+      raw
+        .replace("approved_by: null", 'approved_by: "DennieSeth"')
+        .replace("approved_at: null", 'approved_at: "2026-08-30T00:00:00.000Z"'),
+      "utf8"
+    );
+
+    const plan = await diffPlannerFileView({ tasksDir, before });
+    expect(plan.ok).toBe(false);
+    expect(plan.violations.map((v) => v.message).join(" ")).toMatch(/approved_by/);
+    expect(await store.get("T-0001")).toMatchObject({ approved_by: null, approved_at: null });
+  });
+
   it("detects a new card file as a create", async () => {
     const { tasksDir, before } = await setupWorktree("T-0011");
     await fs.writeFile(

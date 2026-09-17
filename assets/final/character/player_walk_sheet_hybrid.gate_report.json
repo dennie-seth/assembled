@@ -1,0 +1,201 @@
+{
+  "sheet": "player_walk_sheet_hybrid.png",
+  "grid": {
+    "cols": 4,
+    "rows": 2,
+    "cell_px": 48,
+    "frame_cells": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        0,
+        3
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        1,
+        3
+      ]
+    ]
+  },
+  "motion_class": null,
+  "thresholds": {
+    "frame_delta_cap": 0.3,
+    "arm_c_benchmark": [
+      0.072,
+      0.112
+    ]
+  },
+  "frame_pairs": [
+    {
+      "pair": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "pixel_delta_count": 414,
+      "silhouette_delta_ratio": 0.2288135593220339,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "pixel_delta_count": 84,
+      "silhouette_delta_ratio": 0.03374777975133215,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ]
+      ],
+      "pixel_delta_count": 145,
+      "silhouette_delta_ratio": 0.13854351687388988,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "pixel_delta_count": 136,
+      "silhouette_delta_ratio": 0.18007662835249041,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "pixel_delta_count": 164,
+      "silhouette_delta_ratio": 0.22142857142857142,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "pixel_delta_count": 78,
+      "silhouette_delta_ratio": 0.04136690647482014,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "pixel_delta_count": 181,
+      "silhouette_delta_ratio": 0.25316455696202533,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          3
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "pixel_delta_count": 369,
+      "silhouette_delta_ratio": 0.21764705882352942,
+      "within_frame_delta_cap": true
+    }
+  ],
+  "pixel_delta_summary": {
+    "counts": [
+      414,
+      84,
+      145,
+      136,
+      164,
+      78,
+      181,
+      369
+    ],
+    "max": 414,
+    "min": 78,
+    "max_min_ratio": 5.3076923076923075
+  },
+  "silhouette_delta_range": [
+    0.03374777975133215,
+    0.25316455696202533
+  ],
+  "checks": {
+    "character_arm_c_provenance": {
+      "passed": true,
+      "reason": "player_walk_sheet_hybrid.png: frame_delta_range + Arm-C benchmark comparison both recorded"
+    },
+    "character_frame_delta_cap": {
+      "passed": true,
+      "reason": "player_walk_sheet_hybrid.png: motion_class=None frame-delta upper bound 0.2532 <= cap 0.3"
+    }
+  }
+}

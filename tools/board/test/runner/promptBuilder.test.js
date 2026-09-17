@@ -170,6 +170,20 @@ describe("buildPrompt — template correctness", () => {
     expect(prompt).toContain("Build the thing.");
   });
 
+  it("teaches the implementer the fenced host-action-request format for a host-only blocker (T-0323)", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).toContain("```host-action-request");
+    expect(prompt).toMatch(/host:/);
+    expect(prompt).toMatch(/action:/);
+    expect(prompt).toMatch(/reason:/);
+    expect(prompt).toMatch(/verify:/);
+  });
+
+  it("includes the host-action-request instruction on a continuing run too (T-0323)", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, continuing: true });
+    expect(prompt).toContain("```host-action-request");
+  });
+
   it("throws when task or task.body is missing", () => {
     expect(() => buildPrompt({})).toThrow();
     expect(() => buildPrompt({ task: { id: "T-0001" } })).toThrow();
@@ -262,6 +276,32 @@ describe("buildPrompt — continuing an existing branch (re-run after review)", 
   it("works with no comments argument at all (defaults to none)", () => {
     const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
     expect(prompt).not.toContain("## Human comments on this card");
+  });
+});
+
+describe("buildPrompt — prior validation history digest (T-0345)", () => {
+  const DIGEST = "2 prior validation verdict(s) archived: 1 FAIL, 1 PASS.\n\nMost recent 2 (oldest to newest):\n- [t1] Validation: FAIL: missing test\n- [t2] Validation: PASS: all green";
+
+  it("includes a digest section when verdictDigest is provided", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, verdictDigest: DIGEST });
+    expect(prompt).toContain("## Prior validation history (digest)");
+    expect(prompt).toContain(DIGEST);
+  });
+
+  it("omits the digest section entirely when no verdictDigest is given", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).not.toContain("## Prior validation history (digest)");
+  });
+
+  it("omits the digest section when verdictDigest is an empty string", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, verdictDigest: "" });
+    expect(prompt).not.toContain("## Prior validation history (digest)");
+  });
+
+  it("points the continuing workflow at the digest section instead of claiming prior verdict notes live in the task body", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES, continuing: true, verdictDigest: DIGEST });
+    expect(prompt.toLowerCase()).toContain("prior validation history");
+    expect(prompt.toLowerCase()).not.toContain("verdict notes in the task card body");
   });
 });
 
@@ -461,6 +501,26 @@ describe("buildPlannerPrompt -- edge cases as an explicit, verified part of Acce
     const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
     expect(prompt.toLowerCase()).not.toContain("block the card");
     expect(prompt.toLowerCase()).not.toContain("must not proceed");
+  });
+});
+
+describe("buildPlannerPrompt -- complexity_points authoring guidance (T-0368)", () => {
+  it("instructs the planner to consider setting a complexity_points value while authoring/expanding a card", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toContain("complexity_points");
+  });
+
+  it("gives a one-line rubric for every Fibonacci step (1, 2, 3, 5, 8, 13, 21)", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    for (const step of ["1", "2", "3", "5", "8", "13", "21"]) {
+      expect(prompt).toMatch(new RegExp("`" + step + "`\\s*[-—]"));
+    }
+  });
+
+  it("is explicit that complexity_points is a human planning signal only, never read by launch/admission/cost paths", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("planning signal only");
+    expect(prompt.toLowerCase()).toContain("never");
   });
 });
 

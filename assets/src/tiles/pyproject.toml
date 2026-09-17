@@ -16,6 +16,8 @@ dev = [
 
 [project.scripts]
 generate-transition-sheet = "tile_gen.transition_sheet:main"
+generate-signal-tower-base-fields = "tile_gen.base_fields:main"
+generate-signal-tower-transitions = "tile_gen.signal_tower_sheet:main"
 
 [build-system]
 requires = ["setuptools>=68"]
