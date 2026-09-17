@@ -1,0 +1,60 @@
+{
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (identity, chained, weight 0.5) + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (style + identity LoRA)",
+  "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+  "style_lora_name": "soviet_brutalism_style_v1.safetensors",
+  "style_lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "style_lora_weight": 0.7,
+  "identity_lora_name": "player_identity_v2.safetensors",
+  "identity_lora_hash": "fc447cfb886cb6a694c52ae21c9d172bae696ebc175f8daa7d6ecfd22eac36b4",
+  "identity_lora_weight": 0.5,
+  "controlnet": "controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+  "controlnet_strength": 1.5,
+  "controlnet_end_percent": 1.0,
+  "prompt": "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), true 90-degree side profile view, not a three-quarter view, facing right, only the near arm and only the near leg extended forward at roughly a right angle clear of the torso, the far arm and far leg held back close to the body and hidden from view, one visible shoulder, a single visible arm silhouette, a single visible goggle lens, both hands empty, open palm, nothing held, (a single gloved hand reaching forward, pale light grey glove clearly lighter than the coat, fingers visible:1.2), wearing a long vivid institutional green cloth coat, coat reaching to mid-shin, well past the knee, (the raised near leg's own silhouette clearly visible pushing the coat fabric forward at the front of the stride, the coat hem swept up and forward by the forward motion of the raised knee, a visible boot beneath the lifted hem:1.3), the coat itself is green, not black, not grey, wearing a hooded mask with (a single dark round goggle lens on the near side of the hood:1.3), not a blank void, hood fully up and forward, face completely covered by the mask, no visible hair, no visible face, boots, never high heels, Soviet brutalist interior aesthetic, solid flat black background only, no scene elements, no wall, no floor, no environment, flat even lighting, no cast shadow, no atmospheric haze, no depth of field, hard value separation, dark darks and light lights, clean readable outline, game asset reference sheet style, figure silhouette study",
+  "negative_prompt": "three-quarter view, three-quarter angle, front view, facing the camera, facing left, back view, rear view, isometric, both arms visible, second arm visible, far arm visible, both hands visible, two hands visible, both eyes visible, both eye lenses visible, two eye lenses, second lens, far eye visible, both shoulders visible, symmetric front-facing pose, mid-hip coat, cropped coat, short coat, coat above the knee, bare thigh, no coat, blank head, faceless, featureless mannequin head, missing face, no face, headless, weapon, holding an object, tool in hand, high heels, stiletto heels, pumps, grey tactical costume, tan tactical costume, khaki uniform, army fatigues, muted olive costume, brownish coat, washed out colour, pale colour, desaturated coat, grayscale, black coat, grey coat, black armor, monochrome, colourless, perspective, vanishing point, receding walls, atmospheric haze, depth of field, sky, clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient lighting, ambient occlusion, painterly, cartoon, cheerful, grey background, concrete background, wall, floor, environment, scenery, multiple figures, two figures, group of people, text, watermark, signature, blurry, low quality",
+  "seed": 380002,
+  "steps": 30,
+  "cfg": 7.0,
+  "denoise": 0.87,
+  "width": 1024,
+  "height": 1024,
+  "sampler": "euler",
+  "scheduler": "normal",
+  "comfyui_prompt_id": "9b943588-70aa-4190-9cd7-81afcbec07d8",
+  "method": "img2img: T-0317 base image composited onto a 1024x1024 black canvas (compose_base_on_canvas) -> VAEEncode -> KSampler(denoise<1.0), conditioned by ControlNetApplyAdvanced on the authored forward-limb OpenPose skeleton (pose_rig_forward_limb_controlnet_T0380, reused from T-0351's side_right_forward rig) + LoraLoader(style) -> LoraLoader(identity), chained. No IP-Adapter.",
+  "generator": "assets/src/concept/gen_player_profile_forward_limb_controlnet_T0380.py",
+  "card": "T-0380",
+  "route": "generated",
+  "spec": "docs/design/13-asset-pipeline.md, ARM_FORWARD_LIMB_REFERENCE_ATTEMPT_LOG_T0355.md's own stop-and-report finding (pose-by-prompt falsified)",
+  "attempt": 2,
+  "gpu_seconds": 51.1,
+  "green_content": {
+    "whole_frame_green_pixels": 70230,
+    "centred_crop_green_pixels": 13180,
+    "centred_crop_box": [
+      418,
+      412,
+      605,
+      612
+    ],
+    "benchmark_green_band": [
+      6000,
+      6900
+    ]
+  },
+  "border_max_channel": 4,
+  "base_image_path": "assets/src/concept/player_profile_costume_reference_T0317.png",
+  "base_image_sha256": "603c00f2cc7a5da0462f05232176131d06678776de4876800e7b27af343d7f19",
+  "base_image_card": "T-0317",
+  "base_composite_offset": {
+    "x": 424,
+    "y": 66,
+    "canvas_size": 1024
+  },
+  "skeleton_path": "assets/src/concept/player_profile_forward_limb_skeleton_T0380.png",
+  "skeleton_sha256": "1fe2df9f771633291ea68298e48e37c23630c3353daeb333704b0439ed728069",
+  "skeleton_keypoints_path": "assets/src/concept/player_profile_forward_limb_skeleton_T0380.json",
+  "promoted": true,
+  "concept_hash": "76c22339db9c5e746f8b51b93e0e6a5e059a770bf444a9e453eccafc784cfc23"
+}
