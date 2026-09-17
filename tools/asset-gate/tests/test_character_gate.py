@@ -24,7 +24,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
+from asset_gate.art import check_identity_stability, check_pose_fidelity
 from asset_gate.character import (
     IDENTITY_STABILITY_HISTOGRAM_CAP,
     POSE_FIDELITY_IOU_FLOOR,
@@ -685,22 +687,123 @@ def test_negative_control_session13_drift_candidate_fails_motion_fidelity():
     assert not result.details["identity_ok"]
 
 
-def test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available():
-    """Cross-checks `_SESSION13_DRIFT_CANDIDATE` against a live re-measurement
-    of the actual sheet, when the sibling `feature/T-0259` worktree that
-    holds it (gitignored `assets/out/`, never committed to any branch) is
-    present on the machine running this suite. Skips rather than fabricates
-    or silently passes when it isn't -- this is a bonus regression check on
-    the recorded numbers above, not the acceptance test itself (that one,
-    above, does not depend on this worktree existing)."""
+#: T-0361: the committed rescue path (card body, "PRESERVED COPY of the
+#: session-13 negative control") -- both files copied from the *retired*
+#: `feature/T-0259` worktree's gitignored `assets/out/hybrid_walk/attempt_5/`
+#: into this repo, sha256-verified against the values the card records, so
+#: this acceptance test no longer depends on that sibling worktree (which
+#: could be cleaned up at any time) still existing on the machine running it.
+_SESSION13_FIXTURES_DIR = (
+    Path(__file__).resolve().parent / "fixtures" / "session13_negative_control"
+)
+_SESSION13_SHEET_FIXTURE = _SESSION13_FIXTURES_DIR / "sheet_192x96_indexed.png"
+_SESSION13_PROVENANCE_FIXTURE = _SESSION13_FIXTURES_DIR / "provenance_candidate.json"
+_SESSION13_SHEET_SHA256 = "f3441daab4fe471437becdaa5a3c8ed9cbe6d8b0fb3ffc0f9ac7b1d9d32dcf8c"
+_SESSION13_PROVENANCE_SHA256 = "1247a0692331b7804bf5f74979d497796266f1510a2961595e59671ece2f3470"
+
+
+def _calibrate_session13_from_committed_fixture():
+    """Re-derives session 13's pose-fidelity/identity-stability range from
+    the COMMITTED fixture copy, using the exact same rig keypoints + gate
+    functions `calibrate_motion_fidelity_T0340.calibrate_session13_drift_candidate`
+    uses against the (sibling-worktree-only) original -- duplicated here
+    rather than calling that function because it hardcodes the sibling
+    `feature/T-0259` worktree path and this card's own rescue explicitly
+    targets the committed copy instead (T-0361 card body: "Point
+    `calibrate_session13_drift_candidate()` (or the test) at that committed
+    path")."""
     character_dir = _REPO_ROOT / "assets" / "src" / "character"
     if str(character_dir) not in sys.path:
         sys.path.insert(0, str(character_dir))
-    from calibrate_motion_fidelity_T0340 import calibrate_session13_drift_candidate
+    from calibrate_motion_fidelity_T0340 import (
+        BACKGROUND_INDEX,
+        CELL_PX,
+        COLS,
+        ROWS,
+        _predicted_silhouette,
+        _split_cells,
+        _torso_region,
+    )
+    from pose_rig_walk_T0259 import FRAME_COUNT, walk_keypoints_for_frame
 
-    calibrated = calibrate_session13_drift_candidate()
-    if not calibrated["available"]:
-        pytest.skip(calibrated["note"])
+    sheet = Image.open(_SESSION13_SHEET_FIXTURE)
+    cells = _split_cells(sheet, COLS, ROWS, CELL_PX)
+    assert len(cells) == FRAME_COUNT
+
+    pose_ious = []
+    for i, cell in enumerate(cells):
+        points = walk_keypoints_for_frame(i, FRAME_COUNT)
+        predicted = _predicted_silhouette(points, CELL_PX)
+        result = check_pose_fidelity(
+            cell, predicted, background_index=BACKGROUND_INDEX, min_iou=0.0
+        )
+        pose_ious.append(result.details["iou"])
+
+    torso_region = _torso_region(CELL_PX)
+    identity_distances = []
+    pairs = [(i, (i + 1) % FRAME_COUNT) for i in range(FRAME_COUNT)]
+    for a, b in pairs:
+        result = check_identity_stability(
+            cells[a], cells[b], background_index=BACKGROUND_INDEX,
+            region=torso_region, max_histogram_distance=1.0,
+        )
+        identity_distances.append(result.details["distance"])
+
+    return {
+        "pose_fidelity_range": [min(pose_ious), max(pose_ious)],
+        "identity_stability_range": [min(identity_distances), max(identity_distances)],
+    }
+
+
+def test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available():
+    """Cross-checks `_SESSION13_DRIFT_CANDIDATE` against a live re-measurement
+    of the REAL session-13 sheet: first the committed rescue-path fixture
+    (`tools/asset-gate/tests/fixtures/session13_negative_control/`, T-0361),
+    falling back to the sibling `feature/T-0259` worktree's gitignored
+    `assets/out/` (T-0340's original path, in case the sibling worktree is
+    present but the rescue copy is not yet committed). Skips, naming
+    exactly which host-side action is needed, rather than fabricating a
+    stand-in when NEITHER is available -- this is a bonus regression check
+    on the recorded numbers above, not the acceptance test itself (that one,
+    above, does not depend on either path existing).
+
+    **T-0361 status:** the committed rescue copy could not be added by this
+    card's own implementer session -- its filesystem sandbox is restricted
+    to this worktree only (`/mnt/f/...` and the sibling
+    `worktrees/T-0259` are both unreachable from here, confirmed live, not
+    assumed). See the card's own "PRESERVED COPY" section for the verified
+    sha256 values a host-side session should check before copying the two
+    files into `_SESSION13_FIXTURES_DIR`.
+    """
+    if _SESSION13_SHEET_FIXTURE.is_file() and _SESSION13_PROVENANCE_FIXTURE.is_file():
+        import hashlib
+
+        sheet_sha256 = hashlib.sha256(_SESSION13_SHEET_FIXTURE.read_bytes()).hexdigest()
+        provenance_sha256 = hashlib.sha256(_SESSION13_PROVENANCE_FIXTURE.read_bytes()).hexdigest()
+        assert sheet_sha256 == _SESSION13_SHEET_SHA256, (
+            "committed session13 sheet fixture does not match the card's verified sha256"
+        )
+        assert provenance_sha256 == _SESSION13_PROVENANCE_SHA256, (
+            "committed session13 provenance fixture does not match the card's verified sha256"
+        )
+        calibrated = _calibrate_session13_from_committed_fixture()
+    else:
+        character_dir = _REPO_ROOT / "assets" / "src" / "character"
+        if str(character_dir) not in sys.path:
+            sys.path.insert(0, str(character_dir))
+        from calibrate_motion_fidelity_T0340 import calibrate_session13_drift_candidate
+
+        calibrated = calibrate_session13_drift_candidate()
+        if not calibrated["available"]:
+            pytest.skip(
+                "session13 negative control unavailable: neither the committed rescue fixture "
+                f"({_SESSION13_FIXTURES_DIR}) nor the sibling feature/T-0259 worktree is present "
+                "on this machine -- a host-side session with access to "
+                "F:\\PetProjects\\assembled\\fixtures\\session13_negative_control\\ (verified "
+                f"sha256 {_SESSION13_SHEET_SHA256[:16]}... / "
+                f"{_SESSION13_PROVENANCE_SHA256[:16]}...) needs to copy both files into "
+                f"{_SESSION13_FIXTURES_DIR} to close out T-0361's rescue."
+            )
 
     assert calibrated["pose_fidelity_range"] == pytest.approx(
         _SESSION13_DRIFT_CANDIDATE["pose_fidelity_range"]

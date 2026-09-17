@@ -10,6 +10,7 @@ from asset_gate.art import (
     check_indexed_preservation,
     check_orphan_pixels,
     check_pose_fidelity,
+    check_region_identity_stability,
     check_tile_seamlessness,
     check_transition_adjacency,
     count_pixel_deltas,
@@ -327,6 +328,99 @@ def test_identity_stability_fails_when_torso_colour_drifts():
     )
     assert not result.passed
     assert result.details["distance"] > 0.15
+
+
+# ---------------------------------------------------------------------------
+# check_region_identity_stability (T-0361) -- the spatial/part-aware
+# generalisation of check_identity_stability. DL-31's own negative-control
+# finding: a left/right limb swap scores the fixed torso-only histogram (and
+# any WHOLE-frame histogram) at 0.0, because swapping two regions' content
+# leaves total palette-index counts completely unchanged -- the torso is
+# untouched by construction, and the whole frame just has the same pixels in
+# different places. Evaluating several NAMED regions independently (instead
+# of one box, or the whole frame) catches a mismatch confined to a single
+# part that an aggregate comparison dilutes away or never sees to begin with.
+# ---------------------------------------------------------------------------
+
+
+def _swap_regions_fixture():
+    """Two 20x20 frames whose "near" (2,2,8,8) and "far" (12,12,18,18) boxes
+    have their CONTENTS swapped between frame A and frame B, with identical
+    total foreground pixel counts (24px either way) -- by construction, ANY
+    whole-frame or single-fixed-box histogram comparison that doesn't sit
+    inside both swapped boxes scores this at exactly 0.0 distance, the same
+    "torso histogram scored 0.0" finding the swap is calibrated to
+    reproduce."""
+    a = np.zeros((20, 20), dtype=np.uint8)
+    a[2:6, 2:6] = 1  # "near" box: 16px foreground
+    a[12:14, 12:16] = 1  # "far" box: 8px foreground
+
+    b = np.zeros((20, 20), dtype=np.uint8)
+    b[2:4, 2:6] = 1  # "near" box now holds the OLD "far" shape: 8px
+    b[12:16, 12:16] = 1  # "far" box now holds the OLD "near" shape: 16px
+
+    return a, b
+
+
+def test_region_identity_stability_passes_when_every_named_region_is_stable():
+    a, _ = _swap_regions_fixture()
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(a.copy(), TEST_PALETTE_HEX)
+
+    result = check_region_identity_stability(
+        frame_a,
+        frame_b,
+        background_index=0,
+        regions={"near": (2, 2, 8, 8), "far": (12, 12, 18, 18)},
+        max_histogram_distance=0.15,
+    )
+
+    assert result.passed
+    assert result.details["per_region_distance"] == {"near": 0.0, "far": 0.0}
+
+
+def test_region_identity_stability_fails_on_a_swap_the_whole_frame_misses():
+    """The whole-frame (and any fixed-box-outside-the-swap) comparison passes
+    at exactly 0.0 -- the swap is invisible to it -- while the per-region
+    check, evaluating the near/far boxes themselves, fails."""
+    a, b = _swap_regions_fixture()
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    whole_frame = check_identity_stability(
+        frame_a, frame_b, background_index=0, region=(0, 0, 20, 20), max_histogram_distance=0.15
+    )
+    assert whole_frame.passed
+    assert whole_frame.details["distance"] == 0.0
+
+    part_aware = check_region_identity_stability(
+        frame_a,
+        frame_b,
+        background_index=0,
+        regions={"near": (2, 2, 8, 8), "far": (12, 12, 18, 18)},
+        max_histogram_distance=0.15,
+    )
+    assert not part_aware.passed
+    assert part_aware.details["per_region_distance"]["near"] > 0.15
+    assert part_aware.details["per_region_distance"]["far"] > 0.15
+
+
+def test_region_identity_stability_reason_names_the_worst_region():
+    a, b = _swap_regions_fixture()
+    frame_a = make_indexed_image(a, TEST_PALETTE_HEX)
+    frame_b = make_indexed_image(b, TEST_PALETTE_HEX)
+
+    result = check_region_identity_stability(
+        frame_a,
+        frame_b,
+        background_index=0,
+        regions={"near": (2, 2, 8, 8), "far": (12, 12, 18, 18)},
+        max_histogram_distance=0.15,
+    )
+
+    assert not result.passed
+    assert result.details["worst_region"] in {"near", "far"}
+    assert result.reason.count(result.details["worst_region"]) >= 1
 
 
 def test_identity_stability_catches_drift_that_frame_consistency_missed():
