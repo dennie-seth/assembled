@@ -17,9 +17,24 @@ extended forward and the near thigh (`_R_HIP` -> `_R_KNEE`) already close to
 horizontal -- exactly "front leg raised ~90 degrees at the hip, not a lunge"
 -- and it already faces right (nose x > neck x, forward reach on the
 positive-x/right side), the same direction as the T-0317 base image this card
-composites onto the img2img canvas. Reusing it verbatim, rather than
-re-authoring a new topology, is this card's whole point: the skeleton is
-"authored from committed pose-rig joints," not invented fresh.
+composites onto the img2img canvas.
+
+**One override on top of the verbatim reuse.** T-0351's far arm ("held back
+close to the body") is tuned for a multi-panel walk-cycle sheet, where a
+far elbow/wrist bent in toward the hip reads fine alongside five other
+panels. Attempt 1/2's own evidence
+(`docs/assets/evidence/T-0380/attempt_2_main_1024.png`) showed that same far
+arm, reused verbatim, still projects far enough past the torso in a single
+strict-profile frame that img2img renders it as a second, unrequested
+visible hand/glove at the hip -- exactly the "far fist visible" defect
+T-0355's own stop-and-report falsified the prompt-only route over. This
+card's acceptance checklist requires "a single visible arm silhouette," so
+the far elbow and far wrist are collapsed onto the far shoulder here --
+a zero-length limb, the same "collapsed onto the view axis" principle
+`side_right_forward` already applies to the shoulders/hips in a true
+profile -- giving the ControlNet conditioning no joint to hang a second
+hand on. Every other joint, including the qualifying near-arm/near-leg
+raise, is untouched from the committed rig.
 
 `render_skeleton` reuses `pose_rig_master_sheet_T0351.render_pose_skeleton`
 directly (itself a thin wrapper over `gen_arm_a_idle_T0228.
@@ -51,9 +66,22 @@ _R_EAR, _L_EAR = 16, 17
 
 POSE_KEY = "side_right_forward"
 
-# Reused verbatim from the committed T-0351 rig -- see module docstring for
-# why this card authors no new keypoint numbers of its own.
-FORWARD_LIMB_KEYPOINTS_NORM: dict[int, Point] = _T0351.keypoints_for(POSE_KEY)
+
+def _collapse_far_arm(points: dict[int, Point]) -> dict[int, Point]:
+    """Collapse the far elbow/wrist onto the far shoulder -- see module
+    docstring: T-0351's own far-arm joints, reused verbatim, still rendered
+    a second visible hand in attempt 1/2. This is the only departure from
+    verbatim reuse."""
+    points = dict(points)
+    points[_L_ELBOW] = points[_L_SHOULDER]
+    points[_L_WRIST] = points[_L_SHOULDER]
+    return points
+
+
+# Reused verbatim from the committed T-0351 rig, except the far arm -- see
+# module docstring for why this card authors no new keypoint numbers of its
+# own beyond that one override.
+FORWARD_LIMB_KEYPOINTS_NORM: dict[int, Point] = _collapse_far_arm(_T0351.keypoints_for(POSE_KEY))
 
 
 def keypoints() -> dict[int, Point]:

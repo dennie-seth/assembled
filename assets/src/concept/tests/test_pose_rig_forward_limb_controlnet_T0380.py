@@ -33,10 +33,39 @@ _R_HIP, _R_KNEE, _R_ANKLE = 8, 9, 10
 _L_HIP, _L_KNEE, _L_ANKLE = 11, 12, 13
 
 
-def test_keypoints_are_reused_verbatim_from_the_committed_T0351_rig():
+def test_near_limbs_and_torso_are_reused_verbatim_from_the_committed_T0351_rig():
+    """Every joint this card's acceptance criteria actually depend on -- the
+    near arm/leg raise, the profile-collapsed shoulders/hips, the head/face
+    joints, the far leg -- is reused verbatim from T-0351, unmodified. Only
+    the far arm's elbow/wrist are card-specific overrides (see the collapse
+    test below) -- attempt 2's evidence showed reusing them verbatim too
+    renders a second, visible far hand."""
     import pose_rig_master_sheet_T0351 as t0351
 
-    assert rig.FORWARD_LIMB_KEYPOINTS_NORM == t0351.keypoints_for("side_right_forward")
+    upstream = t0351.keypoints_for("side_right_forward")
+    ours = rig.FORWARD_LIMB_KEYPOINTS_NORM
+    overridden = {_L_ELBOW, _L_WRIST}
+    for joint in set(upstream) - overridden:
+        assert ours[joint] == upstream[joint], f"joint {joint} drifted from the committed T0351 rig"
+    assert ours[_L_ELBOW] != upstream[_L_ELBOW], "far elbow must be overridden to collapse it hidden"
+    assert ours[_L_WRIST] != upstream[_L_WRIST], "far wrist must be overridden to collapse it hidden"
+
+
+def test_far_arm_is_collapsed_hidden_behind_the_far_shoulder():
+    """Attempt 2 (docs/assets/evidence/T-0380/attempt_2_main_1024.png) reused
+    T-0351's far arm verbatim -- 'held back close to the body' for a
+    multi-panel walk-cycle sheet, but still offset far enough from the torso
+    (elbow/wrist projected out past the hip) that img2img rendered it as a
+    second, unrequested visible hand/glove at the hip. That is exactly the
+    'far fist visible' defect T-0355 already falsified the prompt-only route
+    over. Fix: collapse the far elbow/wrist onto the far shoulder for this
+    card's skeleton specifically -- a zero-length limb, the same 'collapsed
+    onto the view axis' principle already applied to the shoulders/hips in a
+    true profile -- so the ControlNet conditioning gives the sampler no
+    joint to hang a second hand on."""
+    points = rig.keypoints()
+    assert points[_L_ELBOW] == points[_L_SHOULDER]
+    assert points[_L_WRIST] == points[_L_SHOULDER]
 
 
 def test_keypoints_emit_all_18_coco_joints():
