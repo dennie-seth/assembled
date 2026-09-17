@@ -13,19 +13,40 @@
 // math (`assets/src/character/pose_rig_walk_T0259.py`'s gait model, copied
 // as inert reference data the same way
 // `tests/test_character_gate_pixel_recompute_T0357.py`'s own
-// `_BASE_POSE_NORM` already treats it) and the same capsule-silhouette
-// geometry `asset_gate.art.render_rig_silhouette` draws (a PIL thick line
-// plus round end-caps is exactly the Minkowski sum of the segment with a
-// disk of the same radius -- i.e. point-to-segment distance <= radius,
-// which is what this script rasterizes directly). Re-running this script
-// always produces byte-identical output (no Math.random, no Date.now).
+// `_BASE_POSE_NORM` already treats it) and *attempts* the same
+// capsule-silhouette geometry `asset_gate.art.render_rig_silhouette` draws.
+//
+// **Known divergence (found by VALIDATION, 2026-09-17): this script's own
+// pose-fidelity/part-identity numbers are NOT the real gate's numbers.**
+// `render_rig_silhouette` draws each limb with PIL's `ImageDraw.line(...,
+// width=line_width)` plus a round end-cap ellipse -- PIL's own thick-line
+// rasterizer, which for a non-axis-aligned segment is not the same
+// raster as this script's `pointSegDist(...) <= radius` per-pixel capsule
+// test, even though both are "a thick line with round caps" in concept.
+// `identity_stability_range` does not depend on the rendered capsule at all
+// (it compares each control's own actual frames to each other, never to a
+// predicted silhouette), so it happens to match the real gate exactly;
+// `pose_fidelity_range`/`part_identity_range` both measure actual-vs-
+// predicted-silhouette overlap and so inherit the rasterization mismatch.
+// **This script's own `pose_fidelity_range`/`part_identity_range` output is
+// therefore reference-only, not authoritative** -- do not transcribe it into
+// docs or tests without cross-checking against a live `sweep_character_gate`
+// run first; see docs/character-motion-negative-controls-T0361.md's
+// "Tooling note" and `test_control_metric_ranges_match_the_committed_
+// calibration_table` in test_character_negative_controls_T0361.py, which
+// pin the real, Python-gate-measured numbers instead. Re-running this
+// script always produces byte-identical fixture output (no Math.random, no
+// Date.now) -- that determinism, not the calibration numbers it also
+// prints, is what this script is relied on for.
 //
 // Usage: node generate_negative_controls_T0361.js
 
-'use strict';
-const fs = require('fs');
-const path = require('path');
-const zlib = require('zlib');
+import fs from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Minimal indexed-PNG encoder (2-colour palette: index 0 = background,

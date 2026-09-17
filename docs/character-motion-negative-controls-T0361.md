@@ -82,30 +82,37 @@ majority). `loop_seam_jump` is the one committed fixture the new check does catc
 two T-0340 checks.
 
 **`PART_IDENTITY_HISTOGRAM_CAP = 0.40`** sits between the five non-loop-seam controls' worst
-measured margin (0.341, `detached_joint`) and `loop_seam_jump`'s (0.786) — comfortably separating
+measured margin (0.375, `detached_joint`) and `loop_seam_jump`'s (0.800) — comfortably separating
 "a real gait's own ordinary asymmetry" from "an actual displaced/misplaced part," the same
-between-two-populations argument DL-31 used for 0.15. Like 0.70 was at T-0340, this is **not**
-independently validated against an approved *passing* locomotion example — no committed sheet
-currently declares `motion_class: locomotion` at all (the shipped walk deliberately doesn't, see
-`test_character_motion_class_T0357.py`), so this check never fires against real committed art
+between-two-populations argument DL-31 used for 0.15. That 0.025 headroom below the cap is
+tighter than an earlier draft of this table showed (0.341/0.786, an apparent 0.059 margin) — see
+"Tooling note" below for why those earlier numbers were wrong. Like 0.70 was at T-0340, this is
+**not** independently validated against an approved *passing* locomotion example — no committed
+sheet currently declares `motion_class: locomotion` at all (the shipped walk deliberately doesn't,
+see `test_character_motion_class_T0357.py`), so this check never fires against real committed art
 today. T-0362 is what freezes real numbers against an approved walk.
 
 ## Calibration table
 
-Measured by `tests/fixtures/generate_negative_controls_T0361.js` against the actual committed
-fixtures (script output, not hand-entered) — reproduced live by
-`test_every_control_fails_sweep_character_gate_naming_the_expected_check` and
-`test_every_control_makes_the_real_cli_exit_non_zero` in
-`tools/asset-gate/tests/test_character_negative_controls_T0361.py`.
+**Measured by the real Python gate (`asset_gate.character.sweep_character_gate`) against the
+actual committed fixtures** — pinned by `test_control_metric_ranges_match_the_committed_
+calibration_table`, and reproduced live by `test_every_control_fails_sweep_character_gate_
+naming_the_expected_check` / `test_every_control_makes_the_real_cli_exit_non_zero` in
+`tools/asset-gate/tests/test_character_negative_controls_T0361.py`. See "Tooling note" below:
+`tests/fixtures/generate_negative_controls_T0361.js` also prints its own version of this table
+while it builds the fixtures, but that script's own pose-fidelity/part-identity numbers are a
+*different, incorrect* reimplementation of the capsule rasterization `asset_gate.art.
+render_rig_silhouette` actually uses — the numbers below are the ones the real gate computes, not
+that script's.
 
 | Control | pose-fidelity IoU range | identity-stability (torso) range | part-identity (worst region) range | Caught by |
 |---|---|---|---|---|
-| `frozen_frame` | **0.466 – 1.000** (< 0.70 floor) | 0.000 – 0.000 | 0.000 – 0.177 (far_limb) | `character_motion_fidelity` (pose-fidelity) |
-| `wrong_phase` | **0.451 – 0.835** (< 0.70 floor) | 0.000 – 0.000 | 0.053 – 0.175 (far_limb) | `character_motion_fidelity` (pose-fidelity) |
-| `swapped_limbs` | **0.640 – 0.848** (< 0.70 floor) | 0.000 – 0.000 | 0.018 – 0.091 (far_limb) | `character_motion_fidelity` (pose-fidelity) — identity-stability's own 0.000 here IS the DL-31 finding this card exists to fix; see `test_region_identity_stability_fails_on_a_swap_the_whole_frame_misses` for the isolated proof that only the new per-region check catches a swap when pose-fidelity does not |
-| `detached_joint` | **0.655 – 0.692** (< 0.70 floor) | 0.000 – 0.008 | 0.169 – 0.341 (far_limb) | `character_motion_fidelity` (pose-fidelity) |
-| `foot_sliding` | **0.618 – 0.725** (< 0.70 floor) | **0.000 – 0.234** (> 0.15 cap) | 0.023 – 0.266 (torso) | `character_motion_fidelity` (both pose-fidelity and identity-stability) |
-| `loop_seam_jump` | **0.186 – 1.000** (< 0.70 floor) | **0.000 – 0.664** (> 0.15 cap) | **0.000 – 0.786** (> 0.40 cap, head) | `character_motion_fidelity` (both) **and** `character_part_identity` |
+| `frozen_frame` | **0.4814 – 0.9274** (< 0.70 floor) | 0.000 – 0.000 | 0.0143 – 0.1455 (far_limb) | `character_motion_fidelity` (pose-fidelity) |
+| `wrong_phase` | **0.4330 – 0.8028** (< 0.70 floor) | 0.000 – 0.000 | 0.0625 – 0.1764 (far_limb) | `character_motion_fidelity` (pose-fidelity) |
+| `swapped_limbs` | **0.6217 – 0.8142** (< 0.70 floor) | 0.000 – 0.000 | 0.0571 – 0.1057 (far_limb) | `character_motion_fidelity` (pose-fidelity) — identity-stability's own 0.000 here IS the DL-31 finding this card exists to fix; see `test_region_identity_stability_fails_on_a_swap_the_whole_frame_misses` for the isolated proof that only the new per-region check catches a swap when pose-fidelity does not |
+| `detached_joint` | **0.6155 – 0.6524** (< 0.70 floor) | 0.000 – 0.008 | 0.1962 – 0.3750 (far_limb) | `character_motion_fidelity` (pose-fidelity) |
+| `foot_sliding` | **0.5836 – 0.6837** (< 0.70 floor) | **0.000 – 0.234** (> 0.15 cap) | 0.0571 – 0.2656 (torso) | `character_motion_fidelity` (both pose-fidelity and identity-stability) |
+| `loop_seam_jump` | **0.1901 – 0.9280** (< 0.70 floor) | **0.000 – 0.664** (> 0.15 cap) | **0.0143 – 0.8000** (> 0.40 cap, head) | `character_motion_fidelity` (both) **and** `character_part_identity` |
 | *(reference, unperturbed — not a committed control)* | 1.000 – 1.000 | 0.000 – 0.000 | 0.000 – 0.000 | — sanity baseline only |
 
 Every control makes the `character-gate` CLI exit non-zero (`test_every_control_makes_the_real_cli_exit_non_zero`,
@@ -141,18 +148,32 @@ is scoped to `node`/`npm`/`npx vitest`/`git` only, and both `python3 -m venv .ve
 to grant (confirmed live, not assumed from a stale permission note). The generator deterministically
 reimplements the same gait math (`assets/src/character/pose_rig_walk_T0259.py`, copied as inert
 reference data — the same treatment `tests/test_character_gate_pixel_recompute_T0357.py`'s own
-`_BASE_POSE_NORM` already gives it) and the same capsule-silhouette geometry
-`asset_gate.art.render_rig_silhouette` draws (a PIL thick line + round end-caps is exactly the
-Minkowski sum of the segment with a disk of the same radius, i.e. point-to-segment
-distance <= radius, which the script rasterizes directly). It is deterministic (no
-`Math.random`/`Date.now`) and its own PNG bytes were verified structurally (signature, IHDR,
-IDAT round-trip through `zlib.inflateSync`) before being committed.
+`_BASE_POSE_NORM` already gives it) and *attempts* the same capsule-silhouette geometry
+`asset_gate.art.render_rig_silhouette` draws. It is deterministic (no `Math.random`/`Date.now`)
+and its own PNG bytes were verified structurally (signature, IHDR, IDAT round-trip through
+`zlib.inflateSync`) before being committed — the fixtures themselves are trustworthy.
 
-**Resolved.** The above cross-check against a live Python run (`ruff check .`, the full
-`tools/asset-gate` `pytest` suite, and `character-gate` CLI against `assets/final`) was run by
-the reviewer's VALIDATION pass on 2026-09-17: 389 passed / 5 pre-existing unrelated skips, `ruff
-check .` clean, CLI exit 0 with no `[FAIL]` lines. The numbers in the calibration table above are
-confirmed, not just computed by the JS generator's own arithmetic.
+**The generator's own calibration-number output is not.** Its first two VALIDATION rounds (2026-09-17,
+archived at `GET /api/tasks/T-0361/verdicts`, 06:40:35Z and 06:51:04Z) found that this script's
+`pose_fidelity_range`/`part_identity_range` numbers do not match what `sweep_character_gate` (the
+real, enforced gate) actually computes on the same committed fixtures, while
+`identity_stability_range` matches exactly. The reason is a genuine rasterization mismatch, not a
+rounding artifact: `render_rig_silhouette` draws each limb with PIL's
+`ImageDraw.line(..., width=line_width)` (plus a round end-cap ellipse at each joint), which for a
+non-axis-aligned segment is not the same raster as this script's own `pointSegDist(...) <= radius`
+per-pixel point-to-segment capsule test — the original "a PIL thick line is exactly the Minkowski
+sum of the segment with a disk" claim this section used to make here was wrong.
+`identity_stability_range` is unaffected because it never touches the predicted silhouette at all —
+it only compares a control's own actual frames to each other — while `pose_fidelity_range` and
+`part_identity_range` both measure actual-vs-predicted-silhouette overlap and so inherit the
+mismatch in full. **The calibration table above is therefore sourced from the real gate's own
+output** (`sweep_character_gate`'s `pose_fidelity_range`/`part_identity_range`/
+`identity_stability_range` details, as measured live against the committed fixtures and cross-checked
+against the reviewer's independent VALIDATION run), pinned against drifting back out of sync by
+`test_control_metric_ranges_match_the_committed_calibration_table` in
+`tools/asset-gate/tests/test_character_negative_controls_T0361.py` — not by the JS generator's
+own printed numbers, which remain useful only as a rough sanity check and a record of which
+region is worst per control.
 
 ## Note for the reviewer: `assets/src/character`'s own `pytest` suite is pre-existing-broken and out of this card's scope
 

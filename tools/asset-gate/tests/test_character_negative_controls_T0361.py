@@ -39,10 +39,14 @@ from asset_gate.result import all_passed
 _FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures" / "negative_controls"
 _SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 
-# control name -> the check(s) that must be among the failing checks,
-# measured by tests/fixtures/generate_negative_controls_T0361.js against the
-# committed fixtures (see docs/character-motion-negative-controls-T0361.md
-# for the full table of measured values vs threshold).
+# control name -> the check(s) that must be among the failing checks --
+# which checks fail is the same conclusion under both
+# tests/fixtures/generate_negative_controls_T0361.js's own arithmetic and the
+# real `sweep_character_gate` (see
+# test_control_metric_ranges_match_the_committed_calibration_table below for
+# why their exact metric VALUES differ); see
+# docs/character-motion-negative-controls-T0361.md for the full table of
+# measured values vs threshold.
 _EXPECTED_FAILING_CHECKS = {
     "frozen_frame": {"character_motion_fidelity"},
     "wrong_phase": {"character_motion_fidelity"},
@@ -52,6 +56,52 @@ _EXPECTED_FAILING_CHECKS = {
     "loop_seam_jump": {
         "character_motion_fidelity",
         "character_part_identity",
+    },
+}
+
+
+# T-0361 acceptance criterion 5: the docs calibration table's own numbers must
+# match what the real gate (`sweep_character_gate`, the same path CI and the
+# board's reviewer route invoke) actually computes over the committed
+# fixtures -- not `tests/fixtures/generate_negative_controls_T0361.js`'s own
+# independent reimplementation of the same math. VALIDATION found the JS
+# script's `pose_fidelity_range`/`part_identity_range` numbers do not match
+# the real gate (its capsule rasterization diverges from
+# `asset_gate.art.render_rig_silhouette`'s PIL-based one for non-axis-aligned
+# limbs), while `identity_stability_range` -- which never touches a predicted
+# silhouette -- does match exactly. These values are the real gate's own
+# output, transcribed into `docs/character-motion-negative-controls-T0361.md`;
+# this test pins them so the two cannot drift apart again.
+_EXPECTED_METRIC_RANGES = {
+    "frozen_frame": {
+        "pose_fidelity_range": (0.4814, 0.9274),
+        "identity_stability_range": (0.0, 0.0),
+        "part_identity_range": (0.0143, 0.1455),
+    },
+    "wrong_phase": {
+        "pose_fidelity_range": (0.4330, 0.8028),
+        "identity_stability_range": (0.0, 0.0),
+        "part_identity_range": (0.0625, 0.1764),
+    },
+    "swapped_limbs": {
+        "pose_fidelity_range": (0.6217, 0.8142),
+        "identity_stability_range": (0.0, 0.0),
+        "part_identity_range": (0.0571, 0.1057),
+    },
+    "detached_joint": {
+        "pose_fidelity_range": (0.6155, 0.6524),
+        "identity_stability_range": (0.0, 0.008),
+        "part_identity_range": (0.1962, 0.3750),
+    },
+    "foot_sliding": {
+        "pose_fidelity_range": (0.5836, 0.6837),
+        "identity_stability_range": (0.0, 0.234),
+        "part_identity_range": (0.0571, 0.2656),
+    },
+    "loop_seam_jump": {
+        "pose_fidelity_range": (0.1901, 0.9280),
+        "identity_stability_range": (0.0, 0.664),
+        "part_identity_range": (0.0143, 0.8000),
     },
 }
 
@@ -126,6 +176,39 @@ def test_every_control_makes_the_real_cli_exit_non_zero(control_dir):
     assert proc.returncode != 0, proc.stdout + proc.stderr
     for check_name in _EXPECTED_FAILING_CHECKS[control_dir.name]:
         assert check_name in proc.stdout
+
+
+@pytest.mark.parametrize("control_dir", _control_dirs(), ids=lambda p: p.name)
+def test_control_metric_ranges_match_the_committed_calibration_table(control_dir):
+    """T-0361 acceptance criterion 5: the calibration table's numbers must be
+    the real gate's own numbers. Re-derives `pose_fidelity_range`,
+    `identity_stability_range` and `part_identity_range` live from
+    `sweep_character_gate` -- the same authoritative path the `character-gate`
+    CLI and the board's reviewer route both use -- and cross-checks them
+    against `_EXPECTED_METRIC_RANGES` (see its own comment for where those
+    numbers come from, and why they differ from
+    `generate_negative_controls_T0361.js`'s own printed output for two of the
+    three metrics)."""
+    results = sweep_character_gate(control_dir, repo_root=control_dir)
+    by_check = {
+        r.check: r
+        for r in results
+        if r.check in {"character_motion_fidelity", "character_part_identity"}
+    }
+
+    expected = _EXPECTED_METRIC_RANGES[control_dir.name]
+    fidelity_details = by_check["character_motion_fidelity"].details
+    assert fidelity_details["pose_fidelity_range"] == pytest.approx(
+        expected["pose_fidelity_range"], abs=1e-3
+    )
+    assert fidelity_details["identity_stability_range"] == pytest.approx(
+        expected["identity_stability_range"], abs=1e-3
+    )
+
+    part_details = by_check["character_part_identity"].details
+    assert part_details["part_identity_range"] == pytest.approx(
+        expected["part_identity_range"], abs=1e-3
+    )
 
 
 def test_no_control_fixture_is_produced_by_the_t0338_compositor():
