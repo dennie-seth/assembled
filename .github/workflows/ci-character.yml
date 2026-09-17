@@ -1,0 +1,66 @@
+name: ci-character
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "assets/src/character/**"
+      - "tools/asset-gate/src/**"
+      - "assets/src/lora/src/**"
+      - "assets/final/palette/**"
+      - ".github/workflows/ci-character.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "assets/src/character/**"
+      - "tools/asset-gate/src/**"
+      - "assets/src/lora/src/**"
+      - "assets/final/palette/**"
+      - ".github/workflows/ci-character.yml"
+
+concurrency:
+  group: ci-character-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: assets/src/character
+
+jobs:
+  lint-test:
+    name: lint, test (clean install, T-0363)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Deliberately char-gen's OWN pyproject.toml only -- pillow + numpy,
+      # no editable install of tools/asset-gate. conftest.py sys.path-injects
+      # tools/asset-gate/src (and assets/src/lora/src) instead of requiring a
+      # separate install step; this job is what actually proves that wiring
+      # collects and runs cleanly from a genuinely clean venv, which no CI
+      # workflow did before T-0363 (Codex review, 2026-09-11).
+      - run: pip install -e ".[dev]"
+
+      - run: ruff check .
+
+      - run: pytest -q
+
+      # T-0363 AC: a full character test session must never write into the
+      # committed assets/final tree. conftest.py used to auto-synthesize any
+      # missing shipped sheet directly into assets/final/character and
+      # assets/final/entity (removed in T-0363, see
+      # tests/test_conftest_no_synthesis_T0363.py) -- this is the CI-side
+      # backstop so a regression of that hazard fails the PR instead of
+      # merging silently.
+      - name: assets/final must be unchanged after the test session
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          if [ -n "$(git status --porcelain assets/final)" ]; then
+            echo "character test session wrote into assets/final:"
+            git status --porcelain assets/final
+            exit 1
+          fi
