@@ -31,9 +31,9 @@ tools/asset-gate/tests/fixtures/
     <control>/character/sheet.png
     <control>/character/sheet.provenance.json
     <control>/character/rig/frame_0.json .. frame_7.json
-  session13_negative_control/            # rescue target -- see "Session 13" below
-    sheet_192x96_indexed.png             # NOT YET committed, see status
-    provenance_candidate.json            # NOT YET committed, see status
+  session13_negative_control/            # rescued -- see "Session 13" below
+    sheet_192x96_indexed.png             # committed, sha256-verified
+    provenance_candidate.json            # committed, sha256-verified
   generate_negative_controls_T0361.js    # the generator (see "Tooling note")
 ```
 
@@ -111,39 +111,25 @@ fixtures (script output, not hand-entered) — reproduced live by
 Every control makes the `character-gate` CLI exit non-zero (`test_every_control_makes_the_real_cli_exit_non_zero`,
 one real `subprocess.run` per control, not just the in-process function).
 
-## Session 13 (T-0340's original negative control) — rescue attempted, not completed
+## Session 13 (T-0340's original negative control) — rescued
 
-**Status: NOT rescued by this card.** `tools/asset-gate/tests/fixtures/session13_negative_control/`
-does not exist yet. The two files this card needed to copy in and sha256-verify are documented in
-the card body's "PRESERVED COPY" section:
+**Status: rescued.** `tools/asset-gate/tests/fixtures/session13_negative_control/` is committed
+(`50e88e1`), sha256-verified against the card body's "PRESERVED COPY" table before committing:
 
 | File | Bytes | sha256 |
 |---|---|---|
 | `sheet_192x96_indexed.png` | 4,775 | `f3441daab4fe471437becdaa5a3c8ed9cbe6d8b0fb3ffc0f9ac7b1d9d32dcf8c` |
 | `provenance_candidate.json` | 27,791 | `1247a0692331b7804bf5f74979d497796266f1510a2961595e59671ece2f3470` |
 
-```host-action-request
-host: any host/session with filesystem access beyond this worktree (e.g. a session rooted at
-  the assembled-board repo root, or with access to F:\PetProjects\assembled\fixtures\ from WSL)
-action: verify the sha256 of both files above at
-  F:\PetProjects\assembled\fixtures\session13_negative_control\ (from WSL:
-  /mnt/f/PetProjects/assembled/fixtures/session13_negative_control/), then copy both into
-  tools/asset-gate/tests/fixtures/session13_negative_control/ in this branch and commit them.
-reason: this card's implementer session runs in a filesystem sandbox restricted to
-  worktrees/T-0361 only -- confirmed live: `ls /mnt/f/PetProjects/...` and
-  `ls worktrees/T-0259` (the sibling worktree that also holds these bytes) both returned
-  "may only list files in the allowed working directories for this session:
-  .../worktrees/T-0361". Neither path is reachable from here by any tool grant.
-verify: `test_negative_control_session13_drift_candidate_reproduces_from_real_artifact_when_available`
-  (tools/asset-gate/tests/test_character_gate.py) stops skipping and passes once both files are
-  committed at that path with matching sha256 -- it checks the hashes itself before trusting them.
-```
-
-The test already prefers the committed rescue path over the sibling-worktree path (falls back to
-the old T-0340 path only if the rescue copy is absent, so nothing regresses if the sibling
-`feature/T-0259` worktree still happens to exist on some machine) and verifies both sha256 values
-itself before trusting the fixture. Once the two files land, the skip in that test naturally stops
-firing — no further code change is needed.
+`assets/src/character/calibrate_motion_fidelity_T0340.py`'s `SESSION13_SHEET`/`SESSION13_PROVENANCE`
+now point at this committed path instead of the sibling `feature/T-0259` worktree, so
+`calibrate_session13_drift_candidate()` reads the rescued fixture directly — no sibling worktree
+needed on the machine running it. The test
+(`test_negative_control_session13_drift_candidate_reproduces_from_real_artifact` in
+`tools/asset-gate/tests/test_character_gate.py`) calls that same production helper, re-verifies
+both sha256 values itself, and asserts `calibrated["available"]` is true; the old
+skip-if-neither-path-exists branch is removed, since the committed fixture is now always present
+once this branch is checked out.
 
 ## Tooling note: why the generator is JavaScript, not Python
 
