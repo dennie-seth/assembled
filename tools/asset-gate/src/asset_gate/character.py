@@ -81,15 +81,40 @@ for the same reason at a larger scale). ``determine_character_part_identity``
 / ``PART_IDENTITY_HISTOGRAM_CAP`` are the fix: four NAMED regions
 (head/torso/near_limb/far_limb, three of them re-derived per frame from that
 frame's own rig-commanded keypoints since limbs move) evaluated
-independently via ``asset_gate.art.check_region_identity_stability``, so a
-mismatch confined to one part cannot be diluted by an unaffected majority of
-the frame. This card does not touch ``POSE_FIDELITY_IOU_FLOOR`` or
-``IDENTITY_STABILITY_HISTOGRAM_CAP`` -- see ``PART_IDENTITY_HISTOGRAM_CAP``'s
-own docstring for why its cap is a new, separate, still-provisional value.
+independently, each frame's own region compared against a REAL per-part
+appearance reference (never the binary rig silhouette -- see
+``determine_character_part_identity``'s own docstring for the 2026-09-17
+Codex fix and its documented limits), so a mismatch confined to one part
+cannot be diluted by an unaffected majority of the frame. This card does not
+touch ``POSE_FIDELITY_IOU_FLOOR`` or ``IDENTITY_STABILITY_HISTOGRAM_CAP`` --
+see ``PART_IDENTITY_HISTOGRAM_CAP``'s own docstring for why its cap is a
+new, separate, still-provisional value.
+
+**T-0360 (Codex review 2026-09-11 finding 2c): bind a recorded motion score
+to content hashes.** T-0357 made ``determine_character_motion_fidelity``
+always recompute pose-fidelity/identity-stability live from pixels when rig
+evidence exists, and fail outright when it does not -- but a recomputed
+result was never checked against what a sidecar itself *recorded*, and
+nothing tied a recorded score to the sheet/rig/palette/evaluator state it was
+measured under. ``check_motion_score_binding`` closes that gap: once a
+recompute has actually happened, it requires a sidecar's own
+``pose_fidelity_range``/``identity_stability_range`` to carry a
+``motion_score_binding`` (the sheet PNG's own content hash, ``RIG_CONFIG_VERSION``,
+the palette file's content hash, and ``EVALUATOR_VERSION``), fails if any of
+those four no longer match the sheet's current reality, and -- once every
+hash matches -- fails if the recorded score itself disagrees with a fresh
+recompute beyond ``MOTION_SCORE_TOLERANCE``. It is a distinct check
+(``character_motion_score_binding``) from ``character_motion_fidelity``:
+missing/malformed rig evidence stays T-0357's own fail-closed concern, never
+conflated with a stale binding. An exemption, if one is ever needed, uses the
+same explicit, path-exact, written-reason baseline idiom as
+``character_motion_class_baseline.txt`` -- see
+``character_motion_score_binding_baseline.txt``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import numbers
 from pathlib import Path
@@ -542,6 +567,38 @@ def build_character_gate_report(
         sheet_name=sheet_name,
     )
 
+    checks = {
+        "character_arm_c_provenance": {
+            "passed": arm_c_result.passed,
+            "reason": arm_c_result.reason,
+        },
+        "character_frame_delta_cap": {
+            "passed": cap_result.passed,
+            "reason": cap_result.reason,
+        },
+        "character_motion_fidelity": {
+            "passed": motion_result.passed,
+            "reason": motion_result.reason,
+        },
+        "character_part_identity": {
+            "passed": part_identity_result.passed,
+            "reason": part_identity_result.reason,
+        },
+    }
+    if motion_result.details.get("recomputed_from_pixels"):
+        binding_result = check_motion_score_binding(
+            provenance,
+            recomputed_pose_fidelity_range=motion_result.details["pose_fidelity_range"],
+            recomputed_identity_stability_range=motion_result.details["identity_stability_range"],
+            sheet=sheet,
+            repo_root=repo_root,
+            sheet_name=sheet_name,
+        )
+        checks["character_motion_score_binding"] = {
+            "passed": binding_result.passed,
+            "reason": binding_result.reason,
+        }
+
     return {
         "sheet": sheet_name,
         "grid": {
@@ -569,24 +626,7 @@ def build_character_gate_report(
             "max_min_ratio": (max_count / min_count) if min_count else None,
         },
         "silhouette_delta_range": [min(silhouette_ratios), max(silhouette_ratios)],
-        "checks": {
-            "character_arm_c_provenance": {
-                "passed": arm_c_result.passed,
-                "reason": arm_c_result.reason,
-            },
-            "character_frame_delta_cap": {
-                "passed": cap_result.passed,
-                "reason": cap_result.reason,
-            },
-            "character_motion_fidelity": {
-                "passed": motion_result.passed,
-                "reason": motion_result.reason,
-            },
-            "character_part_identity": {
-                "passed": part_identity_result.passed,
-                "reason": part_identity_result.reason,
-            },
-        },
+        "checks": checks,
     }
 
 
@@ -1554,27 +1594,286 @@ def determine_character_part_identity(
     )
 
 
+# ---- T-0360: bind recorded motion scores to content hashes (Codex 2c) ----
+
+_MOTION_SCORE_BINDING_BASELINE_FILENAME = "character_motion_score_binding_baseline.txt"
+
+#: T-0360: versions `check_motion_score_binding`'s own comparison semantics
+#: (which fields are bound, how score drift is measured) -- distinct from
+#: `RIG_CONFIG_VERSION`, which versions the rig topology/capsule radius used
+#: to RENDER the recompute this check compares against. Bump this if the
+#: binding shape or drift comparison itself ever changes, so a binding
+#: recorded under an older scheme is caught as stale rather than silently
+#: compared under the new one.
+EVALUATOR_VERSION = "check_motion_score_binding:sheet+rig+palette+evaluator:v1"
+
+#: T-0360: the recompute (`render_rig_silhouette` + `check_pose_fidelity` /
+#: `check_identity_stability`) is fully deterministic given the same sheet
+#: pixels and rig keypoints -- a fresh recompute should reproduce a
+#: previously recorded score exactly. This tolerance exists only to absorb
+#: floating-point rounding noise across platforms/numpy versions, never to
+#: permit real drift.
+MOTION_SCORE_TOLERANCE = 1e-6
+
+#: The four fields a `motion_score_binding` must carry, each a non-empty
+#: string.
+_MOTION_SCORE_BINDING_FIELDS: tuple[str, ...] = (
+    "sheet_sha256",
+    "rig_config_version",
+    "palette_sha256",
+    "evaluator_version",
+)
+
+
+def compute_image_content_sha256(image: Image.Image) -> str:
+    """sha256 of an indexed image's own pixel data + embedded palette --
+    independent of PNG encoder/compression settings, so hashing a
+    just-opened committed file and hashing the same content built
+    in-memory (e.g. by a test) agree.
+    """
+    hasher = hashlib.sha256()
+    hasher.update(image.tobytes())
+    hasher.update(bytes(image.getpalette() or []))
+    return hasher.hexdigest()
+
+
+def compute_file_sha256(path: Path | str) -> str:
+    """sha256 of a file's raw bytes -- used for the palette file, which
+    (unlike the sheet) is compared as a committed file, not decoded pixel
+    content.
+    """
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def check_motion_score_binding(
+    provenance: dict,
+    *,
+    recomputed_pose_fidelity_range: tuple[float, float] | list[float],
+    recomputed_identity_stability_range: tuple[float, float] | list[float],
+    sheet: Image.Image,
+    repo_root: Path | str = ".",
+    sheet_name: str = "<sheet>",
+) -> CheckResult:
+    """T-0360 (Codex review 2026-09-11 finding 2c): a locomotion/transition/
+    loop sheet's recorded `pose_fidelity_range`/`identity_stability_range`
+    must be bound to the sheet PNG's own content hash, the rig/config
+    version used to recompute it, the home palette file's own content hash,
+    and this module's own `EVALUATOR_VERSION` -- and, once every one of
+    those four matches, the recorded score itself must still agree with a
+    fresh pixel recompute within `MOTION_SCORE_TOLERANCE`.
+
+    Only meaningful once `determine_character_motion_fidelity` has already
+    recomputed successfully from pixels -- `recomputed_pose_fidelity_range`/
+    `recomputed_identity_stability_range` are that recompute's own output.
+    Missing or malformed rig evidence is T-0357's own fail-closed concern,
+    a distinct check (`character_motion_fidelity`); callers should only
+    invoke this once a recompute has actually happened.
+
+    Args:
+        provenance: dict loaded from a `.provenance.json` sidecar. Its own
+            `pose_fidelity_range`/`identity_stability_range` are the
+            RECORDED score being checked; `palette_source` names the
+            palette file to hash.
+        recomputed_pose_fidelity_range: the aggregate [lo, hi] pose-fidelity
+            IoU just recomputed live from this sheet's pixels.
+        recomputed_identity_stability_range: the aggregate [lo, hi]
+            identity-stability histogram distance, recomputed the same way.
+        sheet: the sheet image the recompute was just run against.
+        repo_root: repository root used to resolve `palette_source`.
+        sheet_name: identifies the sheet in the failure message.
+
+    Returns:
+        `CheckResult` with `passed=True` iff a `motion_score_binding` with
+        all four fields is present, every field matches the sheet's current
+        reality, and the recorded score agrees with the fresh recompute
+        within tolerance.
+    """
+    binding = provenance.get("motion_score_binding")
+    recorded_pose = provenance.get("pose_fidelity_range")
+    recorded_identity = provenance.get("identity_stability_range")
+
+    missing: list[str] = []
+    if not isinstance(binding, dict):
+        missing.append("motion_score_binding")
+    else:
+        missing.extend(
+            field_name
+            for field_name in _MOTION_SCORE_BINDING_FIELDS
+            if not isinstance(binding.get(field_name), str) or not binding.get(field_name)
+        )
+    if not _is_well_formed_range(recorded_pose):
+        missing.append("pose_fidelity_range")
+    if not _is_well_formed_range(recorded_identity):
+        missing.append("identity_stability_range")
+
+    if missing:
+        return CheckResult(
+            check="character_motion_score_binding",
+            passed=False,
+            reason=(
+                f"{sheet_name} is missing or has a malformed motion-score-binding field(s): "
+                f"{', '.join(missing)} -- a recorded locomotion/transition/loop motion score "
+                "must be bound to the sheet's content hash, rig/config version, palette hash "
+                "and evaluator version (T-0360)"
+            ),
+            details={"missing": missing},
+        )
+
+    mismatches: dict[str, dict[str, str]] = {}
+
+    actual_sheet_sha256 = compute_image_content_sha256(sheet)
+    if binding["sheet_sha256"] != actual_sheet_sha256:
+        mismatches["sheet_sha256"] = {
+            "recorded": binding["sheet_sha256"],
+            "actual": actual_sheet_sha256,
+        }
+
+    if binding["rig_config_version"] != RIG_CONFIG_VERSION:
+        mismatches["rig_config_version"] = {
+            "recorded": binding["rig_config_version"],
+            "actual": RIG_CONFIG_VERSION,
+        }
+
+    palette_source = provenance.get("palette_source")
+    if not palette_source:
+        mismatches["palette_sha256"] = {
+            "recorded": binding["palette_sha256"],
+            "actual": "<no palette_source recorded on this sidecar>",
+        }
+    else:
+        palette_path = Path(repo_root) / palette_source
+        if not palette_path.is_file():
+            mismatches["palette_sha256"] = {
+                "recorded": binding["palette_sha256"],
+                "actual": f"<palette_source {palette_source!r} not found under {repo_root}>",
+            }
+        else:
+            actual_palette_sha256 = compute_file_sha256(palette_path)
+            if binding["palette_sha256"] != actual_palette_sha256:
+                mismatches["palette_sha256"] = {
+                    "recorded": binding["palette_sha256"],
+                    "actual": actual_palette_sha256,
+                }
+
+    if binding["evaluator_version"] != EVALUATOR_VERSION:
+        mismatches["evaluator_version"] = {
+            "recorded": binding["evaluator_version"],
+            "actual": EVALUATOR_VERSION,
+        }
+
+    if mismatches:
+        return CheckResult(
+            check="character_motion_score_binding",
+            passed=False,
+            reason=(
+                f"{sheet_name}: motion_score_binding is stale -- "
+                f"{', '.join(sorted(mismatches))} no longer match(es) the sheet's current "
+                "content, rig/config version, palette or evaluator (T-0360)"
+            ),
+            details={"mismatches": mismatches},
+        )
+
+    drift: dict[str, dict[str, object]] = {}
+
+    pose_drift = max(
+        abs(recorded_pose[0] - recomputed_pose_fidelity_range[0]),
+        abs(recorded_pose[1] - recomputed_pose_fidelity_range[1]),
+    )
+    if pose_drift > MOTION_SCORE_TOLERANCE:
+        drift["pose_fidelity_range"] = {
+            "recorded": list(recorded_pose),
+            "recomputed": list(recomputed_pose_fidelity_range),
+            "drift": pose_drift,
+        }
+
+    identity_drift = max(
+        abs(recorded_identity[0] - recomputed_identity_stability_range[0]),
+        abs(recorded_identity[1] - recomputed_identity_stability_range[1]),
+    )
+    if identity_drift > MOTION_SCORE_TOLERANCE:
+        drift["identity_stability_range"] = {
+            "recorded": list(recorded_identity),
+            "recomputed": list(recomputed_identity_stability_range),
+            "drift": identity_drift,
+        }
+
+    if drift:
+        return CheckResult(
+            check="character_motion_score_binding",
+            passed=False,
+            reason=(
+                f"{sheet_name}: recorded motion score disagrees with a fresh pixel recompute "
+                f"beyond the {MOTION_SCORE_TOLERANCE} tolerance for {', '.join(sorted(drift))} "
+                "(T-0360)"
+            ),
+            details={"drift": drift},
+        )
+
+    return CheckResult(
+        check="character_motion_score_binding",
+        passed=True,
+        reason=(
+            f"{sheet_name}: motion_score_binding matches the sheet's current content, "
+            "rig/config version, palette and evaluator, and the recorded score agrees with a "
+            "fresh pixel recompute"
+        ),
+        details={"binding": binding},
+    )
+
+
+def _default_binding_baseline_path() -> Path:
+    return Path(__file__).parent / _MOTION_SCORE_BINDING_BASELINE_FILENAME
+
+
+def load_character_motion_score_binding_baseline(
+    path: Path | str | None = None,
+) -> frozenset[str]:
+    """Load the set of documented pre-T-0360 motion-score-binding gaps --
+    same shape/idiom as `load_character_motion_class_baseline`. Empty by
+    default: no committed character sidecar declares a locomotion/
+    transition/loop `motion_class` today (see
+    `character_motion_class_baseline.txt`), so nothing in the committed
+    tree needs a binding exemption yet -- this exists so a genuinely
+    unrecomputable legacy sheet can be exempted explicitly and path-exactly
+    in the future, never silently.
+    """
+    baseline_path = (
+        Path(path) if path is not None else _default_binding_baseline_path()
+    )
+    if not baseline_path.is_file():
+        return frozenset()
+    return frozenset(
+        line.strip()
+        for line in baseline_path.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    )
+
+
 def sweep_character_gate(
     root: Path | str,
     *,
     repo_root: Path | str = ".",
     baseline: frozenset[str] = frozenset(),
     motion_class_baseline: frozenset[str] = frozenset(),
+    motion_score_binding_baseline: frozenset[str] = frozenset(),
 ) -> list[CheckResult]:
     """The single authoritative character validator (T-0357, Codex review
     2026-09-11 finding 1): every character-class `*.provenance.json` under
     *root* must pass CHR-1 presence, the idle-class frame-delta cap, a
     validated `motion_class` declaration, and -- recomputed live from the
     sheet's own PNG whenever rig evidence permits it -- pose-fidelity/
-    identity-stability.
+    identity-stability. Whenever that recompute actually happens, T-0360's
+    `check_motion_score_binding` also runs, binding the recorded score to
+    the sheet/rig/palette/evaluator state it claims to have been measured
+    under.
 
     This is the union of `sweep_character_arm_c_provenance`,
     `sweep_character_frame_delta_cap`, `sweep_character_motion_class_declared`,
-    `determine_character_motion_fidelity`, and (T-0361)
-    `determine_character_part_identity` -- the one function the
-    `character-gate` CLI subcommand exposes, and the one both
-    `ci-asset-gate.yml` and the board's reviewer route invoke, so there is
-    exactly one enforcement path instead of two that can silently drift
+    `determine_character_motion_fidelity`, (T-0361) `determine_character_part_identity`
+    and `check_motion_score_binding` -- the one function the `character-gate`
+    CLI subcommand exposes, and the one both `ci-asset-gate.yml` and the
+    board's reviewer route invoke, so there is exactly one enforcement path
+    instead of two that can silently drift
     apart (this card's own motivating gap: T-0340's motion-fidelity sweep
     existed and was unit-tested, but no workflow anywhere ever called it).
 
@@ -1582,12 +1881,17 @@ def sweep_character_gate(
         root: directory whose subdirectories are asset classes (e.g.
             `assets/final`).
         repo_root: repository root used to resolve each frame's versioned
-            rig-keypoints file (`frame_generation[i].pose_keypoints_file`).
+            rig-keypoints file (`frame_generation[i].pose_keypoints_file`)
+            and each sidecar's `palette_source`.
         baseline: paths (relative to *root*) exempt from CHR-1 presence and
             the idle frame-delta cap -- see `load_character_arm_c_baseline`.
         motion_class_baseline: paths (relative to *root*) exempt from the
             motion_class declaration requirement -- see
             `load_character_motion_class_baseline`.
+        motion_score_binding_baseline: paths (relative to *root*) exempt
+            from the motion-score-binding requirement -- see
+            `load_character_motion_score_binding_baseline`. Empty by
+            default; nothing in the committed tree needs this yet.
     """
     root_path = Path(root)
     results: list[CheckResult] = []
@@ -1690,5 +1994,30 @@ def sweep_character_gate(
                 details={**part_identity.details, "path": rel_str},
             )
         )
+
+        if fidelity.details.get("recomputed_from_pixels"):
+            binding = check_motion_score_binding(
+                provenance,
+                recomputed_pose_fidelity_range=fidelity.details["pose_fidelity_range"],
+                recomputed_identity_stability_range=fidelity.details["identity_stability_range"],
+                sheet=Image.open(image_path),
+                repo_root=repo_root,
+                sheet_name=rel_str,
+            )
+            if not binding.passed and rel_str in motion_score_binding_baseline:
+                binding = CheckResult(
+                    check=binding.check,
+                    passed=True,
+                    reason=f"{binding.reason} [baseline-exempt: T-0360]",
+                    details={**binding.details, "baseline_exempt": True},
+                )
+            results.append(
+                CheckResult(
+                    check=binding.check,
+                    passed=binding.passed,
+                    reason=binding.reason,
+                    details={**binding.details, "path": rel_str},
+                )
+            )
 
     return results
