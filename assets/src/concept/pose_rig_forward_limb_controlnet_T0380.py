@@ -36,10 +36,18 @@ profile -- giving the ControlNet conditioning no joint to hang a second
 hand on. Every other joint, including the qualifying near-arm/near-leg
 raise, is untouched from the committed rig.
 
-`render_skeleton` reuses `pose_rig_master_sheet_T0351.render_pose_skeleton`
-directly (itself a thin wrapper over `gen_arm_a_idle_T0228.
-draw_pose_skeleton_cell`) -- the same OpenPose-format renderer this pipeline
-has used for every ControlNet-conditioned card so far.
+`render_skeleton` draws this module's own `keypoints()` (collapsed far arm
+included) via `gen_arm_a_idle_T0228.draw_pose_skeleton_cell` -- the same
+OpenPose-format renderer this pipeline has used for every ControlNet-
+conditioned card so far -- rather than `pose_rig_master_sheet_T0351.
+render_pose_skeleton`, which re-derives its points straight from T-0351's own
+module and would silently discard the far-arm override above. That was a
+real bug here, not a hypothetical: attempt 3's committed skeleton PNG still
+showed the un-collapsed far arm despite the override existing in this
+module's `FORWARD_LIMB_KEYPOINTS_NORM`, because `render_skeleton` was calling
+`_T0351.render_pose_skeleton(POSE_KEY, size)`, which calls
+`_T0351.keypoints_for(POSE_KEY)` internally and never saw this module's
+collapsed copy.
 """
 
 from __future__ import annotations
@@ -53,6 +61,7 @@ if str(_CHARACTER_DIR) not in sys.path:
     sys.path.insert(0, str(_CHARACTER_DIR))
 
 import pose_rig_master_sheet_T0351 as _T0351  # noqa: E402
+from gen_arm_a_idle_T0228 import draw_pose_skeleton_cell  # noqa: E402
 
 Point = tuple[float, float]
 
@@ -106,10 +115,14 @@ def thigh_angle_degrees_from_horizontal(points: dict[int, Point] | None = None) 
 
 
 def render_skeleton(size: int):
-    """Reuses `pose_rig_master_sheet_T0351.render_pose_skeleton` directly --
-    same limb topology/colours, same joint-radius/line-width scaling, same
-    pure black background."""
-    return _T0351.render_pose_skeleton(POSE_KEY, size)
+    """Draws this module's own (far-arm-collapsed) `keypoints()` via
+    `gen_arm_a_idle_T0228.draw_pose_skeleton_cell` -- same limb topology/
+    colours, same joint-radius/line-width scaling, same pure black
+    background as every other ControlNet-conditioned card. Must NOT
+    delegate to T-0351's own convenience wrapper, which re-derives
+    keypoints from T-0351's module internally and would silently drop the
+    far-arm override -- see module docstring."""
+    return draw_pose_skeleton_cell(size, points_norm=keypoints())
 
 
 def keypoints_to_coco_list(points: dict[int, Point] | None = None) -> list[dict]:

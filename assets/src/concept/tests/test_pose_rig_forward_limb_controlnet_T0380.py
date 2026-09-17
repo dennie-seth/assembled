@@ -118,11 +118,41 @@ def test_faces_right_same_direction_as_the_T0317_base():
     assert points[_R_SHOULDER][0] > points[_L_SHOULDER][0]
 
 
-def test_render_skeleton_reuses_the_T0351_renderer():
+def test_render_skeleton_reuses_the_shared_openpose_renderer():
     import inspect
 
     src = inspect.getsource(rig.render_skeleton)
-    assert "render_pose_skeleton" in src
+    assert "draw_pose_skeleton_cell" in src
+
+
+def test_render_skeleton_does_not_call_T0351s_render_pose_skeleton():
+    """Regression for the attempt-3 bug: `_T0351.render_pose_skeleton`
+    re-derives keypoints from T-0351's own module and would silently
+    discard this module's far-arm collapse override (see module
+    docstring) -- `render_skeleton` must draw this module's own
+    `keypoints()` instead."""
+    import inspect
+
+    src = inspect.getsource(rig.render_skeleton)
+    assert "render_pose_skeleton" not in src
+
+
+def test_render_skeleton_actually_reflects_the_far_arm_collapse():
+    """Pins the fix directly at the pixel level: rendering this module's
+    keypoints must produce bit-identical output to drawing `keypoints()`
+    directly -- i.e. `render_skeleton` cannot silently substitute some
+    other (un-collapsed) point set, the exact way it did before this
+    module imported `draw_pose_skeleton_cell` itself."""
+    from io import BytesIO
+
+    from gen_arm_a_idle_T0228 import draw_pose_skeleton_cell
+
+    expected = draw_pose_skeleton_cell(256, points_norm=rig.keypoints())
+    actual = rig.render_skeleton(256)
+    buf_expected, buf_actual = BytesIO(), BytesIO()
+    expected.save(buf_expected, format="PNG")
+    actual.save(buf_actual, format="PNG")
+    assert buf_expected.getvalue() == buf_actual.getvalue()
 
 
 def test_render_skeleton_size_matches_request():
