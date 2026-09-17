@@ -74,34 +74,34 @@ _EXPECTED_FAILING_CHECKS = {
 # this test pins them so the two cannot drift apart again.
 _EXPECTED_METRIC_RANGES = {
     "frozen_frame": {
-        "pose_fidelity_range": (0.4814, 0.9274),
-        "identity_stability_range": (0.0, 0.0),
-        "part_identity_range": (0.0143, 0.1455),
+        "pose_fidelity_range": [0.4814, 0.9274],
+        "identity_stability_range": [0.0, 0.0],
+        "part_identity_range": [0.0143, 0.1455],
     },
     "wrong_phase": {
-        "pose_fidelity_range": (0.4330, 0.8028),
-        "identity_stability_range": (0.0, 0.0),
-        "part_identity_range": (0.0625, 0.1764),
+        "pose_fidelity_range": [0.4330, 0.8028],
+        "identity_stability_range": [0.0, 0.0],
+        "part_identity_range": [0.0625, 0.1764],
     },
     "swapped_limbs": {
-        "pose_fidelity_range": (0.6217, 0.8142),
-        "identity_stability_range": (0.0, 0.0),
-        "part_identity_range": (0.0571, 0.1057),
+        "pose_fidelity_range": [0.6217, 0.8142],
+        "identity_stability_range": [0.0, 0.0],
+        "part_identity_range": [0.0571, 0.1057],
     },
     "detached_joint": {
-        "pose_fidelity_range": (0.6155, 0.6524),
-        "identity_stability_range": (0.0, 0.008),
-        "part_identity_range": (0.1962, 0.3750),
+        "pose_fidelity_range": [0.6155, 0.6524],
+        "identity_stability_range": [0.0, 0.008],
+        "part_identity_range": [0.1962, 0.3750],
     },
     "foot_sliding": {
-        "pose_fidelity_range": (0.5836, 0.6837),
-        "identity_stability_range": (0.0, 0.234),
-        "part_identity_range": (0.0571, 0.2656),
+        "pose_fidelity_range": [0.5836, 0.6837],
+        "identity_stability_range": [0.0, 0.234],
+        "part_identity_range": [0.0571, 0.2656],
     },
     "loop_seam_jump": {
-        "pose_fidelity_range": (0.1901, 0.9280),
-        "identity_stability_range": (0.0, 0.664),
-        "part_identity_range": (0.0143, 0.8000),
+        "pose_fidelity_range": [0.1901, 0.9280],
+        "identity_stability_range": [0.0, 0.664],
+        "part_identity_range": [0.0143, 0.8000],
     },
 }
 
