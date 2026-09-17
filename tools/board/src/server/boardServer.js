@@ -21,6 +21,7 @@ import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 import { createAutoPullPoller } from "../runner/autoPullPoller.js";
 import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
 import { drainPendingUsageWrites } from "../runner/usageLedger.js";
+import { reconcileReservationsOnStartup } from "../runner/launchReservation.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -220,6 +221,24 @@ export async function startBoardServer({
   // before resetting anything, and only reaps what it can't corroborate as still alive.
   await orphanReaper.reapOnStartup();
   orphanReaper.start();
+  // WIP gate T-D (spec §5): releases a launch-boundary reservation left dangling by a crash or
+  // an ungraceful restart. Runs AFTER the reaper above so it reconciles against each card's
+  // already-corrected status -- a card the reaper just reset from in-progress to blocked must
+  // have its stranded reservation released too, not left counted as still-unspent forever.
+  // Gated on the same cross-process ownership as the reaper (see its own docstring): a
+  // non-owner process reads a different runs directory and must never release another live
+  // board's reservations.
+  if (ownership.owned) {
+    // reconcileReservationsOnStartup already tolerates an unreadable/malformed lease file or an
+    // unlistable reservation directory internally (T-0370 follow-up) -- this try/catch is a
+    // backstop for anything else that call could still throw (e.g. a release write failing), so
+    // that reservation reconciliation can never be the reason a board process fails to start.
+    try {
+      await reconcileReservationsOnStartup({ runsDir: path.join(tasksDir, ".runs"), store: guardedStore });
+    } catch (err) {
+      console.error(`launch-reservation: startup reconciliation failed -- continuing startup: ${err.message}`);
+    }
+  }
   selfImprovementLoop.start();
   autoPullPoller.start();
   autoLaunchPoller.start();

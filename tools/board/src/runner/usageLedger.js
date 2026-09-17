@@ -786,6 +786,26 @@ export function executionTotal(entries, executionId) {
 }
 
 /**
+ * Whether an execution's `executionTotal(...).costUsd` may be treated as an EXACT actual cost,
+ * rather than a lower bound (T-0370 fix round, Codex review finding 4: "`runCard` resolving is
+ * not treated as success"). `runCard` resolving without throwing only means the run's own promise
+ * chain didn't reject -- a reviewer FAIL that lands the card on `blocked`, a quota stop, and a
+ * cancellation all resolve that same way. The only thing this module can independently verify is
+ * each recorded entry's own `outcome`/`complete` classification (`runOrchestrator.js`'s
+ * `_recordUsage` call sites: `"success"` for a phase that ran to completion and passed, versus
+ * `"quota_stop"`/`"reviewer_fail"`/`"cancelled"`/`"phase_timeout"`/`"crashed"` for everything
+ * else) -- true only when there is at least one entry for this execution AND every one of them is
+ * `complete: true`, `outcome: "success"`, and carries a real known `costUsd`. Any other entry
+ * present for the execution (a quota stop, a FAIL, a cancellation, ...) means the run did NOT end
+ * in a successful terminal state, so its subtotal must be reported as a lower bound instead.
+ */
+export function executionEndedSuccessfully(entries, executionId) {
+  const scoped = entries.filter((e) => e.executionId === executionId);
+  if (scoped.length === 0) return false;
+  return scoped.every((e) => e.complete === true && e.outcome === "success" && typeof e.costUsd === "number" && Number.isFinite(e.costUsd));
+}
+
+/**
  * Sums every execution/attempt/phase/retry ever recorded for the card -- the card's LIFETIME
  * total across every separate launch, not just the most recent one. Distinct from
  * `executionTotal`, which scopes to a single launch (Codex review 2026-09-12, P1): two separate
