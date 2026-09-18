@@ -400,6 +400,54 @@ describe("PATCH /api/tasks/:id", () => {
     const payload = await res.json();
     expect(payload.error).toMatch(/complexity_points/i);
   });
+
+  // Codex review 2026-09-18 (T-0384), finding 3: a re-check followed by an unconditional PATCH
+  // is a TOCTOU race. X-Board-Expected-Status lets a caller assert the card's current status
+  // before the write commits, atomically with the write (StaleWriteError -> 409) rather than as
+  // a separate read of its own.
+  describe("conditional write (X-Board-Expected-Status)", () => {
+    it("applies the write when the header matches the task's current status", async () => {
+      const task = await createTask();
+      expect(task.status).toBe("backlog");
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Expected-Status": "backlog" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+      const updated = await res.json();
+      expect(updated.status).toBe("ready");
+    });
+
+    it("returns 409 and leaves the record untouched when the header no longer matches the current status", async () => {
+      const task = await createTask();
+      await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "in-progress" })
+      });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Expected-Status": "backlog" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(409);
+
+      const current = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+      expect(current.status).toBe("in-progress");
+    });
+
+    it("PATCHes normally when no expected-status header is sent (backward compatible)", async () => {
+      const task = await createTask();
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+    });
+  });
 });
 
 describe("PATCH /api/tasks/:id dependency guard", () => {
