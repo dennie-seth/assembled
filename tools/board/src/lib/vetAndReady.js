@@ -124,35 +124,99 @@ export function supersededCheck(task) {
   };
 }
 
+/** The section-heading regex `extractAcceptancePaths` scopes its extraction to. */
+const ACCEPTANCE_SECTION_RE = /^#{1,6}\s*acceptance\b[^\n]*\n([\s\S]*?)(?=\n#{1,6}\s|\n*$)/im;
+
 /**
- * Rule 2: not already satisfied by merged work, checked against `git log` on `develop` for
- * commits naming the card id. `gitLogGrep(cardId)` is injected (see
- * `tools/board/ops/vetAndReady.js`'s `makeGitLogGrep`) so this stays a pure function -- it never
- * shells out itself. Conservative on both failure modes: a hit is treated as "possibly already
- * satisfied" (skip), and a `git` error is treated as uncertain (skip) rather than either crashing
- * the run or silently treating the card as clear.
+ * File extensions `extractAcceptancePaths` treats as "this token names a repo path", not just
+ * "this token happens to contain a dot" (which would also match things like "e.g." or "v1.0").
+ * A short, curated allowlist rather than an exhaustive one -- widening it only ever makes the
+ * check MORE conservative (more candidate paths checked, more potential skips), never less safe.
+ */
+const PATH_TOKEN_EXTENSIONS = "js|jsx|ts|tsx|py|md|json|yml|yaml|sh|cpp|hpp|h|cc|sql|gd|toml|cfg|ini|txt";
+const PATH_TOKEN_RE = new RegExp(
+  "`([^`\\s]+\\.(?:" + PATH_TOKEN_EXTENSIONS + "))`" + "|" + "\\b([\\w][\\w./-]*\\.(?:" + PATH_TOKEN_EXTENSIONS + "))\\b",
+  "gi"
+);
+
+/**
+ * Purely mechanical: extracts path-*looking* tokens (backtick-quoted, or bare `word.ext`) from
+ * the card body's own `## Acceptance` section only -- never its `Links`/`Pointers`/`Scope`
+ * sections, which routinely name paths to *existing* docs unrelated to this card (`docs/PLAN.md`
+ * always exists) and would otherwise make every card that links to one look "already satisfied".
+ * No file content is read here and no path is required to actually exist -- this only produces
+ * candidates for `mergedWorkCheck` to check for existing git history on the base branch.
+ */
+export function extractAcceptancePaths(body) {
+  const match = ACCEPTANCE_SECTION_RE.exec(body ?? "");
+  const section = match ? match[1] : "";
+  const paths = new Set();
+  let hit;
+  const re = new RegExp(PATH_TOKEN_RE);
+  while ((hit = re.exec(section))) {
+    const token = hit[1] || hit[2];
+    if (token) paths.add(token);
+  }
+  return [...paths];
+}
+
+/**
+ * Rule 2: not already satisfied by merged work. Checks the base branch (`develop`) two ways,
+ * both via the single injected `gitLogGrep(term)` (see `tools/board/ops/vetAndReady.js`'s
+ * `makeGitLogGrep`, which runs a message `--grep` for an id-shaped term and a path-scoped
+ * `git log -- <path>` for a path-shaped one) so this stays a pure function that never shells out
+ * itself:
  *
- * This deliberately does not attempt the acceptance-path-diff half of the spec's example ("every
- * path its acceptance names already present with the described change") -- whether a path already
- * existing on develop reflects *this card's* described change is a semantic judgment call no
- * mechanical check can make safely (a path like `docs/PLAN.md` always exists, for reasons
- * unrelated to any one card), and a false "satisfied" verdict here is exactly the costly mistake
- * rule 2 exists to avoid. Same posture T-0383's DEPLOY.md documents for its own API-only limits.
+ *   1. Does any commit message on `develop` mention the card id?
+ *   2. Does any path named in the card's own `## Acceptance` section already have commit history
+ *      on `develop` (extractAcceptancePaths above)?
+ *
+ * Conservative on every failure mode: EITHER check hitting is treated as "possibly already
+ * satisfied" (skip), and a `git` error on any check is treated as uncertain (skip) rather than
+ * either crashing the run or silently treating the card as clear.
+ *
+ * Codex review 2026-09-18, finding 2: check (1) alone is not enough -- an empty id-grep only
+ * proves commit *messages* don't mention the id, not that the described work is actually
+ * missing (Codex's fixture: `develop` already had `feature.js` implementing the card's whole
+ * acceptance, committed as "Implement feature flag" with no id mention anywhere). Check (2)
+ * closes that gap mechanically -- existence-on-branch, not content/prose interpretation. Neither
+ * check attempts the full "does the diff match the described change" judgment call: a path
+ * existing is only ever evidence to SKIP (conservative), never evidence to positively clear one
+ * that wasn't already going to clear on its own.
  */
 export async function mergedWorkCheck({ task, gitLogGrep }) {
-  let hits;
-  try {
-    hits = await gitLogGrep(task.id);
-  } catch (err) {
-    return { ok: false, reason: `could not verify merged-work status (git check failed): ${err.message}`, evidence: "" };
+  const candidates = [
+    { term: task.id, label: `card id ${task.id}` },
+    ...extractAcceptancePaths(task.body).map((p) => ({ term: p, label: `acceptance path \`${p}\`` }))
+  ];
+
+  const hits = [];
+  for (const candidate of candidates) {
+    let result;
+    try {
+      result = await gitLogGrep(candidate.term);
+    } catch (err) {
+      return { ok: false, reason: `could not verify merged-work status (git check failed): ${err.message}`, evidence: "" };
+    }
+    if (result && result.length > 0) {
+      hits.push({ ...candidate, commits: result });
+    }
   }
-  if (!hits || hits.length === 0) {
-    return { ok: true, reason: "no develop commits mention this card id", evidence: "" };
+
+  if (hits.length === 0) {
+    return {
+      ok: true,
+      reason: "no develop commits mention this card id, and none of the paths its acceptance section names already have history on develop",
+      evidence: ""
+    };
   }
   return {
     ok: false,
-    reason: `possibly already satisfied by merged work -- develop has commit(s) mentioning ${task.id}`,
-    evidence: hits.slice(0, 5).join(" | ")
+    reason: `possibly already satisfied by merged work -- develop already shows activity for ${hits.map((h) => h.label).join(", ")}`,
+    evidence: hits
+      .flatMap((h) => h.commits)
+      .slice(0, 5)
+      .join(" | ")
   };
 }
 

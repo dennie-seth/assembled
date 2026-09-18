@@ -76,10 +76,28 @@ export async function fetchPollerState({ baseUrl, fetchImpl }) {
   }
 }
 
-/** Builds the injectable `gitLogGrep(cardId)` rule 2 (`vetAndReady.js`'s `mergedWorkCheck`) needs. */
+/** A term that names a repo path (a file extension at the end, or a directory separator). */
+function looksLikePath(term) {
+  return /\.[a-zA-Z0-9]{1,6}$/.test(term) || term.includes("/");
+}
+
+/**
+ * Builds the injectable `gitLogGrep(term)` rule 2 (`vetAndReady.js`'s `mergedWorkCheck`) needs.
+ *
+ * Codex review 2026-09-18, finding 2: a message `--grep` can never find merged work that never
+ * mentioned the card id in a commit message. When `term` looks like a path (see `looksLikePath`
+ * above -- exactly what `extractAcceptancePaths` extracts from a card's own `## Acceptance`
+ * section), this instead runs a path-scoped `git log -- <path>`: does *any* commit on the base
+ * branch touch this path at all. That's existence-on-branch, a mechanical git primitive -- not
+ * a read of the path's content or an interpretation of what the card's acceptance prose means.
+ * A card-id-shaped term (no dot-extension, no slash) still gets the original message `--grep`.
+ */
 export function makeGitLogGrep({ repoRoot, baseBranch, execFileFn }) {
-  return async function gitLogGrep(cardId) {
-    const { stdout } = await execFileFn("git", ["-C", repoRoot, "log", baseBranch, "--oneline", "-i", `--grep=${cardId}`]);
+  return async function gitLogGrep(term) {
+    const args = looksLikePath(term)
+      ? ["-C", repoRoot, "log", baseBranch, "--oneline", "--", term]
+      : ["-C", repoRoot, "log", baseBranch, "--oneline", "-i", `--grep=${term}`];
+    const { stdout } = await execFileFn("git", args);
     return stdout
       .split("\n")
       .map((line) => line.trim())
