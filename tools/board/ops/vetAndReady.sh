@@ -13,6 +13,20 @@
 #
 # vetAndReady.js's own default is a dry run that writes nothing; --apply here is what turns this
 # nightly run into the one that actually PATCHes status: ready on vetted cards.
+#
+# Exit codes (T-0384 FIX ROUND 3, named constants in ops/vetAndReady.js):
+#   0 (EXIT_CODE_OK)                -- a dry run, or an apply run where every candidate either
+#                                       wrote cleanly or was skipped at SELECTION time (dependency,
+#                                       merged-work, held/superseded, approval, GPU/asset, cap) --
+#                                       none of those are write-time events.
+#   1 (EXIT_CODE_BOARD_UNREACHABLE) -- the board API itself could not be reached at all.
+#   2 (EXIT_CODE_WRITE_REFUSED)     -- (--apply only) at least one candidate was refused AT WRITE
+#                                       TIME: its vetted fields changed after selection, or the
+#                                       server rejected a stale write. Since Type=oneshot units
+#                                       report a non-zero exit as a failed unit, this run correctly
+#                                       shows up as failed in `systemctl --user status` /
+#                                       `journalctl --user -u board-vet-and-ready.service` instead
+#                                       of looking identical to a fully successful night.
 set -uo pipefail
 
 LOCKFILE="/tmp/board-vet-and-ready.lock"

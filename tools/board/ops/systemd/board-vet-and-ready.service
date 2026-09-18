@@ -2,6 +2,12 @@
 Description=Nightly WSL-native vet-and-ready pass for the assembled board (T-0384)
 After=network.target
 
+# Exit codes (see vetAndReady.sh and ops/README.md for the full table): 0 = OK (dry run, or an
+# apply run with no write-time refusal), 1 = board API unreachable, 2 = a candidate was refused
+# at write time. Type=oneshot means a nonzero exit correctly marks this unit "failed" in
+# `systemctl --user status` / `journalctl --user -u board-vet-and-ready.service` -- codes 1 and 2
+# are deliberately distinct so an operator can tell "couldn't reach the board" apart from "reached
+# it, but a card changed out from under the run" at a glance.
 [Service]
 Type=oneshot
 ExecStart=%h/.local/bin/board-vet-and-ready.sh

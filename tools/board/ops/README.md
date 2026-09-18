@@ -229,10 +229,39 @@ scope, approval flag, body markers, dependencies -- everything except the
 git-based merged-work check, which doesn't go stale within a run) against
 that fresh snapshot; a candidate that no longer passes is skipped and
 reported, never written. The write itself also carries the freshly-observed
-status as an `X-Board-Expected-Status` header, which `PATCH /api/tasks/:id`
-enforces as a server-side precondition (`StaleWriteError` -> 409) so a card
-that changes in the small remaining gap between that re-check and the write
-landing is refused, not silently overwritten, instead of racing.
+status as an `X-Board-Expected-Status` header AND a full field fingerprint
+(`X-Board-Expected-Fields` -- status, agent, deliverable_type,
+requires_approval, depends_on, and a hash of body, built by
+`buildExpectedFields`), which `PATCH /api/tasks/:id` enforces as a
+server-side precondition (`StaleWriteError` -> 409) so a card whose body,
+agent, deliverable_type, or depends_on changes in the small remaining gap
+between that re-check and the write landing -- not just its status -- is
+refused, not silently overwritten, instead of racing (T-0384 FIX ROUND 2,
+Codex P2 #1). `FsTaskStore` additionally serializes every mutating call for
+a given id through a per-instance async lock so this precondition check and
+the write it guards can't be interleaved by a second call on the same id
+within this same store instance/process (Codex P2 #2) -- see the guarantee
+each store actually makes, spelled out precisely in `fsTaskStore.js`'s
+constructor comment and `dbTaskStore.js`'s `update` comment (neither claims
+cross-process safety).
+
+**A write-time refusal changes the run's exit code, not just its report**
+(T-0384 FIX ROUND 3). `vetAndReady.js` exports three named exit codes:
+
+| Code | Constant | When |
+|---|---|---|
+| `0` | `EXIT_CODE_OK` | A dry run, or an apply run where every candidate either wrote cleanly or was skipped at *selection* time (dependency, merged-work, held/superseded, approval, GPU/asset, cap) |
+| `1` | `EXIT_CODE_BOARD_UNREACHABLE` | The board API could not be reached at all |
+| `2` | `EXIT_CODE_WRITE_REFUSED` | (`--apply` only) at least one candidate was refused *at write time* -- its vetted fields changed after selection, or the server rejected a stale write |
+
+Before this, every run that reached the task fetch returned `0`, including
+an apply run where every single candidate was refused at write time -- the
+same "reports success and exits 0" shape Codex's P2 #1 objected to on the
+write path itself, just moved to the exit code. A dry run and an ordinary
+selection-time skip are not write-time events and always exit `0`, so the
+live nightly dry run (which currently skips every eligible card) stays a
+green systemd unit; see `board-vet-and-ready.service`'s own comment and
+`vetAndReady.sh`'s header comment for the same table.
 
 Every run prints its full decision table to stdout (captured by
 `journalctl --user -u board-vet-and-ready.service` once installed, since

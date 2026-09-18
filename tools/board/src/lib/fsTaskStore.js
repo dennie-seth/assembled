@@ -32,8 +32,18 @@ export class FsTaskStore extends TaskStore {
     // `existing` used to be checked against `expected` and then, separately, overwritten by the
     // write -- a real gap a second, fully-interleaved `update()` call on the SAME id could land a
     // write in. Every mutating call for a given id is now chained onto the previous one for that
-    // id, so the read-check-write is atomic against every other writer this store itself
-    // services, not merely "the smallest window this store's design allows".
+    // id, so the read-check-write is atomic against every other writer that goes through THIS
+    // `FsTaskStore` instance's own `_locks` map.
+    //
+    // T-0384 FIX ROUND 3: spelling out the limit precisely, since a prior version of this comment
+    // ("atomic against every other writer this store itself services") read more broadly than
+    // it is. This lock is in-process and per-instance only: it does not serialize against a
+    // second `FsTaskStore` instance pointed at the same `dir` (in this process or another), and it
+    // does not serialize against any other process writing the same task file directly (there is
+    // no filesystem-level lock, e.g. `flock`, on the task file itself). The same shape of
+    // guarantee as `DbTaskStore`'s transaction-based check (see its comment in `dbTaskStore.js`) --
+    // atomic against in-process writers sharing the same store instance/connection, no claim
+    // beyond that.
     this._locks = new Map();
   }
 

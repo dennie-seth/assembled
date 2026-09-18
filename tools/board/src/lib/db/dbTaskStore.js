@@ -167,9 +167,17 @@ export class DbTaskStore extends TaskStore {
     const run = db.transaction(() => {
       if (expected) {
         // Re-read INSIDE the transaction, not the `existing` fetched above -- better-sqlite3
-        // transactions run to completion without yielding to the event loop, so nothing else in
-        // this process can write to this row between this check and the UPDATE below. That's
-        // what makes this atomic where FsTaskStore's equivalent check can only narrow the window.
+        // transactions run to completion without yielding to the event loop, so nothing else
+        // sharing THIS `this.db` connection (i.e. every writer in this process that goes through
+        // this same DbTaskStore instance) can write to this row between this check and the UPDATE
+        // below. This store makes no claim beyond that: a second process (or a second connection
+        // opened separately against the same on-disk database) is not covered by this guarantee.
+        // T-0384 FIX ROUND 3: this used to say FsTaskStore's equivalent check "can only narrow the
+        // window" -- true before FIX ROUND 2, no longer accurate now that FsTaskStore's own
+        // per-id lock (see fsTaskStore.js) closes the same in-process race for its own callers.
+        // The two stores' guarantees are the same shape (atomic against in-process writers through
+        // the same store instance) even though the mechanism differs (a synchronous transaction
+        // here, an async per-id lock there).
         const freshRow = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
         if (!freshRow) {
           throw new Error(`Task ${id} not found`);

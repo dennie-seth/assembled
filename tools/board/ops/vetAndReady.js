@@ -31,6 +31,24 @@ import { hashBody } from "../src/lib/taskStore.js";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const ACTOR_HEADER_VALUE = "agent:vet-and-ready";
 
+/**
+ * Exit codes this CLI can return, named so both this file and the systemd unit notes (see
+ * `ops/README.md`) refer to the same values instead of a bare magic number.
+ *
+ * T-0384 FIX ROUND 3 (reviewer FAIL round, 2026-09-18): before this, EVERY run that reached the
+ * task fetch returned 0 -- including an apply-mode run where every single candidate was refused
+ * at write time (a vetted-field change, a stale-write refusal, or a changed-card skip caught
+ * immediately before the PATCH). That's the exact "reports success and exits 0" false-success
+ * shape Codex's P2 #1 objected to, just moved from the write path to the exit code. `1` stays
+ * reserved for "board API unreachable" (unchanged); `WRITE_REFUSED` is a distinct, new value so
+ * the two failure modes are never confused by anything watching this process's exit status.
+ * Dry runs and ordinary selection-time skips (dependency/merged-work/held/approval/GPU-asset/cap)
+ * are not write-time events and always exit `OK`.
+ */
+export const EXIT_CODE_OK = 0;
+export const EXIT_CODE_BOARD_UNREACHABLE = 1;
+export const EXIT_CODE_WRITE_REFUSED = 2;
+
 /** Reads flags/env into one config object. `--apply` is the only opt-in to writing anything. */
 export function resolveConfig(env = process.env, argv = []) {
   const apply = argv.includes("--apply");
@@ -179,19 +197,26 @@ export async function applyReady({ baseUrl, id, fetchImpl, expectedTask }) {
  * If any candidate's own re-fetch fails, that candidate alone is skipped and reported -- it does
  * not abort the rest of the batch, and it never writes anything for that candidate. Same
  * "uncertainty means backlog" posture as every other rule here.
+ *
+ * Returns `{ summary, writeRefused }` rather than a bare string (T-0384 FIX ROUND 3): `writeRefused`
+ * is true whenever at least one candidate did NOT get written -- a re-fetch failure, a failed
+ * pre-write revalidation, or a write the server itself refused -- so `runVetAndReady` can surface
+ * that as a distinct exit code instead of the run looking identical to full success.
  */
 async function applyReadiedCards({ result, baseUrl, fetchImpl }) {
   if (result.readied.length === 0) {
-    return "Apply mode -- nothing to write, zero cards were readied this run.";
+    return { summary: "Apply mode -- nothing to write, zero cards were readied this run.", writeRefused: false };
   }
 
   const outcomes = [];
+  let writeRefused = false;
   for (const entry of result.readied) {
     let freshTasks;
     try {
       freshTasks = await fetchTasks({ baseUrl, fetchImpl });
     } catch (err) {
       outcomes.push(`${entry.id}: SKIPPED -- FAILED to re-fetch tasks for the pre-write revalidation: ${err.message}`);
+      writeRefused = true;
       continue;
     }
     const freshById = new Map(freshTasks.map((task) => [task.id, task]));
@@ -199,6 +224,7 @@ async function applyReadiedCards({ result, baseUrl, fetchImpl }) {
     const revalidation = revalidateCandidate(freshTask, freshById);
     if (!revalidation.ok) {
       outcomes.push(`${entry.id}: SKIPPED at write time -- ${revalidation.reason}`);
+      writeRefused = true;
       continue;
     }
     try {
@@ -206,9 +232,10 @@ async function applyReadiedCards({ result, baseUrl, fetchImpl }) {
       outcomes.push(`${entry.id}: wrote status=ready`);
     } catch (err) {
       outcomes.push(`${entry.id}: SKIPPED -- write refused (card changed): ${err.message}`);
+      writeRefused = true;
     }
   }
-  return `Apply mode:\n${outcomes.map((line) => `- ${line}`).join("\n")}`;
+  return { summary: `Apply mode:\n${outcomes.map((line) => `- ${line}`).join("\n")}`, writeRefused };
 }
 
 /**
@@ -236,16 +263,22 @@ export async function runVetAndReady({
     tasks = await fetchTasks({ baseUrl: config.baseUrl, fetchImpl });
   } catch (err) {
     logFn(`assembled-board vet-and-ready: FAILED to reach the board API at ${config.baseUrl}: ${err.message}`);
-    return { exitCode: 1, config, timestamp };
+    return { exitCode: EXIT_CODE_BOARD_UNREACHABLE, config, timestamp };
   }
 
   const poller = await fetchPollerState({ baseUrl: config.baseUrl, fetchImpl });
   const gitLogGrep = makeGitLogGrep({ repoRoot: config.repoRoot, baseBranch: config.baseBranch, execFileFn });
   const result = await vetAndReady({ tasks, gitLogGrep, cap: config.cap });
 
-  const appliedSummary = config.apply
-    ? await applyReadiedCards({ result, baseUrl: config.baseUrl, fetchImpl })
-    : "Dry run (default) -- nothing was written. Pass --apply to PATCH status: ready on the readied cards above.";
+  let appliedSummary;
+  let writeRefused = false;
+  if (config.apply) {
+    const applied = await applyReadiedCards({ result, baseUrl: config.baseUrl, fetchImpl });
+    appliedSummary = applied.summary;
+    writeRefused = applied.writeRefused;
+  } else {
+    appliedSummary = "Dry run (default) -- nothing was written. Pass --apply to PATCH status: ready on the readied cards above.";
+  }
 
   const report = formatReport({ result, poller, timestamp, appliedSummary });
   logFn(report);
@@ -262,7 +295,12 @@ export async function runVetAndReady({
     logFn(`assembled-board vet-and-ready: could not write the summary file under ${config.logDir}: ${err.message}`);
   }
 
-  return { exitCode: 0, config, timestamp, result, poller, report };
+  // Only an apply-mode write-time refusal changes the exit code -- a dry run and an ordinary
+  // selection-time skip (dependency/merged-work/held/approval/GPU-asset/cap) are not write-time
+  // events and must stay EXIT_CODE_OK so the systemd unit reads a legitimately-all-skipped dry
+  // run as success.
+  const exitCode = config.apply && writeRefused ? EXIT_CODE_WRITE_REFUSED : EXIT_CODE_OK;
+  return { exitCode, config, timestamp, result, poller, report };
 }
 
 const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
