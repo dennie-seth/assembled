@@ -289,3 +289,48 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
     skipped: decided.filter((entry) => entry.verdict === "skip").sort(byIdAscending)
   };
 }
+
+/**
+ * Codex review 2026-09-18, finding 3: `applyReadiedCards` must re-check a candidate's status,
+ * eligibility scope, approval flag, body markers, and dependencies immediately before its write
+ * -- a candidate selected minutes earlier (the run also does a poller fetch and a `git log` per
+ * candidate in between) may no longer be the card that was actually vetted. This is the pure,
+ * injectable core of that re-check: given the FRESHEST possible `task` and `tasksById` (a fresh
+ * `GET /api/tasks` right before the apply loop, not the original selection-time snapshot),
+ * decide whether the card is still safe to write.
+ *
+ * Deliberately does NOT re-run `mergedWorkCheck`: it's git-based and doesn't change within a
+ * single run's timeframe, and re-running it (a subprocess per candidate) at write time would
+ * meaningfully slow down every apply run for a check that can't itself have gone stale here.
+ *
+ * This narrows, but does not by itself close, the TOCTOU window -- there's still a gap between
+ * this check and the actual `PATCH`. `applyReady`'s `expectedStatus` (via `X-Board-Expected-Status`,
+ * `StaleWriteError` at the store layer) is what closes that last gap atomically with the write.
+ */
+export function revalidateCandidate(task, tasksById) {
+  if (!task) {
+    return { ok: false, reason: "card no longer exists at write time", evidence: "" };
+  }
+  if (!isEligibleAtAll(task)) {
+    return {
+      ok: false,
+      reason:
+        `no longer eligible at write time -- status=${task.status}, agent=${task.agent}, ` +
+        `deliverable_type=${task.deliverable_type ?? "code"}, requires_approval=${task.requires_approval === true}`,
+      evidence: ""
+    };
+  }
+  const depCheck = dependencyCheck(task, tasksById);
+  if (!depCheck.ok) {
+    return { ok: false, reason: `dependency changed at write time -- ${depCheck.reason}`, evidence: depCheck.evidence };
+  }
+  const superseded = supersededCheck(task);
+  if (!superseded.ok) {
+    return { ok: false, reason: `body changed at write time -- ${superseded.reason}`, evidence: superseded.evidence };
+  }
+  return {
+    ok: true,
+    reason: "revalidated immediately before write: still eligible, dependencies satisfied, no superseding marker",
+    evidence: ""
+  };
+}
