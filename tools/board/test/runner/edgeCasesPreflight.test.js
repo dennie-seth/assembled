@@ -67,3 +67,26 @@ describe("checkEdgeCasesPreflight -- Acceptance section with an Edge cases block
     expect(result.warnings).toHaveLength(1);
   });
 });
+
+describe("checkEdgeCasesPreflight -- Edge cases label present but empty (planner.md requires its own checklist items)", () => {
+  it("warns when the label is immediately followed by the next heading, with no checklist items under it", () => {
+    const body = "## Acceptance\n- [ ] works\n\n**Edge cases:**\n\n## Story\nAs a player...\n";
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(/Edge cases/);
+  });
+
+  it("warns when the label is followed only by prose, with no `- [ ]` items before the end of the section", () => {
+    const body =
+      "## Acceptance\n- [ ] works\n\n**Edge cases:**\nWe considered some cases but didn't list any.\n";
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.warnings).toHaveLength(1);
+  });
+
+  it("returns no warnings once the label has at least one `- [ ]` item under it, even after intervening prose", () => {
+    const body =
+      "## Acceptance\n- [ ] works\n\n**Edge cases:**\nDerived from the card's own logic:\n- [ ] boundary case\n";
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.warnings).toEqual([]);
+  });
+});
