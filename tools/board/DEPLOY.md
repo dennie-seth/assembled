@@ -275,6 +275,153 @@ Two consequences worth knowing before enabling it:
 
 Only `status: "rejected"` on the top-level `rate_limit_info` counts as a refusal.
 
+## Reliable, low-bandwidth access for sandboxed callers (T-0383)
+
+The scheduled **nightly-infra-prep** task runs in a sandbox with no WSL, so it cannot reach
+`127.0.0.1:${BOARD_PORT:-4173}` directly -- it only ever touches the board through a Chrome
+browser. That path was unreliable on three fronts: `GET /api/tasks` was an unfiltered blob (no
+server-side `status=`/`fields=` support at all, even though the query string was already being
+sent), the auto-launch poller's own configuration was readable only from the repo or the systemd
+drop-in, and the only write path (`PATCH /api/tasks/:id`) needs in-page JS `fetch`, which the
+sandbox's browser content filter sometimes blocks silently. This card adds three read/write
+surfaces to close those gaps. **What it explicitly does NOT fix:** the sandbox still cannot reach
+`127.0.0.1` on its own -- nothing here adds remote reachability or exposes the board beyond
+localhost; every route below is still served only from the existing `127.0.0.1`-bound listener,
+and reaching it from the sandbox still requires going through the browser (now more reliably).
+
+### `GET /api/tasks?status=` and `?fields=` (`src/server/httpApi.js`)
+
+- **`status=<a>,<b>,...`** -- filters server-side, comma-separated, validated against
+  `taskParser.js`'s `STATUSES` (the same list `validateTask` enforces on write). An unknown value
+  is a 400 naming the bad value, never a silent full dump.
+- **`fields=<a>,<b>,...`** -- projects each surviving task down to only the named fields,
+  comma-separated, validated against the stored field set (`taskParser.js`'s new `TASK_FIELDS`
+  export) plus two computed fields:
+  - **`dependency_status`** -- `{ dependencies: [{id, status}], allSatisfied }`, where
+    `allSatisfied` counts `done`/`retired` as satisfied, mirroring
+    `dependencyGuard.js`/`autoLaunchPoller.js`'s own rule. A dependency id absent from the corpus
+    reports `status: null` and counts as unsatisfied -- the same "unresolvable reference is
+    uncertainty, and uncertainty skips" posture `selectNextCard` already uses.
+  - **`last_activity_at`** -- the latest of the task's own `created`/`approved_at`/`rescoped_at`/
+    comment timestamps/attachment `uploaded_at` values. **This is a best-effort activity signal,
+    not a true "last edited" timestamp** -- see "Vetting data and the auto-ready criterion" below
+    for exactly what it does and doesn't capture, and why.
+  - An unknown field name is a 400, same posture as `status=`.
+- **With neither param present, the response is byte-identical to before this card** -- the exact
+  same `store.list()` call, untouched. `test/httpApi.taskQuery.test.js` pins this with a raw-text
+  comparison, not just a deep-equal, so nothing about this feature can silently reorder or filter
+  keys for existing callers (the board UI included).
+- **Measured size, the nightly task's own query.** The live board's actual baseline (measured
+  2026-09-18): **3,104,158 bytes for 317 cards**, and `?status=backlog` on that board returned all
+  317 -- the query string was ignored entirely before this card. That live corpus isn't
+  reproducible from this test suite (no network path from here to the deployed board's data), so
+  `test/httpApi.taskQuery.test.js`'s synthetic-corpus test measures the same shape of win against
+  317 generated cards sized to match the live average (3,104,158 / 317 ≈ 9,791 bytes/card body):
+
+  ```
+  unfiltered GET /api/tasks                                                        = 3,230,307 bytes
+  GET /api/tasks?status=backlog&fields=id,title,priority,agent,phase,depends_on,
+                 dependency_status,last_activity_at                                =    22,329 bytes
+  ```
+
+  **99.3% smaller**, on a corpus deliberately sized to the live board's own average card weight.
+  Re-measure against the live 317-card corpus once this lands, and update this table with the
+  real number -- the synthetic figure is a reproducible stand-in, not a substitute for the actual
+  measurement the acceptance criteria ask for.
+
+### Vetting data and the auto-ready criterion
+
+`dependency_status` and `last_activity_at` (above) are what the nightly task needs to assemble a
+"is this card worth surfacing" backlog without touching git. They are not enough, on their own,
+to answer "has this card's acceptance already been superseded by merged work" -- that question is
+inherently about *what changed in the diff since the card was written*, which is git-history
+information no API-only signal can reconstruct:
+
+- `last_activity_at` only advances when something already timestamped changes (a comment, an
+  attachment, an approval/rescope record). A card whose `title`/`priority`/`agent`/body prose was
+  hand-edited with no comment alongside it will not move this value -- there is no `updated_at`
+  column anywhere in this schema (fs-mode frontmatter has no such field; db-mode's `card_events`
+  table records status-changing transitions, not arbitrary field edits) to capture that instead,
+  and adding one is a schema change out of this card's scope.
+- Nothing here inspects diff content, so "the acceptance criteria this card lists were already
+  satisfied by a since-merged PR" is not detectable from these endpoints at all.
+
+**The minimal safe auto-ready criterion computable from API data alone**, until/unless a real
+`updated_at` signal exists: a card is safe to auto-surface as ready-to-vet only if
+`dependency_status.allSatisfied` is `true` **and** its status is still `backlog` (i.e. nobody has
+already started triaging it). That is a *filter*, not a promotion -- it narrows the set worth a
+human or the nightly task's own (git-capable, on-host) logic looking at, it does not by itself
+justify writing `ready`. Any check that needs to know whether acceptance criteria were superseded
+by merged work must still go through a git-based path (outside this API, and outside what the
+nightly sandbox can do directly) -- this card intentionally does not attempt to fake that signal
+from data that can't support it.
+
+### `GET /api/poller` (`src/runner/autoLaunchPoller.js`'s `getStatus()`)
+
+Reports the auto-launch poller's own state over plain HTTP, so it no longer has to be inferred
+from the repo (`autoLaunchEnabledFromEnv()`/`autoLaunchIntervalMsFromEnv()`/
+`autoLaunchUsageMaxFromEnv()`) or the systemd drop-in. Same "answer from already-known process
+state, no store/git/filesystem access" posture as `GET /api/health`:
+
+```json
+{
+  "enabled": true,
+  "intervalMs": 18000000,
+  "usageMax": 0.8,
+  "running": true,
+  "lastTickAt": "2026-09-18T05:00:00.000Z",
+  "nextTickAt": "2026-09-18T10:00:00.000Z",
+  "lastResult": { "kind": "skip", "reason": "usage 0.85 >= max 0.8 ...", "cardId": null },
+  "activeRun": false
+}
+```
+
+`lastResult.kind` is `"skip"`, `"launched"`, or `"error"` (an unexpected failure other than the
+run guard's own `CardLaunchError` refusal, which reports as a `"skip"` instead -- see
+`autoLaunchPoller.js`'s `tick()`); `nextTickAt` is an estimate (derived from the last
+tick, or from when the poller started if it hasn't ticked yet) since `setInterval` firing can
+drift and a skipped tick doesn't reschedule anything. If no poller is wired into a given server
+instance, the route still answers 200 by falling back to the same env-reading functions the
+poller itself would use, with the tick-history fields `null`/`false` -- it never 404s or 500s.
+
+### `POST /api/tasks/:id/ready` -- the reliable write channel
+
+**Auth/CSRF, stated plainly:** guarded by a shared-secret token, `BOARD_READY_TOKEN`. Without one
+configured, the route responds `501` -- it is opt-in, not silently open, mirroring
+`AUTO_LAUNCH_ENABLED`'s default-off posture. This is a real, separate concern from
+`PATCH /api/tasks/:id`: a `fetch`/XHR PATCH with a JSON body is a CORS "non-simple" request and
+needs a preflight the browser won't grant cross-origin by default, which today gives PATCH
+*incidental* CSRF protection. A plain `<form method="post" enctype="application/
+x-www-form-urlencoded">` -- the whole point of this route, since it's exactly what still works
+when in-page `fetch` is blocked -- is a CORS "simple request" with **no** preflight, so *any* page
+a browser on this host loads could auto-submit one blind. The token is what closes that gap: an
+attacker page cannot know it, so a blind cross-origin form-POST fails closed. This is a
+shared-secret guard scoped to one action, not full authentication -- consistent with this API's
+existing trust model (single operator, `127.0.0.1`-only bind, no other route requires a token
+either). The token travels, checked in this order, **before the task store is ever touched**:
+
+1. `Authorization: Bearer <token>` header (direct HTTP callers reaching the host);
+2. a `token` field in the request body (a hidden `<input>` in an HTML form).
+
+Deliberately **not** accepted as a query param: a query string routinely ends up in server/proxy
+access logs, browser history, and an outbound `Referer` header, any of which would leak the very
+secret this token exists to keep private -- and a hidden form field already gives the "no JS
+needed" property a query param would have been for, without that exposure.
+
+The request body is either `application/x-www-form-urlencoded` (what a plain form submits, no JS)
+or `application/json` (direct callers); anything else is a 400. The route is deliberately narrow:
+it only ever writes `status: "ready"`. A `status` field in the body is accepted for the form's own
+clarity (`<input type=hidden name=status value=ready>`) but must equal `"ready"` -- any other
+value is a 400, "this route only accepts ready". `PATCH /api/tasks/:id` is completely unchanged
+and remains the general-purpose write path for every other field/status.
+
+**Which channel the nightly task should use:** this route (`POST .../ready`, form-encoded, with
+`BOARD_READY_TOKEN` configured), submitted as a real `<form>` navigation from the sandbox's
+browser -- not a `fetch` call, since that is the exact path the content filter has been observed
+to block. Configure `BOARD_READY_TOKEN` in the service environment (same place as
+`AUTO_LAUNCH_ENABLED` et al.) and give the nightly task's generated page the token as a hidden
+form field -- never in the form's `action` URL, which this route does not accept it from.
+
 ## Worktree artifact preservation (`src/runner/artifactPreservation.js`)
 
 Re-running a card reclaims its worktree with `git worktree remove --force`, which deletes the

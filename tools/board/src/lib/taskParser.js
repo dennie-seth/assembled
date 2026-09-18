@@ -15,7 +15,7 @@ const REQUIRED_FIELDS = [
 
 const ID_RE = /^T-\d{4}$/;
 const CREATED_RE = /^\d{4}-\d{2}-\d{2}$/;
-const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked", "retired"];
+export const STATUSES = ["backlog", "ready", "in-progress", "validation", "review", "done", "blocked", "retired"];
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
 // "dispatch" is a non-executable sentinel: a valid agent field value with no
 // .claude/agents/dispatch.md definition, so listAssignableAgents' directory-intersection keeps
@@ -251,6 +251,36 @@ export function parseTask(raw) {
     body
   };
 }
+
+// T-0383: the projectable field set for `GET /api/tasks?fields=` -- every key `parseTask` puts
+// on a task object, in the same order. Kept here (not re-derived in httpApi.js) so the API's
+// idea of "a task's fields" can never drift from the store's own shape.
+export const TASK_FIELDS = [
+  "id",
+  "title",
+  "status",
+  "priority",
+  "phase",
+  "agent",
+  "depends_on",
+  "created",
+  "branch",
+  "commit",
+  "pr",
+  "deliverable_type",
+  "requires_approval",
+  "approved_by",
+  "approved_at",
+  "attempts",
+  "max_attempts",
+  "round",
+  "rescoped_by",
+  "rescoped_at",
+  "complexity_points",
+  "comments",
+  "attachments",
+  "body"
+];
 
 export function serializeTask(task) {
   validateTask(task);

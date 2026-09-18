@@ -9,8 +9,12 @@ const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 /** Statuses that mean a card is mid-run, independent of what the in-process orchestrator thinks. */
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
-/** Dependencies in either of these states are satisfied -- same rule as `assertCanMoveToInProgress`. */
-const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
+/**
+ * Dependencies in either of these states are satisfied -- same rule as `assertCanMoveToInProgress`.
+ * Exported (T-0383) so httpApi.js's `dependency_status` computed field uses this exact Set rather
+ * than keeping its own copy in lockstep by hand.
+ */
+export const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
 
 const PRIORITY_RANK = new Map([
   ["P0", 0],
@@ -194,14 +198,24 @@ export function createAutoLaunchPoller({
 }) {
   const effectivelyEnabled = Boolean(enabled) && intervalMs > 0;
   let timer = null;
+  // T-0383: state `getStatus()` reports over `GET /api/poller`, so an operator (or the
+  // nightly-infra-prep sandbox, which cannot reach this host directly) can see what the poller
+  // last did without reading the repo or the systemd drop-in. Updated only from inside `tick()`/
+  // `start()`/`stop()` -- never read speculatively, so `getStatus()` stays a cheap, synchronous
+  // report of already-known state.
+  let lastTickAtMs = null;
+  let startedAtMs = null;
+  let lastResult = null;
 
   function skip(reason) {
     logger.log(`${LOG_PREFIX}: skipped -- ${reason}`);
+    lastResult = { kind: "skip", reason, cardId: null };
     return null;
   }
 
   async function tick() {
     if (!effectivelyEnabled) return null;
+    lastTickAtMs = now();
 
     // Gate 2: usage.
     let usage;
@@ -317,6 +331,9 @@ export function createAutoLaunchPoller({
         if (passedOver.length > 0) {
           logger.log(`${LOG_PREFIX}: passed over ${passedOver.length} earlier-queued card(s) that did not fit -- ${passedOver.join("; ")}`);
         }
+        // T-0383: lastResult is what GET /api/poller reports -- refresh it in step with the
+        // lastTickAtMs set at the top of this function, same as every other exit from tick().
+        lastResult = { kind: "launched", reason: null, cardId: candidate.id };
         return launched;
       } catch (err) {
         if (err instanceof CardLaunchError) {
@@ -330,8 +347,16 @@ export function createAutoLaunchPoller({
             logger.log(`${LOG_PREFIX}: ${candidate.id} does not fit -- trying the next eligible card: ${err.message}`);
             continue;
           }
+          // The guarded path refused it for a reason unrelated to capacity fit. Deliberately no
+          // fall-through to the next candidate: a non-capacity refusal is information worth
+          // surfacing rather than routing around.
           return skip(`${candidate.id} refused by the run guard: ${err.message}`);
         }
+        // An unexpected failure (not a guard refusal) still rethrows -- start()'s tick().catch
+        // logs it -- but lastResult must be refreshed in step with the lastTickAtMs set at the top
+        // of this function, or getStatus() would pair a fresh lastTickAt with a stale lastResult
+        // from an earlier, unrelated tick.
+        lastResult = { kind: "error", reason: err.message, cardId: candidate.id };
         throw err;
       }
     }
@@ -342,6 +367,7 @@ export function createAutoLaunchPoller({
   function start() {
     if (!effectivelyEnabled || timer) return;
     logger.log(`${LOG_PREFIX}: enabled (every ${intervalMs}ms, usage max ${usageMax})`);
+    startedAtMs = now();
     timer = setInterval(() => {
       tick().catch((err) => logger.error(`${LOG_PREFIX}: tick failed: ${err.message}`));
     }, intervalMs);
@@ -355,10 +381,35 @@ export function createAutoLaunchPoller({
     }
   }
 
+  /**
+   * T-0383: the whole payload behind `GET /api/poller`. Every field here is already sitting in
+   * this closure -- no store read, no git call, no filesystem access -- same "answer from
+   * process state alone" posture as `handleHealth` in httpApi.js.
+   */
+  function getStatus() {
+    // `nextTickAt` is an estimate, not a guarantee: `setInterval`'s actual firing can drift, and
+    // a tick that skips does not reschedule anything (the interval is fixed). It's still the
+    // best available signal, derived from the last tick if there's been one, else from when the
+    // timer started.
+    const anchorMs = lastTickAtMs ?? startedAtMs;
+    const nextTickAtMs = effectivelyEnabled && anchorMs !== null ? anchorMs + intervalMs : null;
+    return {
+      enabled: effectivelyEnabled,
+      intervalMs,
+      usageMax,
+      running: timer !== null,
+      lastTickAt: lastTickAtMs !== null ? new Date(lastTickAtMs).toISOString() : null,
+      nextTickAt: nextTickAtMs !== null ? new Date(nextTickAtMs).toISOString() : null,
+      lastResult,
+      activeRun: Boolean(orchestrator && orchestrator.hasActiveRuns && orchestrator.hasActiveRuns())
+    };
+  }
+
   return {
     tick,
     start,
     stop,
+    getStatus,
     get enabled() {
       return effectivelyEnabled;
     }
