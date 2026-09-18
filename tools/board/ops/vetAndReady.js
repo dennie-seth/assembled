@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { DEFAULT_BOARD_PORT } from "../src/lib/agentCurlPolicy.js";
-import { vetAndReady, READY_CAP } from "../src/lib/vetAndReady.js";
+import { vetAndReady, READY_CAP, revalidateCandidate } from "../src/lib/vetAndReady.js";
 import { formatReport } from "../src/lib/vetAndReadyReport.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -105,11 +105,22 @@ export function makeGitLogGrep({ repoRoot, baseBranch, execFileFn }) {
   };
 }
 
-/** The only write this script ever performs: `PATCH status: "ready"` on one vetted card. */
-export async function applyReady({ baseUrl, id, fetchImpl }) {
+/**
+ * The only write this script ever performs: `PATCH status: "ready"` on one vetted card.
+ *
+ * `expectedStatus`, when given, is sent as `X-Board-Expected-Status` -- the board rejects the
+ * write with 409 if the card's actual current status no longer matches by the time the write
+ * happens (see httpApi.js's `handlePatchTask`, `StaleWriteError`). Codex review 2026-09-18,
+ * finding 3: this is the server-enforced half of the pre-write safety check; `revalidateCandidate`
+ * below is the client-side half that catches everything the status alone can't (eligibility
+ * scope, dependencies, body markers).
+ */
+export async function applyReady({ baseUrl, id, fetchImpl, expectedStatus }) {
+  const headers = { "Content-Type": "application/json", "X-Board-Actor": ACTOR_HEADER_VALUE };
+  if (expectedStatus) headers["X-Board-Expected-Status"] = expectedStatus;
   const res = await fetchImpl(`${baseUrl}/api/tasks/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", "X-Board-Actor": ACTOR_HEADER_VALUE },
+    headers,
     body: JSON.stringify({ status: "ready" })
   });
   if (!res.ok) {
@@ -119,17 +130,48 @@ export async function applyReady({ baseUrl, id, fetchImpl }) {
   return res.json();
 }
 
+/**
+ * Writes `status: ready` on every readied card -- but not blindly off the selection-time
+ * snapshot. Codex review 2026-09-18, finding 3: the poller fetch and the per-candidate `git log`
+ * calls that already happened this run are enough time for a card to change underneath it (a
+ * human drags it, another process writes it, a dependency finishes). Before each write:
+ *
+ *   1. Re-fetch the full task list fresh (one call, not one per candidate).
+ *   2. `revalidateCandidate` the entry against that fresh snapshot -- status, eligibility scope,
+ *      dependencies, body markers all re-checked.
+ *   3. Only if that still passes, PATCH with the freshly-observed status as
+ *      `X-Board-Expected-Status`, so the board itself refuses a write that goes stale in the
+ *      remaining gap between this re-check and the PATCH actually landing.
+ *
+ * If the initial re-fetch itself fails, nothing is written at all -- same "uncertainty means
+ * backlog" posture as every other rule here.
+ */
 async function applyReadiedCards({ result, baseUrl, fetchImpl }) {
   if (result.readied.length === 0) {
     return "Apply mode -- nothing to write, zero cards were readied this run.";
   }
+
+  let freshTasks;
+  try {
+    freshTasks = await fetchTasks({ baseUrl, fetchImpl });
+  } catch (err) {
+    return `Apply mode -- FAILED to re-fetch tasks for the pre-write revalidation, wrote nothing: ${err.message}`;
+  }
+  const freshById = new Map(freshTasks.map((task) => [task.id, task]));
+
   const outcomes = [];
   for (const entry of result.readied) {
+    const freshTask = freshById.get(entry.id);
+    const revalidation = revalidateCandidate(freshTask, freshById);
+    if (!revalidation.ok) {
+      outcomes.push(`${entry.id}: SKIPPED at write time -- ${revalidation.reason}`);
+      continue;
+    }
     try {
-      await applyReady({ baseUrl, id: entry.id, fetchImpl });
+      await applyReady({ baseUrl, id: entry.id, fetchImpl, expectedStatus: freshTask.status });
       outcomes.push(`${entry.id}: wrote status=ready`);
     } catch (err) {
-      outcomes.push(`${entry.id}: FAILED -- ${err.message}`);
+      outcomes.push(`${entry.id}: SKIPPED -- write refused (card changed): ${err.message}`);
     }
   }
   return `Apply mode:\n${outcomes.map((line) => `- ${line}`).join("\n")}`;
