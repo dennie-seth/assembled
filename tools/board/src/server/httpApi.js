@@ -14,7 +14,8 @@ import { listAssignableAgents } from "../lib/agentCatalog.js";
 import {
   autoLaunchEnabledFromEnv,
   autoLaunchIntervalMsFromEnv,
-  autoLaunchUsageMaxFromEnv
+  autoLaunchUsageMaxFromEnv,
+  SATISFIED_DEP_STATUSES
 } from "../runner/autoLaunchPoller.js";
 import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
 import { launchCardRun, CardLaunchError } from "../runner/cardLaunch.js";
@@ -66,8 +67,6 @@ const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 // T-0383: `GET /api/tasks?status=` filter -- the single source of truth for "what is a status"
 // is taskParser.js's STATUSES; this is just a Set for O(1) membership checks.
 const STATUS_SET = new Set(STATUSES);
-/** Dependencies in either of these states are satisfied -- same rule dependencyGuard.js and autoLaunchPoller.js's selectNextCard use. */
-const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
 // T-0383: `GET /api/tasks?fields=` projection -- the raw stored fields plus two cheap computed
 // vetting fields (see computeDependencyStatus/computeLastActivityAt below).
 const DEPENDENCY_STATUS_FIELD = "dependency_status";
@@ -806,21 +805,23 @@ async function readFormOrJsonBody(req) {
 }
 
 /**
- * The ready-token can travel three ways, in priority order: an `Authorization: Bearer` header
- * (direct HTTP callers, e.g. curl from a host that can reach this port), a `token` field in the
- * parsed body (a hidden form input a plain `<form>` submits), or a `token` query param (so a
- * static form's `action` URL alone can carry it, with no JS and no body field required).
+ * The ready-token can travel two ways, in priority order: an `Authorization: Bearer` header
+ * (direct HTTP callers, e.g. curl from a host that can reach this port), or a `token` field in
+ * the parsed body (a hidden form input a plain `<form>` submits -- fully static HTML, no script
+ * required). Deliberately NOT accepted as a query param: a query string routinely ends up in
+ * server/proxy access logs, browser history, and the `Referer` header sent to any third-party
+ * resource the resulting page happens to load next, any of which would hand this shared secret
+ * to someone the token exists specifically to keep out -- undermining the exact CSRF protection
+ * this token is for. A static form's hidden `<input type=hidden name=token value=...>` gives the
+ * same "no JS needed" property without that exposure, so the query-param channel bought nothing
+ * a hidden field doesn't already cover.
  */
-function extractReadyToken(req, parsedBody, searchParams) {
+function extractReadyToken(req, parsedBody) {
   const authHeader = req.headers["authorization"];
   if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     return authHeader.slice("Bearer ".length);
   }
-  if (typeof parsedBody.token === "string" && parsedBody.token.length > 0) {
-    return parsedBody.token;
-  }
-  const queryToken = searchParams.get("token");
-  return typeof queryToken === "string" && queryToken.length > 0 ? queryToken : null;
+  return typeof parsedBody.token === "string" && parsedBody.token.length > 0 ? parsedBody.token : null;
 }
 
 /**
@@ -837,14 +838,14 @@ function extractReadyToken(req, parsedBody, searchParams) {
  * value=ready>`) but must equal `"ready"` or the request is rejected -- this is a dedicated
  * action route, not a second general-purpose PATCH.
  */
-async function handleSetReadyStatus({ store, id, req, res, searchParams, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub }) {
+async function handleSetReadyStatus({ store, id, req, res, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub }) {
   const configuredToken = readyTokenFromEnv();
   if (!configuredToken) {
     throw new HttpError(501, "BOARD_READY_TOKEN is not configured -- this write channel is disabled");
   }
 
   const parsedBody = await readFormOrJsonBody(req);
-  const suppliedToken = extractReadyToken(req, parsedBody, searchParams);
+  const suppliedToken = extractReadyToken(req, parsedBody);
   if (!suppliedToken || !timingSafeEqualStrings(suppliedToken, configuredToken)) {
     throw new HttpError(403, "Invalid or missing ready token");
   }
@@ -1567,7 +1568,6 @@ export function createRequestListener({
           id: readyMatch[1],
           req,
           res,
-          searchParams,
           repoRoot,
           tasksDir,
           orchestrator,

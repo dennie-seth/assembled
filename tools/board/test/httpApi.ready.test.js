@@ -20,8 +20,11 @@ import { startHttpServer } from "../src/server/httpApi.js";
  * unlike `PATCH /api/tasks/:id` (which needs a `fetch`/XHR with a JSON content-type, and so
  * already gets incidental CSRF protection from the browser's preflight requirement), this route
  * needs its own explicit guard. The token can be supplied as an `Authorization: Bearer` header
- * (direct HTTP callers), a form field, or a query param (so a static HTML form's hidden input or
- * action URL can carry it without any script).
+ * (direct HTTP callers) or a form field (a static HTML form's hidden `<input>`, no script
+ * required). Deliberately NOT accepted as a query param -- a query string routinely ends up in
+ * access logs, browser history, and an outbound `Referer` header, any of which would leak the
+ * very secret this token exists to keep private, and a hidden form field already covers the
+ * "no JS" use case a query param would have been for.
  */
 
 let tasksDir;
@@ -82,7 +85,7 @@ describe("POST /api/tasks/:id/ready", () => {
     expect((await res.json()).status).toBe("ready");
   });
 
-  it("accepts the token as a query param, for a plain static form action URL", async () => {
+  it("rejects a token supplied only as a query param -- it must never end up in logs/Referer", async () => {
     const task = await createTask();
 
     const res = await fetch(`${baseUrl}/api/tasks/${task.id}/ready?token=test-ready-token`, {
@@ -91,8 +94,9 @@ describe("POST /api/tasks/:id/ready", () => {
       body: ""
     });
 
-    expect(res.status).toBe(200);
-    expect((await res.json()).status).toBe("ready");
+    expect(res.status).toBe(403);
+    const unchanged = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+    expect(unchanged.status).toBe("backlog");
   });
 
   it("is reachable via a body a plain <form> POST produces -- form-encoded, no custom headers besides Content-Type", async () => {

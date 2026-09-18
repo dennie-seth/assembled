@@ -9,8 +9,12 @@ const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 /** Statuses that mean a card is mid-run, independent of what the in-process orchestrator thinks. */
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
-/** Dependencies in either of these states are satisfied -- same rule as `assertCanMoveToInProgress`. */
-const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
+/**
+ * Dependencies in either of these states are satisfied -- same rule as `assertCanMoveToInProgress`.
+ * Exported (T-0383) so httpApi.js's `dependency_status` computed field uses this exact Set rather
+ * than keeping its own copy in lockstep by hand.
+ */
+export const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
 
 const PRIORITY_RANK = new Map([
   ["P0", 0],
@@ -318,6 +322,11 @@ export function createAutoLaunchPoller({
         // than routing around.
         return skip(`${candidate.id} refused by the run guard: ${err.message}`);
       }
+      // An unexpected failure (not a guard refusal) still rethrows -- start()'s tick().catch
+      // logs it -- but lastResult must be refreshed in step with the lastTickAtMs set at the top
+      // of this function, or getStatus() would pair a fresh lastTickAt with a stale lastResult
+      // from an earlier, unrelated tick.
+      lastResult = { kind: "error", reason: err.message, cardId: candidate.id };
       throw err;
     }
   }

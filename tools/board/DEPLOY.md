@@ -376,7 +376,9 @@ state, no store/git/filesystem access" posture as `GET /api/health`:
 }
 ```
 
-`lastResult.kind` is `"skip"` or `"launched"`; `nextTickAt` is an estimate (derived from the last
+`lastResult.kind` is `"skip"`, `"launched"`, or `"error"` (an unexpected failure other than the
+run guard's own `CardLaunchError` refusal, which reports as a `"skip"` instead -- see
+`autoLaunchPoller.js`'s `tick()`); `nextTickAt` is an estimate (derived from the last
 tick, or from when the poller started if it hasn't ticked yet) since `setInterval` firing can
 drift and a skipped tick doesn't reschedule anything. If no poller is wired into a given server
 instance, the route still answers 200 by falling back to the same env-reading functions the
@@ -399,9 +401,12 @@ existing trust model (single operator, `127.0.0.1`-only bind, no other route req
 either). The token travels, checked in this order, **before the task store is ever touched**:
 
 1. `Authorization: Bearer <token>` header (direct HTTP callers reaching the host);
-2. a `token` field in the request body (a hidden `<input>` in an HTML form);
-3. a `token` query param (so a static form's `action=".../ready?token=..."` alone can carry it,
-   with no hidden field and no script needed).
+2. a `token` field in the request body (a hidden `<input>` in an HTML form).
+
+Deliberately **not** accepted as a query param: a query string routinely ends up in server/proxy
+access logs, browser history, and an outbound `Referer` header, any of which would leak the very
+secret this token exists to keep private -- and a hidden form field already gives the "no JS
+needed" property a query param would have been for, without that exposure.
 
 The request body is either `application/x-www-form-urlencoded` (what a plain form submits, no JS)
 or `application/json` (direct callers); anything else is a 400. The route is deliberately narrow:
@@ -415,7 +420,7 @@ and remains the general-purpose write path for every other field/status.
 browser -- not a `fetch` call, since that is the exact path the content filter has been observed
 to block. Configure `BOARD_READY_TOKEN` in the service environment (same place as
 `AUTO_LAUNCH_ENABLED` et al.) and give the nightly task's generated page the token as a hidden
-form field or in the form's `action` URL.
+form field -- never in the form's `action` URL, which this route does not accept it from.
 
 ## Worktree artifact preservation (`src/runner/artifactPreservation.js`)
 
