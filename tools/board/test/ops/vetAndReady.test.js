@@ -13,6 +13,9 @@ import {
   runVetAndReady
 } from "../../ops/vetAndReady.js";
 import { vetAndReady } from "../../src/lib/vetAndReady.js";
+import { startHttpServer } from "../../src/server/httpApi.js";
+import { DbTaskStore } from "../../src/lib/db/dbTaskStore.js";
+import { IdAllocatorDb } from "../../src/lib/db/idAllocatorDb.js";
 
 /**
  * T-0384: the WSL-native CLI wrapper. Every I/O boundary (board API, `git log`, filesystem) is
@@ -173,18 +176,48 @@ describe("applyReady", () => {
   // Codex review 2026-09-18, finding 3: the write must carry a server-enforced condition so a
   // stale write (the card changed between the check and the write) is refused, not silently
   // applied.
-  it("sends X-Board-Expected-Status when an expectedStatus is given", async () => {
+  //
+  // T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): a status-only condition is invisible to a
+  // body/agent/deliverable_type/depends_on change that leaves status alone. `applyReady` now
+  // takes the whole freshly-observed `expectedTask` and sends a fingerprint covering every vetted
+  // field, never status in isolation.
+  it("sends both X-Board-Expected-Status and a X-Board-Expected-Fields fingerprint when an expectedTask is given", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(makeTask({ status: "ready" })));
-    await applyReady({ baseUrl: "http://127.0.0.1:4173", id: "T-0001", fetchImpl, expectedStatus: "backlog" });
+    const expectedTask = makeTask({ status: "backlog", agent: "infra", depends_on: ["T-0099"] });
+    await applyReady({ baseUrl: "http://127.0.0.1:4173", id: "T-0001", fetchImpl, expectedTask });
     const [, opts] = fetchImpl.mock.calls[0];
     expect(opts.headers["X-Board-Expected-Status"]).toBe("backlog");
+    const fields = JSON.parse(opts.headers["X-Board-Expected-Fields"]);
+    expect(fields.status).toBe("backlog");
+    expect(fields.agent).toBe("infra");
+    expect(fields.deliverable_type).toBe("code");
+    expect(fields.requires_approval).toBe(false);
+    expect(fields.depends_on).toEqual(["T-0099"]);
+    expect(typeof fields.bodyHash).toBe("string");
+    expect(fields.bodyHash.length).toBeGreaterThan(0);
+    // bodyHash must actually reflect the body content, not a placeholder -- two different bodies
+    // must hash differently.
+    const otherFields = JSON.parse(
+      (await (async () => {
+        const otherFetch = vi.fn(async () => jsonResponse(makeTask({ status: "ready" })));
+        await applyReady({
+          baseUrl: "http://127.0.0.1:4173",
+          id: "T-0001",
+          fetchImpl: otherFetch,
+          expectedTask: makeTask({ body: "## Held\nDo not ready.\n" })
+        });
+        return otherFetch.mock.calls[0][1].headers["X-Board-Expected-Fields"];
+      })())
+    );
+    expect(otherFields.bodyHash).not.toBe(fields.bodyHash);
   });
 
-  it("omits the header entirely when no expectedStatus is given", async () => {
+  it("omits both expected headers entirely when no expectedTask is given", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(makeTask({ status: "ready" })));
     await applyReady({ baseUrl: "http://127.0.0.1:4173", id: "T-0001", fetchImpl });
     const [, opts] = fetchImpl.mock.calls[0];
     expect(opts.headers["X-Board-Expected-Status"]).toBeUndefined();
+    expect(opts.headers["X-Board-Expected-Fields"]).toBeUndefined();
   });
 });
 
@@ -240,11 +273,72 @@ describe("runVetAndReady", () => {
     expect(patchCalls[0][0]).toBe("http://127.0.0.1:4173/api/tasks/T-0001");
   });
 
-  it("apply mode: sends the observed status as X-Board-Expected-Status on the write", async () => {
+  it("apply mode: sends the observed status AND a full field fingerprint on the write", async () => {
     const deps = makeDeps({ tasks: [makeTask({ id: "T-0001", status: "backlog" })] });
     await runVetAndReady({ env: {}, argv: ["--apply"], now: () => new Date("2026-09-18T01:00:00.000Z"), ...deps });
     const patchCalls = deps.fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "PATCH");
     expect(patchCalls[0][1].headers["X-Board-Expected-Status"]).toBe("backlog");
+    const fields = JSON.parse(patchCalls[0][1].headers["X-Board-Expected-Fields"]);
+    expect(fields).toMatchObject({ status: "backlog", agent: "infra", deliverable_type: "code", requires_approval: false });
+    expect(typeof fields.bodyHash).toBe("string");
+  });
+
+  // T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): revalidation used to happen once, off one
+  // fresh fetch shared by the whole apply loop -- a later candidate's revalidation was checked
+  // against a snapshot that could already be stale by the time ITS write happened, especially
+  // with an earlier candidate's write landing in between. Each candidate now gets its own fresh
+  // `GET /api/tasks` immediately before its own write.
+  it("apply mode: re-fetches the task list freshly for EACH candidate, not once for the whole batch", async () => {
+    const deps = makeDeps({
+      tasks: [makeTask({ id: "T-0001", priority: "P0" }), makeTask({ id: "T-0002", priority: "P1" })]
+    });
+    await runVetAndReady({ env: {}, argv: ["--apply"], now: () => new Date("2026-09-18T01:00:00.000Z"), ...deps });
+    const taskListFetches = deps.fetchImpl.mock.calls.filter(([url]) => url.endsWith("/api/tasks"));
+    // One fetch during selection, plus one PER readied candidate immediately before its own write.
+    expect(taskListFetches.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // A later candidate's vetted fields (not just status) change while an earlier candidate's write
+  // is already in flight: the changed candidate must be skipped and reported, and the earlier
+  // write must still go through untouched.
+  it("apply mode: skips a later candidate whose body changed while an earlier candidate's write was in flight, without disturbing the earlier write", async () => {
+    let t1 = makeTask({ id: "T-0001", priority: "P0" });
+    let t2 = makeTask({ id: "T-0002", priority: "P1" });
+    let t1PatchStarted = false;
+    const fetchImpl = vi.fn(async (url, opts) => {
+      if (url.endsWith("/api/tasks")) return jsonResponse([t1, t2]);
+      if (url.endsWith("/api/poller")) return jsonResponse(null, { ok: false, status: 404, statusText: "Not Found" });
+      if (opts?.method === "PATCH" && url.endsWith("/T-0001")) {
+        t1PatchStarted = true;
+        // While T-0001's write is in flight, a separate actor adds a Held marker to T-0002.
+        t2 = { ...t2, body: "## Held\nDo not ready this card until a human decision.\n" };
+        t1 = { ...t1, ...JSON.parse(opts.body) };
+        return jsonResponse(t1);
+      }
+      if (opts?.method === "PATCH" && url.endsWith("/T-0002")) {
+        throw new Error("T-0002 must never be PATCHed once it picks up a Held marker");
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const result = await runVetAndReady({
+      env: {},
+      argv: ["--apply"],
+      fetchImpl,
+      execFileFn: vi.fn(async () => ({ stdout: "", stderr: "" })),
+      writeFileFn: vi.fn(async () => {}),
+      mkdirFn: vi.fn(async () => {}),
+      appendFileFn: vi.fn(async () => {}),
+      logFn: vi.fn(),
+      now: () => new Date("2026-09-18T01:00:00.000Z")
+    });
+
+    expect(t1PatchStarted).toBe(true);
+    expect(t1.status).toBe("ready");
+    expect(t2.status).toBe("backlog");
+    expect(result.exitCode).toBe(0);
+    expect(result.report).toMatch(/T-0002/);
+    expect(result.report).toMatch(/SKIPPED/);
   });
 
   // Codex review 2026-09-18, finding 3, reproduced against the real runVetAndReady wiring (not
@@ -353,6 +447,138 @@ describe("mergedWorkCheck against a real git repo (Codex's merged-work-probe fix
       expect(skipped.reason).toMatch(/feature\.js/);
     } finally {
       await rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * T-0384 FIX ROUND 2 -- Codex follow-up review of #396 (head d81d474c), P2 #1: reproduces the
+ * real reproduction Codex ran against `runVetAndReady`, a real isolated HTTP server, and a real
+ * (in-memory) `DbTaskStore` -- not mocks. Before this fix, `applyReadiedCards` revalidated once
+ * off a snapshot fetched before the apply loop and then wrote with an `X-Board-Expected-Status`
+ * condition covering status alone, so a body change landing between that check and the PATCH
+ * (even one recorded via the store's own `update`, the same path a human/another agent would use)
+ * was invisible to the write. The card is now expected to stay `backlog` with the Held section
+ * intact, and the run reports the skip -- zero writes ever land on a card that stopped being safe
+ * to ready.
+ */
+describe("runVetAndReady against a real HTTP server + a real DbTaskStore (Codex's P2 #1 reproduction)", () => {
+  function makeReadyCandidate(overrides = {}) {
+    return {
+      id: "T-9001",
+      title: "Do the thing",
+      status: "backlog",
+      priority: "P1",
+      phase: 7,
+      agent: "infra",
+      depends_on: [],
+      deliverable_type: "code",
+      requires_approval: false,
+      created: "2026-09-18",
+      body: "## Acceptance\n\n- [ ] Update `src/lib/doTheThing.js` to do the thing.\n",
+      ...overrides
+    };
+  }
+
+  async function setup() {
+    const store = new DbTaskStore(":memory:");
+    const idAllocator = new IdAllocatorDb(store.db);
+    const server = await startHttpServer({ store, idAllocator, taskStoreKind: "db", port: 0 });
+    const { port } = server.address();
+    return {
+      store,
+      baseUrl: `http://127.0.0.1:${port}`,
+      teardown: async () => {
+        await new Promise((resolve) => server.close(resolve));
+        store.close();
+      }
+    };
+  }
+
+  it("does not ready a card whose body gains a Held marker between client-side revalidation and the server-side write", async () => {
+    const { store, baseUrl, teardown } = await setup();
+    try {
+      await store.create(makeReadyCandidate());
+
+      let patchIntercepted = false;
+      const fetchImpl = async (url, opts) => {
+        if (opts?.method === "PATCH" && !patchIntercepted) {
+          patchIntercepted = true;
+          // Simulates a human/another agent writing the Held marker via the same store the HTTP
+          // server itself uses, in the gap between this run's own pre-write revalidation (already
+          // done by the time applyReady is called) and the PATCH actually reaching the server.
+          await store.update("T-9001", {
+            body: "## Held\nDo not ready this card until a human decision.\n"
+          });
+        }
+        return fetch(url, opts);
+      };
+
+      const result = await runVetAndReady({
+        env: { BOARD_BASE_URL: baseUrl },
+        argv: ["--apply"],
+        fetchImpl,
+        execFileFn: async () => ({ stdout: "", stderr: "" }),
+        writeFileFn: async () => {},
+        mkdirFn: async () => {},
+        appendFileFn: async () => {},
+        logFn: () => {},
+        now: () => new Date("2026-09-18T01:00:00.000Z")
+      });
+
+      expect(patchIntercepted).toBe(true);
+      const final = await store.get("T-9001");
+      expect(final.status).toBe("backlog");
+      expect(final.body).toMatch(/Held/);
+      expect(result.exitCode).toBe(0);
+      expect(result.report).toMatch(/T-9001/);
+      expect(result.report).toMatch(/SKIPPED/);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("skips a later candidate that changes while an earlier candidate's PATCH is in flight, and still completes the earlier write", async () => {
+    const { store, baseUrl, teardown } = await setup();
+    try {
+      await store.create(makeReadyCandidate({ id: "T-9001", priority: "P0" }));
+      await store.create(
+        makeReadyCandidate({
+          id: "T-9002",
+          priority: "P1",
+          body: "## Acceptance\n\n- [ ] Update `src/lib/doOtherThing.js` to do the other thing.\n"
+        })
+      );
+
+      let firstPatchSeen = false;
+      const fetchImpl = async (url, opts) => {
+        if (opts?.method === "PATCH" && url.endsWith("/T-9001") && !firstPatchSeen) {
+          firstPatchSeen = true;
+          await store.update("T-9002", { body: "## Held\nDo not ready this card.\n" });
+        }
+        return fetch(url, opts);
+      };
+
+      const result = await runVetAndReady({
+        env: { BOARD_BASE_URL: baseUrl },
+        argv: ["--apply"],
+        fetchImpl,
+        execFileFn: async () => ({ stdout: "", stderr: "" }),
+        writeFileFn: async () => {},
+        mkdirFn: async () => {},
+        appendFileFn: async () => {},
+        logFn: () => {},
+        now: () => new Date("2026-09-18T01:00:00.000Z")
+      });
+
+      const t1 = await store.get("T-9001");
+      const t2 = await store.get("T-9002");
+      expect(t1.status).toBe("ready");
+      expect(t2.status).toBe("backlog");
+      expect(result.report).toMatch(/T-9002/);
+      expect(result.report).toMatch(/SKIPPED/);
+    } finally {
+      await teardown();
     }
   });
 });

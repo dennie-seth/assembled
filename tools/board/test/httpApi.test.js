@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
@@ -446,6 +447,68 @@ describe("PATCH /api/tasks/:id", () => {
         body: JSON.stringify({ status: "ready" })
       });
       expect(res.status).toBe(200);
+    });
+  });
+
+  // T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): X-Board-Expected-Status alone only guards
+  // status. A caller that needs to guard body/agent/deliverable_type/depends_on too sends
+  // X-Board-Expected-Fields -- a JSON fingerprint of every field it vetted -- and the write is
+  // refused if ANY of them changed underneath it, even with status still matching.
+  describe("conditional write (X-Board-Expected-Fields)", () => {
+    it("applies the write when every field in the fingerprint still matches", async () => {
+      const task = await createTask({ body: "## Acceptance\n- [ ] Do the thing.\n" });
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Board-Expected-Fields": JSON.stringify({
+            status: "backlog",
+            agent: task.agent,
+            bodyHash: crypto.createHash("sha256").update(task.body).digest("hex")
+          })
+        },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("ready");
+    });
+
+    it("returns 409 and leaves the record untouched when the body changed, even though status still matches", async () => {
+      const task = await createTask({ body: "## Acceptance\n- [ ] Do the thing.\n" });
+      await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "## Held\nDo not ready this card.\n" })
+      });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Board-Expected-Fields": JSON.stringify({
+            status: "backlog",
+            bodyHash: crypto.createHash("sha256").update(task.body).digest("hex")
+          })
+        },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(409);
+      const payload = await res.json();
+      expect(payload.error).toMatch(/body/);
+
+      const current = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+      expect(current.status).toBe("backlog");
+      expect(current.body).toBe("## Held\nDo not ready this card.\n");
+    });
+
+    it("returns 400 when the header isn't valid JSON", async () => {
+      const task = await createTask();
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Expected-Fields": "{not json" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(400);
     });
   });
 });

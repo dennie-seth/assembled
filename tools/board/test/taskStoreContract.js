@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { TaskStore, StaleWriteError } from "../src/lib/taskStore.js";
+import { TaskStore, StaleWriteError, hashBody } from "../src/lib/taskStore.js";
 
 export function makeTask(overrides = {}) {
   return {
@@ -297,6 +297,81 @@ export function runTaskStoreContractTests(label, setup) {
       await expect(
         store.update("T-9999", { status: "ready" }, { expected: { status: "backlog" } })
       ).rejects.toThrow(/not found/i);
+    });
+
+    // T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): `expected` used to only ever carry
+    // `status`, so a concurrent change to body/agent/deliverable_type/depends_on that left status
+    // alone was invisible to the precondition -- a card could be conditionally "readied" over a
+    // Held marker a human had just written. `expected` now accepts a fingerprint covering every
+    // vetted field, checked atomically alongside status.
+    it("refuses a conditional write when the body changed (via bodyHash), even though status still matches", async () => {
+      const task = makeTask({ body: "## Acceptance\n- [ ] Do the thing.\n" });
+      await store.create(task);
+      await store.update(task.id, { body: "## Held\nDo not ready this card.\n" });
+
+      await expect(
+        store.update(
+          task.id,
+          { status: "ready" },
+          { expected: { status: "backlog", bodyHash: hashBody(task.body) } }
+        )
+      ).rejects.toThrow(StaleWriteError);
+      expect(await store.get(task.id)).toMatchObject({ status: "backlog", body: "## Held\nDo not ready this card.\n" });
+    });
+
+    it("applies a conditional write when the observed bodyHash still matches the current body", async () => {
+      const task = makeTask({ body: "## Acceptance\n- [ ] Do the thing.\n" });
+      await store.create(task);
+      const updated = await store.update(
+        task.id,
+        { status: "ready" },
+        { expected: { status: "backlog", bodyHash: hashBody(task.body) } }
+      );
+      expect(updated.status).toBe("ready");
+    });
+
+    // depends_on is an array: naive reference equality would make every conditional write on a
+    // task with dependencies fail, since `expected.depends_on` always arrives as a fresh array
+    // (deserialized from JSON over HTTP, or read separately from the store) rather than the same
+    // reference the store holds.
+    it("compares an expected depends_on by contents, not by array identity", async () => {
+      const task = makeTask({ depends_on: ["T-0001", "T-0002"] });
+      await store.create(task);
+      const updated = await store.update(
+        task.id,
+        { status: "ready" },
+        { expected: { status: "backlog", depends_on: ["T-0001", "T-0002"] } }
+      );
+      expect(updated.status).toBe("ready");
+    });
+
+    it("refuses a conditional write when depends_on changed since it was observed", async () => {
+      const task = makeTask({ depends_on: ["T-0001"] });
+      await store.create(task);
+      await store.update(task.id, { depends_on: ["T-0001", "T-0002"] });
+
+      await expect(
+        store.update(task.id, { status: "ready" }, { expected: { status: "backlog", depends_on: ["T-0001"] } })
+      ).rejects.toThrow(StaleWriteError);
+    });
+
+    it("names every mismatched field on the thrown StaleWriteError, not just status", async () => {
+      const task = makeTask({ agent: "infra" });
+      await store.create(task);
+      await store.update(task.id, { agent: "server" });
+
+      let caught = null;
+      try {
+        await store.update(
+          task.id,
+          { status: "ready" },
+          { expected: { status: "backlog", agent: "infra" } }
+        );
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(StaleWriteError);
+      expect(caught.changedFields).toContain("agent");
     });
   });
 
