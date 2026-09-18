@@ -221,10 +221,10 @@ without needing `journalctl` at all.
 ### Live dry run (T-0384 acceptance evidence)
 
 `node ops/vetAndReady.js` (no `--apply`) against the actual live board at
-`127.0.0.1:4173`, 2026-09-18T09:50:03.567Z:
+`127.0.0.1:4173`, 2026-09-18T09:51:34.590Z:
 
 ```
-# Board vet-and-ready run -- 2026-09-18T09:50:03.567Z
+# Board vet-and-ready run -- 2026-09-18T09:51:34.590Z
 
 Poller state: unavailable -- GET /api/poller returned 404 Not Found -- likely a board deployment that predates T-0383
 
@@ -233,11 +233,11 @@ Readied: 2 (cap 4)
 Skipped: 1
 
 ## Readied
-- T-0371 [P2] READIED -- 5-cap-ok: every rule passed; readied (priority P2, within the cap of 4)
-- T-0372 [P2] READIED -- 5-cap-ok: every rule passed; readied (priority P2, within the cap of 4)
+- T-0371 "WIP gate T-E: one shared GPU lease across every audited GPU submission path, with owner + crash reconciliation" [P2] READIED -- 5-cap-ok: every rule passed; readied (priority P2, within the cap of 4)
+- T-0372 "WIP gate T-F: drain mode with oversized-card detection and bounded, aged waiting" [P2] READIED -- 5-cap-ok: every rule passed; readied (priority P2, within the cap of 4)
 
 ## Skipped
-- T-0362 [P1] skipped -- 1-dependency: unmet dependency: T-0338 is backlog ([{"id":"T-0338","status":"backlog"}])
+- T-0362 "Freeze the motion-gate thresholds against the first approved compositor walk and the negative-control battery (DL-31)" [P1] skipped -- 1-dependency: unmet dependency: T-0338 is backlog ([{"id":"T-0338","status":"backlog"}])
 
 ## Apply
 Dry run (default) -- nothing was written. Pass --apply to PATCH status: ready on the readied cards above.

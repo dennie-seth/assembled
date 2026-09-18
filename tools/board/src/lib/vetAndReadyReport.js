@@ -8,11 +8,12 @@
 const READY_LABEL = "READIED";
 const SKIP_LABEL = "skipped";
 
-/** One line per card: id, priority, verdict, the rule that decided it, and its evidence. */
+/** One line per card: id, title, priority, verdict, the rule that decided it, and its evidence. */
 export function formatDecisionRow(entry) {
   const label = entry.verdict === "ready" ? READY_LABEL : SKIP_LABEL;
   const evidence = entry.evidence ? ` (${entry.evidence})` : "";
-  return `- ${entry.id} [${entry.priority}] ${label} -- ${entry.rule}: ${entry.reason}${evidence}`;
+  const title = entry.title ? ` "${entry.title}"` : "";
+  return `- ${entry.id}${title} [${entry.priority}] ${label} -- ${entry.rule}: ${entry.reason}${evidence}`;
 }
 
 /** The full per-card decision table, readied cards listed before skipped ones. */

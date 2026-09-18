@@ -26,6 +26,12 @@ describe("formatDecisionRow", () => {
     expect(skipLine).toMatch(/T-0010/);
   });
 
+  it("includes the card title -- the morning summary must show ids AND titles", () => {
+    const line = formatDecisionRow(readyEntry({ id: "T-0009", title: "Ship the widget" }));
+    expect(line).toMatch(/T-0009/);
+    expect(line).toMatch(/Ship the widget/);
+  });
+
   it("includes evidence inline when present", () => {
     const line = formatDecisionRow(readyEntry({ verdict: "skip", rule: "2-merged", reason: "possibly satisfied", evidence: "abc1234 feat: T-0001 done" }));
     expect(line).toMatch(/abc1234/);
