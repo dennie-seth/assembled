@@ -18,11 +18,35 @@ export const READY_CAP = 4;
 /**
  * Body markers that mean a card's acceptance may be self-contradicted or superseded by a later
  * section of its own body (spec rule 3, worked example T-0339). Deliberately a fixed, documented
- * list rather than an open-ended heuristic -- "each decided mechanically" -- so a marker this
- * list doesn't cover is a known limitation, not a silent gap. "and so on" in the source spec is
- * exactly why this list may need a future addition; extend it here, in one place, when it does.
+ * list of rules rather than an open-ended heuristic -- "each decided mechanically" -- so a marker
+ * this list doesn't cover is a known limitation, not a silent gap. "and so on" in the source spec
+ * is exactly why this list may need a future addition; extend it here, in one place, when it does.
+ *
+ * Codex review of #396, finding 1: the original implementation did a case-sensitive
+ * `body.includes()` over a fixed-case string list, so `## Held`, lowercase `held`, and
+ * `Stop-and-report:` all slipped through and got readied. Every pattern here is matched
+ * case-insensitively, and the phrase markers tolerate the real punctuation/spacing variants
+ * Codex reproduced (`stop-and-report`, `stop and report`, hyphen-optional `re-scoped`). Word-like
+ * markers use `\b` boundaries so an unrelated word merely containing the marker as a substring
+ * (`upheld`, `withheld`) does not false-trigger -- see the "still passes" test in
+ * test/lib/vetAndReady.test.js.
+ *
+ * `## Finding` is its own rule: a "## Finding" (or "## Findings") heading is, on its own, a
+ * recorded-outcome section per the source spec's "a stop-and-report outcome already recorded" --
+ * so its mere presence is a governing signal even without one of the other phrase markers also
+ * appearing in the same body (see T-0384's fix-round AC).
  */
-export const SUPERSEDED_MARKERS = ["HELD", "RE-SCOPED", "RESCOPED", "SUPERSEDED", "This section governs", "STOP AND REPORT"];
+const SUPERSEDED_MARKER_RULES = [
+  { label: "HELD", test: (body) => /\bheld\b/i.test(body) },
+  { label: "RE-SCOPED", test: (body) => /\bre-?scoped\b/i.test(body) },
+  { label: "SUPERSEDED", test: (body) => /\bsuperseded\b/i.test(body) },
+  { label: "This section governs", test: (body) => /this section governs/i.test(body) },
+  { label: "STOP AND REPORT", test: (body) => /stop[\s-]+and[\s-]+report/i.test(body) },
+  { label: "## Finding", test: (body) => /^\s{0,3}#{1,6}\s*findings?\b/im.test(body) }
+];
+
+/** Display labels for the rules above -- used by tests and anything that wants the marker list. */
+export const SUPERSEDED_MARKERS = SUPERSEDED_MARKER_RULES.map((rule) => rule.label);
 
 const PRIORITY_RANK = new Map([
   ["P0", 0],
@@ -86,10 +110,10 @@ export function dependencyCheck(task, tasksById) {
   };
 }
 
-/** Rule 3: the card body carries none of `SUPERSEDED_MARKERS`. */
+/** Rule 3: the card body carries none of `SUPERSEDED_MARKER_RULES`, case-insensitively. */
 export function supersededCheck(task) {
   const body = task.body ?? "";
-  const hits = SUPERSEDED_MARKERS.filter((marker) => body.includes(marker));
+  const hits = SUPERSEDED_MARKER_RULES.filter((rule) => rule.test(body)).map((rule) => rule.label);
   if (hits.length === 0) {
     return { ok: true, reason: "no superseding/held markers found in the card body", evidence: "" };
   }
