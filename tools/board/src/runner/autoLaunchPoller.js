@@ -10,7 +10,7 @@ const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
 /** Dependencies in either of these states are satisfied -- same rule as `assertCanMoveToInProgress`. */
-const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
+export const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
 
 const PRIORITY_RANK = new Map([
   ["P0", 0],

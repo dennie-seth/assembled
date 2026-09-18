@@ -212,7 +212,9 @@ describe("vetAndReady -- end to end selection", () => {
       makeTask({ id: "T-0023", priority: "P2" })
     ];
     const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
-    expect(result.readied.map((r) => r.id)).toEqual(["T-0030", "T-0005", "T-0021", "T-0020"]);
+    // Selection is priority-first (P0 T-0030 beats every lower-priority, lower-id card); display
+    // order is the decision table's own deterministic id-ascending order, not selection order.
+    expect(result.readied.map((r) => r.id)).toEqual(["T-0005", "T-0020", "T-0021", "T-0030"]);
     expect(result.skipped.map((r) => r.id).sort()).toEqual(["T-0022", "T-0023"]);
     for (const entry of result.skipped) {
       expect(entry.rule).toMatch(/cap/);
