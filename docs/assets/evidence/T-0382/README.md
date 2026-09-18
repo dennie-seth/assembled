@@ -18,8 +18,9 @@ max channel measured 22
 (`docs/assets/evidence/T-0382/attempt_2_non_black_corner_crop.png`), also over the 16 ceiling.
 Attempt 3 (`docs/assets/evidence/T-0382/attempt_3_main_1024.png`, seed reverted to 380002, denoise
 lowered 0.87 -> 0.80, the single parameter varied) fixed profile-facing-right, background (border
-max channel 4, `docs/assets/evidence/T-0382/attempt_3_head_lens_crop.png`) and landed the centred
-green-crop count at 7,411, inside the 6,000-6,900 band -- but at the cost of the pose extension
+max channel 4, measured on the full frame
+`docs/assets/evidence/T-0382/attempt_3_main_1024.png`) and landed the centred green-crop count
+at 7,411, above the required 6,000 floor -- but at the cost of the pose extension
 itself: neither the near arm nor the near leg break the coat's silhouette at all
 (`docs/assets/evidence/T-0382/attempt_3_torso_no_arm_crop.png` shows an unbroken coat column with
 no arm silhouette anywhere; `docs/assets/evidence/T-0382/attempt_3_hem_no_raised_leg_crop.png`
@@ -85,8 +86,9 @@ Single parameter varied from attempt 1: denoise only (0.87 -> 0.80), seed revert
 380002. Full frame: `attempt_3_main_1024.png`.
 
 - Faces right: pass -- strict right-facing profile.
-- Solid black background: pass -- measured border max channel 4 against the 16 ceiling.
-- Green band (centred 187x200 crop): 7,411 px, inside the 6,000-6,900 band.
+- Solid black background: pass -- border max channel 4 against the 16 ceiling, measured on the
+  full frame `attempt_3_main_1024.png`.
+- Green band (centred 187x200 crop): 7,411 px, above the required 6,000 floor.
 - Identity present (hood, mask, long coat past the knee): pass by inspection.
 - Single visible goggle lens: **FAIL** (marginal) -- `attempt_3_head_lens_crop.png` shows a dark
   strap-like band across the face rather than a legible round lens.
