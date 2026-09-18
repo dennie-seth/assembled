@@ -31,7 +31,10 @@ function makeTask(overrides = {}) {
     depends_on: [],
     deliverable_type: "code",
     requires_approval: false,
-    body: "## Acceptance\n\n- [ ] Does the thing\n",
+    // A checkable acceptance path so the default fixture clears rule 2 (mergedWorkCheck) on real
+    // mechanical evidence -- see tools/board/test/lib/vetAndReady.test.js for the dedicated
+    // prose-only-body coverage fix-round 2 (T-0384) adds.
+    body: "## Acceptance\n\n- [ ] Update `src/lib/doTheThing.js` to do the thing.\n",
     ...overrides
   };
 }

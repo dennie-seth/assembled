@@ -33,7 +33,10 @@ function makeTask(overrides = {}) {
     created: "2026-09-01",
     deliverable_type: "code",
     requires_approval: false,
-    body: "## Acceptance\n\n- [ ] Does the thing\n",
+    // A checkable acceptance path (rather than bare prose) so the default fixture clears rule 2
+    // on real mechanical evidence -- see the dedicated prose-only-body tests below for the
+    // "no checkable path at all" case fix-round 2 (T-0384) closes.
+    body: "## Acceptance\n\n- [ ] Update `src/lib/doTheThing.js` to do the thing.\n",
     ...overrides
   };
 }
@@ -203,6 +206,22 @@ describe("mergedWorkCheck", () => {
     const result = await mergedWorkCheck({ task, gitLogGrep: NO_GIT_HITS });
     expect(result.ok).toBe(true);
   });
+
+  // reviewer FAIL round, 2026-09-18: AC 10. An absent card-id hit is NOT clearance on its own --
+  // it only proves commit *messages* don't mention the id. When the acceptance section names no
+  // checkable path at all, there is no mechanical evidence available in either direction, so this
+  // must land as skip-as-uncertain, not ok:true. Reproduces the branch's own previously-passing
+  // "readies a clean runnable card" fixture shape (a prose-only body with no path-like token).
+  it("fails, uncertain, when the acceptance section names no checkable path and the card id has no hits either", async () => {
+    const task = makeTask({
+      id: "T-9003",
+      body: "## Acceptance\n\n- [ ] Does the thing\n"
+    });
+    const result = await mergedWorkCheck({ task, gitLogGrep: NO_GIT_HITS });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/uncertain/i);
+    expect(result.reason).toMatch(/no checkable path/i);
+  });
 });
 
 describe("extractAcceptancePaths", () => {
@@ -215,6 +234,17 @@ describe("extractAcceptancePaths", () => {
   it("extracts a backtick-quoted repo path from the Acceptance section", () => {
     const body = "## Acceptance\n- [ ] `tools/board/ops/vetAndReady.js` implements every rule.\n";
     expect(extractAcceptancePaths(body)).toEqual(["tools/board/ops/vetAndReady.js"]);
+  });
+
+  // reviewer FAIL round, 2026-09-18: this repo's own house style (see nearly every card body,
+  // including T-0384's own) puts a blank line between the `## Acceptance` heading and its list --
+  // "## Acceptance\n\n- [ ] ...". The section-boundary regex's `$` anchor, under the `m` flag,
+  // matched at that very first blank line (multiline `$` matches before ANY `\n`, not just at the
+  // true end of the body), so the capture group came back empty and every real, standard-style
+  // card silently extracted zero paths regardless of what its acceptance actually named.
+  it("extracts a path from an Acceptance section with a blank line after the heading (the repo's house style)", () => {
+    const body = "## Acceptance\n\n- [ ] Update `src/lib/doTheThing.js` to do the thing.\n";
+    expect(extractAcceptancePaths(body)).toEqual(["src/lib/doTheThing.js"]);
   });
 
   it("ignores paths mentioned outside the Acceptance section (e.g. Links/Pointers)", () => {
@@ -338,6 +368,19 @@ describe("vetAndReady -- end to end selection", () => {
     const snapshot = JSON.stringify(tasks);
     await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
     expect(JSON.stringify(tasks)).toBe(snapshot);
+  });
+
+  // reviewer FAIL round, 2026-09-18: AC 10. A card whose `## Acceptance` section is prose-only
+  // (no path-like token at all) must be skipped as uncertain, not readied on an absent id-grep
+  // alone -- rule "2-merged" is the one that decides it.
+  it("skips, as uncertain, a card whose acceptance section names no checkable path", async () => {
+    const tasks = [makeTask({ id: "T-0051", body: "## Acceptance\n\n- [ ] Does the thing\n" })];
+    const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
+    expect(result.readied).toEqual([]);
+    const t51 = result.skipped.find((r) => r.id === "T-0051");
+    expect(t51).toBeTruthy();
+    expect(t51.rule).toBe("2-merged");
+    expect(t51.reason).toMatch(/uncertain/i);
   });
 });
 
