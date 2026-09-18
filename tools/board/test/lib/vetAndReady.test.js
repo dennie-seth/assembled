@@ -10,6 +10,7 @@ import {
   supersededCheck,
   mergedWorkCheck,
   extractAcceptancePaths,
+  revalidateCandidate,
   vetAndReady
 } from "../../src/lib/vetAndReady.js";
 
@@ -337,5 +338,57 @@ describe("vetAndReady -- end to end selection", () => {
     const snapshot = JSON.stringify(tasks);
     await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
     expect(JSON.stringify(tasks)).toBe(snapshot);
+  });
+});
+
+// Codex review 2026-09-18, finding 3: applyReadiedCards must revalidate a candidate's status,
+// eligibility scope, approval flag, body markers, and dependencies right before the write --
+// this is the pure, injectable core of that re-check (no git, no board API), so ops/vetAndReady.js
+// only has to wire it to a fresh fetch. Deliberately does NOT re-run mergedWorkCheck (git-based,
+// stable within a run, and expensive to re-run per candidate).
+describe("revalidateCandidate", () => {
+  it("still passes an unchanged, eligible card with satisfied dependencies and no superseding marker", () => {
+    const task = makeTask({ id: "T-0060" });
+    const byId = new Map([[task.id, task]]);
+    expect(revalidateCandidate(task, byId).ok).toBe(true);
+  });
+
+  it("fails when the card no longer exists", () => {
+    expect(revalidateCandidate(null, new Map()).ok).toBe(false);
+    expect(revalidateCandidate(undefined, new Map()).ok).toBe(false);
+  });
+
+  it("fails when the card's status changed out of backlog since it was selected", () => {
+    const task = makeTask({ id: "T-0061", status: "done" });
+    const byId = new Map([[task.id, task]]);
+    const result = revalidateCandidate(task, byId);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/no longer eligible/);
+  });
+
+  it("fails when the card picked up requires_approval since it was selected", () => {
+    const task = makeTask({ id: "T-0062", requires_approval: true });
+    const byId = new Map([[task.id, task]]);
+    expect(revalidateCandidate(task, byId).ok).toBe(false);
+  });
+
+  it("fails when a dependency is no longer satisfied at write time", () => {
+    const dep = makeTask({ id: "T-0063", status: "in-progress" });
+    const task = makeTask({ id: "T-0064", depends_on: ["T-0063"] });
+    const byId = new Map([
+      [dep.id, dep],
+      [task.id, task]
+    ]);
+    const result = revalidateCandidate(task, byId);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/dependency/);
+  });
+
+  it("fails when the body picked up a superseding marker since it was selected", () => {
+    const task = makeTask({ id: "T-0065", body: "## Held\nDo not ready this card.\n" });
+    const byId = new Map([[task.id, task]]);
+    const result = revalidateCandidate(task, byId);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/body changed/);
   });
 });
