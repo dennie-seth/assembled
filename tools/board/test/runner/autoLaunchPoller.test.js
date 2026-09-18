@@ -743,3 +743,69 @@ describe("createAutoLaunchPoller — window-aware usage comparison (WIP gate T-D
     }
   });
 });
+
+/**
+ * T-0383: `getStatus()` is what `GET /api/poller` reports -- it must never read the repo or a
+ * unit file, only what the poller already tracks in memory. These tests pin the shape and the
+ * bookkeeping (`lastTickAt`/`lastResult`/`nextTickAt`) that every tick updates.
+ */
+describe("createAutoLaunchPoller — getStatus()", () => {
+  it("reports enabled/intervalMs/usageMax from construction before any tick has run", () => {
+    const { poller } = makePoller({ intervalMs: 12_345, usageMax: 0.42 });
+    const status = poller.getStatus();
+    expect(status.enabled).toBe(true);
+    expect(status.intervalMs).toBe(12_345);
+    expect(status.usageMax).toBe(0.42);
+    expect(status.lastTickAt).toBeNull();
+    expect(status.lastResult).toBeNull();
+  });
+
+  it("reports enabled: false when AUTO_LAUNCH_ENABLED is off, without touching the store", () => {
+    const { poller, store } = makePoller({ enabled: false });
+    const status = poller.getStatus();
+    expect(status.enabled).toBe(false);
+    expect(store.list).not.toHaveBeenCalled();
+  });
+
+  it("records lastTickAt and a skip reason after a tick that skips", async () => {
+    const { poller } = makePoller({
+      now: () => 1_700_000_000_000,
+      usage: { utilization: 0.9, status: "allowed_warning", reason: "status=allowed_warning" }
+    });
+    await poller.tick();
+    const status = poller.getStatus();
+    expect(status.lastTickAt).toBe(new Date(1_700_000_000_000).toISOString());
+    expect(status.lastResult).toMatchObject({ kind: "skip" });
+    expect(status.lastResult.reason).toMatch(/usage/i);
+  });
+
+  it("records lastTickAt and the launched card id after a tick that launches", async () => {
+    const { poller } = makePoller({ now: () => 1_700_000_000_000 });
+    await poller.tick();
+    const status = poller.getStatus();
+    expect(status.lastTickAt).toBe(new Date(1_700_000_000_000).toISOString());
+    expect(status.lastResult).toMatchObject({ kind: "launched", cardId: "T-0001" });
+  });
+
+  it("computes nextTickAt as lastTickAt + intervalMs once a tick has run", async () => {
+    const { poller } = makePoller({ now: () => 1_700_000_000_000, intervalMs: 60_000 });
+    await poller.tick();
+    const status = poller.getStatus();
+    expect(status.nextTickAt).toBe(new Date(1_700_000_060_000).toISOString());
+  });
+
+  it("reports activeRun from the orchestrator's own hasActiveRuns()", () => {
+    const { poller, orchestrator } = makePoller({ active: true });
+    expect(poller.getStatus().activeRun).toBe(true);
+    expect(orchestrator.hasActiveRuns).toHaveBeenCalled();
+  });
+
+  it("reports running: true once start() has been called, false before/after stop()", () => {
+    const { poller } = makePoller({ intervalMs: 60_000 });
+    expect(poller.getStatus().running).toBe(false);
+    poller.start();
+    expect(poller.getStatus().running).toBe(true);
+    poller.stop();
+    expect(poller.getStatus().running).toBe(false);
+  });
+});
