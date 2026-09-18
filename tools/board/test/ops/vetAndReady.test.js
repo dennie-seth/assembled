@@ -166,6 +166,23 @@ describe("applyReady", () => {
     const fetchImpl = vi.fn(async () => jsonResponse(null, { ok: false, status: 409, statusText: "Conflict" }));
     await expect(applyReady({ baseUrl: "http://127.0.0.1:4173", id: "T-0001", fetchImpl })).rejects.toThrow(/409/);
   });
+
+  // Codex review 2026-09-18, finding 3: the write must carry a server-enforced condition so a
+  // stale write (the card changed between the check and the write) is refused, not silently
+  // applied.
+  it("sends X-Board-Expected-Status when an expectedStatus is given", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(makeTask({ status: "ready" })));
+    await applyReady({ baseUrl: "http://127.0.0.1:4173", id: "T-0001", fetchImpl, expectedStatus: "backlog" });
+    const [, opts] = fetchImpl.mock.calls[0];
+    expect(opts.headers["X-Board-Expected-Status"]).toBe("backlog");
+  });
+
+  it("omits the header entirely when no expectedStatus is given", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(makeTask({ status: "ready" })));
+    await applyReady({ baseUrl: "http://127.0.0.1:4173", id: "T-0001", fetchImpl });
+    const [, opts] = fetchImpl.mock.calls[0];
+    expect(opts.headers["X-Board-Expected-Status"]).toBeUndefined();
+  });
 });
 
 describe("runVetAndReady", () => {
@@ -218,6 +235,53 @@ describe("runVetAndReady", () => {
     const patchCalls = deps.fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "PATCH");
     expect(patchCalls).toHaveLength(1);
     expect(patchCalls[0][0]).toBe("http://127.0.0.1:4173/api/tasks/T-0001");
+  });
+
+  it("apply mode: sends the observed status as X-Board-Expected-Status on the write", async () => {
+    const deps = makeDeps({ tasks: [makeTask({ id: "T-0001", status: "backlog" })] });
+    await runVetAndReady({ env: {}, argv: ["--apply"], now: () => new Date("2026-09-18T01:00:00.000Z"), ...deps });
+    const patchCalls = deps.fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "PATCH");
+    expect(patchCalls[0][1].headers["X-Board-Expected-Status"]).toBe("backlog");
+  });
+
+  // Codex review 2026-09-18, finding 3, reproduced against the real runVetAndReady wiring (not
+  // just the probe): a card flips to "done" (simulating a concurrent human/agent write) during
+  // the per-candidate git check that happens between selection and the apply loop. Apply mode
+  // must re-fetch and revalidate immediately before the write and perform ZERO writes here.
+  it("apply mode: performs zero writes and reports the card as changed when it flips status underneath the run (Codex's concurrent-status-change probe)", async () => {
+    let current = makeTask({ id: "T-9001", status: "backlog" });
+    const writes = [];
+    const fetchImpl = vi.fn(async (url, opts) => {
+      if (url.endsWith("/api/tasks")) return jsonResponse([{ ...current }]);
+      if (url.endsWith("/api/poller")) return jsonResponse(null, { ok: false, status: 404, statusText: "Not Found" });
+      writes.push({ before: current.status, patch: JSON.parse(opts.body) });
+      current = { ...current, ...JSON.parse(opts.body) };
+      return jsonResponse(current);
+    });
+    // The mock's git-check side effect mimics a concurrent write landing on the card while the
+    // run is still working through its own per-candidate checks -- same shape as Codex's probe.
+    const execFileFn = vi.fn(async () => {
+      current = { ...current, status: "done" };
+      return { stdout: "", stderr: "" };
+    });
+
+    const result = await runVetAndReady({
+      env: {},
+      argv: ["--apply"],
+      fetchImpl,
+      execFileFn,
+      writeFileFn: vi.fn(async () => {}),
+      mkdirFn: vi.fn(async () => {}),
+      appendFileFn: vi.fn(async () => {}),
+      logFn: vi.fn(),
+      now: () => new Date("2026-09-18T01:00:00.000Z")
+    });
+
+    expect(writes).toHaveLength(0);
+    expect(current.status).toBe("done");
+    expect(result.exitCode).toBe(0);
+    expect(result.report).toMatch(/T-9001/);
+    expect(result.report).toMatch(/SKIPPED/);
   });
 
   it("reports a degraded poller state when /api/poller 404s, and still completes the run", async () => {
