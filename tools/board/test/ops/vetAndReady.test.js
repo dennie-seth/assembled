@@ -57,6 +57,18 @@ describe("resolveConfig", () => {
     const config = resolveConfig({ BOARD_BASE_URL: "http://127.0.0.1:9999", BOARD_PORT: "5000" }, []);
     expect(config.baseUrl).toBe("http://127.0.0.1:9999");
   });
+
+  // Codex review 2026-09-18, finding 4: BOARD_VET_READY_CAP=10 let six clean candidates all
+  // ready in one run. The per-run cap of 4 is a hard ceiling the config can lower but never
+  // raise -- an oversized value clamps to 4, and the clamped (effective) value is what's reported.
+  it("clamps an oversized BOARD_VET_READY_CAP down to the hard cap of 4", () => {
+    const config = resolveConfig({ BOARD_VET_READY_CAP: "10" }, []);
+    expect(config.cap).toBe(4);
+  });
+
+  it("still honours a smaller BOARD_VET_READY_CAP than 4", () => {
+    expect(resolveConfig({ BOARD_VET_READY_CAP: "2" }, []).cap).toBe(2);
+  });
 });
 
 describe("fetchTasks", () => {

@@ -257,6 +257,18 @@ describe("vetAndReady -- end to end selection", () => {
     expect(result.skipped.map((r) => r.id)).toEqual(["T-0041"]);
   });
 
+  // Codex review 2026-09-18, finding 4: BOARD_VET_READY_CAP=10 with six clean candidates
+  // selected all six. The per-run cap of 4 is a hard upper bound the config can lower but never
+  // raise -- enforced here, at the selection boundary itself, not only in ops/vetAndReady.js's
+  // config parsing (so a caller of this library function directly gets the same guarantee).
+  it("never exceeds the hard cap of 4 even when a larger cap is passed in", async () => {
+    const tasks = Array.from({ length: 6 }, (_, i) => makeTask({ id: `T-090${i}`, priority: "P1" }));
+    const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS, cap: 10 });
+    expect(result.readied.length).toBeLessThanOrEqual(4);
+    expect(result.readied.length).toBe(4);
+    expect(result.cap).toBe(4);
+  });
+
   it("never mutates the input tasks array", async () => {
     const tasks = [makeTask({ id: "T-0050" })];
     const snapshot = JSON.stringify(tasks);
