@@ -77,6 +77,10 @@ The Notion reconcile step (syncing staged/Drive-pushed assets into Notion)
 runs as a separate Claude scheduled task, not on this box, and is out of
 scope for these scripts.
 
+`board-vet-and-ready.sh` (T-0384) is a separate, independent job -- it does
+not participate in the asset/backup/integrity pipeline above. See its own
+section below.
+
 ## Scripts
 
 | Script | Purpose |
@@ -88,6 +92,7 @@ scope for these scripts.
 | `board-integrity-check.py` | Read-only daily health check (DB integrity, DB<->API<->attachments consistency, backup freshness, staged-export freshness). |
 | `board-db-backup.sh` | Runs the app's `npm run backup:db` (WAL-safe online backup) then prunes old backups under `<dataDir>/backups/` to a retention count; used by the daily timer. Also uploads the newest backup to Drive and prunes the Drive folder to a small retention count. |
 | `check-comfyui-regime.sh` (T-0322) | Wrapper for `npm run check:comfyui-regime` (`../scripts/checkComfyUiRegime.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself), following the same `flock` + timestamped-log pattern as `board-db-backup.sh`. Read-only against ComfyUI (`GET /system_stats` only). Fails loudly if the live server's `argv` has drifted from the regime declared in `comfyui-regime.json`, in either direction. See `docs/comfyui-setup.md#determinism`. Also invocable directly (ad hoc or from an asset-generation preflight) without this wrapper. |
+| `vetAndReady.sh` (T-0384) | `flock`-guarded wrapper for `npm run vet:ready -- --apply` (`../ops/vetAndReady.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself). See "Nightly vet-and-ready (T-0384)" below. |
 
 ## Install locations on the box
 
@@ -139,6 +144,7 @@ folder-ID lookup, since it only ever needs the one destination.
 | `board-db-backup.timer` | daily at 03:00 (±120s random delay) | `board-db-backup.sh` |
 | `board-integrity-check.timer` | daily at 03:20 (±300s random delay) | `board-integrity-check.py` |
 | `check-comfyui-regime.timer` (T-0322) | hourly (±120s random delay) | `check-comfyui-regime.sh` |
+| `board-vet-and-ready.timer` (T-0384) | daily at ~01:00 (±300s random delay) | `board-vet-and-ready.sh` |
 
 All timers are `Persistent=true` (catch up on a missed run after the box was
 off) and installed under `~/.config/systemd/user/`, enabled with
@@ -153,6 +159,83 @@ repo checkout's own Node/npm/git tools, so `cp` to `~/.local/bin` /
 check-comfyui-regime.timer` (the same "Deploying changes" step below) are
 still an open step for whoever next has that access. Until then, the only
 live check is the manual `npm run check:comfyui-regime` invocation.
+
+`board-vet-and-ready.timer`'s unit files are new as of T-0384 and are
+**deliberately not installed or enabled** -- see "Nightly vet-and-ready
+(T-0384)" below for why this one is different from every other row in this
+table (not just "nobody has had the access yet").
+
+## Nightly vet-and-ready (T-0384)
+
+`vetAndReady.js` (`tools/board/ops/vetAndReady.js`) is a WSL-native
+replacement for the external `nightly-infra-prep` scheduled task, which runs
+in a cloud sandbox with no WSL and so cannot reach `~/dev/assembled-board` or
+`127.0.0.1:4173` directly -- it either fails outright or coin-flips on a
+browser-JS fallback. Run natively here instead, it has full git and board API
+access, so it implements every vetting rule for real:
+
+1. Every dependency of a candidate card is `done` or `retired` (mirrors the
+   auto-launch poller's own satisfied-dependency test,
+   `autoLaunchPoller.js`'s `SATISFIED_DEP_STATUSES`).
+2. The card is not already satisfied by merged work, checked via `git log
+   <base-branch> --grep=<card-id>`. Conservative: a hit, or a `git` error, is
+   treated as "possibly already satisfied" and skipped rather than readied --
+   see `src/lib/vetAndReady.js`'s `mergedWorkCheck` for the documented limit
+   of what a mechanical check can safely claim here.
+3. The card's body carries none of a fixed list of superseding/held markers
+   (`HELD`, `RE-SCOPED`, `SUPERSEDED`, "This section governs", ...).
+4. DAG order is respected -- enforced by rule 1 itself, since `ready` is
+   never a satisfied dependency status, so a dependent card whose
+   prerequisite is only being readied this same run still fails rule 1.
+5. At most 4 cards are readied per run, highest priority first then lowest
+   numeric id.
+
+It **only ever** writes `status: "ready"` via `PATCH /api/tasks/:id` on
+cards that pass every rule -- never `POST /api/tasks/:id/run`, never a
+merge, never a deploy, never a body edit. **Dry run is the default**;
+`--apply` is required to write anything. It also reads `GET /api/poller`
+(T-0383) for the auto-launch poller's own state and degrades gracefully --
+never throwing -- to a documented "poller state unavailable" summary line on
+any board deployment that predates T-0383.
+
+Every run prints its full decision table to stdout (captured by
+`journalctl --user -u board-vet-and-ready.service` once installed, since
+systemd captures a oneshot unit's own stdout automatically -- `vetAndReady.sh`
+does not redirect it away) and also writes it to
+`$BOARD_VET_LOG_DIR/latest.md` (default
+`~/.local/state/board-vet-and-ready/latest.md`), plus a one-line-per-run
+`history.log` in the same directory, so an operator can read the last run
+without needing `journalctl` at all.
+
+### Environment variables (`vetAndReady.js`)
+
+| Variable | Default |
+|---|---|
+| `BOARD_BASE_URL` | `http://127.0.0.1:${BOARD_PORT:-4173}` |
+| `BOARD_PORT` | `4173` |
+| `BOARD_REPO_ROOT` | the repo checkout `ops/vetAndReady.js` itself resolves from |
+| `BOARD_VET_BASE_BRANCH` | `develop` (the branch rule 2's `git log --grep` runs against) |
+| `BOARD_VET_READY_CAP` | `4` |
+| `BOARD_VET_LOG_DIR` | `~/.local/state/board-vet-and-ready` |
+
+### Installing (not done by this card, on purpose)
+
+This card's acceptance is the script, its tests, and these committed unit
+files -- **not** a live, enabled timer. The external `nightly-infra-prep`
+scheduled task stays enabled until this WSL timer is proven; installing this
+one is a separate, later, human step:
+
+```sh
+cp tools/board/ops/vetAndReady.sh ~/.local/bin/board-vet-and-ready.sh
+chmod +x ~/.local/bin/board-vet-and-ready.sh
+cp tools/board/ops/systemd/board-vet-and-ready.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now board-vet-and-ready.timer
+```
+
+Check the last run with `systemctl --user status board-vet-and-ready.service`,
+`journalctl --user -u board-vet-and-ready.service`, or by reading
+`~/.local/state/board-vet-and-ready/latest.md` directly.
 
 ## Deploying changes
 

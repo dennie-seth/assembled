@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly (~01:00) vet-and-ready pass for the assembled board (T-0384)
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+RandomizedDelaySec=300
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

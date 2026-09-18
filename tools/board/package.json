@@ -21,6 +21,7 @@
     "check:grant-ambiguity": "node scripts/checkGrantAmbiguity.js",
     "check:live-run": "node scripts/checkLiveRun.js",
     "check:comfyui-regime": "node scripts/checkComfyUiRegime.js",
+    "vet:ready": "node ops/vetAndReady.js",
     "deploy": "bash scripts/deploy.sh",
     "backup:db": "node scripts/backupDb.js",
     "import:db": "node scripts/importTasksToDb.js"

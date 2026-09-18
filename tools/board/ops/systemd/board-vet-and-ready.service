@@ -1,0 +1,7 @@
+[Unit]
+Description=Nightly WSL-native vet-and-ready pass for the assembled board (T-0384)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/board-vet-and-ready.sh
