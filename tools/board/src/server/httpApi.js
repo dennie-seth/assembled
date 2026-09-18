@@ -665,6 +665,18 @@ async function approvalProvenanceNoticeComment({ repoRoot, task }) {
  * `applyApprovalGateToPatch`.
  */
 /**
+ * The conditional-write precondition a caller may attach to a status write: `X-Board-Expected-Status`
+ * carries the status the caller last observed, and the store rejects the write with a
+ * `StaleWriteError` if it no longer holds by the time the write happens (see FsTaskStore/DbTaskStore's
+ * `expected` option -- Codex review 2026-09-18, finding 3). Read per request by each route, because
+ * `applyPatchAndSideEffects` below is shared by two routes that parse their requests differently.
+ */
+function expectedFromHeaders(headers) {
+  const header = headers["x-board-expected-status"];
+  return typeof header === "string" ? { status: header } : undefined;
+}
+
+/**
  * The shared core of every "write a status/field patch to a card" route: the approval gate, the
  * in-progress guards, the store write, the approval-provenance notice, the commit-on-write, the
  * ws broadcast, and the terminal-status side effects. Factored out of `handlePatchTask` (T-0383)
@@ -673,7 +685,7 @@ async function approvalProvenanceNoticeComment({ repoRoot, task }) {
  * Takes an already-parsed `body`, since the two callers parse the request differently (JSON only
  * for PATCH; form-encoded or JSON for the ready route).
  */
-async function applyPatchAndSideEffects({ store, id, body, actor, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub }) {
+async function applyPatchAndSideEffects({ store, id, body, actor, expected, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub }) {
   await applyApprovalGateToPatch({ store, id, body, actor });
 
   if (body.status === "in-progress") {
@@ -690,14 +702,7 @@ async function applyPatchAndSideEffects({ store, id, body, actor, repoRoot, task
     }
   }
 
-  // T-0384's vet-and-ready job (and any other caller that re-checks a card before writing it) can
-  // assert the card hasn't changed underneath it -- X-Board-Expected-Status carries the status it
-  // last observed, and the store rejects the write with a StaleWriteError if that no longer holds
-  // by the time the write actually happens, atomically with the write itself (see
-  // FsTaskStore/DbTaskStore's `expected` option, taskStore.js's StaleWriteError -- Codex review
-  // 2026-09-18, finding 3).
-  const expectedStatusHeader = req.headers["x-board-expected-status"];
-  const expected = typeof expectedStatusHeader === "string" ? { status: expectedStatusHeader } : undefined;
+  // `expected` is the caller-supplied conditional-write precondition -- see expectedFromHeaders.
 
   let updated;
   try {
@@ -761,11 +766,13 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     throw new HttpError(400, "Cannot change a task's id");
   }
   const actor = actorFromHeaders(req.headers);
+  const expected = expectedFromHeaders(req.headers);
   const updated = await applyPatchAndSideEffects({
     store,
     id,
     body,
     actor,
+    expected,
     repoRoot,
     tasksDir,
     orchestrator,
@@ -868,11 +875,13 @@ async function handleSetReadyStatus({ store, id, req, res, repoRoot, tasksDir, o
   }
 
   const actor = actorFromHeaders(req.headers);
+  const expected = expectedFromHeaders(req.headers);
   const updated = await applyPatchAndSideEffects({
     store,
     id,
     body: { status: "ready" },
     actor,
+    expected,
     repoRoot,
     tasksDir,
     orchestrator,
