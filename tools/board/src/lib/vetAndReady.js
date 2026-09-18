@@ -162,6 +162,11 @@ export async function mergedWorkCheck({ task, gitLogGrep }) {
  * Never mutates `tasks`. Deterministic: both lists are sorted by numeric card id.
  */
 export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
+  // Codex review 2026-09-18, finding 4: the per-run cap is a hard ceiling -- a caller (config
+  // parsing, a future direct caller of this library function) can lower it, never raise it above
+  // READY_CAP. Enforced here, at the selection boundary itself, so this guarantee holds no
+  // matter what any upstream config validation does or doesn't do.
+  const effectiveCap = Math.min(cap, READY_CAP);
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const eligible = tasks.filter(isEligibleAtAll);
   const decided = [];
@@ -192,8 +197,8 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
   }
 
   const sorted = [...passRule2].sort((a, b) => priorityRank(a) - priorityRank(b) || numericId(a) - numericId(b));
-  const readiedTasks = sorted.slice(0, cap);
-  const overflow = sorted.slice(cap);
+  const readiedTasks = sorted.slice(0, effectiveCap);
+  const overflow = sorted.slice(effectiveCap);
 
   for (const task of readiedTasks) {
     decided.push({
@@ -202,20 +207,20 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
       priority: task.priority,
       verdict: "ready",
       rule: "5-cap-ok",
-      reason: `every rule passed; readied (priority ${task.priority}, within the cap of ${cap})`,
+      reason: `every rule passed; readied (priority ${task.priority}, within the cap of ${effectiveCap})`,
       evidence: ""
     });
   }
   for (const task of overflow) {
     skip(task, "5-cap", {
-      reason: `every other rule passed, but the per-run cap of ${cap} was already filled by higher-priority/earlier-id candidates`,
+      reason: `every other rule passed, but the per-run cap of ${effectiveCap} was already filled by higher-priority/earlier-id candidates`,
       evidence: ""
     });
   }
 
   return {
     eligibleCount: eligible.length,
-    cap,
+    cap: effectiveCap,
     readied: decided.filter((entry) => entry.verdict === "ready").sort(byIdAscending),
     skipped: decided.filter((entry) => entry.verdict === "skip").sort(byIdAscending)
   };

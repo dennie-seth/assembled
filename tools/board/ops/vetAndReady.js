@@ -35,8 +35,12 @@ export function resolveConfig(env = process.env, argv = []) {
   const apply = argv.includes("--apply");
   const baseUrl = env.BOARD_BASE_URL || `http://127.0.0.1:${env.BOARD_PORT || DEFAULT_BOARD_PORT}`;
   const repoRoot = env.BOARD_REPO_ROOT ? path.resolve(env.BOARD_REPO_ROOT) : REPO_ROOT;
+  // Codex review 2026-09-18, finding 4: BOARD_VET_READY_CAP could previously raise the cap above
+  // READY_CAP (e.g. =10 let six clean candidates all ready in one run). It may only ever lower
+  // the cap now -- clamped here AND, independently, inside vetAndReady() itself (the selection
+  // boundary), so this ceiling holds even if a future caller skips resolveConfig entirely.
   const parsedCap = Number(env.BOARD_VET_READY_CAP);
-  const cap = Number.isInteger(parsedCap) && parsedCap > 0 ? parsedCap : READY_CAP;
+  const cap = Number.isInteger(parsedCap) && parsedCap > 0 ? Math.min(parsedCap, READY_CAP) : READY_CAP;
   const logDir = env.BOARD_VET_LOG_DIR || path.join(os.homedir(), ".local", "state", "board-vet-and-ready");
   const baseBranch = env.BOARD_VET_BASE_BRANCH || "develop";
   return { apply, baseUrl, repoRoot, cap, logDir, baseBranch };
