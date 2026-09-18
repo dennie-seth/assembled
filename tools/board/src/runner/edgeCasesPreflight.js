@@ -10,11 +10,18 @@ const EDGE_CASES_LABEL_RE = /^\*\*Edge cases:?\*\*/i;
  * `**Edge cases:**` sub-list but deliberately leaves it unenforced -- no VALIDATION gate FAILs a
  * card for omitting one. Cards created before that convention landed (68a359a, 2026-08-09) -- and
  * plenty created after it (T-0192/T-0193/T-0195/T-0198/T-0212-0215/T-0218 in this same backlog) --
- * ship with no edge-case coverage at all, so the first implementation pass has nothing forcing it
- * to consider boundary/failure conditions upfront. T-0365's own evidence (T-0065, T-0120, T-0122,
- * all created before 68a359a) shows the reviewer then discovers them one at a time across several
- * rework rounds instead: a boot-breaking duplicate-class_name regression, a missed returning-player
- * gate, an unsaved-session warning caught only on re-review, a duplicated clock-proximity formula.
+ * ship with no edge-case coverage at all. That much is a confirmed observation.
+ *
+ * What is NOT confirmed: that this gap caused T-0365's own rework-rate evidence. T-0065, T-0120
+ * and T-0122 (T-0365's cited evidence, all created before 68a359a) do lack the block, but their
+ * archived FAIL/Blocked notes name five separate causes unrelated to it -- an inherited flaky-port
+ * timeout test, an unimplemented "readable labels" acceptance clause, a boot-breaking duplicate
+ * `class_name` plus missing integration wiring, an identity-overwrite/blank-screen regression only
+ * a real-scene load caught, and a DRY violation the reviewer flagged despite a passing suite (see
+ * tasks/T-0365.md's "FIX ROUND 1" section for the quoted notes). None of the five reads as "the
+ * first pass never considered an edge case it should have." This preflight is a planning-warning
+ * *experiment* on the strength of the observed correlation, not a fix tied to a demonstrated
+ * failure mechanism -- the rework-rate root cause itself remains unidentified.
  *
  * Mirrors impossibleAcceptancePreflight.js's contract exactly: never blocks (a false positive here
  * must never stop a legitimate card from running), returns `{ warnings: string[] }`, and is a no-op

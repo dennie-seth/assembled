@@ -761,11 +761,15 @@ export class RunOrchestrator {
 
       // Warn-only pre-flight (T-0365): flags a card whose ## Acceptance section has no bold
       // **Edge cases:** block (planner.md's convention, unenforced by design -- see
-      // edgeCasesPreflight.js). Root cause for the rework-rate signal this card was proposed
-      // against: T-0065/T-0120/T-0122 all predate that convention and each needed multiple
-      // reviewer rounds to surface edge cases the first implementation pass had no reason to
-      // consider upfront. Deliberately never blocks, same reasoning as the impossible-acceptance
-      // preflight above: this is a heuristic over freeform structure, not a definite grant lookup.
+      // edgeCasesPreflight.js). This is a planning-warning experiment, not a demonstrated fix:
+      // T-0065/T-0120/T-0122 (the rework-rate evidence this card was proposed against) do all
+      // predate that convention, but their own archived FAIL/Blocked notes each name a different
+      // cause unrelated to a missing checklist -- see edgeCasesPreflight.js's header comment and
+      // tasks/T-0365.md's "FIX ROUND 1" section for the quoted notes. The rework-rate root cause
+      // remains unidentified; this warning only surfaces the (unenforced) missing-block convention
+      // on the unverified hope that doing so helps. Deliberately never blocks, same reasoning as
+      // the impossible-acceptance preflight above: this is a heuristic over freeform structure,
+      // not a definite grant lookup.
       const edgeCasesPreflight = checkEdgeCasesPreflight(preFlightTask);
       if (edgeCasesPreflight.warnings.length > 0) {
         await this._logEdgeCasesWarning(taskId, runLog, edgeCasesPreflight.warnings);
