@@ -665,15 +665,44 @@ async function approvalProvenanceNoticeComment({ repoRoot, task }) {
  * `applyApprovalGateToPatch`.
  */
 /**
- * The conditional-write precondition a caller may attach to a status write: `X-Board-Expected-Status`
- * carries the status the caller last observed, and the store rejects the write with a
- * `StaleWriteError` if it no longer holds by the time the write happens (see FsTaskStore/DbTaskStore's
- * `expected` option -- Codex review 2026-09-18, finding 3). Read per request by each route, because
- * `applyPatchAndSideEffects` below is shared by two routes that parse their requests differently.
+ * The conditional-write precondition a caller may attach to a status write. Two headers, checked
+ * atomically together (both fold into the single `expected` map passed to `store.update`):
+ *
+ *   - `X-Board-Expected-Status`: the status the caller last observed (Codex review 2026-09-18,
+ *     finding 3).
+ *   - `X-Board-Expected-Fields` (T-0384 FIX ROUND 2, Codex P2 #1, head d81d474c): a JSON object
+ *     covering whatever OTHER fields the caller vetted -- typically `agent`, `deliverable_type`,
+ *     `requires_approval`, `depends_on`, and a `bodyHash` (see `hashBody` in taskStore.js) in
+ *     place of the literal body, since a card body can be far larger than is reasonable to put in
+ *     an HTTP header. `status` alone was blind to a body/agent/depends_on change landing between
+ *     a caller's own check and this write; this closes that gap for every field a caller names.
+ *
+ * The store rejects the write with a `StaleWriteError` (see FsTaskStore/DbTaskStore's `expected`
+ * option) if ANY named field no longer holds by the time the write happens. Read per request by
+ * each route, because `applyPatchAndSideEffects` below is shared by two routes that parse their
+ * requests differently.
  */
 function expectedFromHeaders(headers) {
-  const header = headers["x-board-expected-status"];
-  return typeof header === "string" ? { status: header } : undefined;
+  const statusHeader = headers["x-board-expected-status"];
+  const fieldsHeader = headers["x-board-expected-fields"];
+
+  let fields;
+  if (typeof fieldsHeader === "string") {
+    try {
+      fields = JSON.parse(fieldsHeader);
+    } catch {
+      throw new HttpError(400, "X-Board-Expected-Fields must be valid JSON");
+    }
+    if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+      throw new HttpError(400, "X-Board-Expected-Fields must be a JSON object");
+    }
+  }
+
+  const expected = { ...(fields ?? {}) };
+  if (typeof statusHeader === "string") {
+    expected.status = statusHeader;
+  }
+  return Object.keys(expected).length > 0 ? expected : undefined;
 }
 
 /**

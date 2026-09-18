@@ -1,4 +1,4 @@
-import { TaskStore, StaleWriteError } from "../taskStore.js";
+import { TaskStore, StaleWriteError, findMismatchedExpectedFields } from "../taskStore.js";
 import { validateTask } from "../taskParser.js";
 import { openDb, DEFAULT_DB_PATH } from "./connection.js";
 
@@ -175,10 +175,13 @@ export class DbTaskStore extends TaskStore {
           throw new Error(`Task ${id} not found`);
         }
         const fresh = taskRowToTask(db, freshRow);
-        for (const [key, value] of Object.entries(expected)) {
-          if (fresh[key] !== value) {
-            throw new StaleWriteError(id, expected, fresh);
-          }
+        // T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): checks the full fingerprint a caller
+        // vetted (status, agent, deliverable_type, depends_on, a body hash, ...) -- not status
+        // alone -- via the same shared comparator FsTaskStore uses, so a body/agent/depends_on
+        // change that left status untouched is no longer invisible to this precondition.
+        const mismatches = findMismatchedExpectedFields(expected, fresh);
+        if (mismatches.length > 0) {
+          throw new StaleWriteError(id, expected, fresh, mismatches);
         }
       }
 

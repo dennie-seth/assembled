@@ -26,6 +26,7 @@ import { promisify } from "node:util";
 import { DEFAULT_BOARD_PORT } from "../src/lib/agentCurlPolicy.js";
 import { vetAndReady, READY_CAP, revalidateCandidate } from "../src/lib/vetAndReady.js";
 import { formatReport } from "../src/lib/vetAndReadyReport.js";
+import { hashBody } from "../src/lib/taskStore.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const ACTOR_HEADER_VALUE = "agent:vet-and-ready";
@@ -106,18 +107,45 @@ export function makeGitLogGrep({ repoRoot, baseBranch, execFileFn }) {
 }
 
 /**
+ * Builds the `X-Board-Expected-Fields` payload from a freshly-observed task snapshot: every field
+ * this job's own rules vet, so the server-side write is conditioned on the WHOLE fingerprint --
+ * never status alone. `body` is fingerprinted via `hashBody` rather than sent literally: a card
+ * body can be many KB (this very card's is), far past what's reasonable to put in an HTTP header.
+ *
+ * T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): before this, `applyReady` only ever sent
+ * `X-Board-Expected-Status`, so a body/agent/deliverable_type/depends_on change landing between
+ * this job's own check and the write (even one just a network round-trip away) was invisible to
+ * the server-side precondition -- a card could be "readied" straight over a Held marker.
+ */
+function buildExpectedFields(task) {
+  return {
+    status: task.status,
+    agent: task.agent,
+    deliverable_type: task.deliverable_type ?? "code",
+    requires_approval: task.requires_approval === true,
+    depends_on: task.depends_on ?? [],
+    bodyHash: hashBody(task.body)
+  };
+}
+
+/**
  * The only write this script ever performs: `PATCH status: "ready"` on one vetted card.
  *
- * `expectedStatus`, when given, is sent as `X-Board-Expected-Status` -- the board rejects the
- * write with 409 if the card's actual current status no longer matches by the time the write
- * happens (see httpApi.js's `handlePatchTask`, `StaleWriteError`). Codex review 2026-09-18,
- * finding 3: this is the server-enforced half of the pre-write safety check; `revalidateCandidate`
- * below is the client-side half that catches everything the status alone can't (eligibility
- * scope, dependencies, body markers).
+ * `expectedTask`, when given, is the freshest full snapshot of the card this job has (normally
+ * fetched immediately before this call -- see `applyReadiedCards` below). It's sent as BOTH
+ * `X-Board-Expected-Status` (for readability/back-compat) and `X-Board-Expected-Fields` -- a
+ * fingerprint covering every field this job vetted. The board rejects the write with 409 if ANY
+ * of them no longer match by the time the write happens (see httpApi.js's `handlePatchTask`,
+ * `StaleWriteError`). Codex review 2026-09-18, finding 3: this is the server-enforced half of the
+ * pre-write safety check; `revalidateCandidate` below is the client-side half that catches
+ * everything a field fingerprint alone can't (eligibility scope, dependencies).
  */
-export async function applyReady({ baseUrl, id, fetchImpl, expectedStatus }) {
+export async function applyReady({ baseUrl, id, fetchImpl, expectedTask }) {
   const headers = { "Content-Type": "application/json", "X-Board-Actor": ACTOR_HEADER_VALUE };
-  if (expectedStatus) headers["X-Board-Expected-Status"] = expectedStatus;
+  if (expectedTask) {
+    headers["X-Board-Expected-Status"] = expectedTask.status;
+    headers["X-Board-Expected-Fields"] = JSON.stringify(buildExpectedFields(expectedTask));
+  }
   const res = await fetchImpl(`${baseUrl}/api/tasks/${id}`, {
     method: "PATCH",
     headers,
@@ -132,35 +160,41 @@ export async function applyReady({ baseUrl, id, fetchImpl, expectedStatus }) {
 
 /**
  * Writes `status: ready` on every readied card -- but not blindly off the selection-time
- * snapshot. Codex review 2026-09-18, finding 3: the poller fetch and the per-candidate `git log`
- * calls that already happened this run are enough time for a card to change underneath it (a
- * human drags it, another process writes it, a dependency finishes). Before each write:
+ * snapshot, and not off one shared snapshot for the whole batch either. Codex review 2026-09-18,
+ * finding 3 (and its FIX ROUND 2 follow-up, P2 #1, head d81d474c): the poller fetch, the
+ * per-candidate `git log` calls, and every earlier candidate's own write in this same apply loop
+ * are all enough time for a LATER card to change underneath it (a human drags it, another process
+ * writes it, a dependency finishes) -- a single fetch shared across the whole loop only catches
+ * changes that happened before that one fetch, not ones that land while the loop is still working
+ * through earlier candidates. So for EACH candidate, immediately before its own write:
  *
- *   1. Re-fetch the full task list fresh (one call, not one per candidate).
+ *   1. Re-fetch the full task list fresh (one call per candidate, not once for the whole batch).
  *   2. `revalidateCandidate` the entry against that fresh snapshot -- status, eligibility scope,
  *      dependencies, body markers all re-checked.
- *   3. Only if that still passes, PATCH with the freshly-observed status as
- *      `X-Board-Expected-Status`, so the board itself refuses a write that goes stale in the
- *      remaining gap between this re-check and the PATCH actually landing.
+ *   3. Only if that still passes, PATCH with the freshly-observed task as the expected condition
+ *      (`applyReady`'s `expectedTask` -- status AND a fingerprint of every other vetted field), so
+ *      the board itself refuses a write that goes stale in the remaining gap between this
+ *      re-check and the PATCH actually landing, no matter which field changed.
  *
- * If the initial re-fetch itself fails, nothing is written at all -- same "uncertainty means
- * backlog" posture as every other rule here.
+ * If any candidate's own re-fetch fails, that candidate alone is skipped and reported -- it does
+ * not abort the rest of the batch, and it never writes anything for that candidate. Same
+ * "uncertainty means backlog" posture as every other rule here.
  */
 async function applyReadiedCards({ result, baseUrl, fetchImpl }) {
   if (result.readied.length === 0) {
     return "Apply mode -- nothing to write, zero cards were readied this run.";
   }
 
-  let freshTasks;
-  try {
-    freshTasks = await fetchTasks({ baseUrl, fetchImpl });
-  } catch (err) {
-    return `Apply mode -- FAILED to re-fetch tasks for the pre-write revalidation, wrote nothing: ${err.message}`;
-  }
-  const freshById = new Map(freshTasks.map((task) => [task.id, task]));
-
   const outcomes = [];
   for (const entry of result.readied) {
+    let freshTasks;
+    try {
+      freshTasks = await fetchTasks({ baseUrl, fetchImpl });
+    } catch (err) {
+      outcomes.push(`${entry.id}: SKIPPED -- FAILED to re-fetch tasks for the pre-write revalidation: ${err.message}`);
+      continue;
+    }
+    const freshById = new Map(freshTasks.map((task) => [task.id, task]));
     const freshTask = freshById.get(entry.id);
     const revalidation = revalidateCandidate(freshTask, freshById);
     if (!revalidation.ok) {
@@ -168,7 +202,7 @@ async function applyReadiedCards({ result, baseUrl, fetchImpl }) {
       continue;
     }
     try {
-      await applyReady({ baseUrl, id: entry.id, fetchImpl, expectedStatus: freshTask.status });
+      await applyReady({ baseUrl, id: entry.id, fetchImpl, expectedTask: freshTask });
       outcomes.push(`${entry.id}: wrote status=ready`);
     } catch (err) {
       outcomes.push(`${entry.id}: SKIPPED -- write refused (card changed): ${err.message}`);

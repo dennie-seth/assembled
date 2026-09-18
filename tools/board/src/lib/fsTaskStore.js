@@ -1,17 +1,17 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TaskStore, StaleWriteError } from "./taskStore.js";
+import { TaskStore, StaleWriteError, findMismatchedExpectedFields } from "./taskStore.js";
 import { parseTask, serializeTask } from "./taskParser.js";
 import { atomicWriteFile } from "./atomicWrite.js";
 
-/** Checks `expected` (a partial field->value map) against `current`; throws on any mismatch. */
+/** Checks `expected` (a partial field->value map, see findMismatchedExpectedFields) against
+ * `current`; throws a StaleWriteError naming every mismatched field on any mismatch.
+ */
 function assertExpectedMatches(id, expected, current) {
-  if (!expected) return;
-  for (const [key, value] of Object.entries(expected)) {
-    if (current[key] !== value) {
-      throw new StaleWriteError(id, expected, current);
-    }
+  const mismatches = findMismatchedExpectedFields(expected, current);
+  if (mismatches.length > 0) {
+    throw new StaleWriteError(id, expected, current, mismatches);
   }
 }
 
@@ -28,6 +28,32 @@ export class FsTaskStore extends TaskStore {
   constructor(dir = DEFAULT_DIR) {
     super();
     this.dir = dir;
+    // Per-id async mutex (T-0384 FIX ROUND 2, Codex P2 #2, head d81d474c). `update`'s own read of
+    // `existing` used to be checked against `expected` and then, separately, overwritten by the
+    // write -- a real gap a second, fully-interleaved `update()` call on the SAME id could land a
+    // write in. Every mutating call for a given id is now chained onto the previous one for that
+    // id, so the read-check-write is atomic against every other writer this store itself
+    // services, not merely "the smallest window this store's design allows".
+    this._locks = new Map();
+  }
+
+  /** Serializes `fn` against any other call already queued for `id`. See the constructor note. */
+  async _withLock(id, fn) {
+    const previousTail = this._locks.get(id) ?? Promise.resolve();
+    const run = previousTail.then(fn, fn);
+    const settledTail = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this._locks.set(id, settledTail);
+    try {
+      return await run;
+    } finally {
+      // Only clear the entry if nothing else has queued behind us in the meantime.
+      if (this._locks.get(id) === settledTail) {
+        this._locks.delete(id);
+      }
+    }
   }
 
   async list() {
@@ -54,33 +80,38 @@ export class FsTaskStore extends TaskStore {
   }
 
   async create(task) {
-    await fs.mkdir(this.dir, { recursive: true });
-    const filePath = taskPath(this.dir, task.id);
-    const exists = await fs
-      .access(filePath)
-      .then(() => true)
-      .catch(() => false);
-    if (exists) {
-      throw new Error(`Task ${task.id} already exists`);
-    }
-    await atomicWriteFile(filePath, serializeTask(task));
-    return task;
+    return this._withLock(task.id, async () => {
+      await fs.mkdir(this.dir, { recursive: true });
+      const filePath = taskPath(this.dir, task.id);
+      const exists = await fs
+        .access(filePath)
+        .then(() => true)
+        .catch(() => false);
+      if (exists) {
+        throw new Error(`Task ${task.id} already exists`);
+      }
+      await atomicWriteFile(filePath, serializeTask(task));
+      return task;
+    });
   }
 
   async update(id, updates, { expected } = {}) {
-    const existing = await this.get(id);
-    if (!existing) {
-      throw new Error(`Task ${id} not found`);
-    }
-    if (updates.id !== undefined && updates.id !== id) {
-      throw new Error("Cannot change a task's id via update");
-    }
-    // Checked against the same `existing` read that's about to be overwritten, immediately
-    // before the write -- the smallest window this store's design allows without a real lock.
-    assertExpectedMatches(id, expected, existing);
-    const merged = { ...existing, ...updates, id };
-    await atomicWriteFile(taskPath(this.dir, id), serializeTask(merged));
-    return merged;
+    return this._withLock(id, async () => {
+      const existing = await this.get(id);
+      if (!existing) {
+        throw new Error(`Task ${id} not found`);
+      }
+      if (updates.id !== undefined && updates.id !== id) {
+        throw new Error("Cannot change a task's id via update");
+      }
+      // The per-id lock above makes this atomic against every other mutating call on the same
+      // id serviced by this store instance: no other `create`/`update`/`remove` for `id` can run
+      // between this read and the write below.
+      assertExpectedMatches(id, expected, existing);
+      const merged = { ...existing, ...updates, id };
+      await atomicWriteFile(taskPath(this.dir, id), serializeTask(merged));
+      return merged;
+    });
   }
 
   async move(id, status) {
@@ -88,13 +119,15 @@ export class FsTaskStore extends TaskStore {
   }
 
   async remove(id) {
-    try {
-      await fs.unlink(taskPath(this.dir, id));
-    } catch (err) {
-      if (err.code === "ENOENT") {
-        throw new Error(`Task ${id} not found`);
+    return this._withLock(id, async () => {
+      try {
+        await fs.unlink(taskPath(this.dir, id));
+      } catch (err) {
+        if (err.code === "ENOENT") {
+          throw new Error(`Task ${id} not found`);
+        }
+        throw err;
       }
-      throw err;
-    }
+    });
   }
 }
