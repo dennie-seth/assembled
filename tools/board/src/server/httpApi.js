@@ -38,6 +38,7 @@ import {
   RoundCapExceededError
 } from "../lib/roundCap.js";
 import { readVerdictEntries } from "../lib/verdictArchive.js";
+import { StaleWriteError } from "../lib/taskStore.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_APPROVAL_PATH_RE = /^\/api\/tasks\/([^/]+)\/approval$/;
@@ -554,10 +555,22 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     }
   }
 
+  // T-0384's vet-and-ready job (and any other caller that re-checks a card before writing it) can
+  // assert the card hasn't changed underneath it -- X-Board-Expected-Status carries the status it
+  // last observed, and the store rejects the write with a StaleWriteError if that no longer holds
+  // by the time the write actually happens, atomically with the write itself (see
+  // FsTaskStore/DbTaskStore's `expected` option, taskStore.js's StaleWriteError -- Codex review
+  // 2026-09-18, finding 3).
+  const expectedStatusHeader = req.headers["x-board-expected-status"];
+  const expected = typeof expectedStatusHeader === "string" ? { status: expectedStatusHeader } : undefined;
+
   let updated;
   try {
-    updated = await store.update(id, body);
+    updated = await store.update(id, body, { expected });
   } catch (err) {
+    if (err instanceof StaleWriteError) {
+      throw new HttpError(err.statusCode, err.message);
+    }
     const status = /not found/i.test(err.message) ? 404 : 400;
     throw new HttpError(status, err.message);
   }
