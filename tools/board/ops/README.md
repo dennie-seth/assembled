@@ -177,18 +177,33 @@ access, so it implements every vetting rule for real:
 1. Every dependency of a candidate card is `done` or `retired` (mirrors the
    auto-launch poller's own satisfied-dependency test,
    `autoLaunchPoller.js`'s `SATISFIED_DEP_STATUSES`).
-2. The card is not already satisfied by merged work, checked via `git log
-   <base-branch> --grep=<card-id>`. Conservative: a hit, or a `git` error, is
-   treated as "possibly already satisfied" and skipped rather than readied --
-   see `src/lib/vetAndReady.js`'s `mergedWorkCheck` for the documented limit
-   of what a mechanical check can safely claim here.
-3. The card's body carries none of a fixed list of superseding/held markers
-   (`HELD`, `RE-SCOPED`, `SUPERSEDED`, "This section governs", ...).
+2. The card is not already satisfied by merged work. Checked two ways on the
+   base branch, both mechanical (no path content is ever read, no acceptance
+   prose is interpreted): a message `git log <base-branch> --grep=<card-id>`,
+   and -- for every path-looking token named in the card's own `## Acceptance`
+   section (`extractAcceptancePaths`) -- a path-scoped `git log <base-branch>
+   -- <path>` (does that path have *any* history on the base branch at all).
+   Either kind of hit is treated as "possibly already satisfied" and skips
+   the card; a `git` error on either check does too. A **missing** hit on
+   both is what clears a card -- absence of a card-id mention alone is never
+   sufficient on its own (Codex review 2026-09-18, finding 2: a commit can
+   implement a card's whole acceptance without ever mentioning the card id).
+   See `src/lib/vetAndReady.js`'s `mergedWorkCheck` for the documented limit
+   of what a mechanical check can safely claim beyond this.
+3. The card's body carries none of a fixed set of superseding/held marker
+   rules (`HELD`, `RE-SCOPED`/`RESCOPED`, `SUPERSEDED`, "This section
+   governs", "stop and report"/"stop-and-report", a `## Finding` heading),
+   matched case-insensitively and tolerant of real punctuation/spacing
+   variants (Codex review 2026-09-18, finding 1) -- see
+   `SUPERSEDED_MARKER_RULES` in `src/lib/vetAndReady.js`.
 4. DAG order is respected -- enforced by rule 1 itself, since `ready` is
    never a satisfied dependency status, so a dependent card whose
    prerequisite is only being readied this same run still fails rule 1.
 5. At most 4 cards are readied per run, highest priority first then lowest
-   numeric id.
+   numeric id. This is a hard ceiling: `BOARD_VET_READY_CAP` can lower it,
+   never raise it, and the ceiling is enforced twice -- once in config
+   parsing (`resolveConfig`) and again inside `vetAndReady()` itself at the
+   selection boundary (Codex review 2026-09-18, finding 4).
 
 It **only ever** writes `status: "ready"` via `PATCH /api/tasks/:id` on
 cards that pass every rule -- never `POST /api/tasks/:id/run`, never a
@@ -197,6 +212,20 @@ merge, never a deploy, never a body edit. **Dry run is the default**;
 (T-0383) for the auto-launch poller's own state and degrades gracefully --
 never throwing -- to a documented "poller state unavailable" summary line on
 any board deployment that predates T-0383.
+
+**Apply mode revalidates every candidate immediately before its write**
+(Codex review 2026-09-18, finding 3): the poller fetch and the per-candidate
+`git log` calls earlier in the same run are enough time for a card to change
+underneath it. Right before each write, `applyReadiedCards` re-fetches the
+full task list fresh and re-runs `revalidateCandidate` (status, eligibility
+scope, approval flag, body markers, dependencies -- everything except the
+git-based merged-work check, which doesn't go stale within a run) against
+that fresh snapshot; a candidate that no longer passes is skipped and
+reported, never written. The write itself also carries the freshly-observed
+status as an `X-Board-Expected-Status` header, which `PATCH /api/tasks/:id`
+enforces as a server-side precondition (`StaleWriteError` -> 409) so a card
+that changes in the small remaining gap between that re-check and the write
+landing is refused, not silently overwritten, instead of racing.
 
 Every run prints its full decision table to stdout (captured by
 `journalctl --user -u board-vet-and-ready.service` once installed, since
@@ -215,7 +244,7 @@ without needing `journalctl` at all.
 | `BOARD_PORT` | `4173` |
 | `BOARD_REPO_ROOT` | the repo checkout `ops/vetAndReady.js` itself resolves from |
 | `BOARD_VET_BASE_BRANCH` | `develop` (the branch rule 2's `git log --grep` runs against) |
-| `BOARD_VET_READY_CAP` | `4` |
+| `BOARD_VET_READY_CAP` | `4` (may only lower this; a larger value clamps back down to 4) |
 | `BOARD_VET_LOG_DIR` | `~/.local/state/board-vet-and-ready` |
 
 ### Live dry run (T-0384 acceptance evidence)
@@ -249,6 +278,31 @@ this run, and `git status --porcelain` was unchanged. The `Poller state:
 unavailable` line is the documented T-0383 degrade path working as intended
 -- this board deployment (built from `develop` before T-0383 merged) has no
 `GET /api/poller` route yet.
+
+#### Fix round (Codex review 2026-09-18, PR #396) -- re-verification status
+
+The four findings above (case-insensitive markers, mechanical merged-work
+path evidence, pre-write revalidation + a server-enforced write condition,
+a hard 4-card cap) were fixed with failing-test-first commits and verified
+against Codex's own `vetting-probes.mjs` and `merged-work-probe.mjs`,
+repointed at this worktree and re-run directly: all three body-marker
+variants skip, the `BOARD_VET_READY_CAP=10` cap override reports an
+effective cap of 4 with exactly 4 readied, the concurrent-status-change
+probe performs zero writes, and the merged-work probe (develop already has
+`feature.js` implementing the card's whole acceptance, committed without
+the card id) now skips instead of readying. The full board suite
+(`npx vitest run`, 3746 tests) and `npm run lint` are green.
+
+The live board at `127.0.0.1:4173` was **not reachable from this session**
+(`ECONNREFUSED` on `GET /api/health`) -- the box this normally runs against
+wasn't up during this fix-round session, so the dry-run decision table
+above is unrefreshed. None of the four fixes change the *outcome* for the
+three cards it lists (T-0371/T-0372 have no held/superseded body markers
+and no acceptance-path git hits either way; T-0362 is skipped purely on
+its unmet T-0338 dependency, rule 1, untouched by this fix round), but
+that has not been re-confirmed live. Re-running `node ops/vetAndReady.js`
+(no `--apply`) once the board is reachable and replacing this block with
+fresh output is the next step before this evidence is current again.
 
 ### Installing (not done by this card, on purpose)
 
