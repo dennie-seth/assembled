@@ -1,6 +1,6 @@
 const SECTION_RE = /^##\s+Acceptance\s*$/i;
 const HEADING_RE = /^#{1,6}\s+/;
-const CHECKBOX_RE = /^-\s*\[([ xX])\]\s*(.+)$/;
+export const CHECKBOX_RE = /^-\s*\[([ xX])\]\s*(.+)$/;
 
 /**
  * Extracts the checkbox items under a card body's `## Acceptance` section --

@@ -80,7 +80,7 @@ function baseTask(overrides = {}) {
     requires_approval: false,
     approved_by: null,
     approved_at: null,
-    body: "## Context\nGenerate it.\n\n## Acceptance\n- [ ] a sheet exists\n",
+    body: "## Context\nGenerate it.\n\n## Acceptance\n- [ ] a sheet exists\n\n**Edge cases:**\n- [ ] none\n",
     ...overrides
   };
 }
