@@ -1,9 +1,19 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TaskStore } from "./taskStore.js";
+import { TaskStore, StaleWriteError } from "./taskStore.js";
 import { parseTask, serializeTask } from "./taskParser.js";
 import { atomicWriteFile } from "./atomicWrite.js";
+
+/** Checks `expected` (a partial field->value map) against `current`; throws on any mismatch. */
+function assertExpectedMatches(id, expected, current) {
+  if (!expected) return;
+  for (const [key, value] of Object.entries(expected)) {
+    if (current[key] !== value) {
+      throw new StaleWriteError(id, expected, current);
+    }
+  }
+}
 
 const DEFAULT_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -57,7 +67,7 @@ export class FsTaskStore extends TaskStore {
     return task;
   }
 
-  async update(id, updates) {
+  async update(id, updates, { expected } = {}) {
     const existing = await this.get(id);
     if (!existing) {
       throw new Error(`Task ${id} not found`);
@@ -65,6 +75,9 @@ export class FsTaskStore extends TaskStore {
     if (updates.id !== undefined && updates.id !== id) {
       throw new Error("Cannot change a task's id via update");
     }
+    // Checked against the same `existing` read that's about to be overwritten, immediately
+    // before the write -- the smallest window this store's design allows without a real lock.
+    assertExpectedMatches(id, expected, existing);
     const merged = { ...existing, ...updates, id };
     await atomicWriteFile(taskPath(this.dir, id), serializeTask(merged));
     return merged;

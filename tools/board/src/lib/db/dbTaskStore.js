@@ -1,4 +1,4 @@
-import { TaskStore } from "../taskStore.js";
+import { TaskStore, StaleWriteError } from "../taskStore.js";
 import { validateTask } from "../taskParser.js";
 import { openDb, DEFAULT_DB_PATH } from "./connection.js";
 
@@ -151,7 +151,7 @@ export class DbTaskStore extends TaskStore {
     this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor, task.body);
   }
 
-  async update(id, updates, { actor = DEFAULT_ACTOR } = {}) {
+  async update(id, updates, { actor = DEFAULT_ACTOR, expected } = {}) {
     const existing = await this.get(id);
     if (!existing) {
       throw new Error(`Task ${id} not found`);
@@ -165,6 +165,23 @@ export class DbTaskStore extends TaskStore {
     const changedFields = Object.keys(updates).filter((k) => k !== "id");
 
     const run = db.transaction(() => {
+      if (expected) {
+        // Re-read INSIDE the transaction, not the `existing` fetched above -- better-sqlite3
+        // transactions run to completion without yielding to the event loop, so nothing else in
+        // this process can write to this row between this check and the UPDATE below. That's
+        // what makes this atomic where FsTaskStore's equivalent check can only narrow the window.
+        const freshRow = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+        if (!freshRow) {
+          throw new Error(`Task ${id} not found`);
+        }
+        const fresh = taskRowToTask(db, freshRow);
+        for (const [key, value] of Object.entries(expected)) {
+          if (fresh[key] !== value) {
+            throw new StaleWriteError(id, expected, fresh);
+          }
+        }
+      }
+
       db.prepare(
         `UPDATE tasks SET
            title = @title, status = @status, priority = @priority, phase = @phase,
