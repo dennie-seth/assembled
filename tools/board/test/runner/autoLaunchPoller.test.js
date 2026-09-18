@@ -808,4 +808,23 @@ describe("createAutoLaunchPoller — getStatus()", () => {
     poller.stop();
     expect(poller.getStatus().running).toBe(false);
   });
+
+  it("records an error result (and still rethrows) when launchFn throws something other than CardLaunchError", async () => {
+    const boom = new Error("unexpected failure");
+    const { poller } = makePoller({
+      now: () => 1_700_000_000_000,
+      launchFn: vi.fn(async () => {
+        throw boom;
+      })
+    });
+
+    await expect(poller.tick()).rejects.toThrow(boom);
+
+    const status = poller.getStatus();
+    // lastTickAt is set unconditionally near the top of tick(), before the launch attempt --
+    // lastResult must be refreshed in step with it, never left describing an earlier tick.
+    expect(status.lastTickAt).toBe(new Date(1_700_000_000_000).toISOString());
+    expect(status.lastResult).toMatchObject({ kind: "error", cardId: "T-0001" });
+    expect(status.lastResult.reason).toMatch(/unexpected failure/);
+  });
 });
