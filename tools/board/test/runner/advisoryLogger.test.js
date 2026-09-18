@@ -10,6 +10,7 @@ import {
   buildTelemetryFreshness,
   recordAdvisoryDecision,
   recordAdvisoryOutcome,
+  recordManualOverride,
   withAdvisoryLogging,
   decideLaunchAdvisory,
   measureRecordedCoverage,
@@ -206,6 +207,64 @@ describe("recordAdvisoryOutcome -- eventual outcome is attached after the fact",
     await expect(
       recordAdvisoryOutcome({ runsDir, cardId: "T-0369", executionId: "never", invocationId: "never", outcome: {} })
     ).rejects.toThrow(/no decision recorded/);
+  });
+});
+
+describe("recordManualOverride -- T-0379: marks a decision as bypassed by an operator-initiated launch", () => {
+  it("attaches a manualOverride marker to a previously recorded decision, leaving the prediction untouched", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0379",
+      executionId: "exec-mo1",
+      invocationId: "inv-1",
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "advisory dry run"
+    });
+
+    const admission = { admitted: false, windows: { five_hour: { admitted: false, holdReason: "units_not_comparable" } } };
+    const updated = await recordManualOverride({
+      runsDir,
+      cardId: "T-0379",
+      executionId: "exec-mo1",
+      invocationId: "inv-1",
+      admission,
+      reason: "five_hour: units_not_comparable"
+    });
+
+    expect(updated.manualOverride).toMatchObject({ reason: "five_hour: units_not_comparable", admission });
+    expect(updated.manualOverride.overriddenAt).toEqual(expect.any(String));
+    expect(updated.prediction).toEqual(SAMPLE_ESTIMATE);
+
+    const onDisk = JSON.parse(await fs.readFile(advisoryLogPath(runsDir, { cardId: "T-0379", executionId: "exec-mo1", invocationId: "inv-1" }), "utf8"));
+    expect(onDisk.manualOverride.reason).toBe("five_hour: units_not_comparable");
+  });
+
+  it("throws a distinguishable AdvisoryDecisionMissingError when no decision was ever recorded", async () => {
+    await expect(
+      recordManualOverride({ runsDir, cardId: "T-0379", executionId: "never", invocationId: "never", admission: null, reason: "n/a" })
+    ).rejects.toBeInstanceOf(AdvisoryDecisionMissingError);
+  });
+
+  it("records a null admission (advisory pipeline itself unavailable) rather than throwing", async () => {
+    await recordAdvisoryDecision({
+      runsDir,
+      cardId: "T-0379",
+      executionId: "exec-mo2",
+      invocationId: "inv-1",
+      estimate: SAMPLE_ESTIMATE,
+      telemetryReadings: SAMPLE_TELEMETRY,
+      reason: "advisory dry run"
+    });
+    const updated = await recordManualOverride({
+      runsDir,
+      cardId: "T-0379",
+      executionId: "exec-mo2",
+      invocationId: "inv-1",
+      admission: null,
+      reason: "advisory decision unavailable (timeout/error) -- unknown capacity"
+    });
+    expect(updated.manualOverride.admission).toBeNull();
   });
 });
 

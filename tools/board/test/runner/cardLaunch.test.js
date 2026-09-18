@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES, reconcileLaunchOutcome } from "../../src/runner/cardLaunch.js";
+import { launchCardRun, CardLaunchError, RUNNABLE_STATUSES, reconcileLaunchOutcome, LAUNCH_TRIGGERS } from "../../src/runner/cardLaunch.js";
 import { ROUND_CAP } from "../../src/lib/roundCap.js";
 import { listActiveReservations } from "../../src/runner/launchReservation.js";
 import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
@@ -534,14 +534,38 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
 
   it("T-0370 (Codex finding 2): under the enforcement flag, an explicit admission hold refuses the launch and releases the reservation it provisionally wrote", async () => {
     const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
-    // No unit-conversion evidence exists in this test's default config, so the real admission
-    // pipeline always holds (units_not_comparable) -- the intended fail-safe, not a bug.
-    await expect(launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true })).rejects.toMatchObject({
+    // No telemetry and no unit-conversion evidence exist in this test's real, empty runsDir, so
+    // the real admission pipeline always holds -- the intended fail-safe, not a bug. T-0379: a
+    // default-trigger (auto) launch through the real pipeline (no evaluateAdmissionFn stub) always
+    // holds this way, and the refusal is marked capacityFitHold so the poller's queue behaviour can
+    // skip past it (see the dedicated units_not_comparable proof below, which stubs a comparable
+    // admission directly, and admissionDecision.test.js for the pure per-window fail-safe).
+    const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true });
+    await expect(rejection).rejects.toMatchObject({
       name: "CardLaunchError",
-      statusCode: 409
+      statusCode: 409,
+      capacityFitHold: true
     });
     expect(orchestrator.runCard).not.toHaveBeenCalled();
     expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+  });
+
+  it("T-0379 Units: with a real MEASURED window reading but no shipped USD-to-utilization conversion, the real pipeline holds units_not_comparable, never a fabricated fit", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const readUsageTelemetryFn = async () => ({
+      five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0.1, resetElapsed: false },
+      seven_day: { windowKind: "seven_day", classification: "measured", utilization: 0.1, resetElapsed: false }
+    });
+    const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
+
+    const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+    await expect(rejection).rejects.toMatchObject({
+      name: "CardLaunchError",
+      statusCode: 409,
+      capacityFitHold: true,
+      message: expect.stringMatching(/units_not_comparable/)
+    });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
   });
 
   it("T-0370 (Codex finding 2): under enforcement, an active overrun stop refuses a brand-new admission", async () => {
@@ -891,6 +915,197 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
       expect(record.outcome).not.toBeNull();
       expect(record.reason).toMatch(/genuine, just slow/);
       expect(files.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
+    });
+  });
+
+  describe("T-0379: trigger -- the shared launch boundary knows auto (poller) from manual (Run button)", () => {
+    function nonFittingAdmissionFn() {
+      return () => ({
+        admitted: false,
+        windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "units_not_comparable" } }
+      });
+    }
+
+    it("defaults to 'auto' -- a capacity-fit hold refuses the launch and marks the error for the poller's queue fallthrough", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, evaluateAdmissionFn: nonFittingAdmissionFn() });
+
+      const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+      await expect(rejection).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409, capacityFitHold: true });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+      expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+    });
+
+    it("trigger 'manual' bypasses a capacity-fit hold -- launches, still publishes the reservation, and marks the advisory record manualOverride", async () => {
+      let resolveRun;
+      const runCard = vi.fn(() => new Promise((resolve) => (resolveRun = resolve)));
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })], { runCard });
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, evaluateAdmissionFn: nonFittingAdmissionFn() });
+
+      await launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        enforcementEnabledFn: () => true,
+        buildLaunchDecideFn,
+        trigger: LAUNCH_TRIGGERS.MANUAL
+      });
+
+      expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+      expect(await listActiveReservations({ runsDir })).toHaveLength(1);
+
+      const advisoryFile = (await fs.readdir(runsDir)).find((f) => f.endsWith(".advisory.json"));
+      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      expect(record.manualOverride).toBeDefined();
+      expect(record.manualOverride.reason).toMatch(/units_not_comparable/);
+
+      resolveRun();
+    });
+
+    it("trigger 'manual' bypasses an unavailable advisory decision (timeout/error) too -- unknown capacity is still overridable", async () => {
+      vi.useFakeTimers();
+      try {
+        const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+        const ensureExecutionIdFn = vi.fn(async () => "exec-1");
+        const buildLaunchDecideFn = () => () => new Promise(() => {});
+        const launchPromise = launchCardRun({
+          orchestrator,
+          id: "T-0001",
+          enforcementEnabledFn: () => true,
+          buildLaunchDecideFn,
+          ensureExecutionIdFn,
+          trigger: LAUNCH_TRIGGERS.MANUAL
+        });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await launchPromise;
+        expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("trigger 'manual' bypasses a broken advisory/admission pipeline too -- launches exactly once, same as enforcement off", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => {
+        throw new Error("setup failed");
+      };
+      await launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        enforcementEnabledFn: () => true,
+        buildLaunchDecideFn,
+        trigger: LAUNCH_TRIGGERS.MANUAL
+      });
+      expect(orchestrator.runCard).toHaveBeenCalledTimes(1);
+    });
+
+    it("trigger 'manual' does NOT bypass a reservation that failed to publish -- ledger integrity is never overridable by trigger", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => ({
+        estimate: { value: 0.1, unit: "usd" },
+        telemetryReadings: {},
+        reason: "stub",
+        admission: { admitted: true, windows: {}, reservationPublished: false }
+      });
+      const rejection = launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        enforcementEnabledFn: () => true,
+        buildLaunchDecideFn,
+        trigger: LAUNCH_TRIGGERS.MANUAL
+      });
+      await expect(rejection).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409, message: expect.stringMatching(/reservation/i) });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+    });
+
+    it("a reservation-publish-failure refusal is never marked capacityFitHold -- the poller must not fall through past a ledger-integrity refusal", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => ({
+        estimate: { value: 0.1, unit: "usd" },
+        telemetryReadings: {},
+        reason: "stub",
+        admission: { admitted: true, windows: {}, reservationPublished: false }
+      });
+      const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+      await expect(rejection).rejects.toMatchObject({ statusCode: 409 });
+      await rejection.catch((err) => expect(err.capacityFitHold).toBeFalsy());
+    });
+
+    it("trigger 'manual' does NOT bypass an active overrun stop -- T-0370's overrun response is unchanged", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => ({
+        estimate: { value: 0.1, unit: "usd" },
+        telemetryReadings: {},
+        reason: "stub",
+        admission: { admitted: true, windows: {}, reservationPublished: true }
+      });
+      const evaluateOverrunPolicyFn = vi.fn(async () => ({ overrun: true, reason: "estimate overrun: 5/5 exceeded" }));
+
+      const rejection = launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        enforcementEnabledFn: () => true,
+        buildLaunchDecideFn,
+        evaluateOverrunPolicyFn,
+        trigger: LAUNCH_TRIGGERS.MANUAL
+      });
+      await expect(rejection).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/overrun/i) });
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+    });
+
+    it("calls recordManualOverrideFn with the admission decision it overrode", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const admission = {
+        admitted: false,
+        windows: { five_hour: { admitted: false, holdReason: "estimate_unknown" } },
+        reservationPublished: true
+      };
+      const buildLaunchDecideFn = () => async () => ({
+        estimate: { value: null, unit: "usd" },
+        telemetryReadings: {},
+        reason: "stub",
+        admission
+      });
+      const recordManualOverrideFn = vi.fn(async () => {});
+      await launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        enforcementEnabledFn: () => true,
+        buildLaunchDecideFn,
+        recordManualOverrideFn,
+        trigger: LAUNCH_TRIGGERS.MANUAL
+      });
+      expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+      expect(recordManualOverrideFn).toHaveBeenCalledWith(
+        expect.objectContaining({ cardId: "T-0001", admission, reason: expect.stringMatching(/estimate_unknown/) })
+      );
+    });
+
+    it("a failing recordManualOverrideFn never blocks the manual-override launch", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = () => async () => ({
+        estimate: { value: null, unit: "usd" },
+        telemetryReadings: {},
+        reason: "stub",
+        admission: { admitted: false, windows: {}, reservationPublished: true }
+      });
+      const recordManualOverrideFn = vi.fn(async () => {
+        throw new Error("disk full");
+      });
+      await launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        enforcementEnabledFn: () => true,
+        buildLaunchDecideFn,
+        recordManualOverrideFn,
+        trigger: LAUNCH_TRIGGERS.MANUAL
+      });
+      expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+    });
+
+    it("with enforcement off, trigger has no effect -- launches unaffected either way", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      await launchCardRun({ orchestrator, id: "T-0001", trigger: LAUNCH_TRIGGERS.MANUAL });
+      expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
     });
   });
 });

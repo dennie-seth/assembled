@@ -200,7 +200,8 @@ export async function startBoardServer({
       taskStoreKind,
       hub,
       restartCoordinator,
-      gitInfoImpl
+      gitInfoImpl,
+      autoLaunchPoller
     })
   );
   server.on("upgrade", (req, socket, head) => {

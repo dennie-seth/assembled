@@ -1,4 +1,4 @@
-import { launchCardRun, CardLaunchError } from "./cardLaunch.js";
+import { launchCardRun, CardLaunchError, LAUNCH_TRIGGERS } from "./cardLaunch.js";
 import { readUsageSnapshot } from "./usageWindow.js";
 import { readUsageTelemetry, WINDOW_KINDS, READING_STATUS } from "./usageTelemetry.js";
 import { admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
@@ -9,7 +9,11 @@ const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 /** Statuses that mean a card is mid-run, independent of what the in-process orchestrator thinks. */
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
 
-/** Dependencies in either of these states are satisfied -- same rule as `assertCanMoveToInProgress`. */
+/**
+ * Dependencies in either of these states are satisfied -- same rule as `assertCanMoveToInProgress`.
+ * Exported (T-0383) so httpApi.js's `dependency_status` computed field uses this exact Set rather
+ * than keeping its own copy in lockstep by hand.
+ */
 export const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
 
 const PRIORITY_RANK = new Map([
@@ -87,8 +91,13 @@ function numericId(task) {
  * Selection is advisory, not a guard: whatever it returns still goes through `launchCardRun` and
  * has to clear `assertCanMoveToInProgress` against the live store. The dependency filter here
  * only keeps the poller from picking a candidate that would predictably be refused.
+ *
+ * T-0379: every eligible candidate, in priority order -- not just the first. Under the WIP gate's
+ * enforcement flag, the poller's own queue behaviour (`tick()`) tries each of these in turn rather
+ * than stalling behind a head-of-queue card the shared admission decision holds on capacity-fit
+ * grounds, so a smaller card further back can still be admitted this tick.
  */
-export function selectNextCard(tasks) {
+export function selectEligibleCardsInOrder(tasks) {
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const eligible = tasks.filter((task) => {
     if (task.status !== "ready") return false;
@@ -96,8 +105,13 @@ export function selectNextCard(tasks) {
     return (task.depends_on ?? []).every((depId) => SATISFIED_DEP_STATUSES.has(byId.get(depId)?.status));
   });
 
-  if (eligible.length === 0) return null;
-  return eligible.sort((a, b) => priorityRank(a) - priorityRank(b) || numericId(a) - numericId(b))[0];
+  return eligible.sort((a, b) => priorityRank(a) - priorityRank(b) || numericId(a) - numericId(b));
+}
+
+/** The single highest-priority eligible card, or `null` -- see `selectEligibleCardsInOrder`. */
+export function selectNextCard(tasks) {
+  const eligible = selectEligibleCardsInOrder(tasks);
+  return eligible.length > 0 ? eligible[0] : null;
 }
 
 
@@ -184,14 +198,24 @@ export function createAutoLaunchPoller({
 }) {
   const effectivelyEnabled = Boolean(enabled) && intervalMs > 0;
   let timer = null;
+  // T-0383: state `getStatus()` reports over `GET /api/poller`, so an operator (or the
+  // nightly-infra-prep sandbox, which cannot reach this host directly) can see what the poller
+  // last did without reading the repo or the systemd drop-in. Updated only from inside `tick()`/
+  // `start()`/`stop()` -- never read speculatively, so `getStatus()` stays a cheap, synchronous
+  // report of already-known state.
+  let lastTickAtMs = null;
+  let startedAtMs = null;
+  let lastResult = null;
 
   function skip(reason) {
     logger.log(`${LOG_PREFIX}: skipped -- ${reason}`);
+    lastResult = { kind: "skip", reason, cardId: null };
     return null;
   }
 
   async function tick() {
     if (!effectivelyEnabled) return null;
+    lastTickAtMs = now();
 
     // Gate 2: usage.
     let usage;
@@ -290,30 +314,60 @@ export function createAutoLaunchPoller({
       return skip(`cards still at in-progress/validation: ${live.map((task) => task.id).join(", ")}`);
     }
 
-    // Gates 4 + 5: pick one, and start it through the same guarded path the Run button uses.
-    const candidate = selectNextCard(tasks);
-    if (!candidate) {
+    // Gates 4 + 5: try eligible candidates, in priority order, through the same guarded path the
+    // Run button uses -- every launch here is explicitly `trigger: "auto"` (T-0379: the ONE thing
+    // that makes the capacity-fit limit apply at all; there is no config surface on this poller to
+    // pass anything else, so it can never reach the manual-override path).
+    const candidates = selectEligibleCardsInOrder(tasks);
+    if (candidates.length === 0) {
       return skip("no eligible ready card (dependencies unmet, or nothing ready)");
     }
 
-    try {
-      const launched = await launchFn({ orchestrator, id: candidate.id, logger });
-      logger.log(`${LOG_PREFIX}: launched ${candidate.id} (${candidate.priority ?? "no priority"})`);
-      return launched;
-    } catch (err) {
-      if (err instanceof CardLaunchError) {
-        // The guarded path refused it. Deliberately no fall-through to the next candidate: at
-        // most one launch attempt per tick, and a refusal is information worth surfacing rather
-        // than routing around.
-        return skip(`${candidate.id} refused by the run guard: ${err.message}`);
+    const passedOver = [];
+    for (const candidate of candidates) {
+      try {
+        const launched = await launchFn({ orchestrator, id: candidate.id, logger, trigger: LAUNCH_TRIGGERS.AUTO });
+        logger.log(`${LOG_PREFIX}: launched ${candidate.id} (${candidate.priority ?? "no priority"})`);
+        if (passedOver.length > 0) {
+          logger.log(`${LOG_PREFIX}: passed over ${passedOver.length} earlier-queued card(s) that did not fit -- ${passedOver.join("; ")}`);
+        }
+        // T-0383: lastResult is what GET /api/poller reports -- refresh it in step with the
+        // lastTickAtMs set at the top of this function, same as every other exit from tick().
+        lastResult = { kind: "launched", reason: null, cardId: candidate.id };
+        return launched;
+      } catch (err) {
+        if (err instanceof CardLaunchError) {
+          if (err.capacityFitHold) {
+            // T-0379: a capacity-fit hold is a per-card determination, not a board-wide stop --
+            // try the next eligible candidate rather than stalling the whole tick behind one card
+            // that doesn't fit. Every OTHER refusal (an unmet dependency the guard alone caught, an
+            // already-active run, a round-cap trip, an overrun stop) is unrelated to whether THIS
+            // card fits, so it still ends the tick immediately, same as before this card.
+            passedOver.push(`${candidate.id}: ${err.message}`);
+            logger.log(`${LOG_PREFIX}: ${candidate.id} does not fit -- trying the next eligible card: ${err.message}`);
+            continue;
+          }
+          // The guarded path refused it for a reason unrelated to capacity fit. Deliberately no
+          // fall-through to the next candidate: a non-capacity refusal is information worth
+          // surfacing rather than routing around.
+          return skip(`${candidate.id} refused by the run guard: ${err.message}`);
+        }
+        // An unexpected failure (not a guard refusal) still rethrows -- start()'s tick().catch
+        // logs it -- but lastResult must be refreshed in step with the lastTickAtMs set at the top
+        // of this function, or getStatus() would pair a fresh lastTickAt with a stale lastResult
+        // from an earlier, unrelated tick.
+        lastResult = { kind: "error", reason: err.message, cardId: candidate.id };
+        throw err;
       }
-      throw err;
     }
+
+    return skip(`no eligible card fit the 5-hour window capacity this tick -- held: ${passedOver.join("; ")}`);
   }
 
   function start() {
     if (!effectivelyEnabled || timer) return;
     logger.log(`${LOG_PREFIX}: enabled (every ${intervalMs}ms, usage max ${usageMax})`);
+    startedAtMs = now();
     timer = setInterval(() => {
       tick().catch((err) => logger.error(`${LOG_PREFIX}: tick failed: ${err.message}`));
     }, intervalMs);
@@ -327,10 +381,35 @@ export function createAutoLaunchPoller({
     }
   }
 
+  /**
+   * T-0383: the whole payload behind `GET /api/poller`. Every field here is already sitting in
+   * this closure -- no store read, no git call, no filesystem access -- same "answer from
+   * process state alone" posture as `handleHealth` in httpApi.js.
+   */
+  function getStatus() {
+    // `nextTickAt` is an estimate, not a guarantee: `setInterval`'s actual firing can drift, and
+    // a tick that skips does not reschedule anything (the interval is fixed). It's still the
+    // best available signal, derived from the last tick if there's been one, else from when the
+    // timer started.
+    const anchorMs = lastTickAtMs ?? startedAtMs;
+    const nextTickAtMs = effectivelyEnabled && anchorMs !== null ? anchorMs + intervalMs : null;
+    return {
+      enabled: effectivelyEnabled,
+      intervalMs,
+      usageMax,
+      running: timer !== null,
+      lastTickAt: lastTickAtMs !== null ? new Date(lastTickAtMs).toISOString() : null,
+      nextTickAt: nextTickAtMs !== null ? new Date(nextTickAtMs).toISOString() : null,
+      lastResult,
+      activeRun: Boolean(orchestrator && orchestrator.hasActiveRuns && orchestrator.hasActiveRuns())
+    };
+  }
+
   return {
     tick,
     start,
     stop,
+    getStatus,
     get enabled() {
       return effectivelyEnabled;
     }

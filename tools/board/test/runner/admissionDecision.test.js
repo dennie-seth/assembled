@@ -207,6 +207,54 @@ describe("evaluateWindowAdmission -- with a versioned unit conversion, applies s
   });
 });
 
+describe("evaluateWindowAdmission -- T-0379: an estimate that could never fit, even at full headroom, is named distinctly", () => {
+  const unitConversion = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+
+  it("holds with OVERSIZED_ESTIMATE_NEVER_FITS when the estimate exceeds the theoretical max budget even at 0% utilization", () => {
+    // max possible budget at utilization=0: 1 - 0.05 - 0.05 = 0.9 window units = 9usd. A 100usd
+    // estimate (10 window units) can never fit this window, no matter how idle it is.
+    const decision = evaluateWindowAdmission({
+      windowKind: "five_hour",
+      reading: reading({ utilization: 0 }),
+      estimate: estimate({ value: 100 }),
+      reservedUnspentCostUsd: 0,
+      config,
+      unitConversion
+    });
+    expect(decision.admitted).toBe(false);
+    expect(decision.holdReason).toBe(HOLD_REASON.OVERSIZED_ESTIMATE_NEVER_FITS);
+  });
+
+  it("does NOT hold OVERSIZED_ESTIMATE_NEVER_FITS for a refusal that would fit at a lower current utilization", () => {
+    // remaining = 0.5, budget = 0.5-0.05-0.05 = 0.4 window units = 4usd; a 5usd estimate is refused
+    // right now, but max possible budget at utilization=0 is 0.9 window units = 9usd >= 5usd, so it
+    // is NOT permanently oversized -- just currently too tight.
+    const decision = evaluateWindowAdmission({
+      windowKind: "five_hour",
+      reading: reading({ utilization: 0.5 }),
+      estimate: estimate({ value: 5 }),
+      reservedUnspentCostUsd: 0,
+      config,
+      unitConversion
+    });
+    expect(decision.admitted).toBe(false);
+    expect(decision.holdReason).toBeNull();
+  });
+
+  it("never marks an admitted decision as oversized", () => {
+    const decision = evaluateWindowAdmission({
+      windowKind: "five_hour",
+      reading: reading({ utilization: 0.1 }),
+      estimate: estimate({ value: 0.1 }),
+      reservedUnspentCostUsd: 0,
+      config,
+      unitConversion
+    });
+    expect(decision.admitted).toBe(true);
+    expect(decision.holdReason).toBeNull();
+  });
+});
+
 describe("evaluateAdmission -- evaluates both windows independently, in the same verified units", () => {
   const unitConversion = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
   const nestedConfig = {
