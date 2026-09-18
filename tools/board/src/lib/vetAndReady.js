@@ -124,8 +124,19 @@ export function supersededCheck(task) {
   };
 }
 
-/** The section-heading regex `extractAcceptancePaths` scopes its extraction to. */
-const ACCEPTANCE_SECTION_RE = /^#{1,6}\s*acceptance\b[^\n]*\n([\s\S]*?)(?=\n#{1,6}\s|\n*$)/im;
+/**
+ * The section-heading regex `extractAcceptancePaths` scopes its extraction to.
+ *
+ * Reviewer FAIL round, 2026-09-18: this used to anchor with `^...$` under the `m` flag, so `$`
+ * matched at the end of every LINE, not just the end of the body. This repo's own house style
+ * puts a blank line right after the `## Acceptance` heading -- "## Acceptance\n\n- [ ] ..." -- and
+ * that blank line satisfied `\n*$` immediately, so the capture group came back empty for
+ * virtually every real card, regardless of what its acceptance section actually named. No `m`
+ * flag now: `(?:^|\n)` finds the heading at the body's start or after any newline (so it still
+ * doesn't require the heading to be the very first line), and a bare `$` matches only the true
+ * end of the body, so the capture only stops early at an actual next heading.
+ */
+const ACCEPTANCE_SECTION_RE = /(?:^|\n)#{1,6}\s*acceptance\b[^\n]*\n([\s\S]*?)(?=\n#{1,6}\s|$)/i;
 
 /**
  * File extensions `extractAcceptancePaths` treats as "this token names a repo path", not just
@@ -183,11 +194,21 @@ export function extractAcceptancePaths(body) {
  * check attempts the full "does the diff match the described change" judgment call: a path
  * existing is only ever evidence to SKIP (conservative), never evidence to positively clear one
  * that wasn't already going to clear on its own.
+ *
+ * Reviewer FAIL round, 2026-09-18 (AC 10): an absent id-grep is still not clearance on its own --
+ * it is silent precisely when the acceptance section names no checkable path at all, which is
+ * exactly the case where check (2) has nothing to check. There are only three authorised
+ * outcomes here: mechanical acceptance evidence (a path with no history -> ok), an explicit
+ * recorded vetting decision (none exists in this corpus today), or skip-as-uncertain. So when
+ * `extractAcceptancePaths` finds zero path-like tokens, ok:true is never reachable purely off an
+ * absent id-grep -- this returns skip-as-uncertain instead, unless the id-grep itself hit (which
+ * still means "possibly already satisfied", handled the same as before).
  */
 export async function mergedWorkCheck({ task, gitLogGrep }) {
+  const paths = extractAcceptancePaths(task.body);
   const candidates = [
     { term: task.id, label: `card id ${task.id}` },
-    ...extractAcceptancePaths(task.body).map((p) => ({ term: p, label: `acceptance path \`${p}\`` }))
+    ...paths.map((p) => ({ term: p, label: `acceptance path \`${p}\`` }))
   ];
 
   const hits = [];
@@ -203,20 +224,30 @@ export async function mergedWorkCheck({ task, gitLogGrep }) {
     }
   }
 
-  if (hits.length === 0) {
+  if (hits.length > 0) {
     return {
-      ok: true,
-      reason: "no develop commits mention this card id, and none of the paths its acceptance section names already have history on develop",
+      ok: false,
+      reason: `possibly already satisfied by merged work -- develop already shows activity for ${hits.map((h) => h.label).join(", ")}`,
+      evidence: hits
+        .flatMap((h) => h.commits)
+        .slice(0, 5)
+        .join(" | ")
+    };
+  }
+
+  if (paths.length === 0) {
+    return {
+      ok: false,
+      reason:
+        "uncertain -- acceptance names no checkable path, cannot mechanically confirm the work is unmerged (an absent card-id hit alone is not clearance)",
       evidence: ""
     };
   }
+
   return {
-    ok: false,
-    reason: `possibly already satisfied by merged work -- develop already shows activity for ${hits.map((h) => h.label).join(", ")}`,
-    evidence: hits
-      .flatMap((h) => h.commits)
-      .slice(0, 5)
-      .join(" | ")
+    ok: true,
+    reason: "no develop commits mention this card id, and none of the paths its acceptance section names already have history on develop",
+    evidence: ""
   };
 }
 
