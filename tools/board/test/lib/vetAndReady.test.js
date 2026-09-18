@@ -9,6 +9,7 @@ import {
   dependencyCheck,
   supersededCheck,
   mergedWorkCheck,
+  extractAcceptancePaths,
   vetAndReady
 } from "../../src/lib/vetAndReady.js";
 
@@ -168,6 +169,68 @@ describe("mergedWorkCheck", () => {
     const result = await mergedWorkCheck({ task: makeTask(), gitLogGrep });
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/git check failed/);
+  });
+
+  // Codex review 2026-09-18, finding 2: mergedWorkCheck returned {ok: true} whenever a card-id
+  // grep on the base branch found nothing -- but that only proves commit *messages* lack the id,
+  // not that the described change is actually missing. Codex's fixture: develop already contains
+  // `feature.js` exporting `featureEnabled = true` via a commit that never mentions the card id
+  // at all ("Implement feature flag"). Absence of an id hit must no longer be sufficient to clear
+  // a card on its own -- mergedWorkCheck also checks whether any path its acceptance section
+  // names already has history on the base branch, via the same injected gitLogGrep (see
+  // ops/vetAndReady.js's makeGitLogGrep, which runs a path-scoped `git log -- <path>` instead of
+  // `--grep` when the term looks like a path). This is mechanical existence-checking, not prose
+  // interpretation: no attempt is made to read *what* the path contains.
+  it("fails, conservatively, when a path named in the acceptance section already has history on the base branch even though the card id has no hits", async () => {
+    const task = makeTask({
+      id: "T-9001",
+      body: "## Acceptance\n- feature.js exports featureEnabled = true.\n"
+    });
+    const gitLogGrep = async (term) =>
+      term === "feature.js" ? ["abc1234 Implement feature flag"] : [];
+    const result = await mergedWorkCheck({ task, gitLogGrep });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/feature\.js/);
+    expect(result.evidence).toMatch(/abc1234/);
+  });
+
+  it("passes when neither the card id nor any acceptance path has any hits", async () => {
+    const task = makeTask({
+      id: "T-9002",
+      body: "## Acceptance\n- Add a brand-new src/lib/newThing.js module.\n"
+    });
+    const result = await mergedWorkCheck({ task, gitLogGrep: NO_GIT_HITS });
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("extractAcceptancePaths", () => {
+  it("extracts a bare filename-looking token from the Acceptance section", () => {
+    expect(extractAcceptancePaths("## Acceptance\n- feature.js exports featureEnabled = true.\n")).toEqual([
+      "feature.js"
+    ]);
+  });
+
+  it("extracts a backtick-quoted repo path from the Acceptance section", () => {
+    const body = "## Acceptance\n- [ ] `tools/board/ops/vetAndReady.js` implements every rule.\n";
+    expect(extractAcceptancePaths(body)).toEqual(["tools/board/ops/vetAndReady.js"]);
+  });
+
+  it("ignores paths mentioned outside the Acceptance section (e.g. Links/Pointers)", () => {
+    const body =
+      "## Acceptance\n- [ ] Ship the thing.\n\n## Links\n\nSee `docs/PLAN.md` for background.\n";
+    expect(extractAcceptancePaths(body)).toEqual([]);
+  });
+
+  it("returns an empty list when the body has no Acceptance section or no path-like tokens", () => {
+    expect(extractAcceptancePaths("## Acceptance\n- [ ] Does the thing\n")).toEqual([]);
+    expect(extractAcceptancePaths("")).toEqual([]);
+    expect(extractAcceptancePaths(undefined)).toEqual([]);
+  });
+
+  it("dedupes repeated path mentions", () => {
+    const body = "## Acceptance\n- [ ] Update `feature.js`.\n- [ ] Test `feature.js` too.\n";
+    expect(extractAcceptancePaths(body)).toEqual(["feature.js"]);
   });
 });
 

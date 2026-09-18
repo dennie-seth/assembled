@@ -1,4 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
+import { execFile as callbackExec } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   resolveConfig,
   fetchTasks,
@@ -7,6 +12,7 @@ import {
   applyReady,
   runVetAndReady
 } from "../../ops/vetAndReady.js";
+import { vetAndReady } from "../../src/lib/vetAndReady.js";
 
 /**
  * T-0384: the WSL-native CLI wrapper. Every I/O boundary (board API, `git log`, filesystem) is
@@ -124,6 +130,25 @@ describe("makeGitLogGrep", () => {
     const gitLogGrep = makeGitLogGrep({ repoRoot: "/repo", baseBranch: "develop", execFileFn });
     expect(await gitLogGrep("T-0042")).toEqual([]);
   });
+
+  // Codex review 2026-09-18, finding 2: a card-id grep can never catch merged work that never
+  // mentioned the card id. When the term looks like a path (has a file extension or a slash),
+  // gitLogGrep now runs a path-scoped `git log -- <path>` instead of a message `--grep` -- pure
+  // existence-on-the-base-branch checking, not content/prose interpretation.
+  it("runs a path-scoped git log when the term looks like a file path, not a --grep", async () => {
+    const execFileFn = vi.fn(async () => ({ stdout: "abc1234 Implement feature flag\n", stderr: "" }));
+    const gitLogGrep = makeGitLogGrep({ repoRoot: "/repo", baseBranch: "develop", execFileFn });
+    const hits = await gitLogGrep("feature.js");
+    expect(execFileFn).toHaveBeenCalledWith("git", ["-C", "/repo", "log", "develop", "--oneline", "--", "feature.js"]);
+    expect(hits).toEqual(["abc1234 Implement feature flag"]);
+  });
+
+  it("still uses --grep for a card-id-shaped term with a slash-free, extension-free id", async () => {
+    const execFileFn = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const gitLogGrep = makeGitLogGrep({ repoRoot: "/repo", baseBranch: "develop", execFileFn });
+    await gitLogGrep("T-0384");
+    expect(execFileFn).toHaveBeenCalledWith("git", ["-C", "/repo", "log", "develop", "--oneline", "-i", "--grep=T-0384"]);
+  });
 });
 
 describe("applyReady", () => {
@@ -211,5 +236,56 @@ describe("runVetAndReady", () => {
     const result = await runVetAndReady({ env: {}, argv: [], now: () => new Date(), ...deps });
     expect(result.exitCode).toBe(1);
     expect(deps.writeFileFn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Codex review 2026-09-18, finding 2 -- reproduces Codex's own merged-work-probe.mjs against a
+ * REAL temporary git repo (not a mocked gitLogGrep), so this is the actual makeGitLogGrep +
+ * mergedWorkCheck wiring under test, end to end: develop already contains `feature.js` exporting
+ * `featureEnabled = true`, committed as "Implement feature flag" -- no mention of the card id
+ * anywhere. Before the fix this cleared (readied); after the fix it must skip.
+ */
+describe("mergedWorkCheck against a real git repo (Codex's merged-work-probe fixture)", () => {
+  it("skips a card whose acceptance names a path that already has history on develop, even with zero card-id hits", async () => {
+    const execFileFn = promisify(callbackExec);
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "board-vet-merged-work-"));
+    try {
+      const git = (...args) => execFileFn("git", ["-C", repoRoot, ...args]);
+      await git("init", "-q", "-b", "develop");
+      await writeFile(path.join(repoRoot, "feature.js"), "export const featureEnabled = true;\n");
+      await git("add", "feature.js");
+      await git(
+        "-c",
+        "user.name=Review Fixture",
+        "-c",
+        "user.email=review@example.invalid",
+        "commit",
+        "-qm",
+        "Implement feature flag"
+      );
+
+      const task = {
+        id: "T-9001",
+        title: "Add feature flag",
+        priority: "P1",
+        status: "backlog",
+        agent: "infra",
+        deliverable_type: "code",
+        requires_approval: false,
+        depends_on: [],
+        body: "## Acceptance\n- feature.js exports featureEnabled = true.\n"
+      };
+      const gitLogGrep = makeGitLogGrep({ repoRoot, baseBranch: "develop", execFileFn });
+      const result = await vetAndReady({ tasks: [task], gitLogGrep });
+
+      expect(result.readied).toEqual([]);
+      const skipped = result.skipped.find((entry) => entry.id === "T-9001");
+      expect(skipped).toBeTruthy();
+      expect(skipped.rule).toBe("2-merged");
+      expect(skipped.reason).toMatch(/feature\.js/);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+    }
   });
 });
