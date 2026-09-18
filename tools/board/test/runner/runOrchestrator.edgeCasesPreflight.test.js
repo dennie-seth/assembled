@@ -5,7 +5,6 @@ import { RunOrchestrator } from "../../src/runner/runOrchestrator.js";
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
 
-// Mirrors the infra agent's real .claude/agents/infra.md grants -- no systemctl, no journalctl.
 const INFRA_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Grep", "Glob", "Bash(node:*)", "Bash(npm:*)", "Bash(npx vitest:*)", "Bash(git:*)"];
 
 function fakeChildProcess() {
@@ -165,13 +164,11 @@ async function runToCompletion(orchestrator, runner) {
   await runPromise;
 }
 
-describe("RunOrchestrator -- unsatisfiable-AC preflight (T-0300), warns but never blocks", () => {
-  it("still spawns the implementer AND posts a warning comment for a human-observation criterion", async () => {
+describe("RunOrchestrator -- missing-Edge-cases preflight (T-0365), warns but never blocks", () => {
+  it("still spawns the implementer AND posts a warning comment for a card with no Edge cases block", async () => {
     const store = makeStore([
       baseTask({
-        body:
-          "## Context\nAdd drag auto-scroll.\n\n## Acceptance\n" +
-          "- [ ] Drag a tall card near the column edge and say what you observed -- do not infer it from the code\n"
+        body: "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n- [ ] also works\n"
       })
     ]);
     const git = makeGit();
@@ -183,39 +180,18 @@ describe("RunOrchestrator -- unsatisfiable-AC preflight (T-0300), warns but neve
     // Never blocked, and the implementer genuinely ran -- this is a warning, not a hard block.
     const finalTask = await store.get("T-0001");
     expect(finalTask.status).not.toBe("blocked");
+    expect(runner.start).toHaveBeenCalledTimes(2);
 
-    const warningComment = (finalTask.comments ?? []).find((c) => c.text.includes("say what you observed"));
+    const warningComment = (finalTask.comments ?? []).find((c) => c.text.includes("Edge cases"));
     expect(warningComment).toBeTruthy();
     expect(warningComment.author).toBe("assembled-board");
     expect(warningComment.text).toContain("warning, not a block");
   });
 
-  it("still spawns the implementer AND posts a warning comment for an ungranted systemctl mention", async () => {
+  it("posts no extra warning comment when the Acceptance section already has a well-formed Edge cases block", async () => {
     const store = makeStore([
       baseTask({
-        body:
-          "## Context\nMeasure restart time.\n\n## Acceptance\n" +
-          "- [ ] Run `systemctl --user restart assembled-board` and record the measured stop duration\n"
-      })
-    ]);
-    const git = makeGit();
-    const runner = makeRunner();
-    const orchestrator = makeOrchestrator({ store, git, runner });
-
-    await runToCompletion(orchestrator, runner);
-
-    const finalTask = await store.get("T-0001");
-    expect(finalTask.status).not.toBe("blocked");
-    const warningComment = (finalTask.comments ?? []).find((c) => c.text.includes("systemctl"));
-    expect(warningComment).toBeTruthy();
-  });
-
-  it("posts no extra warning comment when the AC is fully satisfiable", async () => {
-    const store = makeStore([
-      baseTask({
-        body:
-          "## Context\nAdd a vitest check.\n\n## Acceptance\n" +
-          "- [ ] Run `npx vitest run` and confirm all green\n\n**Edge cases:**\n- [ ] none\n"
+        body: "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n\n**Edge cases:**\n- [ ] none\n"
       })
     ]);
     const git = makeGit();
