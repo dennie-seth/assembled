@@ -1,5 +1,6 @@
 import path from "node:path";
 import http from "node:http";
+import crypto from "node:crypto";
 import { promises as fs, createReadStream } from "node:fs";
 import busboy from "busboy";
 import { fileTypeFromBuffer } from "file-type";
@@ -8,7 +9,13 @@ import {
   UnmetDependencyError,
   DependencyCycleError
 } from "../lib/dependencyGuard.js";
+import { STATUSES, TASK_FIELDS } from "../lib/taskParser.js";
 import { listAssignableAgents } from "../lib/agentCatalog.js";
+import {
+  autoLaunchEnabledFromEnv,
+  autoLaunchIntervalMsFromEnv,
+  autoLaunchUsageMaxFromEnv
+} from "../runner/autoLaunchPoller.js";
 import { pullDevelop, commitTaskFile, commitPaths, autoCommitCardsOnCreateFromEnv } from "../runner/gitOps.js";
 import { launchCardRun, CardLaunchError } from "../runner/cardLaunch.js";
 import { artifactCacheRootFor, clearPreservedArtifacts } from "../runner/artifactPreservation.js";
@@ -47,12 +54,26 @@ const TASK_COMMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/comments$/;
 const TASK_ATTACHMENTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/attachments$/;
 const TASK_ATTACHMENT_FILE_PATH_RE = /^\/api\/tasks\/([^/]+)\/attachments\/([^/]+)$/;
 const TASK_VERDICTS_PATH_RE = /^\/api\/tasks\/([^/]+)\/verdicts$/;
+const TASK_READY_PATH_RE = /^\/api\/tasks\/([^/]+)\/ready$/;
 const AGENTS_PATH = "/api/agents";
 const BACKLOG_EXPORT_PATH = "/api/tasks/export/backlog";
 const DONE_EXPORT_PATH = "/api/tasks/export/done";
 const GIT_STATUS_PATH = "/api/git/status";
 const HEALTH_PATH = "/api/health";
+const POLLER_PATH = "/api/poller";
 const LIVE_RUN_STATUSES = new Set(["in-progress", "validation"]);
+
+// T-0383: `GET /api/tasks?status=` filter -- the single source of truth for "what is a status"
+// is taskParser.js's STATUSES; this is just a Set for O(1) membership checks.
+const STATUS_SET = new Set(STATUSES);
+/** Dependencies in either of these states are satisfied -- same rule dependencyGuard.js and autoLaunchPoller.js's selectNextCard use. */
+const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
+// T-0383: `GET /api/tasks?fields=` projection -- the raw stored fields plus two cheap computed
+// vetting fields (see computeDependencyStatus/computeLastActivityAt below).
+const DEPENDENCY_STATUS_FIELD = "dependency_status";
+const LAST_ACTIVITY_AT_FIELD = "last_activity_at";
+const COMPUTED_TASK_FIELDS = new Set([DEPENDENCY_STATUS_FIELD, LAST_ACTIVITY_AT_FIELD]);
+const PROJECTABLE_FIELDS = new Set([...TASK_FIELDS, ...COMPUTED_TASK_FIELDS]);
 
 /**
  * Attachment upload policy (see handleUploadAttachment): a denylist, not a strict allowlist --
@@ -287,9 +308,120 @@ function asciiFallbackFilename(name) {
   return ascii.length > 0 ? ascii : "attachment";
 }
 
-async function handleListTasks(store, res) {
+/** Splits a comma-separated query param into trimmed, non-empty entries; rejects an all-blank value. */
+function parseCommaSeparatedParam(raw, paramName) {
+  const parts = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length === 0) {
+    throw new HttpError(400, `"${paramName}" must be a non-empty comma-separated list`);
+  }
+  return parts;
+}
+
+function assertAllKnown(values, allowedSet, paramName) {
+  const unknown = values.filter((value) => !allowedSet.has(value));
+  if (unknown.length > 0) {
+    throw new HttpError(
+      400,
+      `Unknown ${paramName} value${unknown.length > 1 ? "s" : ""} "${unknown.join(", ")}": expected one of ${[
+        ...allowedSet
+      ].join(", ")}`
+    );
+  }
+}
+
+/**
+ * The `dependency_status` computed field (T-0383 acceptance: "each dependency's id and status,
+ * plus an all-dependencies-satisfied boolean that counts done and retired the way the launch
+ * guard does"). `byId` is built once per request from the already-loaded full task list, so this
+ * is a plain in-memory lookup -- no extra store round-trip per card.
+ */
+function computeDependencyStatus(task, byId) {
+  const dependencies = (task.depends_on ?? []).map((depId) => ({
+    id: depId,
+    status: byId.get(depId)?.status ?? null
+  }));
+  const allSatisfied = dependencies.every((dep) => SATISFIED_DEP_STATUSES.has(dep.status));
+  return { dependencies, allSatisfied };
+}
+
+/**
+ * The `last_activity_at` computed field: the most recent timestamp already sitting on the task
+ * object (created date, approval/rescope records, comment and attachment timestamps). This is a
+ * best-effort activity signal, NOT a true "last edited" timestamp -- no field in this schema
+ * (fs frontmatter or the db `tasks` table) records a bare field edit with no comment/attachment/
+ * approval alongside it, so a priority/agent/title-only change that nobody comments on will not
+ * move this value. Detecting that precisely would need either a new updated_at column (a schema
+ * change, `card_events.created_at` only exists in db mode) or git history (fs mode) -- see
+ * DEPLOY.md's "Vetting data over the API" section for why this card ships the honest, cheap
+ * signal rather than either of those.
+ */
+function computeLastActivityAt(task) {
+  const stamps = [
+    task.created ? `${task.created}T00:00:00.000Z` : null,
+    task.approved_at,
+    task.rescoped_at,
+    ...(task.comments ?? []).map((comment) => comment.timestamp),
+    ...(task.attachments ?? []).map((attachment) => attachment.uploaded_at)
+  ].filter((stamp) => typeof stamp === "string" && stamp.length > 0);
+  if (stamps.length === 0) return null;
+  return stamps.sort().at(-1);
+}
+
+function projectTaskFields(task, fields, byId) {
+  const projected = {};
+  for (const field of fields) {
+    if (field === DEPENDENCY_STATUS_FIELD) {
+      projected[field] = computeDependencyStatus(task, byId);
+    } else if (field === LAST_ACTIVITY_AT_FIELD) {
+      projected[field] = computeLastActivityAt(task);
+    } else {
+      projected[field] = task[field];
+    }
+  }
+  return projected;
+}
+
+/**
+ * `GET /api/tasks` -- T-0383: the query string used to be ignored entirely (an unfiltered blob
+ * every time, 3.1 MB / 317 cards measured on the live board 2026-09-18). With NEITHER `status=`
+ * nor `fields=` present this returns exactly `store.list()`, untouched -- byte-identical to the
+ * pre-T-0383 response, which the board UI and every existing caller still depend on.
+ *
+ * `status=` filters server-side (comma-separated, validated against taskParser.js's STATUSES).
+ * `fields=` projects each surviving task down to only the named fields (comma-separated,
+ * validated against PROJECTABLE_FIELDS, which includes two cheap computed vetting fields --
+ * see computeDependencyStatus/computeLastActivityAt). Either is a 400 on an unknown value,
+ * never a silent fallback to the full dump.
+ */
+async function handleListTasks(store, res, searchParams) {
+  const hasStatus = searchParams.has("status");
+  const hasFields = searchParams.has("fields");
+  if (!hasStatus && !hasFields) {
+    const tasks = await store.list();
+    return sendJson(res, 200, tasks);
+  }
+
   const tasks = await store.list();
-  sendJson(res, 200, tasks);
+  let filtered = tasks;
+  if (hasStatus) {
+    const statuses = parseCommaSeparatedParam(searchParams.get("status"), "status");
+    assertAllKnown(statuses, STATUS_SET, "status");
+    const statusSet = new Set(statuses);
+    filtered = filtered.filter((task) => statusSet.has(task.status));
+  }
+
+  if (!hasFields) {
+    return sendJson(res, 200, filtered);
+  }
+
+  const fields = parseCommaSeparatedParam(searchParams.get("fields"), "fields");
+  assertAllKnown(fields, PROJECTABLE_FIELDS, "fields");
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const projected = filtered.map((task) => projectTaskFields(task, fields, byId));
+  sendJson(res, 200, projected);
 }
 
 async function handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir, taskStoreKind, hub) {
@@ -532,12 +664,16 @@ async function approvalProvenanceNoticeComment({ repoRoot, task }) {
  * `approved_at`. An agent-originated PATCH doing the same thing is refused with 409 -- see
  * `applyApprovalGateToPatch`.
  */
-async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub) {
-  const body = requireJsonObject(await readJsonBody(req));
-  if ("id" in body && body.id !== id) {
-    throw new HttpError(400, "Cannot change a task's id");
-  }
-  const actor = actorFromHeaders(req.headers);
+/**
+ * The shared core of every "write a status/field patch to a card" route: the approval gate, the
+ * in-progress guards, the store write, the approval-provenance notice, the commit-on-write, the
+ * ws broadcast, and the terminal-status side effects. Factored out of `handlePatchTask` (T-0383)
+ * so `POST /api/tasks/:id/ready` -- a second write channel with different request parsing but the
+ * exact same guarantees PATCH already gives -- reuses this instead of re-implementing any of it.
+ * Takes an already-parsed `body`, since the two callers parse the request differently (JSON only
+ * for PATCH; form-encoded or JSON for the ready route).
+ */
+async function applyPatchAndSideEffects({ store, id, body, actor, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub }) {
   await applyApprovalGateToPatch({ store, id, body, actor });
 
   if (body.status === "in-progress") {
@@ -604,7 +740,158 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
     repoRoot
   });
 
+  return updated;
+}
+
+async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub) {
+  const body = requireJsonObject(await readJsonBody(req));
+  if ("id" in body && body.id !== id) {
+    throw new HttpError(400, "Cannot change a task's id");
+  }
+  const actor = actorFromHeaders(req.headers);
+  const updated = await applyPatchAndSideEffects({
+    store,
+    id,
+    body,
+    actor,
+    repoRoot,
+    tasksDir,
+    orchestrator,
+    restartCoordinator,
+    taskStoreKind,
+    hub
+  });
   sendJson(res, 200, updated);
+}
+
+/** BOARD_READY_TOKEN env var: the shared secret guarding POST /api/tasks/:id/ready. Unset means the route is disabled. */
+function readyTokenFromEnv() {
+  const raw = process.env.BOARD_READY_TOKEN;
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+/** Constant-time string comparison, so a mistyped/guessed ready-token can't be distinguished by response timing. */
+function timingSafeEqualStrings(a, b) {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Parses either an `application/x-www-form-urlencoded` body (what a plain `<form method="post">`
+ * navigation sends -- no JS `fetch` involved) or an `application/json` body (for a direct HTTP
+ * caller). Anything else is a 400 -- this route deliberately does not fall back to "ignore the
+ * body", since a caller sending a Content-Type it doesn't recognize is worth surfacing rather
+ * than silently treating as empty.
+ */
+async function readFormOrJsonBody(req) {
+  const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const raw = Buffer.concat(chunks).toString("utf8");
+
+  if (contentType === "application/json") {
+    if (raw.length === 0) return {};
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new HttpError(400, "Request body must be valid JSON");
+    }
+  }
+  if (contentType === "application/x-www-form-urlencoded" || contentType === "") {
+    return Object.fromEntries(new URLSearchParams(raw));
+  }
+  throw new HttpError(400, "Content-Type must be application/x-www-form-urlencoded or application/json");
+}
+
+/**
+ * The ready-token can travel three ways, in priority order: an `Authorization: Bearer` header
+ * (direct HTTP callers, e.g. curl from a host that can reach this port), a `token` field in the
+ * parsed body (a hidden form input a plain `<form>` submits), or a `token` query param (so a
+ * static form's `action` URL alone can carry it, with no JS and no body field required).
+ */
+function extractReadyToken(req, parsedBody, searchParams) {
+  const authHeader = req.headers["authorization"];
+  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+    return authHeader.slice("Bearer ".length);
+  }
+  if (typeof parsedBody.token === "string" && parsedBody.token.length > 0) {
+    return parsedBody.token;
+  }
+  const queryToken = searchParams.get("token");
+  return typeof queryToken === "string" && queryToken.length > 0 ? queryToken : null;
+}
+
+/**
+ * `POST /api/tasks/:id/ready` -- T-0383's "reliable ready path". A write channel a plain browser
+ * page navigation can hit even when in-page JS `fetch` is blocked (the failure mode that
+ * motivated this card: nightly-infra-prep's sandbox browser sometimes blocks in-page `fetch`, so
+ * `PATCH /api/tasks/:id` silently never fires). See this file's top-of-route docstrings on
+ * `readyTokenFromEnv`/`readFormOrJsonBody`/`extractReadyToken` for the auth/CSRF design: a
+ * shared-secret token, checked before the store is ever touched, because a bare form-POST route
+ * (unlike `fetch`-based PATCH) is not protected by the browser's CORS preflight.
+ *
+ * Deliberately narrow: this route only ever writes `status: "ready"`. A `status` field in the
+ * body/form is accepted for an HTML form's own clarity (`<input type=hidden name=status
+ * value=ready>`) but must equal `"ready"` or the request is rejected -- this is a dedicated
+ * action route, not a second general-purpose PATCH.
+ */
+async function handleSetReadyStatus({ store, id, req, res, searchParams, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub }) {
+  const configuredToken = readyTokenFromEnv();
+  if (!configuredToken) {
+    throw new HttpError(501, "BOARD_READY_TOKEN is not configured -- this write channel is disabled");
+  }
+
+  const parsedBody = await readFormOrJsonBody(req);
+  const suppliedToken = extractReadyToken(req, parsedBody, searchParams);
+  if (!suppliedToken || !timingSafeEqualStrings(suppliedToken, configuredToken)) {
+    throw new HttpError(403, "Invalid or missing ready token");
+  }
+
+  if ("status" in parsedBody && parsedBody.status !== "ready") {
+    throw new HttpError(400, `Invalid target status "${parsedBody.status}": this route only accepts "ready"`);
+  }
+
+  const actor = actorFromHeaders(req.headers);
+  const updated = await applyPatchAndSideEffects({
+    store,
+    id,
+    body: { status: "ready" },
+    actor,
+    repoRoot,
+    tasksDir,
+    orchestrator,
+    restartCoordinator,
+    taskStoreKind,
+    hub
+  });
+  sendJson(res, 200, updated);
+}
+
+/**
+ * `GET /api/poller` -- T-0383: reports the auto-launch poller's own state (see
+ * autoLaunchPoller.js's `getStatus()`) so an operator or the nightly-infra-prep sandbox can see
+ * whether it's enabled and what it last did without reading the repo or the systemd drop-in.
+ * Same "answer from already-known state, no store/git/filesystem access" posture as
+ * `handleHealth`. When no poller is wired into this server (a bare test harness, or a future
+ * server variant that doesn't run one), falls back to the same env-reading functions the poller
+ * itself would have used, so the route still answers rather than 404ing or 500ing.
+ */
+function handleGetPollerStatus(autoLaunchPoller, res) {
+  if (!autoLaunchPoller) {
+    return sendJson(res, 200, {
+      enabled: autoLaunchEnabledFromEnv(),
+      intervalMs: autoLaunchIntervalMsFromEnv(),
+      usageMax: autoLaunchUsageMaxFromEnv(),
+      running: false,
+      lastTickAt: null,
+      nextTickAt: null,
+      lastResult: null,
+      activeRun: false
+    });
+  }
+  sendJson(res, 200, autoLaunchPoller.getStatus());
 }
 
 async function handleRunTask(orchestrator, id, res) {
@@ -1201,11 +1488,12 @@ export function createRequestListener({
   taskStoreKind = "fs",
   hub,
   restartCoordinator,
-  gitInfoImpl
+  gitInfoImpl,
+  autoLaunchPoller
 }) {
   return async function requestListener(req, res) {
     try {
-      const { pathname } = new URL(req.url, "http://localhost");
+      const { pathname, searchParams } = new URL(req.url, "http://localhost");
       const idMatch = TASK_ID_PATH_RE.exec(pathname);
       const approvalMatch = TASK_APPROVAL_PATH_RE.exec(pathname);
       const runMatch = TASK_RUN_PATH_RE.exec(pathname);
@@ -1214,6 +1502,7 @@ export function createRequestListener({
       const attachmentsMatch = TASK_ATTACHMENTS_PATH_RE.exec(pathname);
       const attachmentFileMatch = TASK_ATTACHMENT_FILE_PATH_RE.exec(pathname);
       const verdictsMatch = TASK_VERDICTS_PATH_RE.exec(pathname);
+      const readyMatch = TASK_READY_PATH_RE.exec(pathname);
 
       // First route in the chain, deliberately: a liveness probe should do the least work of
       // anything the server serves, and should not sit behind any check that could itself be
@@ -1221,6 +1510,9 @@ export function createRequestListener({
       // rather than a load-bearing guarantee -- but it is the ordering to keep.
       if (pathname === HEALTH_PATH && req.method === "GET") {
         return handleHealth(res, { taskStoreKind, orchestrator });
+      }
+      if (pathname === POLLER_PATH && req.method === "GET") {
+        return handleGetPollerStatus(autoLaunchPoller, res);
       }
       if (pathname === GIT_STATUS_PATH && req.method === "GET") {
         return await handleGitStatus(gitInfoImpl, res);
@@ -1235,7 +1527,7 @@ export function createRequestListener({
         return await handleExportDone(store, res);
       }
       if (pathname === "/api/tasks" && req.method === "GET") {
-        return await handleListTasks(store, res);
+        return await handleListTasks(store, res, searchParams);
       }
       if (pathname === "/api/tasks" && req.method === "POST") {
         return await handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir, taskStoreKind, hub);
@@ -1268,6 +1560,21 @@ export function createRequestListener({
       }
       if (runMatch && req.method === "POST") {
         return await handleRunTask(orchestrator, runMatch[1], res);
+      }
+      if (readyMatch && req.method === "POST") {
+        return await handleSetReadyStatus({
+          store,
+          id: readyMatch[1],
+          req,
+          res,
+          searchParams,
+          repoRoot,
+          tasksDir,
+          orchestrator,
+          restartCoordinator,
+          taskStoreKind,
+          hub
+        });
       }
       if (cancelMatch && req.method === "POST") {
         return await handleCancelTask(orchestrator, cancelMatch[1], res);
@@ -1315,6 +1622,7 @@ export function createRequestListener({
       }
       if (
         pathname === HEALTH_PATH ||
+        pathname === POLLER_PATH ||
         pathname === GIT_STATUS_PATH ||
         pathname === AGENTS_PATH ||
         pathname === "/api/tasks" ||
@@ -1322,6 +1630,7 @@ export function createRequestListener({
         pathname === DONE_EXPORT_PATH ||
         idMatch ||
         runMatch ||
+        readyMatch ||
         cancelMatch ||
         commentsMatch ||
         attachmentsMatch ||
@@ -1353,6 +1662,7 @@ export function startHttpServer({
   hub,
   restartCoordinator,
   gitInfoImpl,
+  autoLaunchPoller,
   port = 0,
   host = "127.0.0.1"
 }) {
@@ -1371,7 +1681,8 @@ export function startHttpServer({
       taskStoreKind,
       hub,
       restartCoordinator,
-      gitInfoImpl
+      gitInfoImpl,
+      autoLaunchPoller
     })
   );
   return new Promise((resolve, reject) => {
