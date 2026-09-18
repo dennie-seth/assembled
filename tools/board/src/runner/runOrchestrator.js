@@ -37,6 +37,7 @@ import { createCard as createCardDefault } from "./cardCreation.js";
 import { checkAcceptancePreflight } from "./acceptancePreflight.js";
 import { checkCapabilityPreflight } from "./capabilityPreflight.js";
 import { checkImpossibleAcceptancePreflight } from "./impossibleAcceptancePreflight.js";
+import { checkEdgeCasesPreflight } from "./edgeCasesPreflight.js";
 import { checkHostStatePreflight } from "./hostStatePreflight.js";
 import { KNOWN_HOST_ISSUES } from "./knownHostIssues.js";
 import { assertRunnerMayApply, needsApproval, parkedForApprovalComment } from "../lib/approvalGate.js";
@@ -757,6 +758,18 @@ export class RunOrchestrator {
       if (impossibleAcceptance.warnings.length > 0) {
         await this._logImpossibleAcceptanceWarning(taskId, runLog, impossibleAcceptance.warnings);
       }
+
+      // Warn-only pre-flight (T-0365): flags a card whose ## Acceptance section has no bold
+      // **Edge cases:** block (planner.md's convention, unenforced by design -- see
+      // edgeCasesPreflight.js). Root cause for the rework-rate signal this card was proposed
+      // against: T-0065/T-0120/T-0122 all predate that convention and each needed multiple
+      // reviewer rounds to surface edge cases the first implementation pass had no reason to
+      // consider upfront. Deliberately never blocks, same reasoning as the impossible-acceptance
+      // preflight above: this is a heuristic over freeform structure, not a definite grant lookup.
+      const edgeCasesPreflight = checkEdgeCasesPreflight(preFlightTask);
+      if (edgeCasesPreflight.warnings.length > 0) {
+        await this._logEdgeCasesWarning(taskId, runLog, edgeCasesPreflight.warnings);
+      }
     }
 
     let currentReused = reused;
@@ -1209,6 +1222,23 @@ export class RunOrchestrator {
       `the implementer still runs:\n` +
       warnings.map((w) => `- ${w}`).join("\n");
     const event = { type: "impossible-acceptance-warning", message };
+    await runLog.append(event);
+    this.hub.broadcast({ type: "run-event", id: taskId, phase: "preflight-warning", event });
+    await this._appendComment(taskId, "assembled-board", message);
+  }
+
+  /**
+   * Surfaces edgeCasesPreflight.js's warnings (T-0365) the same way the impossible-acceptance
+   * preflight does: run log for a live watcher, card comment for whoever reads it later. Never
+   * calls _blocked -- a card missing an Edge cases block is still runnable, this just flags the
+   * gap that historically turned into several reviewer rounds instead of one.
+   */
+  async _logEdgeCasesWarning(taskId, runLog, warnings) {
+    const message =
+      `Edge-cases preflight (T-0365) flagged this card's Acceptance section -- this is a ` +
+      `warning, not a block; the implementer still runs:\n` +
+      warnings.map((w) => `- ${w}`).join("\n");
+    const event = { type: "edge-cases-warning", message };
     await runLog.append(event);
     this.hub.broadcast({ type: "run-event", id: taskId, phase: "preflight-warning", event });
     await this._appendComment(taskId, "assembled-board", message);
