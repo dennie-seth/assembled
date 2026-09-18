@@ -11,7 +11,12 @@ export const HOLD_REASON = Object.freeze({
   NO_MEASURED_READING: "no_measured_window_reading",
   ESTIMATE_UNKNOWN: "estimate_unknown",
   UNITS_NOT_COMPARABLE: "units_not_comparable",
-  RESERVED_COST_UNKNOWN: "reserved_cost_unknown"
+  RESERVED_COST_UNKNOWN: "reserved_cost_unknown",
+  // T-0379: names a refusal that can NEVER become an admit, regardless of how idle the window
+  // gets -- distinct from an ordinary `admitted: false` (which just means "not right now"). Only
+  // set when the estimate is comparable to begin with (a measured reading, a known estimate, a
+  // known reserved cost, and comparable units); see `evaluateWindowAdmission`.
+  OVERSIZED_ESTIMATE_NEVER_FITS: "oversized_estimate_never_fits"
 });
 
 /** The unit every window's `readWindowUsage` reading is expressed in -- see usageTelemetry.js. */
@@ -108,10 +113,22 @@ export function evaluateWindowAdmission({ windowKind, reading, estimate, reserve
   const budget = Math.max(0, observedRemainingCapacity - reservedUnspentCost - externalBurnAllowance - uncertaintyReserve);
   const admitted = predictedRemainingCostUpperBound <= dial * budget;
 
+  // T-0379: a refusal is permanent -- never admittable by this window becoming more idle -- when
+  // it would still be refused at the theoretical maximum headroom (utilization 0, i.e.
+  // `observedRemainingCapacity` at its ceiling of 1). Only meaningful when `admitted` is already
+  // `false`; an admit is never oversized.
+  let holdReason = null;
+  if (!admitted) {
+    const maxPossibleBudget = Math.max(0, 1 - reservedUnspentCost - externalBurnAllowance - uncertaintyReserve);
+    if (predictedRemainingCostUpperBound > dial * maxPossibleBudget) {
+      holdReason = HOLD_REASON.OVERSIZED_ESTIMATE_NEVER_FITS;
+    }
+  }
+
   return {
     windowKind,
     admitted,
-    holdReason: null,
+    holdReason,
     observedRemainingCapacity,
     reservedUnspentCost,
     externalBurnAllowance,

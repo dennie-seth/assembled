@@ -3,32 +3,63 @@ import { assertCanMoveToInProgress, UnmetDependencyError, DependencyCycleError }
 import { assertRoundCapClear, RoundCapExceededError } from "../lib/roundCap.js";
 import { appendNote, effectiveMaxAttempts } from "./runOrchestrator.js";
 import { ensureExecutionId, executionTotal, executionEndedSuccessfully, listCardUsageEntries } from "./usageLedger.js";
-import { withAdvisoryLogging, recordAdvisoryOutcome, retainOutcomeUntilDecisionRecorded, AdvisoryDecisionMissingError } from "./advisoryLogger.js";
+import {
+  withAdvisoryLogging,
+  recordAdvisoryOutcome,
+  retainOutcomeUntilDecisionRecorded,
+  AdvisoryDecisionMissingError,
+  recordManualOverride
+} from "./advisoryLogger.js";
 import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
-import { loadAdmissionConfigFromEnv, admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
+import { loadAdmissionConfigFromEnv, admissionEnforcementEnabledFromEnv, HOLD_REASON } from "./admissionDecision.js";
 import { releaseReservation } from "./launchReservation.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
 import { evaluateOverrunPolicy, isBoundedContinuation } from "./overrunPolicy.js";
 
+/** The two callers of the shared launch boundary (T-0379): the auto-launch poller, and every operator-initiated launch (the Run button, and any other manual launch). */
+export const LAUNCH_TRIGGERS = Object.freeze({ AUTO: "auto", MANUAL: "manual" });
+
 /**
- * Names why the shared admission decision refuses a launch under enforcement, or `null` when it
- * doesn't (T-0370 fix round, Codex review finding 2). `admission` missing entirely (the advisory
- * pipeline itself timed out/errored, per `launchAdvisory.js`'s fallback) is itself a hold --
- * unknown capacity is never treated as "not blocked". `admission.admitted === true` requires
- * EVERY window to have admitted (see `admissionDecision.js`'s `evaluateAdmission`); anything else
- * -- an explicit `false`, or the aggregate `null` a per-window hold reason produces -- refuses,
- * naming each non-admitting window's own reason.
+ * T-0370 fix round 2 finding 4/5: a reservation that failed to publish means this launch's own
+ * capacity was never actually recorded against the shared pool, regardless of what the per-window
+ * formula concluded -- admitting it would silently understate what every OTHER launch's own
+ * admission check sees. This is a ledger-integrity guarantee, not a capacity/fit policy call, so
+ * (T-0379) it is never bypassable by `trigger` -- manual override only ever bypasses
+ * `capacityFitRefusal` below.
  */
-function describeAdmissionRefusal(admission) {
+function reservationIntegrityRefusal(admission) {
+  if (admission && admission.reservationPublished === false) {
+    return "reservation failed to publish -- capacity not actually reserved for this launch";
+  }
+  return null;
+}
+
+/**
+ * T-0379: names why the shared admission decision holds a launch on capacity/fit grounds alone, or
+ * `null` when it doesn't. `admission` missing entirely (the advisory pipeline itself timed
+ * out/errored, per `launchAdvisory.js`'s fallback) is itself a hold -- unknown capacity is never
+ * treated as "not blocked" (same rule as T-0370's original `describeAdmissionRefusal`, which this
+ * replaces). `admission.admitted === true` requires EVERY window to have admitted (see
+ * `admissionDecision.js`'s `evaluateAdmission`); anything else -- an explicit `false`, or the
+ * aggregate `null` a per-window hold reason produces -- refuses, naming each non-admitting window's
+ * own reason. This is the ONE refusal a manual (operator-initiated) launch is allowed to bypass
+ * (acceptance: "Manual override ... bypass the auto-fit limit -- including the unknown-estimate and
+ * unmeasured-window holds"); `reservationIntegrityRefusal` above is deliberately NOT part of this
+ * function so it can never be bypassed by `trigger` alone.
+ */
+function capacityFitRefusal(admission) {
   if (!admission) return "advisory decision unavailable (timeout/error) -- unknown capacity";
-  // T-0370 fix round 2 finding 4/5: a reservation that failed to publish means this launch's own
-  // capacity was never actually reserved, regardless of what the per-window formula concluded --
-  // refuse on that alone rather than trusting a now-stale "admitted" decision.
-  if (admission.reservationPublished === false) return "reservation failed to publish -- capacity not actually reserved for this launch";
   if (admission.admitted === true) return null;
   const reasons = Object.entries(admission.windows ?? {})
     .filter(([, decision]) => decision.admitted !== true)
-    .map(([windowKind, decision]) => `${windowKind}: ${decision.holdReason ?? "insufficient_capacity"}`);
+    .map(([windowKind, decision]) => {
+      const holdReason = decision.holdReason ?? "insufficient_capacity";
+      const neverFits =
+        holdReason === HOLD_REASON.OVERSIZED_ESTIMATE_NEVER_FITS
+          ? " -- never fits this window even at full headroom; launch manually or split the card"
+          : "";
+      return `${windowKind}: ${holdReason}${neverFits}`;
+    });
   return reasons.length > 0 ? reasons.join("; ") : "insufficient capacity";
 }
 
@@ -138,6 +169,12 @@ export async function launchCardRun({
   orchestrator,
   id,
   logger = console,
+  // T-0379: which of the two callers of this shared boundary this launch is. Defaults to the
+  // strict `AUTO` behaviour -- fail-safe by construction, so a caller that forgets to opt into
+  // `MANUAL` gets the auto-launch poller's own capacity-fit limit, never an accidental bypass.
+  // Only the Run button (and any other deliberate, operator-initiated launch) should ever pass
+  // `LAUNCH_TRIGGERS.MANUAL`.
+  trigger = LAUNCH_TRIGGERS.AUTO,
   ensureExecutionIdFn = ensureExecutionId,
   randomUUIDFn = randomUUID,
   buildLaunchDecideFn = buildLaunchDecide,
@@ -147,8 +184,10 @@ export async function launchCardRun({
   enforcementEnabledFn = admissionEnforcementEnabledFromEnv,
   evaluateOverrunPolicyFn = evaluateOverrunPolicy,
   listCardUsageEntriesFn = listCardUsageEntries,
-  releaseReservationFn = releaseReservation
+  releaseReservationFn = releaseReservation,
+  recordManualOverrideFn = recordManualOverride
 }) {
+  const isManualOverride = trigger === LAUNCH_TRIGGERS.MANUAL;
   if (!orchestrator) {
     throw new CardLaunchError("Agent Runner is not configured on this server", 501);
   }
@@ -270,16 +309,38 @@ export async function launchCardRun({
         },
         launch: async () => {
           if (enforcementEnabled) {
-            const refusal = describeAdmissionRefusal(advisory?.admission);
-            if (refusal) {
-              await releaseReservationFn({ runsDir, cardId: id, executionId, invocationId, outcome: { status: "refused_enforcement", reason: refusal } }).catch(() => {});
-              throw new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- ${refusal}`, 409);
+            // T-0379: reservation-ledger integrity is never bypassable by trigger -- see
+            // reservationIntegrityRefusal's own docstring.
+            const integrityRefusal = reservationIntegrityRefusal(advisory?.admission);
+            if (integrityRefusal) {
+              await releaseReservationFn({ runsDir, cardId: id, executionId, invocationId, outcome: { status: "refused_enforcement", reason: integrityRefusal } }).catch(() => {});
+              throw new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- ${integrityRefusal}`, 409);
+            }
+
+            // T-0379: the capacity-fit limit -- the ONE guard a manual (operator-initiated) launch
+            // is allowed to bypass.
+            const fitRefusal = capacityFitRefusal(advisory?.admission);
+            if (fitRefusal) {
+              if (!isManualOverride) {
+                await releaseReservationFn({ runsDir, cardId: id, executionId, invocationId, outcome: { status: "refused_enforcement", reason: fitRefusal } }).catch(() => {});
+                const err = new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- ${fitRefusal}`, 409);
+                // The auto-launch poller's queue behaviour reads this to skip past a non-fitting
+                // head-of-queue card to the next eligible one, rather than stalling the whole tick
+                // on a per-card capacity determination -- see autoLaunchPoller.js.
+                err.capacityFitHold = true;
+                throw err;
+              }
+              logger.log(`wip-gate enforcement: manual override for ${id} -- launching despite a capacity-fit hold: ${fitRefusal}`);
+              await recordManualOverrideFn({ runsDir, cardId: id, executionId, invocationId, admission: advisory?.admission ?? null, reason: fitRefusal, logger }).catch((overrideErr) => {
+                logger.log(`wip-gate enforcement: failed to record the manual override marker for ${id}: ${overrideErr.message}`);
+              });
             }
 
             // Spec §11: an active overrun stop refuses a brand-new admission, but a card that is
             // already mid-cycle (this execution already has ledger history) may still continue --
             // refusing an in-flight card's own retry would abandon already-spent work rather than
-            // bound it.
+            // bound it. T-0370's overrun response is UNCHANGED by T-0379 -- it applies regardless
+            // of `trigger`; manual override only ever bypasses the capacity-fit limit above.
             const overrun = await evaluateOverrunPolicyFn({ runsDir });
             if (overrun.overrun) {
               let priorEntries = [];
@@ -308,16 +369,24 @@ export async function launchCardRun({
       // explicit admission hold. Falling through to the unconditional launch below would let a
       // pipeline error bypass enforcement entirely -- the one thing the flag exists to prevent.
       if (enforcementEnabled) {
-        if (runsDir && executionId !== null && invocationId !== null) {
-          await releaseReservationFn({
-            runsDir,
-            cardId: id,
-            executionId,
-            invocationId,
-            outcome: { status: "refused_enforcement", reason: `advisory pipeline error: ${err.message}` }
-          }).catch(() => {});
+        if (isManualOverride) {
+          // T-0379: same bypass as the capacity-fit hold above -- a broken advisory/admission
+          // pipeline is unknown capacity, not proof of overrun, so manual override still applies.
+          logger.log(`wip-gate enforcement: manual override for ${id} -- advisory/admission pipeline failed, launch proceeds unaffected: ${err.message}`);
+        } else {
+          if (runsDir && executionId !== null && invocationId !== null) {
+            await releaseReservationFn({
+              runsDir,
+              cardId: id,
+              executionId,
+              invocationId,
+              outcome: { status: "refused_enforcement", reason: `advisory pipeline error: ${err.message}` }
+            }).catch(() => {});
+          }
+          const pipelineErr = new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- advisory/admission pipeline failed: ${err.message}`, 409);
+          pipelineErr.capacityFitHold = true;
+          throw pipelineErr;
         }
-        throw new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- advisory/admission pipeline failed: ${err.message}`, 409);
       }
     }
   }
