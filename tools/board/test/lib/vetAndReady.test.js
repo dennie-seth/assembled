@@ -116,6 +116,35 @@ describe("supersededCheck", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
+
+  // Codex review 2026-09-18, finding 1: case-sensitive `body.includes()` over a fixed-case list
+  // let `## Held`, lowercase `held`, and `Stop-and-report:` slip through and get readied. Every
+  // variant below is one Codex actually reproduced or that the fix-round AC names explicitly.
+  it.each([
+    ["## Held\nDo not ready this card until a human decision.", /held/i],
+    ["lowercase held mid-sentence: the fix is being held for review.", /held/i],
+    ["Stop-and-report: acceptance already satisfied by the replacement.", /stop.and.report/i],
+    ["stop and report -- do not proceed.", /stop.and.report/i],
+    ["## Finding\nStop-and-report: acceptance already satisfied by the replacement.", /finding/i],
+    ["rescoped by the follow-up card, see T-0400.", /re-?scoped/i],
+    ["superseded by T-0400.", /superseded/i],
+    ["this section governs the rest of the card.", /this section governs/i]
+  ])("recognises the real-world marker variant %j case-insensitively", (body, expectedReasonPattern) => {
+    const result = supersededCheck(makeTask({ body }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(expectedReasonPattern);
+  });
+
+  it("recognises a bare '## Finding' heading as a recorded outcome even without other marker text", () => {
+    const result = supersededCheck(makeTask({ body: "## Finding\n\nAlready implemented by T-0299; nothing left to do here.\n" }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("still passes a body that merely mentions an unrelated word containing a marker as a substring", () => {
+    // "upheld"/"withheld" must not false-trigger the HELD marker -- \bheld\b is word-bounded.
+    const result = supersededCheck(makeTask({ body: "## Acceptance\n\nThe API contract is upheld across releases.\n" }));
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe("mergedWorkCheck", () => {
