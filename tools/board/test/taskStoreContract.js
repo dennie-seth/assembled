@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { TaskStore } from "../src/lib/taskStore.js";
+import { TaskStore, StaleWriteError } from "../src/lib/taskStore.js";
 
 export function makeTask(overrides = {}) {
   return {
@@ -245,6 +245,58 @@ export function runTaskStoreContractTests(label, setup) {
       await store.create(original);
       await expect(store.create(makeTask({ id: "T-0001", title: "Different" }))).rejects.toThrow();
       expect(await store.get("T-0001")).toEqual(original);
+    });
+  });
+
+  // Codex review 2026-09-18 (T-0384), finding 3: a vet-and-ready re-check followed by an
+  // unconditional PATCH is a TOCTOU race -- a card that changed status between the check and the
+  // write got overwritten anyway. `update`'s optional `{ expected }` option lets a caller assert
+  // the current record still matches before the write commits, atomically with the write itself
+  // (not as a separate read the caller does on its own, which would just move the race).
+  describe(`${label} conditional update`, () => {
+    it("applies the write when every expected field matches the current record", async () => {
+      const task = makeTask();
+      await store.create(task);
+      const updated = await store.update(task.id, { status: "ready" }, { expected: { status: "backlog" } });
+      expect(updated.status).toBe("ready");
+      expect(await store.get(task.id)).toMatchObject({ status: "ready" });
+    });
+
+    it("refuses the write with a StaleWriteError when an expected field no longer matches, and leaves the record untouched", async () => {
+      const task = makeTask();
+      await store.create(task);
+      await store.update(task.id, { status: "in-progress" });
+
+      await expect(
+        store.update(task.id, { status: "ready" }, { expected: { status: "backlog" } })
+      ).rejects.toThrow(StaleWriteError);
+      expect(await store.get(task.id)).toMatchObject({ status: "in-progress" });
+    });
+
+    it("checks every field named in `expected`, not just the first", async () => {
+      const task = makeTask({ priority: "P1" });
+      await store.create(task);
+      await expect(
+        store.update(
+          task.id,
+          { status: "ready" },
+          { expected: { status: "backlog", priority: "P0" } }
+        )
+      ).rejects.toThrow(StaleWriteError);
+      expect(await store.get(task.id)).toMatchObject({ status: "backlog", priority: "P1" });
+    });
+
+    it("writes normally when no `expected` option is given at all (backward compatible)", async () => {
+      const task = makeTask();
+      await store.create(task);
+      const updated = await store.update(task.id, { status: "ready" });
+      expect(updated.status).toBe("ready");
+    });
+
+    it("still throws a not-found error for a missing id even with an expected option present", async () => {
+      await expect(
+        store.update("T-9999", { status: "ready" }, { expected: { status: "backlog" } })
+      ).rejects.toThrow(/not found/i);
     });
   });
 
