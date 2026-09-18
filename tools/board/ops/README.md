@@ -218,6 +218,38 @@ without needing `journalctl` at all.
 | `BOARD_VET_READY_CAP` | `4` |
 | `BOARD_VET_LOG_DIR` | `~/.local/state/board-vet-and-ready` |
 
+### Live dry run (T-0384 acceptance evidence)
+
+`node ops/vetAndReady.js` (no `--apply`) against the actual live board at
+`127.0.0.1:4173`, 2026-09-18T09:50:03.567Z:
+
+```
+# Board vet-and-ready run -- 2026-09-18T09:50:03.567Z
+
+Poller state: unavailable -- GET /api/poller returned 404 Not Found -- likely a board deployment that predates T-0383
+
+Eligible-at-all: 3 card(s) (status=backlog, agent=infra, deliverable_type=code, requires_approval=false)
+Readied: 2 (cap 4)
+Skipped: 1
+
+## Readied
+- T-0371 [P2] READIED -- 5-cap-ok: every rule passed; readied (priority P2, within the cap of 4)
+- T-0372 [P2] READIED -- 5-cap-ok: every rule passed; readied (priority P2, within the cap of 4)
+
+## Skipped
+- T-0362 [P1] skipped -- 1-dependency: unmet dependency: T-0338 is backlog ([{"id":"T-0338","status":"backlog"}])
+
+## Apply
+Dry run (default) -- nothing was written. Pass --apply to PATCH status: ready on the readied cards above.
+```
+
+Confirmed it wrote nothing: `GET /api/tasks/T-0371` and `GET
+/api/tasks/T-0372` both still read `status: "backlog"` immediately after
+this run, and `git status --porcelain` was unchanged. The `Poller state:
+unavailable` line is the documented T-0383 degrade path working as intended
+-- this board deployment (built from `develop` before T-0383 merged) has no
+`GET /api/poller` route yet.
+
 ### Installing (not done by this card, on purpose)
 
 This card's acceptance is the script, its tests, and these committed unit
