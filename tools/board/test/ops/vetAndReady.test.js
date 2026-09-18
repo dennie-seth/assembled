@@ -10,7 +10,10 @@ import {
   fetchPollerState,
   makeGitLogGrep,
   applyReady,
-  runVetAndReady
+  runVetAndReady,
+  EXIT_CODE_OK,
+  EXIT_CODE_BOARD_UNREACHABLE,
+  EXIT_CODE_WRITE_REFUSED
 } from "../../ops/vetAndReady.js";
 import { vetAndReady } from "../../src/lib/vetAndReady.js";
 import { startHttpServer } from "../../src/server/httpApi.js";
@@ -250,7 +253,7 @@ describe("runVetAndReady", () => {
       ...deps
     });
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(EXIT_CODE_OK);
     expect(result.result.readied.map((r) => r.id)).toEqual(["T-0001"]);
     const patchCalls = deps.fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "PATCH");
     expect(patchCalls).toHaveLength(0);
@@ -267,7 +270,8 @@ describe("runVetAndReady", () => {
     });
     const result = await runVetAndReady({ env: {}, argv: ["--apply"], now: () => new Date("2026-09-18T01:00:00.000Z"), ...deps });
 
-    expect(result.exitCode).toBe(0);
+    // The one readied candidate writes cleanly -- no write-time refusal, so this stays OK.
+    expect(result.exitCode).toBe(EXIT_CODE_OK);
     const patchCalls = deps.fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "PATCH");
     expect(patchCalls).toHaveLength(1);
     expect(patchCalls[0][0]).toBe("http://127.0.0.1:4173/api/tasks/T-0001");
@@ -336,7 +340,10 @@ describe("runVetAndReady", () => {
     expect(t1PatchStarted).toBe(true);
     expect(t1.status).toBe("ready");
     expect(t2.status).toBe("backlog");
-    expect(result.exitCode).toBe(0);
+    // T-0384 FIX ROUND 3: a write-time refusal (T-0002, caught by pre-write revalidation) must
+    // surface as a distinct non-zero exit code even though T-0001's own write succeeded -- an
+    // apply run is not "fully successful" just because at least one candidate got written.
+    expect(result.exitCode).toBe(EXIT_CODE_WRITE_REFUSED);
     expect(result.report).toMatch(/T-0002/);
     expect(result.report).toMatch(/SKIPPED/);
   });
@@ -376,7 +383,9 @@ describe("runVetAndReady", () => {
 
     expect(writes).toHaveLength(0);
     expect(current.status).toBe("done");
-    expect(result.exitCode).toBe(0);
+    // Every candidate here was refused at write time (there was only one, and it was refused) --
+    // zero writes landed, so this must NOT read as a clean run.
+    expect(result.exitCode).toBe(EXIT_CODE_WRITE_REFUSED);
     expect(result.report).toMatch(/T-9001/);
     expect(result.report).toMatch(/SKIPPED/);
   });
@@ -384,19 +393,49 @@ describe("runVetAndReady", () => {
   it("reports a degraded poller state when /api/poller 404s, and still completes the run", async () => {
     const deps = makeDeps({ pollerOk: false });
     const result = await runVetAndReady({ env: {}, argv: [], now: () => new Date(), ...deps });
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(EXIT_CODE_OK);
     expect(result.poller.available).toBe(false);
     expect(result.report).toMatch(/unavailable/);
   });
 
-  it("exits 1 and never writes a summary if the board API itself is unreachable", async () => {
+  it("exits EXIT_CODE_BOARD_UNREACHABLE and never writes a summary if the board API itself is unreachable", async () => {
     const deps = makeDeps();
     deps.fetchImpl = vi.fn(async () => {
       throw new Error("ECONNREFUSED");
     });
     const result = await runVetAndReady({ env: {}, argv: [], now: () => new Date(), ...deps });
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(EXIT_CODE_BOARD_UNREACHABLE);
+    expect(EXIT_CODE_BOARD_UNREACHABLE).not.toBe(EXIT_CODE_WRITE_REFUSED);
     expect(deps.writeFileFn).not.toHaveBeenCalled();
+  });
+
+  // T-0384 FIX ROUND 3: a dry run never writes anything, so it is never a "write-time refusal" --
+  // even when every single candidate would have been skipped had this been an apply run, the dry
+  // run itself must stay a green systemd unit.
+  it("dry run always exits EXIT_CODE_OK, even when every candidate would be write-refused in apply mode", async () => {
+    const deps = makeDeps({
+      tasks: [makeTask({ id: "T-0001" }), makeTask({ id: "T-0002" })]
+    });
+    const result = await runVetAndReady({ env: {}, argv: [], now: () => new Date("2026-09-18T01:00:00.000Z"), ...deps });
+    expect(result.exitCode).toBe(EXIT_CODE_OK);
+  });
+
+  // T-0384 FIX ROUND 3: an ordinary selection-time skip (here, an unmet dependency -- rule 1) is
+  // decided before the apply loop even starts and never attempts a write, so it must never trip
+  // the write-refused exit code, in dry run OR apply mode.
+  it("a selection-time-only skip (unmet dependency) exits EXIT_CODE_OK in both dry run and apply mode", async () => {
+    const tasks = [makeTask({ id: "T-0001", depends_on: ["T-0099"] })];
+    const dryRun = makeDeps({ tasks });
+    const dryResult = await runVetAndReady({ env: {}, argv: [], now: () => new Date("2026-09-18T01:00:00.000Z"), ...dryRun });
+    expect(dryResult.result.readied).toEqual([]);
+    expect(dryResult.exitCode).toBe(EXIT_CODE_OK);
+
+    const applyRun = makeDeps({ tasks });
+    const applyResult = await runVetAndReady({ env: {}, argv: ["--apply"], now: () => new Date("2026-09-18T01:00:00.000Z"), ...applyRun });
+    expect(applyResult.result.readied).toEqual([]);
+    expect(applyResult.exitCode).toBe(EXIT_CODE_OK);
+    const patchCalls = applyRun.fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "PATCH");
+    expect(patchCalls).toHaveLength(0);
   });
 });
 
@@ -530,7 +569,10 @@ describe("runVetAndReady against a real HTTP server + a real DbTaskStore (Codex'
       const final = await store.get("T-9001");
       expect(final.status).toBe("backlog");
       expect(final.body).toMatch(/Held/);
-      expect(result.exitCode).toBe(0);
+      // The only candidate in this run was refused at write time (the server-enforced fingerprint
+      // condition rejected the stale PATCH) -- a real apply run against a real store must not
+      // report this as a clean, fully-successful run.
+      expect(result.exitCode).toBe(EXIT_CODE_WRITE_REFUSED);
       expect(result.report).toMatch(/T-9001/);
       expect(result.report).toMatch(/SKIPPED/);
     } finally {
@@ -577,6 +619,9 @@ describe("runVetAndReady against a real HTTP server + a real DbTaskStore (Codex'
       expect(t2.status).toBe("backlog");
       expect(result.report).toMatch(/T-9002/);
       expect(result.report).toMatch(/SKIPPED/);
+      // T-0001's write succeeded, but T-9002 was refused at write time -- the run is not "fully
+      // successful" and must not exit identically to a run where every candidate wrote cleanly.
+      expect(result.exitCode).toBe(EXIT_CODE_WRITE_REFUSED);
     } finally {
       await teardown();
     }
