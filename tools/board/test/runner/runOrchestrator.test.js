@@ -84,7 +84,7 @@ function baseTask(overrides = {}) {
     agent: "infra",
     depends_on: [],
     created: "2026-08-01",
-    body: "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n",
+    body: "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n\n**Edge cases:**\n- [ ] none\n",
     ...overrides
   };
 }

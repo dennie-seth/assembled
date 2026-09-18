@@ -213,7 +213,9 @@ describe("RunOrchestrator -- unsatisfiable-AC preflight (T-0300), warns but neve
   it("posts no extra warning comment when the AC is fully satisfiable", async () => {
     const store = makeStore([
       baseTask({
-        body: "## Context\nAdd a vitest check.\n\n## Acceptance\n" + "- [ ] Run `npx vitest run` and confirm all green\n"
+        body:
+          "## Context\nAdd a vitest check.\n\n## Acceptance\n" +
+          "- [ ] Run `npx vitest run` and confirm all green\n\n**Edge cases:**\n- [ ] none\n"
       })
     ]);
     const git = makeGit();
