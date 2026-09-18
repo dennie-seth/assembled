@@ -188,8 +188,15 @@ access, so it implements every vetting rule for real:
    both is what clears a card -- absence of a card-id mention alone is never
    sufficient on its own (Codex review 2026-09-18, finding 2: a commit can
    implement a card's whole acceptance without ever mentioning the card id).
-   See `src/lib/vetAndReady.js`'s `mergedWorkCheck` for the documented limit
-   of what a mechanical check can safely claim beyond this.
+   Reviewer FAIL round, 2026-09-18 (AC 10): an absent card-id hit alone is
+   *still* not clearance -- if the acceptance section names no checkable
+   path at all, there is no mechanical evidence in either direction, so the
+   card is skipped as uncertain rather than cleared. There are exactly three
+   outcomes: mechanical acceptance evidence (a named path with no history on
+   the base branch), an explicit recorded vetting decision (none exists in
+   this corpus today), or skip-as-uncertain. See `src/lib/vetAndReady.js`'s
+   `mergedWorkCheck` for the documented limit of what a mechanical check can
+   safely claim beyond this.
 3. The card's body carries none of a fixed set of superseding/held marker
    rules (`HELD`, `RE-SCOPED`/`RESCOPED`, `SUPERSEDED`, "This section
    governs", "stop and report"/"stop-and-report", a `## Finding` heading),
@@ -250,59 +257,83 @@ without needing `journalctl` at all.
 ### Live dry run (T-0384 acceptance evidence)
 
 `node ops/vetAndReady.js` (no `--apply`) against the actual live board at
-`127.0.0.1:4173`, 2026-09-18T09:51:34.590Z:
+`127.0.0.1:4173`, re-run after the AC10/AC13 fix round,
+2026-09-18T13:05:13.271Z:
 
 ```
-# Board vet-and-ready run -- 2026-09-18T09:51:34.590Z
+# Board vet-and-ready run -- 2026-09-18T13:05:13.271Z
 
-Poller state: unavailable -- GET /api/poller returned 404 Not Found -- likely a board deployment that predates T-0383
+Poller state: enabled=true, interval=30m, usageMax=0.8
 
-Eligible-at-all: 3 card(s) (status=backlog, agent=infra, deliverable_type=code, requires_approval=false)
-Readied: 2 (cap 4)
-Skipped: 1
-
-## Readied
-- T-0371 "WIP gate T-E: one shared GPU lease across every audited GPU submission path, with owner + crash reconciliation" [P2] READIED -- 5-cap-ok: every rule passed; readied (priority P2, within the cap of 4)
-- T-0372 "WIP gate T-F: drain mode with oversized-card detection and bounded, aged waiting" [P2] READIED -- 5-cap-ok: every rule passed; readied (priority P2, within the cap of 4)
+Eligible-at-all: 4 card(s) (status=backlog, agent=infra, deliverable_type=code, requires_approval=false)
+Readied: 0 (cap 4)
+Skipped: 4
 
 ## Skipped
 - T-0362 "Freeze the motion-gate thresholds against the first approved compositor walk and the negative-control battery (DL-31)" [P1] skipped -- 1-dependency: unmet dependency: T-0338 is backlog ([{"id":"T-0338","status":"backlog"}])
+- T-0371 "WIP gate T-E: one shared GPU lease across every audited GPU submission path, with owner + crash reconciliation" [P2] skipped -- 3-superseded: acceptance may be self-contradicted or superseded -- body contains marker(s): HELD (HELD)
+- T-0372 "WIP gate T-F: drain mode with oversized-card detection and bounded, aged waiting" [P2] skipped -- 3-superseded: acceptance may be self-contradicted or superseded -- body contains marker(s): HELD (HELD)
+- T-0385 "Deploy hardening: `node --watch` bypasses the deferred-restart-until-idle guard" [P1] skipped -- 2-merged: possibly already satisfied by merged work -- develop already shows activity for acceptance path `tools/board/DEPLOY.md` (0baca5f fix(board): fresh poller lastResult on tick error, dedupe dep-status Set, drop leaky ready-token query param (T-0383) | bd4f717 feat(board): add poller status, task filtering, and a token-guarded ready route (T-0383) | 9b094d7 fix(board): deploy.sh fast-forwards instead of always creating a --no-ff merge | 9c836b5 test(board): cover node --watch reload survives exec'd sh -c (T-0290) | d6bcd32 docs(board): spell out why no agent run self-verifies the T-0290 restart)
 
 ## Apply
 Dry run (default) -- nothing was written. Pass --apply to PATCH status: ready on the readied cards above.
 ```
 
-Confirmed it wrote nothing: `GET /api/tasks/T-0371` and `GET
-/api/tasks/T-0372` both still read `status: "backlog"` immediately after
-this run, and `git status --porcelain` was unchanged. The `Poller state:
-unavailable` line is the documented T-0383 degrade path working as intended
--- this board deployment (built from `develop` before T-0383 merged) has no
-`GET /api/poller` route yet.
+Confirmed it wrote nothing: `GET /api/tasks/T-0362`, `GET /api/tasks/T-0371`,
+`GET /api/tasks/T-0372` and `GET /api/tasks/T-0385` all still read
+`status: "backlog"` immediately after this run, and `git status --porcelain`
+was unchanged. `Poller state: enabled=true, interval=30m, usageMax=0.8` is
+the non-degraded path (`GET /api/poller`, T-0383) working live for the first
+time in this evidence -- the earlier fix-round run only ever exercised the
+404-degrade branch because the board it ran against predated T-0383's merge.
+
+This table differs from the earlier fix-round evidence exactly as the fix
+round's own note predicted: T-0371/T-0372 now skip on their `HELD` body
+markers (rule `3-superseded`) instead of being readied -- the case-sensitive
+marker bug that let `## Held` slip through is the very thing finding 1's fix
+closed, so those two cards were always supposed to skip and the earlier
+table was wrong, not this one. T-0362 is unchanged, still skipped purely on
+its unmet T-0338 dependency (rule 1). T-0385 is a card that didn't exist
+when the earlier table was captured; it skips on rule `2-merged` because its
+acceptance names `tools/board/DEPLOY.md`, which already has develop history
+-- correct, conservative behaviour, not a fixture of this fix round.
 
 #### Fix round (Codex review 2026-09-18, PR #396) -- re-verification status
 
-The four findings above (case-insensitive markers, mechanical merged-work
-path evidence, pre-write revalidation + a server-enforced write condition,
-a hard 4-card cap) were fixed with failing-test-first commits and verified
-against Codex's own `vetting-probes.mjs` and `merged-work-probe.mjs`,
+The four original findings (case-insensitive markers, mechanical
+merged-work path evidence, pre-write revalidation + a server-enforced write
+condition, a hard 4-card cap) were fixed with failing-test-first commits and
+verified against Codex's own `vetting-probes.mjs` and `merged-work-probe.mjs`,
 repointed at this worktree and re-run directly: all three body-marker
-variants skip, the `BOARD_VET_READY_CAP=10` cap override reports an
-effective cap of 4 with exactly 4 readied, the concurrent-status-change
-probe performs zero writes, and the merged-work probe (develop already has
-`feature.js` implementing the card's whole acceptance, committed without
-the card id) now skips instead of readying. The full board suite
-(`npx vitest run`, 3746 tests) and `npm run lint` are green.
+variants skip, the concurrent-status-change probe performs zero writes, and
+the merged-work probe (develop already has `feature.js` implementing the
+card's whole acceptance, committed without the card id) skips instead of
+readying. The `BOARD_VET_READY_CAP=10` cap override reports an effective cap
+of 4 with exactly 4 readied when run against candidates that carry
+mechanical acceptance evidence (a checkable, unmerged path) -- Codex's own
+probe fixture uses a path-less prose body, which the AC10 fix below now
+correctly skips as uncertain before it ever reaches the cap step; re-run
+with a checkable path (`## Acceptance\n\n- [ ] Add \`src/lib/pollerEndpoint.js\`.`)
+it selects exactly 4 of 6 candidates, confirming the cap itself is intact.
 
-The live board at `127.0.0.1:4173` was **not reachable from this session**
-(`ECONNREFUSED` on `GET /api/health`) -- the box this normally runs against
-wasn't up during this fix-round session, so the dry-run decision table
-above is unrefreshed. None of the four fixes change the *outcome* for the
-three cards it lists (T-0371/T-0372 have no held/superseded body markers
-and no acceptance-path git hits either way; T-0362 is skipped purely on
-its unmet T-0338 dependency, rule 1, untouched by this fix round), but
-that has not been re-confirmed live. Re-running `node ops/vetAndReady.js`
-(no `--apply`) once the board is reachable and replacing this block with
-fresh output is the next step before this evidence is current again.
+#### AC10/AC13 fix round (reviewer FAIL round, 2026-09-18)
+
+Two criteria failed in the prior validation: (1) `mergedWorkCheck` still
+returned `ok: true` whenever a card's acceptance section named no checkable
+path at all, clearing it on nothing but an absent card-id git hit -- fixed
+so that case now returns skip-as-uncertain instead (see `mergedWorkCheck`
+in `src/lib/vetAndReady.js`, and the rule-2 description above). Fixing this
+surfaced a second, real bug: `ACCEPTANCE_SECTION_RE`'s `m`-flag `$` anchor
+matched at the first blank line after the `## Acceptance` heading -- this
+repo's own house style -- so `extractAcceptancePaths` silently returned `[]`
+for virtually every real card regardless of content; also fixed, with its
+own failing-test-first regression. (2) This "Live dry run" evidence block
+above was stale from a session where the board was unreachable; it is now
+the fresh 2026-09-18T13:05:13.271Z run captured above, confirmed to have
+written nothing.
+
+The full board suite (`npx vitest run`, 200 files / 3825 tests) and
+`npm run lint` are green on the head that includes both fixes.
 
 ### Installing (not done by this card, on purpose)
 
