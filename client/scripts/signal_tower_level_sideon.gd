@@ -82,6 +82,18 @@ func _ready() -> void:
 	## on schedule under that harness.
 	get_tree().physics_frame.connect(_on_grace_window_tick)
 
+	## Geometry + the Player node are built synchronously here, not gated
+	## behind entry_room_ready: tests/test_main_scene_compiles.gd loads
+	## run/main_scene, lets it run a handful of frames with no first-run
+	## screen ever acknowledged, and requires a "Player" child to already
+	## exist — it (deliberately) never drives FirstRunController's async
+	## identity round-trip. Live keyboard input stays gated behind
+	## entry_room_ready via _room_built below, so a first-run blocking
+	## screen still fully owns player control until it's cleared — only
+	## the timing of *when the room is built* changes, not who can move
+	## the player while a screen is up.
+	build_level()
+
 	_first_run = _FirstRunControllerScript.new()
 	add_child(_first_run)
 	_first_run.entry_room_ready.connect(_on_first_run_entry_room_ready)
@@ -89,7 +101,6 @@ func _ready() -> void:
 
 
 func _on_first_run_entry_room_ready() -> void:
-	build_level()
 	_room_built = true
 
 
