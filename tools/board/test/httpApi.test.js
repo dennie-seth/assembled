@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
@@ -399,6 +400,171 @@ describe("PATCH /api/tasks/:id", () => {
     expect(res.status).toBe(400);
     const payload = await res.json();
     expect(payload.error).toMatch(/complexity_points/i);
+  });
+
+  // Codex review 2026-09-18 (T-0384), finding 3: a re-check followed by an unconditional PATCH
+  // is a TOCTOU race. X-Board-Expected-Status lets a caller assert the card's current status
+  // before the write commits, atomically with the write (StaleWriteError -> 409) rather than as
+  // a separate read of its own.
+  describe("conditional write (X-Board-Expected-Status)", () => {
+    it("applies the write when the header matches the task's current status", async () => {
+      const task = await createTask();
+      expect(task.status).toBe("backlog");
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Expected-Status": "backlog" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+      const updated = await res.json();
+      expect(updated.status).toBe("ready");
+    });
+
+    it("returns 409 and leaves the record untouched when the header no longer matches the current status", async () => {
+      const task = await createTask();
+      await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "in-progress" })
+      });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Expected-Status": "backlog" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(409);
+
+      const current = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+      expect(current.status).toBe("in-progress");
+    });
+
+    it("PATCHes normally when no expected-status header is sent (backward compatible)", async () => {
+      const task = await createTask();
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): X-Board-Expected-Status alone only guards
+  // status. A caller that needs to guard body/agent/deliverable_type/depends_on too sends
+  // X-Board-Expected-Fields -- a JSON fingerprint of every field it vetted -- and the write is
+  // refused if ANY of them changed underneath it, even with status still matching.
+  describe("conditional write (X-Board-Expected-Fields)", () => {
+    it("applies the write when every field in the fingerprint still matches", async () => {
+      const task = await createTask({ body: "## Acceptance\n- [ ] Do the thing.\n" });
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Board-Expected-Fields": JSON.stringify({
+            status: "backlog",
+            agent: task.agent,
+            bodyHash: crypto.createHash("sha256").update(task.body).digest("hex")
+          })
+        },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("ready");
+    });
+
+    it("returns 409 and leaves the record untouched when the body changed, even though status still matches", async () => {
+      const task = await createTask({ body: "## Acceptance\n- [ ] Do the thing.\n" });
+      await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "## Held\nDo not ready this card.\n" })
+      });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Board-Expected-Fields": JSON.stringify({
+            status: "backlog",
+            bodyHash: crypto.createHash("sha256").update(task.body).digest("hex")
+          })
+        },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(409);
+      const payload = await res.json();
+      expect(payload.error).toMatch(/body/);
+
+      const current = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+      expect(current.status).toBe("backlog");
+      expect(current.body).toBe("## Held\nDo not ready this card.\n");
+    });
+
+    it("returns 400 when the header isn't valid JSON", async () => {
+      const task = await createTask();
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Expected-Fields": "{not json" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): a dependency re-check done via a plain
+  // GET before this PATCH is not atomic with the write -- the dependency can regress in the gap.
+  // X-Board-Require-Dependencies-Satisfied asks the atomic write itself to verify every
+  // depends_on id is still done/retired, and refuse (409) if not. Opt-in: omitting the header
+  // never runs this check, exactly like the other two conditional-write headers.
+  describe("conditional ready write (X-Board-Require-Dependencies-Satisfied)", () => {
+    it("applies the write when the header is set and every dependency is done", async () => {
+      const dep = await createTask({ title: "Dependency" });
+      await fetch(`${baseUrl}/api/tasks/${dep.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "done" })
+      });
+      const task = await createTask({ title: "Depends on it", depends_on: [dep.id] });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Require-Dependencies-Satisfied": "true" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("ready");
+    });
+
+    it("returns 409 naming the dependency and its current status when a dependency isn't done at write time, and leaves the record untouched", async () => {
+      const dep = await createTask({ title: "Dependency" });
+      const task = await createTask({ title: "Depends on it", depends_on: [dep.id] });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Require-Dependencies-Satisfied": "true" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(409);
+      const payload = await res.json();
+      expect(payload.error).toMatch(new RegExp(dep.id));
+      expect(payload.error).toMatch(/backlog/);
+
+      const current = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+      expect(current.status).toBe("backlog");
+    });
+
+    it("PATCHes normally without the header even when a dependency isn't done (backward compatible, opt-in)", async () => {
+      const dep = await createTask({ title: "Dependency" });
+      const task = await createTask({ title: "Depends on it", depends_on: [dep.id] });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+    });
   });
 });
 
