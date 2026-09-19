@@ -27,9 +27,12 @@ const DEFAULT_LAYOUT_PATH: String = "res://signal_tower/layouts/signal_tower_v1.
 ## Door opening height, in tiles, anchored at the shared floor row (T-0390
 ## planner finding 5) — not the vertical midpoint of the two rooms' overlap.
 const DOOR_OPENING_TILES: int = 3
-## Ladder opening width, in tiles — mirrors signal_tower_overview.gd's
-## OPENING_SPAN.
-const LADDER_OPENING_TILES: int = 2
+## Ladder opening width, in tiles. Deliberately narrower than
+## signal_tower_overview.gd's OPENING_SPAN (2) — antenna_shaft's interior is
+## only 4 tiles wide and hosts two ladders back-to-back (T-0328's narrow-shaft
+## edge case), so a 2-tile opening for each would consume the entire interior
+## with no gap left for a landing clear of either trigger (T-0390).
+const LADDER_OPENING_TILES: int = 1
 ## Thickness, along the crossing axis, of a door trigger area.
 const DOOR_TRIGGER_DEPTH_PX: float = 16.0
 ## Extra clearance placed past a trigger's far edge when landing a player —
@@ -38,6 +41,10 @@ const DOOR_TRIGGER_DEPTH_PX: float = 16.0
 const CONNECTOR_CLEARANCE_PX: float = 16.0
 ## Vertical band, centred on a room's floor_y, a ladder trigger occupies.
 const LADDER_TRIGGER_HEIGHT_PX: float = 16.0
+
+## Extra safety margin, in physics frames, added on top of a room-width-
+## derived grace window — see _grace_frames_for_room().
+const REENTRY_GRACE_MARGIN_FRAMES: int = 10
 
 const _WALL_COLOR: Color = Color(0.28, 0.28, 0.28)
 const _FLOOR_COLOR: Color = Color(0.22, 0.22, 0.22)
@@ -52,6 +59,7 @@ var _trigger_by_pair: Dictionary = {}
 ## the player lands, and its new floor_y, when transitioning from_tag -> to_tag.
 var _arrivals: Dictionary = {}
 var _pending_room_connectors: Array = []
+var _connector_count_by_room: Dictionary = {}  ## anchor_tag -> int
 
 var _player: CharacterBody2D
 var _first_run: Node
@@ -60,8 +68,20 @@ var _current_room_tag: String = ""
 var _room_change_count: int = 0
 var _load_error: String = ""
 
+## The "<room>|<target>" connector key currently filtered out of
+## _player.room_connectors, and how many physics frames until it's restored —
+## see _on_player_room_transition()'s grace-suppression comment.
+var _suppressed_connector_key: String = ""
+var _suppress_frames_remaining: int = 0
+
 
 func _ready() -> void:
+	## Decoupled from _physics_process (tests build a live instance with
+	## set_physics_process(false), driving physics via direct apply_input() +
+	## awaited physics_frame calls instead) so grace suppression still expires
+	## on schedule under that harness.
+	get_tree().physics_frame.connect(_on_grace_window_tick)
+
 	_first_run = _FirstRunControllerScript.new()
 	add_child(_first_run)
 	_first_run.entry_room_ready.connect(_on_first_run_entry_room_ready)
@@ -92,6 +112,9 @@ func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
 	_arrivals = {}
 	_pending_room_connectors = []
 
+	_suppressed_connector_key = ""
+	_suppress_frames_remaining = 0
+
 	_layout = _RoomLayoutScript.new()
 	var err: String = _layout.load_from_path(layout_path)
 	if err != "":
@@ -108,10 +131,23 @@ func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
 		_layout = null
 		return
 
+	_connector_count_by_room = {}
+	for conn: Dictionary in _layout.get_connections():
+		_connector_count_by_room[conn["from"]] = _connector_count_by_room.get(conn["from"], 0) + 1
+		_connector_count_by_room[conn["to"]] = _connector_count_by_room.get(conn["to"], 0) + 1
+
 	var openings: Dictionary = {}
 	for tag: String in _layout.get_all_tags():
 		openings[tag] = {"left": [], "right": [], "top": [], "bottom": []}
 
+	## Two passes: geometry first (every connection's opening + ladder trigger
+	## x-range), then room construction, then connector registration — landing
+	## placement (_register_connector) needs every OTHER ladder trigger
+	## sharing a room already known, not just the connection being processed,
+	## to keep a landing clear of both walls and neighbouring triggers (see
+	## _pick_ladder_landing_x()).
+	var conn_geos: Array = []
+	var ladder_ranges_by_room: Dictionary = {}  ## anchor_tag -> Array[Vector2(x0_px, x1_px)]
 	var ladder_index: int = 0
 	for conn: Dictionary in _layout.get_connections():
 		var geo: Dictionary
@@ -128,12 +164,18 @@ func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
 		else:
 			geo = _ladder_geometry(conn, ladder_index)
 			ladder_index += 1
+			var trigger_range := Vector2(geo["opening_x0_px"], geo["opening_x1_px"])
+			ladder_ranges_by_room.get_or_add(conn["from"], []).append(trigger_range)
+			ladder_ranges_by_room.get_or_add(conn["to"], []).append(trigger_range)
 		openings[conn["from"]][geo["a_side"]].append(geo["a_range"])
 		openings[conn["to"]][geo["b_side"]].append(geo["b_range"])
-		_register_connector(conn, geo)
+		conn_geos.append({"conn": conn, "geo": geo})
 
 	for tag: String in _layout.get_all_tags():
 		_room_nodes[tag] = _build_room(tag, openings[tag])
+
+	for entry: Dictionary in conn_geos:
+		_register_connector(entry["conn"], entry["geo"], ladder_ranges_by_room)
 
 	_build_player()
 
@@ -190,6 +232,47 @@ func _floor_row_global(tag: String) -> int:
 
 func _floor_y_px(tag: String) -> float:
 	return float(_floor_row_global(tag)) * float(_layout.tile_size_px)
+
+
+## World-space [x_min, x_max) of [param tag]'s INTERIOR columns — inset one
+## tile from its own left/right walls, matching _ladder_geometry()'s own
+## interior inset so a landing point placed within these bounds never spawns
+## inside a wall collider.
+func _room_interior_x_bounds(tag: String) -> Vector2:
+	var rect: Rect2i = _layout.get_rect_tiles(tag)
+	var tile_size: int = _layout.tile_size_px
+	return Vector2(float((rect.position.x + 1) * tile_size), float((rect.end.x - 1) * tile_size))
+
+
+## Chooses where a ladder's arrival point lands inside [param tag]: past the
+## opening's right edge by CONNECTOR_CLEARANCE_PX if that stays clear of both
+## the room's own walls and every OTHER ladder trigger already registered in
+## that room ([param other_ranges_in_room]); otherwise past the left edge
+## under the same test; otherwise (room too narrow for either) the room's own
+## midpoint, clamped inside its walls, as a last resort.
+##
+## Needed because PlayerController's connector check is unconditional
+## position overlap with no notion of "which side did the player come from"
+## (T-0390) — a landing that spawns inside a wall gets shoved by physics on
+## the very next move_and_slide(), and a landing inside ANOTHER trigger's
+## zone fires that connector immediately, neither of which is a legitimate
+## room-to-room hop.
+func _pick_ladder_landing_x(tag: String, x0_px: float, x1_px: float, other_ranges_in_room: Array) -> float:
+	var bounds: Vector2 = _room_interior_x_bounds(tag)
+	var right: float = x1_px + CONNECTOR_CLEARANCE_PX
+	var left: float = x0_px - CONNECTOR_CLEARANCE_PX
+	if right <= bounds.y and not _x_in_any_range(right, other_ranges_in_room):
+		return right
+	if left >= bounds.x and not _x_in_any_range(left, other_ranges_in_room):
+		return left
+	return clampf((bounds.x + bounds.y) * 0.5, bounds.x, bounds.y)
+
+
+func _x_in_any_range(x: float, ranges: Array) -> bool:
+	for r: Vector2 in ranges:
+		if x >= r.x and x < r.y:
+			return true
+	return false
 
 
 ## Door opening geometry: the opening is anchored at the shared floor row of
@@ -353,8 +436,12 @@ func _add_wall(
 # ── Connectors ────────────────────────────────────────────────────────────────
 
 ## Registers both directions of one declared connection: a trigger area and
-## an arrival point in each of the two connected rooms.
-func _register_connector(conn: Dictionary, geo: Dictionary) -> void:
+## an arrival point in each of the two connected rooms. [param ladder_ranges_by_room]
+## is every ladder trigger's world x-range, grouped by the room it lives in
+## (built across ALL connections before this is called) — used to keep a
+## ladder's own landing clear of both that room's walls and any OTHER ladder
+## trigger sharing the room (see _pick_ladder_landing_x()).
+func _register_connector(conn: Dictionary, geo: Dictionary, ladder_ranges_by_room: Dictionary = {}) -> void:
 	var a_tag: String = conn["from"]
 	var b_tag: String = conn["to"]
 
@@ -387,12 +474,19 @@ func _register_connector(conn: Dictionary, geo: Dictionary) -> void:
 		var floor_b: float = _floor_y_px(b_tag)
 		area_a = Rect2(x0_px, floor_a - half_h, width_px, LADDER_TRIGGER_HEIGHT_PX)
 		area_b = Rect2(x0_px, floor_b - half_h, width_px, LADDER_TRIGGER_HEIGHT_PX)
-		var landing_x: float = x1_px + CONNECTOR_CLEARANCE_PX
-		arrival_b = Vector2(landing_x, floor_b)
-		arrival_a = Vector2(landing_x, floor_a)
+		arrival_b = Vector2(
+			_pick_ladder_landing_x(b_tag, x0_px, x1_px, ladder_ranges_by_room.get(b_tag, [])), floor_b
+		)
+		arrival_a = Vector2(
+			_pick_ladder_landing_x(a_tag, x0_px, x1_px, ladder_ranges_by_room.get(a_tag, [])), floor_a
+		)
 
-	_pending_room_connectors.append({"area": area_a, "target_room_id": b_tag})
-	_pending_room_connectors.append({"area": area_b, "target_room_id": a_tag})
+	_pending_room_connectors.append(
+		{"area": area_a, "target_room_id": b_tag, "key": "%s|%s" % [a_tag, b_tag]}
+	)
+	_pending_room_connectors.append(
+		{"area": area_b, "target_room_id": a_tag, "key": "%s|%s" % [b_tag, a_tag]}
+	)
 
 	_trigger_by_pair["%s|%s" % [a_tag, b_tag]] = area_a
 	_trigger_by_pair["%s|%s" % [b_tag, a_tag]] = area_b
@@ -439,10 +533,69 @@ func _on_player_room_transition(target_room_id: String) -> void:
 		return
 
 	var arrival: Dictionary = _arrivals[key]
+	var previous_tag: String = _current_room_tag
 	_current_room_tag = target_room_id
 	_player.floor_y = arrival["floor_y"]
 	_player.position = arrival["position"]
 	_room_change_count += 1
+
+	## PlayerController's overlap check (§161-171) is unconditional and
+	## position-only — it has no notion of travel direction or intent. A room
+	## with more than two connectors can have one sandwiched, along the
+	## floor-row line, between this arrival point and another connector the
+	## player needs to reach (T-0390: equipment_floor's ladder-then-door
+	## layout — the ladder back up to power_substation sits between the
+	## landing spot and both the ladder down to antenna_shaft and the door to
+	## storage_cache). Without this, simply walking onward immediately re-
+	## triggers the connector just used. Suppress only that one connector,
+	## only long enough to walk clear of the room, and only where a genuine
+	## sandwich is possible — a two-connector room (e.g. ground_relay <->
+	## power_substation) has nothing to be sandwiched behind, so an immediate
+	## deliberate reversal there (the "wrong-side ladder" edge case) is never
+	## suppressed.
+	if _connector_count_by_room.get(target_room_id, 0) > 2:
+		_suppressed_connector_key = "%s|%s" % [target_room_id, previous_tag]
+		_suppress_frames_remaining = _grace_frames_for_room(target_room_id)
+		_apply_connector_suppression()
+
+
+## See _on_player_room_transition()'s grace-suppression comment. Long enough
+## to cross [param tag]'s full authored width at the player's slowest
+## (walking) speed, plus a fixed margin — derived from the layout and
+## PlayerController.WALK_SPEED rather than a fixed constant, so it stays
+## correct if the authored room sizes ever change.
+func _grace_frames_for_room(tag: String) -> int:
+	var width_px: float = _layout.get_rect_px(tag).size.x
+	var fps: float = float(Engine.physics_ticks_per_second)
+	var px_per_frame: float = _PlayerScript.WALK_SPEED / fps
+	return int(ceil(width_px / px_per_frame)) + REENTRY_GRACE_MARGIN_FRAMES
+
+
+## Applies (or lifts) the current suppression to the live player's
+## room_connectors. Filtering a copy of _pending_room_connectors rather than
+## mutating it in place keeps the unfiltered list intact for restoration.
+func _apply_connector_suppression() -> void:
+	if _suppress_frames_remaining > 0 and _suppressed_connector_key != "":
+		var filtered: Array[Dictionary] = []
+		for c: Dictionary in _pending_room_connectors:
+			if c.get("key", "") != _suppressed_connector_key:
+				filtered.append(c)
+		_player.room_connectors.assign(filtered)
+	else:
+		_suppressed_connector_key = ""
+		_player.room_connectors.assign(_pending_room_connectors)
+
+
+## Connected to SceneTree.physics_frame in _ready() — ticks the grace window
+## regardless of whether this level's own _physics_process is enabled (tests
+## disable it, driving physics via direct apply_input() + awaited
+## physics_frame calls instead of the level's automatic Input polling).
+func _on_grace_window_tick() -> void:
+	if _suppress_frames_remaining <= 0:
+		return
+	_suppress_frames_remaining -= 1
+	if _suppress_frames_remaining == 0:
+		_apply_connector_suppression()
 
 
 func _physics_process(_delta: float) -> void:
