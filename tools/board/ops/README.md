@@ -286,6 +286,30 @@ partial "hold one, wait on another" state for a deadlock to form in. See
 `test/fsTaskStore.test.js`'s "FIX ROUND 5" describe block for both
 regressions.
 
+**The FS guard re-validates its own lock set before trusting it** (T-0384
+FIX ROUND 6, Chat round-3 review): FIX ROUND 5's lock set was still chosen
+from an UNLOCKED peek of `depends_on`, taken before any lock is acquired --
+if `depends_on` itself changed between that peek and the lock actually
+landing, the guard could lock yesterday's dependency and evaluate today's
+real one without ever holding its lock. `FsTaskStore.update` now re-reads
+`depends_on` fresh from INSIDE the lock it just acquired and compares it
+against the ids it actually locked (`sameIdSet`); a mismatch drops the lock
+and retries with the corrected set, bounded by `MAX_DEPENDENCY_LOCK_ATTEMPTS`
+(5) -- a depends_on that changes on every single re-read is refused with a
+new `DependencyLockSetUnstableError` rather than retried forever. This does
+**not** depend on a caller-supplied `expected.depends_on`: the comparison is
+always against a fresh read `update` takes itself, so
+`requireDependenciesSatisfied: true` is safe on its own with no `expected`
+at all -- the option chosen was (a) retry, not (b) refuse-on-this-backend,
+since retrying converges in the ordinary case and the bound keeps the
+pathological case from hanging. `DbTaskStore` needed no change: its whole
+`requireDependenciesSatisfied` check plus the write already run inside one
+synchronous transaction, so there is no separate "peek" step to go stale.
+See `test/fsTaskStore.test.js`'s "FIX ROUND 6" describe block for the
+interleaving regression (encoding Chat's exact reproduction), the
+bounded-retry-exhaustion regression, and a no-deadlock regression for two
+concurrent guarded writes whose dependency sets change mid-flight.
+
 **A write-time refusal changes the run's exit code, not just its report**
 (T-0384 FIX ROUND 3). `vetAndReady.js` exports three named exit codes:
 
@@ -454,6 +478,38 @@ without deadlock.
 Board suite: 203 files / 3908 tests passing (the same one load-dependent
 flake as FIX ROUND 4, `test/runner/cardLaunch.test.js:915`, unrelated to
 this diff -- 72/72 green when that file runs alone); `npm run lint` clean.
+
+#### FIX ROUND 6 (Chat round-3 review 2026-09-19, head bf4449c)
+
+One remaining P2: FIX ROUND 5's dependency-lock fix chose which ids to lock
+from an UNLOCKED peek of `depends_on`, taken before `_withLocks` is even
+called. If `depends_on` itself changed in the gap between that peek and lock
+acquisition, the guard could lock the WRONG dependency (yesterday's) and
+evaluate the real one (today's) without ever holding its lock -- a narrower,
+same-instance version of the FIX ROUND 5 gap, not the accepted
+cross-process/per-instance limitation. See the "FS guard re-validates its
+own lock set" paragraph above for the full writeup and the chosen fix
+(option (a): re-read `depends_on` inside the lock and retry with a corrected
+set, bounded).
+
+Chat's `fs-changed-dependency-probe.mjs`, mirrored at
+`/home/dennieseth/codex-2026-09-19-r3/`, is outside this worktree and not
+reachable from this sandbox (a hard filesystem boundary, not a permission
+prompt -- `ls` on that path is refused: "may only list files in the allowed
+working directories for this session"). Per the card's own fallback, the
+new "FIX ROUND 6" describe block in `test/fsTaskStore.test.js` stands in for
+it: the exact 5-step interleaving Chat described (stale peek locks T-9002,
+a competing write retargets `depends_on` to T-9003, the guard must not
+evaluate/write against T-9003 without holding its lock -- the competing
+write to T-9003 is proven to queue behind the guard's corrected lock
+instead of racing it), plus a bounded-retry-exhaustion regression
+(`depends_on` changing on every re-read refuses with
+`DependencyLockSetUnstableError` rather than hanging) and a no-deadlock
+regression for two concurrent guarded writes whose dependency sets change
+mid-flight.
+
+Board suite: 203 files / 3916 tests passing, no flake this run; `npm run
+lint` clean.
 
 ### Installing (not done by this card, on purpose)
 

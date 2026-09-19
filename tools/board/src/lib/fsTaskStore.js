@@ -5,6 +5,7 @@ import {
   TaskStore,
   StaleWriteError,
   DependencyNotSatisfiedError,
+  DependencyLockSetUnstableError,
   findMismatchedExpectedFields,
   findUnsatisfiedDependencies
 } from "./taskStore.js";
@@ -20,6 +21,23 @@ function assertExpectedMatches(id, expected, current) {
     throw new StaleWriteError(id, expected, current, mismatches);
   }
 }
+
+/** Order-independent id-set equality -- used to compare a candidate's freshly re-read
+ * `depends_on` against the ids a guarded FS write actually locked (see `update`'s
+ * `requireDependenciesSatisfied` branch, T-0384 FIX ROUND 6).
+ */
+function sameIdSet(a, b) {
+  const setA = new Set(a ?? []);
+  const setB = new Set(b ?? []);
+  if (setA.size !== setB.size) return false;
+  for (const value of setA) {
+    if (!setB.has(value)) return false;
+  }
+  return true;
+}
+
+/** Bounded retry limit for `update`'s dependency-lock-set correction loop -- see its comment. */
+const MAX_DEPENDENCY_LOCK_ATTEMPTS = 5;
 
 const DEFAULT_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -57,6 +75,18 @@ export class FsTaskStore extends TaskStore {
     // candidate's write. `update()` now locks the candidate id together with every id in the
     // `depends_on` list it is about to check, via `_withLocks` below, so a dependency write
     // through this store instance cannot interleave with a guarded ready operation checking it.
+    //
+    // T-0384 FIX ROUND 6 (Chat round-3 review 2026-09-19, P2): FIX ROUND 5 still chose WHICH ids
+    // to lock from an UNLOCKED peek of `depends_on`, taken before any lock is held -- if
+    // `depends_on` itself changed between that peek and lock acquisition, the guard could end up
+    // holding yesterday's dependency's lock while evaluating today's real dependency without ever
+    // locking it. `update()` now re-reads `depends_on` fresh INSIDE the lock it just acquired and
+    // compares it against the ids it actually locked; a mismatch releases the lock and retries
+    // with the corrected set (bounded by `MAX_DEPENDENCY_LOCK_ATTEMPTS`, refusing with
+    // `DependencyLockSetUnstableError` rather than looping forever if it never settles). This does
+    // NOT rely on a caller-supplied `expected.depends_on` -- the comparison is always against a
+    // fresh read taken by `update` itself, so `requireDependenciesSatisfied: true` is safe on its
+    // own with no `expected` at all.
     this._locks = new Map();
   }
 
@@ -138,55 +168,75 @@ export class FsTaskStore extends TaskStore {
   }
 
   async update(id, updates, { expected, requireDependenciesSatisfied } = {}) {
-    // T-0384 FIX ROUND 5 (Codex round-2 review 2026-09-19, P2): when the write is going to check
-    // dependency status, lock those dependency ids TOO, not just `id` -- otherwise a separate write
-    // to a dependency (a different entry in `_locks`) could still land between the read below and
-    // the write it guards. This peek is unlocked and may be stale if `depends_on` itself changes
-    // before the lock is acquired, but that's harmless: `assertExpectedMatches` below (which runs
-    // inside the lock, against a fresh re-read) already refuses the write if `depends_on` changed,
-    // independent of which ids happened to get locked here.
-    const lockIds = [id];
-    if (requireDependenciesSatisfied) {
-      const peeked = updates.depends_on ?? (await this.get(id))?.depends_on ?? [];
-      lockIds.push(...peeked);
+    for (let attempt = 1; ; attempt += 1) {
+      // T-0384 FIX ROUND 5 (Codex round-2 review 2026-09-19, P2): when the write is going to check
+      // dependency status, lock those dependency ids TOO, not just `id` -- otherwise a separate
+      // write to a dependency (a different entry in `_locks`) could still land between the read
+      // below and the write it guards. T-0384 FIX ROUND 6 (Chat round-3 review, P2): this peek is
+      // UNLOCKED and can be stale the instant it's taken -- `depends_on` itself may change before
+      // the lock below is even acquired, which used to mean the guard could lock the WRONG ids.
+      // The re-check inside the lock, below, catches that and retries with a corrected set.
+      const peekedDependencyIds = requireDependenciesSatisfied
+        ? (updates.depends_on ?? (await this.get(id))?.depends_on ?? [])
+        : [];
+      const lockIds = [id, ...peekedDependencyIds];
+      const outcome = await this._withLocks(lockIds, async () => {
+        const existing = await this.get(id);
+        if (!existing) {
+          throw new Error(`Task ${id} not found`);
+        }
+        if (updates.id !== undefined && updates.id !== id) {
+          throw new Error("Cannot change a task's id via update");
+        }
+
+        if (requireDependenciesSatisfied) {
+          // Re-read `depends_on` fresh, now that the lock is actually held, and compare it
+          // against the ids `lockIds` above locked. A mismatch means the unlocked peek was stale
+          // (T-0384 FIX ROUND 6): never evaluate, or write against, a dependency whose lock this
+          // attempt doesn't hold -- drop the lock and retry with the now-known-correct set.
+          const freshDependencyIds = updates.depends_on ?? existing.depends_on ?? [];
+          if (!sameIdSet(freshDependencyIds, peekedDependencyIds)) {
+            return { retry: true };
+          }
+        }
+
+        // The per-id lock above makes this atomic against every other mutating call on the same
+        // id serviced by this store instance: no other `create`/`update`/`remove` for `id` can run
+        // between this read and the write below.
+        assertExpectedMatches(id, expected, existing);
+        const merged = { ...existing, ...updates, id };
+
+        // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): re-reads each dependency's status
+        // here, inside the same per-id lock section, immediately before the write -- not off
+        // whatever a caller checked separately beforehand. T-0384 FIX ROUND 5/6: as of the
+        // dependency-set check above, this section only ever runs once `lockIds` is confirmed to
+        // match `merged.depends_on`, so every id read here is genuinely held. Still
+        // in-process/per-instance only (see the constructor note): it does not cover a dependency
+        // written by a second `FsTaskStore` instance or another process.
+        if (requireDependenciesSatisfied) {
+          const statusById = new Map();
+          for (const depId of merged.depends_on ?? []) {
+            const dep = await this.get(depId);
+            statusById.set(depId, dep?.status ?? null);
+          }
+          const unmet = findUnsatisfiedDependencies(merged.depends_on, statusById);
+          if (unmet.length > 0) {
+            throw new DependencyNotSatisfiedError(id, unmet);
+          }
+        }
+
+        await atomicWriteFile(taskPath(this.dir, id), serializeTask(merged));
+        return { merged };
+      });
+
+      if (outcome.retry) {
+        if (attempt >= MAX_DEPENDENCY_LOCK_ATTEMPTS) {
+          throw new DependencyLockSetUnstableError(id, MAX_DEPENDENCY_LOCK_ATTEMPTS);
+        }
+        continue;
+      }
+      return outcome.merged;
     }
-    return this._withLocks(lockIds, async () => {
-      const existing = await this.get(id);
-      if (!existing) {
-        throw new Error(`Task ${id} not found`);
-      }
-      if (updates.id !== undefined && updates.id !== id) {
-        throw new Error("Cannot change a task's id via update");
-      }
-      // The per-id lock above makes this atomic against every other mutating call on the same
-      // id serviced by this store instance: no other `create`/`update`/`remove` for `id` can run
-      // between this read and the write below.
-      assertExpectedMatches(id, expected, existing);
-      const merged = { ...existing, ...updates, id };
-
-      // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): re-reads each dependency's status
-      // here, inside the same per-id lock section, immediately before the write -- not off
-      // whatever a caller checked separately beforehand. T-0384 FIX ROUND 5: as of the `lockIds`
-      // computed above, this section now ALSO holds each dependency's own lock (in addition to
-      // `id`'s), so a separate write to one of these dependency ids through this same store
-      // instance cannot interleave here either. Still in-process/per-instance only (see the
-      // constructor note): it does not cover a dependency written by a second `FsTaskStore`
-      // instance or another process.
-      if (requireDependenciesSatisfied) {
-        const statusById = new Map();
-        for (const depId of merged.depends_on ?? []) {
-          const dep = await this.get(depId);
-          statusById.set(depId, dep?.status ?? null);
-        }
-        const unmet = findUnsatisfiedDependencies(merged.depends_on, statusById);
-        if (unmet.length > 0) {
-          throw new DependencyNotSatisfiedError(id, unmet);
-        }
-      }
-
-      await atomicWriteFile(taskPath(this.dir, id), serializeTask(merged));
-      return merged;
-    });
   }
 
   async move(id, status) {

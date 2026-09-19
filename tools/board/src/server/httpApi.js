@@ -46,7 +46,7 @@ import {
   RoundCapExceededError
 } from "../lib/roundCap.js";
 import { readVerdictEntries } from "../lib/verdictArchive.js";
-import { StaleWriteError, DependencyNotSatisfiedError } from "../lib/taskStore.js";
+import { StaleWriteError, DependencyNotSatisfiedError, DependencyLockSetUnstableError } from "../lib/taskStore.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_APPROVAL_PATH_RE = /^\/api\/tasks\/([^/]+)\/approval$/;
@@ -761,7 +761,11 @@ async function applyPatchAndSideEffects({
   try {
     updated = await store.update(id, body, { expected, requireDependenciesSatisfied });
   } catch (err) {
-    if (err instanceof StaleWriteError || err instanceof DependencyNotSatisfiedError) {
+    if (
+      err instanceof StaleWriteError ||
+      err instanceof DependencyNotSatisfiedError ||
+      err instanceof DependencyLockSetUnstableError
+    ) {
       throw new HttpError(err.statusCode, err.message);
     }
     const status = /not found/i.test(err.message) ? 404 : 400;

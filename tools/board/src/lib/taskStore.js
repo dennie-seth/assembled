@@ -131,6 +131,28 @@ export class DependencyNotSatisfiedError extends Error {
   }
 }
 
+/**
+ * Thrown by `FsTaskStore.update(id, updates, { requireDependenciesSatisfied: true })` when the
+ * candidate's `depends_on` list is different on every re-read, so the guard can never settle on a
+ * dependency lock set that still matches by the time it holds the locks (T-0384 FIX ROUND 6, Chat
+ * round-3 review, P2). The guard's own unlocked peek (which ids to lock) can be stale the instant
+ * it's taken; re-reading `depends_on` INSIDE the acquired locks and retrying with a corrected lock
+ * set closes that, but a caller that keeps mutating `depends_on` faster than the guard can catch up
+ * must eventually be refused rather than retried forever -- same "uncertainty never counts as
+ * satisfied" posture as `DependencyNotSatisfiedError`, `statusCode` included.
+ */
+export class DependencyLockSetUnstableError extends Error {
+  constructor(id, attempts) {
+    super(
+      `Refusing to ready ${id}: its depends_on list changed on every re-read across ${attempts} attempt(s) -- could not settle on a stable dependency lock set`
+    );
+    this.name = "DependencyLockSetUnstableError";
+    this.id = id;
+    this.attempts = attempts;
+    this.statusCode = 409;
+  }
+}
+
 export class TaskStore {
   async list() {
     throw new Error("TaskStore.list is not implemented");
