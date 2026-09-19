@@ -83,6 +83,8 @@ func _run() -> void:
 	_failures += await _test_dead_end_branches_isolated()
 	_failures += await _test_chain_terminus_no_onward_connector()
 	_failures += await _test_player_blocked_by_side_wall()
+	_failures += await _test_camera_exists_and_is_current()
+	_failures += await _test_player_has_visible_grey_box_body()
 	_failures += await _test_full_critical_path_traversal_and_branches_and_reverse()
 
 	_finish()
@@ -222,6 +224,46 @@ func _walk_to_room_via_interact(
 	player.interact_pressed.emit()
 	await physics_frame
 	return level.get_current_room_tag() == to_tag
+
+
+## Asserts the player, the active room's floor row at the player's x, and (if
+## currently shown) the interaction prompt are all within the REAL running
+## viewport's visible rect (T-0390 fix round 3, P1 a) — canvas transform +
+## visible rect from the live Viewport, not room-rect maths, so this fails if
+## the camera doesn't actually track the player. player.floor_y always equals
+## the active room's floor row (PlayerController is floor-plane-locked), so
+## checking it at the player's own x is sufficient — no separate per-room
+## floor_y lookup is needed.
+func _assert_on_screen(inst: Node2D, player: CharacterBody2D, failures: Array[String], context: String) -> void:
+	var viewport: Viewport = player.get_viewport()
+	if viewport == null:
+		failures.append("%s: player has no viewport" % context)
+		return
+
+	var xform: Transform2D = viewport.get_canvas_transform()
+	var visible_rect: Rect2 = viewport.get_visible_rect()
+
+	var player_screen: Vector2 = xform * player.global_position
+	if not visible_rect.has_point(player_screen):
+		failures.append(
+			"%s: player screen pos %s not inside visible rect %s"
+			% [context, str(player_screen), str(visible_rect)]
+		)
+
+	var floor_screen: Vector2 = xform * Vector2(player.global_position.x, player.floor_y)
+	if not visible_rect.has_point(floor_screen):
+		failures.append(
+			"%s: floor row screen pos %s not inside visible rect %s"
+			% [context, str(floor_screen), str(visible_rect)]
+		)
+
+	if inst.get_interaction_prompt_visible():
+		var prompt_screen: Vector2 = xform * inst.get_interaction_prompt_global_position()
+		if not visible_rect.has_point(prompt_screen):
+			failures.append(
+				"%s: interaction prompt screen pos %s not inside visible rect %s"
+				% [context, str(prompt_screen), str(visible_rect)]
+			)
 
 
 ## ── Static source guards (no live tree needed) ──────────────────────────────
@@ -1008,6 +1050,7 @@ func _test_interaction_prompt_visibility() -> Array[String]:
 		failures.append("prompt: must be visible while standing in a connector area")
 	if inst.get_interaction_prompt_text() == "":
 		failures.append("prompt: must show non-empty text while in a connector area")
+	_assert_on_screen(inst, player, failures, "prompt_visible")
 
 	## Leave back toward the room's own centre, not blindly further in the
 	## entry direction — ground_relay's ladder opening sits flush against the
@@ -1133,8 +1176,15 @@ func _test_player_blocked_by_side_wall() -> Array[String]:
 	player.apply_input(-1.0, true)
 	for i in range(cross_frames):
 		await physics_frame
+		## Sampled periodically (not every frame) while walking ground_relay's
+		## full authored width (30 tiles = 480 px, wider than the 384 px
+		## viewport) — the camera must keep panning to hold the player on
+		## screen throughout (T-0390 fix round 3, P1 a).
+		if i % 40 == 0:
+			_assert_on_screen(inst, player, failures, "ground_relay_crossing:%d" % i)
 	player.apply_input(0.0, false)
 	await physics_frame
+	_assert_on_screen(inst, player, failures, "ground_relay_crossing:end")
 
 	if inst.get_current_room_tag() != GROUND_RELAY:
 		failures.append(
@@ -1146,6 +1196,91 @@ func _test_player_blocked_by_side_wall() -> Array[String]:
 			"wall_collision: player position %s left ground_relay's rect %s after walking into its left wall"
 			% [str(player.position), str(relay_rect)]
 		)
+
+	_free_instance(inst)
+	return failures
+
+
+## ── Camera / visible player (T-0390 fix round 3) ────────────────────────────
+
+## P1 (a): a Camera2D must exist and be the viewport's active camera the
+## moment the level is built — Chat's round-3 probe found ACTIVE_CAMERA null
+## and the canvas transform at identity on the pre-fix branch head.
+func _test_camera_exists_and_is_current() -> Array[String]:
+	var failures: Array[String] = []
+	var inst: Node2D = await _build_live_instance(failures)
+	if inst.get_layout() == null:
+		_free_instance(inst)
+		return failures
+
+	var player: CharacterBody2D = inst.get_player()
+	var viewport: Viewport = player.get_viewport()
+	if viewport == null:
+		failures.append("camera: player has no viewport")
+		_free_instance(inst)
+		return failures
+	if viewport.get_camera_2d() == null:
+		failures.append("camera: no active Camera2D in the player's viewport")
+
+	_assert_on_screen(inst, player, failures, "camera_spawn")
+
+	_free_instance(inst)
+	return failures
+
+
+## P1 (b): the player must carry a drawable, untextured grey-box body distinct
+## from its CollisionShape2D, visible in ordinary play (not debug-collision
+## drawing), with its feet aligned to floor_y like the collider.
+func _test_player_has_visible_grey_box_body() -> Array[String]:
+	var failures: Array[String] = []
+	var inst: Node2D = await _build_live_instance(failures)
+	if inst.get_layout() == null:
+		_free_instance(inst)
+		return failures
+
+	var player: CharacterBody2D = inst.get_player()
+	var body: ColorRect = null
+	for child: Node in player.get_children():
+		if child is ColorRect:
+			body = child as ColorRect
+			break
+
+	if body == null:
+		failures.append("visible_body: player must have a ColorRect (or equivalent) drawable body")
+		_free_instance(inst)
+		return failures
+
+	if body is Sprite2D or body is TextureRect:
+		failures.append("visible_body: must not be a Sprite2D/TextureRect — no final art")
+	if not body.is_visible_in_tree():
+		failures.append("visible_body: body must be visible_in_tree() without relying on debug-collision draw")
+	if body.size.x <= 0.0 or body.size.y <= 0.0:
+		failures.append("visible_body: body must have a non-zero size, got %s" % str(body.size))
+	if body.color.a <= 0.0:
+		failures.append("visible_body: body must be non-transparent, got alpha %.3f" % body.color.a)
+
+	## Body must sit within the player's 12x14 collider bounds, bottom edge at
+	## floor_y — collider.position is its CENTRE (RectangleShape2D convention),
+	## ColorRect.position is its TOP-LEFT, so this is not a shared literal.
+	var collision: CollisionShape2D = null
+	for child: Node in player.get_children():
+		if child is CollisionShape2D:
+			collision = child as CollisionShape2D
+			break
+	if collision == null:
+		failures.append("visible_body: player must still have its CollisionShape2D (fix round 1)")
+	else:
+		var box: RectangleShape2D = collision.shape as RectangleShape2D
+		var collider_top: float = collision.position.y - box.size.y * 0.5
+		var collider_bottom: float = collision.position.y + box.size.y * 0.5
+		if body.position.y < collider_top - 0.5:
+			failures.append("visible_body: body top %.2f is above the collider's top %.2f" % [body.position.y, collider_top])
+		var body_bottom: float = body.position.y + body.size.y
+		if absf(body_bottom - collider_bottom) > 0.5:
+			failures.append(
+				"visible_body: body bottom %.2f must align with the collider's bottom (floor_y) %.2f"
+				% [body_bottom, collider_bottom]
+			)
 
 	_free_instance(inst)
 	return failures
@@ -1167,6 +1302,7 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 	var visited: Array[String] = [inst.get_current_room_tag()]
 	if inst.get_current_room_tag() != critical_path[0]:
 		failures.append("traversal: must start in '%s'" % critical_path[0])
+	_assert_on_screen(inst, player, failures, "traversal_spawn:%s" % critical_path[0])
 
 	## Forward along the critical path, each hop walked into the connector
 	## area and then activated with E (T-0390 fix round 2) — no walking
@@ -1180,6 +1316,11 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 			_free_instance(inst)
 			return failures
 		visited.append(to_tag)
+		## Camera/viewport contract (T-0390 fix round 3, P1 a) — the player
+		## and their room's floor must stay on screen after every real
+		## E-driven transition, forward, including into antenna_shaft (28
+		## tiles tall, far exceeding the 216 px viewport height).
+		_assert_on_screen(inst, player, failures, "traversal_forward:%s" % to_tag)
 
 	if visited != critical_path:
 		failures.append(
@@ -1215,6 +1356,7 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 			"wall_collision: player position %s left broadcast_deck's rect %s after walking into its far wall"
 			% [str(player.position), str(deck_rect)]
 		)
+	_assert_on_screen(inst, player, failures, "traversal_forward:broadcast_deck_far_wall")
 
 	## Reverse the whole critical path, connector by connector, same press-E
 	## mechanism.
@@ -1228,6 +1370,7 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 			)
 			_free_instance(inst)
 			return failures
+		_assert_on_screen(inst, player, failures, "traversal_reverse:%s" % to_tag)
 
 	if inst.get_current_room_tag() != critical_path[0]:
 		failures.append("traversal: reverse critical path must end back at '%s'" % critical_path[0])
@@ -1237,11 +1380,14 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 	if not to_records:
 		failures.append("traversal: failed to walk+interact ground_relay -> records_room")
 	else:
+		_assert_on_screen(inst, player, failures, "traversal_branch:records_room")
 		var back_from_records: bool = await _walk_to_room_via_interact(
 			inst, player, RECORDS_ROOM, GROUND_RELAY, MAX_WALK_STEPS
 		)
 		if not back_from_records:
 			failures.append("traversal: failed to walk+interact records_room -> ground_relay")
+		else:
+			_assert_on_screen(inst, player, failures, "traversal_branch:back_to_ground_relay")
 
 	## Walk to equipment_floor to test its branch.
 	var to_power: bool = await _walk_to_room_via_interact(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
@@ -1262,11 +1408,14 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 	if not to_storage:
 		failures.append("traversal: failed to walk+interact equipment_floor -> storage_cache")
 	else:
+		_assert_on_screen(inst, player, failures, "traversal_branch:storage_cache")
 		var back_from_storage: bool = await _walk_to_room_via_interact(
 			inst, player, STORAGE_CACHE, EQUIPMENT_FLOOR, MAX_WALK_STEPS
 		)
 		if not back_from_storage:
 			failures.append("traversal: failed to walk+interact storage_cache -> equipment_floor")
+		else:
+			_assert_on_screen(inst, player, failures, "traversal_branch:back_to_equipment_floor")
 
 	_free_instance(inst)
 	return failures
