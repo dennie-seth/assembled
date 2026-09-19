@@ -74,10 +74,10 @@ func _run() -> void:
 	_failures += await _test_layout_unknown_room_tag_connection()
 	_failures += await _test_layout_invalid_connection_type()
 	_failures += await _test_reentrant_transition_idempotent()
-	_failures += await _test_ladder_ping_pong_guard()
 	_failures += await _test_wrong_side_ladder_resolves_correctly()
 	_failures += await _test_dead_end_branches_isolated()
 	_failures += await _test_chain_terminus_no_onward_connector()
+	_failures += await _test_player_blocked_by_side_wall()
 	_failures += await _test_full_critical_path_traversal_and_branches_and_reverse()
 
 	_finish()
@@ -148,6 +148,32 @@ func _build_live_instance(failures: Array[String]) -> Node2D:
 func _free_instance(inst: Node2D) -> void:
 	if inst != null:
 		inst.queue_free()
+
+
+## The union, in world space, of every collider rect built directly under
+## [param room_node] — used to verify a room's ACTUAL built extent (not just
+## its container node's position) against RoomLayout.get_rect_px(), since a
+## room built with a missing wall or floor would still have the right
+## container position while covering the wrong area.
+func _room_collider_bounds(room_node: Node2D) -> Rect2:
+	var result: Rect2 = Rect2()
+	var first: bool = true
+	for child: Node in room_node.get_children():
+		if not (child is StaticBody2D):
+			continue
+		for shape_node: Node in child.get_children():
+			if shape_node is CollisionShape2D:
+				var box: RectangleShape2D = (shape_node as CollisionShape2D).shape as RectangleShape2D
+				if box == null:
+					continue
+				var world_pos: Vector2 = room_node.position + child.position
+				var r := Rect2(world_pos, box.size)
+				if first:
+					result = r
+					first = false
+				else:
+					result = result.merge(r)
+	return result
 
 
 ## Walks the player toward the trigger connecting from_tag -> to_tag until
@@ -298,28 +324,36 @@ func _test_seven_rooms_built_matching_layout() -> Array[String]:
 		_free_detached_instance(inst)
 		return failures
 
-	var built_tags: Array = []
-	for tag: String in ChainSideonScript.new().get_all_tags():
-		if inst.get_room_node(tag) != null:
-			built_tags.append(tag)
+	## Iterates the BUILT set, not the canonical tag list — a room built for a
+	## tag outside the canonical seven must be caught, not silently ignored
+	## because nothing asked about it by name (T-0390 fix round 1, criterion 2).
+	var built_tags: Array = inst.get_built_room_tags()
 
 	if built_tags.size() != 7:
 		failures.append(
 			"seven_rooms: expected exactly 7 built room containers, got %d" % built_tags.size()
 		)
+	for tag: String in built_tags:
+		if not ALL_SEVEN.has(tag):
+			failures.append("seven_rooms: unexpected room container built for '%s'" % tag)
 	for tag: String in ALL_SEVEN:
 		if not built_tags.has(tag):
 			failures.append("seven_rooms: no room container built for '%s'" % tag)
 
+	## Per room, the built extent (union of its collider rects) must equal
+	## RoomLayout.get_rect_px() in BOTH position and size — a room missing a
+	## wall or floor would still pass a position-only check (T-0390 fix round
+	## 1, criterion 3).
 	for tag: String in ALL_SEVEN:
 		var room_node: Node2D = inst.get_room_node(tag)
 		if room_node == null:
 			continue
 		var expected_rect: Rect2 = layout.get_rect_px(tag)
-		if not room_node.position.is_equal_approx(expected_rect.position):
+		var actual_rect: Rect2 = _room_collider_bounds(room_node)
+		if not actual_rect.position.is_equal_approx(expected_rect.position) or not actual_rect.size.is_equal_approx(expected_rect.size):
 			failures.append(
-				"room_position: '%s' at %s, expected %s"
-				% [tag, str(room_node.position), str(expected_rect.position)]
+				"room_rect: '%s' built collider bounds %s, expected %s"
+				% [tag, str(actual_rect), str(expected_rect)]
 			)
 
 	_free_detached_instance(inst)
@@ -595,6 +629,68 @@ func _test_wall_segments_all_positive_length() -> Array[String]:
 	return failures
 
 
+## Per-side wall/floor coverage, in tiles, that the authored connections
+## require for these two rooms — hand-derived from signal_tower_v1.json:
+##   antenna_shaft (6x28): top opening cols[1,2) (ladder to equipment_floor),
+##     bottom opening cols[4,5) (ladder to broadcast_deck), no side doors —
+##     left/right fully closed (28 tiles each); top/bottom 6-1=5 tiles each.
+##   ground_relay (30x9): right opening rows[6,9) (door to records_room, 3
+##     tiles) -> right closed 9-3=6; bottom (floor) opening cols[1,2) (ladder
+##     to power_substation) PLUS the door floor-corner exclusion col[29,30)
+##     -> floor 30-1-1=28; top/left have no openings (30 and 9 respectively).
+const _NARROW_WIDE_EXPECTED: Dictionary = {
+	"signal_tower.antenna_shaft": {"top": 5, "bottom": 5, "left": 28, "right": 28},
+	"signal_tower.ground_relay": {"top": 30, "bottom": 28, "left": 9, "right": 6},
+}
+
+
+## Sums built wall/floor collider coverage per perimeter side of [param
+## room_node], in tiles. Each of the 4 walls _build_room() constructs has a
+## FIXED thin dimension of exactly one tile (top/bottom segments are always
+## 1 tile tall; left/right segments are always 1 tile wide) — classifying by
+## that thin dimension, rather than by segment length, correctly attributes
+## a segment to its side regardless of how an opening split it. A 1x1 corner
+## segment satisfies both a horizontal and a vertical thin-dimension test;
+## resolved by requiring left/right segments to be MORE than one tile tall,
+## since every side actually built by these two rooms is either a lone
+## corner tile (correctly counted once, under top/bottom) or many tiles tall
+## (unambiguously vertical).
+func _side_coverage_tiles(room_node: Node2D, size: Vector2i, tile_size: int) -> Dictionary:
+	var covered: Dictionary = {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
+	var bottom_y: float = float((size.y - 1) * tile_size)
+	var right_x: float = float((size.x - 1) * tile_size)
+
+	for child: Node in room_node.get_children():
+		if not (child is StaticBody2D):
+			continue
+		var box: RectangleShape2D = null
+		for shape_node: Node in child.get_children():
+			if shape_node is CollisionShape2D:
+				box = (shape_node as CollisionShape2D).shape as RectangleShape2D
+				break
+		if box == null:
+			continue
+
+		if is_equal_approx(child.position.y, 0.0) and is_equal_approx(box.size.y, float(tile_size)):
+			covered["top"] += box.size.x / tile_size
+		if is_equal_approx(child.position.y, bottom_y) and is_equal_approx(box.size.y, float(tile_size)):
+			covered["bottom"] += box.size.x / tile_size
+		if (
+			is_equal_approx(child.position.x, 0.0)
+			and is_equal_approx(box.size.x, float(tile_size))
+			and box.size.y > float(tile_size) + 0.01
+		):
+			covered["left"] += box.size.y / tile_size
+		if (
+			is_equal_approx(child.position.x, right_x)
+			and is_equal_approx(box.size.x, float(tile_size))
+			and box.size.y > float(tile_size) + 0.01
+		):
+			covered["right"] += box.size.y / tile_size
+
+	return covered
+
+
 func _test_narrow_and_wide_rooms_closed() -> Array[String]:
 	var failures: Array[String] = []
 	var inst: Node2D = _build_detached_instance(failures)
@@ -603,39 +699,22 @@ func _test_narrow_and_wide_rooms_closed() -> Array[String]:
 		_free_detached_instance(inst)
 		return failures
 
-	for tag: String in [ANTENNA_SHAFT, GROUND_RELAY]:
+	for tag: String in _NARROW_WIDE_EXPECTED.keys():
 		var room_node: Node2D = inst.get_room_node(tag)
 		if room_node == null:
 			failures.append("narrow_wide: room '%s' was not built" % tag)
 			continue
 
-		var expected_size: Vector2 = Vector2(layout.get_size_tiles(tag)) * layout.tile_size_px
-		var total_wall_width_px: float = 0.0
-		var total_wall_height_px: float = 0.0
-		var body_count: int = 0
-		for child: Node in room_node.get_children():
-			if child is StaticBody2D:
-				body_count += 1
-		if body_count == 0:
-			failures.append("narrow_wide: room '%s' has no wall/floor colliders" % tag)
+		var size: Vector2i = layout.get_size_tiles(tag)
+		var covered: Dictionary = _side_coverage_tiles(room_node, size, layout.tile_size_px)
+		var expected: Dictionary = _NARROW_WIDE_EXPECTED[tag]
 
-		## Every room must be reachable at its own floor level and enclosed —
-		## a coarse boundary check: no collider extends beyond the room's
-		## authored size.
-		for child: Node in room_node.get_children():
-			if not (child is StaticBody2D):
-				continue
-			for shape_node: Node in child.get_children():
-				if shape_node is CollisionShape2D:
-					var box: RectangleShape2D = (shape_node as CollisionShape2D).shape as RectangleShape2D
-					if box == null:
-						continue
-					var far_corner: Vector2 = child.position + box.size
-					if far_corner.x > expected_size.x + 0.01 or far_corner.y > expected_size.y + 0.01:
-						failures.append(
-							"narrow_wide: room '%s' has a collider extending past its authored size %s (corner %s)"
-							% [tag, str(expected_size), str(far_corner)]
-						)
+		for side: String in ["top", "bottom", "left", "right"]:
+			if not is_equal_approx(covered[side], float(expected[side])):
+				failures.append(
+					"narrow_wide: room '%s' side '%s' covers %.2f tiles, expected %d (missing wall or floor coverage)"
+					% [tag, side, covered[side], expected[side]]
+				)
 
 	_free_detached_instance(inst)
 	return failures
@@ -767,34 +846,25 @@ func _test_reentrant_transition_idempotent() -> Array[String]:
 	return failures
 
 
-func _test_ladder_ping_pong_guard() -> Array[String]:
-	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
-	if inst.get_layout() == null:
-		_free_instance(inst)
-		return failures
-
-	var player: CharacterBody2D = inst.get_player()
-	var reached: bool = await _walk_to_room(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
-	if not reached:
-		failures.append("ladder_ping_pong: setup failed — never reached power_substation")
-		_free_instance(inst)
-		return failures
-
-	var room_after_arrival: String = inst.get_current_room_tag()
+## Holds zero input for 10 physics frames and asserts the current room does
+## not change — the reciprocal connector the player just arrived through
+## must not immediately re-fire. Folded into the per-hop loop of
+## _test_full_critical_path_traversal_and_branches_and_reverse() (T-0390 fix
+## round 1, criterion: "asserted after EACH critical-path transition, forward
+## and reverse", not just ground_relay -> power_substation).
+func _assert_no_immediate_bounce(
+	inst: Node2D, expected_tag: String, context: String, failures: Array[String]
+) -> void:
 	for i in range(10):
 		await physics_frame
-		if inst.get_current_room_tag() != room_after_arrival:
+		if inst.get_current_room_tag() != expected_tag:
 			failures.append(
 				(
-					"ladder_ping_pong: room changed to '%s' within 10 zero-input frames after arrival — "
+					"ladder_ping_pong: room changed to '%s' within 10 zero-input frames after %s — "
 					+ "player was not placed clear of the reciprocal connector"
-				) % inst.get_current_room_tag()
+				) % [inst.get_current_room_tag(), context]
 			)
-			break
-
-	_free_instance(inst)
-	return failures
+			return
 
 
 func _test_wrong_side_ladder_resolves_correctly() -> Array[String]:
@@ -877,6 +947,44 @@ func _test_chain_terminus_no_onward_connector() -> Array[String]:
 	return failures
 
 
+## Pushes the player into ground_relay's left wall — the one perimeter side
+## with no declared connection (its door is on the right, to records_room;
+## its ladder is on the bottom, to power_substation) — and asserts a plain
+## solid wall actually blocks it (T-0390 fix round 1, the real defect: a
+## side wall of a room other than broadcast_deck's far wall).
+func _test_player_blocked_by_side_wall() -> Array[String]:
+	var failures: Array[String] = []
+	var inst: Node2D = await _build_live_instance(failures)
+	if inst.get_layout() == null:
+		_free_instance(inst)
+		return failures
+
+	var player: CharacterBody2D = inst.get_player()
+	var relay_rect: Rect2 = inst.get_layout().get_rect_px(GROUND_RELAY)
+	var run_px_per_frame: float = PlayerControllerScript.RUN_SPEED / float(Engine.physics_ticks_per_second)
+	var cross_frames: int = int(ceil(relay_rect.size.x / run_px_per_frame)) + 60
+
+	player.apply_input(-1.0, true)
+	for i in range(cross_frames):
+		await physics_frame
+	player.apply_input(0.0, false)
+	await physics_frame
+
+	if inst.get_current_room_tag() != GROUND_RELAY:
+		failures.append(
+			"wall_collision: walking into ground_relay's left wall left the room (now '%s')"
+			% inst.get_current_room_tag()
+		)
+	if not relay_rect.has_point(player.position):
+		failures.append(
+			"wall_collision: player position %s left ground_relay's rect %s after walking into its left wall"
+			% [str(player.position), str(relay_rect)]
+		)
+
+	_free_instance(inst)
+	return failures
+
+
 ## ── Full traversal ───────────────────────────────────────────────────────────
 
 func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[String]:
@@ -893,7 +1001,9 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 	if inst.get_current_room_tag() != critical_path[0]:
 		failures.append("traversal: must start in '%s'" % critical_path[0])
 
-	## Forward along the critical path.
+	## Forward along the critical path. Each hop is followed by a 10-frame
+	## zero-input ping-pong check (T-0390 fix round 1: every critical-path
+	## transition, not just ground_relay -> power_substation).
 	for i in range(critical_path.size() - 1):
 		var from_tag: String = critical_path[i]
 		var to_tag: String = critical_path[i + 1]
@@ -902,13 +1012,39 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 			failures.append("traversal: failed to walk %s -> %s" % [from_tag, to_tag])
 			_free_instance(inst)
 			return failures
+		await _assert_no_immediate_bounce(inst, to_tag, "%s -> %s" % [from_tag, to_tag], failures)
 
 	if inst.get_current_room_tag() != critical_path.back():
 		failures.append("traversal: expected to end at '%s'" % critical_path.back())
 		_free_instance(inst)
 		return failures
 
-	## Reverse the whole critical path, ladder by ladder.
+	## Chain terminus wall collision (T-0390 fix round 1, the real defect):
+	## broadcast_deck's far wall must actually block the player, not just be
+	## absent of an outgoing connector. Hold running input long enough to
+	## cross the room's full authored width with margin.
+	var deck_rect: Rect2 = inst.get_layout().get_rect_px(BROADCAST_DECK)
+	var run_px_per_frame: float = PlayerControllerScript.RUN_SPEED / float(Engine.physics_ticks_per_second)
+	var deck_cross_frames: int = int(ceil(deck_rect.size.x / run_px_per_frame)) + 60
+	player.apply_input(1.0, true)
+	for i in range(deck_cross_frames):
+		await physics_frame
+	player.apply_input(0.0, false)
+	await physics_frame
+
+	if inst.get_current_room_tag() != BROADCAST_DECK:
+		failures.append(
+			"wall_collision: walking into broadcast_deck's far wall left the room (now '%s')"
+			% inst.get_current_room_tag()
+		)
+	if not deck_rect.has_point(player.position):
+		failures.append(
+			"wall_collision: player position %s left broadcast_deck's rect %s after walking into its far wall"
+			% [str(player.position), str(deck_rect)]
+		)
+
+	## Reverse the whole critical path, ladder by ladder, with the same
+	## per-hop ping-pong check.
 	for i in range(critical_path.size() - 1, 0, -1):
 		var from_tag: String = critical_path[i]
 		var to_tag: String = critical_path[i - 1]
@@ -917,6 +1053,7 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 			failures.append("traversal: failed to walk critical path in reverse %s -> %s" % [from_tag, to_tag])
 			_free_instance(inst)
 			return failures
+		await _assert_no_immediate_bounce(inst, to_tag, "reverse %s -> %s" % [from_tag, to_tag], failures)
 
 	if inst.get_current_room_tag() != critical_path[0]:
 		failures.append("traversal: reverse critical path must end back at '%s'" % critical_path[0])
