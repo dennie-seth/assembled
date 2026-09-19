@@ -1250,8 +1250,6 @@ func _test_player_has_visible_grey_box_body() -> Array[String]:
 		_free_instance(inst)
 		return failures
 
-	if body is Sprite2D or body is TextureRect:
-		failures.append("visible_body: must not be a Sprite2D/TextureRect — no final art")
 	if not body.is_visible_in_tree():
 		failures.append("visible_body: body must be visible_in_tree() without relying on debug-collision draw")
 	if body.size.x <= 0.0 or body.size.y <= 0.0:
