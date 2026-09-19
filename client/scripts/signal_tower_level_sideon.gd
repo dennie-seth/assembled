@@ -11,11 +11,16 @@
 ## Every room is built at its authored world position
 ## (RoomLayout.get_rect_px), all seven coexisting in one continuous
 ## coordinate space — the same convention scenes/signal_tower_overview.gd
-## uses. A "room transition" is bookkeeping (current room tag + floor_y)
-## plus a placement clear of the connector that triggered it, not a scene
-## swap: PlayerController is floor-plane-locked (no vertical movement inside
-## a room), so the only way to reach a different floor_y is through one of
-## these transitions.
+## uses. Doors and ladders are press-E interactables (T-0390 fix round 2,
+## @DennieSeth): PlayerController.room_connectors is deliberately left empty
+## so its own overlap check never fires room_transition — standing in a
+## connector's area does nothing by itself. Pressing E (PlayerController's
+## interact_pressed signal, T-0188) is routed to _on_player_interact(),
+## which looks up whichever connector area the player is currently standing
+## in and performs the transition: bookkeeping (current room tag + floor_y)
+## plus a landing placement, not a scene swap — PlayerController is
+## floor-plane-locked (no vertical movement inside a room), so the only way
+## to reach a different floor_y is through one of these transitions.
 extends Node2D
 
 const _RoomLayoutScript: GDScript = preload("res://signal_tower/room_layout.gd")
@@ -49,10 +54,6 @@ const LADDER_TRIGGER_HEIGHT_PX: float = 16.0
 const _PLAYER_BODY_WIDTH_PX: float = 12.0
 const _PLAYER_BODY_HEIGHT_PX: float = 14.0
 
-## Extra safety margin, in physics frames, added on top of a connector-width-
-## derived grace window — see _grace_frames_for_connector().
-const REENTRY_GRACE_MARGIN_FRAMES: int = 10
-
 const _WALL_COLOR: Color = Color(0.28, 0.28, 0.28)
 const _FLOOR_COLOR: Color = Color(0.22, 0.22, 0.22)
 
@@ -65,29 +66,25 @@ var _trigger_by_pair: Dictionary = {}
 ## "<from_tag>|<to_tag>" -> {"position": Vector2, "floor_y": float} — where
 ## the player lands, and its new floor_y, when transitioning from_tag -> to_tag.
 var _arrivals: Dictionary = {}
-var _pending_room_connectors: Array = []
-var _connector_count_by_room: Dictionary = {}  ## anchor_tag -> int
+## "<from_tag>|<to_tag>" -> "door"/"ladder" — the connection type, used by the
+## contextual interact prompt to choose its verb.
+var _connector_type_by_pair: Dictionary = {}
 
 var _player: CharacterBody2D
+var _prompt_label: Label
 var _first_run: Node
 var _room_built: bool = false
 var _current_room_tag: String = ""
 var _room_change_count: int = 0
 var _load_error: String = ""
 
-## The "<room>|<target>" connector key currently filtered out of
-## _player.room_connectors, and how many physics frames until it's restored —
-## see _on_player_room_transition()'s grace-suppression comment.
-var _suppressed_connector_key: String = ""
-var _suppress_frames_remaining: int = 0
-
 
 func _ready() -> void:
 	## Decoupled from _physics_process (tests build a live instance with
 	## set_physics_process(false), driving physics via direct apply_input() +
-	## awaited physics_frame calls instead) so grace suppression still expires
-	## on schedule under that harness.
-	get_tree().physics_frame.connect(_on_grace_window_tick)
+	## awaited physics_frame calls instead) so the interact prompt still
+	## tracks the player under that harness too.
+	get_tree().physics_frame.connect(_update_interaction_prompt)
 
 	## Geometry + the Player node are built synchronously here, not gated
 	## behind entry_room_ready: tests/test_main_scene_compiles.gd loads
@@ -135,16 +132,15 @@ func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
 			room_node.free()
 	if is_instance_valid(_player):
 		_player.free()
+	if is_instance_valid(_prompt_label):
+		_prompt_label.free()
 
 	_load_error = ""
 	_room_nodes = {}
 	_connector_records = []
 	_trigger_by_pair = {}
 	_arrivals = {}
-	_pending_room_connectors = []
-
-	_suppressed_connector_key = ""
-	_suppress_frames_remaining = 0
+	_connector_type_by_pair = {}
 
 	_layout = _RoomLayoutScript.new()
 	var err: String = _layout.load_from_path(layout_path)
@@ -161,11 +157,6 @@ func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
 		_load_error = joined
 		_layout = null
 		return
-
-	_connector_count_by_room = {}
-	for conn: Dictionary in _layout.get_connections():
-		_connector_count_by_room[conn["from"]] = _connector_count_by_room.get(conn["from"], 0) + 1
-		_connector_count_by_room[conn["to"]] = _connector_count_by_room.get(conn["to"], 0) + 1
 
 	var openings: Dictionary = {}
 	for tag: String in _layout.get_all_tags():
@@ -256,8 +247,7 @@ func get_current_room_tag() -> String:
 	return _current_room_tag
 
 
-## Returns how many times _on_player_room_transition() actually changed rooms
-## (re-entrant signal emissions while already in the target room don't count).
+## Returns how many times _on_player_interact() actually changed rooms.
 func get_room_change_count() -> int:
 	return _room_change_count
 
@@ -520,18 +510,14 @@ func _register_connector(conn: Dictionary, geo: Dictionary, ladder_ranges_by_roo
 			_pick_ladder_landing_x(a_tag, x0_px, x1_px, ladder_ranges_by_room.get(a_tag, [])), floor_a
 		)
 
-	_pending_room_connectors.append(
-		{"area": area_a, "target_room_id": b_tag, "key": "%s|%s" % [a_tag, b_tag]}
-	)
-	_pending_room_connectors.append(
-		{"area": area_b, "target_room_id": a_tag, "key": "%s|%s" % [b_tag, a_tag]}
-	)
-
 	_trigger_by_pair["%s|%s" % [a_tag, b_tag]] = area_a
 	_trigger_by_pair["%s|%s" % [b_tag, a_tag]] = area_b
 
 	_arrivals["%s|%s" % [a_tag, b_tag]] = {"position": arrival_b, "floor_y": _floor_y_px(b_tag)}
 	_arrivals["%s|%s" % [b_tag, a_tag]] = {"position": arrival_a, "floor_y": _floor_y_px(a_tag)}
+
+	_connector_type_by_pair["%s|%s" % [a_tag, b_tag]] = conn["type"]
+	_connector_type_by_pair["%s|%s" % [b_tag, a_tag]] = conn["type"]
 
 	_connector_records.append({
 		"from": a_tag, "to": b_tag, "type": conn["type"], "branch": conn.get("branch", false),
@@ -543,7 +529,10 @@ func _register_connector(conn: Dictionary, geo: Dictionary, ladder_ranges_by_roo
 func _build_player() -> void:
 	_player = _PlayerScript.new()
 	_player.name = "Player"
-	_player.room_connectors.assign(_pending_room_connectors)
+	## room_connectors stays empty (T-0390 fix round 2) — doors and ladders
+	## are press-E interactables, not overlap triggers. Feeding it here would
+	## make PlayerController.update_state() emit room_transition on every
+	## physics frame the player merely stands in a connector's area.
 
 	## PlayerController (T-0188) builds no CollisionShape2D of its own — without
 	## one, every wall/floor StaticBody2D this level builds is inert against the
@@ -561,9 +550,10 @@ func _build_player() -> void:
 	_current_room_tag = _layout.entry_room
 	_player.floor_y = _floor_y_px(_current_room_tag)
 	_player.position = _spawn_position()
-	_player.room_transition.connect(_on_player_room_transition)
+	_player.interact_pressed.connect(_on_player_interact)
 
 	add_child(_player)
+	_build_prompt()
 
 
 ## Spawn point inside the layout's entry room, derived from its authored
@@ -573,92 +563,84 @@ func _spawn_position() -> Vector2:
 	return Vector2(rect.position.x + rect.size.x * 0.5, _floor_y_px(_layout.entry_room))
 
 
-## Handles PlayerController.room_transition. Fires on every physics frame the
-## player's centre is inside a connector area — idempotent by construction:
-## once _current_room_tag already equals target_room_id, re-emissions are a
-## no-op.
-func _on_player_room_transition(target_room_id: String) -> void:
-	if target_room_id == "" or target_room_id == _current_room_tag:
+## The contextual "[E] ..." prompt Label, hidden until the player stands in a
+## connector's area. World-space positioned (tracks the player directly)
+## rather than a CanvasLayer overlay — sufficient for a grey-box level with
+## no camera/viewport concerns of its own.
+func _build_prompt() -> void:
+	_prompt_label = Label.new()
+	_prompt_label.name = "InteractionPrompt"
+	_prompt_label.visible = false
+	add_child(_prompt_label)
+
+
+## Handles PlayerController.interact_pressed (E/Space). Finds whichever
+## connector area the player is currently standing in and performs the
+## transition — bookkeeping (current room tag + floor_y) plus a landing
+## placement, not a scene swap. Does nothing if the player isn't standing in
+## any connector's area (T-0390 fix round 2: overlap alone never transitions,
+## only an explicit E press does).
+func _on_player_interact() -> void:
+	var key: String = _connector_key_at_player()
+	if key == "":
 		return
-	var key: String = "%s|%s" % [_current_room_tag, target_room_id]
 	if not _arrivals.has(key):
 		return
 
 	var arrival: Dictionary = _arrivals[key]
-	var previous_tag: String = _current_room_tag
+	var target_room_id: String = key.split("|")[1]
 	_current_room_tag = target_room_id
 	_player.floor_y = arrival["floor_y"]
 	_player.position = arrival["position"]
 	_room_change_count += 1
 
-	## PlayerController's overlap check (§161-171) is unconditional and
-	## position-only — it has no notion of travel direction or intent. This
-	## is a genuine geometric conflict in equipment_floor, not a placement
-	## choice that landing alone can fix (T-0390 fix round 1 asked for
-	## placement-only first; recorded here since it provably doesn't work):
-	## its ladder back up to power_substation must open somewhere within
-	## power_substation's own width (interior columns [1,19)), which sits
-	## strictly between the room's other two connectors — the ladder down to
-	## antenna_shaft, forced near column 1 by antenna_shaft's own narrow
-	## interior, and the door to storage_cache, fixed at equipment_floor's
-	## far right wall. Wherever in [1,19) the up-ladder's opening lands, and
-	## whichever side of it the arrival point is placed on, walking from that
-	## arrival to WHICHEVER of the other two connectors is on the far side
-	## crosses back through the up-ladder's own trigger — there is no static
-	## landing point clear of that crossing in both directions at once.
-	## Suppressing only the just-used connector, only long enough to clear
-	## ITS OWN trigger width (not the whole room, unlike the original
-	## implementation of this fix), keeps every ladder usable within about
-	## half a second of arriving, and only in the one room where a static
-	## landing point cannot avoid this (a two-connector room like
-	## ground_relay <-> power_substation has nothing to be sandwiched behind,
-	## so an immediate deliberate reversal there — the "wrong-side ladder"
-	## edge case — is never suppressed).
-	if _connector_count_by_room.get(target_room_id, 0) > 2:
-		_suppressed_connector_key = "%s|%s" % [target_room_id, previous_tag]
-		_suppress_frames_remaining = _grace_frames_for_connector(target_room_id, previous_tag)
-		_apply_connector_suppression()
+
+## Returns the "<from_tag>|<to_tag>" key of the connector trigger the player
+## is currently standing inside, scoped to the room the player is logically
+## in (_current_room_tag) so a connector whose area happens to be reachable
+## from the wrong logical side is never picked. Returns "" if the player is
+## not standing in any connector belonging to their current room. Shared by
+## _on_player_interact() and _update_interaction_prompt() so the prompt and
+## the E handler always agree on what "inside a connector" means.
+func _connector_key_at_player() -> String:
+	if _player == null:
+		return ""
+	var prefix: String = _current_room_tag + "|"
+	for key: String in _trigger_by_pair.keys():
+		if not (key as String).begins_with(prefix):
+			continue
+		var area: Rect2 = _trigger_by_pair[key]
+		if area.has_point(_player.position):
+			return key
+	return ""
 
 
-## See _on_player_room_transition()'s grace-suppression comment. Long enough
-## to clear the just-used connector's OWN trigger width, plus the landing
-## clearance on both sides of it, at the player's slowest (walking) speed,
-## plus a fixed margin — NOT the room's full width, so the suppression is
-## scoped to the minimum needed to prevent the immediate re-trigger it
-## exists for.
-func _grace_frames_for_connector(from_tag: String, to_tag: String) -> int:
-	var trigger: Rect2 = get_trigger_area(from_tag, to_tag)
-	var distance_px: float = trigger.size.x + 2.0 * CONNECTOR_CLEARANCE_PX
-	var fps: float = float(Engine.physics_ticks_per_second)
-	var px_per_frame: float = _PlayerScript.WALK_SPEED / fps
-	return int(ceil(distance_px / px_per_frame)) + REENTRY_GRACE_MARGIN_FRAMES
-
-
-## Applies (or lifts) the current suppression to the live player's
-## room_connectors. Filtering a copy of _pending_room_connectors rather than
-## mutating it in place keeps the unfiltered list intact for restoration.
-func _apply_connector_suppression() -> void:
-	if _suppress_frames_remaining > 0 and _suppressed_connector_key != "":
-		var filtered: Array[Dictionary] = []
-		for c: Dictionary in _pending_room_connectors:
-			if c.get("key", "") != _suppressed_connector_key:
-				filtered.append(c)
-		_player.room_connectors.assign(filtered)
-	else:
-		_suppressed_connector_key = ""
-		_player.room_connectors.assign(_pending_room_connectors)
-
-
-## Connected to SceneTree.physics_frame in _ready() — ticks the grace window
-## regardless of whether this level's own _physics_process is enabled (tests
-## disable it, driving physics via direct apply_input() + awaited
-## physics_frame calls instead of the level's automatic Input polling).
-func _on_grace_window_tick() -> void:
-	if _suppress_frames_remaining <= 0:
+## Connected to SceneTree.physics_frame in _ready() — updates regardless of
+## whether this level's own _physics_process is enabled (tests disable it,
+## driving physics via direct apply_input() + awaited physics_frame calls
+## instead of the level's automatic Input polling).
+func _update_interaction_prompt() -> void:
+	if _player == null or _prompt_label == null:
 		return
-	_suppress_frames_remaining -= 1
-	if _suppress_frames_remaining == 0:
-		_apply_connector_suppression()
+	var key: String = _connector_key_at_player()
+	if key == "":
+		_prompt_label.visible = false
+		return
+	var conn_type: String = _connector_type_by_pair.get(key, "")
+	_prompt_label.text = "[E] Climb" if conn_type == "ladder" else "[E] Enter"
+	_prompt_label.position = _player.position + Vector2(-20.0, -24.0)
+	_prompt_label.visible = true
+
+
+## Returns whether the contextual interact prompt is currently visible.
+func get_interaction_prompt_visible() -> bool:
+	return _prompt_label != null and _prompt_label.visible
+
+
+## Returns the contextual interact prompt's current text, or "" if it has
+## none (or hasn't been built yet).
+func get_interaction_prompt_text() -> String:
+	return _prompt_label.text if _prompt_label != null else ""
 
 
 func _physics_process(_delta: float) -> void:
