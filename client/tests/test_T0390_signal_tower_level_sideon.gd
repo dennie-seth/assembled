@@ -20,6 +20,7 @@ extends SceneTree
 
 const LevelScript := preload("res://scripts/signal_tower_level_sideon.gd")
 const ChainSideonScript := preload("res://signal_tower/signal_tower_chain_sideon.gd")
+const PlayerControllerScript := preload("res://player_controller.gd")
 const DEFAULT_LAYOUT_PATH: String = "res://signal_tower/layouts/signal_tower_v1.json"
 
 const GROUND_RELAY: String = "signal_tower.ground_relay"
@@ -97,16 +98,45 @@ func _finish() -> void:
 
 ## ── Helpers ────────────────────────────────────────────────────────────────
 
-## Builds a fresh, live-tree level instance with its own automatic Input
-## polling disabled (tests drive PlayerController.apply_input() directly —
-## the level's own _physics_process(), which reads the real Input singleton,
-## would otherwise overwrite whatever direction a test just set before the
-## next physics frame runs).
+## Builds a fresh level instance and calls build_level() directly, WITHOUT
+## adding it to the live tree — _ready() (and the FirstRunController /
+## NoteClient it constructs) never fires. Every check that only inspects the
+## built node tree (geometry, connectors, spawn point, source guards) uses
+## this; the boot contract itself is covered separately by
+## tests/test_main_scene_boot.gd, so there is no need to pay the cost of a
+## live FirstRunController here — creating dozens of them in one process
+## exhausted engine resources during development of this test file.
+func _build_detached_instance(failures: Array[String]) -> Node2D:
+	var inst: Node2D = LevelScript.new()
+	inst.build_level()
+
+	if inst.get_layout() == null:
+		failures.append("build_instance: build_level() did not produce a loaded RoomLayout")
+	return inst
+
+
+func _free_detached_instance(inst: Node2D) -> void:
+	if inst != null:
+		inst.free()
+
+
+## Builds a fresh, live-tree level instance for the handful of tests that
+## genuinely need real physics stepping (move_and_slide, room_transition
+## detection) — its own automatic Input polling is disabled since tests
+## drive PlayerController.apply_input() directly (the level's own
+## _physics_process(), which reads the real Input singleton, would otherwise
+## overwrite whatever direction a test just set before the next physics
+## frame runs). build_level() is called directly rather than waiting on
+## _ready()'s first-run gate — a redundant FirstRunController from _ready()
+## still gets constructed (add_child() always fires it), left inert and
+## ignored; the boot contract itself is covered by
+## tests/test_main_scene_boot.gd. Reserve this for tests that cannot work
+## against a detached instance — see _build_detached_instance().
 func _build_live_instance(failures: Array[String]) -> Node2D:
 	var inst: Node2D = LevelScript.new()
+	inst.set_physics_process(false)
 	root.add_child(inst)
 	inst.build_level()
-	inst.set_physics_process(false)
 	await physics_frame
 	await physics_frame
 
@@ -182,12 +212,20 @@ func _test_no_wrong_player_script_reference() -> Array[String]:
 		failures.append("wrong_player_script: could not read level script source")
 		return failures
 
-	if text.findn("res://scripts/player_controller.gd") != -1:
-		failures.append(
-			"wrong_player_script: level script must not preload the free-2D "
-			+ "res://scripts/player_controller.gd (T-0184) — use res://player_controller.gd "
-			+ "(T-0188, class_name PlayerController) per finding 1"
-		)
+	## Only code lines matter here — the script's own docstring explains, in
+	## prose, why the free-2D controller must NOT be used, which necessarily
+	## mentions its path.
+	for line: String in text.split("\n"):
+		var stripped: String = line.strip_edges()
+		if stripped.begins_with("#"):
+			continue
+		if stripped.findn("res://scripts/player_controller.gd") != -1:
+			failures.append(
+				"wrong_player_script: level script must not preload the free-2D "
+				+ "res://scripts/player_controller.gd (T-0184) — use res://player_controller.gd "
+				+ "(T-0188, class_name PlayerController) per finding 1"
+			)
+			break
 
 	return failures
 
@@ -254,10 +292,10 @@ func _test_no_entity_or_prop_wiring() -> Array[String]:
 
 func _test_seven_rooms_built_matching_layout() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	var layout: RefCounted = inst.get_layout()
 	if layout == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var built_tags: Array = []
@@ -284,15 +322,15 @@ func _test_seven_rooms_built_matching_layout() -> Array[String]:
 				% [tag, str(room_node.position), str(expected_rect.position)]
 			)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
 func _test_grey_box_only() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	if inst.get_layout() == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var text: String = _read_level_source()
@@ -305,7 +343,7 @@ func _test_grey_box_only() -> Array[String]:
 			continue
 		_assert_no_textured_nodes(room_node, tag, failures)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
@@ -322,10 +360,10 @@ func _assert_no_textured_nodes(node: Node, tag: String, failures: Array[String])
 
 func _test_connector_set_matches_layout() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	var layout: RefCounted = inst.get_layout()
 	if layout == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var expected: Array = layout.get_connections()
@@ -353,16 +391,16 @@ func _test_connector_set_matches_layout() -> Array[String]:
 	if not mismatches.is_empty():
 		failures.append("connectivity_mismatches: expected none, got %s" % ", ".join(mismatches))
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
 func _test_door_openings_at_floor_row() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	var layout: RefCounted = inst.get_layout()
 	if layout == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var tile_size: int = layout.tile_size_px
@@ -395,21 +433,21 @@ func _test_door_openings_at_floor_row() -> Array[String]:
 				% [from_tag, to_tag, row0, row1, expected_row]
 			)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
 func _test_no_ladder_in_drop_gaps() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	if inst.get_layout() == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var player: CharacterBody2D = inst.get_player()
 	if player == null:
 		failures.append("no_ladder_drop_gaps: no player built")
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	if not player.drop_gaps.is_empty():
@@ -424,7 +462,7 @@ func _test_no_ladder_in_drop_gaps() -> Array[String]:
 						% [conn["from"], conn["to"]]
 					)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
@@ -432,39 +470,39 @@ func _test_no_ladder_in_drop_gaps() -> Array[String]:
 
 func _test_player_is_correct_prefab() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	if inst.get_layout() == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var player: Node = inst.get_node_or_null("Player")
 	if player == null:
 		failures.append("player_prefab: level root must have a direct child named 'Player'")
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
-	if not (player is PlayerController):
+	if player.get_script() != PlayerControllerScript:
 		failures.append("player_prefab: 'Player' must be an instance of PlayerController (T-0188)")
 
 	if inst.get_player() != player:
 		failures.append("player_prefab: get_player() must return the same node as the 'Player' child")
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
 func _test_spawn_in_ground_relay_clear_of_connectors() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	var layout: RefCounted = inst.get_layout()
 	if layout == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var player: CharacterBody2D = inst.get_player()
 	if player == null:
 		failures.append("spawn: no player built")
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var relay_rect: Rect2 = layout.get_rect_px(layout.entry_room)
@@ -488,7 +526,7 @@ func _test_spawn_in_ground_relay_clear_of_connectors() -> Array[String]:
 				% [str(player.position), str(area)]
 			)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
@@ -530,9 +568,9 @@ func _test_floor_plane_lock_holds() -> Array[String]:
 
 func _test_wall_segments_all_positive_length() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	if inst.get_layout() == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	for tag: String in ALL_SEVEN:
@@ -553,16 +591,16 @@ func _test_wall_segments_all_positive_length() -> Array[String]:
 							% [tag, str(box.size)]
 						)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
 func _test_narrow_and_wide_rooms_closed() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	var layout: RefCounted = inst.get_layout()
 	if layout == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	for tag: String in [ANTENNA_SHAFT, GROUND_RELAY]:
@@ -599,7 +637,7 @@ func _test_narrow_and_wide_rooms_closed() -> Array[String]:
 							% [tag, str(expected_size), str(far_corner)]
 						)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
@@ -608,9 +646,7 @@ func _test_narrow_and_wide_rooms_closed() -> Array[String]:
 func _test_malformed_layout_missing_file() -> Array[String]:
 	var failures: Array[String] = []
 	var inst := LevelScript.new()
-	root.add_child(inst)
 	inst.build_level("res://signal_tower/layouts/does_not_exist_T0390.json")
-	await physics_frame
 
 	if inst.get_load_error() == "":
 		failures.append("malformed_missing_file: get_load_error() must be non-empty")
@@ -619,7 +655,7 @@ func _test_malformed_layout_missing_file() -> Array[String]:
 	if inst.get_room_node(GROUND_RELAY) != null:
 		failures.append("malformed_missing_file: no partial geometry may be built")
 
-	inst.queue_free()
+	inst.free()
 	return failures
 
 
@@ -636,16 +672,14 @@ func _test_malformed_layout_missing_origin_size() -> Array[String]:
 	f.close()
 
 	var inst := LevelScript.new()
-	root.add_child(inst)
 	inst.build_level(tmp_path)
-	await physics_frame
 
 	if inst.get_load_error() == "":
 		failures.append("malformed_missing_origin_size: get_load_error() must be non-empty")
 	if inst.get_room_node(GROUND_RELAY) != null:
 		failures.append("malformed_missing_origin_size: no partial geometry may be built")
 
-	inst.queue_free()
+	inst.free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 	return failures
 
@@ -663,16 +697,14 @@ func _test_layout_unknown_room_tag_connection() -> Array[String]:
 	f.close()
 
 	var inst := LevelScript.new()
-	root.add_child(inst)
 	inst.build_level(tmp_path)
-	await physics_frame
 
 	if inst.get_load_error() == "":
 		failures.append("unknown_room_tag: get_load_error() must be non-empty")
 	if inst.get_room_node(GROUND_RELAY) != null:
 		failures.append("unknown_room_tag: no partial geometry may be built")
 
-	inst.queue_free()
+	inst.free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 	return failures
 
@@ -690,16 +722,14 @@ func _test_layout_invalid_connection_type() -> Array[String]:
 	f.close()
 
 	var inst := LevelScript.new()
-	root.add_child(inst)
 	inst.build_level(tmp_path)
-	await physics_frame
 
 	if inst.get_load_error() == "":
 		failures.append("invalid_connection_type: get_load_error() must be non-empty")
 	if inst.get_room_node(GROUND_RELAY) != null:
 		failures.append("invalid_connection_type: no partial geometry may be built")
 
-	inst.queue_free()
+	inst.free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 	return failures
 
@@ -708,9 +738,9 @@ func _test_layout_invalid_connection_type() -> Array[String]:
 
 func _test_reentrant_transition_idempotent() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	if inst.get_layout() == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var player: CharacterBody2D = inst.get_player()
@@ -733,7 +763,7 @@ func _test_reentrant_transition_idempotent() -> Array[String]:
 			% inst.get_current_room_tag()
 		)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
@@ -756,8 +786,10 @@ func _test_ladder_ping_pong_guard() -> Array[String]:
 		await physics_frame
 		if inst.get_current_room_tag() != room_after_arrival:
 			failures.append(
-				"ladder_ping_pong: room changed to '%s' within 10 zero-input frames after arrival — "
-				"player was not placed clear of the reciprocal connector" % inst.get_current_room_tag()
+				(
+					"ladder_ping_pong: room changed to '%s' within 10 zero-input frames after arrival — "
+					+ "player was not placed clear of the reciprocal connector"
+				) % inst.get_current_room_tag()
 			)
 			break
 
@@ -797,9 +829,9 @@ func _test_wrong_side_ladder_resolves_correctly() -> Array[String]:
 
 func _test_dead_end_branches_isolated() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	if inst.get_layout() == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	for pair: Array in [[RECORDS_ROOM, GROUND_RELAY], [STORAGE_CACHE, EQUIPMENT_FLOOR]]:
@@ -819,15 +851,15 @@ func _test_dead_end_branches_isolated() -> Array[String]:
 		if chain.get_critical_path().has(branch_tag):
 			failures.append("dead_end: '%s' must not appear on the critical path" % branch_tag)
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
 func _test_chain_terminus_no_onward_connector() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = await _build_live_instance(failures)
+	var inst: Node2D = _build_detached_instance(failures)
 	if inst.get_layout() == null:
-		_free_instance(inst)
+		_free_detached_instance(inst)
 		return failures
 
 	var outgoing: int = 0
@@ -841,7 +873,7 @@ func _test_chain_terminus_no_onward_connector() -> Array[String]:
 	if chain.get_main_next(BROADCAST_DECK) != "":
 		failures.append("chain_terminus: get_main_next(broadcast_deck) must be ''")
 
-	_free_instance(inst)
+	_free_detached_instance(inst)
 	return failures
 
 
