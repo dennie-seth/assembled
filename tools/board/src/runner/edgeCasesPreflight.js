@@ -67,9 +67,8 @@ export function checkEdgeCasesPreflight(task) {
   return {
     warnings: [
       "## Acceptance has no **Edge cases:** block with its own `- [ ]` checklist items " +
-        "(.claude/rules/planner.md) -- the first implementation pass has nothing forcing it to " +
-        "consider boundary/failure conditions upfront; expect the reviewer to surface them one " +
-        "at a time across rework rounds instead."
+        "(.claude/rules/planner.md) -- a compliant block adds a bold `**Edge cases:**` line " +
+        "under `## Acceptance`, followed by its own `- [ ] ...` item(s), one per edge case."
     ]
   };
 }

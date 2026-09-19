@@ -135,10 +135,10 @@ async function reapCard(
  * - `reapOnStartup`: a fresh process has zero active runs *in memory* by
  *   definition, so `activeCardIds` alone can't tell a genuinely-dead run
  *   from one whose `claude` child process (spawned `detached: true`,
- *   see claudeCliRunner.js) survived a `node --watch` relaunch or board
- *   restart -- that child is not in this process's process group, so it
- *   keeps running with the same pid across the restart. Before reaping,
- *   check `runState.js`'s persisted `{pid, runLogPath}` for the card: a
+ *   see claudeCliRunner.js) survived a board restart -- that child is not
+ *   in this process's process group, so it keeps running with the same
+ *   pid across the restart. Before reaping, check `runState.js`'s
+ *   persisted `{pid, runLogPath}` for the card: a
  *   live pid (`isPidAlive`) means the run is genuinely still going, so the
  *   card is left at its current status and re-adopted into `activeCardIds`
  *   instead of being reset. Only a card with no evidence of a live process

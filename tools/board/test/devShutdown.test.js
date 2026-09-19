@@ -103,7 +103,7 @@ describe.skipIf(process.platform !== "linux")("npm run dev process tree", () => 
         stdio: "ignore"
       });
 
-      // Give the tree time to fully fork/exec through concurrently -> node --watch / vite.
+      // Give the tree time to fully fork/exec through concurrently -> node / vite.
       await new Promise((resolve) => setTimeout(resolve, 4000));
 
       const descendants = await collectDescendants(child.pid);
