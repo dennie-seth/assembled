@@ -42,8 +42,15 @@ const CONNECTOR_CLEARANCE_PX: float = 16.0
 ## Vertical band, centred on a room's floor_y, a ladder trigger occupies.
 const LADDER_TRIGGER_HEIGHT_PX: float = 16.0
 
-## Extra safety margin, in physics frames, added on top of a room-width-
-## derived grace window — see _grace_frames_for_room().
+## Player body size, matching PlayerController's documented 12x14 body
+## (client/player_controller.gd _HALF_W/_HALF_H) — T-0188 leaves collision
+## shape construction to the room runtime, so this level builds one for the
+## node it already configures (floor_y, room_connectors, position).
+const _PLAYER_BODY_WIDTH_PX: float = 12.0
+const _PLAYER_BODY_HEIGHT_PX: float = 14.0
+
+## Extra safety margin, in physics frames, added on top of a connector-width-
+## derived grace window — see _grace_frames_for_connector().
 const REENTRY_GRACE_MARGIN_FRAMES: int = 10
 
 const _WALL_COLOR: Color = Color(0.28, 0.28, 0.28)
@@ -205,6 +212,14 @@ func get_load_error() -> String:
 ## Returns the built room container for [param tag], or null.
 func get_room_node(tag: String) -> Node2D:
 	return _room_nodes.get(tag, null)
+
+
+## Returns the tags of every room container actually built — the built set,
+## not the canonical tag list, so a stray room built for a tag outside the
+## canonical seven is observable by a caller that iterates this instead of
+## the tag list.
+func get_built_room_tags() -> Array:
+	return _room_nodes.keys()
 
 
 ## Returns one record per declared connection: {from, to, type, branch}.
@@ -517,6 +532,19 @@ func _build_player() -> void:
 	_player.name = "Player"
 	_player.room_connectors.assign(_pending_room_connectors)
 
+	## PlayerController (T-0188) builds no CollisionShape2D of its own — without
+	## one, every wall/floor StaticBody2D this level builds is inert against the
+	## player. Not centred on position: floor_y is the TOP edge of the floor
+	## row (see _floor_y_px()), so the shape is offset upward by its full
+	## height, putting its bottom edge (the player's feet) exactly on floor_y
+	## rather than half-sinking into the floor collider.
+	var collision := CollisionShape2D.new()
+	var box := RectangleShape2D.new()
+	box.size = Vector2(_PLAYER_BODY_WIDTH_PX, _PLAYER_BODY_HEIGHT_PX)
+	collision.shape = box
+	collision.position = Vector2(0.0, -_PLAYER_BODY_HEIGHT_PX * 0.5)
+	_player.add_child(collision)
+
 	_current_room_tag = _layout.entry_room
 	_player.floor_y = _floor_y_px(_current_room_tag)
 	_player.position = _spawn_position()
@@ -551,35 +579,46 @@ func _on_player_room_transition(target_room_id: String) -> void:
 	_room_change_count += 1
 
 	## PlayerController's overlap check (§161-171) is unconditional and
-	## position-only — it has no notion of travel direction or intent. A room
-	## with more than two connectors can have one sandwiched, along the
-	## floor-row line, between this arrival point and another connector the
-	## player needs to reach (T-0390: equipment_floor's ladder-then-door
-	## layout — the ladder back up to power_substation sits between the
-	## landing spot and both the ladder down to antenna_shaft and the door to
-	## storage_cache). Without this, simply walking onward immediately re-
-	## triggers the connector just used. Suppress only that one connector,
-	## only long enough to walk clear of the room, and only where a genuine
-	## sandwich is possible — a two-connector room (e.g. ground_relay <->
-	## power_substation) has nothing to be sandwiched behind, so an immediate
-	## deliberate reversal there (the "wrong-side ladder" edge case) is never
-	## suppressed.
+	## position-only — it has no notion of travel direction or intent. This
+	## is a genuine geometric conflict in equipment_floor, not a placement
+	## choice that landing alone can fix (T-0390 fix round 1 asked for
+	## placement-only first; recorded here since it provably doesn't work):
+	## its ladder back up to power_substation must open somewhere within
+	## power_substation's own width (interior columns [1,19)), which sits
+	## strictly between the room's other two connectors — the ladder down to
+	## antenna_shaft, forced near column 1 by antenna_shaft's own narrow
+	## interior, and the door to storage_cache, fixed at equipment_floor's
+	## far right wall. Wherever in [1,19) the up-ladder's opening lands, and
+	## whichever side of it the arrival point is placed on, walking from that
+	## arrival to WHICHEVER of the other two connectors is on the far side
+	## crosses back through the up-ladder's own trigger — there is no static
+	## landing point clear of that crossing in both directions at once.
+	## Suppressing only the just-used connector, only long enough to clear
+	## ITS OWN trigger width (not the whole room, unlike the original
+	## implementation of this fix), keeps every ladder usable within about
+	## half a second of arriving, and only in the one room where a static
+	## landing point cannot avoid this (a two-connector room like
+	## ground_relay <-> power_substation has nothing to be sandwiched behind,
+	## so an immediate deliberate reversal there — the "wrong-side ladder"
+	## edge case — is never suppressed).
 	if _connector_count_by_room.get(target_room_id, 0) > 2:
 		_suppressed_connector_key = "%s|%s" % [target_room_id, previous_tag]
-		_suppress_frames_remaining = _grace_frames_for_room(target_room_id)
+		_suppress_frames_remaining = _grace_frames_for_connector(target_room_id, previous_tag)
 		_apply_connector_suppression()
 
 
 ## See _on_player_room_transition()'s grace-suppression comment. Long enough
-## to cross [param tag]'s full authored width at the player's slowest
-## (walking) speed, plus a fixed margin — derived from the layout and
-## PlayerController.WALK_SPEED rather than a fixed constant, so it stays
-## correct if the authored room sizes ever change.
-func _grace_frames_for_room(tag: String) -> int:
-	var width_px: float = _layout.get_rect_px(tag).size.x
+## to clear the just-used connector's OWN trigger width, plus the landing
+## clearance on both sides of it, at the player's slowest (walking) speed,
+## plus a fixed margin — NOT the room's full width, so the suppression is
+## scoped to the minimum needed to prevent the immediate re-trigger it
+## exists for.
+func _grace_frames_for_connector(from_tag: String, to_tag: String) -> int:
+	var trigger: Rect2 = get_trigger_area(from_tag, to_tag)
+	var distance_px: float = trigger.size.x + 2.0 * CONNECTOR_CLEARANCE_PX
 	var fps: float = float(Engine.physics_ticks_per_second)
 	var px_per_frame: float = _PlayerScript.WALK_SPEED / fps
-	return int(ceil(width_px / px_per_frame)) + REENTRY_GRACE_MARGIN_FRAMES
+	return int(ceil(distance_px / px_per_frame)) + REENTRY_GRACE_MARGIN_FRAMES
 
 
 ## Applies (or lifts) the current suppression to the live player's
