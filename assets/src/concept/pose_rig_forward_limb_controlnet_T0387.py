@@ -12,36 +12,43 @@ the cost of the arm and leg extension disappearing entirely. This card holds
 0.87 and fixes the remaining two defects at the skeleton and prompt, not by
 trading denoise again.
 
-Two concrete measurements from that evidence pin what to change here, both
+One concrete measurement from that evidence pins what to change here,
 already present in T-0382's own committed skeleton JSON
-(`player_profile_forward_limb_skeleton_T0380.json`):
+(`player_profile_forward_limb_skeleton_T0380.json`): the two eye joints sit
+only ~0.02 of the frame width apart on x -- almost coincident. Attempt 1
+(denoise 0.87) rendered a back/three-quarter view with no visible lens at
+all; attempt 3 (denoise 0.80) rendered a strap-like band across the face
+instead of a legible round lens. A near-coincident eye pair gives the
+ControlNet conditioning no strong asymmetric signal to anchor a strict
+profile head with one clearly forward, one clearly hidden eye.
 
-  - The near (right) knee sits only ~0.11 of the frame width forward of the
-    hip and ~0.01 of the frame height higher -- `thigh_angle_degrees_from_horizontal`
-    already clears the inherited <20-degree ceiling on paper, but the
-    on-canvas excursion is tiny next to a floor-length coat and a
-    dominant, full-length far (standing) leg. Attempt 1 at this card's own
-    denoise (0.87) rendered "legs flat"; attempt 3 at 0.80 rendered "both
-    feet together at rest, no lifted hem" -- neither denoise let that small
-    a joint displacement survive sampling as a visible break in the coat.
-  - The two eye joints sit only ~0.02 of the frame width apart on x --
-    almost coincident. Attempt 1 (denoise 0.87) rendered a back/three-quarter
-    view with no visible lens at all; attempt 3 (denoise 0.80) rendered a
-    strap-like band across the face instead of a legible round lens. A
-    near-coincident eye pair gives the ControlNet conditioning no strong
-    asymmetric signal to anchor a strict profile head with one clearly
-    forward, one clearly hidden eye.
+This module's own attempt 1/2 (this card's first two of its three
+pre-registered attempts) also tried a much larger near-knee/ankle excursion
+to fix the raised-leg defect, run together with the eye change above. Both
+attempts broke the single-arm result T-0382 attempt 1 already had at this
+exact seed/denoise/prompt baseline: attempt 1 (heavier prompt rewrite, both
+skeleton overrides) collapsed composition outright (figure zoomed past the
+frame); attempt 2 (reverted to near-original prompt, same two skeleton
+overrides) restored composition but brought back a second, unrequested
+hand at the hip -- the exact defect the far-arm collapse was meant to
+prevent -- with the leg still not reading as a clean raise either. Since
+the eye change is small and localized to the head while the knee/ankle
+change is a large excursion into the torso/hip region (physically where
+the phantom hand appeared), the knee/ankle override is the more likely
+cause of that regression. This card's third and final attempt isolates the
+one change least implicated in that regression: only the eye separation,
+with the near knee/ankle reverted verbatim to T-0380/T-0382's own rig,
+restoring the exact skeleton context attempt 1's single-arm result was
+measured under.
 
 This module keeps every joint from `pose_rig_forward_limb_controlnet_T0380`
 (which already collapses the far arm -- T-0382's own fix, still needed and
-left untouched) verbatim except these two overrides:
-
-  - the near knee/ankle pushed further forward and the knee lifted higher,
-    while keeping the thigh angle under the inherited 20-degree ceiling
-  - the near eye pulled toward the nose (the forward-most facial point) and
-    the far eye pulled back toward the far ear (reading as hidden behind
-    the head in a true profile), roughly quadrupling the pair's on-canvas
-    x separation
+left untouched) verbatim except one override: the near eye pulled toward
+the nose (the forward-most facial point) and the far eye pulled back toward
+the far ear (reading as hidden behind the head in a true profile), roughly
+quadrupling the pair's on-canvas x separation. The near-leg raise's small
+on-canvas amplitude remains an open, unresolved defect this card's
+evidence reports rather than works around by spending a fourth attempt.
 """
 
 from __future__ import annotations
@@ -72,31 +79,25 @@ _R_EAR, _L_EAR = 16, 17
 
 POSE_KEY = _t0382.POSE_KEY
 
-# Near knee/ankle: bigger forward reach and a real upward lift (was
-# (0.62, 0.56) / (0.7, 0.62) in T-0380/T-0382's rig -- hip (0.51, 0.57) to
-# knee here gives dx=0.16, dy=-0.043, thigh angle ~15.0 degrees, comfortably
-# under the 20-degree ceiling with margin, versus the prior ~5.2 degrees on
-# a much smaller excursion).
-_R_KNEE_OVERRIDE: Point = (0.67, 0.527)
-_R_ANKLE_OVERRIDE: Point = (0.71, 0.68)
-
 # Eyes: near eye pulled to the nose's x, far eye pulled to the far ear's x
-# (was (0.565, 0.078) / (0.545, 0.078) -- ~0.02 apart).
+# (was (0.565, 0.078) / (0.545, 0.078) -- ~0.02 apart). The near knee/ankle
+# are deliberately NOT overridden here -- see module docstring: attempt 1/2
+# tried a bigger knee/ankle excursion and both regressed the single-arm
+# result, so this card's third and final attempt isolates the eye change
+# alone, reverting the leg joints verbatim to T-0380/T-0382's own rig.
 _R_EYE_OVERRIDE: Point = (0.573, 0.084)
 _L_EYE_OVERRIDE: Point = (0.498, 0.086)
 
 
 def _apply_overrides(points: dict[int, Point]) -> dict[int, Point]:
     points = dict(points)
-    points[_R_KNEE] = _R_KNEE_OVERRIDE
-    points[_R_ANKLE] = _R_ANKLE_OVERRIDE
     points[_R_EYE] = _R_EYE_OVERRIDE
     points[_L_EYE] = _L_EYE_OVERRIDE
     return points
 
 
-# Reused verbatim from T-0380/T-0382's far-arm-collapsed rig except the near
-# knee/ankle and both eyes -- see module docstring.
+# Reused verbatim from T-0380/T-0382's far-arm-collapsed rig except both
+# eyes -- see module docstring.
 FORWARD_LIMB_KEYPOINTS_NORM: dict[int, Point] = _apply_overrides(
     _t0382.FORWARD_LIMB_KEYPOINTS_NORM
 )

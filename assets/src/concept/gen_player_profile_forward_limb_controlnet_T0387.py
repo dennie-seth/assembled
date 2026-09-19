@@ -96,37 +96,41 @@ MAX_ATTEMPTS = 3
 GREEN_MEASURE_CROP_SIZE = (187, 200)
 BORDER_PX = 16
 
-# T-0382's attempt-2-era prompt, strengthened at exactly the three clauses
-# this card's own evidence points at: the goggle lens (attempt 1: no lens
-# at all; attempt 3: a strap-like band), the raised near leg (attempt 1
-# "legs flat"; attempt 3 "both feet together at rest"), and the black
-# background (attempt 1 measured border max channel 45, over the 16
-# ceiling). Everything else -- identity elements, single-arm phrasing,
-# facing-right -- is unchanged from T-0382.
+# T-0382's attempt-2-era prompt, with a small addition at exactly the one
+# clause this card's third and final attempt still targets: the goggle
+# lens (attempt 1: no lens at all; attempt 3: a strap-like band). Attempts
+# 1/2 (this card's own) also tried a raised-leg prompt clause and a
+# background-reinforcement clause; attempt 1's heavier (:1.4) rewrite of
+# all three together broke composition outright, and attempt 2's lighter
+# revert still brought back a second, unrequested hand at the hip (see
+# module docstring and `pose_rig_forward_limb_controlnet_T0387`'s own for
+# why that regression is pinned on the skeleton's leg excursion, not the
+# prompt). This third attempt reverts the leg clause verbatim to T-0382's
+# own wording, isolating the lens change alone alongside the eye-only
+# skeleton change. Everything else -- identity elements, single-arm
+# phrasing, facing-right, background wording, leg wording -- is unchanged
+# from T-0382.
 POSITIVE_PROMPT = (
     f"{TRIGGER_TOKEN}, (a single full-body figure, exactly one pose, exactly one camera view, "
     "isolated portrait alone on a plain background:1.3), true 90-degree side profile view, not "
     "a three-quarter view, facing right, only the near arm and only the near leg extended "
     "forward at roughly a right angle clear of the torso, the far arm and far leg held back "
     "close to the body and hidden from view, one visible shoulder, a single visible arm "
-    "silhouette, both hands empty, open palm, nothing held, "
+    "silhouette, a single visible goggle lens, both hands empty, open palm, nothing held, "
     "(a single gloved hand reaching forward, pale light grey glove clearly lighter than the "
     "coat, fingers visible:1.2), wearing a long vivid institutional green cloth coat, coat "
     "reaching to mid-shin, well past the knee, "
-    "(the near knee lifted sharply forward and up at hip height, thigh raised to roughly a "
-    "right angle from the torso, the shin and booted foot hanging clear of the floor beneath "
-    "the lifted knee, entirely off the ground, the coat hem blown open at the front of the "
-    "stride to fully reveal the raised leg's silhouette and the boot suspended in mid-air, not "
-    "touching the ground:1.4), the coat itself is green, not black, not grey, wearing a hooded "
-    "mask with (a single circular convex goggle lens set into the hood over the near eye, dark "
-    "tinted glass with a subtle round highlight, clearly a lens and not a strap, not a "
-    "blindfold, not a fabric band:1.4), not a blank void, hood fully up and forward, face "
-    "completely covered by the mask, no visible hair, no visible face, boots, never high heels, "
-    "Soviet brutalist interior aesthetic, (background is pure solid RGB black, perfectly flat "
-    "and uniform, no vignette, no glow, no rim light bleeding past the figure's silhouette:1.2), "
-    "no scene elements, no wall, no floor, no environment, flat even lighting, no cast shadow, "
-    "no atmospheric haze, no depth of field, hard value separation, dark darks and light "
-    "lights, clean readable outline, game asset reference sheet style, figure silhouette study"
+    "(the raised near leg's own silhouette clearly visible pushing the coat fabric forward at "
+    "the front of the stride, the coat hem swept up and forward by the forward motion of the "
+    "raised knee, a visible boot beneath the lifted hem:1.3), the coat itself is green, not "
+    "black, not grey, wearing a hooded mask with (a single dark round circular goggle lens on "
+    "the near side of the hood, not a strap, not a blindfold:1.3), not a blank void, hood fully "
+    "up and forward, face completely covered by the mask, no visible hair, no visible face, "
+    "boots, never high heels, Soviet brutalist interior aesthetic, solid flat black background "
+    "only, no scene elements, no wall, no floor, no environment, flat even lighting, no cast "
+    "shadow, no atmospheric haze, no depth of field, hard value separation, dark darks and "
+    "light lights, clean readable outline, game asset reference sheet style, figure silhouette "
+    "study"
 )
 
 NEGATIVE_PROMPT = (
@@ -134,18 +138,13 @@ NEGATIVE_PROMPT = (
     "view, rear view, isometric, both arms visible, second arm visible, far arm visible, both "
     "hands visible, two hands visible, both eyes visible, both eye lenses visible, two eye "
     "lenses, second lens, far eye visible, both shoulders visible, symmetric front-facing pose, "
-    "blindfold, strap across the face, fabric band over the eyes, opaque wrap with no lens, "
-    "sunglasses, two lenses, goggles with two lenses, "
-    "both feet planted on the ground, feet together, standing at rest, idle stance, static "
-    "pose, legs together, straight standing legs, no leg raised, "
+    "blindfold, strap across the face, fabric band over the eyes, "
     "mid-hip coat, cropped coat, short coat, coat above the knee, bare thigh, no coat, blank "
     "head, faceless, featureless mannequin head, missing face, no face, headless, weapon, "
     "holding an object, tool in hand, high heels, stiletto heels, pumps, "
     "grey tactical costume, tan tactical costume, khaki uniform, army fatigues, muted olive "
     "costume, brownish coat, washed out colour, pale colour, desaturated coat, grayscale, black "
     "coat, grey coat, black armor, monochrome, colourless, "
-    "vignette, glow, bloom, halo, rim light, lighting falloff, dark grey background, gradient "
-    "background, non-black corners, "
     "perspective, vanishing point, receding walls, atmospheric haze, depth of field, sky, "
     "clouds, foliage, scene, composed illustration, photorealistic, 3d render, soft gradient "
     "lighting, ambient occlusion, painterly, cartoon, cheerful, grey background, concrete "
@@ -368,9 +367,13 @@ ATTEMPT_LOG_HEADER = (
     "Continues T-0382's stop-and-report (`docs/assets/evidence/T-0382/README.md`): denoise held "
     "at 0.87 (never lowered), ControlNet strength/end 1.5/1.0, T-0382's style/identity LoRA "
     "stack (0.70/0.50, no IP-Adapter), 1024. Only the skeleton "
-    "(`pose_rig_forward_limb_controlnet_T0387`: bigger near-knee/ankle excursion, separated "
-    "eyes) and the prompt (strengthened lens/leg/background clauses) move. Hard cap of 3 "
-    "attempts, pre-registered; see `docs/assets/evidence/T-0387/README.md` for the finding.\n\n"
+    "(`pose_rig_forward_limb_controlnet_T0387`) and the prompt moved, one lever isolated per "
+    "attempt after the first attempt's combined change regressed composition: attempt 1 tried a "
+    "bigger near-knee/ankle excursion plus separated eyes plus heavier lens/leg/background "
+    "prompt rewrites together; attempt 2 reverted the prompt but kept the enlarged knee/ankle; "
+    "attempt 3 reverted the leg skeleton and leg prompt clause verbatim to T-0382, isolating the "
+    "eye-separation + lens-wording change alone. Hard cap of 3 attempts, pre-registered; see "
+    "`docs/assets/evidence/T-0387/README.md` for the finding.\n\n"
     "| Attempt | Seed | Denoise | ControlNet strength/end | GPU seconds | Whole-frame green px | "
     "Centred-crop green px | Border max channel | Skeleton sha256 | Skeleton/prompt change | "
     "Promoted | Notes |\n"

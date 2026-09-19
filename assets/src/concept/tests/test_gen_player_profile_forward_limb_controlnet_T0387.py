@@ -135,26 +135,37 @@ def test_positive_prompt_strengthens_the_goggle_lens_beyond_T0382():
     assert "blindfold" in negative or "strap" in negative
 
 
-def test_positive_prompt_strengthens_the_raised_leg_beyond_T0382():
-    """Attempt 1 'legs flat'; attempt 3 'both feet together at rest, no
-    lifted hem'. The prompt must explicitly describe the foot as clear of
-    the ground, not just repeat T-0382's weaker hem-only clause."""
+def test_positive_prompt_leg_clause_is_reverted_verbatim_to_T0382():
+    """This card's own attempts 1/2 tried a strengthened leg clause
+    alongside a bigger knee/ankle skeleton excursion, and both regressed
+    the single-arm result T-0382 attempt 1 already had (see
+    `pose_rig_forward_limb_controlnet_T0387`'s own module docstring). The
+    third and final attempt isolates the lens change alone: the leg clause
+    (and the skeleton's leg joints) revert verbatim to T-0382's own
+    wording, leaving the near-leg raise an open, unresolved defect this
+    card reports rather than re-attempts a fourth time."""
+    t0382_leg_clause = (
+        "(the raised near leg's own silhouette clearly visible pushing the coat fabric forward "
+        "at the front of the stride, the coat hem swept up and forward by the forward motion of "
+        "the raised knee, a visible boot beneath the lifted hem:1.3)"
+    )
+    assert t0382_leg_clause in gen.build_positive_prompt()
+    assert t0382_leg_clause in _t0382_gen.build_positive_prompt()
+
+
+def test_positive_prompt_keeps_T0382s_background_wording_unchanged():
+    """This card's own attempt 1 tried an added background-reinforcement
+    clause plus heavier (:1.4) lens/leg rewrites together, and that
+    combination broke composition outright (figure zoomed in past the
+    frame, head cropped off the top edge) -- worse than either targeted
+    defect it tried to fix. Reverting the background wording to T-0382's
+    own verbatim text isolates the fix to the two clauses this card
+    targets, per its own 'change only the skeleton joints and the prompt
+    -- and nothing else' pre-registration discipline."""
     prompt = gen.build_positive_prompt().lower()
     old_prompt = _t0382_gen.build_positive_prompt().lower()
-    assert prompt != old_prompt
-    assert "clear of the" in prompt or "off the ground" in prompt or "mid-air" in prompt
-    negative = gen.build_negative_prompt().lower()
-    assert "feet together" in negative or "both feet planted" in negative or "idle stance" in negative
-
-
-def test_positive_prompt_reinforces_solid_black_background():
-    """T-0382 attempt 1 measured border max channel 45, over the 16
-    ceiling -- reinforcing 'pure black, no vignette/glow' is this card's
-    only lever on that check besides the skeleton."""
-    prompt = gen.build_positive_prompt().lower()
-    assert "vignette" in prompt or "glow" in prompt
-    negative = gen.build_negative_prompt().lower()
-    assert "vignette" in negative or "glow" in negative
+    assert "solid flat black background only" in prompt
+    assert "solid flat black background only" in old_prompt
 
 
 def test_positive_prompt_still_names_identity_elements():

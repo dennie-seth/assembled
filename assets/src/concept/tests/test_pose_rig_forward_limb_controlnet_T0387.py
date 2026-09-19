@@ -14,15 +14,21 @@ x -- almost coincident -- which this card's own reasoning ties to attempt
 1's back/three-quarter drift and no visible lens: too weak an asymmetric
 signal for the sampler to commit to a strict one-eye-visible profile head.
 
-This module keeps every joint from `pose_rig_forward_limb_controlnet_T0380`
-(far arm already collapsed) verbatim except two overrides:
+This card's own first two of three pre-registered attempts tried a bigger
+near-knee/ankle excursion for the leg defect alongside the eye change, and
+both regressed the single-arm result T-0382 attempt 1 already had at this
+exact seed/denoise/prompt baseline (attempt 1: composition collapsed
+outright; attempt 2: a second, unrequested hand reappeared at the hip).
+Since the knee/ankle change is a large excursion into the torso/hip region
+-- physically where the phantom hand appeared -- while the eye change is
+small and confined to the head, this card's third and final attempt
+isolates the eye change alone, reverting the near knee/ankle verbatim to
+T-0380/T-0382's own rig.
 
-  - the near (right) knee/ankle pushed further forward and the knee lifted
-    higher, while keeping the thigh angle under this card's inherited
-    20-degree ceiling
-  - the eye pair separated much further apart on x: the near (right) eye
-    pulled toward the nose, the far (left) eye pulled back toward the far
-    ear
+This module keeps every joint from `pose_rig_forward_limb_controlnet_T0380`
+(far arm already collapsed) verbatim except one override: the eye pair
+separated much further apart on x -- the near (right) eye pulled toward
+the nose, the far (left) eye pulled back toward the far ear.
 
 RED state: pose_rig_forward_limb_controlnet_T0387 does not exist yet.
 """
@@ -47,13 +53,15 @@ _L_HIP, _L_KNEE, _L_ANKLE = 11, 12, 13
 _R_EYE, _L_EYE = 14, 15
 _R_EAR, _L_EAR = 16, 17
 
-_OVERRIDDEN = {_R_KNEE, _R_ANKLE, _R_EYE, _L_EYE}
+_OVERRIDDEN = {_R_EYE, _L_EYE}
 
 
-def test_only_the_knee_ankle_and_eye_joints_are_overridden_from_T0382():
+def test_only_the_eye_joints_are_overridden_from_T0382():
     """Every joint this card does not touch -- including the far-arm
-    collapse T-0382 already fixed -- stays reused verbatim; only the near
-    knee/ankle (leg amplitude) and both eyes (head asymmetry) move."""
+    collapse T-0382 already fixed, and the near knee/ankle (reverted after
+    attempts 1/2 showed a bigger leg excursion regressed the single-arm
+    result) -- stays reused verbatim; only both eyes (head asymmetry)
+    move."""
     upstream = _t0382_rig.FORWARD_LIMB_KEYPOINTS_NORM
     ours = rig.FORWARD_LIMB_KEYPOINTS_NORM
     for joint in set(upstream) - _OVERRIDDEN:
@@ -88,31 +96,18 @@ def test_near_thigh_is_within_20_degrees_of_horizontal():
     assert angle < 20, f"near thigh is {angle:.1f} degrees from horizontal, not raised"
 
 
-def test_near_knee_reach_is_substantially_larger_than_T0382s_rig():
-    """The measured defect: T-0382's own knee reach (~0.11 of frame width,
-    ~0.01 of frame height) was too small an amplitude for the sampler to
-    render as a visible break in the coat -- this pins the fix at a
-    concrete, much larger on-canvas excursion, not just a same-magnitude
-    number that happens to differ."""
+def test_near_knee_and_ankle_are_reverted_verbatim_to_T0382s_rig():
+    """Attempts 1/2 (this card's own) tried a bigger knee/ankle excursion
+    and both regressed the single-arm result T-0382 attempt 1 already had
+    at this seed/denoise/prompt baseline -- see module docstring. This
+    card's third and final attempt reverts the leg joints verbatim to
+    isolate the eye change alone; the near-leg raise's small on-canvas
+    amplitude is reported as an open, unresolved defect rather than
+    re-attempted a fourth time."""
     upstream = _t0382_rig.FORWARD_LIMB_KEYPOINTS_NORM
-    hip_x, hip_y = rig.FORWARD_LIMB_KEYPOINTS_NORM[_R_HIP]
-    old_knee_x, old_knee_y = upstream[_R_KNEE]
-    new_knee_x, new_knee_y = rig.FORWARD_LIMB_KEYPOINTS_NORM[_R_KNEE]
-
-    old_dx, old_dy = old_knee_x - hip_x, hip_y - old_knee_y
-    new_dx, new_dy = new_knee_x - hip_x, hip_y - new_knee_y
-
-    assert new_dx > old_dx * 1.3, "knee's forward reach must clearly grow, not just shift"
-    assert new_dy > old_dy * 2.0, "knee's upward lift must clearly grow, not just shift"
-
-
-def test_near_ankle_stays_forward_of_knee_and_off_the_ground():
-    points = rig.keypoints()
-    knee_x, _ = points[_R_KNEE]
-    ankle_x, ankle_y = points[_R_ANKLE]
-    far_ankle_y = points[_L_ANKLE][1]
-    assert ankle_x > knee_x, "shin must continue forward from the raised knee, not fold back"
-    assert ankle_y < far_ankle_y - 0.1, "raised foot must sit well clear of the standing foot's ground line"
+    ours = rig.FORWARD_LIMB_KEYPOINTS_NORM
+    assert ours[_R_KNEE] == upstream[_R_KNEE]
+    assert ours[_R_ANKLE] == upstream[_R_ANKLE]
 
 
 def test_eye_pair_separation_is_much_wider_than_T0382s_rig():
