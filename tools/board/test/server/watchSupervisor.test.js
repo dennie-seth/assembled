@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { createWatchSupervisor } from "../../src/server/watchSupervisor.js";
+import { detectLiveRun } from "../../src/runner/liveRunGuard.js";
 
 /**
  * T-0385: `node --watch` restarts the deployed board process on any changed file,
@@ -173,6 +174,39 @@ describe("createWatchSupervisor", () => {
     expect(detectLiveRunFn).toHaveBeenCalledTimes(1);
     expect(spawnFn).toHaveBeenCalledTimes(2);
   });
+
+  it(
+    "[FIX ROUND 1, P2 -- Codex 2026-09-19] restarts a card that is genuinely active but still in " +
+      "worktree setup, because the real detectLiveRun signal has no way to see it (no claude " +
+      "process yet, no tasks/.runs/*.jsonl yet -- both are only created *after* addWorktree, but " +
+      "activeCardIds already holds the card from the top of runCard())",
+    async () => {
+      // The real detectLiveRun -- not the mocked detectLiveRunFn every other test in this file
+      // uses -- fed deterministic I/O that reproduces the exact setup-window state Codex's probe
+      // hit: pgrep finds no matching claude process (exit code 1, the real "nothing found" case),
+      // and tasks/.runs doesn't exist yet (ENOENT, the real "no run has ever logged" case).
+      const detectLiveRunFn = ({ runsDir, boardDirs }) =>
+        detectLiveRun({
+          runsDir,
+          boardDirs,
+          execFn: vi.fn().mockRejectedValue(Object.assign(new Error("no processes matched"), { code: 1 })),
+          readdirFn: vi.fn().mockRejectedValue(Object.assign(new Error("no such directory"), { code: "ENOENT" }))
+        });
+      const supervisor = make({ detectLiveRunFn });
+      supervisor.start();
+      const firstChild = supervisor.child;
+
+      watcher.emit("all", "change", "/fake/src/foo.js");
+      await vi.advanceTimersByTimeAsync(50);
+      await flushMicrotasks();
+
+      // Desired behavior: a card already tracked as active (from the moment it entered
+      // activeCardIds, before worktree setup) must never be torn down by a source-file change.
+      // This fails today -- detectLiveRun reports {live: false} in this state and the supervisor
+      // restarts anyway, exactly reproducing the incident this card exists to close.
+      expect(firstChild.kill).not.toHaveBeenCalled();
+    }
+  );
 
   it("stop() kills the child, closes the watcher, and cancels a pending deferred restart", async () => {
     detectLiveRunFn.mockResolvedValue({ live: true });
