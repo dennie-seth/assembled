@@ -111,14 +111,9 @@ def test_style_and_identity_lora_weights_match_the_fixed_recipe():
 
 
 def test_attempt_cap_is_3():
-    """This card's own pre-registered hard cap."""
-    import argparse
-    import io
-    import contextlib
-
-    parser = argparse.ArgumentParser()
-    # main() enforces the cap at runtime; assert the constant it checks against
-    # directly instead of invoking argv-parsing/network code here.
+    """This card's own pre-registered hard cap. main() enforces it at
+    runtime against this constant; assert the constant directly instead of
+    invoking argv-parsing/network code here."""
     assert gen.MAX_ATTEMPTS == 3
 
 
