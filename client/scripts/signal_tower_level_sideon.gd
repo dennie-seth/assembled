@@ -56,6 +56,8 @@ const _PLAYER_BODY_HEIGHT_PX: float = 14.0
 
 const _WALL_COLOR: Color = Color(0.28, 0.28, 0.28)
 const _FLOOR_COLOR: Color = Color(0.22, 0.22, 0.22)
+## Grey-box player body colour — deliberately not final art (finding 8).
+const _PLAYER_BODY_COLOR: Color = Color(0.85, 0.72, 0.2)
 
 var _layout: RefCounted  ## RoomLayout
 var _room_nodes: Dictionary = {}  ## anchor_tag -> Node2D
@@ -71,6 +73,7 @@ var _arrivals: Dictionary = {}
 var _connector_type_by_pair: Dictionary = {}
 
 var _player: CharacterBody2D
+var _camera: Camera2D
 var _prompt_label: Label
 var _first_run: Node
 var _room_built: bool = false
@@ -240,6 +243,17 @@ func get_trigger_area(from_tag: String, to_tag: String) -> Rect2:
 ## Returns the built player, or null.
 func get_player() -> CharacterBody2D:
 	return _player
+
+
+## Returns the camera following the player, or null.
+func get_camera() -> Camera2D:
+	return _camera
+
+
+## Returns the interaction prompt's current world-space position, or
+## Vector2.ZERO if it hasn't been built yet.
+func get_interaction_prompt_global_position() -> Vector2:
+	return _prompt_label.global_position if _prompt_label != null else Vector2.ZERO
 
 
 ## Returns the anchor tag of the room the player currently occupies.
@@ -547,12 +561,48 @@ func _build_player() -> void:
 	collision.position = Vector2(0.0, -_PLAYER_BODY_HEIGHT_PX * 0.5)
 	_player.add_child(collision)
 
+	## Grey-box visual body (T-0390 fix round 3, P1 b) — a plain ColorRect, no
+	## Sprite2D/TextureRect and no final-art texture path (finding 8). ColorRect's
+	## position is its TOP-LEFT, unlike CollisionShape2D's centred convention
+	## above, so its bottom edge (not a shared offset) is what's placed at
+	## floor_y: top-left x is -half width to stay horizontally centred, and
+	## top-left y is -full height so the bottom edge sits at y = 0 (floor_y).
+	var body := ColorRect.new()
+	body.name = "Body"
+	body.size = Vector2(_PLAYER_BODY_WIDTH_PX, _PLAYER_BODY_HEIGHT_PX)
+	body.position = Vector2(-_PLAYER_BODY_WIDTH_PX * 0.5, -_PLAYER_BODY_HEIGHT_PX)
+	body.color = _PLAYER_BODY_COLOR
+	_player.add_child(body)
+
 	_current_room_tag = _layout.entry_room
 	_player.floor_y = _floor_y_px(_current_room_tag)
 	_player.position = _spawn_position()
 	_player.interact_pressed.connect(_on_player_interact)
 
+	## _player must already be inside the tree before Camera2D.make_current()
+	## is legal to call (Camera2D errors "!enabled || !is_inside_tree()"
+	## otherwise) — add_child(_player) here, before building the camera,
+	## rather than at the end of this function as the pre-camera code did.
+	## _build_detached_instance()-style tests call build_level() on an
+	## instance never added to any SceneTree; _player then never enters the
+	## tree either, so the is_inside_tree() guard below simply leaves the
+	## camera constructed but not current for those — geometry-only tests
+	## never look at it.
 	add_child(_player)
+
+	## Camera2D (T-0390 fix round 3, P1 a) — child of the player so it tracks
+	## position automatically with no extra per-frame code, clamped every
+	## room transition to the active room's own rect (_update_camera_limits())
+	## so a room wider/taller than the 384x216 viewport pans instead of
+	## showing area outside the room, and a room smaller than the viewport
+	## centres instead of showing the neighbouring room through open walls.
+	_camera = Camera2D.new()
+	_camera.name = "Camera2D"
+	_player.add_child(_camera)
+	if _camera.is_inside_tree():
+		_camera.make_current()
+	_update_camera_limits(_current_room_tag)
+
 	_build_prompt()
 
 
@@ -561,6 +611,23 @@ func _build_player() -> void:
 func _spawn_position() -> Vector2:
 	var rect: Rect2 = _layout.get_rect_px(_layout.entry_room)
 	return Vector2(rect.position.x + rect.size.x * 0.5, _floor_y_px(_layout.entry_room))
+
+
+## Clamps the following camera to [param tag]'s own authored world rect, so a
+## room wider or taller than the viewport pans instead of showing whatever
+## lies past the room's walls. Called once at spawn and again on every
+## room transition (_on_player_interact()) — the room the player is
+## logically in is the only thing that changes; the camera itself stays a
+## permanent child of the player.
+func _update_camera_limits(tag: String) -> void:
+	if _camera == null:
+		return
+	var rect: Rect2 = _layout.get_rect_px(tag)
+	_camera.limit_left = int(rect.position.x)
+	_camera.limit_top = int(rect.position.y)
+	_camera.limit_right = int(rect.position.x + rect.size.x)
+	_camera.limit_bottom = int(rect.position.y + rect.size.y)
+	_camera.reset_smoothing()
 
 
 ## The contextual "[E] ..." prompt Label, hidden until the player stands in a
@@ -592,6 +659,7 @@ func _on_player_interact() -> void:
 	_current_room_tag = target_room_id
 	_player.floor_y = arrival["floor_y"]
 	_player.position = arrival["position"]
+	_update_camera_limits(_current_room_tag)
 	_room_change_count += 1
 
 
