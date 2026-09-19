@@ -228,11 +228,17 @@ full task list fresh and re-runs `revalidateCandidate` (status, eligibility
 scope, approval flag, body markers, dependencies -- everything except the
 git-based merged-work check, which doesn't go stale within a run) against
 that fresh snapshot; a candidate that no longer passes is skipped and
-reported, never written. The write itself also carries the freshly-observed
-status as an `X-Board-Expected-Status` header AND a full field fingerprint
-(`X-Board-Expected-Fields` -- status, agent, deliverable_type,
-requires_approval, depends_on, and a hash of body, built by
-`buildExpectedFields`), which `PATCH /api/tasks/:id` enforces as a
+reported, never written. `findChangedVettedFields` (T-0384 FIX ROUND 4,
+Codex P2 #1) additionally compares that fresh snapshot against the
+candidate's ORIGINAL, selection-time snapshot -- what every rule actually
+vetted -- so a body/acceptance change to a DIFFERENT but still eligible-
+looking value (no Held marker, still eligible, deps still fine) is caught
+too; `revalidateCandidate` alone only re-checks the fresh snapshot against
+itself and has nothing to compare it against. The write itself carries the
+ORIGINAL snapshot's status as an `X-Board-Expected-Status` header AND a full
+field fingerprint (`X-Board-Expected-Fields` -- status, agent,
+deliverable_type, requires_approval, depends_on, and a hash of body, built
+by `buildExpectedFields`), which `PATCH /api/tasks/:id` enforces as a
 server-side precondition (`StaleWriteError` -> 409) so a card whose body,
 agent, deliverable_type, or depends_on changes in the small remaining gap
 between that re-check and the write landing -- not just its status -- is
@@ -244,6 +250,16 @@ within this same store instance/process (Codex P2 #2) -- see the guarantee
 each store actually makes, spelled out precisely in `fsTaskStore.js`'s
 constructor comment and `dbTaskStore.js`'s `update` comment (neither claims
 cross-process safety).
+
+**Dependency status is enforced INSIDE the atomic write itself, not just in
+a preceding GET** (T-0384 FIX ROUND 4, Codex P2 #2): the write also carries
+`X-Board-Require-Dependencies-Satisfied: true`, which `DbTaskStore.update`
+re-checks by re-reading each dependency's status from inside the same
+synchronous transaction as the write, and `FsTaskStore.update` re-checks
+inside its existing per-id lock -- both refuse the transition
+(`DependencyNotSatisfiedError` -> 409, naming the dependency and its current
+status) if a dependency regressed out of `done`/`retired` in the gap between
+this job's own pre-write re-fetch and the PATCH actually landing.
 
 **A write-time refusal changes the run's exit code, not just its report**
 (T-0384 FIX ROUND 3). `vetAndReady.js` exports three named exit codes:
@@ -286,46 +302,38 @@ without needing `journalctl` at all.
 ### Live dry run (T-0384 acceptance evidence)
 
 `node ops/vetAndReady.js` (no `--apply`) against the actual live board at
-`127.0.0.1:4173`, re-run after the AC10/AC13 fix round,
-2026-09-18T13:05:13.271Z:
+`127.0.0.1:4173`, re-run after FIX ROUND 4, 2026-09-19T09:52:12.351Z:
 
 ```
-# Board vet-and-ready run -- 2026-09-18T13:05:13.271Z
+# Board vet-and-ready run -- 2026-09-19T09:52:12.351Z
 
 Poller state: enabled=true, interval=30m, usageMax=0.8
 
-Eligible-at-all: 4 card(s) (status=backlog, agent=infra, deliverable_type=code, requires_approval=false)
+Eligible-at-all: 3 card(s) (status=backlog, agent=infra, deliverable_type=code, requires_approval=false)
 Readied: 0 (cap 4)
-Skipped: 4
+Skipped: 3
 
 ## Skipped
 - T-0362 "Freeze the motion-gate thresholds against the first approved compositor walk and the negative-control battery (DL-31)" [P1] skipped -- 1-dependency: unmet dependency: T-0338 is backlog ([{"id":"T-0338","status":"backlog"}])
 - T-0371 "WIP gate T-E: one shared GPU lease across every audited GPU submission path, with owner + crash reconciliation" [P2] skipped -- 3-superseded: acceptance may be self-contradicted or superseded -- body contains marker(s): HELD (HELD)
 - T-0372 "WIP gate T-F: drain mode with oversized-card detection and bounded, aged waiting" [P2] skipped -- 3-superseded: acceptance may be self-contradicted or superseded -- body contains marker(s): HELD (HELD)
-- T-0385 "Deploy hardening: `node --watch` bypasses the deferred-restart-until-idle guard" [P1] skipped -- 2-merged: possibly already satisfied by merged work -- develop already shows activity for acceptance path `tools/board/DEPLOY.md` (0baca5f fix(board): fresh poller lastResult on tick error, dedupe dep-status Set, drop leaky ready-token query param (T-0383) | bd4f717 feat(board): add poller status, task filtering, and a token-guarded ready route (T-0383) | 9b094d7 fix(board): deploy.sh fast-forwards instead of always creating a --no-ff merge | 9c836b5 test(board): cover node --watch reload survives exec'd sh -c (T-0290) | d6bcd32 docs(board): spell out why no agent run self-verifies the T-0290 restart)
 
 ## Apply
 Dry run (default) -- nothing was written. Pass --apply to PATCH status: ready on the readied cards above.
 ```
 
-Confirmed it wrote nothing: `GET /api/tasks/T-0362`, `GET /api/tasks/T-0371`,
-`GET /api/tasks/T-0372` and `GET /api/tasks/T-0385` all still read
-`status: "backlog"` immediately after this run, and `git status --porcelain`
-was unchanged. `Poller state: enabled=true, interval=30m, usageMax=0.8` is
-the non-degraded path (`GET /api/poller`, T-0383) working live for the first
-time in this evidence -- the earlier fix-round run only ever exercised the
-404-degrade branch because the board it ran against predated T-0383's merge.
+Confirmed it wrote nothing: `GET /api/tasks/T-0362`, `GET /api/tasks/T-0371`
+and `GET /api/tasks/T-0372` all still read `status: "backlog"` immediately
+after this run, and `git status --porcelain` was unchanged.
 
-This table differs from the earlier fix-round evidence exactly as the fix
-round's own note predicted: T-0371/T-0372 now skip on their `HELD` body
-markers (rule `3-superseded`) instead of being readied -- the case-sensitive
-marker bug that let `## Held` slip through is the very thing finding 1's fix
-closed, so those two cards were always supposed to skip and the earlier
-table was wrong, not this one. T-0362 is unchanged, still skipped purely on
-its unmet T-0338 dependency (rule 1). T-0385 is a card that didn't exist
-when the earlier table was captured; it skips on rule `2-merged` because its
-acceptance names `tools/board/DEPLOY.md`, which already has develop history
--- correct, conservative behaviour, not a fixture of this fix round.
+This table differs from the AC10/AC13 fix-round evidence only in that
+T-0385 (a card that has since left backlog) no longer appears -- T-0362 and
+T-0371/T-0372 are unchanged, skipped for the same reasons (rule 1's unmet
+T-0338 dependency, rule 3's `HELD` markers respectively). Nothing in FIX
+ROUND 4 changes selection-time behaviour on any of these three cards; its
+two fixes (comparing against the original vetted snapshot, enforcing
+dependency status atomically) only ever bite at write time, and this run
+never reaches a write.
 
 #### Fix round (Codex review 2026-09-18, PR #396) -- re-verification status
 
@@ -363,6 +371,40 @@ written nothing.
 
 The full board suite (`npx vitest run`, 200 files / 3825 tests) and
 `npm run lint` are green on the head that includes both fixes.
+
+#### FIX ROUND 4 (Codex review 2026-09-19, head 8e44e923)
+
+Two new P2 write-safety gaps, both closed with failing-test-first regressions
+against a real HTTP server + a real (in-memory) `DbTaskStore`, not mocks:
+
+1. A candidate's acceptance/body changing to a DIFFERENT, still eligible-
+   looking value (no Held marker) between selection and its own pre-write
+   re-fetch previously sailed through untouched -- `revalidateCandidate`
+   only ever re-checked the fresh snapshot against itself. Closed by
+   `findChangedVettedFields`, and by anchoring the server-side
+   `X-Board-Expected-Fields` precondition to the ORIGINAL vetted snapshot
+   instead of the fresh one.
+2. A dependency regressing out of `done`/`retired` immediately before the
+   PATCH landed was invisible to both the client-side re-check (a plain GET,
+   already completed by then) and the server-side fingerprint (which only
+   ever carried dependency *ids*, not their statuses). Closed by
+   `DependencyNotSatisfiedError` / `findUnsatisfiedDependencies`
+   (`src/lib/taskStore.js`) and a new opt-in `requireDependenciesSatisfied`
+   store option, checked inside `DbTaskStore`'s transaction and
+   `FsTaskStore`'s per-id lock, surfaced via a new
+   `X-Board-Require-Dependencies-Satisfied` header this job always sends.
+
+Codex's `vetting-probe.mjs` for this round is mirrored at
+`/home/dennieseth/codex-2026-09-19/`, which is outside this worktree and not
+reachable from this sandbox (a hard filesystem boundary, not a permission
+prompt -- confirmed via `ls`). Per the card's own fallback, the four new real-HTTP-server + real-`DbTaskStore`
+regressions in `test/ops/vetAndReady.test.js` stand in for it: P2 #1
+reproduced both as a single candidate and as a later candidate changing
+while an earlier one's write is in flight; P2 #2 reproduced as a dependency
+regressing immediately before the PATCH, plus its "still satisfied"
+complement.
+Board suite: 203 files / 3906 tests passing (one flake unrelated to this
+diff, see the FIX ROUND 4 fix commit message); `npm run lint` clean.
 
 ### Installing (not done by this card, on purpose)
 
