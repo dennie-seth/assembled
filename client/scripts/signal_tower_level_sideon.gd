@@ -123,6 +123,19 @@ func get_first_run_controller() -> Node:
 ## (same pattern as signal_tower_overview.gd's build_layout()), so tests can
 ## drive a deliberately broken path without a live SceneTree.
 func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
+	## Idempotent: frees any previously-built room/player nodes first. Without
+	## this, calling build_level() a second time on an already-_ready() (and
+	## thus already-built) instance — as tests/test_main_scene_boot.gd-style
+	## live-tree harnesses do — leaves the first build's nodes orphaned but
+	## still live in the tree, including a second, physically-live
+	## PlayerController with its own collision shape, silently colliding with
+	## the one callers actually track via get_player().
+	for room_node: Node2D in _room_nodes.values():
+		if is_instance_valid(room_node):
+			room_node.free()
+	if is_instance_valid(_player):
+		_player.free()
+
 	_load_error = ""
 	_room_nodes = {}
 	_connector_records = []
