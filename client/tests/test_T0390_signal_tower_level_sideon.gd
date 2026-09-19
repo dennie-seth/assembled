@@ -1009,7 +1009,14 @@ func _test_interaction_prompt_visibility() -> Array[String]:
 	if inst.get_interaction_prompt_text() == "":
 		failures.append("prompt: must show non-empty text while in a connector area")
 
-	player.apply_input(-1.0, true)
+	## Leave back toward the room's own centre, not blindly further in the
+	## entry direction — ground_relay's ladder opening sits flush against the
+	## room's own left wall (T-0328's committed layout), so continuing further
+	## left after arriving there collides with that wall instead of exiting.
+	var room_rect: Rect2 = inst.get_layout().get_rect_px(GROUND_RELAY)
+	var center_x: float = room_rect.position.x + room_rect.size.x * 0.5
+	var leave_direction: float = 1.0 if center_x >= player.position.x else -1.0
+	player.apply_input(leave_direction, true)
 	var left: bool = false
 	for i in range(120):
 		await physics_frame
