@@ -261,6 +261,31 @@ inside its existing per-id lock -- both refuse the transition
 status) if a dependency regressed out of `done`/`retired` in the gap between
 this job's own pre-write re-fetch and the PATCH actually landing.
 
+**The FS lock now also covers dependency ids, not just the candidate's own
+id** (T-0384 FIX ROUND 5, Codex round-2 review): `DbTaskStore`'s guarantee
+above was already airtight, because its whole `requireDependenciesSatisfied`
+check plus the write run inside one synchronous `better-sqlite3` transaction
+-- nothing else sharing that connection can interleave partway through.
+`FsTaskStore`'s per-id lock, though, keyed the guard purely off the
+candidate's id; a dependency has a *different* id and therefore a different
+lock entry, so a direct write to that dependency through the same store
+instance could still land between the guarded read and the candidate's
+write. Of the two options the card allowed -- (a) lock the dependency ids
+too, in one consistent order, or (b) refuse `requireDependenciesSatisfied`
+outright on this backend -- **(a) was chosen**: `FsTaskStore`'s per-id lock
+generalizes cleanly to a set of ids (`_withLocks`, in `fsTaskStore.js`),
+and refusing the option would have broken the FS-backed contract tests
+that already exercise `requireDependenciesSatisfied` successfully
+(`test/taskStoreContract.js`). `update()` now locks the candidate id
+together with every id in its `depends_on` list (deduped and sorted) before
+running its guarded read-check-write; two concurrent guarded writes whose
+dependency sets overlap in opposite orders both still complete, since
+`_withLocks` captures and replaces every id's queue tail in a single
+synchronous step rather than acquiring ids one at a time -- there is no
+partial "hold one, wait on another" state for a deadlock to form in. See
+`test/fsTaskStore.test.js`'s "FIX ROUND 5" describe block for both
+regressions.
+
 **A write-time refusal changes the run's exit code, not just its report**
 (T-0384 FIX ROUND 3). `vetAndReady.js` exports three named exit codes:
 
@@ -405,6 +430,30 @@ regressing immediately before the PATCH, plus its "still satisfied"
 complement.
 Board suite: 203 files / 3906 tests passing (one flake unrelated to this
 diff, see the FIX ROUND 4 fix commit message); `npm run lint` clean.
+
+#### FIX ROUND 5 (Codex round-2 review 2026-09-19, head 6677455)
+
+One remaining P2, FS-only: `FsTaskStore.update`'s `requireDependenciesSatisfied`
+check ran under a lock keyed only to the candidate's own id, so a direct
+write to a dependency id (a different lock entry) through the same store
+instance could still interleave with the guarded read-check-write. The DB
+path was already closed (see the "FS lock now also covers dependency ids"
+paragraph above for the full writeup and the chosen fix -- option (a), lock
+ordering, over (b), refusing the option on this backend).
+
+Codex's `fs-dependency-probe.mjs` and `vetting-probe.mjs` for this round are
+mirrored at `/home/dennieseth/codex-2026-09-19-r2/`, which is outside this
+worktree and not reachable from this sandbox (a hard filesystem boundary,
+not a permission prompt -- confirmed via `ls` refusal). Per the card's own
+fallback, the two new regressions in `test/fsTaskStore.test.js`'s "FIX ROUND
+5" describe block stand in for them: a concurrent write to a locked
+dependency now blocks until the guarded ready update lands, and two
+concurrent guarded writes with opposite-order dependency sets both complete
+without deadlock.
+
+Board suite: 203 files / 3908 tests passing (the same one load-dependent
+flake as FIX ROUND 4, `test/runner/cardLaunch.test.js:915`, unrelated to
+this diff -- 72/72 green when that file runs alone); `npm run lint` clean.
 
 ### Installing (not done by this card, on purpose)
 
