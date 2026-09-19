@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { TaskStore, StaleWriteError } from "../src/lib/taskStore.js";
+import { TaskStore, StaleWriteError, DependencyLockSetUnstableError } from "../src/lib/taskStore.js";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { runTaskStoreContractTests, makeTask } from "./taskStoreContract.js";
 
@@ -223,6 +223,192 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 5 interleaving regress
 
       expect(r1.status).toBe("ready");
       expect(r2.status).toBe("ready");
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * T-0384 FIX ROUND 6 (Chat round-3 review 2026-09-19, P2): FIX ROUND 5 locked the candidate id
+ * together with its `depends_on` ids -- but it chose WHICH ids to lock from an unlocked peek taken
+ * BEFORE any lock is held. If `depends_on` itself changes between that peek and lock acquisition,
+ * the guard ends up holding the WRONG lock set: it locks yesterday's dependency, not today's, and
+ * evaluates the real (new) dependency without ever holding its lock. `update()` now re-reads
+ * `depends_on` fresh INSIDE the lock it just acquired and compares it against the ids it actually
+ * locked; a mismatch releases the lock and retries with the corrected set (bounded), so the guard
+ * never evaluates -- or writes against -- a dependency whose lock it doesn't hold.
+ */
+describe("FsTaskStore dependency-aware locking (FIX ROUND 6 stale-peek regression)", () => {
+  it("does not ready a candidate off a lock set chosen from a stale, unlocked peek of depends_on", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-fstaskstore-dep-peek-"));
+    try {
+      const store = new FsTaskStore(tmpDir);
+      await store.create(makeTask({ id: "T-9002", status: "done" }));
+      await store.create(makeTask({ id: "T-9003", status: "done" }));
+      await store.create(makeTask({ id: "T-9001", status: "backlog", depends_on: ["T-9002"] }));
+
+      const originalReadFile = fs.readFile.bind(fs);
+      let t9001ReadCount = 0;
+      let t9003ReadCount = 0;
+      let releasePeek;
+      const peekGate = new Promise((resolve) => {
+        releasePeek = resolve;
+      });
+      let releaseDependencyRead;
+      const dependencyReadGate = new Promise((resolve) => {
+        releaseDependencyRead = resolve;
+      });
+
+      const readSpy = vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+        const target = String(args[0]);
+        if (target.endsWith("T-9001.md")) {
+          t9001ReadCount += 1;
+          if (t9001ReadCount === 1) {
+            // (1) the guard's own unlocked peek -- read the CURRENT (soon-to-be-stale) bytes now,
+            // then hold the result back until after the competing write below has landed, so the
+            // guard genuinely decides to lock T-9002 based on what was true a moment ago.
+            const stale = await originalReadFile(...args);
+            await peekGate;
+            return stale;
+          }
+        }
+        if (target.endsWith("T-9003.md")) {
+          t9003ReadCount += 1;
+          if (t9003ReadCount === 1) {
+            // (4) the guard's dependency-status read, taken only once it holds T-9003's lock --
+            // hold it back so the competing write below can attempt (and be forced to queue).
+            const result = await originalReadFile(...args);
+            await dependencyReadGate;
+            return result;
+          }
+        }
+        return originalReadFile(...args);
+      });
+
+      const guardedReady = store.update("T-9001", { status: "ready" }, { requireDependenciesSatisfied: true });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // (2) a competing write changes T-9001's OWN depends_on to a different, also-done card,
+      // while the guard's peek is still holding its stale snapshot back. Nothing locks T-9001 yet
+      // -- the peek is unlocked -- so this lands immediately.
+      await store.update("T-9001", { depends_on: ["T-9003"] });
+
+      // (3) resume: release the stale peek. The guard locks {T-9001, T-9002} -- the STALE set --
+      // and, inside that lock, re-reads T-9001 fresh: depends_on is now ["T-9003"], a mismatch
+      // against the locked set. It must retry rather than evaluate T-9002 (no longer real) or
+      // T-9003 (real, but unlocked).
+      releasePeek();
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // (4) once the guard has re-locked onto the CORRECT set and reached its dependency read for
+      // T-9003, try to move T-9003 to backlog through the same store.
+      let dependencyWriteSettled = false;
+      const dependencyRegression = store.update("T-9003", { status: "backlog" }).then((result) => {
+        dependencyWriteSettled = true;
+        return result;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Because the guard's corrected lock set now includes T-9003, this competing write cannot
+      // land while the guard is still mid-check -- it queues behind the lock instead of racing it.
+      expect(dependencyWriteSettled).toBe(false);
+
+      // (5) resume
+      releaseDependencyRead();
+      const readied = await guardedReady;
+
+      // The outcome is never "T-9001 ready while T-9003 is backlog" -- the write queued behind
+      // the guard's own lock on T-9003, so it can only land after the guard's decision, and the
+      // guard's decision was made while genuinely holding T-9003's lock.
+      expect(readied.status).toBe("ready");
+      expect(dependencyWriteSettled).toBe(false);
+
+      await dependencyRegression;
+      expect(dependencyWriteSettled).toBe(true);
+      expect((await store.get("T-9003")).status).toBe("backlog");
+      expect((await store.get("T-9001")).depends_on).toEqual(["T-9003"]);
+
+      readSpy.mockRestore();
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses with DependencyLockSetUnstableError after a bounded number of attempts, instead of retrying forever", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-fstaskstore-dep-unstable-"));
+    try {
+      const store = new FsTaskStore(tmpDir);
+      await store.create(makeTask({ id: "T-9008", status: "done" }));
+      await store.create(makeTask({ id: "T-9009", status: "done" }));
+      await store.create(makeTask({ id: "T-9007", status: "backlog", depends_on: ["T-9008"] }));
+
+      const originalGet = store.get.bind(store);
+      let calls = 0;
+      const getSpy = vi.spyOn(store, "get").mockImplementation(async (id) => {
+        if (id !== "T-9007") return originalGet(id);
+        calls += 1;
+        const task = await originalGet(id);
+        if (!task) return task;
+        // Every single read of T-9007 -- both the unlocked peek and the fresh re-read inside the
+        // lock -- reports a DIFFERENT depends_on than the one before it, so the guard's lock set
+        // can never match what it reads once it holds it. It must give up, not spin forever.
+        const depends_on = calls % 2 === 0 ? ["T-9008"] : ["T-9009"];
+        return { ...task, depends_on };
+      });
+
+      await expect(
+        store.update("T-9007", { status: "ready" }, { requireDependenciesSatisfied: true })
+      ).rejects.toThrow(DependencyLockSetUnstableError);
+
+      expect((await store.get("T-9007")).status).toBe("backlog");
+      getSpy.mockRestore();
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets two concurrent guarded writes whose dependency sets change mid-flight both resolve without deadlocking", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-fstaskstore-dep-unstable-order-"));
+    try {
+      const store = new FsTaskStore(tmpDir);
+      await store.create(makeTask({ id: "T-9040", status: "done" }));
+      await store.create(makeTask({ id: "T-9041", status: "done" }));
+      await store.create(makeTask({ id: "T-9042", status: "backlog", depends_on: ["T-9040"] }));
+      await store.create(makeTask({ id: "T-9043", status: "backlog", depends_on: ["T-9041"] }));
+
+      const originalGet = store.get.bind(store);
+      let seen42 = 0;
+      let seen43 = 0;
+      const getSpy = vi.spyOn(store, "get").mockImplementation(async (id) => {
+        if (id === "T-9042") {
+          seen42 += 1;
+          const task = await originalGet(id);
+          if (!task) return task;
+          // The very first read (the initial unlocked peek) reports the OTHER candidate's
+          // dependency -- forcing one retry cycle, with the two candidates' lock sets crossing
+          // over each other -- before stabilizing on the real value for every read after.
+          return { ...task, depends_on: seen42 === 1 ? ["T-9041"] : ["T-9040"] };
+        }
+        if (id === "T-9043") {
+          seen43 += 1;
+          const task = await originalGet(id);
+          if (!task) return task;
+          return { ...task, depends_on: seen43 === 1 ? ["T-9040"] : ["T-9041"] };
+        }
+        return originalGet(id);
+      });
+
+      const [r1, r2] = await Promise.all([
+        store.update("T-9042", { status: "ready" }, { requireDependenciesSatisfied: true }),
+        store.update("T-9043", { status: "ready" }, { requireDependenciesSatisfied: true })
+      ]);
+
+      expect(r1.status).toBe("ready");
+      expect(r2.status).toBe("ready");
+      getSpy.mockRestore();
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
