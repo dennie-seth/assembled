@@ -90,3 +90,24 @@ describe("checkEdgeCasesPreflight -- Edge cases label present but empty (planner
     expect(result.warnings).toEqual([]);
   });
 });
+
+describe("checkEdgeCasesPreflight -- warning text stays observation-only (T-0388, T-0365 follow-up)", () => {
+  const body = "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n";
+
+  it("does not assert or imply an effect on the rework rate", () => {
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.warnings[0]).not.toMatch(/rework/i);
+  });
+
+  it("does not tell the reader what the reviewer will do", () => {
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.warnings[0]).not.toMatch(/reviewer/i);
+  });
+
+  it("still says which section is missing the block and what a compliant block looks like", () => {
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.warnings[0]).toMatch(/## Acceptance/);
+    expect(result.warnings[0]).toMatch(/\*\*Edge cases:\*\*/);
+    expect(result.warnings[0]).toMatch(/- \[ \]/);
+  });
+});
