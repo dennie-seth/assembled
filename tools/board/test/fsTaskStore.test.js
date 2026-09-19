@@ -135,3 +135,96 @@ describe("FsTaskStore conditional-update locking (interleaving regression)", () 
     }
   });
 });
+
+/**
+ * T-0384 FIX ROUND 5 (Codex round-2 review 2026-09-19, head 6677455): `requireDependenciesSatisfied`
+ * used to run under `_withLock(id)` -- locking only the CANDIDATE's own id. A dependency has a
+ * different id and therefore a different lock, so a writer touching that dependency directly
+ * (through this same store instance) could still land a status change between the guarded read
+ * and the candidate's own write. `update()` now also locks every id in the depends_on list being
+ * checked, in one consistent (sorted) order together with the candidate id, so a dependency write
+ * through this store cannot interleave with a guarded ready operation that is checking it.
+ */
+describe("FsTaskStore dependency-aware locking (FIX ROUND 5 interleaving regression)", () => {
+  it("blocks a concurrent write to a locked dependency until the guarded update has landed", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-fstaskstore-dep-lock-"));
+    try {
+      const store = new FsTaskStore(tmpDir);
+      await store.create(makeTask({ id: "T-9002", status: "done" }));
+      await store.create(makeTask({ id: "T-9001", status: "backlog", depends_on: ["T-9002"] }));
+
+      let releaseDependencyRead;
+      const gate = new Promise((resolve) => {
+        releaseDependencyRead = resolve;
+      });
+      const originalReadFile = fs.readFile.bind(fs);
+      let dependencyReadSeen = false;
+      const readSpy = vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+        const isDependencyRead = String(args[0]).endsWith("T-9002.md");
+        if (isDependencyRead && !dependencyReadSeen) {
+          dependencyReadSeen = true;
+          await gate; // pauses T-9001's guarded update right after it reads T-9002 as "done"
+        }
+        return originalReadFile(...args);
+      });
+
+      const guardedReady = store.update(
+        "T-9001",
+        { status: "ready" },
+        { expected: { status: "backlog" }, requireDependenciesSatisfied: true }
+      );
+
+      // Give the event loop a tick so guardedReady is paused inside its dependency read.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // A separate write to the DEPENDENCY itself, through the same store instance -- with only
+      // the candidate id locked (the pre-fix behaviour), this would land immediately.
+      let dependencyWriteSettled = false;
+      const dependencyRegression = store
+        .update("T-9002", { status: "backlog" })
+        .then((result) => {
+          dependencyWriteSettled = true;
+          return result;
+        });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(dependencyWriteSettled).toBe(false);
+
+      releaseDependencyRead();
+      const readied = await guardedReady;
+      // T-9001's decision was made while T-9002 was genuinely "done" for the entire guarded
+      // operation -- the dependency write could not interleave, so the ready transition is valid.
+      expect(readied.status).toBe("ready");
+      expect(dependencyWriteSettled).toBe(false);
+
+      await dependencyRegression;
+      expect(dependencyWriteSettled).toBe(true);
+      expect((await store.get("T-9002")).status).toBe("backlog");
+
+      readSpy.mockRestore();
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets two concurrent guarded writes whose dependency sets overlap in opposite orders both complete without deadlock", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-fstaskstore-dep-lock-order-"));
+    try {
+      const store = new FsTaskStore(tmpDir);
+      await store.create(makeTask({ id: "T-9003", status: "done" }));
+      await store.create(makeTask({ id: "T-9004", status: "done" }));
+      await store.create(makeTask({ id: "T-9005", status: "backlog", depends_on: ["T-9003", "T-9004"] }));
+      await store.create(makeTask({ id: "T-9006", status: "backlog", depends_on: ["T-9004", "T-9003"] }));
+
+      const [r1, r2] = await Promise.all([
+        store.update("T-9005", { status: "ready" }, { requireDependenciesSatisfied: true }),
+        store.update("T-9006", { status: "ready" }, { requireDependenciesSatisfied: true })
+      ]);
+
+      expect(r1.status).toBe("ready");
+      expect(r2.status).toBe("ready");
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
