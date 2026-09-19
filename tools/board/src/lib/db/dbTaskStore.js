@@ -1,4 +1,10 @@
-import { TaskStore, StaleWriteError, findMismatchedExpectedFields } from "../taskStore.js";
+import {
+  TaskStore,
+  StaleWriteError,
+  DependencyNotSatisfiedError,
+  findMismatchedExpectedFields,
+  findUnsatisfiedDependencies
+} from "../taskStore.js";
 import { validateTask } from "../taskParser.js";
 import { openDb, DEFAULT_DB_PATH } from "./connection.js";
 
@@ -151,7 +157,7 @@ export class DbTaskStore extends TaskStore {
     this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor, task.body);
   }
 
-  async update(id, updates, { actor = DEFAULT_ACTOR, expected } = {}) {
+  async update(id, updates, { actor = DEFAULT_ACTOR, expected, requireDependenciesSatisfied } = {}) {
     const existing = await this.get(id);
     if (!existing) {
       throw new Error(`Task ${id} not found`);
@@ -190,6 +196,23 @@ export class DbTaskStore extends TaskStore {
         const mismatches = findMismatchedExpectedFields(expected, fresh);
         if (mismatches.length > 0) {
           throw new StaleWriteError(id, expected, fresh, mismatches);
+        }
+      }
+
+      // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): a dependency re-check via a plain GET
+      // before this call is not atomic with the write below -- a dependency can regress in that
+      // gap. Re-reads each dependency's status INSIDE this same transaction (so nothing else
+      // sharing `this.db` can change it between this check and the UPDATE), never off the
+      // `existing` read from before the transaction started.
+      if (requireDependenciesSatisfied) {
+        const statusById = new Map();
+        for (const depId of merged.depends_on ?? []) {
+          const depRow = db.prepare("SELECT status FROM tasks WHERE id = ?").get(depId);
+          statusById.set(depId, depRow?.status ?? null);
+        }
+        const unmet = findUnsatisfiedDependencies(merged.depends_on, statusById);
+        if (unmet.length > 0) {
+          throw new DependencyNotSatisfiedError(id, unmet);
         }
       }
 

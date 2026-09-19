@@ -303,7 +303,14 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
       verdict: "ready",
       rule: "5-cap-ok",
       reason: `every rule passed; readied (priority ${task.priority}, within the cap of ${effectiveCap})`,
-      evidence: ""
+      evidence: "",
+      // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #1): the ORIGINAL, selection-time snapshot
+      // of this card -- the one every rule above actually vetted -- carried forward so the caller
+      // can compare it against a fresh re-fetch immediately before the write (see
+      // `ops/vetAndReady.js`'s `findChangedVettedFields`). A body/acceptance change to a
+      // different-but-still-eligible value has nothing else to be caught against: the fresh
+      // snapshot alone always looks internally consistent.
+      originalTask: task
     });
   }
   for (const task of overflow) {

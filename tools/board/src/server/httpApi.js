@@ -46,7 +46,7 @@ import {
   RoundCapExceededError
 } from "../lib/roundCap.js";
 import { readVerdictEntries } from "../lib/verdictArchive.js";
-import { StaleWriteError } from "../lib/taskStore.js";
+import { StaleWriteError, DependencyNotSatisfiedError } from "../lib/taskStore.js";
 
 const TASK_ID_PATH_RE = /^\/api\/tasks\/([^/]+)$/;
 const TASK_APPROVAL_PATH_RE = /^\/api\/tasks\/([^/]+)\/approval$/;
@@ -706,6 +706,17 @@ function expectedFromHeaders(headers) {
 }
 
 /**
+ * `X-Board-Require-Dependencies-Satisfied: true` (T-0384 FIX ROUND 4, Codex review 2026-09-19,
+ * P2 #2): opt-in, same posture as the two headers above -- a caller that vets dependency status
+ * itself (vet-and-ready's rule 1) asks the write to re-verify it INSIDE the same atomic operation,
+ * since a plain GET beforehand closes nothing on its own. Omitted or any other value: off, exactly
+ * the pre-T-0384 behaviour.
+ */
+function requireDependenciesSatisfiedFromHeaders(headers) {
+  return headers["x-board-require-dependencies-satisfied"] === "true";
+}
+
+/**
  * The shared core of every "write a status/field patch to a card" route: the approval gate, the
  * in-progress guards, the store write, the approval-provenance notice, the commit-on-write, the
  * ws broadcast, and the terminal-status side effects. Factored out of `handlePatchTask` (T-0383)
@@ -714,7 +725,20 @@ function expectedFromHeaders(headers) {
  * Takes an already-parsed `body`, since the two callers parse the request differently (JSON only
  * for PATCH; form-encoded or JSON for the ready route).
  */
-async function applyPatchAndSideEffects({ store, id, body, actor, expected, repoRoot, tasksDir, orchestrator, restartCoordinator, taskStoreKind, hub }) {
+async function applyPatchAndSideEffects({
+  store,
+  id,
+  body,
+  actor,
+  expected,
+  requireDependenciesSatisfied,
+  repoRoot,
+  tasksDir,
+  orchestrator,
+  restartCoordinator,
+  taskStoreKind,
+  hub
+}) {
   await applyApprovalGateToPatch({ store, id, body, actor });
 
   if (body.status === "in-progress") {
@@ -735,9 +759,9 @@ async function applyPatchAndSideEffects({ store, id, body, actor, expected, repo
 
   let updated;
   try {
-    updated = await store.update(id, body, { expected });
+    updated = await store.update(id, body, { expected, requireDependenciesSatisfied });
   } catch (err) {
-    if (err instanceof StaleWriteError) {
+    if (err instanceof StaleWriteError || err instanceof DependencyNotSatisfiedError) {
       throw new HttpError(err.statusCode, err.message);
     }
     const status = /not found/i.test(err.message) ? 404 : 400;
@@ -796,12 +820,14 @@ async function handlePatchTask(store, id, req, res, repoRoot, tasksDir, orchestr
   }
   const actor = actorFromHeaders(req.headers);
   const expected = expectedFromHeaders(req.headers);
+  const requireDependenciesSatisfied = requireDependenciesSatisfiedFromHeaders(req.headers);
   const updated = await applyPatchAndSideEffects({
     store,
     id,
     body,
     actor,
     expected,
+    requireDependenciesSatisfied,
     repoRoot,
     tasksDir,
     orchestrator,
@@ -905,12 +931,14 @@ async function handleSetReadyStatus({ store, id, req, res, repoRoot, tasksDir, o
 
   const actor = actorFromHeaders(req.headers);
   const expected = expectedFromHeaders(req.headers);
+  const requireDependenciesSatisfied = requireDependenciesSatisfiedFromHeaders(req.headers);
   const updated = await applyPatchAndSideEffects({
     store,
     id,
     body: { status: "ready" },
     actor,
     expected,
+    requireDependenciesSatisfied,
     repoRoot,
     tasksDir,
     orchestrator,

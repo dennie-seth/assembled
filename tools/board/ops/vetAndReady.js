@@ -26,7 +26,7 @@ import { promisify } from "node:util";
 import { DEFAULT_BOARD_PORT } from "../src/lib/agentCurlPolicy.js";
 import { vetAndReady, READY_CAP, revalidateCandidate } from "../src/lib/vetAndReady.js";
 import { formatReport } from "../src/lib/vetAndReadyReport.js";
-import { hashBody } from "../src/lib/taskStore.js";
+import { hashBody, findMismatchedExpectedFields } from "../src/lib/taskStore.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const ACTOR_HEADER_VALUE = "agent:vet-and-ready";
@@ -147,6 +147,19 @@ function buildExpectedFields(task) {
 }
 
 /**
+ * T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #1): the fields a candidate's ORIGINAL,
+ * selection-time snapshot (`originalTask` -- see `src/lib/vetAndReady.js`'s `vetAndReady()`)
+ * vetted, that no longer match its fresh per-candidate re-fetch. Reuses `buildExpectedFields` +
+ * `findMismatchedExpectedFields` -- the exact same field set and `body` naming the server-side
+ * `X-Board-Expected-Fields` precondition already checks -- so a body/acceptance change to a
+ * DIFFERENT but still perfectly eligible-looking value is caught even though `revalidateCandidate`
+ * (which only re-checks the fresh snapshot against itself) has nothing to compare it against.
+ */
+export function findChangedVettedFields(originalTask, freshTask) {
+  return findMismatchedExpectedFields(buildExpectedFields(originalTask), freshTask);
+}
+
+/**
  * The only write this script ever performs: `PATCH status: "ready"` on one vetted card.
  *
  * `expectedTask`, when given, is the freshest full snapshot of the card this job has (normally
@@ -163,6 +176,11 @@ export async function applyReady({ baseUrl, id, fetchImpl, expectedTask }) {
   if (expectedTask) {
     headers["X-Board-Expected-Status"] = expectedTask.status;
     headers["X-Board-Expected-Fields"] = JSON.stringify(buildExpectedFields(expectedTask));
+    // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): this job's whole reason to write is
+    // rule 1 (every dependency done/retired) -- a plain GET re-check beforehand doesn't close the
+    // gap between that check and this PATCH landing, so every write asks the atomic operation
+    // itself to re-verify dependency status too.
+    headers["X-Board-Require-Dependencies-Satisfied"] = "true";
   }
   const res = await fetchImpl(`${baseUrl}/api/tasks/${id}`, {
     method: "PATCH",
@@ -198,10 +216,23 @@ export async function applyReady({ baseUrl, id, fetchImpl, expectedTask }) {
  * not abort the rest of the batch, and it never writes anything for that candidate. Same
  * "uncertainty means backlog" posture as every other rule here.
  *
+ * T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #1): `revalidateCandidate` re-checks the FRESH
+ * snapshot against ITSELF -- still eligible, dependencies still met, no NEW superseding marker --
+ * but it has nothing to compare that fresh snapshot AGAINST, so a body/acceptance change to a
+ * DIFFERENT, still perfectly innocent-looking value (no marker, still eligible) sailed straight
+ * through. `findChangedVettedFields` closes that: it compares the fresh snapshot with each
+ * candidate's `originalTask` (the ORIGINAL, selection-time snapshot every rule actually vetted --
+ * see `src/lib/vetAndReady.js`), and any difference in a vetted field names that field and skips
+ * the write. `applyReady`'s `expectedTask` is now built from that SAME original snapshot (not the
+ * fresh one), so the server-side `X-Board-Expected-Fields` condition stays anchored to what was
+ * actually vetted -- a change landing in the remaining gap between this comparison and the PATCH
+ * actually reaching the server is refused atomically, the same way a Held marker already was.
+ *
  * Returns `{ summary, writeRefused }` rather than a bare string (T-0384 FIX ROUND 3): `writeRefused`
  * is true whenever at least one candidate did NOT get written -- a re-fetch failure, a failed
- * pre-write revalidation, or a write the server itself refused -- so `runVetAndReady` can surface
- * that as a distinct exit code instead of the run looking identical to full success.
+ * pre-write revalidation, a changed vetted field, or a write the server itself refused -- so
+ * `runVetAndReady` can surface that as a distinct exit code instead of the run looking identical
+ * to full success.
  */
 async function applyReadiedCards({ result, baseUrl, fetchImpl }) {
   if (result.readied.length === 0) {
@@ -227,8 +258,16 @@ async function applyReadiedCards({ result, baseUrl, fetchImpl }) {
       writeRefused = true;
       continue;
     }
+    const changedFields = findChangedVettedFields(entry.originalTask, freshTask);
+    if (changedFields.length > 0) {
+      outcomes.push(
+        `${entry.id}: SKIPPED at write time -- vetted field(s) changed since selection: ${changedFields.join(", ")}`
+      );
+      writeRefused = true;
+      continue;
+    }
     try {
-      await applyReady({ baseUrl, id: entry.id, fetchImpl, expectedTask: freshTask });
+      await applyReady({ baseUrl, id: entry.id, fetchImpl, expectedTask: entry.originalTask });
       outcomes.push(`${entry.id}: wrote status=ready`);
     } catch (err) {
       outcomes.push(`${entry.id}: SKIPPED -- write refused (card changed): ${err.message}`);

@@ -1,7 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TaskStore, StaleWriteError, findMismatchedExpectedFields } from "./taskStore.js";
+import {
+  TaskStore,
+  StaleWriteError,
+  DependencyNotSatisfiedError,
+  findMismatchedExpectedFields,
+  findUnsatisfiedDependencies
+} from "./taskStore.js";
 import { parseTask, serializeTask } from "./taskParser.js";
 import { atomicWriteFile } from "./atomicWrite.js";
 
@@ -105,7 +111,7 @@ export class FsTaskStore extends TaskStore {
     });
   }
 
-  async update(id, updates, { expected } = {}) {
+  async update(id, updates, { expected, requireDependenciesSatisfied } = {}) {
     return this._withLock(id, async () => {
       const existing = await this.get(id);
       if (!existing) {
@@ -119,6 +125,24 @@ export class FsTaskStore extends TaskStore {
       // between this read and the write below.
       assertExpectedMatches(id, expected, existing);
       const merged = { ...existing, ...updates, id };
+
+      // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): re-reads each dependency's status
+      // here, inside the same per-id lock section, immediately before the write -- not off
+      // whatever a caller checked separately beforehand. This is the same in-process/per-instance
+      // guarantee as the rest of this store's lock (see the constructor note): it does not cover a
+      // dependency written by a second `FsTaskStore` instance or another process.
+      if (requireDependenciesSatisfied) {
+        const statusById = new Map();
+        for (const depId of merged.depends_on ?? []) {
+          const dep = await this.get(depId);
+          statusById.set(depId, dep?.status ?? null);
+        }
+        const unmet = findUnsatisfiedDependencies(merged.depends_on, statusById);
+        if (unmet.length > 0) {
+          throw new DependencyNotSatisfiedError(id, unmet);
+        }
+      }
+
       await atomicWriteFile(taskPath(this.dir, id), serializeTask(merged));
       return merged;
     });

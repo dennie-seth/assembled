@@ -81,6 +81,56 @@ export function expectedConditionHolds(expected, task) {
   return findMismatchedExpectedFields(expected, task).length === 0;
 }
 
+/**
+ * Same "done or retired" rule as `dependencyGuard.js`'s `assertCanMoveToInProgress` and
+ * `autoLaunchPoller.js`'s `SATISFIED_DEP_STATUSES` -- duplicated here, not imported, because
+ * `taskStore.js` sits below the runner layer and must not depend on it (autoLaunchPoller.js pulls
+ * in cardLaunch.js -> runOrchestrator.js, which is exactly the kind of cycle a foundational store
+ * module should never risk).
+ */
+const SATISFIED_DEP_STATUSES = new Set(["done", "retired"]);
+
+/**
+ * T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): every `depends_on` id in `dependsOn` that
+ * is NOT `done`/`retired` according to `statusById` (a `Map<id, status|null>` of a fresh, in-scope
+ * lookup -- e.g. rows read inside the very transaction/lock doing the write). A missing id (not
+ * present in `statusById`, or present with a `null`/`undefined` status) counts as unmet, same
+ * "uncertainty never counts as satisfied" posture `dependencyCheck` (vetAndReady.js) already uses.
+ */
+export function findUnsatisfiedDependencies(dependsOn, statusById) {
+  const unmet = [];
+  for (const depId of dependsOn ?? []) {
+    const status = statusById.get(depId) ?? null;
+    if (!SATISFIED_DEP_STATUSES.has(status)) {
+      unmet.push({ id: depId, status });
+    }
+  }
+  return unmet;
+}
+
+/**
+ * Thrown by `update(id, updates, { requireDependenciesSatisfied: true })` when at least one of
+ * the record's current `depends_on` ids is not `done`/`retired` INSIDE the same atomic operation
+ * as the write -- see `findUnsatisfiedDependencies` above. `statusCode` matches `StaleWriteError`
+ * (409): both are "the condition your write depended on no longer holds", surfaced identically to
+ * an HTTP caller.
+ *
+ * T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): a caller's own dependency re-check, done
+ * via a separate `get`/`list` before this write, closes nothing by itself -- a dependency can
+ * regress in the gap between that check and this write actually landing. This error exists so the
+ * atomic write itself can refuse the transition instead.
+ */
+export class DependencyNotSatisfiedError extends Error {
+  constructor(id, unmet) {
+    const detail = unmet.map((dep) => `${dep.id} is ${dep.status ?? "unknown (not found in the store)"}`).join(", ");
+    super(`Refusing to ready ${id}: dependency not satisfied at write time -- ${detail}`);
+    this.name = "DependencyNotSatisfiedError";
+    this.id = id;
+    this.unmet = unmet;
+    this.statusCode = 409;
+  }
+}
+
 export class TaskStore {
   async list() {
     throw new Error("TaskStore.list is not implemented");
