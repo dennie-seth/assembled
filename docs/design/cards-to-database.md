@@ -16,7 +16,11 @@ of incidents this project has independently hit and patched around, never fixed 
 - **Merge wedges.** `docs/design/agent-runner.md`'s own history (T-0138) and this doc's own
   `scripts/deploy.sh` (lines 6–20) document a real outage: `node --watch` observed a merge landing on a
   *live* working tree and relaunched mid-conflict-resolution, taking the board down 20+ minutes.
-  `deploy.sh` now stops the service before ever touching the tree specifically because of this.
+  `deploy.sh` now stops the service before ever touching the tree specifically because of this. The
+  deployed service itself no longer runs under any file watcher at all (T-0385 tried a guard-respecting
+  one, then removed it in favor of the existing guarded restart-on-pull path -- see
+  `tools/board/DEPLOY.md`'s "No file watcher on the deployed service"), so this class of outage can no
+  longer recur through a file-change reaction, only through the deploy/restart paths above.
 - **Working-tree drift / uncommitted-state risk.** Any card write that fails to commit (`httpApi.js`
   lines 246–254, 310–315, 391–394, 478–482, 590–592; `runOrchestrator.js` lines 159–163;
   `orphanReaper.js` lines 30–41 — every one of these wraps its store write in a `try { commit } catch {
