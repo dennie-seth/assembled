@@ -511,6 +511,61 @@ describe("PATCH /api/tasks/:id", () => {
       expect(res.status).toBe(400);
     });
   });
+
+  // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): a dependency re-check done via a plain
+  // GET before this PATCH is not atomic with the write -- the dependency can regress in the gap.
+  // X-Board-Require-Dependencies-Satisfied asks the atomic write itself to verify every
+  // depends_on id is still done/retired, and refuse (409) if not. Opt-in: omitting the header
+  // never runs this check, exactly like the other two conditional-write headers.
+  describe("conditional ready write (X-Board-Require-Dependencies-Satisfied)", () => {
+    it("applies the write when the header is set and every dependency is done", async () => {
+      const dep = await createTask({ title: "Dependency" });
+      await fetch(`${baseUrl}/api/tasks/${dep.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "done" })
+      });
+      const task = await createTask({ title: "Depends on it", depends_on: [dep.id] });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Require-Dependencies-Satisfied": "true" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("ready");
+    });
+
+    it("returns 409 naming the dependency and its current status when a dependency isn't done at write time, and leaves the record untouched", async () => {
+      const dep = await createTask({ title: "Dependency" });
+      const task = await createTask({ title: "Depends on it", depends_on: [dep.id] });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Board-Require-Dependencies-Satisfied": "true" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(409);
+      const payload = await res.json();
+      expect(payload.error).toMatch(new RegExp(dep.id));
+      expect(payload.error).toMatch(/backlog/);
+
+      const current = await (await fetch(`${baseUrl}/api/tasks/${task.id}`)).json();
+      expect(current.status).toBe("backlog");
+    });
+
+    it("PATCHes normally without the header even when a dependency isn't done (backward compatible, opt-in)", async () => {
+      const dep = await createTask({ title: "Dependency" });
+      const task = await createTask({ title: "Depends on it", depends_on: [dep.id] });
+
+      const res = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "ready" })
+      });
+      expect(res.status).toBe(200);
+    });
+  });
 });
 
 describe("PATCH /api/tasks/:id dependency guard", () => {

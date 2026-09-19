@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { StaleWriteError, hashBody, findMismatchedExpectedFields, expectedConditionHolds } from "../../src/lib/taskStore.js";
+import {
+  StaleWriteError,
+  DependencyNotSatisfiedError,
+  hashBody,
+  findMismatchedExpectedFields,
+  findUnsatisfiedDependencies,
+  expectedConditionHolds
+} from "../../src/lib/taskStore.js";
 
 /**
  * T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): the conditional-write `expected` precondition
@@ -102,5 +109,66 @@ describe("StaleWriteError", () => {
     const err = new StaleWriteError("T-9001", { status: "backlog" }, { status: "done" });
     expect(err.changedFields).toEqual([]);
     expect(err.statusCode).toBe(409);
+  });
+});
+
+/**
+ * T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): a dependency re-check in an earlier GET
+ * alone does not close the race between vet-and-ready's own check and the actual write -- the
+ * atomic ready operation itself (the DbTaskStore transaction, the FsTaskStore per-id lock) has to
+ * verify every depends_on id is still `done`/`retired` at write time. These are the shared,
+ * pure primitives both stores use for that check.
+ */
+describe("findUnsatisfiedDependencies", () => {
+  it("returns an empty list when every dependency is done or retired", () => {
+    const statusById = new Map([
+      ["T-0001", "done"],
+      ["T-0002", "retired"]
+    ]);
+    expect(findUnsatisfiedDependencies(["T-0001", "T-0002"], statusById)).toEqual([]);
+  });
+
+  it("names a dependency that is neither done nor retired, with its current status", () => {
+    const statusById = new Map([["T-0001", "backlog"]]);
+    expect(findUnsatisfiedDependencies(["T-0001"], statusById)).toEqual([{ id: "T-0001", status: "backlog" }]);
+  });
+
+  it("treats a dependency absent from statusById as unmet, with a null status", () => {
+    expect(findUnsatisfiedDependencies(["T-9999"], new Map())).toEqual([{ id: "T-9999", status: null }]);
+  });
+
+  it("returns an empty list for an empty/missing depends_on", () => {
+    expect(findUnsatisfiedDependencies([], new Map())).toEqual([]);
+    expect(findUnsatisfiedDependencies(undefined, new Map())).toEqual([]);
+  });
+
+  it("names every unmet dependency, not just the first", () => {
+    const statusById = new Map([
+      ["T-0001", "backlog"],
+      ["T-0002", "done"],
+      ["T-0003", "in-progress"]
+    ]);
+    expect(findUnsatisfiedDependencies(["T-0001", "T-0002", "T-0003"], statusById)).toEqual([
+      { id: "T-0001", status: "backlog" },
+      { id: "T-0003", status: "in-progress" }
+    ]);
+  });
+});
+
+describe("DependencyNotSatisfiedError", () => {
+  it("names the unmet dependency and its status in the message, and carries statusCode 409", () => {
+    const err = new DependencyNotSatisfiedError("T-9001", [{ id: "T-0099", status: "backlog" }]);
+    expect(err.name).toBe("DependencyNotSatisfiedError");
+    expect(err.statusCode).toBe(409);
+    expect(err.id).toBe("T-9001");
+    expect(err.unmet).toEqual([{ id: "T-0099", status: "backlog" }]);
+    expect(err.message).toMatch(/T-0099/);
+    expect(err.message).toMatch(/backlog/);
+  });
+
+  it("reports a null status as not found, not as a crash", () => {
+    const err = new DependencyNotSatisfiedError("T-9001", [{ id: "T-0099", status: null }]);
+    expect(err.message).toMatch(/T-0099/);
+    expect(err.message).toMatch(/not found/i);
   });
 });

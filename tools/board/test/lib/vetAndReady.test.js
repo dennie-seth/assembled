@@ -273,6 +273,17 @@ describe("vetAndReady -- end to end selection", () => {
     expect(result.skipped).toEqual([]);
   });
 
+  // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #1): the write-time comparison this round adds
+  // (`ops/vetAndReady.js`'s `findChangedVettedFields`) needs the ORIGINAL, selection-time snapshot
+  // of each readied card -- not just its fresh re-fetch -- so a body/acceptance change with no
+  // governing marker is caught even when the fresh snapshot alone still looks perfectly vettable.
+  it("carries the original selection-time task snapshot forward on every readied entry", async () => {
+    const original = makeTask({ id: "T-0001", priority: "P1" });
+    const result = await vetAndReady({ tasks: [original], gitLogGrep: NO_GIT_HITS });
+    expect(result.readied).toHaveLength(1);
+    expect(result.readied[0].originalTask).toEqual(original);
+  });
+
   it("never readies or lists a GPU/assets card -- it stays out of the decision table entirely", async () => {
     const tasks = [makeTask({ id: "T-0002", agent: "assets" })];
     const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });

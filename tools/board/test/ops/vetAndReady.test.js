@@ -10,6 +10,7 @@ import {
   fetchPollerState,
   makeGitLogGrep,
   applyReady,
+  findChangedVettedFields,
   runVetAndReady,
   EXIT_CODE_OK,
   EXIT_CODE_BOARD_UNREACHABLE,
@@ -221,6 +222,53 @@ describe("applyReady", () => {
     const [, opts] = fetchImpl.mock.calls[0];
     expect(opts.headers["X-Board-Expected-Status"]).toBeUndefined();
     expect(opts.headers["X-Board-Expected-Fields"]).toBeUndefined();
+  });
+
+  // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): a dependency re-check via a plain GET
+  // before this PATCH is not atomic with the write. This job is the only caller of applyReady,
+  // and readying a card whose dependency isn't done/retired is exactly what rule 1 forbids -- so
+  // every write this job makes asks the atomic write itself to re-verify dependencies too.
+  it("sends X-Board-Require-Dependencies-Satisfied whenever an expectedTask is given", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(makeTask({ status: "ready" })));
+    await applyReady({ baseUrl: "http://127.0.0.1:4173", id: "T-0001", fetchImpl, expectedTask: makeTask() });
+    const [, opts] = fetchImpl.mock.calls[0];
+    expect(opts.headers["X-Board-Require-Dependencies-Satisfied"]).toBe("true");
+  });
+
+  it("omits X-Board-Require-Dependencies-Satisfied when no expectedTask is given", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(makeTask({ status: "ready" })));
+    await applyReady({ baseUrl: "http://127.0.0.1:4173", id: "T-0001", fetchImpl });
+    const [, opts] = fetchImpl.mock.calls[0];
+    expect(opts.headers["X-Board-Require-Dependencies-Satisfied"]).toBeUndefined();
+  });
+});
+
+/**
+ * T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #1): `revalidateCandidate` alone re-checks the
+ * FRESH snapshot against itself (still eligible? dependencies still met? no NEW superseding
+ * marker?) -- it was never able to catch a vetted field quietly changing to a DIFFERENT, still
+ * perfectly-innocent-looking value, because it has nothing to compare the fresh snapshot AGAINST.
+ * `findChangedVettedFields` is that comparison: the ORIGINAL, selection-time snapshot against the
+ * fresh one, reusing the exact same field set (and the same `body` naming) the server-side
+ * `X-Board-Expected-Fields` fingerprint already checks.
+ */
+describe("findChangedVettedFields", () => {
+  it("returns an empty list when nothing vetted has changed", () => {
+    const original = makeTask();
+    const fresh = makeTask();
+    expect(findChangedVettedFields(original, fresh)).toEqual([]);
+  });
+
+  it("names 'body' when the acceptance/body changed, even with no governing marker present", () => {
+    const original = makeTask({ body: "## Acceptance\n\n- [ ] Add `src/newFeature.js`.\n" });
+    const fresh = makeTask({ body: "## Acceptance\n\n- [ ] Add `src/alreadyMerged.js`.\n" });
+    expect(findChangedVettedFields(original, fresh)).toEqual(["body"]);
+  });
+
+  it("names every changed field, not just the first", () => {
+    const original = makeTask({ agent: "infra", depends_on: [] });
+    const fresh = makeTask({ agent: "server", depends_on: ["T-0099"] });
+    expect(findChangedVettedFields(original, fresh)).toEqual(["agent", "depends_on"]);
   });
 });
 
@@ -622,6 +670,176 @@ describe("runVetAndReady against a real HTTP server + a real DbTaskStore (Codex'
       // T-0001's write succeeded, but T-9002 was refused at write time -- the run is not "fully
       // successful" and must not exit identically to a run where every candidate wrote cleanly.
       expect(result.exitCode).toBe(EXIT_CODE_WRITE_REFUSED);
+    } finally {
+      await teardown();
+    }
+  });
+
+  // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #1): before this round, `applyReadiedCards`
+  // only ever compared the FRESH per-candidate snapshot against itself (`revalidateCandidate`) --
+  // it never compared it against what selection actually vetted. A body/acceptance change to a
+  // DIFFERENT but still perfectly innocent-looking value (no Held marker, still eligible, deps
+  // still fine) sailed straight through both the client-side re-check AND the server-side write,
+  // because the write's own `X-Board-Expected-Fields` condition was built from the FRESH snapshot
+  // too -- which, by definition, always matches itself. This reproduces Codex's fixture: the
+  // acceptance is rewritten from an unmerged path to an already-merged one, with no governing
+  // marker, in the gap between selection and this run's own per-candidate re-fetch.
+  it("does not ready a card whose acceptance changes to a different (unmarked, still-eligible) value between selection and its own pre-write re-fetch", async () => {
+    const { store, baseUrl, teardown } = await setup();
+    try {
+      await store.create(makeReadyCandidate({ body: "## Acceptance\n\n- [ ] Add `src/newFeature.js`.\n" }));
+
+      let taskListFetchCount = 0;
+      const fetchImpl = async (url, opts) => {
+        if (url.endsWith("/api/tasks") && !opts) {
+          taskListFetchCount += 1;
+          if (taskListFetchCount === 2) {
+            // The card's acceptance is rewritten -- no Held/superseded marker anywhere -- in the
+            // gap between this run's selection GET (#1) and its own per-candidate re-fetch (#2).
+            await store.update("T-9001", {
+              body: "## Acceptance\n\n- [ ] Add `src/alreadyMerged.js`.\n"
+            });
+          }
+        }
+        return fetch(url, opts);
+      };
+
+      const result = await runVetAndReady({
+        env: { BOARD_BASE_URL: baseUrl },
+        argv: ["--apply"],
+        fetchImpl,
+        execFileFn: async () => ({ stdout: "", stderr: "" }),
+        writeFileFn: async () => {},
+        mkdirFn: async () => {},
+        appendFileFn: async () => {},
+        logFn: () => {},
+        now: () => new Date("2026-09-19T01:00:00.000Z")
+      });
+
+      const final = await store.get("T-9001");
+      expect(final.status).toBe("backlog");
+      expect(final.body).toMatch(/alreadyMerged/);
+      expect(result.exitCode).toBe(EXIT_CODE_WRITE_REFUSED);
+      expect(result.report).toMatch(/T-9001/);
+      expect(result.report).toMatch(/body/);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("skips a later candidate whose acceptance changes (no marker) while an earlier candidate's write is in flight, and still completes the earlier write", async () => {
+    const { store, baseUrl, teardown } = await setup();
+    try {
+      await store.create(makeReadyCandidate({ id: "T-9001", priority: "P0" }));
+      await store.create(
+        makeReadyCandidate({
+          id: "T-9002",
+          priority: "P1",
+          body: "## Acceptance\n\n- [ ] Add `src/newFeature.js`.\n"
+        })
+      );
+
+      let firstPatchSeen = false;
+      const fetchImpl = async (url, opts) => {
+        if (opts?.method === "PATCH" && url.endsWith("/T-9001") && !firstPatchSeen) {
+          firstPatchSeen = true;
+          // No Held marker -- just a different, still-innocent-looking acceptance section.
+          await store.update("T-9002", { body: "## Acceptance\n\n- [ ] Add `src/alreadyMerged.js`.\n" });
+        }
+        return fetch(url, opts);
+      };
+
+      const result = await runVetAndReady({
+        env: { BOARD_BASE_URL: baseUrl },
+        argv: ["--apply"],
+        fetchImpl,
+        execFileFn: async () => ({ stdout: "", stderr: "" }),
+        writeFileFn: async () => {},
+        mkdirFn: async () => {},
+        appendFileFn: async () => {},
+        logFn: () => {},
+        now: () => new Date("2026-09-19T01:00:00.000Z")
+      });
+
+      const t1 = await store.get("T-9001");
+      const t2 = await store.get("T-9002");
+      expect(t1.status).toBe("ready");
+      expect(t2.status).toBe("backlog");
+      expect(t2.body).toMatch(/alreadyMerged/);
+      expect(result.report).toMatch(/T-9002/);
+      expect(result.report).toMatch(/SKIPPED/);
+      expect(result.exitCode).toBe(EXIT_CODE_WRITE_REFUSED);
+    } finally {
+      await teardown();
+    }
+  });
+
+  // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): the launch guard is a later defence, but
+  // readying an ineligible card in the first place breaks this job's own rule 1 and burns a ready
+  // slot. Dependency status has to be re-checked INSIDE the atomic write, because a plain GET
+  // beforehand (this run's own per-candidate re-fetch, which already passed) leaves exactly the
+  // same TOCTOU gap as every other field this round closes.
+  it("does not ready a card whose dependency regresses out of done/retired between the pre-write re-fetch and the PATCH landing", async () => {
+    const { store, baseUrl, teardown } = await setup();
+    try {
+      await store.create(makeReadyCandidate({ id: "T-9002", status: "done", depends_on: [] }));
+      await store.create(makeReadyCandidate({ id: "T-9001", depends_on: ["T-9002"] }));
+
+      let patchIntercepted = false;
+      const fetchImpl = async (url, opts) => {
+        if (opts?.method === "PATCH" && !patchIntercepted) {
+          patchIntercepted = true;
+          // The dependency regresses in the gap between this run's own pre-write re-fetch (which
+          // still saw it as done) and the PATCH actually reaching the server.
+          await store.update("T-9002", { status: "backlog" });
+        }
+        return fetch(url, opts);
+      };
+
+      const result = await runVetAndReady({
+        env: { BOARD_BASE_URL: baseUrl },
+        argv: ["--apply"],
+        fetchImpl,
+        execFileFn: async () => ({ stdout: "", stderr: "" }),
+        writeFileFn: async () => {},
+        mkdirFn: async () => {},
+        appendFileFn: async () => {},
+        logFn: () => {},
+        now: () => new Date("2026-09-19T01:00:00.000Z")
+      });
+
+      expect(patchIntercepted).toBe(true);
+      const final = await store.get("T-9001");
+      expect(final.status).toBe("backlog");
+      expect(result.exitCode).toBe(EXIT_CODE_WRITE_REFUSED);
+      expect(result.report).toMatch(/T-9001/);
+      expect(result.report).toMatch(/T-9002/);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("readies a card whose dependency is still done/retired at write time (complement)", async () => {
+    const { store, baseUrl, teardown } = await setup();
+    try {
+      await store.create(makeReadyCandidate({ id: "T-9002", status: "done", depends_on: [] }));
+      await store.create(makeReadyCandidate({ id: "T-9001", depends_on: ["T-9002"] }));
+
+      const result = await runVetAndReady({
+        env: { BOARD_BASE_URL: baseUrl },
+        argv: ["--apply"],
+        fetchImpl: fetch,
+        execFileFn: async () => ({ stdout: "", stderr: "" }),
+        writeFileFn: async () => {},
+        mkdirFn: async () => {},
+        appendFileFn: async () => {},
+        logFn: () => {},
+        now: () => new Date("2026-09-19T01:00:00.000Z")
+      });
+
+      const final = await store.get("T-9001");
+      expect(final.status).toBe("ready");
+      expect(result.exitCode).toBe(EXIT_CODE_OK);
     } finally {
       await teardown();
     }

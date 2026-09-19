@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { TaskStore, StaleWriteError, hashBody } from "../src/lib/taskStore.js";
+import { TaskStore, StaleWriteError, DependencyNotSatisfiedError, hashBody } from "../src/lib/taskStore.js";
 
 export function makeTask(overrides = {}) {
   return {
@@ -372,6 +372,75 @@ export function runTaskStoreContractTests(label, setup) {
       }
       expect(caught).toBeInstanceOf(StaleWriteError);
       expect(caught.changedFields).toContain("agent");
+    });
+  });
+
+  // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): a caller's own re-check of a
+  // dependency's status, done via a separate `get`/`list` call before this write, is not atomic
+  // with the write itself -- the dependency can regress in the gap between that check and this
+  // call actually landing. `requireDependenciesSatisfied` asks the store to verify every
+  // `depends_on` id is still `done`/`retired` INSIDE the same atomic operation as the write, so
+  // that gap is closed. Opt-in: omitting it (or leaving it false) never runs this check at all,
+  // exactly like `expected` before T-0384.
+  describe(`${label} requireDependenciesSatisfied`, () => {
+    it("applies the write when every dependency is done or retired", async () => {
+      await store.create(makeTask({ id: "T-0090", status: "done" }));
+      await store.create(makeTask({ id: "T-0091", status: "retired" }));
+      const task = makeTask({ id: "T-0001", depends_on: ["T-0090", "T-0091"] });
+      await store.create(task);
+
+      const updated = await store.update(task.id, { status: "ready" }, { requireDependenciesSatisfied: true });
+      expect(updated.status).toBe("ready");
+    });
+
+    it("refuses the write with a DependencyNotSatisfiedError naming the unmet dependency and its current status", async () => {
+      await store.create(makeTask({ id: "T-0090", status: "backlog" }));
+      const task = makeTask({ id: "T-0001", depends_on: ["T-0090"] });
+      await store.create(task);
+
+      let caught = null;
+      try {
+        await store.update(task.id, { status: "ready" }, { requireDependenciesSatisfied: true });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(DependencyNotSatisfiedError);
+      expect(caught.unmet).toEqual([{ id: "T-0090", status: "backlog" }]);
+      expect(await store.get(task.id)).toMatchObject({ status: "backlog" });
+    });
+
+    it("treats a dependency id absent from the store as unmet, not as satisfied", async () => {
+      const task = makeTask({ id: "T-0001", depends_on: ["T-9999"] });
+      await store.create(task);
+
+      await expect(
+        store.update(task.id, { status: "ready" }, { requireDependenciesSatisfied: true })
+      ).rejects.toThrow(DependencyNotSatisfiedError);
+      expect(await store.get(task.id)).toMatchObject({ status: "backlog" });
+    });
+
+    it("writes normally when requireDependenciesSatisfied is not set at all, even with an unmet dependency (opt-in, backward compatible)", async () => {
+      await store.create(makeTask({ id: "T-0090", status: "backlog" }));
+      const task = makeTask({ id: "T-0001", depends_on: ["T-0090"] });
+      await store.create(task);
+
+      const updated = await store.update(task.id, { status: "ready" });
+      expect(updated.status).toBe("ready");
+    });
+
+    it("combines with `expected`: a fingerprint mismatch is still reported as StaleWriteError, not swallowed by the dependency check", async () => {
+      await store.create(makeTask({ id: "T-0090", status: "done" }));
+      const task = makeTask({ id: "T-0001", depends_on: ["T-0090"], agent: "infra" });
+      await store.create(task);
+      await store.update(task.id, { agent: "server" });
+
+      await expect(
+        store.update(
+          task.id,
+          { status: "ready" },
+          { expected: { agent: "infra" }, requireDependenciesSatisfied: true }
+        )
+      ).rejects.toThrow(StaleWriteError);
     });
   });
 
