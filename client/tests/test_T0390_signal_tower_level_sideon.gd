@@ -58,6 +58,8 @@ func _run() -> void:
 	_failures += _test_no_debug_warp_method()
 	_failures += _test_no_gameplay_constants_declared()
 	_failures += _test_no_entity_or_prop_wiring()
+	_failures += _test_no_grace_window_code()
+	_failures += _test_room_connectors_not_fed()
 
 	_failures += await _test_seven_rooms_built_matching_layout()
 	_failures += await _test_grey_box_only()
@@ -73,7 +75,10 @@ func _run() -> void:
 	_failures += await _test_malformed_layout_missing_origin_size()
 	_failures += await _test_layout_unknown_room_tag_connection()
 	_failures += await _test_layout_invalid_connection_type()
-	_failures += await _test_reentrant_transition_idempotent()
+	_failures += await _test_overlap_alone_does_not_transition()
+	_failures += await _test_interact_outside_connector_does_nothing()
+	_failures += await _test_interact_inside_connector_transitions_once()
+	_failures += await _test_interaction_prompt_visibility()
 	_failures += await _test_wrong_side_ladder_resolves_correctly()
 	_failures += await _test_dead_end_branches_isolated()
 	_failures += await _test_chain_terminus_no_onward_connector()
@@ -176,11 +181,15 @@ func _room_collider_bounds(room_node: Node2D) -> Rect2:
 	return result
 
 
-## Walks the player toward the trigger connecting from_tag -> to_tag until
-## the level's current room actually changes (or max_steps is exhausted).
-## Drives movement only through apply_input() + physics-frame stepping — no
-## direct position assignment, matching the card's traversal requirement.
-func _walk_to_room(
+## Walks the player toward the trigger connecting from_tag -> to_tag until the
+## player's own position actually enters that trigger area (or max_steps is
+## exhausted). Drives movement only through apply_input() + physics-frame
+## stepping — no direct position assignment. Doors and ladders are press-E
+## interactables (T-0390 fix round 2): standing in the area alone must never
+## change rooms, so this helper stops at "inside the area", not "room
+## changed" — callers that want the transition itself call
+## _walk_to_room_via_interact() below.
+func _walk_into_trigger(
 	level: Node2D, player: CharacterBody2D, from_tag: String, to_tag: String, max_steps: int
 ) -> bool:
 	var area: Rect2 = level.get_trigger_area(from_tag, to_tag)
@@ -191,12 +200,28 @@ func _walk_to_room(
 	var reached: bool = false
 	for i in range(max_steps):
 		await physics_frame
-		if level.get_current_room_tag() == to_tag:
+		if area.has_point(player.position):
 			reached = true
 			break
 	player.apply_input(0.0, false)
 	await physics_frame
 	return reached
+
+
+## Walks into the from_tag -> to_tag trigger (see _walk_into_trigger()), then
+## presses E by emitting PlayerController.interact_pressed directly — the
+## acceptance criterion names this as an accepted stand-in for a synthetic
+## KEY_E InputEvent. Returns true only if the level's current room actually
+## became to_tag afterward.
+func _walk_to_room_via_interact(
+	level: Node2D, player: CharacterBody2D, from_tag: String, to_tag: String, max_steps: int
+) -> bool:
+	var reached: bool = await _walk_into_trigger(level, player, from_tag, to_tag, max_steps)
+	if not reached:
+		return false
+	player.interact_pressed.emit()
+	await physics_frame
+	return level.get_current_room_tag() == to_tag
 
 
 ## ── Static source guards (no live tree needed) ──────────────────────────────
@@ -310,6 +335,50 @@ func _test_no_entity_or_prop_wiring() -> Array[String]:
 				"no_entity_or_prop: level script must not reference '%s' — out of scope for this card"
 				% needle
 			)
+
+	return failures
+
+
+## Doors and ladders are press-E interactables (T-0390 fix round 2 design
+## change): the earlier overlap-triggered design needed a ~0.5s just-used-
+## connector suppression window to stop a ladder immediately re-firing on
+## arrival. With no overlap firing at all, that window has nothing left to
+## suppress and must be gone, not merely unused.
+func _test_no_grace_window_code() -> Array[String]:
+	var failures: Array[String] = []
+	var text: String = _read_level_source()
+	if text == "":
+		failures.append("no_grace_window: could not read level script source")
+		return failures
+
+	for needle: String in [
+		"_suppress", "grace_frames", "_apply_connector_suppression", "_on_grace_window_tick",
+	]:
+		if text.findn(needle) != -1:
+			failures.append(
+				"no_grace_window: level script must not contain grace/suppression code (found '%s')"
+				% needle
+			)
+
+	return failures
+
+
+## _player.room_connectors must stay empty — feeding it is what made
+## PlayerController.update_state() emit room_transition on every overlapping
+## physics frame, which is exactly the auto-transition behaviour fix round 2
+## removes in favour of press-E.
+func _test_room_connectors_not_fed() -> Array[String]:
+	var failures: Array[String] = []
+	var text: String = _read_level_source()
+	if text == "":
+		failures.append("room_connectors_not_fed: could not read level script source")
+		return failures
+
+	if text.findn("room_connectors.assign") != -1 or text.findn("room_connectors =") != -1:
+		failures.append(
+			"room_connectors_not_fed: level script must not feed _player.room_connectors — "
+			+ "transitions happen only through interact_pressed (T-0390 fix round 2)"
+		)
 
 	return failures
 
@@ -552,8 +621,21 @@ func _test_spawn_in_ground_relay_clear_of_connectors() -> Array[String]:
 			% [layout.entry_room, inst.get_current_room_tag()]
 		)
 
-	for connector: Dictionary in player.room_connectors:
-		var area: Rect2 = connector.get("area", Rect2())
+	## player.room_connectors stays empty by design (T-0390 fix round 2 —
+	## transitions happen only through interact_pressed), so clearance is
+	## checked against the level's own trigger areas for every connector that
+	## touches the entry room instead.
+	if not player.room_connectors.is_empty():
+		failures.append(
+			"spawn: player.room_connectors must stay empty (press-E interaction, not overlap)"
+		)
+
+	for conn: Dictionary in inst.get_connector_records():
+		if conn["from"] != layout.entry_room and conn["to"] != layout.entry_room:
+			continue
+		var from_tag: String = conn["from"] if conn["from"] == layout.entry_room else conn["to"]
+		var to_tag: String = conn["to"] if conn["from"] == layout.entry_room else conn["from"]
+		var area: Rect2 = inst.get_trigger_area(from_tag, to_tag)
 		if area.has_point(player.position):
 			failures.append(
 				"spawn: player spawn position %s must be clear of connector area %s"
@@ -815,56 +897,133 @@ func _test_layout_invalid_connection_type() -> Array[String]:
 
 ## ── Transition mechanics edge cases ──────────────────────────────────────────
 
-func _test_reentrant_transition_idempotent() -> Array[String]:
+## Overlap alone must never transition (T-0390 fix round 2 design change):
+## standing inside a connector's trigger area for 10 physics steps, with no
+## E press, must leave the current room unchanged.
+func _test_overlap_alone_does_not_transition() -> Array[String]:
 	var failures: Array[String] = []
-	var inst: Node2D = _build_detached_instance(failures)
+	var inst: Node2D = await _build_live_instance(failures)
 	if inst.get_layout() == null:
-		_free_detached_instance(inst)
+		_free_instance(inst)
 		return failures
 
 	var player: CharacterBody2D = inst.get_player()
-	var area: Rect2 = inst.get_trigger_area(GROUND_RELAY, POWER_SUBSTATION)
-	var inside_point: Vector2 = area.position + area.size * 0.5
+	var reached: bool = await _walk_into_trigger(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
+	if not reached:
+		failures.append("overlap_alone: failed to reach the ground_relay -> power_substation trigger area")
+		_free_instance(inst)
+		return failures
 
-	var before: int = inst.get_room_change_count()
+	var before_tag: String = inst.get_current_room_tag()
+	var before_count: int = inst.get_room_change_count()
 	for i in range(10):
-		player.position = inside_point
-		player.update_state(0.016)
-
-	if inst.get_room_change_count() != before + 1:
+		await physics_frame
+	if inst.get_current_room_tag() != before_tag or inst.get_room_change_count() != before_count:
 		failures.append(
-			"reentrant_idempotent: expected exactly 1 room change holding inside one connector "
-			+ "for 10 steps, got %d" % (inst.get_room_change_count() - before)
-		)
-	if inst.get_current_room_tag() != POWER_SUBSTATION:
-		failures.append(
-			"reentrant_idempotent: current room must be power_substation, got '%s'"
-			% inst.get_current_room_tag()
+			"overlap_alone: room changed to '%s' after standing in a connector area for 10 frames "
+			+ "with no E press" % inst.get_current_room_tag()
 		)
 
-	_free_detached_instance(inst)
+	_free_instance(inst)
 	return failures
 
 
-## Holds zero input for 10 physics frames and asserts the current room does
-## not change — the reciprocal connector the player just arrived through
-## must not immediately re-fire. Folded into the per-hop loop of
-## _test_full_critical_path_traversal_and_branches_and_reverse() (T-0390 fix
-## round 1, criterion: "asserted after EACH critical-path transition, forward
-## and reverse", not just ground_relay -> power_substation).
-func _assert_no_immediate_bounce(
-	inst: Node2D, expected_tag: String, context: String, failures: Array[String]
-) -> void:
-	for i in range(10):
+## Pressing E outside every connector area must do nothing.
+func _test_interact_outside_connector_does_nothing() -> Array[String]:
+	var failures: Array[String] = []
+	var inst: Node2D = await _build_live_instance(failures)
+	if inst.get_layout() == null:
+		_free_instance(inst)
+		return failures
+
+	var player: CharacterBody2D = inst.get_player()
+	var before_tag: String = inst.get_current_room_tag()
+	var before_count: int = inst.get_room_change_count()
+
+	## Spawn is already asserted clear of every connector area elsewhere
+	## (_test_spawn_in_ground_relay_clear_of_connectors) — press E right there.
+	player.interact_pressed.emit()
+	await physics_frame
+
+	if inst.get_current_room_tag() != before_tag or inst.get_room_change_count() != before_count:
+		failures.append("interact_outside: E press outside any connector area must not change rooms")
+
+	_free_instance(inst)
+	return failures
+
+
+## Pressing E inside a connector area must change rooms exactly once.
+func _test_interact_inside_connector_transitions_once() -> Array[String]:
+	var failures: Array[String] = []
+	var inst: Node2D = await _build_live_instance(failures)
+	if inst.get_layout() == null:
+		_free_instance(inst)
+		return failures
+
+	var player: CharacterBody2D = inst.get_player()
+	var reached: bool = await _walk_into_trigger(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
+	if not reached:
+		failures.append("interact_inside: failed to reach the trigger area")
+		_free_instance(inst)
+		return failures
+
+	var before_count: int = inst.get_room_change_count()
+	player.interact_pressed.emit()
+	await physics_frame
+
+	if inst.get_room_change_count() != before_count + 1:
+		failures.append(
+			"interact_inside: expected exactly 1 room change for 1 E press, got %d"
+			% (inst.get_room_change_count() - before_count)
+		)
+	if inst.get_current_room_tag() != POWER_SUBSTATION:
+		failures.append(
+			"interact_inside: expected to be in power_substation, got '%s'" % inst.get_current_room_tag()
+		)
+
+	_free_instance(inst)
+	return failures
+
+
+## The contextual "[E] ..." prompt shows while the player stands in a
+## connector's area and disappears once they leave it.
+func _test_interaction_prompt_visibility() -> Array[String]:
+	var failures: Array[String] = []
+	var inst: Node2D = await _build_live_instance(failures)
+	if inst.get_layout() == null:
+		_free_instance(inst)
+		return failures
+
+	var player: CharacterBody2D = inst.get_player()
+	if inst.get_interaction_prompt_visible():
+		failures.append("prompt: must not be visible at spawn, which is clear of every connector")
+
+	var reached: bool = await _walk_into_trigger(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
+	if not reached:
+		failures.append("prompt: failed to reach the trigger area")
+		_free_instance(inst)
+		return failures
+
+	if not inst.get_interaction_prompt_visible():
+		failures.append("prompt: must be visible while standing in a connector area")
+	if inst.get_interaction_prompt_text() == "":
+		failures.append("prompt: must show non-empty text while in a connector area")
+
+	player.apply_input(-1.0, true)
+	var left: bool = false
+	for i in range(120):
 		await physics_frame
-		if inst.get_current_room_tag() != expected_tag:
-			failures.append(
-				(
-					"ladder_ping_pong: room changed to '%s' within 10 zero-input frames after %s — "
-					+ "player was not placed clear of the reciprocal connector"
-				) % [inst.get_current_room_tag(), context]
-			)
-			return
+		if not inst.get_interaction_prompt_visible():
+			left = true
+			break
+	player.apply_input(0.0, false)
+	await physics_frame
+
+	if not left or inst.get_interaction_prompt_visible():
+		failures.append("prompt: must disappear after the player leaves the connector area")
+
+	_free_instance(inst)
+	return failures
 
 
 func _test_wrong_side_ladder_resolves_correctly() -> Array[String]:
@@ -876,7 +1035,7 @@ func _test_wrong_side_ladder_resolves_correctly() -> Array[String]:
 
 	var player: CharacterBody2D = inst.get_player()
 
-	var down_ok: bool = await _walk_to_room(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
+	var down_ok: bool = await _walk_to_room_via_interact(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
 	if not down_ok:
 		failures.append("wrong_side_ladder: failed to descend ground_relay -> power_substation")
 		_free_instance(inst)
@@ -884,7 +1043,7 @@ func _test_wrong_side_ladder_resolves_correctly() -> Array[String]:
 
 	## Taking the SAME ladder from the opposite side must resolve back to the
 	## parent room, not re-descend to a child.
-	var up_ok: bool = await _walk_to_room(inst, player, POWER_SUBSTATION, GROUND_RELAY, MAX_WALK_STEPS)
+	var up_ok: bool = await _walk_to_room_via_interact(inst, player, POWER_SUBSTATION, GROUND_RELAY, MAX_WALK_STEPS)
 	if not up_ok:
 		failures.append("wrong_side_ladder: failed to ascend power_substation -> ground_relay")
 	elif inst.get_current_room_tag() != GROUND_RELAY:
@@ -998,21 +1157,28 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 	var chain: Object = ChainSideonScript.new()
 	var critical_path: Array[String] = chain.get_critical_path()
 
+	var visited: Array[String] = [inst.get_current_room_tag()]
 	if inst.get_current_room_tag() != critical_path[0]:
 		failures.append("traversal: must start in '%s'" % critical_path[0])
 
-	## Forward along the critical path. Each hop is followed by a 10-frame
-	## zero-input ping-pong check (T-0390 fix round 1: every critical-path
-	## transition, not just ground_relay -> power_substation).
+	## Forward along the critical path, each hop walked into the connector
+	## area and then activated with E (T-0390 fix round 2) — no walking
+	## through, no direct position assignment.
 	for i in range(critical_path.size() - 1):
 		var from_tag: String = critical_path[i]
 		var to_tag: String = critical_path[i + 1]
-		var ok: bool = await _walk_to_room(inst, player, from_tag, to_tag, MAX_WALK_STEPS)
+		var ok: bool = await _walk_to_room_via_interact(inst, player, from_tag, to_tag, MAX_WALK_STEPS)
 		if not ok:
-			failures.append("traversal: failed to walk %s -> %s" % [from_tag, to_tag])
+			failures.append("traversal: failed to walk+interact %s -> %s" % [from_tag, to_tag])
 			_free_instance(inst)
 			return failures
-		await _assert_no_immediate_bounce(inst, to_tag, "%s -> %s" % [from_tag, to_tag], failures)
+		visited.append(to_tag)
+
+	if visited != critical_path:
+		failures.append(
+			"traversal: visited sequence %s does not equal CRITICAL_PATH %s"
+			% [str(visited), str(critical_path)]
+		)
 
 	if inst.get_current_room_tag() != critical_path.back():
 		failures.append("traversal: expected to end at '%s'" % critical_path.back())
@@ -1043,50 +1209,57 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 			% [str(player.position), str(deck_rect)]
 		)
 
-	## Reverse the whole critical path, ladder by ladder, with the same
-	## per-hop ping-pong check.
+	## Reverse the whole critical path, connector by connector, same press-E
+	## mechanism.
 	for i in range(critical_path.size() - 1, 0, -1):
 		var from_tag: String = critical_path[i]
 		var to_tag: String = critical_path[i - 1]
-		var ok: bool = await _walk_to_room(inst, player, from_tag, to_tag, MAX_WALK_STEPS)
+		var ok: bool = await _walk_to_room_via_interact(inst, player, from_tag, to_tag, MAX_WALK_STEPS)
 		if not ok:
-			failures.append("traversal: failed to walk critical path in reverse %s -> %s" % [from_tag, to_tag])
+			failures.append(
+				"traversal: failed to walk+interact critical path in reverse %s -> %s" % [from_tag, to_tag]
+			)
 			_free_instance(inst)
 			return failures
-		await _assert_no_immediate_bounce(inst, to_tag, "reverse %s -> %s" % [from_tag, to_tag], failures)
 
 	if inst.get_current_room_tag() != critical_path[0]:
 		failures.append("traversal: reverse critical path must end back at '%s'" % critical_path[0])
 
 	## Branch: ground_relay -> records_room -> ground_relay.
-	var to_records: bool = await _walk_to_room(inst, player, GROUND_RELAY, RECORDS_ROOM, MAX_WALK_STEPS)
+	var to_records: bool = await _walk_to_room_via_interact(inst, player, GROUND_RELAY, RECORDS_ROOM, MAX_WALK_STEPS)
 	if not to_records:
-		failures.append("traversal: failed to walk ground_relay -> records_room")
+		failures.append("traversal: failed to walk+interact ground_relay -> records_room")
 	else:
-		var back_from_records: bool = await _walk_to_room(inst, player, RECORDS_ROOM, GROUND_RELAY, MAX_WALK_STEPS)
+		var back_from_records: bool = await _walk_to_room_via_interact(
+			inst, player, RECORDS_ROOM, GROUND_RELAY, MAX_WALK_STEPS
+		)
 		if not back_from_records:
-			failures.append("traversal: failed to walk records_room -> ground_relay")
+			failures.append("traversal: failed to walk+interact records_room -> ground_relay")
 
 	## Walk to equipment_floor to test its branch.
-	var to_power: bool = await _walk_to_room(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
+	var to_power: bool = await _walk_to_room_via_interact(inst, player, GROUND_RELAY, POWER_SUBSTATION, MAX_WALK_STEPS)
 	if not to_power:
-		failures.append("traversal: failed to walk ground_relay -> power_substation (branch setup)")
+		failures.append("traversal: failed to walk+interact ground_relay -> power_substation (branch setup)")
 		_free_instance(inst)
 		return failures
-	var to_equipment: bool = await _walk_to_room(inst, player, POWER_SUBSTATION, EQUIPMENT_FLOOR, MAX_WALK_STEPS)
+	var to_equipment: bool = await _walk_to_room_via_interact(
+		inst, player, POWER_SUBSTATION, EQUIPMENT_FLOOR, MAX_WALK_STEPS
+	)
 	if not to_equipment:
-		failures.append("traversal: failed to walk power_substation -> equipment_floor (branch setup)")
+		failures.append("traversal: failed to walk+interact power_substation -> equipment_floor (branch setup)")
 		_free_instance(inst)
 		return failures
 
 	## Branch: equipment_floor -> storage_cache -> equipment_floor.
-	var to_storage: bool = await _walk_to_room(inst, player, EQUIPMENT_FLOOR, STORAGE_CACHE, MAX_WALK_STEPS)
+	var to_storage: bool = await _walk_to_room_via_interact(inst, player, EQUIPMENT_FLOOR, STORAGE_CACHE, MAX_WALK_STEPS)
 	if not to_storage:
-		failures.append("traversal: failed to walk equipment_floor -> storage_cache")
+		failures.append("traversal: failed to walk+interact equipment_floor -> storage_cache")
 	else:
-		var back_from_storage: bool = await _walk_to_room(inst, player, STORAGE_CACHE, EQUIPMENT_FLOOR, MAX_WALK_STEPS)
+		var back_from_storage: bool = await _walk_to_room_via_interact(
+			inst, player, STORAGE_CACHE, EQUIPMENT_FLOOR, MAX_WALK_STEPS
+		)
 		if not back_from_storage:
-			failures.append("traversal: failed to walk storage_cache -> equipment_floor")
+			failures.append("traversal: failed to walk+interact storage_cache -> equipment_floor")
 
 	_free_instance(inst)
 	return failures
