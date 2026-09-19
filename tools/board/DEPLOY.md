@@ -1,9 +1,9 @@
 # Deploying assembled-board
 
-The live board runs under a systemd user unit (`assembled-board.service`) whose dev server
-watches its own source for changes so a deploy or a pull takes effect without a manual
-restart. Two real outages taught us that a naive `git pull && systemctl restart` is not safe
-here:
+The live board runs under a systemd user unit (`assembled-board.service`). It does **not** watch
+its own source for changes -- see "No file watcher on the deployed service" below for why, and
+what that means for how a deploy or a pull actually takes effect. Two real outages taught us that
+a naive `git pull && systemctl restart` is not safe here:
 
 1. **An unguarded watch-and-restart auto-relaunches mid-merge, or mid-run.** If code is
    pulled/merged into the working tree while the service is still *up*, a file watcher that
@@ -11,12 +11,13 @@ here:
    mid-conflict-resolution, with conflict markers sitting in a source file. This really
    happened: it reset a live card run and then crashed on the conflict-markered file, taking
    the board down 20+ minutes. `dev:server` used to run under `node --watch`, which has exactly
-   this problem -- it also reappeared in a second, narrower shape (T-0385, see "Guarded
-   restart-on-file-change" below): even after `serviceRestart.js` grew a guard that defers a
-   *pull-triggered* restart while a card run is active, `node --watch` still restarted on the
-   pulled files anyway, because it doesn't know the guard exists. `dev:server` now runs
-   `src/server/watch.js` instead, which closes that hole by applying the same guard to
-   file-change-triggered restarts too.
+   this problem -- it also reappeared in a second, narrower shape (T-0385): even after
+   `serviceRestart.js` grew a guard that defers a *pull-triggered* restart while a card run is
+   active, `node --watch` still restarted on the pulled files anyway, because it doesn't know the
+   guard exists. T-0385 first replaced `node --watch` with a guard-respecting watcher
+   (`src/server/watch.js`), but a follow-up review round found that watcher's own liveness check
+   couldn't see a run still in worktree setup -- see "No file watcher on the deployed service"
+   below for why the fix that landed was removing the watcher outright, not patching that check.
 2. **`develop` diverges from origin by design.** The board commits its own runtime data
    (attachments, card status writes) straight to `develop` locally (see `gitOps.js`'s
    `commitPaths`/`commitTaskFile`). A plain `git pull --ff-only` breaks the first time that
@@ -130,15 +131,15 @@ the Done path uses -- no separate pull/restart logic to keep in sync with PULL-1
   does, and only ever restarts through the same idle-guarded `restartCoordinator` -- it does
   not add a new restart path or a new way to touch the tree while the service is mid-merge.
   Pulling into a running checkout is exactly what exposed T-0385's narrower version of outage
-  #1 (see "Guarded restart-on-file-change" below): `restartCoordinator` itself was always
-  guarded, but the file watcher racing it was not.
+  #1 (see "No file watcher on the deployed service" below): `restartCoordinator` itself was
+  always guarded, but a since-removed file watcher racing it was not.
 
 ## Clean shutdown (T-0290)
 
 Every restart this poller (or `npm run deploy`, or a manual `systemctl --user restart`) triggers
 used to take the full length of systemd's `TimeoutStopSec` -- 90s by default -- because `npm run
 dev`'s process tree is several layers of `sh -c '<cmd>'` deep (`npm -> sh -c "concurrently ..." ->
-concurrently -> sh -c "npm run dev:server" -> npm -> sh -c "node src/server/watch.js"`, and the
+concurrently -> sh -c "npm run dev:server" -> npm -> sh -c "node src/server/index.js"`, and the
 same again for the client). A `sh -c '<cmd>'` layer that doesn't `exec` into `<cmd>` **forks and
 waits** instead of replacing itself, so it stays alive in the unit's cgroup as its own process,
 separate from the real work process it launched -- exactly the "three bare bash processes ignored
@@ -149,13 +150,13 @@ before the fix `npm run dev` has 5 such wrapper shells in its tree; after, none.
 **Fixed in this repo:** `dev`, `dev:server`, and `dev:client` in `package.json` now all prefix
 their command with `exec`, so every `sh -c` layer replaces itself with the program it runs instead
 of parenting it. This is verified by `test/devShutdown.test.js`, which walks the real process tree
-after `npm run dev` boots and asserts no `sh`/`bash`/`dash` PID remains anywhere in it -- `watch.js`
-itself spawns its own watched child directly via `child_process.spawn` (no shell), so it adds a
-second `node` PID to that tree but never an `sh`/`bash`/`dash` one. (T-0385 replaced `dev:server`'s
-`exec node --watch src/server/index.js` with `exec node src/server/watch.js`; the file that used to
-pin `node --watch`'s reload behavior through this same `exec`'d `sh -c` layer,
-`test/devWatchReload.test.js`, was removed since `dev:server` no longer runs under `--watch` at
-all -- superseded by `test/devWatchGuard.test.js`, below.)
+after `npm run dev` boots and asserts no `sh`/`bash`/`dash` PID remains anywhere in it. `dev:server`
+runs `exec node src/server/index.js` directly -- no watcher, no wrapper child process, one `node`
+PID for the whole server lifetime. (T-0385 briefly ran `dev:server` under a guard-respecting
+watcher, `src/server/watch.js`, which spawned the real server as its own supervised child process;
+that watcher was removed in a later fix round -- see "No file watcher on the deployed service"
+below -- so `dev:server` is back to a single, unwrapped `node` process, same shape as before T-0385
+started but still `exec`'d.)
 
 **Not fixed here -- needs a human edit to the live unit, which is outside this repo (see
 `~/.config/systemd/user/assembled-board.service` and its
@@ -201,7 +202,7 @@ gathered by a human, running the commands above from a shell that is *not* itsel
 `assembled-board.service`, after this branch lands. Recording that measurement on the card is the
 one remaining step; it is not something a future implementer or reviewer run should keep re-trying.
 
-## Guarded restart-on-file-change (`src/server/watchSupervisor.js`, `src/server/watch.js`, T-0385)
+## No file watcher on the deployed service (T-0385)
 
 **The incident.** 2026-09-18, during the merges of #394 and #395: #395's merge pulled into the
 running checkout while T-0384's run was still active. `serviceRestart.js`'s guard did exactly
@@ -212,49 +213,64 @@ server anyway, right through the middle of T-0384's run. `GET /api/health` went 
 for the rest of that run -- the exact outage #1 at the top of this file, just triggered by a
 file-watch reaction instead of the deploy script's own unguarded restart.
 
-**The fix.** `dev:server` no longer runs under `node --watch` at all. It now runs
-`src/server/watch.js`, a small supervisor (`createWatchSupervisor` in `watchSupervisor.js`) that
-watches the same source tree but, before ever restarting the child it manages, checks the same
-`detectLiveRun` signal `npm run deploy`'s live-run check already uses (pgrep for a live
-`claude -p` run, or a `tasks/.runs/*.jsonl` file written to in the last 2 minutes -- see
-"Live-run guard" above). This is the same guard as `serviceRestart.js`'s, just applied to a
-different trigger: a raw file change instead of a git pull.
+**First attempt (superseded).** T-0385 first replaced `node --watch` with a guard-respecting
+supervisor (`src/server/watch.js` + `createWatchSupervisor` in `watchSupervisor.js`) that checked
+`detectLiveRun` -- the same pgrep-plus-`tasks/.runs/*.jsonl`-recency signal `npm run deploy`'s
+live-run check uses (see "Live-run guard" above) -- before ever restarting the child it managed.
+A follow-up review round (Codex, 2026-09-19) found a real gap in that check: a card run enters
+`orchestrator.activeCardIds` -- the authoritative "is a run in flight" signal `serviceRestart.js`'s
+own guard reads via `hasActiveRuns()` -- at the very top of `runCard()`, *before*
+`git.addWorktree`. Neither `detectLiveRun` signal exists yet at that point: no `claude -p` process
+has spawned, and no `tasks/.runs/*.jsonl` file exists to be recently-modified. A file change
+landing in that window -- a run genuinely active, `detectLiveRun` genuinely blind to it -- still
+restarted the watched child.
+
+**The fix that landed.** Rather than wiring the watcher up to the real `hasActiveRuns()` signal --
+which lives on the in-process `RunOrchestrator` inside the watched *child*, not the supervisor
+process watching it, and would need a coordination channel across that process boundary just to
+ask "is a run active right now" on every file change -- `dev:server` drops the file watcher
+entirely. It runs `exec node src/server/index.js` directly, the same as before T-0385 ever
+started, and reacts to nothing on disk. The board's only restart mechanisms are now the two that
+were always meant to be authoritative:
+
+- **`npm run deploy`** (see above): stops the service, merges, restarts -- nothing is running to
+  observe the merge at all.
+- **The guarded restart-on-pull path** (`autoPullPoller.js` + `serviceRestart.js`'s
+  `createRestartCoordinator`, see "Periodic auto-pull" below and the Done-triggered pull in
+  `httpApi.js`): reads `orchestrator.hasActiveRuns()` directly -- the real, authoritative signal,
+  true from the moment a card enters `activeCardIds` through to the run's full cleanup, with no
+  process-existence or log-recency heuristic standing in for it.
+
+This removes a second, weaker liveness signal instead of trying to keep it synchronized with the
+first. A pulled/merged file with no service restarting to pick it up is exactly the safe state
+this card's acceptance requires: it just sits on disk until the next `npm run deploy`, the next
+guarded restart-on-pull, or a manual `systemctl --user restart`, at which point the new code takes
+effect the normal way. `src/server/watch.js`, `src/server/watchSupervisor.js`, and their tests are
+removed rather than left as unused dead code.
 
 **What an operator should expect in the journal:**
 
-- **No run active when a file changes** (a deploy, or any pull landing while the board is
-  idle): `assembled-board: file change detected, no active runs -- restarting watched process`,
-  immediately followed by the watched child's own normal startup log line
-  (`assembled-board listening on http://127.0.0.1:...`). Sub-second gap, same as `node --watch`
-  used to give.
-- **A run is active when a file changes** (the incident's exact scenario): `assembled-board:
-  file change detected while a card run is active -- restart deferred until idle`, and *no*
-  restart -- the existing child keeps serving `/api/health` for the rest of the run. Once the
-  run finishes, the supervisor's own poll (every 2s by default) notices on its own and logs
-  `assembled-board: deferred restart: active run finished -- restarting watched process`,
-  restarting with no further file change required. No manual intervention needed either way.
-- **Expect to see this alongside, not instead of, `restartCoordinator`'s own restart-on-pull
-  log lines** (`develop pulled...`/`deferred restart: active run finished -- restarting service
-  to pick up pulled code`, from `serviceRestart.js`). A pull that lands mid-run now defers on
-  *two* independent guards -- this file-watch one (an in-process child respawn) and
-  `restartCoordinator`'s (a `systemctl --user restart` of the whole unit) -- and both fire once
-  the run goes idle, typically within a couple seconds of each other. Seeing two restart-shaped
-  log blocks back to back after a deferred pull is expected, not a sign of a flapping service;
-  each is independently safe and idempotent, and the two never race in a way that drops the
-  listener, since the guard is what stops that from happening in the first place.
+- **A file changes on disk with the service running** (an edit outside of a deploy, e.g. from a
+  card run committing to `repoRoot`): nothing. No log line, no restart, no reaction of any kind --
+  there's nothing watching. The service keeps running the code it started with until the next
+  restart from one of the two mechanisms above.
+- **A pull lands with no card run active**: `serviceRestart.js` logs `develop pulled, no active
+  runs -- restarting service to pick up pulled code` and restarts immediately (`systemctl --user
+  restart assembled-board.service`).
+- **A pull lands while a card run is active** (the incident's exact scenario, including the
+  narrower setup-window gap the follow-up review found): `assembled-board: develop pulled while a
+  card run is active -- restart deferred until idle`, and *no* restart -- the running service keeps
+  serving `/api/health` for the rest of the run, including through worktree setup, with no window
+  where a file change alone can tear it down. Once `RunOrchestrator.activeCardIds` empties,
+  `onIdle()` fires `restartCoordinator.notifyIdle()`, which logs `assembled-board: deferred
+  restart: active run finished -- restarting service to pick up pulled code` and restarts then.
 
-**Config (env vars on the service, same override style as the rest of this file):**
-
-- **`BOARD_WATCH_PATHS`** -- comma-separated paths to watch; defaults to `tools/board/src`.
-- **`BOARD_REPO_ROOT`** -- repo root used to scope the pgrep-based liveness check (same role as
-  `serviceRestart.js`'s implicit repo root); defaults to the real checkout root.
-
-Tests: `test/server/watchSupervisor.test.js` (the guard logic itself, fully mocked), `test/
-server/watch.test.js` (the CLI's env-var wiring, supervisor mocked out), and
-`test/devWatchGuard.test.js` (real end-to-end: spawns the actual `watch.js`, asserts
-`GET /api/health` keeps answering across a file change while a fake run looks active, then
-asserts the same change still restarts once that fake run goes away, with no further file
-touch).
+Regression coverage: `test/runner/pullRestartSetupWindow.test.js` -- a real `RunOrchestrator` with
+`git.addWorktree` held pending (so the run sits genuinely inside `activeCardIds`, with no run log
+and no process, mirroring Codex's exact repro) proves a pull landing in that window still defers,
+and that the deferred restart fires once the run ends; a companion case proves a pull with no
+active run restarts immediately; a third proves `autoPullPoller`'s own tick skips fetching and
+restarting entirely while a run is in that same setup window, and resumes once idle.
 
 ## Auto-launch poller (`src/runner/autoLaunchPoller.js`)
 

@@ -5,11 +5,13 @@ set -euo pipefail
 # user service that runs it -- safely. Two real outages are why this script exists instead
 # of a plain `git pull && systemctl restart`:
 #
-#   1. The service runs the dev server under `node --watch`. Merging code into the working
-#      tree while the service is UP makes `node --watch` auto-relaunch mid-merge -- this
-#      really happened: it reset a live card, then crashed on a conflict-markered file mid-
-#      resolution, taking the board down 20+ minutes. Fix: the service is STOPPED before the
-#      working tree is touched, every time, no exceptions -- see the "stop" step below.
+#   1. The service used to run the dev server under `node --watch` (T-0385, see DEPLOY.md's "No
+#      file watcher on the deployed service"). Merging code into the working tree while the
+#      service was UP made `node --watch` auto-relaunch mid-merge -- this really happened: it
+#      reset a live card, then crashed on a conflict-markered file mid-resolution, taking the
+#      board down 20+ minutes. The service now runs with no file watcher at all -- nothing
+#      reacts to a changed file on disk -- but the service is STILL STOPPED before the working
+#      tree is touched, every time, no exceptions, as defense in depth: see the "stop" step below.
 #   2. The board commits its own runtime data (attachments, card status writes) straight to
 #      `develop` locally and never used to push it, so `develop` steadily diverged from
 #      origin and a plain `git pull --ff-only` broke on every deploy. Fix: `fetch` + a merge
@@ -65,7 +67,7 @@ if ! node "$BOARD_DIR/scripts/checkLiveRun.js" "$REPO_ROOT"; then
   die "refusing to deploy while a card run looks live (see message above). Retry once it finishes."
 fi
 
-log "stopping $SERVICE_NAME -- this MUST happen before the working tree is touched, or node --watch can auto-relaunch mid-merge"
+log "stopping $SERVICE_NAME -- this MUST happen before the working tree is touched, so nothing observes the merge mid-flight"
 if ! systemctl --user stop "$SERVICE_NAME"; then
   die "systemctl --user stop $SERVICE_NAME failed -- refusing to touch the working tree while the service's state is unknown. Check: systemctl --user status $SERVICE_NAME"
 fi
