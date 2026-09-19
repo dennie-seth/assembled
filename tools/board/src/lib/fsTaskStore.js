@@ -50,24 +50,50 @@ export class FsTaskStore extends TaskStore {
     // guarantee as `DbTaskStore`'s transaction-based check (see its comment in `dbTaskStore.js`) --
     // atomic against in-process writers sharing the same store instance/connection, no claim
     // beyond that.
+    //
+    // T-0384 FIX ROUND 5 (Codex round-2 review 2026-09-19, P2): a `requireDependenciesSatisfied`
+    // update used to acquire only the CANDIDATE's own lock, so a separate write to a DEPENDENCY id
+    // -- a different entry in this same map -- could still land between the guarded read and the
+    // candidate's write. `update()` now locks the candidate id together with every id in the
+    // `depends_on` list it is about to check, via `_withLocks` below, so a dependency write
+    // through this store instance cannot interleave with a guarded ready operation checking it.
     this._locks = new Map();
   }
 
   /** Serializes `fn` against any other call already queued for `id`. See the constructor note. */
   async _withLock(id, fn) {
-    const previousTail = this._locks.get(id) ?? Promise.resolve();
-    const run = previousTail.then(fn, fn);
+    return this._withLocks([id], fn);
+  }
+
+  /**
+   * Same guarantee as `_withLock`, generalized to a SET of ids: `fn` runs only once every id in
+   * `ids` has drained its own currently-queued work, and no other call sharing any of those ids
+   * can start until `fn` settles. Ids are deduped and sorted before use -- not because acquisition
+   * order matters for deadlock avoidance here (there is no partial "hold while waiting" step: the
+   * predecessor tails for every id are captured and replaced in one synchronous block, with no
+   * `await` in between, so two overlapping calls can never each hold one id while waiting on the
+   * other) but for deterministic, reviewable behaviour, and so that the two "opposite order"
+   * dependency sets in a concurrent pair of guarded writes converge on the same acquisition order.
+   */
+  async _withLocks(ids, fn) {
+    const uniqueSortedIds = [...new Set(ids)].sort();
+    const previousTails = uniqueSortedIds.map((id) => this._locks.get(id) ?? Promise.resolve());
+    const run = Promise.all(previousTails).then(fn, fn);
     const settledTail = run.then(
       () => undefined,
       () => undefined
     );
-    this._locks.set(id, settledTail);
+    for (const id of uniqueSortedIds) {
+      this._locks.set(id, settledTail);
+    }
     try {
       return await run;
     } finally {
-      // Only clear the entry if nothing else has queued behind us in the meantime.
-      if (this._locks.get(id) === settledTail) {
-        this._locks.delete(id);
+      // Only clear an entry if nothing else has queued behind us in the meantime.
+      for (const id of uniqueSortedIds) {
+        if (this._locks.get(id) === settledTail) {
+          this._locks.delete(id);
+        }
       }
     }
   }
@@ -112,7 +138,19 @@ export class FsTaskStore extends TaskStore {
   }
 
   async update(id, updates, { expected, requireDependenciesSatisfied } = {}) {
-    return this._withLock(id, async () => {
+    // T-0384 FIX ROUND 5 (Codex round-2 review 2026-09-19, P2): when the write is going to check
+    // dependency status, lock those dependency ids TOO, not just `id` -- otherwise a separate write
+    // to a dependency (a different entry in `_locks`) could still land between the read below and
+    // the write it guards. This peek is unlocked and may be stale if `depends_on` itself changes
+    // before the lock is acquired, but that's harmless: `assertExpectedMatches` below (which runs
+    // inside the lock, against a fresh re-read) already refuses the write if `depends_on` changed,
+    // independent of which ids happened to get locked here.
+    const lockIds = [id];
+    if (requireDependenciesSatisfied) {
+      const peeked = updates.depends_on ?? (await this.get(id))?.depends_on ?? [];
+      lockIds.push(...peeked);
+    }
+    return this._withLocks(lockIds, async () => {
       const existing = await this.get(id);
       if (!existing) {
         throw new Error(`Task ${id} not found`);
@@ -128,9 +166,12 @@ export class FsTaskStore extends TaskStore {
 
       // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): re-reads each dependency's status
       // here, inside the same per-id lock section, immediately before the write -- not off
-      // whatever a caller checked separately beforehand. This is the same in-process/per-instance
-      // guarantee as the rest of this store's lock (see the constructor note): it does not cover a
-      // dependency written by a second `FsTaskStore` instance or another process.
+      // whatever a caller checked separately beforehand. T-0384 FIX ROUND 5: as of the `lockIds`
+      // computed above, this section now ALSO holds each dependency's own lock (in addition to
+      // `id`'s), so a separate write to one of these dependency ids through this same store
+      // instance cannot interleave here either. Still in-process/per-instance only (see the
+      // constructor note): it does not cover a dependency written by a second `FsTaskStore`
+      // instance or another process.
       if (requireDependenciesSatisfied) {
         const statusById = new Map();
         for (const depId of merged.depends_on ?? []) {
