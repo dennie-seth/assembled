@@ -32,3 +32,25 @@ independent of the 0.87 full-frame floor, per this card's own "that is not lower
 lowering the full-frame pass is") to keep the sampler closer to the already-correct hood silhouette
 while sharpening the existing highlight into a legible lens, rather than re-designing the whole
 head.
+
+## Attempt 2 (seed 380002, pose denoise 0.87, detail denoise 0.35, frame_scale 0.88, ControlNet strength/end 1.5/1.0): FAIL
+
+Full frame: `attempt_2_main_1024.png`. Both fixes landed cleanly: border max channel measured 4
+(against the 16 ceiling, down from attempt 1's 124), and green band cleared the floor at 9,538 px
+(centred crop). But the pose pass itself (`attempt_2_torso_no_arm_extension_crop.png`) lost the
+near-arm extension entirely -- the same seed and the same near-arm prompt clause that produced a
+clean single extended arm at `frame_scale=1.0` (attempt 1, and every prior attempt across
+T-0382/T-0387 that got a clean arm) rendered both arms held down at rest under `frame_scale=0.88`.
+This is not a detail-pass side effect: `composite_head_detail`'s own mask is scoped to the head
+bounding box only and cannot touch pixels at the torso/arm, and the pose pass's own
+`pose_pass_1024.png` (before the detail pass ever runs) already shows the arm down. The regression
+is attributable to the frame-scale change alone.
+
+Since ComfyUI sampling is deterministic given an unchanged seed, re-running this exact
+seed/scale/denoise combination would reproduce the identical broken arm, not fix it. Attempt 3
+holds the border fix's mechanism (`frame_scale`) but uses a much gentler value (0.95 instead of
+0.88) -- enough remaining headroom margin to keep the border fix's benefit while disturbing the
+ControlNet-conditioned figure's absolute scale far less, on the reasoning that a smaller
+perturbation from the known-good `frame_scale=1.0` geometry is less likely to destabilise the
+already-fragile single-arm result than a large one. This is this card's third and final
+pre-registered attempt.
