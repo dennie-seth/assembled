@@ -354,6 +354,11 @@ export async function launchCardRun({
                     const oversizedErr = new CardLaunchError(`Cannot run ${id}: WIP gate drain hold (oversized) -- ${oversized.reason}`, 409);
                     oversizedErr.capacityFitHold = true;
                     oversizedErr.drainHeldOversized = true;
+                    // FIX ROUND 2: structured fields (not just the message string) so
+                    // autoLaunchPoller.js's terminal-hold bookkeeping can report this oversized
+                    // hold in the same shape as an ordinary wait-expired one.
+                    oversizedErr.blockingWindow = oversized.windowKind;
+                    oversizedErr.reason = oversized.reason;
                     throw oversizedErr;
                   }
                 }
