@@ -1,7 +1,8 @@
 ## Finding
 
-**Stop and report -- the pre-registered alternative outcome. All 4 attempts are spent; no
-compliant six-panel master sheet was produced.** Panels 1, 2, and 5 (front T-pose, back T-pose,
+**Stop and report -- the pre-registered alternative outcome, and this is a decisive result. All 4
+attempts are spent; no compliant six-panel master sheet was produced, and the pattern across all
+4 attempts is unambiguous enough to call.** Panels 1, 2, and 5 (front T-pose, back T-pose,
 side-neutral) reproduced T-0351 attempt 19's clean result on most seeds, confirming "reuse the
 recipe unchanged" holds (`attempt_1_panel1_front_tpose.png`, `attempt_1_panel2_back_tpose.png`,
 `attempt_1_panel5_side_neutral.png`, `attempt_2_panel1_front_tpose.png`,
