@@ -7,6 +7,7 @@ import { ROUND_CAP } from "../../src/lib/roundCap.js";
 import { listActiveReservations } from "../../src/runner/launchReservation.js";
 import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
 import { recordAdvisoryDecision as realRecordAdvisoryDecision, AdvisoryDecisionMissingError } from "../../src/runner/advisoryLogger.js";
+import { HOLD_REASON } from "../../src/runner/admissionDecision.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -1106,6 +1107,98 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
       const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
       await launchCardRun({ orchestrator, id: "T-0001", trigger: LAUNCH_TRIGGERS.MANUAL });
       expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+    });
+  });
+
+  describe("WIP gate T-F: drain mode -- an oversized card is detected before it would ever drain", () => {
+    function oversizedAdmissionFn() {
+      return () => ({
+        admitted: false,
+        windows: {
+          five_hour: { windowKind: "five_hour", admitted: true, holdReason: null },
+          seven_day: { windowKind: "seven_day", admitted: false, holdReason: HOLD_REASON.OVERSIZED_ESTIMATE_NEVER_FITS }
+        }
+      });
+    }
+
+    it("auto-blocks the card with an actionable note naming the window and suggesting a split/re-scope, instead of leaving it to retry every tick forever", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, evaluateAdmissionFn: oversizedAdmissionFn() });
+
+      const rejection = launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        enforcementEnabledFn: () => true,
+        drainModeEnabledFn: () => true,
+        buildLaunchDecideFn
+      });
+      await expect(rejection).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409, capacityFitHold: true, drainHeldOversized: true });
+
+      expect(orchestrator.store.update).toHaveBeenCalledWith(
+        "T-0001",
+        expect.objectContaining({
+          status: "blocked",
+          body: expect.stringMatching(/seven_day/)
+        })
+      );
+      const [, patch] = orchestrator.store.update.mock.calls.find(([id]) => id === "T-0001");
+      expect(patch.body).toMatch(/split/i);
+      expect(patch.body).toMatch(/re-scope/i);
+      expect(orchestrator.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "changed", id: "T-0001" }));
+      expect(orchestrator.runCard).not.toHaveBeenCalled();
+    });
+
+    it("never auto-blocks when drain mode is off -- it still capacity-fit-holds exactly as before this card", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, evaluateAdmissionFn: oversizedAdmissionFn() });
+
+      const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+      await expect(rejection).rejects.toMatchObject({ capacityFitHold: true });
+      expect(rejection.catch((err) => err.drainHeldOversized)).resolves.toBeFalsy();
+      expect(orchestrator.store.update).not.toHaveBeenCalledWith("T-0001", expect.objectContaining({ status: "blocked" }));
+    });
+
+    it("never auto-blocks with the default configuration (enforcement AND drain mode both default off) -- no launch that happens today changes", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, evaluateAdmissionFn: oversizedAdmissionFn() });
+
+      await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+      expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+      expect(orchestrator.store.update).not.toHaveBeenCalledWith("T-0001", expect.objectContaining({ status: "blocked" }));
+    });
+
+    it("manual override bypasses the oversized auto-block exactly like any other capacity-fit hold -- a human asked for this one specifically", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, evaluateAdmissionFn: oversizedAdmissionFn() });
+
+      await launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        enforcementEnabledFn: () => true,
+        drainModeEnabledFn: () => true,
+        buildLaunchDecideFn,
+        trigger: LAUNCH_TRIGGERS.MANUAL
+      });
+      expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+      expect(orchestrator.store.update).not.toHaveBeenCalledWith("T-0001", expect.objectContaining({ status: "blocked" }));
+    });
+
+    it("an ordinary (non-oversized) capacity-fit hold carries the admission and telemetry readings on the error, for the poller's own drain tracking", async () => {
+      const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+      const stubTelemetry = { five_hour: { classification: "measured", utilization: 0.95 } };
+      const buildLaunchDecideFn = () => async () => ({
+        estimate: { value: 1, unit: "usd" },
+        telemetryReadings: stubTelemetry,
+        reason: "stub",
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } }
+      });
+
+      const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+      await expect(rejection).rejects.toMatchObject({ capacityFitHold: true });
+      await rejection.catch((err) => {
+        expect(err.admission).toEqual({ admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } });
+        expect(err.telemetryReadings).toEqual(stubTelemetry);
+      });
     });
   });
 });

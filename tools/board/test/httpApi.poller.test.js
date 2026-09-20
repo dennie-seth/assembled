@@ -109,6 +109,17 @@ describe("GET /api/poller", () => {
     expect(body.lastTickAt).toBeNull();
   });
 
+  it("WIP gate T-F: passes through the poller's drain snapshot (blocking window, next reconsideration) unaltered -- the board's own view of drain mode", async () => {
+    const drain = {
+      "T-0001": { status: "waiting", blockingWindow: "seven_day", nextReconsiderationAtMs: 1_700_500_000_000, agingBoost: 3 }
+    };
+    const autoLaunchPoller = fakePoller({ drain });
+    await startServer({ autoLaunchPoller });
+
+    const body = await (await fetch(`${baseUrl}/api/poller`)).json();
+    expect(body.drain).toEqual(drain);
+  });
+
   it("rejects a non-GET method with 405", async () => {
     await startServer({ autoLaunchPoller: fakePoller() });
 

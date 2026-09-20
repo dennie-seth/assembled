@@ -11,6 +11,8 @@ import {
 } from "../../src/runner/autoLaunchPoller.js";
 import { CardLaunchError, LAUNCH_TRIGGERS } from "../../src/runner/cardLaunch.js";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
+import { orderCandidatesWithAging } from "../../src/runner/autoLaunchPoller.js";
+import { createDrainWaitTracker, DEFAULT_DRAIN_CONFIG } from "../../src/runner/drainMode.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -905,5 +907,137 @@ describe("createAutoLaunchPoller — getStatus()", () => {
     expect(status.lastTickAt).toBe(new Date(1_700_000_000_000).toISOString());
     expect(status.lastResult).toMatchObject({ kind: "error", cardId: "T-0001" });
     expect(status.lastResult.reason).toMatch(/unexpected failure/);
+  });
+});
+
+describe("orderCandidatesWithAging -- waiting cards age so ordinary work is not starved", () => {
+  const now = Date.parse("2026-09-20T00:00:00.000Z");
+
+  it("leaves order unchanged when nobody has any wait history", () => {
+    const tracker = createDrainWaitTracker();
+    const candidates = [makeTask({ id: "T-0001", priority: "P1" }), makeTask({ id: "T-0002", priority: "P1" })];
+    const ordered = orderCandidatesWithAging(candidates, { drainTracker: tracker, now });
+    expect(ordered.map((t) => t.id)).toEqual(["T-0001", "T-0002"]);
+  });
+
+  it("moves a long-waiting card ahead of a same-priority newer one that would otherwise win on id order alone", () => {
+    const tracker = createDrainWaitTracker();
+    tracker.recordHeld("T-0005", now - 5 * DEFAULT_DRAIN_CONFIG.agingStepMs);
+    const candidates = [makeTask({ id: "T-0001", priority: "P1" }), makeTask({ id: "T-0005", priority: "P1" })];
+    const ordered = orderCandidatesWithAging(candidates, { drainTracker: tracker, now });
+    expect(ordered.map((t) => t.id)).toEqual(["T-0005", "T-0001"]);
+  });
+
+  it("never lets aging cross a real priority boundary -- a fresh P0 card still goes before an aged P1 one", () => {
+    const tracker = createDrainWaitTracker();
+    tracker.recordHeld("T-0005", now - 50 * DEFAULT_DRAIN_CONFIG.agingStepMs);
+    const candidates = [makeTask({ id: "T-0005", priority: "P1" }), makeTask({ id: "T-0001", priority: "P0" })];
+    const ordered = orderCandidatesWithAging(candidates, { drainTracker: tracker, now });
+    expect(ordered.map((t) => t.id)).toEqual(["T-0001", "T-0005"]);
+  });
+
+  it("falls back to numeric id order among same-priority cards with equal aging", () => {
+    const tracker = createDrainWaitTracker();
+    const candidates = [makeTask({ id: "T-0010", priority: "P2" }), makeTask({ id: "T-0002", priority: "P2" })];
+    const ordered = orderCandidatesWithAging(candidates, { drainTracker: tracker, now });
+    expect(ordered.map((t) => t.id)).toEqual(["T-0002", "T-0010"]);
+  });
+});
+
+describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => {
+  function capacityFitHoldError(message, extra = {}) {
+    const err = new CardLaunchError(message, 409);
+    err.capacityFitHold = true;
+    Object.assign(err, extra);
+    return err;
+  }
+
+  it("drain mode off (default): getStatus().drain is always empty, even when every candidate is held -- zero footprint on today's behaviour", async () => {
+    const task = makeTask({ id: "T-0001" });
+    const { poller } = makePoller({
+      tasks: [task],
+      now: () => 1_700_000_000_000,
+      launchFn: vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: 1_700_100_000_000, resetElapsed: false } }
+        });
+      })
+    });
+
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().drain).toEqual({});
+  });
+
+  it("drain mode on: an ordinary capacity hold is tracked and reported, naming the blocking window and its OWN reset -- never the other window's", async () => {
+    const task = makeTask({ id: "T-0001" });
+    const fiveHourResetMs = 1_700_010_000_000; // soon
+    const sevenDayResetMs = 1_700_500_000_000; // far later -- the real horizon
+    const { poller } = makePoller({
+      tasks: [task],
+      now: () => 1_700_000_000_000,
+      drainModeEnabled: true,
+      launchFn: vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: {
+            admitted: false,
+            windows: {
+              five_hour: { windowKind: "five_hour", admitted: true, holdReason: null },
+              seven_day: { windowKind: "seven_day", admitted: false, holdReason: "insufficient_capacity" }
+            }
+          },
+          telemetryReadings: {
+            five_hour: { resetsAtMs: fiveHourResetMs, resetElapsed: false },
+            seven_day: { resetsAtMs: sevenDayResetMs, resetElapsed: false }
+          }
+        });
+      })
+    });
+
+    expect(await poller.tick()).toBeNull();
+    const drain = poller.getStatus().drain;
+    expect(drain["T-0001"]).toMatchObject({ status: "waiting", blockingWindow: "seven_day", nextReconsiderationAtMs: sevenDayResetMs });
+  });
+
+  it("drain mode on: an oversized hold is never tracked as ordinary waiting work -- it exits drain entirely, distinct from a same-tick ordinary hold that IS still reconsidered", async () => {
+    const oversizedTask = makeTask({ id: "T-0001", priority: "P1" });
+    const ordinaryTask = makeTask({ id: "T-0002", priority: "P1" });
+    const launchFn = vi.fn(async ({ id }) => {
+      if (id === "T-0001") {
+        throw capacityFitHoldError("oversized", { drainHeldOversized: true });
+      }
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: 1_700_100_000_000, resetElapsed: false } }
+      });
+    });
+    const { poller } = makePoller({ tasks: [oversizedTask, ordinaryTask], now: () => 1_700_000_000_000, drainModeEnabled: true, launchFn });
+
+    expect(await poller.tick()).toBeNull();
+    const drain = poller.getStatus().drain;
+    expect(drain).not.toHaveProperty("T-0001");
+    expect(drain["T-0002"]).toMatchObject({ status: "waiting", blockingWindow: "five_hour" });
+    expect(launchFn).toHaveBeenCalledWith(expect.objectContaining({ id: "T-0001" }));
+    expect(launchFn).toHaveBeenCalledWith(expect.objectContaining({ id: "T-0002" }));
+  });
+
+  it("drain mode on: a still-waiting card's aging boost grows tick over tick, and it keeps being reconsidered rather than dropped", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1_700_000_000_000;
+    const launchFn = vi.fn(async () => {
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, launchFn });
+
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().drain["T-0001"].agingBoost).toBe(0);
+
+    nowMs += 4 * DEFAULT_DRAIN_CONFIG.agingStepMs;
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().drain["T-0001"].agingBoost).toBe(4);
+    expect(launchFn).toHaveBeenCalledTimes(2);
   });
 });
