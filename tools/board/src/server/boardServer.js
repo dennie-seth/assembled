@@ -22,6 +22,7 @@ import { createAutoPullPoller } from "../runner/autoPullPoller.js";
 import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
 import { drainPendingUsageWrites } from "../runner/usageLedger.js";
 import { reconcileReservationsOnStartup } from "../runner/launchReservation.js";
+import { reconcileGpuLeasesOnStartup } from "../runner/gpuLease.js";
 
 const WS_BOARD_PATH = "/ws/board";
 const WS_PTY_PATH = "/ws/pty";
@@ -238,6 +239,20 @@ export async function startBoardServer({
       await reconcileReservationsOnStartup({ runsDir: path.join(tasksDir, ".runs"), store: guardedStore });
     } catch (err) {
       console.error(`launch-reservation: startup reconciliation failed -- continuing startup: ${err.message}`);
+    }
+    // T-0371 (WIP gate T-E): reconciled against the SAME store, right beside the token
+    // reservation above, so a card that crashed loses both its GPU lease and its token
+    // reservation together -- see gpuLease.js's own "recover coherently together" test.
+    // reconcileGpuLeasesOnStartup already tolerates an unreadable/malformed lease file or an
+    // unlistable pool internally; this try/catch is a backstop for anything else it could still
+    // throw, so GPU lease reconciliation can never be the reason a board process fails to start.
+    // Unconditional (not gated on GPU_LEASE_ENABLED): harmless when the feature is off, since no
+    // `.gpu-leases` directory is ever created without it, and reconciling it always keeps the
+    // pool correct if the flag is ever turned on later.
+    try {
+      await reconcileGpuLeasesOnStartup({ runsDir: path.join(tasksDir, ".runs"), store: guardedStore });
+    } catch (err) {
+      console.error(`gpu-lease: startup reconciliation failed -- continuing startup: ${err.message}`);
     }
   }
   selfImprovementLoop.start();
