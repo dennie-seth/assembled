@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   createAutoLaunchPoller,
   selectNextCard,
@@ -12,7 +15,7 @@ import {
 import { CardLaunchError, LAUNCH_TRIGGERS } from "../../src/runner/cardLaunch.js";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
 import { orderCandidatesWithAging } from "../../src/runner/autoLaunchPoller.js";
-import { createDrainWaitTracker, DEFAULT_DRAIN_CONFIG, DRAIN_STATUS } from "../../src/runner/drainMode.js";
+import { createDrainWaitTracker, DEFAULT_DRAIN_CONFIG, DRAIN_STATUS, loadPersistedDrainWaitState } from "../../src/runner/drainMode.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -1008,12 +1011,12 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
     expect(drain["T-0001"]).toMatchObject({ status: "waiting", blockingWindow: "seven_day", nextReconsiderationAtMs: sevenDayResetMs });
   });
 
-  it("drain mode on: an oversized hold is never tracked as ordinary waiting work -- it exits drain entirely, distinct from a same-tick ordinary hold that IS still reconsidered", async () => {
+  it("drain mode on: an oversized hold is no longer tracked as ORDINARY waiting work -- distinct from a same-tick ordinary hold that IS still reconsidered -- but it stays visible as a terminal hold (FIX ROUND 2 finding 2: 'oversized holds behave the same way' as a wait-expired hold)", async () => {
     const oversizedTask = makeTask({ id: "T-0001", priority: "P1" });
     const ordinaryTask = makeTask({ id: "T-0002", priority: "P1" });
     const launchFn = vi.fn(async ({ id }) => {
       if (id === "T-0001") {
-        throw capacityFitHoldError("oversized", { drainHeldOversized: true });
+        throw capacityFitHoldError("oversized", { drainHeldOversized: true, blockingWindow: "seven_day", reason: "Oversized for the seven_day window -- split or re-scope." });
       }
       throw capacityFitHoldError("does not fit", {
         admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
@@ -1024,7 +1027,9 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
 
     expect(await poller.tick()).toBeNull();
     const drain = poller.getStatus().drain;
-    expect(drain).not.toHaveProperty("T-0001");
+    // No longer ordinary wait bookkeeping (no firstHeldAtMs/timesPassedOver aging entry) --
+    // but the terminal hold itself is still reported, not dropped from the map entirely.
+    expect(drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_OVERSIZED, blockingWindow: "seven_day" });
     expect(drain["T-0002"]).toMatchObject({ status: "waiting", blockingWindow: "five_hour" });
     expect(launchFn).toHaveBeenCalledWith(expect.objectContaining({ id: "T-0001" }));
     expect(launchFn).toHaveBeenCalledWith(expect.objectContaining({ id: "T-0002" }));
@@ -1096,13 +1101,74 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
       expect.objectContaining({ type: "changed", id: "T-0001" })
     );
 
-    // No longer tracked as ordinary waiting work -- distinct from `waiting`, consistent with the
-    // oversized exit's own "nothing left to track here" precedent.
-    expect(poller.getStatus().drain).not.toHaveProperty("T-0001");
+    // No longer tracked as ORDINARY waiting work (distinct status, and the drainTracker's own
+    // aging bookkeeping is gone) -- but FIX ROUND 2 finding 2 requires the terminal hold ITSELF
+    // to stay visible in getStatus().drain until a human resolves it, not disappear the instant
+    // it fires. A waiting badge must turn into a hold, never vanish.
+    expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED, blockingWindow: "five_hour" });
 
     // The consumer's own log line is distinct from an ordinary "waiting" report.
     const lines = logLines(logger);
     expect(lines).toMatch(/held_wait_expired/);
+  });
+
+  // FIX ROUND 2 finding 2 (Chat round-3 review of #408): "The terminal hold is deleted before
+  // anyone can see it... getStatus().drain is {} after the tick... The round-2 UI tests injected
+  // terminal states directly, which is exactly why they passed over this." This drives the REAL
+  // poller through REAL ticks (never an injected drain map) and probes exactly what Chat probed:
+  // the card's real status alongside the real getStatus().drain payload.
+  it("REGRESSION (FIX ROUND 2, finding 2): after the real poller records held_wait_expired, task.status is blocked AND getStatus().drain still describes the hold -- not {}", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1000;
+    const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const launchFn = vi.fn(async () => {
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller, store } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, drainConfig, launchFn });
+
+    await poller.tick();
+    nowMs = 10000;
+    await poller.tick();
+
+    const stored = await store.get("T-0001");
+    const drain = poller.getStatus().drain;
+    // The exact producer/consumer mismatch Chat's probe found: task.status === "blocked" while
+    // getStatus().drain was {}. Both sides of the payload must now agree.
+    expect(stored.status).toBe("blocked");
+    expect(drain).not.toEqual({});
+    expect(drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+  });
+
+  it("REGRESSION (FIX ROUND 2, finding 2): the terminal hold clears once a human moves the card back to an eligible state and it launches cleanly -- resolution, not a timeout", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1000;
+    let shouldFit = false;
+    const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const launchFn = vi.fn(async ({ id }) => {
+      if (shouldFit) return makeTask({ id });
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller, store } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, drainConfig, launchFn });
+
+    await poller.tick();
+    nowMs = 10000;
+    await poller.tick();
+    expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+
+    // A human re-scopes the card, moves it back to ready, and this time it fits -- the underlying
+    // hold is genuinely resolved, not merely timed out.
+    await store.update("T-0001", { status: "ready" });
+    shouldFit = true;
+    nowMs = 20000;
+    await poller.tick();
+
+    expect(poller.getStatus().drain).not.toHaveProperty("T-0001");
   });
 
   it("REGRESSION (FIX ROUND 1a): once blocked, the card is no longer an eligible candidate on the NEXT tick -- store.list() naturally excludes it", async () => {
@@ -1126,5 +1192,110 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
     expect(await poller.tick()).toBeNull();
     expect(poller.getStatus().lastResult).toMatchObject({ kind: "skip" });
     expect(launchFn).toHaveBeenCalledTimes(2); // not called a third time -- T-0001 is no longer eligible
+  });
+
+  // FIX ROUND 2 finding 1 (Chat round-3 review of #408): "A finished wait leaves its deadline on
+  // disk... If the card comes back to ready for another attempt after a restart, its first
+  // capacity hold inherits the OLD attempt's deadline and can be held_wait_expired immediately."
+  // Chat's own reproduction, driven through REAL poller ticks and REAL sidecar files under a real
+  // tmp runsDir -- no real worker is ever launched (launchFn stays a fake).
+  describe("REGRESSION (FIX ROUND 2, finding 1): a finished wait's deadline never survives on disk into the next attempt", () => {
+    let runsDir;
+
+    beforeEach(async () => {
+      runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-autolaunch-drain-"));
+    });
+
+    afterEach(async () => {
+      await fs.rm(runsDir, { recursive: true, force: true });
+    });
+
+    it("Chat's fixture: hold at 1000ms, successful (fake) launch at 1500ms, reload at 10000ms with maxWaitMs 1000ms -- the card's next hold starts a FRESH deadline, never held_wait_expired immediately", async () => {
+      let nowMs = 1000;
+      let shouldFit = false;
+      const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+      const launchFn = vi.fn(async ({ id }) => {
+        if (shouldFit) return makeTask({ id });
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+
+      const taskA = makeTask({ id: "T-0001" });
+      const { poller: pollerA, store: storeA } = makePoller({
+        tasks: [taskA],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn
+      });
+
+      // Tick 1 (now=1000): first hold -- persists firstHeldAtMs=1000 to runsDir/.drain-wait/T-0001.json.
+      expect(await pollerA.tick()).toBeNull();
+      await pollerA.flushDrainPersistence();
+      expect(await loadPersistedDrainWaitState({ runsDir })).toEqual({ "T-0001": 1000 });
+
+      // Tick 2 (now=1500): a successful (fake) launch -- must clear BOTH the in-memory tracker
+      // AND the persisted sidecar file, not just the former.
+      nowMs = 1500;
+      shouldFit = true;
+      await pollerA.tick();
+      await pollerA.flushDrainPersistence();
+      expect(await loadPersistedDrainWaitState({ runsDir })).toEqual({});
+
+      // "Reload at 10000ms": a board restart -- a brand-new poller/tracker, seeded only from
+      // whatever is on disk right now (nothing, since the launch cleared it), for the card's next
+      // attempt (a human moved it back to ready after the first launch's own run finished).
+      nowMs = 10000;
+      shouldFit = false;
+      const seed = await loadPersistedDrainWaitState({ runsDir });
+      const restartedTracker = createDrainWaitTracker({ seed });
+      const taskB = makeTask({ id: "T-0001", status: "ready" });
+      const { poller: pollerB } = makePoller({
+        tasks: [taskB],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn,
+        drainTracker: restartedTracker
+      });
+
+      expect(await pollerB.tick()).toBeNull();
+      // A FRESH deadline (WAITING), never the finished attempt's old one (which would already be
+      // expired by now=10000 against a firstHeldAtMs of 1000).
+      expect(pollerB.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.WAITING });
+      expect(pollerB.getStatus().drain["T-0001"].status).not.toBe(DRAIN_STATUS.HELD_WAIT_EXPIRED);
+    });
+
+    it("the oversized exit also clears the persisted sidecar file, not just the in-memory tracker", async () => {
+      let nowMs = 1000;
+      const task = makeTask({ id: "T-0001" });
+      // First tick: an ordinary hold, so a sidecar file actually exists to clear.
+      const launchFn = vi.fn(async ({ id }) => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+      const { poller } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, runsDir, launchFn });
+
+      await poller.tick();
+      await poller.flushDrainPersistence();
+      expect(await loadPersistedDrainWaitState({ runsDir })).toEqual({ "T-0001": 1000 });
+
+      // Next tick: now the SAME card is detected oversized (e.g. its estimate grew) -- the
+      // oversized exit must clear the stale sidecar from the earlier ordinary hold too.
+      launchFn.mockImplementation(async () => {
+        throw capacityFitHoldError("oversized", { drainHeldOversized: true, blockingWindow: "seven_day", reason: "oversized -- split or re-scope" });
+      });
+      nowMs = 2000;
+      await poller.tick();
+      await poller.flushDrainPersistence();
+
+      expect(await loadPersistedDrainWaitState({ runsDir })).toEqual({});
+    });
   });
 });
