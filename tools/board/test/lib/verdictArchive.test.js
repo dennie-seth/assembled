@@ -125,9 +125,38 @@ describe("buildVerdictDigest", () => {
   });
 
   it("truncates a very long verdict text rather than reproducing it in full", () => {
-    const longText = "x".repeat(2000);
+    const longText = "x".repeat(5000);
     const digest = buildVerdictDigest([{ heading: "Validation: FAIL", timestamp: "t1", text: longText }]);
     expect(digest.length).toBeLessThan(longText.length);
+  });
+
+  it("does not cut a realistic multi-sentence reviewer complaint short (T-0365 FIX ROUND 4)", () => {
+    // T-0365's own card documented two consecutive rounds where the digest handed back to the
+    // implementer cut the reviewer's FAIL note off mid-sentence, right after "...TDD order is",
+    // with no way to recover what followed -- the implementer could not act on a complaint it
+    // could not read. This is a realistic-length reviewer note (multi-sentence, cites a rule and
+    // a location) well under the old 240-char cap's failure point; it must survive intact.
+    const text =
+      "TDD order is violated: the implementation in src/lib/edgeCasesPreflight.js was committed " +
+      "before its test file, edgeCasesPreflight.test.js, contrary to conduct.md's test-first rule. " +
+      "Re-do this round test-first: commit a failing test, then the smallest implementation that " +
+      "turns it green.";
+    const digest = buildVerdictDigest([{ heading: "Validation: FAIL", timestamp: "t1", text }]);
+    expect(digest).toContain(text);
+  });
+
+  it("truncates long text at a word boundary, never mid-word", () => {
+    const words = Array.from({ length: 400 }, (_, i) => `word${i}`);
+    const text = words.join(" ");
+    const digest = buildVerdictDigest([{ heading: "Validation: FAIL", timestamp: "t1", text }], {
+      maxTextLength: 100
+    });
+    const line = digest.split("\n").find((l) => l.includes("word0"));
+    const truncated = line.slice(line.indexOf("word0"), line.endsWith("…") ? -1 : undefined);
+    const tokens = truncated.split(" ").filter(Boolean);
+    for (const token of tokens) {
+      expect(words).toContain(token);
+    }
   });
 
   it("caps how many entries are rendered in detail, but still reports the true total count", () => {
