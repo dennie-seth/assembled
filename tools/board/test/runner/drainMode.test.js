@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +15,8 @@ import {
   createDrainWaitTracker,
   persistDrainFirstHeld,
   clearPersistedDrainFirstHeld,
-  loadPersistedDrainWaitState
+  loadPersistedDrainWaitState,
+  createDrainWaitStateCoordinator
 } from "../../src/runner/drainMode.js";
 
 /**
@@ -445,5 +446,117 @@ describe("persistDrainFirstHeld / loadPersistedDrainWaitState / clearPersistedDr
 
   it("loadPersistedDrainWaitState returns {} when runsDir is not provided", async () => {
     expect(await loadPersistedDrainWaitState({ runsDir: null })).toEqual({});
+  });
+});
+
+/**
+ * FIX ROUND 2 finding 1 (Chat round-3 review of #408): "persistence and cleanup are coordinated
+ * so a cleared file cannot be recreated by an outstanding first-hold write that was already in
+ * flight." `persistDrainFirstHeld`/`clearPersistedDrainFirstHeld` above are each independently
+ * fire-and-forget from autoLaunchPoller.js -- nothing stops a slow persist write from completing
+ * AFTER a clear that was issued later, recreating a deadline for a wait that already finished.
+ * `createDrainWaitStateCoordinator` gives every card its own promise chain so persist/clear run in
+ * ISSUE order, not completion order: a clear queued after a persist always executes -- and wins --
+ * only once that persist's own write has settled.
+ */
+describe("createDrainWaitStateCoordinator -- ordered persist/clear per card (FIX ROUND 2 finding 1)", () => {
+  function deferred() {
+    let resolve;
+    const promise = new Promise((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  it("REGRESSION (FIX ROUND 2, finding 1): a clear issued while a first-hold persist is still in flight always wins -- the write lands, then the clear removes it, never the other order", async () => {
+    const order = [];
+    const write = deferred();
+    const writeFileFn = vi.fn(async (...args) => {
+      order.push("write:start");
+      await write.promise;
+      order.push("write:done");
+    });
+    const mkdirFn = vi.fn(async () => {});
+    const unlinkFn = vi.fn(async () => {
+      order.push("unlink");
+    });
+
+    const coordinator = createDrainWaitStateCoordinator({ runsDir: "/fake-runs", writeFileFn, mkdirFn, unlinkFn });
+
+    const persistPromise = coordinator.persistFirstHeld("T-0001", 1000);
+    const clearPromise = coordinator.clearFirstHeld("T-0001");
+
+    // The clear must not run ahead of the still-pending write.
+    expect(unlinkFn).not.toHaveBeenCalled();
+
+    write.resolve();
+    await persistPromise;
+    await clearPromise;
+
+    expect(order).toEqual(["write:start", "write:done", "unlink"]);
+    expect(writeFileFn).toHaveBeenCalledTimes(1);
+    expect(unlinkFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps separate cards' chains independent -- a slow write for one card never blocks a clear for another", async () => {
+    const order = [];
+    const writeFileFn = vi.fn(async (filePath) => {
+      if (filePath.includes("T-0001")) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      order.push(`write:${filePath.includes("T-0001") ? "T-0001" : "T-0002"}`);
+    });
+    const mkdirFn = vi.fn(async () => {});
+    const unlinkFn = vi.fn(async (filePath) => {
+      order.push(`unlink:${filePath.includes("T-0002") ? "T-0002" : "T-0001"}`);
+    });
+    const coordinator = createDrainWaitStateCoordinator({ runsDir: "/fake-runs", writeFileFn, mkdirFn, unlinkFn });
+
+    const slowPersist = coordinator.persistFirstHeld("T-0001", 1000);
+    const fastClear = coordinator.clearFirstHeld("T-0002");
+
+    await fastClear;
+    expect(order).toContain("unlink:T-0002");
+    expect(order).not.toContain("write:T-0001");
+
+    await slowPersist;
+    expect(order).toContain("write:T-0001");
+  });
+
+  it("flush() waits for every in-flight persist/clear across every card to settle", async () => {
+    const write = deferred();
+    const writeFileFn = vi.fn(async () => {
+      await write.promise;
+    });
+    const mkdirFn = vi.fn(async () => {});
+    const unlinkFn = vi.fn(async () => {});
+    const coordinator = createDrainWaitStateCoordinator({ runsDir: "/fake-runs", writeFileFn, mkdirFn, unlinkFn });
+
+    coordinator.persistFirstHeld("T-0001", 1000);
+    let flushed = false;
+    const flushPromise = coordinator.flush().then(() => {
+      flushed = true;
+    });
+
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    write.resolve();
+    await flushPromise;
+    expect(flushed).toBe(true);
+  });
+
+  it("a failed persist does not break the chain -- a subsequent clear for the same card still runs", async () => {
+    const writeFileFn = vi.fn(async () => {
+      throw new Error("disk full");
+    });
+    const mkdirFn = vi.fn(async () => {});
+    const unlinkFn = vi.fn(async () => {});
+    const coordinator = createDrainWaitStateCoordinator({ runsDir: "/fake-runs", writeFileFn, mkdirFn, unlinkFn });
+
+    await coordinator.persistFirstHeld("T-0001", 1000).catch(() => {});
+    await coordinator.clearFirstHeld("T-0001");
+
+    expect(unlinkFn).toHaveBeenCalledTimes(1);
   });
 });
