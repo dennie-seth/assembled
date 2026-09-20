@@ -230,7 +230,7 @@ def test_composite_head_detail_leaves_pixels_outside_the_bbox_untouched():
     result_arr = np.array(result)
 
     # Untouched outside the bbox entirely.
-    assert tuple(result_arr[950, 950]) == (0, 180, 0)
+    assert tuple(result_arr[500, 500]) == (0, 180, 0)
     assert tuple(result_arr[10, 10]) == (0, 0, 0)
     # Untouched at the bbox's own corner, where the mask is zero.
     assert tuple(result_arr[0, 400]) == (0, 0, 0)
