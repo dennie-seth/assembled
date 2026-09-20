@@ -435,18 +435,36 @@ def build_detail_graph(
 
 
 def compose_base_on_canvas(
-    base_image: Image.Image, canvas_size: int = GEN_PX
+    base_image: Image.Image, canvas_size: int = GEN_PX, scale: float = 1.0
 ) -> tuple[Image.Image, int, int]:
     """Centre `base_image` on a solid-black `canvas_size`x`canvas_size`
     canvas, returning the canvas and the exact (offset_x, offset_y) pasted --
-    recorded in provenance so the compositing is reproducible."""
+    recorded in provenance so the compositing is reproducible. `scale` < 1.0
+    shrinks the base image before centring, buying margin on every side --
+    a framing fix (see `scale_keypoints_about_center`), not a pose change."""
     base_rgb = base_image.convert("RGB")
+    if scale != 1.0:
+        new_w = max(1, round(base_rgb.width * scale))
+        new_h = max(1, round(base_rgb.height * scale))
+        base_rgb = base_rgb.resize((new_w, new_h), Image.LANCZOS)
     canvas = Image.new("RGB", (canvas_size, canvas_size), (0, 0, 0))
     bw, bh = base_rgb.size
     offset_x = (canvas_size - bw) // 2
     offset_y = (canvas_size - bh) // 2
     canvas.paste(base_rgb, (offset_x, offset_y))
     return canvas, offset_x, offset_y
+
+
+def scale_keypoints_about_center(
+    keypoints_norm: dict[int, tuple[float, float]], scale: float
+) -> dict[int, tuple[float, float]]:
+    """Uniformly scale every keypoint toward/away from the canvas centre
+    (0.5, 0.5). Pure translation+scale, no shear -- every relative angle
+    (e.g. thigh_angle_degrees_from_horizontal) is preserved exactly."""
+    return {
+        joint: (0.5 + (x - 0.5) * scale, 0.5 + (y - 0.5) * scale)
+        for joint, (x, y) in keypoints_norm.items()
+    }
 
 
 # ── Head-masked detail pass geometry (pure, GPU-free) ───────────────────────
@@ -643,11 +661,18 @@ def append_attempt_log(provenance: dict, change: str = "", notes: str = "") -> N
     ATTEMPT_LOG_PATH.write_text("".join(kept))
 
 
-def author_skeleton() -> tuple[str, str]:
+def author_skeleton(frame_scale: float = 1.0) -> tuple[str, str, dict[int, tuple[float, float]]]:
     """Render + commit the resting-leg forward-limb skeleton once
-    (keypoints JSON + rendered PNG). Returns (skeleton_sha256, keypoints_path
-    as repo-relative str)."""
-    skeleton_img = pose_rig.render_skeleton(GEN_PX)
+    (keypoints JSON + rendered PNG), scaled about the canvas centre by
+    `frame_scale` (see `scale_keypoints_about_center`) to match whatever
+    headroom `compose_base_on_canvas` was given for this attempt -- the
+    committed skeleton must reflect what was actually submitted to
+    ComfyUI. Returns (skeleton_sha256, keypoints_path as repo-relative str,
+    the actual rendered keypoints)."""
+    from gen_arm_a_idle_T0228 import draw_pose_skeleton_cell
+
+    points = scale_keypoints_about_center(pose_rig.keypoints(), frame_scale)
+    skeleton_img = draw_pose_skeleton_cell(GEN_PX, points_norm=points)
     skeleton_img.save(SKELETON_PATH)
     SKELETON_KEYPOINTS_PATH.write_text(
         json.dumps(
@@ -656,16 +681,18 @@ def author_skeleton() -> tuple[str, str]:
                 "source_rig": (
                     "pose_rig_forward_limb_controlnet_T0380.FORWARD_LIMB_KEYPOINTS_NORM, near "
                     "knee/ankle overridden to pose_rig_master_sheet_T0351."
-                    "SIDE_NEUTRAL_KEYPOINTS_NORM (resting leg, no hip-flex excursion)"
+                    "SIDE_NEUTRAL_KEYPOINTS_NORM (resting leg, no hip-flex excursion), scaled "
+                    f"about the canvas centre by frame_scale={frame_scale}"
                 ),
+                "frame_scale": frame_scale,
                 "thigh_angle_degrees_from_horizontal": pose_rig.thigh_angle_degrees_from_horizontal(),
-                "keypoints": pose_rig.keypoints_to_coco_list(),
+                "keypoints": pose_rig.keypoints_to_coco_list(points),
             },
             indent=2,
         )
         + "\n"
     )
-    return sha256_of(SKELETON_PATH), str(SKELETON_KEYPOINTS_PATH.relative_to(REPO_ROOT))
+    return sha256_of(SKELETON_PATH), str(SKELETON_KEYPOINTS_PATH.relative_to(REPO_ROOT)), points
 
 
 def run_attempt(
@@ -677,6 +704,7 @@ def run_attempt(
     controlnet_end: float = DEFAULT_CONTROLNET_END_PERCENT,
     style_lora_weight: float = STYLE_LORA_WEIGHT,
     identity_lora_weight: float = IDENTITY_LORA_WEIGHT,
+    frame_scale: float = 1.0,
 ) -> dict:
     if denoise < 0.87:
         raise SystemExit(
@@ -694,13 +722,13 @@ def run_attempt(
     base_sha256 = sha256_of(BASE_IMAGE_PATH)
     style_lora_hash = sha256_of(LORA_PATH)
     identity_lora_hash = sha256_of(IDENTITY_LORA_PATH)
-    skeleton_sha256, keypoints_relpath = author_skeleton()
+    skeleton_sha256, keypoints_relpath, rendered_points = author_skeleton(frame_scale=frame_scale)
 
     out_dir = REPO_ROOT / "assets" / "out" / "forward_limb_reference_T0394" / f"attempt_{attempt}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     base_img = Image.open(BASE_IMAGE_PATH)
-    canvas, offset_x, offset_y = compose_base_on_canvas(base_img, canvas_size=GEN_PX)
+    canvas, offset_x, offset_y = compose_base_on_canvas(base_img, canvas_size=GEN_PX, scale=frame_scale)
     canvas_path = out_dir / "base_on_canvas_1024.png"
     canvas.save(canvas_path)
 
@@ -730,7 +758,7 @@ def run_attempt(
 
     # ── Stage B: head-masked detail pass ────────────────────────────────
     t1 = time.monotonic()
-    bbox = compute_head_bbox(pose_rig.keypoints(), canvas_size=GEN_PX)
+    bbox = compute_head_bbox(rendered_points, canvas_size=GEN_PX)
     head_crop = pose_pass_img.crop(bbox)
     head_crop_upscaled = head_crop.resize((DETAIL_WORK_PX, DETAIL_WORK_PX), Image.LANCZOS)
     head_crop_path = out_dir / "head_crop_upscaled.png"
@@ -843,6 +871,7 @@ def run_attempt(
         "base_image_sha256": base_sha256,
         "base_image_card": BASE_IMAGE_CARD,
         "base_composite_offset": {"x": offset_x, "y": offset_y, "canvas_size": GEN_PX},
+        "frame_scale": frame_scale,
         "skeleton_path": str(SKELETON_PATH.relative_to(REPO_ROOT)),
         "skeleton_sha256": skeleton_sha256,
         "skeleton_keypoints_path": keypoints_relpath,
@@ -874,6 +903,7 @@ def main() -> None:
     parser.add_argument("--controlnet-end", type=float, default=DEFAULT_CONTROLNET_END_PERCENT)
     parser.add_argument("--style-lora-weight", type=float, default=STYLE_LORA_WEIGHT)
     parser.add_argument("--identity-lora-weight", type=float, default=IDENTITY_LORA_WEIGHT)
+    parser.add_argument("--frame-scale", type=float, default=1.0)
     parser.add_argument("--change", type=str, default="")
     parser.add_argument("--notes", type=str, default="")
     parser.add_argument("--promote-attempt", type=int)
@@ -897,6 +927,7 @@ def main() -> None:
         controlnet_end=args.controlnet_end,
         style_lora_weight=args.style_lora_weight,
         identity_lora_weight=args.identity_lora_weight,
+        frame_scale=args.frame_scale,
     )
     provenance["promoted"] = False
     out_dir = REPO_ROOT / "assets" / "out" / "forward_limb_reference_T0394" / f"attempt_{args.attempt}"

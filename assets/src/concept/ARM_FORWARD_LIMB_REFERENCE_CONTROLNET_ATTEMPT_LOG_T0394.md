@@ -1,0 +1,7 @@
+# Forward-limb reference attempt log (T-0394)
+
+Continues T-0387's stop-and-report (`docs/assets/evidence/T-0387/README.md`): the full-frame pose pass stays at denoise 0.87 (never lowered), ControlNet strength/end 1.5/1.0, T-0382's style/identity LoRA stack (0.70/0.50, no IP-Adapter), 1024, on T-0380/T-0382's far-arm-collapsed skeleton. Two structural changes: the near leg is reset to `pose_rig_master_sheet_T0351`'s own committed resting stance (no hip-flex excursion -- the raised leg is out of scope per @DennieSeth's design change), and the goggle lens is produced by a second pass masked to the head bounding box only (`compute_head_bbox`/`build_head_mask`/`composite_head_detail`), not another skeleton or prompt move on the full-frame pass. Hard cap of 3 attempts, pre-registered.
+
+| Attempt | Seed | Pose denoise | Detail denoise | ControlNet strength/end | GPU seconds (pose+detail) | Whole-frame green px | Centred-crop green px | Border max channel | Skeleton sha256 | Mask path | What changed | Promoted | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 380002 | 0.87 | 0.55 | 1.5/1.0 | 69.2 | 51189 | 17099 | 124 | e895214bed1ba799fdda3c661b3f0ea41e50e803b6f5e81131c292c5b87c2f6c | assets/src/concept/player_profile_forward_limb_head_mask_T0394_attempt_1.png | resting-leg skeleton (T-0351 side_neutral near knee/ankle) + head-masked detail pass (denoise 0.55) for the goggle lens; pose pass unchanged from T-0382/T-0387's own working recipe (denoise 0.87) | no |  |
