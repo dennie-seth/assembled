@@ -33,6 +33,85 @@ const T0387_EVIDENCE_PATHS = [
 
 const T0387_ABSENT_PATH = "assets/src/concept/player_profile_forward_limb_reference_controlnet.png";
 
+/**
+ * T-0394's actual "Proposed finding" text (docs/assets/evidence/T-0394/README.md), transcribed
+ * verbatim -- a second real stop-and-report Finding, distinct from T-0387's, used to pin the same
+ * absent-citation/prompt-weight behaviour against a second real fixture (T-0395 acceptance: "T-0387's
+ * and T-0394's real Findings still pass").
+ */
+const T0394_EVIDENCE_PATHS = [
+  "assets/src/concept/pose_rig_forward_limb_controlnet_T0394.py",
+  "assets/src/character/pose_rig_master_sheet_T0351.py",
+  "docs/assets/evidence/T-0394/attempt_1_main_1024.png",
+  "docs/assets/evidence/T-0394/attempt_2_main_1024.png",
+  "docs/assets/evidence/T-0394/attempt_3_legs_resting_crop.png",
+  "docs/assets/evidence/T-0394/attempt_3_torso_no_second_hand_crop.png",
+  "assets/src/concept/pose_rig_forward_limb_controlnet_T0380.py",
+  "docs/assets/evidence/T-0394/attempt_1_top_border_violation_crop.png",
+  "docs/assets/evidence/T-0394/attempt_2_torso_no_arm_extension_crop.png",
+  "docs/assets/evidence/T-0394/attempt_1_head_mecha_helmet_crop.png",
+  "docs/assets/evidence/T-0394/attempt_3_head_mecha_helmet_crop.png",
+  "docs/assets/evidence/T-0394/attempt_2_head_crop.png"
+];
+
+const T0394_ABSENT_PATH = "assets/src/concept/player_profile_forward_limb_reference_controlnet.png";
+
+const T0394_FINDING_TEXT = [
+  "Decisive falsification of this card's pre-registered hypothesis, within the 3-attempt cap: holding " +
+    "the full-frame pose pass at denoise 0.87 on the resting-leg skeleton, and producing the goggle lens " +
+    "via a head-masked second pass instead of a skeleton or prompt move, did not produce a strict-profile " +
+    "forward-limb green reference passing every acceptance check -- and the attempt sequence surfaced a " +
+    "decisive, previously-unmeasured trade-off this card's own hypothesis did not anticipate: the " +
+    "full-frame composite's `frame_scale` (the headroom fix for the solid-black-background requirement) " +
+    "and the single-arm result trade against each other in a dose-dependent way, at the exact same seed " +
+    "that has produced a clean single arm at `frame_scale=1.0` in every prior sighting across this whole " +
+    "line (T-0382 attempt 1, T-0387 attempts 2-3, this card's own attempt 1).",
+  "Both of this card's two structural changes worked in isolation. The resting leg " +
+    "(`assets/src/concept/pose_rig_forward_limb_controlnet_T0394.py`, near knee/ankle sourced verbatim " +
+    "from `assets/src/character/pose_rig_master_sheet_T0351.py`'s `SIDE_NEUTRAL_KEYPOINTS_NORM`) produced " +
+    "a clean, flat, single resting leg in every one of the 3 attempts " +
+    "(`docs/assets/evidence/T-0394/attempt_1_main_1024.png`, " +
+    "`docs/assets/evidence/T-0394/attempt_2_main_1024.png`, " +
+    "`docs/assets/evidence/T-0394/attempt_3_legs_resting_crop.png`) -- the leg is confirmed solved, " +
+    "exactly as this card's own source material predicted. And the single-arm result held at " +
+    "`frame_scale=1.0` (attempt 1) and was partially recovered at `frame_scale=0.95` (attempt 3, " +
+    "`docs/assets/evidence/T-0394/attempt_3_torso_no_second_hand_crop.png` shows the extended arm with no " +
+    "second hand), so the far-arm collapse " +
+    "(`assets/src/concept/pose_rig_forward_limb_controlnet_T0380.py`) also continued to hold across every " +
+    "attempt -- no attempt in this card ever showed a second hand or glove.",
+  "What did not resolve within the 3-attempt cap is the interaction between the two remaining " +
+    "acceptance checks this card's own hypothesis bet on being independent levers: the border/background " +
+    "fix and the goggle lens. Attempt 1 (`frame_scale=1.0`, the untouched baseline) measured border max " +
+    "channel 124, far over the 16 ceiling -- the hood apex rendered only ~14px from the canvas top edge " +
+    "(`docs/assets/evidence/T-0394/attempt_1_top_border_violation_crop.png`), confirming the border " +
+    "defect is real and structural at denoise 0.87, not attempt-specific noise. Attempt 2 " +
+    "(`frame_scale=0.88`) fixed the border decisively (max channel 4) but lost the near-arm extension " +
+    "entirely (`docs/assets/evidence/T-0394/attempt_2_torso_no_arm_extension_crop.png` shows both arms " +
+    "down at rest, and the pose pass's own pre-detail-pass output already shows this, ruling out the " +
+    "detail pass as the cause). Attempt 3 (`frame_scale=0.95`, a deliberately gentler value chosen " +
+    "specifically to preserve more of the untouched baseline's geometry) partially recovered the arm but " +
+    "only partially recovered the border fix too: max channel 67, worse than attempt 2's 4, better than " +
+    "attempt 1's 124 -- consistent with a real, monotonic, dose-dependent trade-off between `frame_scale` " +
+    "and the single-arm result at this seed, not two independent defects each fixable on its own lever.",
+  "The goggle lens also never became legible across all 3 attempts, regardless of the detail pass's own " +
+    "denoise (0.55 in attempt 1, 0.35 in attempts 2-3): attempt 1 and attempt 3 both show the " +
+    "head-masked detail pass redesigning the hood into an ornate, multi-faceted armour-plate helmet " +
+    "(`docs/assets/evidence/T-0394/attempt_1_head_mecha_helmet_crop.png`, " +
+    "`docs/assets/evidence/T-0394/attempt_3_head_mecha_helmet_crop.png`) rather than clarifying a single " +
+    "circular lens on the pose pass's own hood silhouette, and attempt 3 in particular shows no " +
+    "lens-like highlight at all. Attempt 2's head crop " +
+    "(`docs/assets/evidence/T-0394/attempt_2_head_crop.png`) is the closest of the three -- a clean, " +
+    "legible pale mask shape is visible -- but it reads as a stylised full mask/face, not \"a single dark " +
+    "round goggle lens,\" so it does not clear this card's own specific acceptance wording either. Across " +
+    "three attempts at two different detail-pass denoise values, the mechanism did not reliably produce a " +
+    "legible single circular lens on demand.",
+  "No image produced by any of the three attempts passes every acceptance check simultaneously. Per " +
+    "this card's own pre-registered alternative outcome, this is a decisive valid PASS: stop and report, " +
+    "not spend a fourth attempt. No reference is promoted -- " +
+    "`assets/src/concept/player_profile_forward_limb_reference_controlnet.png` does not exist on this " +
+    "branch."
+].join("\n\n");
+
 const T0387_FINDING_TEXT = [
   "Decisive falsification of this card's pre-registered hypothesis, within the 3-attempt cap: " +
     "holding denoise at 0.87 and moving only the skeleton and/or the prompt did not produce a " +
@@ -223,6 +302,37 @@ describe("classifyFindingEvidenceCitations", () => {
     const text = "Prompt reweighted with `:1.4` on the lens clause; result does not exist yet.";
     expect(classifyFindingEvidenceCitations(text)).toEqual({ present: [], absent: [] });
   });
+
+  it("[FIX ROUND 1] binds an absence phrase to its own clause, not to a positively-cited path sharing the same sentence", () => {
+    // Chat's reproduction (round-2 review of #409): a positive citation and a legitimate absence
+    // claim share one sentence, joined by "while". Only the second path is actually claimed absent.
+    const text =
+      "Decisive: see `docs/good.png`. `docs/missing.png` records the result, while " +
+      "`assets/result.png` was not produced.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({
+      present: ["docs/good.png", "docs/missing.png"],
+      absent: ["assets/result.png"]
+    });
+  });
+
+  it("[FIX ROUND 1] the converse mixed-clause case: a legitimate absence claim does not drag a present citation in the same sentence into absent", () => {
+    const text =
+      "`assets/result.png` was not produced, while `docs/good.png` records the actual result.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({
+      present: ["docs/good.png"],
+      absent: ["assets/result.png"]
+    });
+  });
+
+  it("[FIX ROUND 1] a pure positive citation (no absence phrase anywhere in the sentence) stays present", () => {
+    const text = "Decisive: see `docs/good.png` for the result.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({ present: ["docs/good.png"], absent: [] });
+  });
+
+  it("[FIX ROUND 1] a pure absence claim (single citation, single clause) stays absent", () => {
+    const text = "No reference is promoted -- `docs/missing.png` does not exist on this branch.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({ present: [], absent: ["docs/missing.png"] });
+  });
 });
 
 describe("checkFindingWithEvidence", () => {
@@ -379,5 +489,52 @@ describe("checkFindingWithEvidence", () => {
       }
     });
     expect(result).toEqual({ ok: true, applicable: true, errors: [], absentEvidence: [T0387_ABSENT_PATH] });
+  });
+
+  it("PASSes on T-0394's actual transcribed Finding -- 12 present evidence files, one path cited as absent (T-0395 regression)", async () => {
+    const body = `${FINDING_HEADING}\n${T0394_FINDING_TEXT}\n`;
+    const present = new Set(T0394_EVIDENCE_PATHS);
+    const result = await checkFindingWithEvidence({
+      task: task({ id: "T-0394", body }),
+      beforeBody: `${PRE_REGISTRATION_HEADING}\nIf the resting-leg skeleton + head-masked detail pass can't pass, falsified.\n`,
+      repoRoot: "/repo",
+      fileExists: async (target) => {
+        const rel = target.replace(/^\/repo\//, "");
+        return present.has(rel);
+      }
+    });
+    expect(result).toEqual({ ok: true, applicable: true, errors: [], absentEvidence: [T0394_ABSENT_PATH] });
+  });
+
+  it("[FIX ROUND 1] REJECTs a mixed-clause Finding where a positively-cited path is missing, even though the same sentence also makes a legitimate absence claim", async () => {
+    // Chat's reproduction: only docs/good.png exists. docs/missing.png is cited affirmatively
+    // ("records the result") and must stay FATAL; assets/result.png is a legitimate absence claim.
+    const body =
+      `${FINDING_HEADING}\nDecisive: see \`docs/good.png\`. \`docs/missing.png\` records the result, ` +
+      "while `assets/result.png` was not produced.\n";
+    const result = await checkFindingWithEvidence({
+      task: task({ body }),
+      beforeBody: `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`,
+      repoRoot: "/repo",
+      fileExists: async (target) => target.endsWith("docs/good.png")
+    });
+    expect(result.applicable).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("docs/missing.png");
+    expect(result.errors.join(" ")).not.toContain("assets/result.png");
+    expect(result.absentEvidence).toEqual(["assets/result.png"]);
+  });
+
+  it("[FIX ROUND 1] the converse mixed-clause case does not false-reject: a present citation sharing a sentence with a legitimate absence claim still PASSes", async () => {
+    const body =
+      `${FINDING_HEADING}\nDecisive: \`assets/result.png\` was not produced, while ` +
+      "`docs/good.png` records the actual result.\n";
+    const result = await checkFindingWithEvidence({
+      task: task({ body }),
+      beforeBody: `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`,
+      repoRoot: "/repo",
+      fileExists: async (target) => target.endsWith("docs/good.png")
+    });
+    expect(result).toEqual({ ok: true, applicable: true, errors: [], absentEvidence: ["assets/result.png"] });
   });
 });
