@@ -295,6 +295,40 @@ def test_build_detail_negative_prompt_forbids_two_lenses():
     assert "two" in negative or "both" in negative or "second" in negative
 
 
+# ── Frame scale: attempt-1 evidence showed the hood apex rendering only
+# ── ~14px from the top edge (border max channel 124) -- a headroom fix, not
+# ── a pose change: uniformly scale the whole composite (base image +
+# ── skeleton) about the canvas centre, buying margin on every side without
+# ── altering any relative pose/proportion. Angles (e.g. thigh angle) are
+# ── scale-invariant by construction.
+
+
+def test_scale_keypoints_about_center_is_a_no_op_at_scale_1():
+    points = {0: (0.6, 0.2), 1: (0.4, 0.8)}
+    assert gen.scale_keypoints_about_center(points, 1.0) == points
+
+
+def test_scale_keypoints_about_center_shrinks_toward_the_midpoint():
+    points = {0: (1.0, 1.0), 1: (0.0, 0.0)}
+    scaled = gen.scale_keypoints_about_center(points, 0.5)
+    assert scaled[0] == (0.75, 0.75)
+    assert scaled[1] == (0.25, 0.25)
+
+
+def test_scale_keypoints_about_center_preserves_relative_angles():
+    import math
+
+    points = {0: (0.5, 0.5), 1: (0.62, 0.56)}
+    scaled = gen.scale_keypoints_about_center(points, 0.88)
+
+    def angle(pts):
+        dx = pts[1][0] - pts[0][0]
+        dy = pts[1][1] - pts[0][1]
+        return math.degrees(math.atan2(abs(dy), abs(dx)))
+
+    assert abs(angle(points) - angle(scaled)) < 1e-9
+
+
 # ── Base-image compositing (T-0317 cutout -> 1024 black canvas), reused ─────
 
 
@@ -318,6 +352,29 @@ def test_compose_base_on_canvas_preserves_base_pixels_and_blackens_the_rest():
     assert tuple(arr[offset_y, offset_x]) == (0, 255, 0)
     assert tuple(arr[0, 0]) == (0, 0, 0)
     assert tuple(arr[-1, -1]) == (0, 0, 0)
+
+
+def test_compose_base_on_canvas_default_scale_is_unchanged_from_before():
+    """Existing attempt-1-era behaviour (scale=1.0, native size) must not
+    drift just because a scale parameter was added."""
+    base = Image.new("RGB", (100, 400), (0, 200, 0))
+    canvas, offset_x, offset_y = gen.compose_base_on_canvas(base, canvas_size=1024)
+    assert offset_x == (1024 - 100) // 2
+    assert offset_y == (1024 - 400) // 2
+
+
+def test_compose_base_on_canvas_scale_below_1_shrinks_and_gives_more_margin():
+    base = Image.new("RGB", (100, 400), (0, 200, 0))
+    canvas, offset_x, offset_y = gen.compose_base_on_canvas(base, canvas_size=1024, scale=0.5)
+    arr = np.array(canvas)
+    nonblack_rows = np.where(arr.max(axis=(1, 2)) > 0)[0]
+    top_margin = nonblack_rows.min()
+    _, offset_y_full, _ = (
+        gen.compose_base_on_canvas(base, canvas_size=1024, scale=1.0)[0],
+        gen.compose_base_on_canvas(base, canvas_size=1024, scale=1.0)[2],
+        None,
+    )
+    assert top_margin > offset_y_full, "a smaller scale must buy more top margin, not less"
 
 
 # ── Measurement: reuse T-0317/T-0382's green + border predicates ───────────
