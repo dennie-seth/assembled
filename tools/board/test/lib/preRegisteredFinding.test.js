@@ -333,6 +333,38 @@ describe("classifyFindingEvidenceCitations", () => {
     const text = "No reference is promoted -- `docs/missing.png` does not exist on this branch.";
     expect(classifyFindingEvidenceCitations(text)).toEqual({ present: [], absent: ["docs/missing.png"] });
   });
+
+  it('[FIX ROUND 2] binds absence to the specific "and"-joined citation, not to every citation in the sentence', () => {
+    // Chat's round-3 reproduction: FIX ROUND 1's clause-boundary list didn't include "and", so both
+    // nonexistent paths were classified absent even though `docs/missing.png` is affirmatively cited.
+    const text =
+      "Decisive: see `docs/good.png`. `docs/missing.png` records the result and " +
+      "`assets/result.png` was not produced.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({
+      present: ["docs/good.png", "docs/missing.png"],
+      absent: ["assets/result.png"]
+    });
+  });
+
+  it("[FIX ROUND 2] the newline-separated variant of the same text classifies identically", () => {
+    // Same clauses, "and" replaced by a bare newline and no terminating period on the first line --
+    // a Markdown line break must not merge two independent citations into one absence claim.
+    const text =
+      "Decisive: see `docs/good.png`. `docs/missing.png` records the result\n" +
+      "`assets/result.png` was not produced.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({
+      present: ["docs/good.png", "docs/missing.png"],
+      absent: ["assets/result.png"]
+    });
+  });
+
+  it("[FIX ROUND 2] the converse: an existing citation sharing a line with a legitimate absence claim is not misclassified as absent", () => {
+    const text = "Decisive: `docs/good.png` confirms the result and `assets/result.png` was not produced.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({
+      present: ["docs/good.png"],
+      absent: ["assets/result.png"]
+    });
+  });
 });
 
 describe("checkFindingWithEvidence", () => {
@@ -529,6 +561,55 @@ describe("checkFindingWithEvidence", () => {
     const body =
       `${FINDING_HEADING}\nDecisive: \`assets/result.png\` was not produced, while ` +
       "`docs/good.png` records the actual result.\n";
+    const result = await checkFindingWithEvidence({
+      task: task({ body }),
+      beforeBody: `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`,
+      repoRoot: "/repo",
+      fileExists: async (target) => target.endsWith("docs/good.png")
+    });
+    expect(result).toEqual({ ok: true, applicable: true, errors: [], absentEvidence: ["assets/result.png"] });
+  });
+
+  it('[FIX ROUND 2] REJECTs an "and"-joined Finding where a positively-cited path is missing, even though the same sentence also makes a legitimate absence claim', async () => {
+    // Chat's round-3 reproduction: only docs/good.png exists. docs/missing.png is cited affirmatively
+    // ("records the result") and must stay FATAL; assets/result.png is a legitimate absence claim.
+    const body =
+      `${FINDING_HEADING}\nDecisive: see \`docs/good.png\`. \`docs/missing.png\` records the result and ` +
+      "`assets/result.png` was not produced.\n";
+    const result = await checkFindingWithEvidence({
+      task: task({ body }),
+      beforeBody: `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`,
+      repoRoot: "/repo",
+      fileExists: async (target) => target.endsWith("docs/good.png")
+    });
+    expect(result.applicable).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("docs/missing.png");
+    expect(result.errors.join(" ")).not.toContain("assets/result.png");
+    expect(result.absentEvidence).toEqual(["assets/result.png"]);
+  });
+
+  it("[FIX ROUND 2] the newline-separated variant reproduces the same rejection -- Markdown line breaks must not merge citations", async () => {
+    const body =
+      `${FINDING_HEADING}\nDecisive: see \`docs/good.png\`. \`docs/missing.png\` records the result\n` +
+      "`assets/result.png` was not produced.\n";
+    const result = await checkFindingWithEvidence({
+      task: task({ body }),
+      beforeBody: `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`,
+      repoRoot: "/repo",
+      fileExists: async (target) => target.endsWith("docs/good.png")
+    });
+    expect(result.applicable).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("docs/missing.png");
+    expect(result.errors.join(" ")).not.toContain("assets/result.png");
+    expect(result.absentEvidence).toEqual(["assets/result.png"]);
+  });
+
+  it('[FIX ROUND 2] the converse "and"-joined case does not false-reject: a present citation sharing a line with a legitimate absence claim still PASSes', async () => {
+    const body =
+      `${FINDING_HEADING}\nDecisive: \`docs/good.png\` confirms the result and ` +
+      "`assets/result.png` was not produced.\n";
     const result = await checkFindingWithEvidence({
       task: task({ body }),
       beforeBody: `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`,
