@@ -46,16 +46,30 @@ files exist".
 `launchCardRun` acquires the GPU lease for `assets`/`audio` cards only
 (`resolveCostEstimatorType(task) === GPU_COST_ESTIMATOR_TYPE`, the same "asset-GPU" classification
 T-0370's cost estimator already uses -- one source of truth for which agents touch the GPU,
-exported from `launchAdvisory.js` and shared by both modules rather than duplicated), inside the
-same `launch()` callback T-0370 added, right before `orchestrator.runCard(id)` -- so it is acquired
-atomically with admission, as the acceptance requires, without needing its own copy of
-`buildLaunchDecide`'s in-process capacity lock: a single atomic filesystem link is already
-sufficient for mutual exclusion at server granularity, the same reasoning `reserveLaunchSlot`
-already relies on at per-launch-key granularity.
+exported from `launchAdvisory.js` and shared by both modules rather than duplicated), via a single
+`acquireGpuLeaseGate()` step called immediately before every one of the three places
+`launchCardRun` hands off to `orchestrator.runCard(id)`: the advisory pipeline's own success path
+(right after admission, as before), the manual-override-under-enforcement fallback, and the
+enforcement-off fallback. A single atomic filesystem link is already sufficient for mutual
+exclusion at server granularity, the same reasoning `reserveLaunchSlot` already relies on at
+per-launch-key granularity, so no in-process capacity lock is needed either.
 
-- **Held -> refused.** A `GpuLeaseHeldError` releases this launch's own (already-written) token
-  reservation -- never leaving it dangling for a launch that never actually started -- and raises
-  a `CardLaunchError` (409, `gpuLeaseHold: true`) naming the current holder.
+**FIX ROUND 1 (Chat round-2 review of #407, finding 1 -- P1):** an earlier revision acquired the
+lease only inside T-0370's advisory-pipeline `launch()` callback -- a path that pipeline
+deliberately never reaches on a setup error (a throwing `buildLaunchDecideFn`), with token
+enforcement off, or on a manual override even when enforcement is on (all correct fail-open
+behaviour for TOKEN capacity, a judgement call, but wrong for GPU exclusivity, a hardware fact).
+Chat reproduced this live through `launchCardRun`: a real lease held by another card, GPU leasing
+on, token enforcement off, `buildLaunchDecideFn` throwing -- the second card's worker launched
+anyway. `acquireGpuLeaseGate()` closes this: it is called on every route out of `launchCardRun`
+that reaches `orchestrator.runCard`, independent of whether the advisory/token pipeline itself
+succeeded, failed open, or was bypassed by a manual override.
+
+- **Held, or any other acquisition failure -> refused.** A `GpuLeaseHeldError`, or any other
+  acquisition error (a filesystem/I/O error, a permission error, a malformed lease file),
+  releases this launch's own (already-written) token reservation -- never leaving it dangling for
+  a launch that never actually started -- and raises a `CardLaunchError` (409, `gpuLeaseHold:
+  true`) naming the current holder or the error.
 - **Never bypassable by `trigger`.** Unlike T-0379's capacity-fit limit, a manual (operator)
   launch does NOT override a held GPU lease -- mutual exclusion on one physical GPU is a hardware
   fact, not a policy judgement call a human should be able to override through the Run button. (A
