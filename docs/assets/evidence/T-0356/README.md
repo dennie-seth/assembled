@@ -45,3 +45,44 @@ The forward-limb reference is itself a resting/neutral-leg profile with (per its
 promotion commit) only a single forward *arm*, not a forward leg -- see
 `assets/src/concept/player_profile_forward_limb_reference_controlnet.png`. No prompt weights were
 changed for this attempt; recipe is exactly what the branch head (`7ba10cb`) already carries.
+
+### Attempt 2 -- seed 837291046
+
+Same recipe as attempt 1, byte-identical prompts/weights -- only the base seed changed, to test
+whether panels 3/4's non-compliance is seed-sensitive rather than a structural conditioning
+problem. Full provenance: `attempt_2_provenance.json`. Composited sheet:
+`attempt_2_master_sheet.png`.
+
+Per-panel result:
+
+- **Panel 1 (front T-pose)** -- `attempt_2_panel1_front_tpose.png` -- **clean**: T-pose held,
+  single figure, green coat (open, inner white layer visible, but still a single coherent
+  institutional-green-coated figure).
+- **Panel 2 (back T-pose)** -- `attempt_2_panel2_back_tpose.png` -- **clean**: back-of-hood view
+  held, single figure.
+- **Panel 3 (side, left-forward)** -- `attempt_2_panel3_side_left_forward_MALFORMED.png` --
+  **non-compliant, different failure mode from attempt 1**: single figure and a legible side
+  silhouette this time, but the extended arm now holds a gun-shaped object (the negative prompt
+  explicitly bans held objects/weapons and it appears anyway), the coat has drifted to grey rather
+  than institutional green (identity drift), and the trailing leg's pose is ambiguous rather than a
+  clear held-back stance.
+- **Panel 4 (side, right-forward)** -- `attempt_2_panel4_side_right_forward_MALFORMED.png` --
+  **non-compliant, different failure mode from attempt 1**: single figure, true side profile, right
+  arm does extend forward this time, coat colour holds green -- but the near leg is lifted and
+  bent backward into what reads as a mid-kick/running stride (exactly what the negative prompt's
+  "kicking, mid-kick, running" clause exists to prevent), not "extended forward", and the coat
+  shortens to mid-thigh rather than past-the-knee.
+- **Panel 5 (side, neutral)** -- `attempt_2_panel5_side_neutral.png` -- **clean**: true profile
+  held again, third consecutive card/attempt series it converges cleanly.
+- **Panel 6 (legs)** -- `attempt_2_panel6_legs_REGRESSED.png` -- **regressed from attempt 1**: the
+  coat is visible again, draping to the hip with short shorts underneath rather than the
+  trousers-only, fully-unobstructed-thigh result attempt 1 achieved; a face/hair also renders in
+  frame, which the panel's own crop is supposed to exclude. Same recipe, same weights as attempt 1
+  -- this is seed variance on an unstable panel, not a prompt regression.
+
+2/6 panels compliant this attempt (down from 4/6 in attempt 1) -- panels 3 and 4 fail again, in
+two more distinct ways (held weapon + identity drift vs. kicking-pose + coat-length drift), and
+panel 6 shows the recipe is not yet reliably stable across seeds even where it converged once.
+This is consistent with T-0351's own attempts 19-21: the forward-limb panels do not converge
+under this architecture regardless of which specific failure mode a given seed produces, and nor
+is the legs panel's fix seed-independent yet. No prompt weights changed between attempt 1 and 2.
