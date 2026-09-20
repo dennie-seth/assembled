@@ -10,11 +10,12 @@ import {
   AdvisoryDecisionMissingError,
   recordManualOverride
 } from "./advisoryLogger.js";
-import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
+import { buildLaunchDecide, resolveCostEstimatorType, GPU_COST_ESTIMATOR_TYPE } from "./launchAdvisory.js";
 import { loadAdmissionConfigFromEnv, admissionEnforcementEnabledFromEnv, HOLD_REASON } from "./admissionDecision.js";
 import { releaseReservation } from "./launchReservation.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
 import { evaluateOverrunPolicy, isBoundedContinuation } from "./overrunPolicy.js";
+import { acquireGpuLease, releaseGpuLease, gpuLeaseEnabledFromEnv, GpuLeaseHeldError } from "./gpuLease.js";
 
 /** The two callers of the shared launch boundary (T-0379): the auto-launch poller, and every operator-initiated launch (the Run button, and any other manual launch). */
 export const LAUNCH_TRIGGERS = Object.freeze({ AUTO: "auto", MANUAL: "manual" });
@@ -97,7 +98,8 @@ export async function reconcileLaunchOutcome({
   listCardUsageEntriesFn = listCardUsageEntries,
   recordAdvisoryOutcomeFn = recordAdvisoryOutcome,
   retainOutcomeUntilDecisionRecordedFn = retainOutcomeUntilDecisionRecorded,
-  releaseReservationFn = releaseReservation
+  releaseReservationFn = releaseReservation,
+  releaseGpuLeaseFn = releaseGpuLease
 }) {
   let outcome;
   try {
@@ -130,6 +132,14 @@ export async function reconcileLaunchOutcome({
     await releaseReservationFn({ runsDir, cardId, executionId, invocationId, outcome: { status, errorMessage } });
   } catch (err) {
     logger.error(`Agent Runner: failed to release launch reservation for ${cardId}:`, err.message);
+  }
+  // T-0371: always attempted, never gated on whether this launch actually held a GPU lease --
+  // releaseGpuLeaseFn is a safe no-op (returns null) both when no lease was ever acquired for
+  // this identity and when GPU_LEASE_ENABLED is off, since no lease file exists to match against.
+  try {
+    await releaseGpuLeaseFn({ runsDir, cardId, executionId, invocationId, outcome: { status, errorMessage } });
+  } catch (err) {
+    logger.error(`Agent Runner: failed to release gpu lease for ${cardId}:`, err.message);
   }
 }
 
@@ -185,7 +195,13 @@ export async function launchCardRun({
   evaluateOverrunPolicyFn = evaluateOverrunPolicy,
   listCardUsageEntriesFn = listCardUsageEntries,
   releaseReservationFn = releaseReservation,
-  recordManualOverrideFn = recordManualOverride
+  recordManualOverrideFn = recordManualOverride,
+  // T-0371 (WIP gate T-E): default OFF, and a SEPARATE flag from `enforcementEnabledFn` above --
+  // GPU is its own currency (docs/gpu-lease.md), switched on independently of token-budget
+  // enforcement, never folded into it.
+  gpuLeaseEnabledFn = gpuLeaseEnabledFromEnv,
+  acquireGpuLeaseFn = acquireGpuLease,
+  releaseGpuLeaseFn = releaseGpuLease
 }) {
   const isManualOverride = trigger === LAUNCH_TRIGGERS.MANUAL;
   if (!orchestrator) {
@@ -254,8 +270,12 @@ export async function launchCardRun({
   // from before this card.
   const runsDir = orchestrator.runsDir;
   const enforcementEnabled = enforcementEnabledFn();
+  // T-0371: only assets/audio cards do GPU work at all (launchAdvisory.js's GPU_COST_ESTIMATOR_TYPE
+  // classification) -- every other agent never touches the GPU lease, gated or not.
+  const requiresGpuLease = gpuLeaseEnabledFn() && resolveCostEstimatorType(task) === GPU_COST_ESTIMATOR_TYPE;
   let executionId = null;
   let invocationId = null;
+  let gpuLeaseAcquired = false;
   let runCardPromise;
 
   if (runsDir) {
@@ -356,6 +376,29 @@ export async function launchCardRun({
               logger.log(`wip-gate enforcement: overrun stop active but ${id} is a bounded continuation of an already-admitted execution -- allowed`);
             }
           }
+
+          // T-0371 (WIP gate T-E): independent of `enforcementEnabled` above -- GPU is its own
+          // currency, switched on by its own flag (`gpuLeaseEnabledFn`), never bypassable by
+          // `trigger` (unlike the token capacity-fit limit): mutual exclusion on one physical GPU
+          // is a hardware fact, not a policy judgement call a human should be able to override
+          // through the Run button. Acquired last, right before the actual launch, so no cleanup
+          // is needed for the checks above it -- they either already threw (nothing to release
+          // here) or passed.
+          if (requiresGpuLease) {
+            try {
+              await acquireGpuLeaseFn({ runsDir, cardId: id, executionId, invocationId, owner: `cardLaunch:${id}` });
+              gpuLeaseAcquired = true;
+            } catch (err) {
+              if (err instanceof GpuLeaseHeldError) {
+                await releaseReservationFn({ runsDir, cardId: id, executionId, invocationId, outcome: { status: "refused_gpu_lease_held", reason: err.message } }).catch(() => {});
+                const gpuErr = new CardLaunchError(`Cannot run ${id}: GPU lease held -- ${err.message}`, 409);
+                gpuErr.gpuLeaseHold = true;
+                throw gpuErr;
+              }
+              throw err;
+            }
+          }
+
           runCardPromise = orchestrator.runCard(id);
           return task;
         }
@@ -382,6 +425,9 @@ export async function launchCardRun({
               invocationId,
               outcome: { status: "refused_enforcement", reason: `advisory pipeline error: ${err.message}` }
             }).catch(() => {});
+            if (gpuLeaseAcquired) {
+              await releaseGpuLeaseFn({ runsDir, cardId: id, executionId, invocationId, outcome: { status: "refused_enforcement", reason: `advisory pipeline error: ${err.message}` } }).catch(() => {});
+            }
           }
           const pipelineErr = new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- advisory/admission pipeline failed: ${err.message}`, 409);
           pipelineErr.capacityFitHold = true;
