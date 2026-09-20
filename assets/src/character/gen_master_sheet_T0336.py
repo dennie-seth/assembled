@@ -103,6 +103,20 @@ CONCEPT_SHEET_PATH = (
 PROFILE_REFERENCE_T0317_PATH = (
     REPO_ROOT / "assets" / "src" / "concept" / "player_profile_costume_reference_T0317.png"
 )
+# T-0356 (successor to T-0351's RE-SCOPE): T-0394's promoted attempt-2
+# forward-limb reference -- a genuine near-arm-extended, resting-near-leg
+# green side profile, human-approved 2026-09-20 -- conditions
+# side_left_forward/side_right_forward instead of T-0317's neutral (arms
+# down) profile, which never converged on those two panels across 21
+# attempts (T-0351's own finding: reference conditioning must be
+# POSE-matched, not merely view-matched).
+FORWARD_LIMB_REFERENCE_PATH = (
+    REPO_ROOT
+    / "assets"
+    / "src"
+    / "concept"
+    / "player_profile_forward_limb_reference_controlnet.png"
+)
 
 # ── Entity parameterisation -- enemy cards add a new EntitySpec here, and
 # nowhere else. ───────────────────────────────────────────────────────────
@@ -654,6 +668,42 @@ def build_single_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str
     )
 
 
+def build_forward_limb_pose_positive_prompt(entity: EntitySpec, pose: PoseSpec) -> str:
+    """T-0356: side_left_forward/side_right_forward only, once conditioned
+    on FORWARD_LIMB_REFERENCE_PATH instead of T-0317's neutral profile.
+    Identical to build_single_pose_positive_prompt (panels 1/2/5 keep that
+    function unchanged, per this card's own "do not re-tune" rule) except
+    for one addition: the shared, unweighted "institutional green coat,
+    full-length coat reaching past the knee" clause every panel already
+    carries is replaced here with an explicitly CLIP-emphasized version
+    naming the exact coat length the new reference's own provenance states
+    ("coat reaching to mid-shin, well past the knee",
+    player_profile_forward_limb_reference_controlnet.provenance.json) --
+    T-0351 attempt 21 showed the coat drifting to mid-thigh on seed
+    variance alone when this constraint was left unweighted, at the same
+    seed that held it correctly in every other attempt across this whole
+    line. Do not weaken or remove this clause to chase a different defect
+    on these two panels -- per this card's own "do not tune prompt weights
+    to rescue a panel; if a panel fails under a matched reference, the
+    finding is which reference is missing", any further failure here is
+    now a reference-matching finding, not a prompt-weight one."""
+    head_clause = pose.head_clause or (
+        "(hooded mask with two dark round visible eye lenses, not a blank void, hood fully "
+        "up and forward, face completely covered by the mask, no visible hair, no visible "
+        "face:1.3)"
+    )
+    return (
+        f"{entity.trigger_token}, (a single full-body figure, exactly one pose, exactly one "
+        "camera view, isolated portrait alone on a plain background:1.3), head to toe fully "
+        f"visible, centred, {pose.pose_clause}, both hands empty, open palm, nothing held, "
+        f"{entity.costume_description}, "
+        "institutional green coat, (full-length coat reaching to mid-shin, well past the "
+        "knee, coat length matching the reference image exactly:1.4), wearing a "
+        f"{head_clause}, boots, never high heels, flat uniform neutral grey "
+        "background, flat even lighting, no cast shadow, no perspective, clean readable outline"
+    )
+
+
 def build_legs_panel_positive_prompt(entity: EntitySpec) -> str:
     """2026-09-10 dedicated-legs-panel amendment: the sixth panel, lower
     body only -- trousers and boots, NO COAT -- the dedicated source for
@@ -839,6 +889,23 @@ def build_legs_panel_negative_prompt() -> str:
         "tunic, skirt, dress, apron, garment covering the thighs, garment covering the legs, "
         "head, face, hood, hooded mask, mask, eye lenses, goggles, torso, upper body, chest, "
         "shoulders, arms, hands, gloves, full body shot, head to toe, whole figure"
+    )
+
+
+def build_forward_limb_legs_panel_negative_prompt() -> str:
+    """T-0356: strengthens build_legs_panel_negative_prompt's existing
+    whole-garment ban (coat, jacket, cloak, cape, poncho, mantle, shawl,
+    robe, tunic, skirt, dress, apron) with terms for the specific defect
+    T-0351 attempt 19 showed under this panel's own unchanged torso-free
+    ControlNet skeleton: the thighs were exposed (this panel's entire
+    purpose, and the main goal) but a coat FLAP still draped over them --
+    a partial remnant of fabric, not a full coat body, which none of the
+    existing whole-garment nouns name."""
+    return (
+        build_legs_panel_negative_prompt()
+        + ", coat flap, coat hem, draped fabric, hanging fabric, fabric panel, cloth flap, "
+        "cloth drape, partial coat, coat remnant, coat edge, fabric over the thighs, fabric "
+        "covering the thigh, drape over the leg, hem over the leg"
     )
 
 
@@ -1091,7 +1158,11 @@ def build_graph(
 # 19, 20, 21 -- then a mandatory stop-and-report, not open-ended grinding.
 # 21 pins that boundary mechanically instead of relying on DEFAULT_ATTEMPT_CAP
 # (20), which this card would otherwise hit one attempt early.
-ATTEMPT_CAP_BY_CARD: dict[str, int] = {"T-0336": 5, "T-0351": 21}
+# T-0356's own pre-registered experiment: a hard cap of 4 generation
+# attempts, then a mandatory stop-and-report (the pre-registered
+# alternative outcome, itself a valid PASS) -- distinct from T-0351's
+# 21-attempt RE-SCOPE budget, which this card does not inherit.
+ATTEMPT_CAP_BY_CARD: dict[str, int] = {"T-0336": 5, "T-0351": 21, "T-0356": 4}
 DEFAULT_ATTEMPT_CAP = 20
 
 # T-0351 (2026-09-10 amendment): pose-conditioning-only ControlNet strength/
@@ -1317,6 +1388,39 @@ def promote_attempt(
     promoted["promoted"] = True
     dest_json = resolved_dest_dir / f"{stem}.provenance.json"
     dest_json.write_text(json.dumps(promoted, indent=2) + "\n")
+
+
+def resolve_pose_prompts(card: str, entity: EntitySpec, pose: PoseSpec) -> tuple[str, str]:
+    """Resolves the (positive, negative) prompt pair run_five_pose_attempt
+    submits for one pose panel. The default -- every card except T-0356 --
+    is T-0351's own unchanged branch: the legs panel uses
+    build_legs_panel_positive_prompt/build_legs_panel_negative_prompt,
+    every other panel uses build_single_pose_positive_prompt/
+    build_single_pose_negative_prompt.
+
+    T-0356 overrides exactly two things, nothing else -- both mechanically
+    verified byte-identical to the T-0351 baseline everywhere they don't
+    apply (test_resolve_pose_prompts_reuses_t0351_recipe_unchanged_for_solved_panels):
+    side_left_forward/side_right_forward (now conditioned on
+    FORWARD_LIMB_REFERENCE_PATH via reference_image_for) get the
+    coat-length-emphasized build_forward_limb_pose_positive_prompt instead
+    of the plain build_single_pose_positive_prompt, and the legs panel gets
+    the coat-flap-strengthened build_forward_limb_legs_panel_negative_prompt
+    on top of its own unchanged build_legs_panel_positive_prompt."""
+    if pose.no_coat:
+        positive_text = build_legs_panel_positive_prompt(entity)
+        negative_text = (
+            build_forward_limb_legs_panel_negative_prompt()
+            if card == "T-0356"
+            else build_legs_panel_negative_prompt()
+        )
+        return positive_text, negative_text
+    if card == "T-0356" and pose.key in ("side_left_forward", "side_right_forward"):
+        return (
+            build_forward_limb_pose_positive_prompt(entity, pose),
+            build_single_pose_negative_prompt(pose),
+        )
+    return build_single_pose_positive_prompt(entity, pose), build_single_pose_negative_prompt(pose)
 
 
 # ── Attempt driver ───────────────────────────────────────────────────────
@@ -1554,12 +1658,7 @@ def run_five_pose_attempt(
         # a coat is a defect, not the canonical result -- it gets its own
         # prompt pair rather than the whole-figure one every other panel
         # uses (see build_legs_panel_positive_prompt's docstring).
-        if pose.no_coat:
-            positive_text = build_legs_panel_positive_prompt(entity)
-            negative_text = build_legs_panel_negative_prompt()
-        else:
-            positive_text = build_single_pose_positive_prompt(entity, pose)
-            negative_text = build_single_pose_negative_prompt(pose)
+        positive_text, negative_text = resolve_pose_prompts(card, entity, pose)
 
         skeleton = pose_rig_master_sheet_T0351.render_pose_skeleton(pose.key, width)
         skeleton_path = out_dir / f"pose_{pose.key}_skeleton.png"
@@ -1738,7 +1837,7 @@ NEGATIVE_PROMPT_BUILDERS_BY_CARD: dict[str, Callable[[], str]] = {
 
 # Cards using the lever-2 five-separate-generations-composited-by-script
 # path (run_five_pose_attempt) instead of the single-shot run_attempt.
-FIVE_POSE_CARDS: frozenset[str] = frozenset({"T-0351"})
+FIVE_POSE_CARDS: frozenset[str] = frozenset({"T-0351", "T-0356"})
 
 
 # T-0351: STILL PLACEHOLDER COORDINATES, NOT YET MEASURED AGAINST A REAL
@@ -1769,6 +1868,12 @@ PLAYER_LIMB_CROP_BOXES_T0351: dict[str, tuple[int, int, int, int]] = {
 # geometry actually differs from #365's needs its own override.
 CROP_BOXES_BY_CARD: dict[str, dict[str, tuple[int, int, int, int]]] = {
     "T-0351": PLAYER_LIMB_CROP_BOXES_T0351,
+    # T-0356: the composited row layout (six 1024x1024 panels in POSE_SPECS
+    # order) is unchanged from T-0351 -- only the reference conditioning
+    # (panels 3/4) and the legs negative prompt differ, neither of which
+    # moves any pixel's position in the row, so the hand-tuned boxes carry
+    # over exactly.
+    "T-0356": PLAYER_LIMB_CROP_BOXES_T0351,
 }
 
 
@@ -1861,11 +1966,33 @@ PLAYER_POSE_REFERENCES_T0351: dict[str, tuple[Path, tuple[int, int, int, int] | 
     "legs": (CONCEPT_SHEET_PATH, (25, 279, 153, 219)),
 }
 
+# T-0356 (successor to T-0351's RE-SCOPE, "condition on the new
+# forward-limb reference" -- see this card's own "reuse the recipe
+# unchanged" rule for panels 1, 2, 5, 6): front_tpose/back_tpose/
+# side_neutral/legs reuse T-0351's own resolved references verbatim.
+# side_left_forward/side_right_forward resolve to FORWARD_LIMB_REFERENCE_PATH
+# instead of T-0317 -- the one thing T-0351's own finding identified as
+# actually missing (reference conditioning must be POSE-matched, not
+# merely view-matched; T-0317 is a neutral, arms-down profile and never
+# converged on these two forward-limb panels across 21 attempts). Used
+# whole (no crop): already a single isolated 1024x1024 figure, unlike
+# T-0317's extreme 175x891 aspect ratio, so no square-padding is needed
+# either (see prepare_reference_for_upload).
+PLAYER_POSE_REFERENCES_T0356: dict[str, tuple[Path, tuple[int, int, int, int] | None]] = {
+    "front_tpose": PLAYER_POSE_REFERENCES_T0351["front_tpose"],
+    "back_tpose": PLAYER_POSE_REFERENCES_T0351["back_tpose"],
+    "side_left_forward": (FORWARD_LIMB_REFERENCE_PATH, None),
+    "side_right_forward": (FORWARD_LIMB_REFERENCE_PATH, None),
+    "side_neutral": PLAYER_POSE_REFERENCES_T0351["side_neutral"],
+    "legs": PLAYER_POSE_REFERENCES_T0351["legs"],
+}
+
 # A card with no entry here falls back to concept_crop_box_for's single
 # shared box for every pose -- only a card that actually needs per-panel
 # references (this one) registers itself.
 POSE_REFERENCES_BY_CARD: dict[str, dict[str, tuple[Path, tuple[int, int, int, int] | None]]] = {
     "T-0351": PLAYER_POSE_REFERENCES_T0351,
+    "T-0356": PLAYER_POSE_REFERENCES_T0356,
 }
 
 
