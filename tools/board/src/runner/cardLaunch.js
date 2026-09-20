@@ -10,11 +10,12 @@ import {
   AdvisoryDecisionMissingError,
   recordManualOverride
 } from "./advisoryLogger.js";
-import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
+import { buildLaunchDecide, resolveCostEstimatorType, GPU_COST_ESTIMATOR_TYPE } from "./launchAdvisory.js";
 import { loadAdmissionConfigFromEnv, admissionEnforcementEnabledFromEnv, HOLD_REASON } from "./admissionDecision.js";
 import { releaseReservation } from "./launchReservation.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
 import { evaluateOverrunPolicy, isBoundedContinuation } from "./overrunPolicy.js";
+import { acquireGpuLease, releaseGpuLease, gpuLeaseEnabledFromEnv, GpuLeaseHeldError } from "./gpuLease.js";
 
 /** The two callers of the shared launch boundary (T-0379): the auto-launch poller, and every operator-initiated launch (the Run button, and any other manual launch). */
 export const LAUNCH_TRIGGERS = Object.freeze({ AUTO: "auto", MANUAL: "manual" });
@@ -97,7 +98,8 @@ export async function reconcileLaunchOutcome({
   listCardUsageEntriesFn = listCardUsageEntries,
   recordAdvisoryOutcomeFn = recordAdvisoryOutcome,
   retainOutcomeUntilDecisionRecordedFn = retainOutcomeUntilDecisionRecorded,
-  releaseReservationFn = releaseReservation
+  releaseReservationFn = releaseReservation,
+  releaseGpuLeaseFn = releaseGpuLease
 }) {
   let outcome;
   try {
@@ -130,6 +132,14 @@ export async function reconcileLaunchOutcome({
     await releaseReservationFn({ runsDir, cardId, executionId, invocationId, outcome: { status, errorMessage } });
   } catch (err) {
     logger.error(`Agent Runner: failed to release launch reservation for ${cardId}:`, err.message);
+  }
+  // T-0371: always attempted, never gated on whether this launch actually held a GPU lease --
+  // releaseGpuLeaseFn is a safe no-op (returns null) both when no lease was ever acquired for
+  // this identity and when GPU_LEASE_ENABLED is off, since no lease file exists to match against.
+  try {
+    await releaseGpuLeaseFn({ runsDir, cardId, executionId, invocationId, outcome: { status, errorMessage } });
+  } catch (err) {
+    logger.error(`Agent Runner: failed to release gpu lease for ${cardId}:`, err.message);
   }
 }
 
@@ -185,7 +195,12 @@ export async function launchCardRun({
   evaluateOverrunPolicyFn = evaluateOverrunPolicy,
   listCardUsageEntriesFn = listCardUsageEntries,
   releaseReservationFn = releaseReservation,
-  recordManualOverrideFn = recordManualOverride
+  recordManualOverrideFn = recordManualOverride,
+  // T-0371 (WIP gate T-E): default OFF, and a SEPARATE flag from `enforcementEnabledFn` above --
+  // GPU is its own currency (docs/gpu-lease.md), switched on independently of token-budget
+  // enforcement, never folded into it.
+  gpuLeaseEnabledFn = gpuLeaseEnabledFromEnv,
+  acquireGpuLeaseFn = acquireGpuLease
 }) {
   const isManualOverride = trigger === LAUNCH_TRIGGERS.MANUAL;
   if (!orchestrator) {
@@ -254,9 +269,54 @@ export async function launchCardRun({
   // from before this card.
   const runsDir = orchestrator.runsDir;
   const enforcementEnabled = enforcementEnabledFn();
+  // T-0371: only assets/audio cards do GPU work at all (launchAdvisory.js's GPU_COST_ESTIMATOR_TYPE
+  // classification) -- every other agent never touches the GPU lease, gated or not.
+  const requiresGpuLease = gpuLeaseEnabledFn() && resolveCostEstimatorType(task) === GPU_COST_ESTIMATOR_TYPE;
   let executionId = null;
   let invocationId = null;
   let runCardPromise;
+
+  /**
+   * FIX ROUND 1 (Chat round-2 review of #407, finding 1 -- P1): GPU acquisition must be a hard
+   * gate on EVERY route to `orchestrator.runCard`, independent of the advisory/token pipeline's
+   * own deliberate fail-open contract. That pipeline degrades to an unconditional launch on a
+   * setup error (a throwing `buildLaunchDecideFn`), with token enforcement off, or on a manual
+   * override -- all correct for token capacity (an advisory judgement call a human can override)
+   * but wrong for GPU exclusivity (a hardware fact no flag combination should be able to route
+   * around). Every site below that would otherwise call `orchestrator.runCard(id)` directly now
+   * goes through this instead, so a lease is always attempted first whenever `requiresGpuLease` is
+   * true, regardless of how execution got here. Requires `runsDir` (a lease file has nowhere to
+   * live without one) -- exactly like every other WIP-gate mechanism, an orchestrator with no
+   * `runsDir` (an older/minimal test double) skips GPU gating entirely, unchanged from before.
+   *
+   * Deliberately NOT the thing that calls `orchestrator.runCard` itself: `runCard`'s returned
+   * promise has to stay a genuinely in-flight, un-awaited promise for `runCardPromise` below (the
+   * fire-and-forget tracking this function relies on) -- an `async` helper that itself `return`s
+   * that promise would flatten/adopt it (the standard JS promise-resolution behaviour for a
+   * thenable return value), so `await`ing the helper would block on the ENTIRE run finishing
+   * instead of just the gate. Each call site below awaits this gate, then assigns
+   * `orchestrator.runCard(id)` to `runCardPromise` itself, synchronously and ungated.
+   */
+  const acquireGpuLeaseGate = async () => {
+    if (!requiresGpuLease || !runsDir) return;
+    try {
+      await acquireGpuLeaseFn({ runsDir, cardId: id, executionId, invocationId, owner: `cardLaunch:${id}` });
+    } catch (err) {
+      const reason = err instanceof GpuLeaseHeldError ? err.message : `gpu lease acquisition failed: ${err.message}`;
+      if (executionId !== null && invocationId !== null) {
+        await releaseReservationFn({
+          runsDir,
+          cardId: id,
+          executionId,
+          invocationId,
+          outcome: { status: "refused_gpu_lease", reason }
+        }).catch(() => {});
+      }
+      const gpuErr = new CardLaunchError(`Cannot run ${id}: GPU lease unavailable -- ${reason}`, 409);
+      gpuErr.gpuLeaseHold = true;
+      throw gpuErr;
+    }
+  };
 
   if (runsDir) {
     try {
@@ -356,6 +416,15 @@ export async function launchCardRun({
               logger.log(`wip-gate enforcement: overrun stop active but ${id} is a bounded continuation of an already-admitted execution -- allowed`);
             }
           }
+
+          // T-0371 (WIP gate T-E): independent of `enforcementEnabled` above -- GPU is its own
+          // currency, switched on by its own flag (`gpuLeaseEnabledFn`), never bypassable by
+          // `trigger` (unlike the token capacity-fit limit): mutual exclusion on one physical GPU
+          // is a hardware fact, not a policy judgement call a human should be able to override
+          // through the Run button. `acquireGpuLeaseGate` runs last, right before the actual
+          // launch, so no cleanup is needed for the checks above it -- they either already threw
+          // (nothing to release here) or passed.
+          await acquireGpuLeaseGate();
           runCardPromise = orchestrator.runCard(id);
           return task;
         }
@@ -371,8 +440,13 @@ export async function launchCardRun({
       if (enforcementEnabled) {
         if (isManualOverride) {
           // T-0379: same bypass as the capacity-fit hold above -- a broken advisory/admission
-          // pipeline is unknown capacity, not proof of overrun, so manual override still applies.
+          // pipeline is unknown capacity, not proof of overrun, so manual override still applies
+          // to TOKEN enforcement. It does NOT apply to the GPU lease -- `acquireGpuLeaseGate`
+          // below still gates this exactly like every other route to `orchestrator.runCard`
+          // (FIX ROUND 1).
           logger.log(`wip-gate enforcement: manual override for ${id} -- advisory/admission pipeline failed, launch proceeds unaffected: ${err.message}`);
+          await acquireGpuLeaseGate();
+          runCardPromise = orchestrator.runCard(id);
         } else {
           if (runsDir && executionId !== null && invocationId !== null) {
             await releaseReservationFn({
@@ -387,17 +461,24 @@ export async function launchCardRun({
           pipelineErr.capacityFitHold = true;
           throw pipelineErr;
         }
+      } else {
+        // FIX ROUND 1: token enforcement being off means the advisory/admission pipeline's own
+        // failure is not itself a refusal -- exactly as before this fix. But it must still route
+        // through `acquireGpuLeaseGate` rather than calling `orchestrator.runCard` directly, since
+        // the GPU lease (when required) is never bypassable by ANY of this pipeline's own
+        // fail-open conditions, enforcement included.
+        await acquireGpuLeaseGate();
+        runCardPromise = orchestrator.runCard(id);
       }
     }
   }
 
-  // The advisory branch above always reaches `launch()` in every failure mode it itself
-  // anticipates (withAdvisoryLoggingFn's own contract guarantees `launch()` runs regardless of
-  // what `decide()` does), and the catch above already refuses under enforcement before ever
-  // reaching here. This is the true last resort, reachable only with enforcement OFF: `runCardPromise`
-  // is still unset only if something upstream of `launch()` itself threw synchronously (e.g.
-  // building the decide function) -- constraint 6 requires the launch to proceed even then.
+  // Reachable only when `runsDir` is absent (an older/minimal test double) -- `acquireGpuLeaseGate`
+  // itself skips GPU gating in that case too, so this is an unconditional launch, unchanged from
+  // before this card. Every `runsDir`-present path above already sets `runCardPromise` itself
+  // (via `acquireGpuLeaseGate` + `orchestrator.runCard`) or throws before reaching here.
   if (!runCardPromise) {
+    await acquireGpuLeaseGate();
     runCardPromise = orchestrator.runCard(id);
   }
 
