@@ -1,4 +1,10 @@
-import { TaskStore } from "../taskStore.js";
+import {
+  TaskStore,
+  StaleWriteError,
+  DependencyNotSatisfiedError,
+  findMismatchedExpectedFields,
+  findUnsatisfiedDependencies
+} from "../taskStore.js";
 import { validateTask } from "../taskParser.js";
 import { openDb, DEFAULT_DB_PATH } from "./connection.js";
 
@@ -151,7 +157,7 @@ export class DbTaskStore extends TaskStore {
     this._recordEvent(task.id, "create", Object.keys(task).filter((k) => k !== "id"), actor, task.body);
   }
 
-  async update(id, updates, { actor = DEFAULT_ACTOR } = {}) {
+  async update(id, updates, { actor = DEFAULT_ACTOR, expected, requireDependenciesSatisfied } = {}) {
     const existing = await this.get(id);
     if (!existing) {
       throw new Error(`Task ${id} not found`);
@@ -165,6 +171,51 @@ export class DbTaskStore extends TaskStore {
     const changedFields = Object.keys(updates).filter((k) => k !== "id");
 
     const run = db.transaction(() => {
+      if (expected) {
+        // Re-read INSIDE the transaction, not the `existing` fetched above -- better-sqlite3
+        // transactions run to completion without yielding to the event loop, so nothing else
+        // sharing THIS `this.db` connection (i.e. every writer in this process that goes through
+        // this same DbTaskStore instance) can write to this row between this check and the UPDATE
+        // below. This store makes no claim beyond that: a second process (or a second connection
+        // opened separately against the same on-disk database) is not covered by this guarantee.
+        // T-0384 FIX ROUND 3: this used to say FsTaskStore's equivalent check "can only narrow the
+        // window" -- true before FIX ROUND 2, no longer accurate now that FsTaskStore's own
+        // per-id lock (see fsTaskStore.js) closes the same in-process race for its own callers.
+        // The two stores' guarantees are the same shape (atomic against in-process writers through
+        // the same store instance) even though the mechanism differs (a synchronous transaction
+        // here, an async per-id lock there).
+        const freshRow = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+        if (!freshRow) {
+          throw new Error(`Task ${id} not found`);
+        }
+        const fresh = taskRowToTask(db, freshRow);
+        // T-0384 FIX ROUND 2 (Codex P2 #1, head d81d474c): checks the full fingerprint a caller
+        // vetted (status, agent, deliverable_type, depends_on, a body hash, ...) -- not status
+        // alone -- via the same shared comparator FsTaskStore uses, so a body/agent/depends_on
+        // change that left status untouched is no longer invisible to this precondition.
+        const mismatches = findMismatchedExpectedFields(expected, fresh);
+        if (mismatches.length > 0) {
+          throw new StaleWriteError(id, expected, fresh, mismatches);
+        }
+      }
+
+      // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #2): a dependency re-check via a plain GET
+      // before this call is not atomic with the write below -- a dependency can regress in that
+      // gap. Re-reads each dependency's status INSIDE this same transaction (so nothing else
+      // sharing `this.db` can change it between this check and the UPDATE), never off the
+      // `existing` read from before the transaction started.
+      if (requireDependenciesSatisfied) {
+        const statusById = new Map();
+        for (const depId of merged.depends_on ?? []) {
+          const depRow = db.prepare("SELECT status FROM tasks WHERE id = ?").get(depId);
+          statusById.set(depId, depRow?.status ?? null);
+        }
+        const unmet = findUnsatisfiedDependencies(merged.depends_on, statusById);
+        if (unmet.length > 0) {
+          throw new DependencyNotSatisfiedError(id, unmet);
+        }
+      }
+
       db.prepare(
         `UPDATE tasks SET
            title = @title, status = @status, priority = @priority, phase = @phase,
