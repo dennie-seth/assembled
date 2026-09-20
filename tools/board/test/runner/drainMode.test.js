@@ -471,7 +471,7 @@ describe("createDrainWaitStateCoordinator -- ordered persist/clear per card (FIX
   it("REGRESSION (FIX ROUND 2, finding 1): a clear issued while a first-hold persist is still in flight always wins -- the write lands, then the clear removes it, never the other order", async () => {
     const order = [];
     const write = deferred();
-    const writeFileFn = vi.fn(async (...args) => {
+    const writeFileFn = vi.fn(async () => {
       order.push("write:start");
       await write.promise;
       order.push("write:done");

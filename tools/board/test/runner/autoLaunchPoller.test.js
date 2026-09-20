@@ -1223,7 +1223,7 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
       });
 
       const taskA = makeTask({ id: "T-0001" });
-      const { poller: pollerA, store: storeA } = makePoller({
+      const { poller: pollerA } = makePoller({
         tasks: [taskA],
         now: () => nowMs,
         drainModeEnabled: true,
@@ -1274,7 +1274,7 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
       let nowMs = 1000;
       const task = makeTask({ id: "T-0001" });
       // First tick: an ordinary hold, so a sidecar file actually exists to clear.
-      const launchFn = vi.fn(async ({ id }) => {
+      const launchFn = vi.fn(async () => {
         throw capacityFitHoldError("does not fit", {
           admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
           telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
