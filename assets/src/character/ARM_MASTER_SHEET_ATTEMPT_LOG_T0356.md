@@ -6,3 +6,4 @@ Every attempt is recorded here whether or not it is promoted. Tier-1 generates O
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | player | 246813579 | 0.7 | 0.5 | 0.35 | 6144 | 1024 | 477.4 | no | T-0356 attempt 1: reuse T-0351 attempt-19 recipe unchanged for front_tpose/back_tpose/side_neutral/legs; side_left_forward/side_right_forward now condition on FORWARD_LIMB_REFERENCE_PATH instead of T-0317; legs panel negative prompt gets forward-limb coat-flap ban. |
 | 2 | player | 837291046 | 0.7 | 0.5 | 0.35 | 6144 | 1024 | 501.5 | no | T-0356 attempt 2: identical recipe to attempt 1, seed varied only, testing whether panels 3/4 forward-limb-reference conditioning is seed-sensitive (no prompt-weight tuning). |
+| 3 | player | 519384726 | 0.7 | 0.5 | 0.35 | 6144 | 1024 | 552.5 | no | T-0356 attempt 3: identical recipe, third seed -- continuing to test seed-sensitivity of panels 3/4 and legs-panel stability (no prompt-weight tuning). |

@@ -86,3 +86,45 @@ panel 6 shows the recipe is not yet reliably stable across seeds even where it c
 This is consistent with T-0351's own attempts 19-21: the forward-limb panels do not converge
 under this architecture regardless of which specific failure mode a given seed produces, and nor
 is the legs panel's fix seed-independent yet. No prompt weights changed between attempt 1 and 2.
+
+### Attempt 3 -- seed 519384726
+
+Same recipe again, byte-identical prompts/weights, third seed only. Full provenance:
+`attempt_3_provenance.json`. Composited sheet: `attempt_3_master_sheet.png`.
+
+Per-panel result:
+
+- **Panel 1 (front T-pose)** -- `attempt_3_panel1_front_tpose.png` -- clean (not pictured in
+  detail above; T-pose and single figure held).
+- **Panel 2 (back T-pose)** -- `attempt_3_panel2_back_tpose.png` -- clean.
+- **Panel 3 (side, left-forward)** -- `attempt_3_panel3_side_left_forward_MALFORMED.png` --
+  **non-compliant, a third distinct failure mode**: legible single green-coated figure, but
+  gibberish text/glyphs render in the background (the negative prompt explicitly bans
+  text/watermark), the extended arm/leg relationship is unclear (only one boot is visible, the
+  trailing leg is hidden under the floor-length coat), and the mask/head design shows an unusual
+  speaker-grille-like detail not seen on any other clean panel (identity drift).
+- **Panel 4 (side, right-forward)** -- `attempt_3_panel4_side_right_forward_MALFORMED.png` --
+  **non-compliant, a third distinct failure mode**: arm extends forward correctly, but the near
+  leg lifts and bends backward into a running/kicking stride (the same banned "kicking, mid-kick,
+  running" failure attempt 2's side_right_forward showed), and the background is a dramatic
+  green-glow vignette with a visible cast shadow -- violating "flat uniform neutral grey
+  background, flat even lighting, no cast shadow, no perspective", which every clean panel on
+  every prior attempt has held.
+- **Panel 5 (side, neutral)** -- `attempt_3_panel5_side_neutral.png` -- **partially regressed**:
+  the pose itself is a true profile, but the background is a moody blue-grey gradient with a
+  visible cast shadow, not the flat neutral grey every attempt 1/2 side_neutral render held --
+  the "reuse the recipe unchanged" panels are not fully seed-invariant either.
+- **Panel 6 (legs)** -- `attempt_3_panel6_legs.png` -- **ambiguous**: thighs and lower legs are
+  unobstructed by any coat (the panel's core requirement is met), but the trouser material renders
+  with a plated/segmented look closer to the negative prompt's banned "armor plating" than cloth
+  trousers -- a new failure mode distinct from attempt 2's coat-drape regression.
+
+Three attempts in, panels 3 and 4 have failed in three entirely distinct ways each
+(malformed/blob geometry + held-fabric confusion; held weapon + grey-coat drift + mid-kick;
+background text glyphs + hidden trailing leg vs. mid-kick + dramatic non-flat background) with
+zero convergence toward "single-figure true side view, near arm and near leg extended, matched
+identity, flat background" on any of the three seeds tried. No prompt weight was tuned at any
+point -- only the base seed varied, per the card's own "do not tune weights to rescue a panel"
+rule. This is the same qualitative outcome T-0351 reported after 21 attempts under the
+predecessor architecture: forward-limb reference conditioning does not reliably converge for this
+character/pose combination regardless of which single seed is drawn.
