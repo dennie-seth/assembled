@@ -1,7 +1,52 @@
 ## Finding
 
-(No claims until the run concludes -- either a compliant sheet is promoted, or all 4 attempts are
-spent and this section is replaced with a decisive per-panel finding.)
+**Stop and report -- the pre-registered alternative outcome. All 4 attempts are spent; no
+compliant six-panel master sheet was produced.** Panels 1, 2, and 5 (front T-pose, back T-pose,
+side-neutral) reproduced T-0351 attempt 19's clean result on most seeds, confirming "reuse the
+recipe unchanged" holds (`attempt_1_panel1_front_tpose.png`, `attempt_1_panel2_back_tpose.png`,
+`attempt_1_panel5_side_neutral.png`, `attempt_2_panel1_front_tpose.png`,
+`attempt_2_panel2_back_tpose.png`, `attempt_2_panel5_side_neutral.png`), though not perfectly
+seed-invariant -- attempt 3's side_neutral (`attempt_3_panel5_side_neutral.png`) drifted to a
+non-flat, shadowed background. Panel 6 (legs) achieved its acceptance goal at least once --
+`attempt_1_panel6_legs_clean.png` shows fully unobstructed thighs and lower legs with no coat
+flap, the specific regression this card exists to fix -- but the fix is not stable across seeds:
+`attempt_2_panel6_legs_REGRESSED.png` shows the coat draping back over the hips, and
+`attempt_3_panel6_legs.png`/`attempt_4_panel6_legs.png` unobstruct the thighs but drift toward an
+armor-plated trouser material and a holstered prop respectively.
+
+**Panels 3 and 4 (side_left_forward / side_right_forward), the panels this card exists to fix by
+conditioning on the forward-limb reference (`assets/src/concept/player_profile_forward_limb_reference_controlnet.png`),
+never converged across all 4 attempts -- and failed in a different way on every single attempt:**
+
+- Attempt 1: `attempt_1_panel3_side_left_forward_MALFORMED.png` -- warped/melted geometry, no
+  legible limb extension. `attempt_1_panel4_side_right_forward_MALFORMED.png` -- two-tone
+  green/white cape (coat-identity drift), blank-void head (no eye lenses).
+- Attempt 2: `attempt_2_panel3_side_left_forward_MALFORMED.png` -- held weapon-shaped object
+  (explicitly banned), coat drifted to grey. `attempt_2_panel4_side_right_forward_MALFORMED.png`
+  -- near leg lifted into a mid-kick/running stride (explicitly banned).
+- Attempt 3: `attempt_3_panel3_side_left_forward_MALFORMED.png` -- background text/glyphs
+  (explicitly banned), trailing leg hidden, unusual mask-grille identity drift.
+  `attempt_3_panel4_side_right_forward_MALFORMED.png` -- mid-kick stride again, dramatic non-flat
+  background with a visible cast shadow (explicitly banned).
+- Attempt 4: `attempt_4_panel3_side_left_forward_MALFORMED.png` -- a second ghost/overlapping
+  figure behind the main one (explicitly banned), coat-identity drift to white/grey.
+  `attempt_4_panel4_side_right_forward_MALFORMED.png` -- a visible human face (explicitly banned;
+  every other panel's mask requirement is violated), arm raised rather than extended forward.
+
+**Conclusion:** the forward-limb reference conditioning this card's hypothesis rests on does not
+reliably steer either side panel toward "single-figure true side view, near arm and near leg
+extended, matched identity, flat background" -- across 4 seeds it produced 8 distinct and
+unrelated failure modes (malformed geometry, coat-color drift x2, held weapon, blank-void head,
+mid-kick stride x2, background text, hidden limb, mask-identity drift, ghost/second figure,
+visible face), never converging on a common near-miss to iterate from. Per the card's own "do not
+tune weights to rescue a panel" rule, no prompt weight was changed between attempts -- only the
+base seed varied, which is the only lever this pre-registered experiment was scoped to test.
+**The finding: the forward-limb reference itself is likely insufficient, not merely
+under-weighted** -- per its own T-0394 promotion commit, `player_profile_forward_limb_reference_controlnet.png`
+depicts a *resting leg* with only a single forward *arm*, not the forward-leg geometry panels 3/4
+need to condition on. A future card should source or generate a reference that actually shows a
+forward-extended leg before re-attempting this recipe. Panel 6's fix is also not yet seed-stable
+and would benefit from the same scrutiny. No further attempts remain under this card's cap of 4.
 
 ## Attempts
 
@@ -128,3 +173,35 @@ point -- only the base seed varied, per the card's own "do not tune weights to r
 rule. This is the same qualitative outcome T-0351 reported after 21 attempts under the
 predecessor architecture: forward-limb reference conditioning does not reliably converge for this
 character/pose combination regardless of which single seed is drawn.
+
+### Attempt 4 -- seed 802463951 (final, card cap)
+
+Same recipe again, byte-identical prompts/weights, fourth and final seed under this card's
+`ATTEMPT_CAP_BY_CARD["T-0356"] = 4`. Full provenance: `attempt_4_provenance.json`. Composited
+sheet: `attempt_4_master_sheet.png`.
+
+Per-panel result:
+
+- **Panel 1 (front T-pose)** -- `attempt_4_panel1_front_tpose.png` -- clean-ish: T-pose held,
+  single figure, green coat, though the head shows dark sunglasses-like eye markings rather than
+  the blank/hooded mask other clean attempts show (minor identity variant).
+- **Panel 2 (back T-pose)** -- `attempt_4_panel2_back_tpose.png` -- clean.
+- **Panel 3 (side, left-forward)** -- `attempt_4_panel3_side_left_forward_MALFORMED.png` --
+  **non-compliant, a fourth distinct failure mode**: a second green-cloaked shape appears behind
+  the main white/grey-robed figure -- exactly the "ghost figure ... second figure behind,
+  overlapping figures" the negative prompt explicitly bans -- and the coat has drifted to a
+  white/grey robe rather than institutional green. No legible limb extension either.
+- **Panel 4 (side, right-forward)** -- `attempt_4_panel4_side_right_forward_MALFORMED.png` --
+  **non-compliant, a fourth distinct failure mode**: a visible human face (eye and mouth clearly
+  rendered) -- a direct violation of the hooded-mask/no-visible-face requirement every other
+  panel is judged against -- and the arm raises up and out rather than extending forward; the
+  background is solid black, not flat grey.
+- **Panel 5 (side, neutral)** -- `attempt_4_panel5_side_neutral.png` -- clean.
+- **Panel 6 (legs)** -- `attempt_4_panel6_legs.png` -- unobstructed thighs and lower legs (core
+  requirement met), cargo-style trousers, though a holstered tool/prop hangs from the belt, a
+  minor prop-adjacent identity detail not seen on attempt 1's cleanest result.
+
+Fourth and final attempt: panels 3 and 4 fail a fourth time, in two more failure modes never seen
+before (ghost/second-figure overlap; visible human face) -- eight total distinct failure modes
+across 4 attempts on 2 panels, with no near-miss common enough to suggest one more seed would
+converge. This concludes the card's attempt budget.
