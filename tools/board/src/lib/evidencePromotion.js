@@ -24,6 +24,16 @@ const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
 // A backtick span whose whole content is a bare relative path (no spaces, no leading slash, no
 // scheme) ending in an image extension -- deliberately narrow so an inline-code command, a .md
 // filename, or a config path is never mistaken for a cited frame.
+//
+// T-0395 reviewed this pattern for the same two defects found in preRegisteredFinding.js's own
+// CITATION_PATTERN and found neither applies here, so this one is unchanged:
+// 1. Prompt-weight false positives (`:1.4`, `v1.2.3`): already impossible -- this pattern requires
+//    the content to *end* in an image extension, and a prompt weight or version number never does.
+// 2. Absent-cited paths counted as required evidence: doesn't apply, because this module never
+//    fails a run over an unresolved citation. A cited path that doesn't resolve under `runDir`
+//    degrades to `skippedMissing` (see `promoteEvidence` below) -- informational, never fatal -- so
+//    a log narrating "the reference does not exist" the same way a Finding section would costs
+//    nothing here; it simply promotes nothing for that citation, exactly as it should.
 const CITATION_PATTERN = /`([^`\s]+\.(?:png|jpe?g|webp|gif))`/gi;
 
 // A markdown table data row: starts and ends with `|`. If its own leading cell is a bare integer,

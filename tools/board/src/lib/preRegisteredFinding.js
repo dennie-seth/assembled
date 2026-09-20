@@ -41,23 +41,99 @@ export function readFindingSection(body) {
   return readSection(body, FINDING_HEADING);
 }
 
-// A backtick span whose content is a bare path ending in a file extension -- deliberately
-// excludes bare words/inline commands (`npm test`, `main`) the same way evidencePromotion.js's
-// own CITATION_PATTERN does, so an inline-code mention that isn't a file path is never mistaken
-// for cited evidence.
-const CITATION_PATTERN = /`([^`\s]+\.[A-Za-z0-9]+)`/g;
+// A backtick span with no internal whitespace -- the raw candidate set before filtering by
+// `looksLikeCitedPath`. Deliberately excludes multi-word spans (`` `npm test` ``) the same way
+// evidencePromotion.js's own CITATION_PATTERN does.
+const CITATION_PATTERN = /`([^`\s]+)`/g;
 
-/** Every backtick-quoted, extensioned file path a Finding section cites, in first-seen order, deduped. */
+// A citation counts as a plausible repo path only if it has a path separator (`assets/final/...`)
+// or ends in a known evidence/code extension (a bare `main_384.png` cited with no directory, the
+// shape T-0272's own attempt logs actually use). Neither test alone is enough on its own: a bare
+// extensionless word like `main` has no separator and no extension; a prompt weight like `:1.4` or
+// `(lens:1.4)`, a version number like `v1.2.3`, or any other dotted identifier has a dot but no
+// path separator and no extension this list recognizes -- T-0395: the prior rule (any dot plus an
+// alnum tail) accepted all of those as "cited evidence" and then failed them for not existing.
+const KNOWN_EVIDENCE_EXTENSIONS = /\.(png|jpe?g|webp|gif|md|json|txt|log|csv|py|js|mjs|cjs|ts|tsx|cpp|cc|h|hpp|sql|yml|yaml)$/i;
+const PATH_SEPARATOR_PATTERN = /\//;
+
+function looksLikeCitedPath(candidate) {
+  return PATH_SEPARATOR_PATTERN.test(candidate) || KNOWN_EVIDENCE_EXTENSIONS.test(candidate);
+}
+
+/** Every backtick-quoted citation in `text` that looks like a plausible repo path, with its match index. */
+function iterateCitations(text) {
+  const matches = [];
+  for (const match of text.matchAll(CITATION_PATTERN)) {
+    const cited = match[1];
+    if (!looksLikeCitedPath(cited)) continue;
+    matches.push({ cited, index: match.index });
+  }
+  return matches;
+}
+
+/** Every backtick-quoted, plausible-path citation a Finding section cites, in first-seen order, deduped. */
 export function parseFindingEvidencePaths(findingText) {
   const seen = new Set();
   const ordered = [];
-  for (const match of findingText.matchAll(CITATION_PATTERN)) {
-    const cited = match[1];
+  for (const { cited } of iterateCitations(findingText)) {
     if (seen.has(cited)) continue;
     seen.add(cited);
     ordered.push(cited);
   }
   return ordered;
+}
+
+// A clause saying the cited path does NOT exist -- the three phrasings T-0395's acceptance
+// criteria names verbatim ("does not exist" / "was not produced" / "is not promoted"), plus the
+// tense/number variants a Finding's prose naturally uses. Deliberately literal rather than a
+// broader NLP heuristic: this is a mechanical gate, and a false negative here (an absence framed
+// in words this pattern doesn't recognize) degrades to the pre-T-0395 behaviour -- the path is
+// still checked, just as required evidence -- rather than silently waving a real gap through.
+const ABSENCE_PHRASE_PATTERN =
+  /\b(?:does|did)\s+not\s+exist\b|\b(?:was|were)\s+not\s+(?:produced|created|written|committed|generated)\b|\b(?:is|are)\s+not\s+(?:promoted|produced|present|committed)\b/i;
+
+// A true sentence-end period: one followed by whitespace, a closing `**` bold marker, or end of
+// string -- same rule evidencePromotion.js's own SENTENCE_END_PATTERN uses, and for the same
+// reason here: a decimal inside a cited filename (`attempt_1_main_1024.png`) or a measurement
+// (`denoise 0.87`) is always followed directly by another character, never whitespace, so it's
+// never mistaken for a sentence boundary the way a naive "nearest dot" scan would.
+const SENTENCE_END_PATTERN = /\.(?=\s|\*\*|$)/g;
+
+/** The sentence of `text` surrounding `index` -- the scope an absence phrase must appear in to count. */
+function sentenceAround(text, index) {
+  let start = 0;
+  for (const match of text.slice(0, index).matchAll(SENTENCE_END_PATTERN)) {
+    start = match.index + 1;
+  }
+  const after = text.slice(index);
+  const nextEnd = after.matchAll(SENTENCE_END_PATTERN).next().value;
+  const end = nextEnd ? index + nextEnd.index + 1 : text.length;
+  return text.slice(start, end);
+}
+
+/**
+ * Splits a Finding section's citations into `present` (required evidence -- must exist) and
+ * `absent` (the Finding itself claims this path does not exist, e.g. "No reference is promoted --
+ * `path/to/thing.png` does not exist on this branch") based on whether an `ABSENCE_PHRASE_PATTERN`
+ * clause shares the same sentence as the citation. T-0395: a stop-and-report Finding naturally
+ * names the artifact it did NOT produce, and that citation was previously indistinguishable from a
+ * citation of real, present evidence -- this is what makes the distinction.
+ */
+export function classifyFindingEvidenceCitations(findingText) {
+  const seen = new Set();
+  const present = [];
+  const absent = [];
+  for (const { cited, index } of iterateCitations(findingText)) {
+    if (seen.has(cited)) continue;
+    seen.add(cited);
+    const clause = sentenceAround(findingText, index);
+    if (ABSENCE_PHRASE_PATTERN.test(clause)) {
+      absent.push(cited);
+    } else {
+      present.push(cited);
+    }
+  }
+  return { present, absent };
 }
 
 /** Requires the literal word "decisive" -- mechanical, not a judgment call the reviewer has to make. */
@@ -88,7 +164,7 @@ export async function checkFindingWithEvidence({
   fileExists = defaultFileExists
 }) {
   if (!hasPreRegisteredExperiment(beforeBody)) {
-    return { ok: false, applicable: false, errors: [] };
+    return { ok: false, applicable: false, errors: [], absentEvidence: [] };
   }
 
   const errors = [];
@@ -98,7 +174,7 @@ export async function checkFindingWithEvidence({
     errors.push(
       `Card ${task.id} pre-registered an experiment (before this run) but its current body has no "${FINDING_HEADING}" section recording the run's result -- a pre-registered experiment with no recorded finding is still a FAIL.`
     );
-    return { ok: false, applicable: true, errors };
+    return { ok: false, applicable: true, errors, absentEvidence: [] };
   }
 
   if (!isDecisiveFinding(findingText)) {
@@ -107,13 +183,14 @@ export async function checkFindingWithEvidence({
     );
   }
 
-  const cited = parseFindingEvidencePaths(findingText);
-  if (cited.length === 0) {
+  const { present, absent } = classifyFindingEvidenceCitations(findingText);
+
+  if (present.length === 0) {
     errors.push(
       `Card ${task.id}'s "${FINDING_HEADING}" section cites no evidence file -- back the decisive result with at least one committed frame/measurement, referenced with a backtick-quoted path (e.g. \`docs/assets/evidence/${task.id}/attempt_8_main.png\`); a narrative claim alone is still a FAIL.`
     );
   } else {
-    for (const citedPath of cited) {
+    for (const citedPath of present) {
       const exists = repoRoot ? await fileExists(path.join(repoRoot, citedPath)) : false;
       if (!exists) {
         errors.push(
@@ -123,5 +200,14 @@ export async function checkFindingWithEvidence({
     }
   }
 
-  return { ok: errors.length === 0, applicable: true, errors };
+  for (const citedPath of absent) {
+    const exists = repoRoot ? await fileExists(path.join(repoRoot, citedPath)) : false;
+    if (exists) {
+      errors.push(
+        `Card ${task.id}'s "${FINDING_HEADING}" section claims "${citedPath}" does not exist, but a file exists at that path -- an absence claim must be true.`
+      );
+    }
+  }
+
+  return { ok: errors.length === 0, applicable: true, errors, absentEvidence: absent };
 }
