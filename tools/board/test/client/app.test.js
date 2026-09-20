@@ -38,6 +38,7 @@ function makeApp(overrides = {}) {
   const addCommentImpl = overrides.addCommentImpl ?? vi.fn().mockResolvedValue({});
   const uploadAttachmentImpl = overrides.uploadAttachmentImpl ?? vi.fn().mockResolvedValue({});
   const removeAttachmentImpl = overrides.removeAttachmentImpl ?? vi.fn().mockResolvedValue({});
+  const fetchPollerStatusImpl = overrides.fetchPollerStatusImpl ?? null;
   const app = createApp({
     boardRoot,
     detailRoot,
@@ -58,7 +59,9 @@ function makeApp(overrides = {}) {
     fetchGitStatusImpl,
     addCommentImpl,
     uploadAttachmentImpl,
-    removeAttachmentImpl
+    removeAttachmentImpl,
+    fetchPollerStatusImpl,
+    ...(overrides.pollerPollIntervalMs !== undefined ? { pollerPollIntervalMs: overrides.pollerPollIntervalMs } : {})
   });
   return {
     app,
@@ -81,7 +84,8 @@ function makeApp(overrides = {}) {
     fetchGitStatusImpl,
     addCommentImpl,
     uploadAttachmentImpl,
-    removeAttachmentImpl
+    removeAttachmentImpl,
+    fetchPollerStatusImpl
   };
 }
 
@@ -1095,6 +1099,104 @@ describe("createApp git status wiring", () => {
     const { app } = makeApp({ gitStatusRoot });
     await app.init();
     expect(gitStatusRoot.children.length).toBe(0);
+  });
+});
+
+// FIX ROUND 1 finding (b): "The implementation adds the API field and log text, but src/client
+// has no consumer or rendering for drain_state, getStatus().drain or nextReconsiderationAtMs. A
+// person looking at a waiting card sees no explanation and no reconsideration time." This wires
+// app.js to fetch GET /api/poller's own drain map (same shape autoLaunchPoller.js:467 exposes)
+// and thread it through to the board/detail rendering, refreshed on a poll interval -- same shape
+// as the existing git-status polling above, "rather than only at page load."
+describe("createApp drain state wiring (FIX ROUND 1b)", () => {
+  function pollerStatus(drain) {
+    return { enabled: true, intervalMs: 1000, usageMax: 0.8, running: true, lastTickAt: null, nextTickAt: null, lastResult: null, activeRun: false, drain };
+  }
+
+  it("calls fetchPollerStatusImpl on init and shows a waiting card's blocking window and next reconsideration time on the BOARD", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const nextMs = Date.parse("2026-09-21T00:00:00.000Z");
+    const fetchPollerStatusImpl = vi.fn().mockResolvedValue(
+      pollerStatus({ "T-0001": { status: "waiting", blockingWindow: "seven_day", nextReconsiderationAtMs: nextMs } })
+    );
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]), fetchPollerStatusImpl });
+
+    await app.init();
+
+    expect(fetchPollerStatusImpl).toHaveBeenCalled();
+    const card = boardRoot.querySelector('.card[data-id="T-0001"]');
+    expect(card).not.toBeNull();
+    const badgeOrInfo = card.querySelector(".card-drain-badge");
+    expect(badgeOrInfo).not.toBeNull();
+    const label = badgeOrInfo.title || badgeOrInfo.getAttribute("aria-label") || "";
+    expect(label).toMatch(/seven_day/);
+  });
+
+  it("shows the blocking window and next reconsideration time on the DETAIL panel for the selected card", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const nextMs = Date.parse("2026-09-21T00:00:00.000Z");
+    const fetchPollerStatusImpl = vi.fn().mockResolvedValue(
+      pollerStatus({ "T-0001": { status: "waiting", blockingWindow: "five_hour", nextReconsiderationAtMs: nextMs } })
+    );
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]), fetchPollerStatusImpl });
+
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    const drainInfo = detailRoot.querySelector(".detail-drain");
+    expect(drainInfo).not.toBeNull();
+    expect(drainInfo.textContent).toMatch(/five_hour/);
+  });
+
+  it("shows the terminal hold distinctly once a card reaches held_wait_expired / held_oversized", async () => {
+    const t = task({ id: "T-0001", status: "blocked" });
+    const fetchPollerStatusImpl = vi.fn().mockResolvedValue(
+      pollerStatus({ "T-0001": { status: "held_wait_expired", blockingWindow: "five_hour", reason: "needs human intervention" } })
+    );
+    const { app, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]), fetchPollerStatusImpl });
+
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    const drainInfo = detailRoot.querySelector(".detail-drain");
+    expect(drainInfo).not.toBeNull();
+    expect(drainInfo.textContent).toMatch(/human intervention|held_wait_expired/i);
+  });
+
+  it("shows nothing drain-related for a card the poller isn't tracking (no drain)", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const fetchPollerStatusImpl = vi.fn().mockResolvedValue(pollerStatus({}));
+    const { app, boardRoot, detailRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]), fetchPollerStatusImpl });
+
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    expect(boardRoot.querySelector('.card[data-id="T-0001"] .card-drain-badge')).toBeNull();
+    expect(detailRoot.querySelector(".detail-drain")).toBeNull();
+  });
+
+  it("refreshes the rendered drain state on the next poll, not only at page load", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    let callCount = 0;
+    const fetchPollerStatusImpl = vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return Promise.resolve(pollerStatus({}));
+      return Promise.resolve(pollerStatus({ "T-0001": { status: "waiting", blockingWindow: "five_hour", nextReconsiderationAtMs: 1_700_000_000_000 } }));
+    });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]), fetchPollerStatusImpl });
+
+    await app.init();
+    expect(boardRoot.querySelector('.card[data-id="T-0001"] .card-drain-badge')).toBeNull();
+
+    await app.pollPollerStatus();
+    expect(boardRoot.querySelector('.card[data-id="T-0001"] .card-drain-badge')).not.toBeNull();
+  });
+
+  it("does nothing when fetchPollerStatusImpl is not provided -- no drain badge, no error", async () => {
+    const t = task({ id: "T-0001", status: "ready" });
+    const { app, boardRoot } = makeApp({ fetchTasksImpl: vi.fn().mockResolvedValue([t]) });
+    await app.init();
+    expect(boardRoot.querySelector('.card[data-id="T-0001"] .card-drain-badge')).toBeNull();
   });
 });
 

@@ -616,6 +616,66 @@ describe("renderBoard auto-retry attempts badge", () => {
   });
 });
 
+// FIX ROUND 1 finding (b): "a waiting card shows the blocking window and the next
+// reconsideration time on both the card view and the board view." `callbacks.drain` is the
+// same cardId-keyed map GET /api/poller's own getStatus().drain exposes (drainMode.js/
+// autoLaunchPoller.js) -- app.js threads it straight through, no reshaping.
+describe("renderBoard drain badge (FIX ROUND 1b)", () => {
+  it("shows a waiting card's blocking window and next reconsideration time", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "ready" });
+    const nextMs = Date.parse("2026-09-21T00:00:00.000Z");
+    const drain = { "T-0001": { status: "waiting", blockingWindow: "seven_day", nextReconsiderationAtMs: nextMs } };
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn(), drain });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-drain-badge');
+    expect(badge).not.toBeNull();
+    const label = badge.title || badge.getAttribute("aria-label");
+    expect(label).toMatch(/seven_day/);
+    expect(label).toMatch(/2026/);
+  });
+
+  it("shows a distinct terminal-hold badge for held_wait_expired, naming why it needs a human", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "blocked" });
+    const drain = { "T-0001": { status: "held_wait_expired", blockingWindow: "five_hour", reason: "bounded wait exceeded -- needs a human" } };
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn(), drain });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-drain-badge');
+    expect(badge).not.toBeNull();
+    const label = badge.title || badge.getAttribute("aria-label");
+    expect(label).toMatch(/human/i);
+  });
+
+  it("shows a distinct badge for held_oversized", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "blocked" });
+    const drain = { "T-0001": { status: "held_oversized", blockingWindow: "seven_day", reason: "never fits -- split or re-scope" } };
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn(), drain });
+
+    const badge = root.querySelector('.card[data-id="T-0001"] .card-drain-badge');
+    expect(badge).not.toBeNull();
+    const label = badge.title || badge.getAttribute("aria-label");
+    expect(label).toMatch(/split|re-scope/i);
+  });
+
+  it("shows nothing when the card has no drain entry -- no drain, nothing shown", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "ready" });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn(), drain: {} });
+
+    expect(root.querySelector('.card[data-id="T-0001"] .card-drain-badge')).toBeNull();
+  });
+
+  it("shows nothing when no drain map is passed at all (drain mode off / poller not wired)", () => {
+    const root = document.createElement("div");
+    const t = task({ id: "T-0001", status: "ready" });
+    renderBoard(root, [t], { onDrop: vi.fn(), onCardClick: vi.fn() });
+
+    expect(root.querySelector('.card[data-id="T-0001"] .card-drain-badge')).toBeNull();
+  });
+});
+
 describe("renderBoard backlog export button", () => {
   it("renders an export button in the backlog column when onExportBacklog is provided", () => {
     const root = document.createElement("div");

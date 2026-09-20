@@ -1,4 +1,7 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { HOLD_REASON } from "../../src/runner/admissionDecision.js";
 import {
   DRAIN_STATUS,
@@ -9,7 +12,10 @@ import {
   computeNextReconsideration,
   computeAgingBoost,
   evaluateDrainState,
-  createDrainWaitTracker
+  createDrainWaitTracker,
+  persistDrainFirstHeld,
+  clearPersistedDrainFirstHeld,
+  loadPersistedDrainWaitState
 } from "../../src/runner/drainMode.js";
 
 /**
@@ -245,6 +251,38 @@ describe("evaluateDrainState -- the composed decision", () => {
     expect(result.status).toBe(DRAIN_STATUS.WAITING);
     expect(result.agingBoost).toBe(4);
   });
+
+  // FIX ROUND 1 finding (a): "maxWaitMs caps only the reported timestamp... still returns
+  // waiting with overdue: true and nothing acts on it." Chat's exact reproduction: first hold
+  // 1000ms, maxWaitMs 1000ms, now 10000ms -- before this fix that returned WAITING, deadline
+  // 2000ms, overdue: true. It must instead transition to a distinct terminal state.
+  it("REGRESSION (FIX ROUND 1a): transitions to HELD_WAIT_EXPIRED, not WAITING, once now has passed firstHeldAtMs + maxWaitMs (Chat's repro)", () => {
+    const config = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const a = admission({ five_hour: { admitted: false }, seven_day: { admitted: true } });
+    const waitState = { firstHeldAtMs: 1000 };
+    const result = evaluateDrainState({ admission: a, telemetryReadings: {}, waitState, now: 10000, config });
+
+    expect(result.status).toBe(DRAIN_STATUS.HELD_WAIT_EXPIRED);
+    expect(result.status).not.toBe(DRAIN_STATUS.WAITING);
+    expect(result.blockingWindow).toBe("five_hour");
+    expect(result.reason).toMatch(/five_hour/);
+    expect(result.reason).toMatch(/human|intervention/i);
+  });
+
+  it("stays WAITING right up to (but not past) the bound", () => {
+    const config = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const a = admission({ five_hour: { admitted: false }, seven_day: { admitted: true } });
+    const waitState = { firstHeldAtMs: 1000 };
+    const result = evaluateDrainState({ admission: a, telemetryReadings: {}, waitState, now: 1999, config });
+    expect(result.status).toBe(DRAIN_STATUS.WAITING);
+  });
+
+  it("never lets a fresh hold (no prior waitState) start out already expired -- the bound is measured from firstHeldAtMs, not from an assumed history", () => {
+    const config = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 60 * 60 * 1000 };
+    const a = admission({ five_hour: { admitted: false }, seven_day: { admitted: true } });
+    const result = evaluateDrainState({ admission: a, telemetryReadings: {}, waitState: null, now: 10_000_000, config });
+    expect(result.status).toBe(DRAIN_STATUS.WAITING);
+  });
 });
 
 describe("createDrainWaitTracker -- in-memory, per-card wait bookkeeping", () => {
@@ -300,5 +338,112 @@ describe("createDrainWaitTracker -- in-memory, per-card wait bookkeeping", () =>
   it("snapshot is empty for a tracker that has never recorded anything -- default config, nothing to show", () => {
     const tracker = createDrainWaitTracker();
     expect(tracker.snapshot()).toEqual({});
+  });
+
+  // FIX ROUND 1 finding (a): "the tracker forgets the original deadline across a board restart" --
+  // a freshly-constructed tracker can be SEEDED with previously-persisted firstHeldAtMs values, so
+  // the process that creates it (boardServer.js, after loadPersistedDrainWaitState) can restore
+  // exactly what a restart would otherwise silently reset.
+  it("accepts a seed of previously-persisted firstHeldAtMs values, preserving the ORIGINAL deadline rather than starting a fresh one", () => {
+    const tracker = createDrainWaitTracker({ seed: { "T-0001": 1000 } });
+    expect(tracker.get("T-0001")).toMatchObject({ firstHeldAtMs: 1000 });
+  });
+
+  it("a seeded card's own recordHeld still keeps the seeded firstHeldAtMs fixed, only bumping timesPassedOver", () => {
+    const tracker = createDrainWaitTracker({ seed: { "T-0001": 1000 } });
+    const state = tracker.recordHeld("T-0001", 50_000);
+    expect(state.firstHeldAtMs).toBe(1000);
+  });
+});
+
+/**
+ * FIX ROUND 1 finding (a): "the tracker also forgets the original deadline across a board
+ * restart, so a restart quietly extends the bound." These three functions are the persistence
+ * side of that: `persistDrainFirstHeld` writes ONLY the first-hold timestamp (never the whole
+ * wait-state object -- timesPassedOver/lastDrainState are this process's own bookkeeping, not
+ * durable facts), `loadPersistedDrainWaitState` reads every persisted timestamp back at startup,
+ * and `clearPersistedDrainFirstHeld` removes one once a card leaves drain. Same durability class
+ * and atomic-write posture as launchReservation.js's own sidecar files, deliberately scoped to
+ * `runsDir` so it lives alongside every other piece of runner-owned, non-store state.
+ */
+describe("persistDrainFirstHeld / loadPersistedDrainWaitState / clearPersistedDrainFirstHeld -- surviving a board restart", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-drainmode-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  it("round-trips a single card's firstHeldAtMs through a fresh load -- simulating a board restart", async () => {
+    await persistDrainFirstHeld({ runsDir, cardId: "T-0001", firstHeldAtMs: 1000 });
+
+    const loaded = await loadPersistedDrainWaitState({ runsDir });
+    expect(loaded).toEqual({ "T-0001": 1000 });
+  });
+
+  // The literal FIX ROUND 1 requirement: "A test restarts the tracker mid-wait and asserts the
+  // deadline is unchanged."
+  it("REGRESSION (FIX ROUND 1a): a tracker seeded from a restart reports the SAME deadline as before the restart, not a freshly-started one", async () => {
+    const firstHeldAtMs = 1000;
+    await persistDrainFirstHeld({ runsDir, cardId: "T-0001", firstHeldAtMs });
+    const config = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 60 * 60 * 1000 };
+    const originalDeadline = firstHeldAtMs + config.maxWaitMs;
+
+    // "Restart": a brand-new process, a brand-new tracker, seeded only from what's on disk --
+    // never from the dead process's in-memory Map.
+    const seed = await loadPersistedDrainWaitState({ runsDir });
+    const restartedTracker = createDrainWaitTracker({ seed });
+
+    const muchLaterNow = firstHeldAtMs + 10 * config.maxWaitMs;
+    const result = computeNextReconsideration({
+      blockingWindow: "five_hour",
+      telemetryReadings: {},
+      waitState: restartedTracker.get("T-0001"),
+      now: muchLaterNow,
+      config
+    });
+    expect(restartedTracker.get("T-0001").firstHeldAtMs).toBe(firstHeldAtMs);
+    expect(result.nextReconsiderationAtMs).toBe(originalDeadline);
+  });
+
+  it("loads multiple persisted cards into one seed object", async () => {
+    await persistDrainFirstHeld({ runsDir, cardId: "T-0001", firstHeldAtMs: 1000 });
+    await persistDrainFirstHeld({ runsDir, cardId: "T-0002", firstHeldAtMs: 2000 });
+
+    const loaded = await loadPersistedDrainWaitState({ runsDir });
+    expect(loaded).toEqual({ "T-0001": 1000, "T-0002": 2000 });
+  });
+
+  it("returns {} when nothing has ever been persisted (a fresh runsDir, or drain mode never engaged before)", async () => {
+    const loaded = await loadPersistedDrainWaitState({ runsDir });
+    expect(loaded).toEqual({});
+  });
+
+  it("returns {} when runsDir itself doesn't exist yet -- never throws", async () => {
+    const loaded = await loadPersistedDrainWaitState({ runsDir: path.join(runsDir, "does-not-exist") });
+    expect(loaded).toEqual({});
+  });
+
+  it("clearPersistedDrainFirstHeld removes a card's sidecar so a future load no longer sees it", async () => {
+    await persistDrainFirstHeld({ runsDir, cardId: "T-0001", firstHeldAtMs: 1000 });
+    await clearPersistedDrainFirstHeld({ runsDir, cardId: "T-0001" });
+
+    const loaded = await loadPersistedDrainWaitState({ runsDir });
+    expect(loaded).toEqual({});
+  });
+
+  it("clearPersistedDrainFirstHeld is a no-op, not a throw, for a card that was never persisted", async () => {
+    await expect(clearPersistedDrainFirstHeld({ runsDir, cardId: "T-9999" })).resolves.not.toThrow();
+  });
+
+  it("persistDrainFirstHeld is a no-op when runsDir is not provided -- drain persistence is opt-in, matching drain mode's own off-by-default posture", async () => {
+    await expect(persistDrainFirstHeld({ runsDir: null, cardId: "T-0001", firstHeldAtMs: 1000 })).resolves.not.toThrow();
+  });
+
+  it("loadPersistedDrainWaitState returns {} when runsDir is not provided", async () => {
+    expect(await loadPersistedDrainWaitState({ runsDir: null })).toEqual({});
   });
 });

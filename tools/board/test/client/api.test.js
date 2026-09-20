@@ -14,7 +14,8 @@ import {
   addComment,
   uploadAttachment,
   removeAttachment,
-  attachmentDownloadUrl
+  attachmentDownloadUrl,
+  fetchPollerStatus
 } from "../../src/client/api.js";
 
 const originalFetch = global.fetch;
@@ -38,6 +39,25 @@ describe("fetchTasks", () => {
   it("throws when the response is not ok", async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
     await expect(fetchTasks()).rejects.toThrow(/500/);
+  });
+});
+
+// FIX ROUND 1 finding (b): "src/client consumes... the poller's getStatus().drain /
+// nextReconsiderationAtMs (autoLaunchPoller.js:464-467)" -- this is the fetch that makes that data
+// reachable from the client at all; app.js/gitStatusBar.js's own poll-and-render loop is the
+// established shape this mirrors (see fetchGitStatus's sibling usage in app.js).
+describe("fetchPollerStatus", () => {
+  it("GETs /api/poller and returns the parsed JSON, including the drain map", async () => {
+    const payload = { enabled: true, drain: { "T-0001": { status: "waiting", blockingWindow: "five_hour" } } };
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => payload });
+    const status = await fetchPollerStatus();
+    expect(global.fetch).toHaveBeenCalledWith("/api/poller");
+    expect(status).toEqual(payload);
+  });
+
+  it("throws when the response is not ok", async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    await expect(fetchPollerStatus()).rejects.toThrow(/500/);
   });
 });
 

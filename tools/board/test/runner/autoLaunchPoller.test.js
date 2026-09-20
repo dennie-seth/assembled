@@ -12,7 +12,7 @@ import {
 import { CardLaunchError, LAUNCH_TRIGGERS } from "../../src/runner/cardLaunch.js";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
 import { orderCandidatesWithAging } from "../../src/runner/autoLaunchPoller.js";
-import { createDrainWaitTracker, DEFAULT_DRAIN_CONFIG } from "../../src/runner/drainMode.js";
+import { createDrainWaitTracker, DEFAULT_DRAIN_CONFIG, DRAIN_STATUS } from "../../src/runner/drainMode.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -34,11 +34,20 @@ function makeLogger() {
 }
 
 function makeStore(tasks) {
-  return { list: vi.fn(async () => tasks), get: vi.fn(async (id) => tasks.find((t) => t.id === id) ?? null) };
+  return {
+    list: vi.fn(async () => tasks),
+    get: vi.fn(async (id) => tasks.find((t) => t.id === id) ?? null),
+    update: vi.fn(async (id, patch) => {
+      const existing = tasks.find((t) => t.id === id) ?? { id };
+      const updated = { ...existing, ...patch };
+      tasks = tasks.map((t) => (t.id === id ? updated : t));
+      return updated;
+    })
+  };
 }
 
 function makeOrchestrator({ active = false } = {}) {
-  return { hasActiveRuns: vi.fn(() => active), isRunning: vi.fn(() => false) };
+  return { hasActiveRuns: vi.fn(() => active), isRunning: vi.fn(() => false), hub: { broadcast: vi.fn() } };
 }
 
 function makePoller({
@@ -1039,5 +1048,83 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
     expect(await poller.tick()).toBeNull();
     expect(poller.getStatus().drain["T-0001"].agingBoost).toBe(4);
     expect(launchFn).toHaveBeenCalledTimes(2);
+  });
+
+  // FIX ROUND 1 finding (a): "Past maxWaitMs, evaluateDrainState no longer returns waiting with a
+  // capped timestamp and overdue: true that nothing acts on. It transitions to a distinct terminal
+  // state... The consumer acts on it: autoLaunchPoller.js handles the terminal state distinctly
+  // from waiting -- it stops re-reporting the card as merely waiting and surfaces the hold." Drives
+  // repeated ticks ACROSS the deadline (Chat's own reproduction shape), not just one evaluation.
+  it("REGRESSION (FIX ROUND 1a): repeated ticks across the deadline transition the card to a terminal hold -- blocked for a human, never launched, and no longer reported as merely waiting", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1000;
+    const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const launchFn = vi.fn(async () => {
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller, store, orchestrator, logger } = makePoller({
+      tasks: [task],
+      now: () => nowMs,
+      drainModeEnabled: true,
+      drainConfig,
+      launchFn
+    });
+
+    // Tick 1 (now=1000): first hold -- ordinary WAITING.
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.WAITING });
+    expect(store.update).not.toHaveBeenCalled();
+
+    // Tick 2 (now=10000): well past firstHeldAtMs(1000) + maxWaitMs(1000) = 2000.
+    nowMs = 10000;
+    expect(await poller.tick()).toBeNull();
+
+    // Never launched despite "leaving drain" -- the terminal hold is never a free pass around
+    // capacity admission. launchFn was tried (still refused by admission) but never returned a
+    // launch outcome.
+    expect(launchFn).toHaveBeenCalledTimes(2);
+
+    // The card is blocked for a human, exactly like the oversized exit -- not left waiting.
+    expect(store.update).toHaveBeenCalledWith(
+      "T-0001",
+      expect.objectContaining({ status: "blocked", body: expect.stringMatching(/wait|expired|human|intervention/i) })
+    );
+    expect(orchestrator.hub.broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "changed", id: "T-0001" })
+    );
+
+    // No longer tracked as ordinary waiting work -- distinct from `waiting`, consistent with the
+    // oversized exit's own "nothing left to track here" precedent.
+    expect(poller.getStatus().drain).not.toHaveProperty("T-0001");
+
+    // The consumer's own log line is distinct from an ordinary "waiting" report.
+    const lines = logLines(logger);
+    expect(lines).toMatch(/held_wait_expired/);
+  });
+
+  it("REGRESSION (FIX ROUND 1a): once blocked, the card is no longer an eligible candidate on the NEXT tick -- store.list() naturally excludes it", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1000;
+    const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const launchFn = vi.fn(async () => {
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller, store } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, drainConfig, launchFn });
+
+    await poller.tick();
+    nowMs = 10000;
+    await poller.tick();
+    await expect(store.get("T-0001")).resolves.toMatchObject({ status: "blocked" });
+
+    nowMs = 20000;
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().lastResult).toMatchObject({ kind: "skip" });
+    expect(launchFn).toHaveBeenCalledTimes(2); // not called a third time -- T-0001 is no longer eligible
   });
 });
