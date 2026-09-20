@@ -468,3 +468,34 @@ combination of coherence, costume consistency, and a legible head, so a
 further attempt aimed at a shorter-coat seed specifically was not available
 this round. See `docs/assets/evidence/T-0336/README.md` for every attempt's
 image and the full round-by-round analysis.
+
+**Generated, [T-0394](tasks/T-0394.md) (2026-09-20):**
+
+| Asset | Model | License | Prompt | Seed |
+|---|---|---|---|---|
+| `assets/src/concept/player_profile_forward_limb_reference_controlnet.png` | `sd_xl_base_1.0.safetensors` + LoRA `soviet_brutalism_style_v1.safetensors` (style, weight 0.70) + LoRA `player_identity_v2.safetensors` (identity, chained, weight 0.50) + ControlNet `controlnet-openpose-sdxl-1.0_xinsir.safetensors` (strength 1.5, end 1.0) — img2img from `player_profile_costume_reference_T0317.png` composited onto a 1024×1024 black canvas, conditioned on this card's own far-arm-collapsed, resting-leg OpenPose skeleton (`player_profile_forward_limb_skeleton_T0394.png`, sha256 `f18ab222c479a66da83d9e1931d7be0d5fb0872e4f4f2d71c730c88421f94c9f`), plus a second pass masked to the head bounding box only (`player_profile_forward_limb_head_mask_T0394_attempt_2.png`) at its own detail denoise, generator `assets/src/concept/gen_player_profile_forward_limb_reference_T0394.py` | CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRAs) | "sbrutalistplayer, (a single full-body figure, exactly one pose, exactly one camera view, isolated portrait alone on a plain background:1.3), true 90-degree side profile view, not a three-quarter view, facing right, only the near arm extended forward at roughly a right angle clear of the torso, the far arm held back close to the body and hidden from view, the near leg resting flat in a relaxed standing stance..." (full prompt, negative prompt and detail-pass prompt in the `.provenance.json` sidecar) | 380002 |
+
+Promoted from this card's pre-registered 3-attempt experiment's attempt 2 via
+`promote_attempt(2)` (`gen_player_profile_forward_limb_reference_T0394.py:883`).
+**Promotion basis: @DennieSeth's design approval, 2026-09-20**, not a pass of
+every strict-profile acceptance check — the run's own pre-registered
+alternative outcome (stop-and-report; see
+`docs/assets/evidence/T-0394/README.md`) was the valid result of the
+experiment itself, since no attempt cleared every check. Reviewing all three
+attempt frames, @DennieSeth judged attempt 2's near arm as present and
+reading aligned along the body rather than extended forward — not lost — and
+the frame the best of the three and good enough for the reference role,
+overriding the run's own "arm extension lost" reading of that same frame. So
+a future reader does not mistake this for a frame that passed the
+strict-profile forward-arm check: it did not; it was promoted on his design
+call. Attempt 2 does clear the two purely photometric reference-gate
+thresholds — border band max channel 4 (≤16 ceiling) and centred 187×200
+green 9,538px (≥6,000 floor) — which is why the `ci-concept-gate` reference
+tests in `assets/src/concept/tests/test_forward_limb_reference_controlnet_gate_T0382.py`
+now run (rather than skip) and pass. Attempts 1 and 3 were not promoted and
+remain committed only as evidence under `docs/assets/evidence/T-0394/`. The
+goggle lens never rendered in any of the three attempts (flagged, not
+resolved, by this card) and costume-identity drift versus T-0382/T-0387 at
+the same seed/denoise/LoRA weights is flagged for a follow-up card, not
+resolved here. Full per-attempt recipe and measurements:
+`assets/src/concept/ARM_FORWARD_LIMB_REFERENCE_CONTROLNET_ATTEMPT_LOG_T0394.md`.
