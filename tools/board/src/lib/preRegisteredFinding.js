@@ -60,13 +60,13 @@ function looksLikeCitedPath(candidate) {
   return PATH_SEPARATOR_PATTERN.test(candidate) || KNOWN_EVIDENCE_EXTENSIONS.test(candidate);
 }
 
-/** Every backtick-quoted citation in `text` that looks like a plausible repo path, with its match index. */
+/** Every backtick-quoted citation in `text` that looks like a plausible repo path, with its match span. */
 function iterateCitations(text) {
   const matches = [];
   for (const match of text.matchAll(CITATION_PATTERN)) {
     const cited = match[1];
     if (!looksLikeCitedPath(cited)) continue;
-    matches.push({ cited, index: match.index });
+    matches.push({ cited, index: match.index, end: match.index + match[0].length });
   }
   return matches;
 }
@@ -111,58 +111,53 @@ function sentenceRange(text, index) {
   return { start, end };
 }
 
-// Intra-sentence clause boundaries -- narrower than a full sentence. T-0395 FIX ROUND 1: a Finding's
-// prose commonly packs a positive citation and a negative (absence) citation into the *same*
-// sentence, joined by a comma, an em-dash-style "--", or a contrastive conjunction, e.g.
-// "`docs/missing.png` records the result, while `assets/result.png` was not produced." Binding the
-// absence phrase to the whole sentence let the positive citation inherit an absence claim never made
-// about it (and, symmetrically, could drag a real citation into a false absence). None of these can
-// occur mid-backtick-path, so splitting on them never fractures a citation itself.
-const CLAUSE_BOUNDARY_PATTERN = /,|;|--|—|\b(?:while|whereas|although|though|but)\b/gi;
-
-/** The clause of `text` surrounding `index`, scoped within its sentence -- narrower than `sentenceRange`. */
-function clauseAround(text, index) {
-  const { start: sentStart, end: sentEnd } = sentenceRange(text, index);
-  const sentence = text.slice(sentStart, sentEnd);
-  const localIndex = index - sentStart;
-
-  let clauseStart = 0;
-  let clauseEnd = sentence.length;
-  for (const match of sentence.matchAll(CLAUSE_BOUNDARY_PATTERN)) {
-    const matchEnd = match.index + match[0].length;
-    if (matchEnd <= localIndex) {
-      clauseStart = matchEnd;
-    } else if (match.index >= localIndex) {
-      clauseEnd = match.index;
-      break;
-    }
-  }
-  return sentence.slice(clauseStart, clauseEnd);
+// T-0395 FIX ROUND 2: FIX ROUND 1 bound an absence phrase to the citation's *clause*, splitting on a
+// fixed list of separators (comma, "--", "while", etc). That still let one absence phrase claim every
+// citation in the resulting segment when a Finding joined two independent claims with a conjunction
+// the list didn't cover ("and") or a bare Markdown line break -- e.g. "`docs/missing.png` records the
+// result and `assets/result.png` was not produced" classified BOTH paths absent, even though
+// `docs/missing.png` is affirmatively cited. Widening the separator list only chases the next missed
+// word; the fix instead binds an absence phrase to the *specific* citation it follows, by position,
+// not by vocabulary.
+//
+// A citation's "claim window" is the text strictly between it and whichever comes first: the next
+// citation (so a later citation's own absence phrase can never reach backward across it) or the end
+// of its own sentence (so an absence phrase in a later, unrelated sentence can never reach back
+// either). If an `ABSENCE_PHRASE_PATTERN` match falls inside that window, this citation -- and only
+// this citation -- is absent. A citation with no absence phrase in its own window is `present`:
+// ambiguous bindings default to present/claimed-and-required, never absent, per this card's own
+// "treat ambiguous positive evidence conservatively" requirement -- another path's absence phrase can
+// never waive a citation's existence check.
+function citationClaimWindow(text, citation, nextCitation) {
+  const sentenceEnd = sentenceRange(text, citation.index).end;
+  const windowEnd = nextCitation ? Math.min(nextCitation.index, sentenceEnd) : sentenceEnd;
+  return text.slice(citation.end, windowEnd);
 }
 
 /**
  * Splits a Finding section's citations into `present` (required evidence -- must exist) and
  * `absent` (the Finding itself claims this path does not exist, e.g. "No reference is promoted --
  * `path/to/thing.png` does not exist on this branch") based on whether an `ABSENCE_PHRASE_PATTERN`
- * clause shares the same *clause* as the citation -- not merely the same sentence, since a sentence
- * can mix a positive citation and a negative one (T-0395 FIX ROUND 1). A stop-and-report Finding
- * naturally names the artifact it did NOT produce, and that citation was previously indistinguishable
- * from a citation of real, present evidence -- this is what makes the distinction.
+ * match falls in that specific citation's own claim window (see `citationClaimWindow`). A
+ * stop-and-report Finding naturally names the artifact it did NOT produce, and that citation was
+ * previously indistinguishable from a citation of real, present evidence -- this is what makes the
+ * distinction.
  */
 export function classifyFindingEvidenceCitations(findingText) {
+  const citations = iterateCitations(findingText);
   const seen = new Set();
   const present = [];
   const absent = [];
-  for (const { cited, index } of iterateCitations(findingText)) {
-    if (seen.has(cited)) continue;
-    seen.add(cited);
-    const clause = clauseAround(findingText, index);
-    if (ABSENCE_PHRASE_PATTERN.test(clause)) {
-      absent.push(cited);
+  citations.forEach((citation, i) => {
+    if (seen.has(citation.cited)) return;
+    seen.add(citation.cited);
+    const window = citationClaimWindow(findingText, citation, citations[i + 1]);
+    if (ABSENCE_PHRASE_PATTERN.test(window)) {
+      absent.push(citation.cited);
     } else {
-      present.push(cited);
+      present.push(citation.cited);
     }
-  }
+  });
   return { present, absent };
 }
 
