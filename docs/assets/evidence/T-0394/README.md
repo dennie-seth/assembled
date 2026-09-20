@@ -13,46 +13,50 @@ that has produced a clean single arm at `frame_scale=1.0` in every prior sightin
 line (T-0382 attempt 1, T-0387 attempts 2-3, this card's own attempt 1).
 
 Both of this card's two structural changes worked in isolation. The resting leg
-(`pose_rig_forward_limb_controlnet_T0394`, near knee/ankle sourced verbatim from
-`pose_rig_master_sheet_T0351.SIDE_NEUTRAL_KEYPOINTS_NORM`) produced a clean, flat, single resting
-leg in every one of the 3 attempts (`attempt_1_main_1024.png`, `attempt_2_main_1024.png`,
-`attempt_3_legs_resting_crop.png`) -- the leg is confirmed solved, exactly as this card's own source
-material predicted. And the single-arm result held at `frame_scale=1.0` (attempt 1) and was
-partially recovered at `frame_scale=0.95` (attempt 3, `attempt_3_torso_no_second_hand_crop.png`
-shows the extended arm with no second hand), so the far-arm collapse
-(`pose_rig_forward_limb_controlnet_T0380`) also continued to hold across every attempt -- no attempt
-in this card ever showed a second hand or glove.
+(`assets/src/concept/pose_rig_forward_limb_controlnet_T0394.py`, near knee/ankle sourced verbatim
+from `assets/src/character/pose_rig_master_sheet_T0351.py`'s `SIDE_NEUTRAL_KEYPOINTS_NORM`) produced
+a clean, flat, single resting leg in every one of the 3 attempts
+(`docs/assets/evidence/T-0394/attempt_1_main_1024.png`,
+`docs/assets/evidence/T-0394/attempt_2_main_1024.png`,
+`docs/assets/evidence/T-0394/attempt_3_legs_resting_crop.png`) -- the leg is confirmed solved,
+exactly as this card's own source material predicted. And the single-arm result held at
+`frame_scale=1.0` (attempt 1) and was partially recovered at `frame_scale=0.95` (attempt 3,
+`docs/assets/evidence/T-0394/attempt_3_torso_no_second_hand_crop.png` shows the extended arm with no
+second hand), so the far-arm collapse
+(`assets/src/concept/pose_rig_forward_limb_controlnet_T0380.py`) also continued to hold across every
+attempt -- no attempt in this card ever showed a second hand or glove.
 
 What did not resolve within the 3-attempt cap is the interaction between the two remaining
 acceptance checks this card's own hypothesis bet on being independent levers: the border/background
 fix and the goggle lens. Attempt 1 (`frame_scale=1.0`, the untouched baseline) measured border max
 channel 124, far over the 16 ceiling -- the hood apex rendered only ~14px from the canvas top edge
-(`attempt_1_top_border_violation_crop.png`), confirming the border defect is real and structural at
-denoise 0.87, not attempt-specific noise. Attempt 2 (`frame_scale=0.88`) fixed the border decisively
-(max channel 4) but lost the near-arm extension entirely (`attempt_2_torso_no_arm_extension_crop.png`
-shows both arms down at rest, and the pose pass's own pre-detail-pass output already shows this,
-ruling out the detail pass as the cause). Attempt 3 (`frame_scale=0.95`, a deliberately gentler
-value chosen specifically to preserve more of the untouched baseline's geometry) partially recovered
-the arm but only partially recovered the border fix too: max channel 67, worse than attempt 2's 4,
-better than attempt 1's 124 -- consistent with a real, monotonic, dose-dependent trade-off between
-`frame_scale` and the single-arm result at this seed, not two independent defects each fixable on
-its own lever.
+(`docs/assets/evidence/T-0394/attempt_1_top_border_violation_crop.png`), confirming the border
+defect is real and structural at denoise 0.87, not attempt-specific noise. Attempt 2
+(`frame_scale=0.88`) fixed the border decisively (max channel 4) but lost the near-arm extension
+entirely (`docs/assets/evidence/T-0394/attempt_2_torso_no_arm_extension_crop.png` shows both arms
+down at rest, and the pose pass's own pre-detail-pass output already shows this, ruling out the
+detail pass as the cause). Attempt 3 (`frame_scale=0.95`, a deliberately gentler value chosen
+specifically to preserve more of the untouched baseline's geometry) partially recovered the arm but
+only partially recovered the border fix too: max channel 67, worse than attempt 2's 4, better than
+attempt 1's 124 -- consistent with a real, monotonic, dose-dependent trade-off between `frame_scale`
+and the single-arm result at this seed, not two independent defects each fixable on its own lever.
 
 The goggle lens also never became legible across all 3 attempts, regardless of the detail pass's own
 denoise (0.55 in attempt 1, 0.35 in attempts 2-3): attempt 1 and attempt 3 both show the
 head-masked detail pass redesigning the hood into an ornate, multi-faceted armour-plate helmet
-(`attempt_1_head_mecha_helmet_crop.png`, `attempt_3_head_mecha_helmet_crop.png`) rather than
-clarifying a single circular lens on the pose pass's own hood silhouette, and attempt 3 in
-particular shows no lens-like highlight at all. Attempt 2's head crop
-(`attempt_2_head_crop.png`) is the closest of the three -- a clean, legible pale mask shape is
-visible -- but it reads as a stylised full mask/face, not "a single dark round goggle lens," so it
-does not clear this card's own specific acceptance wording either. Across three attempts at two
-different detail-pass denoise values, the mechanism did not reliably produce a legible single
-circular lens on demand.
+(`docs/assets/evidence/T-0394/attempt_1_head_mecha_helmet_crop.png`,
+`docs/assets/evidence/T-0394/attempt_3_head_mecha_helmet_crop.png`) rather than clarifying a single
+circular lens on the pose pass's own hood silhouette, and attempt 3 in particular shows no
+lens-like highlight at all. Attempt 2's head crop
+(`docs/assets/evidence/T-0394/attempt_2_head_crop.png`) is the closest of the three -- a clean,
+legible pale mask shape is visible -- but it reads as a stylised full mask/face, not "a single dark
+round goggle lens," so it does not clear this card's own specific acceptance wording either. Across
+three attempts at two different detail-pass denoise values, the mechanism did not reliably produce a
+legible single circular lens on demand.
 
 No image produced by any of the three attempts passes every acceptance check simultaneously. Per
-this card's own pre-registered alternative outcome, this is a valid PASS: stop and report, not spend
-a fourth attempt. No reference is promoted --
+this card's own pre-registered alternative outcome, this is a decisive valid PASS: stop and report,
+not spend a fourth attempt. No reference is promoted --
 `assets/src/concept/player_profile_forward_limb_reference_controlnet.png` does not exist on this
 branch.
 
