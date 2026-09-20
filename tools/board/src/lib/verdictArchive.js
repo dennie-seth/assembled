@@ -55,9 +55,19 @@ export async function readVerdictEntries(tasksDir, id) {
     .map((line) => JSON.parse(line));
 }
 
+/**
+ * Cuts `text` at or before `max` characters, preferring the last word boundary within range so a
+ * reviewer's FAIL note never gets chopped mid-word (T-0389: an implementer that can't read where
+ * a truncated complaint was headed has no way to act on it -- see this function's cap below).
+ * Falls back to a hard cut only when no whitespace exists in range (e.g. one long token).
+ */
 function truncateOneLine(text, max) {
   const collapsed = String(text).replace(/\s+/g, " ").trim();
-  return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+  if (collapsed.length <= max) return collapsed;
+  const window = collapsed.slice(0, max);
+  const lastSpace = window.lastIndexOf(" ");
+  const cut = lastSpace > 0 ? window.slice(0, lastSpace) : window.slice(0, max - 1);
+  return `${cut}…`;
 }
 
 /**
@@ -66,8 +76,16 @@ function truncateOneLine(text, max) {
  * below) plus the most recent `limit` entries, one line each, text collapsed to a single line
  * and capped. Pure function of its input -- no clock, no randomness -- so it's directly
  * testable and reproducible.
+ *
+ * `maxTextLength` default (T-0389, raised from 240): T-0365's own card documented two consecutive
+ * rounds where the 240-char cap cut a reviewer's FAIL note off mid-sentence, leaving the
+ * implementer unable to read (and therefore act on) the actual complaint -- a direct, reproduced
+ * cause of wasted retry rounds. The original 240 predates verdictArchive.js's own prompt moving
+ * off argv onto stdin (see this file's header comment); with `limit` already bounding entry count
+ * to 5, even a much larger per-entry cap keeps the whole digest a few KB, nowhere near a size
+ * concern for a stdin-delivered prompt.
  */
-export function buildVerdictDigest(entries, { limit = 5, maxTextLength = 240 } = {}) {
+export function buildVerdictDigest(entries, { limit = 5, maxTextLength = 2000 } = {}) {
   if (!entries || entries.length === 0) return "";
 
   const failCount = entries.filter((e) => e.heading === "Validation: FAIL").length;
