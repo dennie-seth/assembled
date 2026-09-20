@@ -1,0 +1,98 @@
+{
+  "pose_key": "side_right_forward",
+  "source_rig": "pose_rig_forward_limb_controlnet_T0380.FORWARD_LIMB_KEYPOINTS_NORM, near knee/ankle overridden to pose_rig_master_sheet_T0351.SIDE_NEUTRAL_KEYPOINTS_NORM (resting leg, no hip-flex excursion), scaled about the canvas centre by frame_scale=0.95",
+  "frame_scale": 0.95,
+  "thigh_angle_degrees_from_horizontal": 89.36340642403653,
+  "keypoints": [
+    {
+      "joint": 0,
+      "x": 0.5712499999999999,
+      "y": 0.12
+    },
+    {
+      "joint": 1,
+      "x": 0.5,
+      "y": 0.22449999999999998
+    },
+    {
+      "joint": 2,
+      "x": 0.50475,
+      "y": 0.23875000000000002
+    },
+    {
+      "joint": 3,
+      "x": 0.614,
+      "y": 0.23875000000000002
+    },
+    {
+      "joint": 4,
+      "x": 0.7375,
+      "y": 0.23875000000000002
+    },
+    {
+      "joint": 5,
+      "x": 0.49524999999999997,
+      "y": 0.2435
+    },
+    {
+      "joint": 6,
+      "x": 0.49524999999999997,
+      "y": 0.2435
+    },
+    {
+      "joint": 7,
+      "x": 0.49524999999999997,
+      "y": 0.2435
+    },
+    {
+      "joint": 8,
+      "x": 0.5095000000000001,
+      "y": 0.5665
+    },
+    {
+      "joint": 9,
+      "x": 0.5114,
+      "y": 0.7375
+    },
+    {
+      "joint": 10,
+      "x": 0.51425,
+      "y": 0.9085000000000001
+    },
+    {
+      "joint": 11,
+      "x": 0.49524999999999997,
+      "y": 0.5683999999999999
+    },
+    {
+      "joint": 12,
+      "x": 0.462,
+      "y": 0.728
+    },
+    {
+      "joint": 13,
+      "x": 0.4335,
+      "y": 0.88
+    },
+    {
+      "joint": 14,
+      "x": 0.56175,
+      "y": 0.09910000000000002
+    },
+    {
+      "joint": 15,
+      "x": 0.5427500000000001,
+      "y": 0.09910000000000002
+    },
+    {
+      "joint": 16,
+      "x": 0.5,
+      "y": 0.12
+    },
+    {
+      "joint": 17,
+      "x": 0.49524999999999997,
+      "y": 0.12
+    }
+  ]
+}
