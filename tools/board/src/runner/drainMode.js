@@ -1,24 +1,33 @@
+import path from "node:path";
+import { promises as fs } from "node:fs";
 import { WINDOW_KINDS } from "./usageTelemetry.js";
 import { HOLD_REASON } from "./admissionDecision.js";
 
 /**
  * WIP gate T-F (spec §9): drain mode decides what happens to a card the shared admission
  * decision (admissionDecision.js) holds on capacity-fit grounds, once enforcement (T-D) is on.
- * Three states:
+ * Four states:
  *
  *   - CLEAR: no window is confirmed blocked (either fully admitted, or every hold reason is an
  *     "unknown capacity" one -- unmeasured/unestimated/incomparable). Nothing to drain.
- *   - WAITING: a real, measured shortage in a specific window. Bounded and aged (see
+ *   - WAITING: a real, measured shortage in a specific window, still within the bound. Aged (see
  *     computeNextReconsideration/computeAgingBoost below) -- the ordinary case.
  *   - HELD_OVERSIZED: the card would still be refused even at that window's theoretical maximum
  *     headroom (admissionDecision.js's own HOLD_REASON.OVERSIZED_ESTIMATE_NEVER_FITS). Waiting
  *     cannot help this one at all, so it exits drain immediately with an actionable reason
  *     instead of occupying a slot in the ordinary wait/retry rotation forever.
+ *   - HELD_WAIT_EXPIRED (FIX ROUND 1, Chat round-2 review of #408 finding 2): the bounded wait
+ *     itself ran out -- `now` has passed `firstHeldAtMs + maxWaitMs` with the window still
+ *     blocked. Distinct from WAITING on purpose: past the bound this is a terminal hold for a
+ *     human, not an indefinite retry. `autoLaunchPoller.js` blocks the card for intervention when
+ *     it sees this status rather than continuing to report it as merely waiting -- see its own
+ *     docstring for why this can never become a free pass around capacity admission.
  */
 export const DRAIN_STATUS = Object.freeze({
   CLEAR: "clear",
   WAITING: "waiting",
-  HELD_OVERSIZED: "held_oversized"
+  HELD_OVERSIZED: "held_oversized",
+  HELD_WAIT_EXPIRED: "held_wait_expired"
 });
 
 // seven_day dominates when both windows are blocked: only ITS OWN reset can ever resolve a
@@ -58,6 +67,21 @@ function buildOversizedReason(windowKind) {
     `Oversized for the ${windowKind} window: this card's predicted cost would still be refused ` +
     "even at that window's maximum possible headroom -- waiting for it to free up cannot help. " +
     "Split this card into smaller units or re-scope it before the next attempt."
+  );
+}
+
+/**
+ * FIX ROUND 1: a human-actionable message for a card that has waited as long as this gate will
+ * ever wait (`config.maxWaitMs`) without the blocking window freeing up. Names the window and
+ * states plainly that this requires a human to intervene -- distinct wording from the oversized
+ * reason above, since the two exits mean different things (a permanent misfit vs. a real
+ * shortage that simply outlasted the bound).
+ */
+function buildWaitExpiredReason(windowKind) {
+  return (
+    `Drain wait bound reached for the ${windowKind} window: this card has waited as long as this ` +
+    "gate will ever wait without the window freeing up. Waiting further will not resolve it on " +
+    "its own -- a human needs to check capacity or re-scope/split the card before it launches again."
   );
 }
 
@@ -170,6 +194,21 @@ export function evaluateDrainState({ admission, telemetryReadings, waitState = n
     config
   });
 
+  // FIX ROUND 1 (Chat round-2 review of #408, finding 2): past the bound this is a terminal hold,
+  // not an indefinite WAITING report with a capped timestamp nobody acts on -- see DRAIN_STATUS's
+  // own docstring.
+  if (overdue) {
+    return {
+      status: DRAIN_STATUS.HELD_WAIT_EXPIRED,
+      blockingWindow,
+      reason: buildWaitExpiredReason(blockingWindow),
+      nextReconsiderationAtMs: null,
+      reconsiderationBasis: null,
+      overdue: true,
+      agingBoost: computeAgingBoost({ waitState, now, config })
+    };
+  }
+
   return {
     status: DRAIN_STATUS.WAITING,
     blockingWindow,
@@ -182,13 +221,23 @@ export function evaluateDrainState({ admission, telemetryReadings, waitState = n
 }
 
 /**
- * In-memory, per-card wait bookkeeping -- same durability class as autoLaunchPoller.js's own
- * `lastResult`/`lastTickAtMs` (deliberately not persisted to the store or a runsDir file: a board
- * restart resets what any human currently knows about a card's wait history too, so starting
- * drain tracking fresh on restart is consistent, not a gap).
+ * In-memory, per-card wait bookkeeping -- `timesPassedOver`/`lastDrainState` are this process's
+ * own scratch state, same durability class as autoLaunchPoller.js's own `lastResult`/
+ * `lastTickAtMs`. `firstHeldAtMs` is different: FIX ROUND 1 requires it survive a board restart
+ * (see persistDrainFirstHeld/loadPersistedDrainWaitState below), so a tracker can be constructed
+ * with a `seed` -- a cardId -> firstHeldAtMs map, typically `loadPersistedDrainWaitState`'s own
+ * return value -- that pre-populates each card's ORIGINAL deadline rather than starting a fresh
+ * one. Persistence itself is a separate concern (see below), kept out of this constructor so
+ * `createDrainWaitTracker()` with no arguments -- every existing call site, and every existing
+ * test -- stays exactly as synchronous and in-memory-only as before this fix.
  */
-export function createDrainWaitTracker() {
+export function createDrainWaitTracker({ seed = {} } = {}) {
   const state = new Map();
+  for (const [cardId, firstHeldAtMs] of Object.entries(seed)) {
+    if (typeof firstHeldAtMs === "number") {
+      state.set(cardId, { firstHeldAtMs, timesPassedOver: 0, lastDrainState: null });
+    }
+  }
 
   /** Records (or continues) a hold for `cardId` as of `now`, optionally attaching the latest computed drain state for `snapshot()` to report. */
   function recordHeld(cardId, now, drainState = null) {
@@ -225,4 +274,63 @@ export function createDrainWaitTracker() {
   }
 
   return { recordHeld, get, clear, snapshot };
+}
+
+/**
+ * FIX ROUND 1 (Chat round-2 review of #408, finding 2): "the tracker also forgets the original
+ * deadline across a board restart, so a restart quietly extends the bound." These three functions
+ * are the persistence side of `createDrainWaitTracker`'s in-memory bookkeeping -- ONE JSON sidecar
+ * per card under `runsDir/.drain-wait/`, storing ONLY `firstHeldAtMs` (never `timesPassedOver`/
+ * `lastDrainState`, which are this process's own scratch state, not durable facts). Same
+ * per-entry-file, best-effort posture as launchReservation.js's own lease files -- a failed write
+ * here must never block a poller tick, so callers are expected to fire these off without letting a
+ * rejection propagate (see autoLaunchPoller.js).
+ */
+const DRAIN_WAIT_STATE_DIRNAME = ".drain-wait";
+
+function drainWaitStatePath(runsDir, cardId) {
+  return path.join(runsDir, DRAIN_WAIT_STATE_DIRNAME, `${cardId}.json`);
+}
+
+/** Persists `cardId`'s first-hold timestamp so a board restart resumes the SAME deadline. A no-op when `runsDir` is not provided (drain persistence is opt-in, matching drain mode's own off-by-default posture). */
+export async function persistDrainFirstHeld({ runsDir, cardId, firstHeldAtMs, writeFileFn = fs.writeFile, mkdirFn = fs.mkdir }) {
+  if (!runsDir) return;
+  const filePath = drainWaitStatePath(runsDir, cardId);
+  await mkdirFn(path.dirname(filePath), { recursive: true });
+  await writeFileFn(filePath, JSON.stringify({ firstHeldAtMs }), "utf8");
+}
+
+/** Removes `cardId`'s persisted first-hold timestamp once it leaves drain (launched, or reaches a terminal hold). Never throws for a card that was never persisted. */
+export async function clearPersistedDrainFirstHeld({ runsDir, cardId, unlinkFn = fs.unlink }) {
+  if (!runsDir) return;
+  await unlinkFn(drainWaitStatePath(runsDir, cardId)).catch(() => {});
+}
+
+/**
+ * Loads every persisted first-hold timestamp under `runsDir` -- called once at startup so a
+ * freshly-constructed tracker (`createDrainWaitTracker({ seed })`) resumes each card's ORIGINAL
+ * deadline instead of silently starting a new maxWaitMs window. `{}` for a missing directory (a
+ * fresh runsDir, or drain mode never engaged before) or a missing `runsDir` argument -- never
+ * throws, same fail-open posture as every other best-effort read in this runner.
+ */
+export async function loadPersistedDrainWaitState({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
+  if (!runsDir) return {};
+  let names;
+  try {
+    names = await readdirFn(path.join(runsDir, DRAIN_WAIT_STATE_DIRNAME));
+  } catch {
+    return {};
+  }
+  const out = {};
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const cardId = name.slice(0, -".json".length);
+    try {
+      const parsed = JSON.parse(await readFileFn(path.join(runsDir, DRAIN_WAIT_STATE_DIRNAME, name), "utf8"));
+      if (typeof parsed.firstHeldAtMs === "number") out[cardId] = parsed.firstHeldAtMs;
+    } catch {
+      // Corrupt/unreadable sidecar -- skip it rather than fail the whole load.
+    }
+  }
+  return out;
 }

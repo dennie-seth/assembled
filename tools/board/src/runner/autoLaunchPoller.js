@@ -3,7 +3,17 @@ import { readUsageSnapshot } from "./usageWindow.js";
 import { readUsageTelemetry, WINDOW_KINDS, READING_STATUS } from "./usageTelemetry.js";
 import { admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
-import { evaluateDrainState, computeAgingBoost, createDrainWaitTracker, drainModeEnabledFromEnv, DRAIN_STATUS, DEFAULT_DRAIN_CONFIG } from "./drainMode.js";
+import { appendNote } from "./runOrchestrator.js";
+import {
+  evaluateDrainState,
+  computeAgingBoost,
+  createDrainWaitTracker,
+  drainModeEnabledFromEnv,
+  DRAIN_STATUS,
+  DEFAULT_DRAIN_CONFIG,
+  persistDrainFirstHeld,
+  clearPersistedDrainFirstHeld
+} from "./drainMode.js";
 
 const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 
@@ -387,15 +397,49 @@ export function createAutoLaunchPoller({
                 drainNote = " [drain: held_oversized -- auto-blocked, see the card's own note]";
               } else {
                 const nowMs = now();
+                const priorWaitState = drainTracker.get(candidate.id);
                 const drainState = evaluateDrainState({
                   admission: err.admission ?? null,
                   telemetryReadings: err.telemetryReadings ?? null,
-                  waitState: drainTracker.get(candidate.id),
+                  waitState: priorWaitState,
                   now: nowMs,
                   config: drainConfig
                 });
                 drainTracker.recordHeld(candidate.id, nowMs, drainState);
-                if (drainState.status === DRAIN_STATUS.WAITING) {
+                if (!priorWaitState && runsDir) {
+                  // FIX ROUND 1: persist ONLY on the card's first hold -- firstHeldAtMs never
+                  // changes after that, so there is nothing new to write on a repeat hold.
+                  // Fire-and-forget: a failed write must never affect this tick (same posture as
+                  // every other best-effort write in this runner).
+                  persistDrainFirstHeld({ runsDir, cardId: candidate.id, firstHeldAtMs: nowMs }).catch((persistErr) => {
+                    logger.log(`${LOG_PREFIX}: failed to persist drain first-hold timestamp for ${candidate.id}: ${persistErr.message}`);
+                  });
+                }
+
+                if (drainState.status === DRAIN_STATUS.HELD_WAIT_EXPIRED) {
+                  // FIX ROUND 1 finding (a): past the bound this is a terminal hold, not an
+                  // indefinite wait -- block the card for a human, exactly like the oversized exit
+                  // above, and NEVER launch it: leaving drain must never bypass capacity admission.
+                  try {
+                    const current = await store.get(candidate.id);
+                    if (current) {
+                      const updated = await store.update(candidate.id, {
+                        status: "blocked",
+                        body: appendNote(current.body ?? "", "WIP Gate: Drain Hold (Wait Expired)", drainState.reason)
+                      });
+                      orchestrator.hub?.broadcast?.({ type: "changed", id: candidate.id, task: updated });
+                    }
+                  } catch (holdErr) {
+                    logger.log(`${LOG_PREFIX}: failed to record the drain-wait-expired hold on ${candidate.id}: ${holdErr.message}`);
+                  }
+                  // The next tick's store.list() naturally excludes it (status is no longer
+                  // "ready") -- nothing left to track here, same precedent as the oversized exit.
+                  drainTracker.clear(candidate.id);
+                  if (runsDir) {
+                    clearPersistedDrainFirstHeld({ runsDir, cardId: candidate.id }).catch(() => {});
+                  }
+                  drainNote = ` [drain: held_wait_expired -- auto-blocked, see the card's own note]`;
+                } else if (drainState.status === DRAIN_STATUS.WAITING) {
                   const nextIso =
                     drainState.nextReconsiderationAtMs !== null ? new Date(drainState.nextReconsiderationAtMs).toISOString() : "unknown";
                   drainNote = ` [drain: waiting on ${drainState.blockingWindow}, next reconsideration ${nextIso}]`;
