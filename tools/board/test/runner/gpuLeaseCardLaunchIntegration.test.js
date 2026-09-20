@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { launchCardRun, LAUNCH_TRIGGERS, CardLaunchError } from "../../src/runner/cardLaunch.js";
-import { readGpuLease } from "../../src/runner/gpuLease.js";
+import { acquireGpuLease, readGpuLease } from "../../src/runner/gpuLease.js";
 import { listActiveReservations } from "../../src/runner/launchReservation.js";
 
 /**
@@ -204,5 +204,134 @@ describe("GPU_LEASE_ENABLED off (default): no launch that happens today is refus
     expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
     expect(orchestrator.runCard).toHaveBeenCalledWith("T-0002");
     expect(await readGpuLease({ runsDir })).toBeNull();
+  });
+
+  it("[FIX ROUND 1] a throwing buildLaunchDecideFn does not block the launch when the flag is off, even for a GPU (assets) card", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0001", agent: "assets" })], {
+      runsDir,
+      runCard: vi.fn(async () => undefined)
+    });
+    const logger = makeLogger();
+    const buildLaunchDecideFn = () => {
+      throw new Error("setup failed");
+    };
+
+    await launchCardRun({ orchestrator, id: "T-0001", trigger: LAUNCH_TRIGGERS.MANUAL, logger, buildLaunchDecideFn });
+
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+  });
+});
+
+/**
+ * FIX ROUND 1 (Chat round-2 review of #407, head 41890678, finding 1 -- P1): the GPU lease
+ * previously sat INSIDE the advisory pipeline's own `launch()` callback, which the pipeline
+ * deliberately never reaches on a setup error (a throwing `buildLaunchDecideFn`, a throwing/hung
+ * `decide()`) when token enforcement is off, or on a manual override even when it is on -- so a
+ * launch could reach `orchestrator.runCard(id)` with the GPU flag on and NO lease ever attempted.
+ * Chat reproduced this through the real `launchCardRun`: a real lease held by another card, GPU
+ * leasing on, token enforcement off, `buildLaunchDecideFn` throwing -- the fake worker for a
+ * second assets card was launched while the other card still held the lease.
+ *
+ * These regressions drive the fix: GPU acquisition must be a hard gate on every route to
+ * `orchestrator.runCard`, independent of whether the advisory/token pipeline itself succeeded,
+ * failed open, or was bypassed by a manual override.
+ */
+describe("FIX ROUND 1: the GPU lease gate is independent of the advisory pipeline's own fail-open behaviour", () => {
+  it("Chat's exact repro -- a real lease held by T-OTHER, GPU leasing on, token enforcement off, buildLaunchDecideFn throwing: the second assets card must not reach the worker", async () => {
+    await acquireGpuLease({ runsDir, cardId: "T-OTHER", executionId: "exec-other", invocationId: "inv-other", owner: "cardLaunch:T-OTHER" });
+
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0002", agent: "assets" })], { runsDir });
+    const logger = makeLogger();
+    const buildLaunchDecideFn = () => {
+      throw new Error("setup failed");
+    };
+
+    await expect(
+      launchCardRun({
+        orchestrator,
+        id: "T-0002",
+        trigger: LAUNCH_TRIGGERS.MANUAL,
+        logger,
+        gpuLeaseEnabledFn: () => true,
+        enforcementEnabledFn: () => false,
+        buildLaunchDecideFn
+      })
+    ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+    // T-OTHER's lease is untouched by the refused attempt.
+    expect(await readGpuLease({ runsDir })).toMatchObject({ cardId: "T-OTHER" });
+  });
+
+  it("lease filesystem error -- acquisition fails with an I/O error (not GpuLeaseHeldError): the launch refuses and the token reservation it already wrote is released", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0001", agent: "assets" })], { runsDir });
+    const logger = makeLogger();
+    const acquireGpuLeaseFn = vi.fn(async () => {
+      throw new Error("EACCES: permission denied, open '.gpu-leases/comfyui-primary.gpu-lease.json.tmp'");
+    });
+
+    await expect(
+      launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        trigger: LAUNCH_TRIGGERS.MANUAL,
+        logger,
+        gpuLeaseEnabledFn: () => true,
+        enforcementEnabledFn: () => false,
+        acquireGpuLeaseFn
+      })
+    ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+    // The token reservation this launch's own (real) advisory pipeline wrote before the GPU
+    // acquisition failed is released, not left dangling.
+    expect(await listActiveReservations({ runsDir })).toHaveLength(0);
+  });
+
+  it("manual launch, token enforcement on -- a real lease held by T-OTHER with buildLaunchDecideFn throwing still refuses, no worker reached", async () => {
+    await acquireGpuLease({ runsDir, cardId: "T-OTHER", executionId: "exec-other", invocationId: "inv-other", owner: "cardLaunch:T-OTHER" });
+
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0002", agent: "assets" })], { runsDir });
+    const logger = makeLogger();
+    const buildLaunchDecideFn = () => {
+      throw new Error("setup failed");
+    };
+
+    await expect(
+      launchCardRun({
+        orchestrator,
+        id: "T-0002",
+        trigger: LAUNCH_TRIGGERS.MANUAL,
+        logger,
+        gpuLeaseEnabledFn: () => true,
+        enforcementEnabledFn: () => true,
+        buildLaunchDecideFn
+      })
+    ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("manual launch, token enforcement on -- a lease filesystem I/O error still refuses, no worker reached, reservation released", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0001", agent: "assets" })], { runsDir });
+    const logger = makeLogger();
+    const acquireGpuLeaseFn = vi.fn(async () => {
+      throw new Error("EACCES: permission denied");
+    });
+
+    await expect(
+      launchCardRun({
+        orchestrator,
+        id: "T-0001",
+        trigger: LAUNCH_TRIGGERS.MANUAL,
+        logger,
+        gpuLeaseEnabledFn: () => true,
+        enforcementEnabledFn: () => true,
+        acquireGpuLeaseFn
+      })
+    ).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409 });
+
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+    expect(await listActiveReservations({ runsDir })).toHaveLength(0);
   });
 });
