@@ -12,6 +12,7 @@ import {
 } from "./advisoryLogger.js";
 import { buildLaunchDecide, resolveCostEstimatorType } from "./launchAdvisory.js";
 import { loadAdmissionConfigFromEnv, admissionEnforcementEnabledFromEnv, HOLD_REASON } from "./admissionDecision.js";
+import { detectOversizedCard, drainModeEnabledFromEnv } from "./drainMode.js";
 import { releaseReservation } from "./launchReservation.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
 import { evaluateOverrunPolicy, isBoundedContinuation } from "./overrunPolicy.js";
@@ -182,6 +183,7 @@ export async function launchCardRun({
   loadAdmissionConfigFromEnvFn = loadAdmissionConfigFromEnv,
   reconcileLaunchOutcomeFn = reconcileLaunchOutcome,
   enforcementEnabledFn = admissionEnforcementEnabledFromEnv,
+  drainModeEnabledFn = drainModeEnabledFromEnv,
   evaluateOverrunPolicyFn = evaluateOverrunPolicy,
   listCardUsageEntriesFn = listCardUsageEntries,
   releaseReservationFn = releaseReservation,
@@ -323,11 +325,48 @@ export async function launchCardRun({
             if (fitRefusal) {
               if (!isManualOverride) {
                 await releaseReservationFn({ runsDir, cardId: id, executionId, invocationId, outcome: { status: "refused_enforcement", reason: fitRefusal } }).catch(() => {});
+
+                // WIP gate T-F (drain mode, spec §9): before this card would otherwise sit in the
+                // poller's per-tick retry rotation forever, check whether the hold is a permanent
+                // misfit -- no amount of waiting can help that, so retrying it every tick only
+                // ever wastes a tick's one launch slot deciding not to use it. Gated on its own
+                // flag on top of enforcement (drainModeEnabledFn): this auto-blocking behaviour is
+                // a further refinement of what an enforcement hold DOES, not a new way to refuse a
+                // launch, so it stays off even once enforcement itself is eventually turned on,
+                // until Dennie separately opts into it. `isManualOverride` launches never reach
+                // here at all (see the isManualOverride branch below), so a human-initiated Run
+                // is never auto-blocked by this.
+                if (drainModeEnabledFn()) {
+                  const oversized = detectOversizedCard({ admission: advisory?.admission });
+                  if (oversized) {
+                    try {
+                      const current = await orchestrator.store.get(id);
+                      if (current) {
+                        const updated = await orchestrator.store.update(id, {
+                          status: "blocked",
+                          body: appendNote(current.body ?? "", "WIP Gate: Drain Hold (Oversized)", oversized.reason)
+                        });
+                        orchestrator.hub?.broadcast?.({ type: "changed", id, task: updated });
+                      }
+                    } catch (holdErr) {
+                      logger.log(`wip-gate drain mode: failed to record the oversized hold on ${id}: ${holdErr.message}`);
+                    }
+                    const oversizedErr = new CardLaunchError(`Cannot run ${id}: WIP gate drain hold (oversized) -- ${oversized.reason}`, 409);
+                    oversizedErr.capacityFitHold = true;
+                    oversizedErr.drainHeldOversized = true;
+                    throw oversizedErr;
+                  }
+                }
+
                 const err = new CardLaunchError(`Cannot run ${id}: WIP gate hold (enforcement) -- ${fitRefusal}`, 409);
                 // The auto-launch poller's queue behaviour reads this to skip past a non-fitting
                 // head-of-queue card to the next eligible one, rather than stalling the whole tick
-                // on a per-card capacity determination -- see autoLaunchPoller.js.
+                // on a per-card capacity determination -- see autoLaunchPoller.js. WIP gate T-F
+                // (drain mode) reads the admission/telemetry readings below to track this card's
+                // own bounded, aged wait -- see drainMode.js/autoLaunchPoller.js.
                 err.capacityFitHold = true;
+                err.admission = advisory?.admission ?? null;
+                err.telemetryReadings = advisory?.telemetryReadings ?? null;
                 throw err;
               }
               logger.log(`wip-gate enforcement: manual override for ${id} -- launching despite a capacity-fit hold: ${fitRefusal}`);

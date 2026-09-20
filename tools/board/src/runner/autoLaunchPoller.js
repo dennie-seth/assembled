@@ -3,6 +3,7 @@ import { readUsageSnapshot } from "./usageWindow.js";
 import { readUsageTelemetry, WINDOW_KINDS, READING_STATUS } from "./usageTelemetry.js";
 import { admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
+import { evaluateDrainState, computeAgingBoost, createDrainWaitTracker, drainModeEnabledFromEnv, DRAIN_STATUS, DEFAULT_DRAIN_CONFIG } from "./drainMode.js";
 
 const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 
@@ -114,6 +115,27 @@ export function selectNextCard(tasks) {
   return eligible.length > 0 ? eligible[0] : null;
 }
 
+/**
+ * WIP gate T-F (drain mode, spec §9): "waiting cards age so ordinary work is not starved."
+ * `candidates` is already priority/id ordered (see `selectEligibleCardsInOrder`); this only
+ * breaks ties WITHIN the same priority tier, using `computeAgingBoost` on each card's own wait
+ * history from `drainTracker` (a card never held before has boost 0, so it sorts exactly as
+ * before this card). Aging never crosses a real priority boundary -- a fresh P0 card still goes
+ * before a long-aged P1 one -- so this only protects a same-priority card from being perpetually
+ * cut in line by a steady stream of newer arrivals, never overrides priority itself.
+ */
+export function orderCandidatesWithAging(candidates, { drainTracker, now, config = DEFAULT_DRAIN_CONFIG }) {
+  return [...candidates].sort((a, b) => {
+    const rankA = priorityRank(a);
+    const rankB = priorityRank(b);
+    if (rankA !== rankB) return rankA - rankB;
+    const boostA = computeAgingBoost({ waitState: drainTracker.get(a.id), now, config });
+    const boostB = computeAgingBoost({ waitState: drainTracker.get(b.id), now, config });
+    if (boostA !== boostB) return boostB - boostA;
+    return numericId(a) - numericId(b);
+  });
+}
+
 
 /**
  * WIP gate T-D (launch-time contracts, 2026-09-14): reads the 5-hour and weekly windows
@@ -192,6 +214,9 @@ export function createAutoLaunchPoller({
   readUsage = readUsageSnapshot,
   readUsageTelemetryFn = readUsageTelemetry,
   enforcementEnabled = admissionEnforcementEnabledFromEnv(),
+  drainModeEnabled = drainModeEnabledFromEnv(),
+  drainConfig = DEFAULT_DRAIN_CONFIG,
+  drainTracker = createDrainWaitTracker(),
   launchFn = launchCardRun,
   now = () => Date.now(),
   logger = console
@@ -318,9 +343,16 @@ export function createAutoLaunchPoller({
     // Run button uses -- every launch here is explicitly `trigger: "auto"` (T-0379: the ONE thing
     // that makes the capacity-fit limit apply at all; there is no config surface on this poller to
     // pass anything else, so it can never reach the manual-override path).
-    const candidates = selectEligibleCardsInOrder(tasks);
+    let candidates = selectEligibleCardsInOrder(tasks);
     if (candidates.length === 0) {
       return skip("no eligible ready card (dependencies unmet, or nothing ready)");
+    }
+
+    // WIP gate T-F (drain mode, spec §9): off by default (see drainModeEnabled's own docstring) --
+    // ordering is untouched below unless a card has actually been held before, so this can never
+    // change which card launches on a board where nothing has ever failed to fit.
+    if (drainModeEnabled) {
+      candidates = orderCandidatesWithAging(candidates, { drainTracker, now: now(), config: drainConfig });
     }
 
     const passedOver = [];
@@ -328,6 +360,7 @@ export function createAutoLaunchPoller({
       try {
         const launched = await launchFn({ orchestrator, id: candidate.id, logger, trigger: LAUNCH_TRIGGERS.AUTO });
         logger.log(`${LOG_PREFIX}: launched ${candidate.id} (${candidate.priority ?? "no priority"})`);
+        if (drainModeEnabled) drainTracker.clear(candidate.id);
         if (passedOver.length > 0) {
           logger.log(`${LOG_PREFIX}: passed over ${passedOver.length} earlier-queued card(s) that did not fit -- ${passedOver.join("; ")}`);
         }
@@ -343,8 +376,34 @@ export function createAutoLaunchPoller({
             // that doesn't fit. Every OTHER refusal (an unmet dependency the guard alone caught, an
             // already-active run, a round-cap trip, an overrun stop) is unrelated to whether THIS
             // card fits, so it still ends the tick immediately, same as before this card.
-            passedOver.push(`${candidate.id}: ${err.message}`);
-            logger.log(`${LOG_PREFIX}: ${candidate.id} does not fit -- trying the next eligible card: ${err.message}`);
+            let drainNote = "";
+            if (drainModeEnabled) {
+              if (err.drainHeldOversized) {
+                // cardLaunch.js already blocked the card (status + actionable note) and this
+                // launch attempt is the ONLY tick that will ever see it as an eligible candidate --
+                // the next tick's store.list() naturally excludes it (status is no longer "ready").
+                // Nothing left to track here; clear any prior ordinary-wait bookkeeping for it.
+                drainTracker.clear(candidate.id);
+                drainNote = " [drain: held_oversized -- auto-blocked, see the card's own note]";
+              } else {
+                const nowMs = now();
+                const drainState = evaluateDrainState({
+                  admission: err.admission ?? null,
+                  telemetryReadings: err.telemetryReadings ?? null,
+                  waitState: drainTracker.get(candidate.id),
+                  now: nowMs,
+                  config: drainConfig
+                });
+                drainTracker.recordHeld(candidate.id, nowMs, drainState);
+                if (drainState.status === DRAIN_STATUS.WAITING) {
+                  const nextIso =
+                    drainState.nextReconsiderationAtMs !== null ? new Date(drainState.nextReconsiderationAtMs).toISOString() : "unknown";
+                  drainNote = ` [drain: waiting on ${drainState.blockingWindow}, next reconsideration ${nextIso}]`;
+                }
+              }
+            }
+            passedOver.push(`${candidate.id}: ${err.message}${drainNote}`);
+            logger.log(`${LOG_PREFIX}: ${candidate.id} does not fit -- trying the next eligible card: ${err.message}${drainNote}`);
             continue;
           }
           // The guarded path refused it for a reason unrelated to capacity fit. Deliberately no
@@ -401,7 +460,11 @@ export function createAutoLaunchPoller({
       lastTickAt: lastTickAtMs !== null ? new Date(lastTickAtMs).toISOString() : null,
       nextTickAt: nextTickAtMs !== null ? new Date(nextTickAtMs).toISOString() : null,
       lastResult,
-      activeRun: Boolean(orchestrator && orchestrator.hasActiveRuns && orchestrator.hasActiveRuns())
+      activeRun: Boolean(orchestrator && orchestrator.hasActiveRuns && orchestrator.hasActiveRuns()),
+      // WIP gate T-F (drain mode, spec §9): "the blocking window and expected next reconsideration
+      // time are shown on ... the board" -- empty whenever drain mode is off (the default), since
+      // drainTracker is never written to in that case.
+      drain: drainTracker.snapshot()
     };
   }
 
