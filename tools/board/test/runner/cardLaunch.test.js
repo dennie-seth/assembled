@@ -1133,6 +1133,10 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
         buildLaunchDecideFn
       });
       await expect(rejection).rejects.toMatchObject({ name: "CardLaunchError", statusCode: 409, capacityFitHold: true, drainHeldOversized: true });
+      // FIX ROUND 2: the poller's terminal-hold bookkeeping (autoLaunchPoller.js) needs the window
+      // and reason as STRUCTURED fields, not just embedded in the error message string, so
+      // getStatus().drain can report an oversized hold the same shape as an ordinary one.
+      await expect(rejection).rejects.toMatchObject({ blockingWindow: "seven_day", reason: expect.stringMatching(/split/i) });
 
       expect(orchestrator.store.update).toHaveBeenCalledWith(
         "T-0001",

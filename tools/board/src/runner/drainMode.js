@@ -334,3 +334,53 @@ export async function loadPersistedDrainWaitState({ runsDir, readdirFn = fs.read
   }
   return out;
 }
+
+/**
+ * FIX ROUND 2 (Chat round-3 review of #408, finding 1): "a finished wait leaves its deadline on
+ * disk" -- `persistDrainFirstHeld`/`clearPersistedDrainFirstHeld` above are each independently
+ * fire-and-forget (`autoLaunchPoller.js` never awaits them, so a tick is never held up by a slow
+ * filesystem). Doing both is not the same as doing them IN ORDER: with no coordination, nothing
+ * stops a completing persist from outliving a clear that was issued after it -- an outstanding
+ * first-hold write for a card's Nth hold can land on disk after a launch that already succeeded
+ * and cleared, recreating a deadline for a wait that just finished.
+ *
+ * Every card gets its own promise chain here, so its persist/clear operations run in ISSUE order,
+ * never completion order: a clear queued after a persist always executes -- and always wins --
+ * only once that persist's own write has settled. Chains are per-coordinator-instance (never a
+ * module-level global) so tests constructing independent coordinators never see cross-test
+ * interference, and a failed operation never breaks the chain for the operations queued after it.
+ */
+export function createDrainWaitStateCoordinator({ runsDir, writeFileFn = fs.writeFile, mkdirFn = fs.mkdir, unlinkFn = fs.unlink } = {}) {
+  const chains = new Map();
+  const pending = new Set();
+
+  function enqueue(cardId, op) {
+    const prior = chains.get(cardId) ?? Promise.resolve();
+    const next = prior.then(op, op);
+    chains.set(cardId, next);
+    const settled = next.then(
+      () => {},
+      () => {}
+    );
+    pending.add(settled);
+    settled.finally(() => pending.delete(settled));
+    return next;
+  }
+
+  /** Queues a first-hold persist for `cardId`, after any already-queued operation for that same card. */
+  function persistFirstHeld(cardId, firstHeldAtMs) {
+    return enqueue(cardId, () => persistDrainFirstHeld({ runsDir, cardId, firstHeldAtMs, writeFileFn, mkdirFn }));
+  }
+
+  /** Queues clearing `cardId`'s persisted first-hold, after any already-queued operation for that same card. */
+  function clearFirstHeld(cardId) {
+    return enqueue(cardId, () => clearPersistedDrainFirstHeld({ runsDir, cardId, unlinkFn }));
+  }
+
+  /** Waits for every currently in-flight persist/clear, across every card, to settle -- lets a caller (chiefly a test) observe the ACTUAL final on-disk state rather than racing a fire-and-forget write. */
+  async function flush() {
+    await Promise.allSettled([...pending]);
+  }
+
+  return { persistFirstHeld, clearFirstHeld, flush };
+}
