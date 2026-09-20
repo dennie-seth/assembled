@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-09-19T21:53:36.469Z",
+  "generated_at": "2026-09-20T12:28:14.120Z",
   "cards": [
     {
       "id": "T-0020",
@@ -1990,6 +1990,12 @@
     },
     {
       "id": "T-0397",
+      "requires_approval": false,
+      "approved_by": null,
+      "approved_at": null
+    },
+    {
+      "id": "T-0398",
       "requires_approval": false,
       "approved_by": null,
       "approved_at": null
