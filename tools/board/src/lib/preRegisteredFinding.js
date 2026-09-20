@@ -99,8 +99,8 @@ const ABSENCE_PHRASE_PATTERN =
 // never mistaken for a sentence boundary the way a naive "nearest dot" scan would.
 const SENTENCE_END_PATTERN = /\.(?=\s|\*\*|$)/g;
 
-/** The sentence of `text` surrounding `index` -- the scope an absence phrase must appear in to count. */
-function sentenceAround(text, index) {
+/** The `{ start, end }` span of the sentence of `text` surrounding `index`. */
+function sentenceRange(text, index) {
   let start = 0;
   for (const match of text.slice(0, index).matchAll(SENTENCE_END_PATTERN)) {
     start = match.index + 1;
@@ -108,16 +108,46 @@ function sentenceAround(text, index) {
   const after = text.slice(index);
   const nextEnd = after.matchAll(SENTENCE_END_PATTERN).next().value;
   const end = nextEnd ? index + nextEnd.index + 1 : text.length;
-  return text.slice(start, end);
+  return { start, end };
+}
+
+// Intra-sentence clause boundaries -- narrower than a full sentence. T-0395 FIX ROUND 1: a Finding's
+// prose commonly packs a positive citation and a negative (absence) citation into the *same*
+// sentence, joined by a comma, an em-dash-style "--", or a contrastive conjunction, e.g.
+// "`docs/missing.png` records the result, while `assets/result.png` was not produced." Binding the
+// absence phrase to the whole sentence let the positive citation inherit an absence claim never made
+// about it (and, symmetrically, could drag a real citation into a false absence). None of these can
+// occur mid-backtick-path, so splitting on them never fractures a citation itself.
+const CLAUSE_BOUNDARY_PATTERN = /,|;|--|—|\b(?:while|whereas|although|though|but)\b/gi;
+
+/** The clause of `text` surrounding `index`, scoped within its sentence -- narrower than `sentenceRange`. */
+function clauseAround(text, index) {
+  const { start: sentStart, end: sentEnd } = sentenceRange(text, index);
+  const sentence = text.slice(sentStart, sentEnd);
+  const localIndex = index - sentStart;
+
+  let clauseStart = 0;
+  let clauseEnd = sentence.length;
+  for (const match of sentence.matchAll(CLAUSE_BOUNDARY_PATTERN)) {
+    const matchEnd = match.index + match[0].length;
+    if (matchEnd <= localIndex) {
+      clauseStart = matchEnd;
+    } else if (match.index >= localIndex) {
+      clauseEnd = match.index;
+      break;
+    }
+  }
+  return sentence.slice(clauseStart, clauseEnd);
 }
 
 /**
  * Splits a Finding section's citations into `present` (required evidence -- must exist) and
  * `absent` (the Finding itself claims this path does not exist, e.g. "No reference is promoted --
  * `path/to/thing.png` does not exist on this branch") based on whether an `ABSENCE_PHRASE_PATTERN`
- * clause shares the same sentence as the citation. T-0395: a stop-and-report Finding naturally
- * names the artifact it did NOT produce, and that citation was previously indistinguishable from a
- * citation of real, present evidence -- this is what makes the distinction.
+ * clause shares the same *clause* as the citation -- not merely the same sentence, since a sentence
+ * can mix a positive citation and a negative one (T-0395 FIX ROUND 1). A stop-and-report Finding
+ * naturally names the artifact it did NOT produce, and that citation was previously indistinguishable
+ * from a citation of real, present evidence -- this is what makes the distinction.
  */
 export function classifyFindingEvidenceCitations(findingText) {
   const seen = new Set();
@@ -126,7 +156,7 @@ export function classifyFindingEvidenceCitations(findingText) {
   for (const { cited, index } of iterateCitations(findingText)) {
     if (seen.has(cited)) continue;
     seen.add(cited);
-    const clause = sentenceAround(findingText, index);
+    const clause = clauseAround(findingText, index);
     if (ABSENCE_PHRASE_PATTERN.test(clause)) {
       absent.push(cited);
     } else {
