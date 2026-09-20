@@ -75,10 +75,13 @@ export const DEFAULT_ADVISORY_TIMEOUT_MS = 8000;
  * small and conservative: richer per-agent/per-size calibration is future work (see T-0368's
  * complexity points), not something this card invents unsupported priors for.
  */
+/** Shared with gpuLease.js/cardLaunch.js (T-0371): the one cost-estimator type that names GPU work, so the GPU-lease gate and the cost estimator agree on which agents consume the GPU without duplicating the list. */
+export const GPU_COST_ESTIMATOR_TYPE = "asset-GPU";
+
 const AGENT_TO_COST_TYPE = Object.freeze({
   infra: "infra-small",
-  assets: "asset-GPU",
-  audio: "asset-GPU"
+  assets: GPU_COST_ESTIMATOR_TYPE,
+  audio: GPU_COST_ESTIMATOR_TYPE
 });
 
 export function resolveCostEstimatorType(task) {
