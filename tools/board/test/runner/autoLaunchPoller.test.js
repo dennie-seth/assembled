@@ -1457,5 +1457,82 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
       await pollerC.tick();
       expect(pollerC.getStatus().drain).not.toHaveProperty("T-0001");
     });
+
+    // REGRESSION (reconciliation gap left by FIX ROUND 3's own review): the criterion is "a
+    // recovered entry is dropped once the card is no longer in the held state (a human moved it
+    // to ready/backlog/in-progress, or it ran)". The restart test above only exercises "ready".
+    // Live reconciliation (no restart involved) only cleared a terminal hold when the card showed
+    // up in `candidates` -- which requires status exactly "ready" AND dependency-eligible -- so a
+    // human moving the card straight to "backlog" or "in-progress" never reconciled it away until
+    // a full process restart happened to run reconcileTerminalHoldsOnStartup.
+    it("REGRESSION (reconciliation gap): moving the held card straight to backlog clears the terminal hold on the next tick, without the card ever becoming an eligible candidate", async () => {
+      let nowMs = 1000;
+      const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+      const launchFn = vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+      const task = makeTask({ id: "T-0001" });
+      const { poller, store } = makePoller({
+        tasks: [task],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn
+      });
+
+      expect(await poller.tick()).toBeNull();
+      nowMs = 10000;
+      expect(await poller.tick()).toBeNull();
+      expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+
+      // A human resolves the hold by moving the card straight to backlog -- it never becomes an
+      // eligible "ready" candidate.
+      await store.update("T-0001", { status: "backlog" });
+      nowMs = 11000;
+      await poller.tick();
+      expect(poller.getStatus().drain).not.toHaveProperty("T-0001");
+      await poller.flushDrainPersistence();
+      expect(await loadPersistedDrainHeldState({ runsDir })).not.toHaveProperty("T-0001");
+    });
+
+    it("REGRESSION (reconciliation gap): moving the held card to in-progress (running it directly) clears the terminal hold even on a tick that otherwise skips because a card is mid-run", async () => {
+      let nowMs = 1000;
+      const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+      const launchFn = vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+      const task = makeTask({ id: "T-0001" });
+      const { poller, store } = makePoller({
+        tasks: [task],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn
+      });
+
+      expect(await poller.tick()).toBeNull();
+      nowMs = 10000;
+      expect(await poller.tick()).toBeNull();
+      expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+
+      // A human runs the card directly (e.g. the manual Run button), moving it to in-progress.
+      // This tick skips for the unrelated "cards still at in-progress" gate -- reconciliation must
+      // not depend on reaching the candidate-selection code past that gate.
+      await store.update("T-0001", { status: "in-progress" });
+      nowMs = 11000;
+      await poller.tick();
+      expect(poller.getStatus().lastResult).toMatchObject({ kind: "skip" });
+      expect(poller.getStatus().drain).not.toHaveProperty("T-0001");
+      await poller.flushDrainPersistence();
+      expect(await loadPersistedDrainHeldState({ runsDir })).not.toHaveProperty("T-0001");
+    });
   });
 });
