@@ -365,6 +365,25 @@ describe("classifyFindingEvidenceCitations", () => {
       absent: ["assets/result.png"]
     });
   });
+
+  it("[FIX ROUND 3] does not bind an absence phrase to a citation unless the phrase directly attaches to that citation -- a later, uncited negative phrase must not reach back to the nearest preceding citation", () => {
+    // Chat's round-4 reproduction: the claim window still let ANY absence phrase inside it mark the
+    // preceding citation absent, even with no backtick path of its own. Here "was not produced"
+    // predicates "the final artifact", not `docs/missing.png` -- the sentence says that path
+    // *records the result*. Positional proximity is not a binding rule.
+    const text =
+      "Decisive: see `docs/good.png`. `docs/missing.png` records the result, but the final artifact " +
+      "was not produced.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({
+      present: ["docs/good.png", "docs/missing.png"],
+      absent: []
+    });
+  });
+
+  it("[FIX ROUND 3] a directly-attached absence predicate (citation is the immediate subject) is still recognized as absent", () => {
+    const text = "No reference is promoted -- `docs/missing.png` does not exist on this branch.";
+    expect(classifyFindingEvidenceCitations(text)).toEqual({ present: [], absent: ["docs/missing.png"] });
+  });
 });
 
 describe("checkFindingWithEvidence", () => {
@@ -617,5 +636,37 @@ describe("checkFindingWithEvidence", () => {
       fileExists: async (target) => target.endsWith("docs/good.png")
     });
     expect(result).toEqual({ ok: true, applicable: true, errors: [], absentEvidence: ["assets/result.png"] });
+  });
+
+  it("[FIX ROUND 3] REJECTs when an uncited negative phrase sits near a citation that is not actually its subject -- the citation is affirmatively cited and must exist", async () => {
+    // Chat's reproduction: only docs/good.png exists. docs/missing.png "records the result" (an
+    // affirmative citation) -- the absence concerns "the final artifact", which has no citation of
+    // its own, so it must not waive docs/missing.png's existence requirement.
+    const body =
+      `${FINDING_HEADING}\nDecisive: see \`docs/good.png\`. \`docs/missing.png\` records the result, ` +
+      "but the final artifact was not produced.\n";
+    const result = await checkFindingWithEvidence({
+      task: task({ body }),
+      beforeBody: `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`,
+      repoRoot: "/repo",
+      fileExists: async (target) => target.endsWith("docs/good.png")
+    });
+    expect(result.applicable).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("docs/missing.png");
+    expect(result.absentEvidence).toEqual([]);
+  });
+
+  it("[FIX ROUND 3] the existing-file counterpart of that same sentence PASSes and reports the path as present evidence, never as a false absence", async () => {
+    const body =
+      `${FINDING_HEADING}\nDecisive: see \`docs/good.png\`. \`docs/missing.png\` records the result, ` +
+      "but the final artifact was not produced.\n";
+    const result = await checkFindingWithEvidence({
+      task: task({ body }),
+      beforeBody: `${PRE_REGISTRATION_HEADING}\nIf X, arm falsified.\n`,
+      repoRoot: "/repo",
+      fileExists: async () => true
+    });
+    expect(result).toEqual({ ok: true, applicable: true, errors: [], absentEvidence: [] });
   });
 });
