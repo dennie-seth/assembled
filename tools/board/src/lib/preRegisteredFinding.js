@@ -123,25 +123,50 @@ function sentenceRange(text, index) {
 // A citation's "claim window" is the text strictly between it and whichever comes first: the next
 // citation (so a later citation's own absence phrase can never reach backward across it) or the end
 // of its own sentence (so an absence phrase in a later, unrelated sentence can never reach back
-// either). If an `ABSENCE_PHRASE_PATTERN` match falls inside that window, this citation -- and only
-// this citation -- is absent. A citation with no absence phrase in its own window is `present`:
-// ambiguous bindings default to present/claimed-and-required, never absent, per this card's own
-// "treat ambiguous positive evidence conservatively" requirement -- another path's absence phrase can
-// never waive a citation's existence check.
+// either).
 function citationClaimWindow(text, citation, nextCitation) {
   const sentenceEnd = sentenceRange(text, citation.index).end;
   const windowEnd = nextCitation ? Math.min(nextCitation.index, sentenceEnd) : sentenceEnd;
   return text.slice(citation.end, windowEnd);
 }
 
+// T-0395 FIX ROUND 3: FIX ROUND 2's claim window fixed leakage BETWEEN two cited paths, but it still
+// let an absence phrase with NO citation of its own reach back to whichever citation happened to
+// precede it in the window -- e.g. "`docs/missing.png` records the result, but the final artifact was
+// not produced" classified `docs/missing.png` absent even though the sentence names it as the thing
+// that *records the result*; the absence is about "the final artifact", an uncited noun phrase.
+// Positional proximity inside the window is not a binding rule.
+//
+// The binding rule this round adopts: a citation is absent ONLY when an `ABSENCE_PHRASE_PATTERN`
+// predicate is DIRECTLY ATTACHED to it -- the predicate is the very next thing in the text after the
+// citation (module leading whitespace), i.e. the citation reads as the predicate's own grammatical
+// subject ("`path` does not exist", "`path` was not produced"). Any other wording -- the predicate
+// appearing later in the window, attached to some other noun phrase -- defaults to present/
+// claimed-and-required. This is deliberately conservative: an unresolvable binding must never waive a
+// citation's existence check (per this card's own round-2 "ambiguous positive evidence is treated
+// conservatively" requirement), and a later negative phrase must never be inferred to refer to the
+// closest preceding path just because nothing else is nearby.
+//
+// A Finding that wants to mark a citation absent should therefore always phrase it as directly
+// attached: `path/to/thing.png` does not exist / was not produced / is not promoted -- with the
+// citation immediately followed by the predicate, not separated from it by an intervening clause.
+function citationHasDirectAbsencePredicate(window) {
+  const trimmed = window.replace(/^\s+/, "");
+  const match = ABSENCE_PHRASE_PATTERN.exec(trimmed);
+  return match !== null && match.index === 0;
+}
+
 /**
  * Splits a Finding section's citations into `present` (required evidence -- must exist) and
  * `absent` (the Finding itself claims this path does not exist, e.g. "No reference is promoted --
  * `path/to/thing.png` does not exist on this branch") based on whether an `ABSENCE_PHRASE_PATTERN`
- * match falls in that specific citation's own claim window (see `citationClaimWindow`). A
- * stop-and-report Finding naturally names the artifact it did NOT produce, and that citation was
- * previously indistinguishable from a citation of real, present evidence -- this is what makes the
- * distinction.
+ * predicate is DIRECTLY ATTACHED to that specific citation -- the citation is the predicate's own
+ * subject, i.e. the predicate is the next thing in the text after the citation (see
+ * `citationHasDirectAbsencePredicate`). Every other wording defaults to present/required: a
+ * stop-and-report Finding naturally names the artifact it did NOT produce, but only a citation
+ * phrased as directly attached to its own absence predicate ("`path` does not exist / was not
+ * produced / is not promoted") is exempted from the existence check -- proximity to some other
+ * negative phrase elsewhere in the sentence never is.
  */
 export function classifyFindingEvidenceCitations(findingText) {
   const citations = iterateCitations(findingText);
@@ -152,7 +177,7 @@ export function classifyFindingEvidenceCitations(findingText) {
     if (seen.has(citation.cited)) return;
     seen.add(citation.cited);
     const window = citationClaimWindow(findingText, citation, citations[i + 1]);
-    if (ABSENCE_PHRASE_PATTERN.test(window)) {
+    if (citationHasDirectAbsencePredicate(window)) {
       absent.push(citation.cited);
     } else {
       present.push(citation.cited);
@@ -219,7 +244,7 @@ export async function checkFindingWithEvidence({
       const exists = repoRoot ? await fileExists(path.join(repoRoot, citedPath)) : false;
       if (!exists) {
         errors.push(
-          `Card ${task.id}'s "${FINDING_HEADING}" section cites "${citedPath}" as evidence, but no file exists at that path -- cited evidence must actually be committed, not just named.`
+          `Card ${task.id}'s "${FINDING_HEADING}" section cites "${citedPath}" as evidence, but no file exists at that path -- cited evidence must actually be committed, not just named. If this path is meant to be recorded as absent, the absence predicate must attach directly to it (e.g. \`${citedPath}\` does not exist / was not produced / is not promoted) -- a negative phrase elsewhere in the sentence about something else does not exempt it.`
         );
       }
     }
