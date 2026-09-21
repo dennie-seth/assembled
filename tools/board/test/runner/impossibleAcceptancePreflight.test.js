@@ -67,6 +67,25 @@ describe("checkImpossibleAcceptancePreflight -- no Acceptance section", () => {
   });
 });
 
+// T-0405: a qualified "## Acceptance (...)" heading used to make parseAcceptanceCriteria return
+// [], which this check reads as "nothing to check" and silently returns no warnings -- so the
+// unsatisfiable-AC warning this preflight exists for never fired for a card whose heading merely
+// carried a qualifier. Proven through the real call path with a genuinely unsatisfiable item.
+describe("checkImpossibleAcceptancePreflight -- qualified heading still gets evaluated (T-0403 failure mode)", () => {
+  it("still flags a human-observation criterion under a qualified '## Acceptance (...)' heading", () => {
+    const result = checkImpossibleAcceptancePreflight(
+      task(
+        "## Acceptance (story-level -- planner expands)\n" +
+          "- [ ] Drag a tall card near the column edge in a running board and say what you observed -- do not infer it from the code\n"
+      ),
+      "infra",
+      fixtureOpts()
+    );
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain("say what you observed");
+  });
+});
+
 describe("checkImpossibleAcceptancePreflight -- human-observation criteria (T-0288)", () => {
   it("flags a criterion demanding the agent's own observation, not an inference from code", () => {
     const result = checkImpossibleAcceptancePreflight(

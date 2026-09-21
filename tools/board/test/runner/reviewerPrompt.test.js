@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildReviewerPrompt } from "../../src/runner/reviewerPrompt.js";
+import { T0403_ACCEPTANCE_BODY, T0403_ACCEPTANCE_ITEM_COUNT } from "../fixtures/t0403AcceptanceBody.js";
 
 const TASK = {
   id: "T-0099",
@@ -365,6 +366,29 @@ describe("buildReviewerPrompt -- acceptance criteria audit (green tests != accep
     const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
     expect(prompt).toContain("No parseable");
     expect(prompt).toContain("that is itself a FAIL");
+  });
+
+  // T-0405: a qualified heading ("## Acceptance (story-level -- planner expands)") used to make
+  // parseAcceptanceCriteria return [], so the reviewer saw "No parseable Acceptance section" and
+  // hard-FAILed a card whose checklist was actually well-formed.
+  it("lists criteria under a qualified '## Acceptance (...)' heading, not the no-parseable-section FAIL text", () => {
+    const task = { ...TASK, body: "## Context\nBuild the thing.\n\n## Acceptance criteria\n- [ ] first criterion\n- [ ] second criterion\n" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).toContain("Acceptance criteria -- verify each one explicitly");
+    expect(prompt).toContain("first criterion");
+    expect(prompt).toContain("second criterion");
+    expect(prompt).not.toContain("No parseable");
+  });
+
+  it("renders all 8 criteria from the T-0403 regression fixture (qualified heading, Edge cases item)", () => {
+    const task = { ...TASK, id: "T-0403", body: T0403_ACCEPTANCE_BODY };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    expect(prompt).not.toContain("No parseable");
+    for (let i = 1; i <= T0403_ACCEPTANCE_ITEM_COUNT; i++) {
+      expect(prompt).toContain(`${i}. `);
+    }
+    expect(prompt).toContain("Seventh criterion");
+    expect(prompt).toContain("**Edge cases:**");
   });
 });
 
