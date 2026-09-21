@@ -36,9 +36,12 @@ const ALL_SEVEN: Array[String] = [
 	STORAGE_CACHE, ANTENNA_SHAFT, BROADCAST_DECK,
 ]
 
-## Floor rows named explicitly by the card's finding 5.
-const GROUND_RELAY_RECORDS_ROOM_FLOOR_ROW: int = 8
-const EQUIPMENT_FLOOR_STORAGE_CACHE_FLOOR_ROW: int = 28
+## Floor rows named explicitly by the card's finding 5 — WORLD rows, per the
+## T-0403 bottom-up remap (@DennieSeth, 2026-09-20): entry_room now renders
+## at the bottom of the world, so these are no longer the raw authored rows
+## (8 and 28) but their post-remap world equivalents.
+const GROUND_RELAY_RECORDS_ROOM_FLOOR_ROW: int = 66
+const EQUIPMENT_FLOOR_STORAGE_CACHE_FLOOR_ROW: int = 47
 
 ## Generous step ceiling for a running walk across the widest authored room
 ## (ground_relay, 30 tiles = 480 px) — physics frames, not wall-clock.
@@ -459,7 +462,10 @@ func _test_seven_rooms_built_matching_layout() -> Array[String]:
 		var room_node: Node2D = inst.get_room_node(tag)
 		if room_node == null:
 			continue
-		var expected_rect: Rect2 = layout.get_rect_px(tag)
+		## T-0403: rooms are built at their post-remap WORLD rect, not the
+		## raw authored layout.get_rect_px() — get_room_world_rect() is the
+		## same bottom-up remap the level itself uses to place them.
+		var expected_rect: Rect2 = inst.get_room_world_rect(tag)
 		var actual_rect: Rect2 = _room_collider_bounds(room_node)
 		if not actual_rect.position.is_equal_approx(expected_rect.position) or not actual_rect.size.is_equal_approx(expected_rect.size):
 			failures.append(
@@ -650,7 +656,7 @@ func _test_spawn_in_ground_relay_clear_of_connectors() -> Array[String]:
 		_free_detached_instance(inst)
 		return failures
 
-	var relay_rect: Rect2 = layout.get_rect_px(layout.entry_room)
+	var relay_rect: Rect2 = inst.get_room_world_rect(layout.entry_room)
 	if not relay_rect.has_point(player.position):
 		failures.append(
 			"spawn: player position %s must be inside entry room rect %s"
@@ -1169,7 +1175,7 @@ func _test_player_blocked_by_side_wall() -> Array[String]:
 		return failures
 
 	var player: CharacterBody2D = inst.get_player()
-	var relay_rect: Rect2 = inst.get_layout().get_rect_px(GROUND_RELAY)
+	var relay_rect: Rect2 = inst.get_room_world_rect(GROUND_RELAY)
 	var run_px_per_frame: float = PlayerControllerScript.RUN_SPEED / float(Engine.physics_ticks_per_second)
 	var cross_frames: int = int(ceil(relay_rect.size.x / run_px_per_frame)) + 60
 
@@ -1335,7 +1341,7 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 	## broadcast_deck's far wall must actually block the player, not just be
 	## absent of an outgoing connector. Hold running input long enough to
 	## cross the room's full authored width with margin.
-	var deck_rect: Rect2 = inst.get_layout().get_rect_px(BROADCAST_DECK)
+	var deck_rect: Rect2 = inst.get_room_world_rect(BROADCAST_DECK)
 	var run_px_per_frame: float = PlayerControllerScript.RUN_SPEED / float(Engine.physics_ticks_per_second)
 	var deck_cross_frames: int = int(ceil(deck_rect.size.x / run_px_per_frame)) + 60
 	player.apply_input(1.0, true)
