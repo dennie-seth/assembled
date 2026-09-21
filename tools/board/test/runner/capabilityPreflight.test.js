@@ -79,6 +79,23 @@ describe("checkCapabilityPreflight", () => {
     expect(result.message).toBe("");
   });
 
+  // T-0405: a qualified "## Acceptance (...)" heading used to make parseAcceptanceCriteria return
+  // [], which this check reads as "nothing to check" and silently passes -- so a card with a
+  // genuinely impossible claim under a qualified heading slipped straight past this preflight.
+  // Proven through the real call path: a forbidden "open a pull request" claim under a qualified
+  // heading must still be caught, exactly as it would be under a bare "## Acceptance".
+  it("still evaluates AC items under a qualified '## Acceptance (...)' heading (T-0403 failure mode)", () => {
+    const body = [
+      "## Acceptance (story-level -- planner expands)",
+      "",
+      "- [ ] Open a pull request against develop once the tests are green"
+    ].join("\n");
+    const result = checkCapabilityPreflight(task(body, { id: "T-0903" }), "infra", fixtureOpts());
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("T-0903");
+    expect(result.message).toContain("open a pull request");
+  });
+
   it("passes a fully satisfiable AC: a granted command and an installed checkpoint", () => {
     const body = [
       "## Acceptance",

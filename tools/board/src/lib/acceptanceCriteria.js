@@ -1,4 +1,15 @@
-const SECTION_RE = /^##\s+Acceptance\s*$/i;
+// T-0405: the heading text must BEGIN with the word "Acceptance" (case-insensitive) right after
+// the leading #s and required whitespace -- any suffix after that word is tolerated ("## Acceptance
+// (story-level -- planner expands)", "## Acceptance criteria", "## Acceptance:", ...), because
+// that's the exact shape that hard-blocked T-0403 twice despite a well-formed checklist. The
+// boundary right after "Acceptance" must NOT itself be a letter, digit, or hyphen, so a heading
+// that only glues onto the word ("## Acceptance-adjacent notes") or merely mentions it elsewhere
+// ("## Notes on Acceptance", "## How acceptance is judged") is never mistaken for the section.
+// Heading level is 1-6, matching vetAndReady.js's own tolerant parse of the same section --
+// ACCEPTANCE_HEADING_TEXT_SRC is the single fragment both files build their regex from, so they
+// can no longer diverge on what counts as "the" Acceptance heading (see vetAndReady.js).
+export const ACCEPTANCE_HEADING_TEXT_SRC = "Acceptance(?![A-Za-z0-9-])";
+export const ACCEPTANCE_HEADING_RE = new RegExp(`^#{1,6}\\s+${ACCEPTANCE_HEADING_TEXT_SRC}`, "i");
 const HEADING_RE = /^#{1,6}\s+/;
 export const CHECKBOX_RE = /^-\s*\[([ xX])\]\s*(.+)$/;
 
@@ -15,7 +26,7 @@ export function parseAcceptanceCriteria(body) {
     return [];
   }
   const lines = body.split(/\r?\n/);
-  const startIdx = lines.findIndex((line) => SECTION_RE.test(line.trim()));
+  const startIdx = lines.findIndex((line) => ACCEPTANCE_HEADING_RE.test(line.trim()));
   if (startIdx === -1) {
     return [];
   }

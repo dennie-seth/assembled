@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checkAcceptancePreflight } from "../../src/runner/acceptancePreflight.js";
+import { T0403_ACCEPTANCE_BODY } from "../fixtures/t0403AcceptanceBody.js";
 
 describe("checkAcceptancePreflight", () => {
   it("returns ok:false when body has no ## Acceptance section", () => {
@@ -56,5 +57,21 @@ describe("checkAcceptancePreflight", () => {
     const body = "## Acceptance\n\n## Next Section\n\n- [ ] not part of acceptance\n";
     const result = checkAcceptancePreflight({ id: "T-0009", body });
     expect(result.ok).toBe(false);
+  });
+
+  // T-0405: a card whose ## Acceptance heading carries a qualifier ("(story-level -- planner
+  // expands)", "criteria", a trailing colon, ...) used to parse as having no acceptance section at
+  // all and hard-block here before the implementer did any work. T-0403 hit this twice.
+  it("returns ok:true when the ## Acceptance heading carries a qualifier", () => {
+    const body = "## Acceptance (story-level -- planner expands)\n\n- [ ] something must pass\n";
+    const result = checkAcceptancePreflight({ id: "T-0010", body });
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe("");
+  });
+
+  it("does not block on the T-0403 regression fixture (qualified heading, 8 items, Edge cases item)", () => {
+    const result = checkAcceptancePreflight({ id: "T-0403", body: T0403_ACCEPTANCE_BODY });
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe("");
   });
 });
