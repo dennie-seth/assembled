@@ -2,6 +2,7 @@ const TASKS_PATH = "/api/tasks";
 const AGENTS_PATH = "/api/agents";
 const WS_PATH = "/ws/board";
 const GIT_STATUS_PATH = "/api/git/status";
+const POLLER_PATH = "/api/poller";
 
 /**
  * Identifies requests from the board UI -- i.e. from a person clicking things -- to the
@@ -138,6 +139,20 @@ export async function fetchGitStatus() {
   const res = await fetch(GIT_STATUS_PATH);
   if (!res.ok) {
     throw new Error(`GET ${GIT_STATUS_PATH} failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * WIP gate T-F (drain mode, spec §9), FIX ROUND 1 finding (b): the poller's own `drain` map --
+ * cardId keyed, carrying each held card's blocking window and next reconsideration time (see
+ * autoLaunchPoller.js's `getStatus()`) -- had no client consumer at all. This is what makes that
+ * data reachable from the board UI; app.js polls it the same way it already polls git status.
+ */
+export async function fetchPollerStatus() {
+  const res = await fetch(POLLER_PATH);
+  if (!res.ok) {
+    throw new Error(`GET ${POLLER_PATH} failed: ${res.status}`);
   }
   return res.json();
 }

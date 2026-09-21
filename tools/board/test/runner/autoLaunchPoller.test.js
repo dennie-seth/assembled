@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   createAutoLaunchPoller,
   selectNextCard,
@@ -11,6 +14,14 @@ import {
 } from "../../src/runner/autoLaunchPoller.js";
 import { CardLaunchError, LAUNCH_TRIGGERS } from "../../src/runner/cardLaunch.js";
 import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
+import { orderCandidatesWithAging } from "../../src/runner/autoLaunchPoller.js";
+import {
+  createDrainWaitTracker,
+  DEFAULT_DRAIN_CONFIG,
+  DRAIN_STATUS,
+  loadPersistedDrainWaitState,
+  loadPersistedDrainHeldState
+} from "../../src/runner/drainMode.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -32,11 +43,20 @@ function makeLogger() {
 }
 
 function makeStore(tasks) {
-  return { list: vi.fn(async () => tasks), get: vi.fn(async (id) => tasks.find((t) => t.id === id) ?? null) };
+  return {
+    list: vi.fn(async () => tasks),
+    get: vi.fn(async (id) => tasks.find((t) => t.id === id) ?? null),
+    update: vi.fn(async (id, patch) => {
+      const existing = tasks.find((t) => t.id === id) ?? { id };
+      const updated = { ...existing, ...patch };
+      tasks = tasks.map((t) => (t.id === id ? updated : t));
+      return updated;
+    })
+  };
 }
 
 function makeOrchestrator({ active = false } = {}) {
-  return { hasActiveRuns: vi.fn(() => active), isRunning: vi.fn(() => false) };
+  return { hasActiveRuns: vi.fn(() => active), isRunning: vi.fn(() => false), hub: { broadcast: vi.fn() } };
 }
 
 function makePoller({
@@ -905,5 +925,614 @@ describe("createAutoLaunchPoller — getStatus()", () => {
     expect(status.lastTickAt).toBe(new Date(1_700_000_000_000).toISOString());
     expect(status.lastResult).toMatchObject({ kind: "error", cardId: "T-0001" });
     expect(status.lastResult.reason).toMatch(/unexpected failure/);
+  });
+});
+
+describe("orderCandidatesWithAging -- waiting cards age so ordinary work is not starved", () => {
+  const now = Date.parse("2026-09-20T00:00:00.000Z");
+
+  it("leaves order unchanged when nobody has any wait history", () => {
+    const tracker = createDrainWaitTracker();
+    const candidates = [makeTask({ id: "T-0001", priority: "P1" }), makeTask({ id: "T-0002", priority: "P1" })];
+    const ordered = orderCandidatesWithAging(candidates, { drainTracker: tracker, now });
+    expect(ordered.map((t) => t.id)).toEqual(["T-0001", "T-0002"]);
+  });
+
+  it("moves a long-waiting card ahead of a same-priority newer one that would otherwise win on id order alone", () => {
+    const tracker = createDrainWaitTracker();
+    tracker.recordHeld("T-0005", now - 5 * DEFAULT_DRAIN_CONFIG.agingStepMs);
+    const candidates = [makeTask({ id: "T-0001", priority: "P1" }), makeTask({ id: "T-0005", priority: "P1" })];
+    const ordered = orderCandidatesWithAging(candidates, { drainTracker: tracker, now });
+    expect(ordered.map((t) => t.id)).toEqual(["T-0005", "T-0001"]);
+  });
+
+  it("never lets aging cross a real priority boundary -- a fresh P0 card still goes before an aged P1 one", () => {
+    const tracker = createDrainWaitTracker();
+    tracker.recordHeld("T-0005", now - 50 * DEFAULT_DRAIN_CONFIG.agingStepMs);
+    const candidates = [makeTask({ id: "T-0005", priority: "P1" }), makeTask({ id: "T-0001", priority: "P0" })];
+    const ordered = orderCandidatesWithAging(candidates, { drainTracker: tracker, now });
+    expect(ordered.map((t) => t.id)).toEqual(["T-0001", "T-0005"]);
+  });
+
+  it("falls back to numeric id order among same-priority cards with equal aging", () => {
+    const tracker = createDrainWaitTracker();
+    const candidates = [makeTask({ id: "T-0010", priority: "P2" }), makeTask({ id: "T-0002", priority: "P2" })];
+    const ordered = orderCandidatesWithAging(candidates, { drainTracker: tracker, now });
+    expect(ordered.map((t) => t.id)).toEqual(["T-0002", "T-0010"]);
+  });
+});
+
+describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => {
+  function capacityFitHoldError(message, extra = {}) {
+    const err = new CardLaunchError(message, 409);
+    err.capacityFitHold = true;
+    Object.assign(err, extra);
+    return err;
+  }
+
+  it("drain mode off (default): getStatus().drain is always empty, even when every candidate is held -- zero footprint on today's behaviour", async () => {
+    const task = makeTask({ id: "T-0001" });
+    const { poller } = makePoller({
+      tasks: [task],
+      now: () => 1_700_000_000_000,
+      launchFn: vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: 1_700_100_000_000, resetElapsed: false } }
+        });
+      })
+    });
+
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().drain).toEqual({});
+  });
+
+  it("drain mode on: an ordinary capacity hold is tracked and reported, naming the blocking window and its OWN reset -- never the other window's", async () => {
+    const task = makeTask({ id: "T-0001" });
+    const fiveHourResetMs = 1_700_010_000_000; // soon
+    const sevenDayResetMs = 1_700_500_000_000; // far later -- the real horizon
+    const { poller } = makePoller({
+      tasks: [task],
+      now: () => 1_700_000_000_000,
+      drainModeEnabled: true,
+      launchFn: vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: {
+            admitted: false,
+            windows: {
+              five_hour: { windowKind: "five_hour", admitted: true, holdReason: null },
+              seven_day: { windowKind: "seven_day", admitted: false, holdReason: "insufficient_capacity" }
+            }
+          },
+          telemetryReadings: {
+            five_hour: { resetsAtMs: fiveHourResetMs, resetElapsed: false },
+            seven_day: { resetsAtMs: sevenDayResetMs, resetElapsed: false }
+          }
+        });
+      })
+    });
+
+    expect(await poller.tick()).toBeNull();
+    const drain = poller.getStatus().drain;
+    expect(drain["T-0001"]).toMatchObject({ status: "waiting", blockingWindow: "seven_day", nextReconsiderationAtMs: sevenDayResetMs });
+  });
+
+  it("drain mode on: an oversized hold is no longer tracked as ORDINARY waiting work -- distinct from a same-tick ordinary hold that IS still reconsidered -- but it stays visible as a terminal hold (FIX ROUND 2 finding 2: 'oversized holds behave the same way' as a wait-expired hold)", async () => {
+    const oversizedTask = makeTask({ id: "T-0001", priority: "P1" });
+    const ordinaryTask = makeTask({ id: "T-0002", priority: "P1" });
+    const launchFn = vi.fn(async ({ id }) => {
+      if (id === "T-0001") {
+        throw capacityFitHoldError("oversized", { drainHeldOversized: true, blockingWindow: "seven_day", reason: "Oversized for the seven_day window -- split or re-scope." });
+      }
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: 1_700_100_000_000, resetElapsed: false } }
+      });
+    });
+    const { poller } = makePoller({ tasks: [oversizedTask, ordinaryTask], now: () => 1_700_000_000_000, drainModeEnabled: true, launchFn });
+
+    expect(await poller.tick()).toBeNull();
+    const drain = poller.getStatus().drain;
+    // No longer ordinary wait bookkeeping (no firstHeldAtMs/timesPassedOver aging entry) --
+    // but the terminal hold itself is still reported, not dropped from the map entirely.
+    expect(drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_OVERSIZED, blockingWindow: "seven_day" });
+    expect(drain["T-0002"]).toMatchObject({ status: "waiting", blockingWindow: "five_hour" });
+    expect(launchFn).toHaveBeenCalledWith(expect.objectContaining({ id: "T-0001" }));
+    expect(launchFn).toHaveBeenCalledWith(expect.objectContaining({ id: "T-0002" }));
+  });
+
+  it("drain mode on: a still-waiting card's aging boost grows tick over tick, and it keeps being reconsidered rather than dropped", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1_700_000_000_000;
+    const launchFn = vi.fn(async () => {
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, launchFn });
+
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().drain["T-0001"].agingBoost).toBe(0);
+
+    nowMs += 4 * DEFAULT_DRAIN_CONFIG.agingStepMs;
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().drain["T-0001"].agingBoost).toBe(4);
+    expect(launchFn).toHaveBeenCalledTimes(2);
+  });
+
+  // FIX ROUND 1 finding (a): "Past maxWaitMs, evaluateDrainState no longer returns waiting with a
+  // capped timestamp and overdue: true that nothing acts on. It transitions to a distinct terminal
+  // state... The consumer acts on it: autoLaunchPoller.js handles the terminal state distinctly
+  // from waiting -- it stops re-reporting the card as merely waiting and surfaces the hold." Drives
+  // repeated ticks ACROSS the deadline (Chat's own reproduction shape), not just one evaluation.
+  it("REGRESSION (FIX ROUND 1a): repeated ticks across the deadline transition the card to a terminal hold -- blocked for a human, never launched, and no longer reported as merely waiting", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1000;
+    const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const launchFn = vi.fn(async () => {
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller, store, orchestrator, logger } = makePoller({
+      tasks: [task],
+      now: () => nowMs,
+      drainModeEnabled: true,
+      drainConfig,
+      launchFn
+    });
+
+    // Tick 1 (now=1000): first hold -- ordinary WAITING.
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.WAITING });
+    expect(store.update).not.toHaveBeenCalled();
+
+    // Tick 2 (now=10000): well past firstHeldAtMs(1000) + maxWaitMs(1000) = 2000.
+    nowMs = 10000;
+    expect(await poller.tick()).toBeNull();
+
+    // Never launched despite "leaving drain" -- the terminal hold is never a free pass around
+    // capacity admission. launchFn was tried (still refused by admission) but never returned a
+    // launch outcome.
+    expect(launchFn).toHaveBeenCalledTimes(2);
+
+    // The card is blocked for a human, exactly like the oversized exit -- not left waiting.
+    expect(store.update).toHaveBeenCalledWith(
+      "T-0001",
+      expect.objectContaining({ status: "blocked", body: expect.stringMatching(/wait|expired|human|intervention/i) })
+    );
+    expect(orchestrator.hub.broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "changed", id: "T-0001" })
+    );
+
+    // No longer tracked as ORDINARY waiting work (distinct status, and the drainTracker's own
+    // aging bookkeeping is gone) -- but FIX ROUND 2 finding 2 requires the terminal hold ITSELF
+    // to stay visible in getStatus().drain until a human resolves it, not disappear the instant
+    // it fires. A waiting badge must turn into a hold, never vanish.
+    expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED, blockingWindow: "five_hour" });
+
+    // The consumer's own log line is distinct from an ordinary "waiting" report.
+    const lines = logLines(logger);
+    expect(lines).toMatch(/held_wait_expired/);
+  });
+
+  // FIX ROUND 2 finding 2 (Chat round-3 review of #408): "The terminal hold is deleted before
+  // anyone can see it... getStatus().drain is {} after the tick... The round-2 UI tests injected
+  // terminal states directly, which is exactly why they passed over this." This drives the REAL
+  // poller through REAL ticks (never an injected drain map) and probes exactly what Chat probed:
+  // the card's real status alongside the real getStatus().drain payload.
+  it("REGRESSION (FIX ROUND 2, finding 2): after the real poller records held_wait_expired, task.status is blocked AND getStatus().drain still describes the hold -- not {}", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1000;
+    const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const launchFn = vi.fn(async () => {
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller, store } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, drainConfig, launchFn });
+
+    await poller.tick();
+    nowMs = 10000;
+    await poller.tick();
+
+    const stored = await store.get("T-0001");
+    const drain = poller.getStatus().drain;
+    // The exact producer/consumer mismatch Chat's probe found: task.status === "blocked" while
+    // getStatus().drain was {}. Both sides of the payload must now agree.
+    expect(stored.status).toBe("blocked");
+    expect(drain).not.toEqual({});
+    expect(drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+  });
+
+  it("REGRESSION (FIX ROUND 2, finding 2): the terminal hold clears once a human moves the card back to an eligible state and it launches cleanly -- resolution, not a timeout", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1000;
+    let shouldFit = false;
+    const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const launchFn = vi.fn(async ({ id }) => {
+      if (shouldFit) return makeTask({ id });
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller, store } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, drainConfig, launchFn });
+
+    await poller.tick();
+    nowMs = 10000;
+    await poller.tick();
+    expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+
+    // A human re-scopes the card, moves it back to ready, and this time it fits -- the underlying
+    // hold is genuinely resolved, not merely timed out.
+    await store.update("T-0001", { status: "ready" });
+    shouldFit = true;
+    nowMs = 20000;
+    await poller.tick();
+
+    expect(poller.getStatus().drain).not.toHaveProperty("T-0001");
+  });
+
+  it("REGRESSION (FIX ROUND 1a): once blocked, the card is no longer an eligible candidate on the NEXT tick -- store.list() naturally excludes it", async () => {
+    const task = makeTask({ id: "T-0001" });
+    let nowMs = 1000;
+    const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+    const launchFn = vi.fn(async () => {
+      throw capacityFitHoldError("does not fit", {
+        admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+        telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+      });
+    });
+    const { poller, store } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, drainConfig, launchFn });
+
+    await poller.tick();
+    nowMs = 10000;
+    await poller.tick();
+    await expect(store.get("T-0001")).resolves.toMatchObject({ status: "blocked" });
+
+    nowMs = 20000;
+    expect(await poller.tick()).toBeNull();
+    expect(poller.getStatus().lastResult).toMatchObject({ kind: "skip" });
+    expect(launchFn).toHaveBeenCalledTimes(2); // not called a third time -- T-0001 is no longer eligible
+  });
+
+  // FIX ROUND 2 finding 1 (Chat round-3 review of #408): "A finished wait leaves its deadline on
+  // disk... If the card comes back to ready for another attempt after a restart, its first
+  // capacity hold inherits the OLD attempt's deadline and can be held_wait_expired immediately."
+  // Chat's own reproduction, driven through REAL poller ticks and REAL sidecar files under a real
+  // tmp runsDir -- no real worker is ever launched (launchFn stays a fake).
+  describe("REGRESSION (FIX ROUND 2, finding 1): a finished wait's deadline never survives on disk into the next attempt", () => {
+    let runsDir;
+
+    beforeEach(async () => {
+      runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-autolaunch-drain-"));
+    });
+
+    afterEach(async () => {
+      await fs.rm(runsDir, { recursive: true, force: true });
+    });
+
+    it("Chat's fixture: hold at 1000ms, successful (fake) launch at 1500ms, reload at 10000ms with maxWaitMs 1000ms -- the card's next hold starts a FRESH deadline, never held_wait_expired immediately", async () => {
+      let nowMs = 1000;
+      let shouldFit = false;
+      const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+      const launchFn = vi.fn(async ({ id }) => {
+        if (shouldFit) return makeTask({ id });
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+
+      const taskA = makeTask({ id: "T-0001" });
+      const { poller: pollerA } = makePoller({
+        tasks: [taskA],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn
+      });
+
+      // Tick 1 (now=1000): first hold -- persists firstHeldAtMs=1000 to runsDir/.drain-wait/T-0001.json.
+      expect(await pollerA.tick()).toBeNull();
+      await pollerA.flushDrainPersistence();
+      expect(await loadPersistedDrainWaitState({ runsDir })).toEqual({ "T-0001": 1000 });
+
+      // Tick 2 (now=1500): a successful (fake) launch -- must clear BOTH the in-memory tracker
+      // AND the persisted sidecar file, not just the former.
+      nowMs = 1500;
+      shouldFit = true;
+      await pollerA.tick();
+      await pollerA.flushDrainPersistence();
+      expect(await loadPersistedDrainWaitState({ runsDir })).toEqual({});
+
+      // "Reload at 10000ms": a board restart -- a brand-new poller/tracker, seeded only from
+      // whatever is on disk right now (nothing, since the launch cleared it), for the card's next
+      // attempt (a human moved it back to ready after the first launch's own run finished).
+      nowMs = 10000;
+      shouldFit = false;
+      const seed = await loadPersistedDrainWaitState({ runsDir });
+      const restartedTracker = createDrainWaitTracker({ seed });
+      const taskB = makeTask({ id: "T-0001", status: "ready" });
+      const { poller: pollerB } = makePoller({
+        tasks: [taskB],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn,
+        drainTracker: restartedTracker
+      });
+
+      expect(await pollerB.tick()).toBeNull();
+      // A FRESH deadline (WAITING), never the finished attempt's old one (which would already be
+      // expired by now=10000 against a firstHeldAtMs of 1000).
+      expect(pollerB.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.WAITING });
+      expect(pollerB.getStatus().drain["T-0001"].status).not.toBe(DRAIN_STATUS.HELD_WAIT_EXPIRED);
+    });
+
+    it("the oversized exit also clears the persisted sidecar file, not just the in-memory tracker", async () => {
+      let nowMs = 1000;
+      const task = makeTask({ id: "T-0001" });
+      // First tick: an ordinary hold, so a sidecar file actually exists to clear.
+      const launchFn = vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+      const { poller } = makePoller({ tasks: [task], now: () => nowMs, drainModeEnabled: true, runsDir, launchFn });
+
+      await poller.tick();
+      await poller.flushDrainPersistence();
+      expect(await loadPersistedDrainWaitState({ runsDir })).toEqual({ "T-0001": 1000 });
+
+      // Next tick: now the SAME card is detected oversized (e.g. its estimate grew) -- the
+      // oversized exit must clear the stale sidecar from the earlier ordinary hold too.
+      launchFn.mockImplementation(async () => {
+        throw capacityFitHoldError("oversized", { drainHeldOversized: true, blockingWindow: "seven_day", reason: "oversized -- split or re-scope" });
+      });
+      nowMs = 2000;
+      await poller.tick();
+      await poller.flushDrainPersistence();
+
+      expect(await loadPersistedDrainWaitState({ runsDir })).toEqual({});
+    });
+  });
+
+  // FIX ROUND 3 (Chat 2026-09-21 review of #408, finding 1): "terminal holds are in-memory only,
+  // so a restart erases them... after a restart neither the seeded drainTracker nor the fresh
+  // terminal map knows the card -- and because the card is blocked it is not an eligible
+  // candidate, so no later tick ever recreates the entry." Drives the REAL poller through REAL
+  // ticks and REAL sidecar files, restarting with a REPLACEMENT poller built the same way a live
+  // restart would build one: same store, same runsDir, a drainTracker seeded from
+  // loadPersistedDrainWaitState({ runsDir }) -- nothing new passed in.
+  describe("REGRESSION (FIX ROUND 3): an unresolved terminal hold survives a poller restart", () => {
+    let runsDir;
+
+    beforeEach(async () => {
+      runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-autolaunch-drain-restart-"));
+    });
+
+    afterEach(async () => {
+      await fs.rm(runsDir, { recursive: true, force: true });
+    });
+
+    function makeReplacementPoller({ store, orchestrator, logger, launchFn, drainConfig, drainTracker, now }) {
+      return createAutoLaunchPoller({
+        store,
+        orchestrator,
+        runsDir,
+        enabled: true,
+        intervalMs: 1000,
+        usageMax: 0.8,
+        readUsage: async () => ({ utilization: 0, status: "allowed", reason: "status=allowed" }),
+        readUsageTelemetryFn: async () => ({
+          five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0, resetElapsed: false },
+          seven_day: { windowKind: "seven_day", classification: "measured", utilization: 0, resetElapsed: false }
+        }),
+        launchFn,
+        logger,
+        drainModeEnabled: true,
+        drainConfig,
+        drainTracker,
+        now
+      });
+    }
+
+    it("Chat's fixture: enter waiting -> advance past the deadline -> flush -> a replacement poller seeded only from loadPersistedDrainWaitState still reports the unresolved terminal hold on its first tick, and never launches the still-blocked card", async () => {
+      let nowMs = 1000;
+      const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+      const launchFn = vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+      const task = makeTask({ id: "T-0001" });
+      const { poller: pollerA, store, orchestrator, logger } = makePoller({
+        tasks: [task],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn
+      });
+
+      expect(await pollerA.tick()).toBeNull();
+      nowMs = 10000;
+      expect(await pollerA.tick()).toBeNull();
+      expect((await store.get("T-0001")).status).toBe("blocked");
+      expect(pollerA.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+      await pollerA.flushDrainPersistence();
+      // The terminal hold is durable, not just in-memory -- a real sidecar file exists for it.
+      expect(await loadPersistedDrainHeldState({ runsDir })).toHaveProperty("T-0001");
+
+      // "Restart": the replacement poller is constructed with the same store/runsDir and a
+      // drainTracker seeded from loadPersistedDrainWaitState({ runsDir }) -- nothing new.
+      const seed = await loadPersistedDrainWaitState({ runsDir });
+      const pollerB = makeReplacementPoller({
+        store,
+        orchestrator,
+        logger,
+        launchFn,
+        drainConfig,
+        drainTracker: createDrainWaitTracker({ seed }),
+        now: () => nowMs
+      });
+
+      expect(await pollerB.tick()).toBeNull();
+      expect((await store.get("T-0001")).status).toBe("blocked");
+      expect(pollerB.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+      // Restoration never bypasses capacity admission: the card is still "blocked" so it is never
+      // even an eligible candidate on the replacement poller -- launchFn was never tried again.
+      expect(pollerB.getStatus().lastResult).toMatchObject({ kind: "skip" });
+      expect(launchFn).toHaveBeenCalledTimes(2);
+    });
+
+    it("REGRESSION, the intervention half: a human resolves the hold on the restored poller, and a further restart does not bring it back", async () => {
+      let nowMs = 1000;
+      const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+      let shouldFit = false;
+      const launchFn = vi.fn(async ({ id }) => {
+        if (shouldFit) return makeTask({ id });
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+      const task = makeTask({ id: "T-0001" });
+      const { poller: pollerA, store, orchestrator, logger } = makePoller({
+        tasks: [task],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn
+      });
+
+      expect(await pollerA.tick()).toBeNull();
+      nowMs = 10000;
+      expect(await pollerA.tick()).toBeNull();
+      await pollerA.flushDrainPersistence();
+
+      const seed = await loadPersistedDrainWaitState({ runsDir });
+      const pollerB = makeReplacementPoller({
+        store,
+        orchestrator,
+        logger,
+        launchFn,
+        drainConfig,
+        drainTracker: createDrainWaitTracker({ seed }),
+        now: () => nowMs
+      });
+      expect(await pollerB.tick()).toBeNull();
+      expect(pollerB.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+
+      // A human resolves the hold and moves the card back to ready; this time it fits.
+      await store.update("T-0001", { status: "ready" });
+      shouldFit = true;
+      nowMs = 20000;
+      expect(await pollerB.tick()).not.toBeNull();
+      expect(pollerB.getStatus().drain).not.toHaveProperty("T-0001");
+      await pollerB.flushDrainPersistence();
+      expect(await loadPersistedDrainHeldState({ runsDir })).not.toHaveProperty("T-0001");
+
+      // A further restart must not resurrect the resolved hold.
+      const seed2 = await loadPersistedDrainWaitState({ runsDir });
+      const pollerC = makeReplacementPoller({
+        store,
+        orchestrator,
+        logger,
+        launchFn,
+        drainConfig,
+        drainTracker: createDrainWaitTracker({ seed: seed2 }),
+        now: () => nowMs
+      });
+      await pollerC.tick();
+      expect(pollerC.getStatus().drain).not.toHaveProperty("T-0001");
+    });
+
+    // REGRESSION (reconciliation gap left by FIX ROUND 3's own review): the criterion is "a
+    // recovered entry is dropped once the card is no longer in the held state (a human moved it
+    // to ready/backlog/in-progress, or it ran)". The restart test above only exercises "ready".
+    // Live reconciliation (no restart involved) only cleared a terminal hold when the card showed
+    // up in `candidates` -- which requires status exactly "ready" AND dependency-eligible -- so a
+    // human moving the card straight to "backlog" or "in-progress" never reconciled it away until
+    // a full process restart happened to run reconcileTerminalHoldsOnStartup.
+    it("REGRESSION (reconciliation gap): moving the held card straight to backlog clears the terminal hold on the next tick, without the card ever becoming an eligible candidate", async () => {
+      let nowMs = 1000;
+      const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+      const launchFn = vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+      const task = makeTask({ id: "T-0001" });
+      const { poller, store } = makePoller({
+        tasks: [task],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn
+      });
+
+      expect(await poller.tick()).toBeNull();
+      nowMs = 10000;
+      expect(await poller.tick()).toBeNull();
+      expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+
+      // A human resolves the hold by moving the card straight to backlog -- it never becomes an
+      // eligible "ready" candidate.
+      await store.update("T-0001", { status: "backlog" });
+      nowMs = 11000;
+      await poller.tick();
+      expect(poller.getStatus().drain).not.toHaveProperty("T-0001");
+      await poller.flushDrainPersistence();
+      expect(await loadPersistedDrainHeldState({ runsDir })).not.toHaveProperty("T-0001");
+    });
+
+    it("REGRESSION (reconciliation gap): moving the held card to in-progress (running it directly) clears the terminal hold even on a tick that otherwise skips because a card is mid-run", async () => {
+      let nowMs = 1000;
+      const drainConfig = { ...DEFAULT_DRAIN_CONFIG, maxWaitMs: 1000 };
+      const launchFn = vi.fn(async () => {
+        throw capacityFitHoldError("does not fit", {
+          admission: { admitted: false, windows: { five_hour: { windowKind: "five_hour", admitted: false, holdReason: "insufficient_capacity" } } },
+          telemetryReadings: { five_hour: { resetsAtMs: null, resetElapsed: false } }
+        });
+      });
+      const task = makeTask({ id: "T-0001" });
+      const { poller, store } = makePoller({
+        tasks: [task],
+        now: () => nowMs,
+        drainModeEnabled: true,
+        drainConfig,
+        runsDir,
+        launchFn
+      });
+
+      expect(await poller.tick()).toBeNull();
+      nowMs = 10000;
+      expect(await poller.tick()).toBeNull();
+      expect(poller.getStatus().drain["T-0001"]).toMatchObject({ status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+
+      // A human runs the card directly (e.g. the manual Run button), moving it to in-progress.
+      // This tick skips for the unrelated "cards still at in-progress" gate -- reconciliation must
+      // not depend on reaching the candidate-selection code past that gate.
+      await store.update("T-0001", { status: "in-progress" });
+      nowMs = 11000;
+      await poller.tick();
+      expect(poller.getStatus().lastResult).toMatchObject({ kind: "skip" });
+      expect(poller.getStatus().drain).not.toHaveProperty("T-0001");
+      await poller.flushDrainPersistence();
+      expect(await loadPersistedDrainHeldState({ runsDir })).not.toHaveProperty("T-0001");
+    });
   });
 });

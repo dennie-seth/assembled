@@ -20,6 +20,7 @@ import { createRunAwareTaskStore } from "../lib/runAwareTaskStore.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 import { createAutoPullPoller } from "../runner/autoPullPoller.js";
 import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
+import { createDrainWaitTracker, loadPersistedDrainWaitState } from "../runner/drainMode.js";
 import { drainPendingUsageWrites } from "../runner/usageLedger.js";
 import { reconcileReservationsOnStartup } from "../runner/launchReservation.js";
 import { reconcileGpuLeasesOnStartup } from "../runner/gpuLease.js";
@@ -168,6 +169,13 @@ export async function startBoardServer({
     orchestrator,
     restartCoordinator
   });
+  // WIP gate T-F drain mode, FIX ROUND 1 (Chat round-2 review of #408, finding 2): the original
+  // firstHeldAtMs deadline must survive a board restart, or a restart quietly extends the bound.
+  // Loaded BEFORE the tracker is constructed -- `createAutoLaunchPoller` itself stays synchronous,
+  // so seeding has to happen here, the one place this process already does async startup work in
+  // sequence before anything starts ticking. Best-effort: an unreadable/missing sidecar directory
+  // (a fresh runsDir, or drain mode never engaged before) resolves to `{}`, never throws.
+  const drainWaitSeed = await loadPersistedDrainWaitState({ runsDir: path.join(tasksDir, ".runs") });
   // Starts at most one ready card per tick when the board is idle and Claude usage is below
   // threshold -- the in-process replacement for an external scheduler that could not reach the
   // board. Default OFF (AUTO_LAUNCH_ENABLED), so deploying this does not switch it on; see
@@ -175,7 +183,8 @@ export async function startBoardServer({
   const autoLaunchPoller = createAutoLaunchPoller({
     store,
     orchestrator,
-    runsDir: path.join(tasksDir, ".runs")
+    runsDir: path.join(tasksDir, ".runs"),
+    drainTracker: createDrainWaitTracker({ seed: drainWaitSeed })
   });
 
   if (watcher) {

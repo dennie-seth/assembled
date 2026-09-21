@@ -128,7 +128,48 @@ function attemptsBadgeFor(task) {
   return badge;
 }
 
-function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, dependencyStatus, unmetDependencies) {
+const DRAIN_BADGE_ICON = {
+  waiting: "⏳",
+  held_oversized: "⛔",
+  held_wait_expired: "⛔"
+};
+
+/**
+ * WIP gate T-F (drain mode, spec §9), FIX ROUND 1 finding (b): "a waiting card shows the
+ * blocking window and the next reconsideration time on both the card view and the board view."
+ * `drainByCardId` is the poller's own `getStatus().drain` map (see api.js's fetchPollerStatus),
+ * threaded straight through by app.js -- no reshaping here. A card with no entry (drain mode off,
+ * or this card simply isn't held) renders nothing, same as every other conditional badge above.
+ */
+function drainSummaryFor(state) {
+  if (state.status === "waiting") {
+    const windowLabel = state.blockingWindow ?? "capacity";
+    const next =
+      typeof state.nextReconsiderationAtMs === "number" ? new Date(state.nextReconsiderationAtMs).toLocaleString() : "unknown";
+    return `Drain: waiting on ${windowLabel} window -- next reconsideration ${next}`;
+  }
+  if (state.status === "held_oversized") {
+    return `Drain hold (oversized): ${state.reason ?? "waiting cannot help -- split or re-scope this card"}`;
+  }
+  if (state.status === "held_wait_expired") {
+    return `Drain hold (wait expired): ${state.reason ?? "bounded wait exceeded -- needs a human to intervene"}`;
+  }
+  return `Drain: ${state.status}`;
+}
+
+function drainBadgeFor(task, drainByCardId) {
+  const state = drainByCardId?.[task.id];
+  if (!state || !state.status || state.status === "clear") return null;
+  const badge = document.createElement("span");
+  badge.className = "card-drain-badge";
+  const label = drainSummaryFor(state);
+  badge.textContent = DRAIN_BADGE_ICON[state.status] ?? "⏳";
+  badge.title = label;
+  badge.setAttribute("aria-label", label);
+  return badge;
+}
+
+function renderCard(task, { onCardClick, onRun, onCancel, drain }, blockerCounts, dependencyStatus, unmetDependencies) {
   const card = document.createElement("div");
   card.className = "card";
   card.draggable = true;
@@ -160,6 +201,11 @@ function renderCard(task, { onCardClick, onRun, onCancel }, blockerCounts, depen
   const attemptsBadge = attemptsBadgeFor(task);
   if (attemptsBadge) {
     titleRow.appendChild(attemptsBadge);
+  }
+
+  const drainBadge = drainBadgeFor(task, drain);
+  if (drainBadge) {
+    titleRow.appendChild(drainBadge);
   }
 
   const meta = document.createElement("div");

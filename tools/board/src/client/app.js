@@ -12,7 +12,8 @@ import {
   fetchGitStatus,
   addComment,
   uploadAttachment,
-  removeAttachment
+  removeAttachment,
+  fetchPollerStatus
 } from "./api.js";
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard, BATCH_SIZE } from "./boardView.js";
@@ -43,7 +44,9 @@ export function createApp({
   addCommentImpl = addComment,
   uploadAttachmentImpl = uploadAttachment,
   removeAttachmentImpl = removeAttachment,
-  gitPollIntervalMs = 30000
+  fetchPollerStatusImpl = fetchPollerStatus,
+  gitPollIntervalMs = 30000,
+  pollerPollIntervalMs = 15000
 }) {
   let tasks = [];
   let agentOptions = [];
@@ -56,6 +59,11 @@ export function createApp({
   const columnBatch = new Map(STATUSES.map((status) => [status, BATCH_SIZE]));
   let gitStatus = null;
   let knownGitHead = null;
+  // WIP gate T-F (drain mode, spec §9), FIX ROUND 1 finding (b): the poller's own `drain` map --
+  // see api.js's fetchPollerStatus. `{}` (never tracking anything) until the first successful
+  // poll, so a card renders no drain badge/info before that resolves rather than throwing on an
+  // undefined lookup.
+  let drainByCardId = {};
 
   // Every subtree render() rebuilds. Focus, caret, uncommitted text, scroll offsets
   // and open <details> live only in the DOM, so they are captured before the rebuild
@@ -83,7 +91,8 @@ export function createApp({
       columnSort,
       onSortChange: handleSortChange,
       columnBatch,
-      onShowMore: handleShowMore
+      onShowMore: handleShowMore,
+      drain: drainByCardId
     });
     const selected = selectedId !== null ? (tasks.find((task) => task.id === selectedId) ?? null) : null;
     if (sidePanelRoot) {
@@ -98,7 +107,8 @@ export function createApp({
         onUploadAttachment: handleUploadAttachment,
         onRemoveAttachment: handleRemoveAttachment,
         agentOptions,
-        allTasks: tasks.map((task) => ({ id: task.id, title: task.title }))
+        allTasks: tasks.map((task) => ({ id: task.id, title: task.title })),
+        drainState: selected ? (drainByCardId[selected.id] ?? null) : null
       });
     }
     if (consoleRoot) {
@@ -339,6 +349,23 @@ export function createApp({
     }
   }
 
+  // WIP gate T-F (drain mode, spec §9), FIX ROUND 1 finding (b): "the view refreshes as drain
+  // state changes -- when a card enters drain, when its reconsideration time moves, and when it
+  // reaches the terminal hold -- rather than only at page load." Same shape as pollGitStatus
+  // above: poll on an interval, re-render only when the data actually moved.
+  async function pollPollerStatus() {
+    if (!fetchPollerStatusImpl) return;
+    try {
+      const status = await fetchPollerStatusImpl();
+      const next = status?.drain ?? {};
+      if (JSON.stringify(next) === JSON.stringify(drainByCardId)) return;
+      drainByCardId = next;
+      renderGate.request();
+    } catch {
+      // Non-fatal: drain state is informational; don't surface fetch errors on the board.
+    }
+  }
+
   function gitStatusUnchanged(previous, next) {
     if (!previous) return false;
     return (
@@ -373,6 +400,13 @@ export function createApp({
         }
       }
     }
+
+    if (fetchPollerStatusImpl) {
+      await pollPollerStatus();
+      if (pollerPollIntervalMs > 0) {
+        setInterval(pollPollerStatus, pollerPollIntervalMs);
+      }
+    }
   }
 
   return {
@@ -397,6 +431,7 @@ export function createApp({
     handleExportBacklog,
     handleExportDone,
     pollGitStatus,
+    pollPollerStatus,
     getTasks: () => tasks,
     getSelectedId: () => selectedId,
     getError: () => error
