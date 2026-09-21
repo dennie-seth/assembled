@@ -16,6 +16,9 @@ import {
   persistDrainFirstHeld,
   clearPersistedDrainFirstHeld,
   loadPersistedDrainWaitState,
+  persistDrainHeldState,
+  clearPersistedDrainHeldState,
+  loadPersistedDrainHeldState,
   createDrainWaitStateCoordinator
 } from "../../src/runner/drainMode.js";
 
@@ -558,5 +561,144 @@ describe("createDrainWaitStateCoordinator -- ordered persist/clear per card (FIX
     await coordinator.clearFirstHeld("T-0001");
 
     expect(unlinkFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * FIX ROUND 3 (Chat 2026-09-21 review of #408, finding 1): "terminal holds are in-memory only, so
+ * a restart erases them... after a restart neither the seeded drainTracker nor the fresh terminal
+ * map knows the card -- and because the card is blocked it is not an eligible candidate, so no
+ * later tick ever recreates the entry." These three functions are the durable side of a terminal
+ * hold (HELD_WAIT_EXPIRED / HELD_OVERSIZED) -- kept as their OWN sidecar, deliberately separate
+ * from persistDrainFirstHeld's deadline file, since the two states are mutually exclusive for a
+ * card and conflating the files would make it impossible to tell, from disk alone, which state a
+ * restart should restore.
+ */
+describe("persistDrainHeldState / loadPersistedDrainHeldState / clearPersistedDrainHeldState -- terminal holds surviving a board restart (FIX ROUND 3)", () => {
+  let runsDir;
+
+  beforeEach(async () => {
+    runsDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-drainmode-held-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(runsDir, { recursive: true, force: true });
+  });
+
+  const heldState = Object.freeze({
+    status: DRAIN_STATUS.HELD_WAIT_EXPIRED,
+    blockingWindow: "five_hour",
+    reason: "Drain wait bound reached for the five_hour window",
+    nextReconsiderationAtMs: null,
+    agingBoost: 3
+  });
+
+  it("round-trips a single card's terminal hold through a fresh load -- simulating a board restart", async () => {
+    await persistDrainHeldState({ runsDir, cardId: "T-0001", heldState });
+
+    const loaded = await loadPersistedDrainHeldState({ runsDir });
+    expect(loaded).toEqual({ "T-0001": heldState });
+  });
+
+  it("loads multiple persisted cards into one map", async () => {
+    const oversized = { ...heldState, status: DRAIN_STATUS.HELD_OVERSIZED, blockingWindow: "seven_day" };
+    await persistDrainHeldState({ runsDir, cardId: "T-0001", heldState });
+    await persistDrainHeldState({ runsDir, cardId: "T-0002", heldState: oversized });
+
+    const loaded = await loadPersistedDrainHeldState({ runsDir });
+    expect(loaded).toEqual({ "T-0001": heldState, "T-0002": oversized });
+  });
+
+  it("returns {} when nothing has ever been persisted", async () => {
+    expect(await loadPersistedDrainHeldState({ runsDir })).toEqual({});
+  });
+
+  it("returns {} when runsDir itself doesn't exist yet -- never throws", async () => {
+    expect(await loadPersistedDrainHeldState({ runsDir: path.join(runsDir, "does-not-exist") })).toEqual({});
+  });
+
+  it("clearPersistedDrainHeldState removes a card's sidecar so a future load no longer sees it -- resolution, not a timeout", async () => {
+    await persistDrainHeldState({ runsDir, cardId: "T-0001", heldState });
+    await clearPersistedDrainHeldState({ runsDir, cardId: "T-0001" });
+
+    expect(await loadPersistedDrainHeldState({ runsDir })).toEqual({});
+  });
+
+  it("clearPersistedDrainHeldState is a no-op, not a throw, for a card that was never persisted", async () => {
+    await expect(clearPersistedDrainHeldState({ runsDir, cardId: "T-9999" })).resolves.not.toThrow();
+  });
+
+  it("persistDrainHeldState is a no-op when runsDir is not provided", async () => {
+    await expect(persistDrainHeldState({ runsDir: null, cardId: "T-0001", heldState })).resolves.not.toThrow();
+  });
+
+  it("loadPersistedDrainHeldState returns {} when runsDir is not provided", async () => {
+    expect(await loadPersistedDrainHeldState({ runsDir: null })).toEqual({});
+  });
+});
+
+/**
+ * FIX ROUND 3: the same ordered-persist/clear coordination FIX ROUND 2 gave the deadline sidecar
+ * (createDrainWaitStateCoordinator -- ordered persist/clear per card, above) extends to the
+ * terminal-hold sidecar too, so an outstanding persist for a just-recovered hold can never
+ * outlive a clear issued after it (e.g. a human resolving the hold moments after a restart
+ * reconciles it).
+ */
+describe("createDrainWaitStateCoordinator -- ordered persist/clear for terminal holds (FIX ROUND 3)", () => {
+  function deferred() {
+    let resolve;
+    const promise = new Promise((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  it("a clear issued while a terminal-hold persist is still in flight always wins -- the write lands, then the clear removes it, never the other order", async () => {
+    const order = [];
+    const write = deferred();
+    const writeFileFn = vi.fn(async () => {
+      order.push("write:start");
+      await write.promise;
+      order.push("write:done");
+    });
+    const mkdirFn = vi.fn(async () => {});
+    const unlinkFn = vi.fn(async () => {
+      order.push("unlink");
+    });
+    const coordinator = createDrainWaitStateCoordinator({ runsDir: "/fake-runs", writeFileFn, mkdirFn, unlinkFn });
+
+    const persistPromise = coordinator.persistHeldState("T-0001", { status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+    const clearPromise = coordinator.clearHeldState("T-0001");
+
+    expect(unlinkFn).not.toHaveBeenCalled();
+
+    write.resolve();
+    await persistPromise;
+    await clearPromise;
+
+    expect(order).toEqual(["write:start", "write:done", "unlink"]);
+  });
+
+  it("flush() also waits for in-flight terminal-hold persist/clear operations", async () => {
+    const write = deferred();
+    const writeFileFn = vi.fn(async () => {
+      await write.promise;
+    });
+    const mkdirFn = vi.fn(async () => {});
+    const unlinkFn = vi.fn(async () => {});
+    const coordinator = createDrainWaitStateCoordinator({ runsDir: "/fake-runs", writeFileFn, mkdirFn, unlinkFn });
+
+    coordinator.persistHeldState("T-0001", { status: DRAIN_STATUS.HELD_WAIT_EXPIRED });
+    let flushed = false;
+    const flushPromise = coordinator.flush().then(() => {
+      flushed = true;
+    });
+
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    write.resolve();
+    await flushPromise;
+    expect(flushed).toBe(true);
   });
 });
