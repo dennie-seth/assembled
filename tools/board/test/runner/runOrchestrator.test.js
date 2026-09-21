@@ -3140,6 +3140,37 @@ describe("RunOrchestrator per-agent phase budgets", () => {
     expect((await store.get("T-0001")).status).toBe("blocked");
   });
 
+  it("holds a client phase to its own 90-minute budget using the real default table, not the 40-minute default (T-0407)", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "client" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      // No phaseTimeoutsByAgent override -- this exercises the real, imported
+      // PHASE_TIMEOUT_MS_BY_AGENT table, not an injected test double.
+      inactivityTimeoutMs: QUIET,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    const implChild = runner.spawnedChildren[0];
+
+    // Well past the 40-minute default, still inside the real 90-minute client budget: alive.
+    await vi.advanceTimersByTimeAsync(DEFAULT_PHASE_TIMEOUT_MS + 10 * 60 * 1000);
+    expect(runner.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(40 * 60 * 1000);
+    await runPromise;
+
+    expect(runner.kill).toHaveBeenCalledWith(expect.objectContaining({ child: implChild }));
+    expect((await store.get("T-0001")).status).toBe("blocked");
+  });
+
   it("holds the reviewer phase of an assets card to the reviewer budget, not the assets one", async () => {
     vi.useFakeTimers();
     const store = makeStore([baseTask({ agent: "assets" })]);
@@ -3224,6 +3255,33 @@ describe("RunOrchestrator timeout messages distinguish overrun from hang", () =>
     // assert either. The inactivity watchdog and §23-a's no-progress abort are the
     // actual hang defences.
     expect(body).not.toMatch(/hung|hang/i);
+  });
+
+  it("the phase-timeout message reports 90 minutes for a client phase using the real default table, not the 40-minute default (T-0407)", async () => {
+    vi.useFakeTimers();
+    const store = makeStore([baseTask({ agent: "client" })]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({
+      store,
+      git,
+      runner,
+      // No phaseTimeoutsByAgent override -- exercises the real PHASE_TIMEOUT_MS_BY_AGENT table.
+      inactivityTimeoutMs: 10 * 60 * 60 * 1000,
+      writeRunStateFn: vi.fn(async () => {}),
+      clearRunStateFn: vi.fn(async () => {})
+    });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(90 * 60 * 1000);
+    await runPromise;
+
+    const body = (await store.get("T-0001")).body;
+    expect(body).toMatch(/implementer/i);
+    expect(body).toContain("90");
+    expect(body).toMatch(/client/);
+    expect(body).not.toContain("40-minute");
   });
 
   it("the inactivity message still calls out silence and a likely hang", async () => {
