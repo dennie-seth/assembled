@@ -400,6 +400,29 @@ export function createAutoLaunchPoller({
       return skip(`the card corpus could not be read: ${err.message}`);
     }
 
+    // FIX ROUND 3 followup: "a recovered entry is dropped once the card is no longer in the held
+    // state (a human moved it to ready/backlog/in-progress, or it ran)." Reconciling only against
+    // `candidates` below missed this -- `candidates` requires status exactly "ready" AND
+    // dependency-eligible, so a human moving a held card straight to "backlog" or "in-progress"
+    // (a manual run) never cleared the hold without a full process restart. Reconciling here,
+    // against the FULL task list for this tick, catches every resolution path immediately and
+    // runs even on a tick that is about to skip for an unrelated reason (e.g. another card
+    // mid-run) below.
+    if (terminalHolds.size > 0) {
+      const tasksById = new Map(tasks.map((task) => [task.id, task]));
+      for (const cardId of Array.from(terminalHolds.keys())) {
+        const current = tasksById.get(cardId);
+        if (!current || current.status !== "blocked") {
+          terminalHolds.delete(cardId);
+          if (runsDir) {
+            drainWaitStateCoordinator.clearHeldState(cardId).catch((clearErr) => {
+              logger.log(`${LOG_PREFIX}: failed to clear persisted terminal drain hold for ${cardId}: ${clearErr.message}`);
+            });
+          }
+        }
+      }
+    }
+
     const live = tasks.filter((task) => LIVE_RUN_STATUSES.has(task.status));
     if (live.length > 0) {
       return skip(`cards still at in-progress/validation: ${live.map((task) => task.id).join(", ")}`);
@@ -410,23 +433,6 @@ export function createAutoLaunchPoller({
     // that makes the capacity-fit limit apply at all; there is no config surface on this poller to
     // pass anything else, so it can never reach the manual-override path).
     let candidates = selectEligibleCardsInOrder(tasks);
-
-    // FIX ROUND 2 finding 2: "the hold clears only when the underlying hold is resolved." A card
-    // appearing here (status exactly "ready") can only mean a human moved it out of `blocked` --
-    // the terminal hold that put it there is resolved, so it no longer belongs in the terminal
-    // map. This runs BEFORE this tick's own candidate loop below, so a card that becomes a fresh
-    // terminal hold in THIS tick is never immediately reconciled away by its own appearance.
-    if (terminalHolds.size > 0) {
-      for (const candidate of candidates) {
-        // FIX ROUND 3: also drop the persisted terminal-hold sidecar right here, or a FURTHER
-        // restart would resurrect a hold this tick just resolved.
-        if (terminalHolds.delete(candidate.id) && runsDir) {
-          drainWaitStateCoordinator.clearHeldState(candidate.id).catch((clearErr) => {
-            logger.log(`${LOG_PREFIX}: failed to clear persisted terminal drain hold for ${candidate.id}: ${clearErr.message}`);
-          });
-        }
-      }
-    }
 
     if (candidates.length === 0) {
       return skip("no eligible ready card (dependencies unmet, or nothing ready)");
