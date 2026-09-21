@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import { IdAllocator } from "../src/lib/idAllocator.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,7 +26,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("IdAllocator", () => {

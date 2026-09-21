@@ -21,6 +21,7 @@ import {
   loadPersistedDrainHeldState,
   createDrainWaitStateCoordinator
 } from "../../src/runner/drainMode.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 /**
  * WIP gate T-F (spec §9): drain mode's own decision logic, tested in isolation from the admission
@@ -378,7 +379,7 @@ describe("persistDrainFirstHeld / loadPersistedDrainWaitState / clearPersistedDr
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("round-trips a single card's firstHeldAtMs through a fresh load -- simulating a board restart", async () => {
@@ -582,7 +583,7 @@ describe("persistDrainHeldState / loadPersistedDrainHeldState / clearPersistedDr
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const heldState = Object.freeze({

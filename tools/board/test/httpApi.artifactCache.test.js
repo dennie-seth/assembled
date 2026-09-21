@@ -6,6 +6,7 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
 import { ARTIFACT_CACHE_DIRNAME } from "../src/runner/artifactPreservation.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 let tmpDir;
 let worktreesDir;
@@ -33,7 +34,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 async function createTask(overrides = {}) {

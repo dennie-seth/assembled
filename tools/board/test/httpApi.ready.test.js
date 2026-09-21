@@ -5,6 +5,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * T-0383: `POST /api/tasks/:id/ready` -- a write channel that does not depend on in-page JS
@@ -45,7 +46,7 @@ afterEach(async () => {
   if (originalToken === undefined) delete process.env.BOARD_READY_TOKEN;
   else process.env.BOARD_READY_TOKEN = originalToken;
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tasksDir, { recursive: true, force: true });
+  await rmTemp(tasksDir);
 });
 
 async function createTask(overrides = {}) {

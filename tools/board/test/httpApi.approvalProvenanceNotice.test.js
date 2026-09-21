@@ -5,6 +5,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 vi.mock("../src/runner/gitOps.js", () => ({
   pullDevelop: vi.fn().mockResolvedValue({ advanced: false, before: "aaa", after: "aaa" }),
@@ -43,8 +44,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tasksDir, { recursive: true, force: true });
-  await fs.rm(repoRoot, { recursive: true, force: true });
+  await rmTemp(tasksDir);
+  await rmTemp(repoRoot);
 });
 
 async function createTask(overrides = {}) {
@@ -151,7 +152,7 @@ describe("live approval-time ASSET_PROVENANCE.md staleness notice", () => {
   });
 
   it("does not fail the approval itself when repoRoot has no readable ASSET_PROVENANCE.md at all", async () => {
-    await fs.rm(repoRoot, { recursive: true, force: true });
+    await rmTemp(repoRoot);
     const task = await createTask({ requires_approval: true, status: "review" });
 
     const res = await patch(task.id, { status: "done" });

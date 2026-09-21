@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { TaskWatcher } from "../src/lib/taskWatcher.js";
 import { serializeTask } from "../src/lib/taskParser.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 let tmpDir;
 let watcher;
@@ -35,7 +36,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await watcher.close();
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("TaskWatcher", () => {

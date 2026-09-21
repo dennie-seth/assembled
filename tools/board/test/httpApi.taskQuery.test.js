@@ -5,6 +5,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * T-0383: `GET /api/tasks` is an unfiltered blob today -- measured on the live board 2026-09-18,
@@ -34,7 +35,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tasksDir, { recursive: true, force: true });
+  await rmTemp(tasksDir);
 });
 
 async function createTask(overrides = {}) {

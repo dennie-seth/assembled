@@ -8,6 +8,7 @@ import { listActiveReservations } from "../../src/runner/launchReservation.js";
 import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
 import { recordAdvisoryDecision as realRecordAdvisoryDecision, AdvisoryDecisionMissingError } from "../../src/runner/advisoryLogger.js";
 import { HOLD_REASON } from "../../src/runner/admissionDecision.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -377,7 +378,7 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     // rather than letting a stray ENOTEMPTY fail an unrelated test.
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
-        await fs.rm(runsDir, { recursive: true, force: true });
+        await rmTemp(runsDir);
         return;
       } catch (err) {
         if (err.code !== "ENOTEMPTY" || attempt === 9) throw err;

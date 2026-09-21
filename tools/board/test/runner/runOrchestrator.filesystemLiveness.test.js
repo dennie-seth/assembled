@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { RunOrchestrator, MAX_AUTO_RETRY_ATTEMPTS } from "../../src/runner/runOrchestrator.js";
 import { probeLivenessMtime, DEFAULT_LIVENESS_PROBE_INTERVAL_MS } from "../../src/runner/filesystemLiveness.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
@@ -397,8 +398,8 @@ describe("RunOrchestrator — filesystem-progress liveness (T-0308: subagent-own
       expect(reprieveEvents.length).toBeLessThan(4);
       expect(killEvents).toHaveLength(1);
     } finally {
-      await fs.rm(worktreeDir, { recursive: true, force: true });
-      await fs.rm(runsDir, { recursive: true, force: true });
+      await rmTemp(worktreeDir);
+      await rmTemp(runsDir);
     }
   }, 10_000);
 

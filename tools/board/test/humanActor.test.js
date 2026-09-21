@@ -11,6 +11,7 @@ import {
   isAgentActor,
   resolveAuthor
 } from "../src/lib/approvalGate.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * Who a human action is recorded as.
@@ -50,7 +51,7 @@ afterEach(async () => {
   delete process.env.BOARD_HUMAN_ACTOR;
   if (server) await new Promise((resolve) => server.close(resolve));
   server = null;
-  await fs.rm(tasksDir, { recursive: true, force: true });
+  await rmTemp(tasksDir);
 });
 
 function createTask(overrides = {}) {

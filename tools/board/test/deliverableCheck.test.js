@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { checkDeliverable } from "../src/lib/deliverableCheck.js";
 import { PRE_REGISTRATION_HEADING, FINDING_HEADING } from "../src/lib/preRegisteredFinding.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /** git's own blob content hash -- mirrors deliverableCheck.js's internal `gitBlobHash`. */
 function gitBlobHashOf(content) {
@@ -100,7 +101,7 @@ describe("checkDeliverable", () => {
     let dir;
 
     afterEach(async () => {
-      if (dir) await fs.rm(dir, { recursive: true, force: true });
+      if (dir) await rmTemp(dir);
     });
 
     it("passes when every recorded attachment's file actually exists on disk", async () => {
@@ -213,7 +214,7 @@ describe("checkDeliverable", () => {
         );
         expect(report).toEqual({ ok: true, applicable: true, errors: [] });
       } finally {
-        await fs.rm(localDir, { recursive: true, force: true });
+        await rmTemp(localDir);
       }
     });
 
@@ -231,7 +232,7 @@ describe("checkDeliverable", () => {
     let dir;
 
     afterEach(async () => {
-      if (dir) await fs.rm(dir, { recursive: true, force: true });
+      if (dir) await rmTemp(dir);
     });
 
     function evidenceAttachments(count) {

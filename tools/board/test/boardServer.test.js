@@ -12,6 +12,7 @@ import { IdAllocatorDb } from "../src/lib/db/idAllocatorDb.js";
 import { recordAttemptUsage, readAttemptUsage } from "../src/runner/usageLedger.js";
 import { reserveLaunchSlot, listActiveReservations } from "../src/runner/launchReservation.js";
 import { writeRunState } from "../src/runner/runState.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 let tmpDir;
 let board;
@@ -57,7 +58,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await board.close();
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("board server integration", () => {
@@ -138,7 +139,7 @@ describe("board server task store selection (BOARD_TASK_STORE)", () => {
       expect(server.store).toBeInstanceOf(FsTaskStore);
     } finally {
       await server.close();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 
@@ -179,8 +180,8 @@ describe("board server task store selection (BOARD_TASK_STORE)", () => {
     } finally {
       if (priorBoardDbPath === undefined) delete process.env.BOARD_DB_PATH;
       else process.env.BOARD_DB_PATH = priorBoardDbPath;
-      await fs.rm(dir, { recursive: true, force: true });
-      await fs.rm(dbDir, { recursive: true, force: true });
+      await rmTemp(dir);
+      await rmTemp(dbDir);
     }
   });
 
@@ -199,8 +200,8 @@ describe("board server task store selection (BOARD_TASK_STORE)", () => {
     } finally {
       if (priorBoardDbPath === undefined) delete process.env.BOARD_DB_PATH;
       else process.env.BOARD_DB_PATH = priorBoardDbPath;
-      await fs.rm(dir, { recursive: true, force: true });
-      await fs.rm(dbDir, { recursive: true, force: true });
+      await rmTemp(dir);
+      await rmTemp(dbDir);
     }
   });
 
@@ -237,8 +238,8 @@ describe("board server task store selection (BOARD_TASK_STORE)", () => {
     } finally {
       if (priorBoardDbPath === undefined) delete process.env.BOARD_DB_PATH;
       else process.env.BOARD_DB_PATH = priorBoardDbPath;
-      await fs.rm(dir, { recursive: true, force: true });
-      await fs.rm(dbDir, { recursive: true, force: true });
+      await rmTemp(dir);
+      await rmTemp(dbDir);
     }
   });
 
@@ -249,7 +250,7 @@ describe("board server task store selection (BOARD_TASK_STORE)", () => {
         startBoardServer({ tasksDir: dir, port: 0, taskStoreKind: "postgres" })
       ).rejects.toThrow(/Unknown BOARD_TASK_STORE/i);
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 });
@@ -273,7 +274,7 @@ describe("orphaned run recovery", () => {
       expect(task.body).toMatch(/## Recovered \(.+\)/);
     } finally {
       await reaperBoard.close();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 
@@ -294,7 +295,7 @@ describe("orphaned run recovery", () => {
       expect(task.status).toBe("review");
     } finally {
       await reaperBoard.close();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 });
@@ -323,7 +324,7 @@ describe("launch reservation reconciliation on startup (WIP gate T-D)", () => {
       expect(await listActiveReservations({ runsDir })).toHaveLength(0);
     } finally {
       await reconcileBoard.close();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 
@@ -353,7 +354,7 @@ describe("launch reservation reconciliation on startup (WIP gate T-D)", () => {
       expect(await listActiveReservations({ runsDir })).toHaveLength(1);
     } finally {
       await reconcileBoard.close();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 
@@ -389,7 +390,7 @@ describe("launch reservation reconciliation on startup (WIP gate T-D)", () => {
     } finally {
       errorSpy.mockRestore();
       if (malformedBoard) await malformedBoard.close();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 
@@ -415,7 +416,7 @@ describe("launch reservation reconciliation on startup (WIP gate T-D)", () => {
     } finally {
       errorSpy.mockRestore();
       if (unlistableBoard) await unlistableBoard.close();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 });
@@ -451,7 +452,7 @@ describe("auto-pull poller wiring", () => {
     } finally {
       if (prior === undefined) delete process.env.BOARD_AUTOPULL;
       else process.env.BOARD_AUTOPULL = prior;
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 });
@@ -495,7 +496,7 @@ describe("auto-launch poller wiring", () => {
     } finally {
       if (prior === undefined) delete process.env.AUTO_LAUNCH_ENABLED;
       else process.env.AUTO_LAUNCH_ENABLED = prior;
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 });
@@ -618,7 +619,7 @@ describe("usage-ledger drain on shutdown (T-0367 fix round 3)", () => {
     release();
     await write;
     warnSpy.mockRestore();
-    await fs.rm(localTasksDir, { recursive: true, force: true });
+    await rmTemp(localTasksDir);
   });
 
   it("a rejecting usage-ledger drain is logged and never blocks close() or throws", async () => {
@@ -639,6 +640,6 @@ describe("usage-ledger drain on shutdown (T-0367 fix round 3)", () => {
     );
 
     warnSpy.mockRestore();
-    await fs.rm(localTasksDir, { recursive: true, force: true });
+    await rmTemp(localTasksDir);
   });
 });

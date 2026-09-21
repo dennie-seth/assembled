@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ let tmpDir;
 
 afterEach(async () => {
   if (tmpDir) {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await rmTemp(tmpDir);
     tmpDir = undefined;
   }
 });

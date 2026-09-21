@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRunLog, readRunLog } from "../../src/runner/runLog.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 let tmpDir;
 
@@ -11,7 +12,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("createRunLog", () => {

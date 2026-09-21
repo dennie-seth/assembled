@@ -5,6 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { RunOrchestrator } from "../../src/runner/runOrchestrator.js";
 import { APPROVAL_LEDGER_RELATIVE_PATH } from "../../src/runner/approvalLedgerRegen.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 /**
  * T-0313: `_handlePass` regenerates the committed approval ledger from the live store, inside the
@@ -177,7 +178,7 @@ describe("T-0313: approval ledger regeneration on PASS", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(worktreesDir, { recursive: true, force: true });
+    await rmTemp(worktreesDir);
   });
 
   it("regenerates the ledger from the live store before the branch is pushed, from a fake store whose approval state differs from the committed ledger", async () => {
@@ -236,7 +237,7 @@ describe("T-0313: approval ledger regeneration on PASS", () => {
   it("logs a failure inside ledger regeneration but does not fail the PASS, block the push, or lose the PR", async () => {
     // Delete the parent directory so the write itself throws (ENOENT) -- stands in for a real
     // export failure (disk full, DB locked) without needing to actually fill a disk.
-    await fs.rm(path.join(worktreeDir, "tools"), { recursive: true, force: true });
+    await rmTemp(path.join(worktreeDir, "tools"));
 
     const store = makeStore([
       baseTask({ requires_approval: true, approved_by: "DennieSeth", approved_at: "2026-09-03T17:52:21.435Z" })

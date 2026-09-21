@@ -6,6 +6,7 @@ import { openDb } from "../src/lib/db/connection.js";
 import { IdAllocatorDb } from "../src/lib/db/idAllocatorDb.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { makeTask } from "./taskStoreContract.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 let tmpDir;
 let dbPath;
@@ -16,7 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("IdAllocatorDb", () => {

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -59,7 +60,7 @@ beforeEach(async () => {
 afterEach(async () => {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(repoRoot, { recursive: true, force: true });
+  await rmTemp(repoRoot);
 });
 
 async function createTask() {

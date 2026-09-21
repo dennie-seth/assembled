@@ -12,6 +12,7 @@ import {
   listCardUsageEntries,
   executionTotal
 } from "../../src/runner/usageLedger.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
@@ -713,7 +714,7 @@ describe("RunOrchestrator — crash-recovery invocation identity (Codex review 2
 
       expect(executionTotal(entries, executionId).tokens.input).toBe(125);
     } finally {
-      await fs.rm(runsDir, { recursive: true, force: true });
+      await rmTemp(runsDir);
     }
   });
 });

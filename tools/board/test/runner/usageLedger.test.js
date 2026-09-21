@@ -19,6 +19,7 @@ import {
   resetUsageLedgerProcessStateForTests,
   UsageLedgerReadIndeterminateError
 } from "../../src/runner/usageLedger.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 let assistantMessageCounter = 0;
 
@@ -310,7 +311,7 @@ describe("recordAttemptUsage / readAttemptUsage -- idempotent ledger", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const key = { cardId: "T-0367", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 };
@@ -412,7 +413,7 @@ describe("listCardUsageEntries / attemptTotal / cardCycleTotal", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("sums attempt totals across phases/retries within one attempt", async () => {
@@ -541,7 +542,7 @@ describe("execution identity (Codex review 2026-09-12, P1)", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("two separate launches of the same card, both attempt 1, keep separate execution totals that still sum to a correct lifetime total", async () => {
@@ -617,7 +618,7 @@ describe("write ordering and atomicity (Codex review 2026-09-12, P2)", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const base = { runsDir, cardId: "T-REVIEW", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 };
@@ -773,7 +774,7 @@ describe("publication ordering across out-of-order renames (Codex review 2, 2026
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const base = { runsDir, cardId: "T-PUBLISH", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 };
@@ -872,7 +873,7 @@ describe("execution id hardening (Codex review 2, 2026-09-12, finding 4)", () =>
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("usageLedgerEntryPath rejects a missing executionId before building any path", () => {
@@ -909,7 +910,7 @@ describe("invocation id hardening (Codex review 3, 2026-09-12, finding 3)", () =
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("usageLedgerEntryPath rejects a missing invocationId before building any path, instead of defaulting to a shared key", () => {
@@ -1059,7 +1060,7 @@ describe("monotonic ledger publication (Codex review 3, 2026-09-12, finding 1)",
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const base = { runsDir, cardId: "T-MONOTONIC", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 };
@@ -1193,7 +1194,7 @@ describe("revision numbers survive a board restart (Round 6, 2026-09-12)", () =>
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const key = () => ({ runsDir, cardId: "T-RESTART", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
@@ -1295,7 +1296,7 @@ describe("epoch robustness against a lost/damaged/never-written epoch file (Epoc
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const key = () => ({ runsDir, cardId: "T-EPOCH", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
@@ -1358,7 +1359,7 @@ describe("epoch robustness against a lost/damaged/never-written epoch file (Epoc
 
     resetUsageLedgerProcessStateForTests(runsDir);
     // Disk is healthy again for the next process.
-    await fs.rm(usageLedgerEpochStatePath(runsDir), { recursive: true, force: true });
+    await rmTemp(usageLedgerEpochStatePath(runsDir));
 
     await recordAttemptUsage({ ...key(), events: [assistantTurn({ id: "msg-1", input: 777 })], outcome: "success", complete: true });
 
@@ -1418,7 +1419,7 @@ describe("a concurrent prune must never make an existing entry read as absent (C
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const base = () => ({ runsDir, cardId: "T-PRUNE-RACE", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
@@ -1539,7 +1540,7 @@ describe("the stored epoch must be a safe integer (Codex review 0913, 2026-09-13
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   const key = () => ({ runsDir, cardId: "T-EPOCH-SAFE", executionId: "exec-1", invocationId: "inv-1", attempt: 1, phase: "implementer", retry: 0 });
