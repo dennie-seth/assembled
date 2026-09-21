@@ -336,6 +336,65 @@ export async function loadPersistedDrainWaitState({ runsDir, readdirFn = fs.read
 }
 
 /**
+ * FIX ROUND 3 (Chat 2026-09-21 review of #408, finding 1): "terminal holds are in-memory only, so
+ * a restart erases them... after a restart neither the seeded drainTracker nor the fresh terminal
+ * map knows the card -- and because the card is blocked it is not an eligible candidate, so no
+ * later tick ever recreates the entry." The durable side of a terminal hold (HELD_WAIT_EXPIRED /
+ * HELD_OVERSIZED) -- ONE JSON sidecar per card under `runsDir/.drain-held/`, storing the FULL
+ * terminal drain state (everything getStatus().drain reports for a held card), kept deliberately
+ * separate from persistDrainFirstHeld's deadline sidecar above: a terminal hold and an active wait
+ * deadline are mutually exclusive states for a card (autoLaunchPoller.js clears the other one
+ * whenever it writes this one), and conflating the two files would make it impossible to tell,
+ * from disk alone, which state a restart should restore.
+ */
+const DRAIN_HELD_STATE_DIRNAME = ".drain-held";
+
+function drainHeldStatePath(runsDir, cardId) {
+  return path.join(runsDir, DRAIN_HELD_STATE_DIRNAME, `${cardId}.json`);
+}
+
+/** Persists `cardId`'s full terminal drain state so a board restart can restore it. A no-op when `runsDir` is not provided. */
+export async function persistDrainHeldState({ runsDir, cardId, heldState, writeFileFn = fs.writeFile, mkdirFn = fs.mkdir }) {
+  if (!runsDir) return;
+  const filePath = drainHeldStatePath(runsDir, cardId);
+  await mkdirFn(path.dirname(filePath), { recursive: true });
+  await writeFileFn(filePath, JSON.stringify(heldState), "utf8");
+}
+
+/** Removes `cardId`'s persisted terminal hold once a human resolves it (or a launch supersedes it). Never throws for a card that was never persisted. */
+export async function clearPersistedDrainHeldState({ runsDir, cardId, unlinkFn = fs.unlink }) {
+  if (!runsDir) return;
+  await unlinkFn(drainHeldStatePath(runsDir, cardId)).catch(() => {});
+}
+
+/**
+ * Loads every persisted terminal hold under `runsDir` -- called once, on a poller's first tick, so
+ * a restart recovers `terminalHolds` without a new constructor argument (recovery must not depend
+ * on the caller). `{}` for a missing directory or a missing `runsDir` argument -- never throws.
+ */
+export async function loadPersistedDrainHeldState({ runsDir, readdirFn = fs.readdir, readFileFn = fs.readFile }) {
+  if (!runsDir) return {};
+  let names;
+  try {
+    names = await readdirFn(path.join(runsDir, DRAIN_HELD_STATE_DIRNAME));
+  } catch {
+    return {};
+  }
+  const out = {};
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const cardId = name.slice(0, -".json".length);
+    try {
+      const parsed = JSON.parse(await readFileFn(path.join(runsDir, DRAIN_HELD_STATE_DIRNAME, name), "utf8"));
+      if (parsed && typeof parsed.status === "string") out[cardId] = parsed;
+    } catch {
+      // Corrupt/unreadable sidecar -- skip it rather than fail the whole load.
+    }
+  }
+  return out;
+}
+
+/**
  * FIX ROUND 2 (Chat round-3 review of #408, finding 1): "a finished wait leaves its deadline on
  * disk" -- `persistDrainFirstHeld`/`clearPersistedDrainFirstHeld` above are each independently
  * fire-and-forget (`autoLaunchPoller.js` never awaits them, so a tick is never held up by a slow
@@ -377,10 +436,24 @@ export function createDrainWaitStateCoordinator({ runsDir, writeFileFn = fs.writ
     return enqueue(cardId, () => clearPersistedDrainFirstHeld({ runsDir, cardId, unlinkFn }));
   }
 
+  /**
+   * FIX ROUND 3: queues a terminal-hold persist for `cardId`, after any already-queued operation
+   * for that same card -- same per-card chain as persistFirstHeld/clearFirstHeld above, so a
+   * terminal hold recorded moments after a deadline clears (or vice versa) can never race it.
+   */
+  function persistHeldState(cardId, heldState) {
+    return enqueue(cardId, () => persistDrainHeldState({ runsDir, cardId, heldState, writeFileFn, mkdirFn }));
+  }
+
+  /** Queues clearing `cardId`'s persisted terminal hold, after any already-queued operation for that same card. */
+  function clearHeldState(cardId) {
+    return enqueue(cardId, () => clearPersistedDrainHeldState({ runsDir, cardId, unlinkFn }));
+  }
+
   /** Waits for every currently in-flight persist/clear, across every card, to settle -- lets a caller (chiefly a test) observe the ACTUAL final on-disk state rather than racing a fire-and-forget write. */
   async function flush() {
     await Promise.allSettled([...pending]);
   }
 
-  return { persistFirstHeld, clearFirstHeld, flush };
+  return { persistFirstHeld, clearFirstHeld, persistHeldState, clearHeldState, flush };
 }

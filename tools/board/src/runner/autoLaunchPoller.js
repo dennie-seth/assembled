@@ -11,7 +11,8 @@ import {
   drainModeEnabledFromEnv,
   DRAIN_STATUS,
   DEFAULT_DRAIN_CONFIG,
-  createDrainWaitStateCoordinator
+  createDrainWaitStateCoordinator,
+  loadPersistedDrainHeldState
 } from "./drainMode.js";
 
 const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
@@ -243,6 +244,12 @@ export function createAutoLaunchPoller({
   // moved it out of `blocked` -- see the reconciliation in `tick()` below. Never reconciled by a
   // timeout: "resolved" means a human acted, not that time passed.
   const terminalHolds = new Map();
+  // FIX ROUND 3 (Chat 2026-09-21 review of #408, finding 1): "terminal holds are in-memory only,
+  // so a restart erases them." Runs once, on this poller's own first tick -- never a new
+  // constructor argument the caller has to supply, so recovery never depends on the caller -- and
+  // reconstructs `terminalHolds` from whatever `persistDrainHeldState` wrote before an earlier
+  // process died. See `reconcileTerminalHoldsOnStartup` below.
+  let terminalHoldsInitialized = false;
   // T-0383: state `getStatus()` reports over `GET /api/poller`, so an operator (or the
   // nightly-infra-prep sandbox, which cannot reach this host directly) can see what the poller
   // last did without reading the repo or the systemd drop-in. Updated only from inside `tick()`/
@@ -258,9 +265,48 @@ export function createAutoLaunchPoller({
     return null;
   }
 
+  /**
+   * FIX ROUND 3: reconstructs `terminalHolds` from durable state on this poller's first tick.
+   * Reconciled against the card's OWN current status -- a persisted record only survives if the
+   * card is still `blocked`, so a human who already resolved it (moved it to ready/backlog/
+   * in-progress, or it ran) never sees the stale hold resurrected, and the persisted file is
+   * dropped right here so a FURTHER restart cannot bring it back either. Restoration only ever
+   * repopulates a Map read by `getStatus()` -- it never touches `store` beyond a read, so it can
+   * never itself make a blocked card launchable or bypass capacity admission.
+   */
+  async function reconcileTerminalHoldsOnStartup() {
+    if (terminalHoldsInitialized) return;
+    terminalHoldsInitialized = true;
+    if (!runsDir) return;
+    let persisted;
+    try {
+      persisted = await loadPersistedDrainHeldState({ runsDir });
+    } catch (err) {
+      logger.log(`${LOG_PREFIX}: failed to load persisted terminal drain holds: ${err.message}`);
+      return;
+    }
+    for (const [cardId, heldState] of Object.entries(persisted)) {
+      let current = null;
+      try {
+        current = await store.get(cardId);
+      } catch {
+        current = null;
+      }
+      if (current && current.status === "blocked") {
+        terminalHolds.set(cardId, heldState);
+      } else {
+        drainWaitStateCoordinator.clearHeldState(cardId).catch(() => {});
+      }
+    }
+  }
+
   async function tick() {
     if (!effectivelyEnabled) return null;
     lastTickAtMs = now();
+
+    if (drainModeEnabled) {
+      await reconcileTerminalHoldsOnStartup();
+    }
 
     // Gate 2: usage.
     let usage;
@@ -372,7 +418,13 @@ export function createAutoLaunchPoller({
     // terminal hold in THIS tick is never immediately reconciled away by its own appearance.
     if (terminalHolds.size > 0) {
       for (const candidate of candidates) {
-        terminalHolds.delete(candidate.id);
+        // FIX ROUND 3: also drop the persisted terminal-hold sidecar right here, or a FURTHER
+        // restart would resurrect a hold this tick just resolved.
+        if (terminalHolds.delete(candidate.id) && runsDir) {
+          drainWaitStateCoordinator.clearHeldState(candidate.id).catch((clearErr) => {
+            logger.log(`${LOG_PREFIX}: failed to clear persisted terminal drain hold for ${candidate.id}: ${clearErr.message}`);
+          });
+        }
       }
     }
 
@@ -402,6 +454,11 @@ export function createAutoLaunchPoller({
           if (runsDir) {
             drainWaitStateCoordinator.clearFirstHeld(candidate.id).catch((clearErr) => {
               logger.log(`${LOG_PREFIX}: failed to clear persisted drain first-hold timestamp for ${candidate.id}: ${clearErr.message}`);
+            });
+            // FIX ROUND 3: a successful launch also resolves any terminal hold -- clear its
+            // persisted sidecar too, not just the in-memory map.
+            drainWaitStateCoordinator.clearHeldState(candidate.id).catch((clearErr) => {
+              logger.log(`${LOG_PREFIX}: failed to clear persisted terminal drain hold for ${candidate.id}: ${clearErr.message}`);
             });
           }
         }
@@ -444,6 +501,12 @@ export function createAutoLaunchPoller({
                   nextReconsiderationAtMs: null,
                   agingBoost: 0
                 });
+                if (runsDir) {
+                  // FIX ROUND 3: durable, not just in-memory -- a restart must still see this hold.
+                  drainWaitStateCoordinator.persistHeldState(candidate.id, terminalHolds.get(candidate.id)).catch((persistErr) => {
+                    logger.log(`${LOG_PREFIX}: failed to persist terminal drain hold for ${candidate.id}: ${persistErr.message}`);
+                  });
+                }
                 drainNote = " [drain: held_oversized -- auto-blocked, see the card's own note]";
               } else {
                 const nowMs = now();
@@ -500,6 +563,12 @@ export function createAutoLaunchPoller({
                     nextReconsiderationAtMs: null,
                     agingBoost: drainState.agingBoost
                   });
+                  if (runsDir) {
+                    // FIX ROUND 3: durable, not just in-memory -- a restart must still see this hold.
+                    drainWaitStateCoordinator.persistHeldState(candidate.id, terminalHolds.get(candidate.id)).catch((persistErr) => {
+                      logger.log(`${LOG_PREFIX}: failed to persist terminal drain hold for ${candidate.id}: ${persistErr.message}`);
+                    });
+                  }
                   drainNote = ` [drain: held_wait_expired -- auto-blocked, see the card's own note]`;
                 } else if (drainState.status === DRAIN_STATUS.WAITING) {
                   const nextIso =
