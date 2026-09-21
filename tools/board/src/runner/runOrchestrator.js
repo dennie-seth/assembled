@@ -129,9 +129,21 @@ export const DEFAULT_PHASE_TIMEOUT_MS = 40 * 60 * 1000;
  * Note this keys on the agent the PHASE runs as, not the card's agent: an assets card's
  * reviewer phase runs as `reviewer` and keeps the default, since it verifies output
  * rather than generating it.
+ *
+ * `client` (90 min) -- a Godot client card runs a `scons` build of the GDExtension plus a
+ * full headless test suite on top of ordinary implementation and verification, which is
+ * structurally longer than a server or infra phase. T-0403 (side-on tower level bugfixes)
+ * was killed at exactly the 40-minute default while making steady progress -- 330 logged
+ * events, its last line "Build succeeded. Now let's re-run test_main_scene_boot.gd and
+ * test_main_scene_compiles.gd to confirm they're clean" -- and never came close to tripping
+ * DEFAULT_INACTIVITY_TIMEOUT_MS (8 min). It was not stuck; the work was lost to the ceiling,
+ * not a defect. 90 minutes leaves room for a full build-plus-suite cycle while staying far
+ * under `assets`' 240 -- this is a cost ceiling like that entry, not the hang defence;
+ * DEFAULT_INACTIVITY_TIMEOUT_MS still catches a genuine hang regardless of what this says.
  */
 export const PHASE_TIMEOUT_MS_BY_AGENT = Object.freeze({
-  assets: 240 * 60 * 1000
+  assets: 240 * 60 * 1000,
+  client: 90 * 60 * 1000
 });
 
 const PHASE_TIMEOUT_ENV_VAR = "PHASE_TIMEOUT_MS";
