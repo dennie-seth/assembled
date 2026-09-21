@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { RunOrchestrator } from "../../src/runner/runOrchestrator.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 /**
  * T-0314: `_handlePass` promotes an asset run's decisive attempt frames into
@@ -174,7 +175,7 @@ describe("T-0314: evidence promotion on PASS", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(worktreesDir, { recursive: true, force: true });
+    await rmTemp(worktreesDir);
   });
 
   it("promotes the round's cited decisive frame into docs/assets/evidence/<card>/ before the branch is pushed -- the FINDING case, nothing promoted to assets/final", async () => {

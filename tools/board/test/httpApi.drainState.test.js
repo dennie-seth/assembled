@@ -5,6 +5,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * WIP gate T-F (drain mode, spec §9): "the blocking window and expected next reconsideration
@@ -58,7 +59,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
   server = null;
-  await fs.rm(tasksDir, { recursive: true, force: true });
+  await rmTemp(tasksDir);
 });
 
 async function startServer(overrides = {}) {

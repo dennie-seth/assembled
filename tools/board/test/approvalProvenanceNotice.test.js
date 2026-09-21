@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { approvalProvenanceStaleNotice } from "../src/lib/approvalProvenanceNotice.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * `approvalProvenanceStaleNotice` (T-0286): the live counterpart to
@@ -31,7 +32,7 @@ describe("approvalProvenanceStaleNotice", () => {
   });
 
   afterAll(async () => {
-    await rm(repoRoot, { recursive: true, force: true });
+    await rmTemp(repoRoot);
   });
 
   it("returns a notice when the just-approved card's provenance row still reads unapproved", async () => {
@@ -72,7 +73,7 @@ describe("approvalProvenanceStaleNotice", () => {
       const notice = await approvalProvenanceStaleNotice({ repoRoot: emptyRoot, task: task() });
       expect(notice).toBeNull();
     } finally {
-      await rm(emptyRoot, { recursive: true, force: true });
+      await rmTemp(emptyRoot);
     }
   });
 

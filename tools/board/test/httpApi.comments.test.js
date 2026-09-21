@@ -8,6 +8,7 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
 import { DEFAULT_HUMAN_ACTOR } from "../src/lib/approvalGate.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,7 +41,7 @@ beforeEach(async () => {
 afterEach(async () => {
   delete process.env.AUTO_COMMIT_CARDS_ON_CREATE;
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(repoRoot, { recursive: true, force: true });
+  await rmTemp(repoRoot);
 });
 
 async function createTask(overrides = {}) {

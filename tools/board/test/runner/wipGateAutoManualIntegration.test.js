@@ -7,6 +7,7 @@ import { launchCardRun, LAUNCH_TRIGGERS } from "../../src/runner/cardLaunch.js";
 import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
 import { evaluateAdmission as realEvaluateAdmission } from "../../src/runner/admissionDecision.js";
 import { listActiveReservations } from "../../src/runner/launchReservation.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 /**
  * T-0379 acceptance: "Tests, through the real poller tick and the real launchCardRun (not
@@ -111,7 +112,7 @@ function makeLogger() {
 async function rmRetrying(dir) {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
       return;
     } catch (err) {
       if (err.code !== "ENOTEMPTY" || attempt === 9) throw err;

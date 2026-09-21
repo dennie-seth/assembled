@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { execFile as callbackExec } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { rmTemp } from "../helpers/rmTemp.js";
 import {
   resolveConfig,
   fetchTasks,
@@ -533,7 +534,7 @@ describe("mergedWorkCheck against a real git repo (Codex's merged-work-probe fix
       expect(skipped.rule).toBe("2-merged");
       expect(skipped.reason).toMatch(/feature\.js/);
     } finally {
-      await rm(repoRoot, { recursive: true, force: true });
+      await rmTemp(repoRoot);
     }
   });
 });

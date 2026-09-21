@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { runMigrations } from "../src/lib/db/migrate.js";
 import { ASSIGNABLE_AGENT_NAMES } from "../src/lib/taskParser.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const MIGRATIONS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -23,7 +24,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   db.close();
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 /**

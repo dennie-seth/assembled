@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openDb, DEFAULT_DB_PATH } from "../src/lib/db/connection.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 let tmpDir;
 let db;
@@ -16,7 +17,7 @@ afterEach(async () => {
     db.close();
     db = undefined;
   }
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("openDb", () => {

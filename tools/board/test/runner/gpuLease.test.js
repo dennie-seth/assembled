@@ -12,6 +12,7 @@ import {
   gpuLeaseEnabledFromEnv,
   GpuLeaseHeldError
 } from "../../src/runner/gpuLease.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 /**
  * T-0371 (WIP gate T-E): one shared, exclusive GPU lease per constrained GPU/ComfyUI server --
@@ -27,7 +28,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(runsDir, { recursive: true, force: true });
+  await rmTemp(runsDir);
 });
 
 function key(overrides = {}) {

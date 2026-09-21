@@ -11,6 +11,7 @@ vi.mock("../src/runner/gitOps.js", () => ({
 }));
 
 import { pullDevelop } from "../src/runner/gitOps.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 function makeRestartCoordinator() {
   return { notifyPulled: vi.fn(), notifyIdle: vi.fn() };
@@ -36,7 +37,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 async function createTask(overrides = {}) {

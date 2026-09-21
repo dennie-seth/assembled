@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_PATH = path.resolve(
@@ -102,7 +103,7 @@ describe("checkApprovalProvenanceDrift.js (end-to-end)", () => {
   });
 
   afterAll(async () => {
-    await rm(repoDir, { recursive: true, force: true });
+    await rmTemp(repoDir);
   });
 
   it("passes clean when nothing has drifted", async () => {
@@ -218,7 +219,7 @@ describe("checkApprovalProvenanceDrift.js (end-to-end): the approval-ledger fall
   });
 
   afterAll(async () => {
-    await rm(repoDir, { recursive: true, force: true });
+    await rmTemp(repoDir);
   });
 
   async function writeLedger(name, ledger) {

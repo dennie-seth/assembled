@@ -6,6 +6,7 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { importTasks } from "../src/lib/db/importer.js";
 import { makeTask } from "./taskStoreContract.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 let tmpDir;
 let tasksDir;
@@ -21,7 +22,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 async function seedSourceTasks() {

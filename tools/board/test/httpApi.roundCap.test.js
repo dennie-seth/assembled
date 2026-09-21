@@ -6,6 +6,7 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
 import { ROUND_CAP } from "../src/lib/roundCap.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 // Same shape as httpApi.approval.test.js: a fake repoRoot plus a mocked gitOps, so writes are
 // observable without a real git remote.
@@ -45,7 +46,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tasksDir, { recursive: true, force: true });
+  await rmTemp(tasksDir);
 });
 
 /** The board UI's own headers -- a person clicking things. */

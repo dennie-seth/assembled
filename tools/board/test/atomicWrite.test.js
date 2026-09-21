@@ -3,13 +3,14 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { atomicWriteFile } from "../src/lib/atomicWrite.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 let tmpDir;
 
 afterEach(async () => {
   vi.restoreAllMocks();
   if (tmpDir) {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await rmTemp(tmpDir);
     tmpDir = undefined;
   }
 });

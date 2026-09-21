@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { checkArtifactFreshness, defaultListCommitsSince } from "../../src/lib/artifactFreshness.js";
 import { formatHostActionRequest } from "../../src/lib/hostActionRequest.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 function task(overrides = {}) {
   return { id: "T-0351", ...overrides };
@@ -170,7 +171,7 @@ describe("defaultListCommitsSince (real git)", () => {
   let dir;
 
   afterEach(async () => {
-    if (dir) await fs.rm(dir, { recursive: true, force: true });
+    if (dir) await rmTemp(dir);
   });
 
   it("returns commits made since the given timestamp, each with its changed paths and full message", async () => {

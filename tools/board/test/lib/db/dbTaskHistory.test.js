@@ -7,6 +7,7 @@ import { DbTaskStore } from "../../../src/lib/db/dbTaskStore.js";
 import { readTaskBodyBeforeRun, readRunStartTimestamp } from "../../../src/lib/db/dbTaskHistory.js";
 import { makeTask } from "../../taskStoreContract.js";
 import { PRE_REGISTRATION_HEADING } from "../../../src/lib/preRegisteredFinding.js";
+import { rmTemp } from "../../helpers/rmTemp.js";
 
 let tmpDir;
 let db;
@@ -20,7 +21,7 @@ async function setup() {
 
 afterEach(async () => {
   if (db) db.close();
-  if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  if (tmpDir) await rmTemp(tmpDir);
   tmpDir = undefined;
   db = undefined;
   store = undefined;

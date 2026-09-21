@@ -41,7 +41,7 @@ afterEach(async () => {
   delete process.env.AUTO_COMMIT_CARDS_ON_CREATE;
   delete process.env.AUTO_PUSH_ON_COMMIT;
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(repoRoot, { recursive: true, force: true });
+  await rmTemp(repoRoot);
 });
 
 async function createTask(overrides = {}) {
@@ -142,7 +142,7 @@ describe("PATCH /api/tasks/:id — commits the card update to git", () => {
 
     expect(res.status).toBe(200);
     await new Promise((resolve) => bareServer.close(resolve));
-    await fs.rm(bareDir, { recursive: true, force: true });
+    await rmTemp(bareDir);
   });
 
   it("lets a subsequent develop pull succeed on the Review→Done transition (the reported bug)", async () => {

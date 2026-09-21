@@ -18,6 +18,7 @@ vi.mock("../src/runner/gitOps.js", () => ({
 }));
 
 import { pullDevelop } from "../src/runner/gitOps.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * The human direction-approval gate, end to end over the real HTTP API
@@ -52,7 +53,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tasksDir, { recursive: true, force: true });
+  await rmTemp(tasksDir);
 });
 
 /** The board UI's own headers -- a person clicking things. */

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { checkPlannerDiffGuard, collectTasksDiff, isCardFile } from "../src/lib/plannerDiffGuard.js";
 import { serializeTask } from "../src/lib/taskParser.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -206,7 +207,7 @@ describe("collectTasksDiff", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await rmTemp(tmpDir);
   });
 
   it("reports a modified card with both old and new raw content", async () => {

@@ -8,6 +8,7 @@ import {
   DEFAULT_LIVENESS_PROBE_INTERVAL_MS
 } from "../../src/runner/filesystemLiveness.js";
 import { DEFAULT_PRESERVED_ARTIFACT_PATHS } from "../../src/runner/artifactPreservation.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 describe("watchedLivenessPaths", () => {
   it("returns the worktree root plus each output subpath as dirs, and the run log path separately as a file", () => {
@@ -209,7 +210,7 @@ describe("probeLivenessMtime", () => {
       expect(result.path).toBe(filePath);
       expect(result.mtimeMs).toBeGreaterThan(0);
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   });
 
@@ -251,7 +252,7 @@ describe("probeLivenessMtime", () => {
       expect([checkpointPath, outputDir]).toContain(after.path);
       expect(after.mtimeMs).toBeGreaterThan(before.mtimeMs);
     } finally {
-      await fs.rm(worktreeDir, { recursive: true, force: true });
+      await rmTemp(worktreeDir);
     }
   });
 
@@ -266,7 +267,7 @@ describe("probeLivenessMtime", () => {
       // Nothing written yet anywhere -- only the worktree root itself is evidence.
       expect(result).toEqual({ path: worktreeDir, mtimeMs: expect.any(Number) });
     } finally {
-      await fs.rm(worktreeDir, { recursive: true, force: true });
+      await rmTemp(worktreeDir);
     }
   });
 });
