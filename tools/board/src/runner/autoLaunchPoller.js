@@ -3,6 +3,17 @@ import { readUsageSnapshot } from "./usageWindow.js";
 import { readUsageTelemetry, WINDOW_KINDS, READING_STATUS } from "./usageTelemetry.js";
 import { admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
+import { appendNote } from "./runOrchestrator.js";
+import {
+  evaluateDrainState,
+  computeAgingBoost,
+  createDrainWaitTracker,
+  drainModeEnabledFromEnv,
+  DRAIN_STATUS,
+  DEFAULT_DRAIN_CONFIG,
+  createDrainWaitStateCoordinator,
+  loadPersistedDrainHeldState
+} from "./drainMode.js";
 
 const ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 
@@ -114,6 +125,27 @@ export function selectNextCard(tasks) {
   return eligible.length > 0 ? eligible[0] : null;
 }
 
+/**
+ * WIP gate T-F (drain mode, spec §9): "waiting cards age so ordinary work is not starved."
+ * `candidates` is already priority/id ordered (see `selectEligibleCardsInOrder`); this only
+ * breaks ties WITHIN the same priority tier, using `computeAgingBoost` on each card's own wait
+ * history from `drainTracker` (a card never held before has boost 0, so it sorts exactly as
+ * before this card). Aging never crosses a real priority boundary -- a fresh P0 card still goes
+ * before a long-aged P1 one -- so this only protects a same-priority card from being perpetually
+ * cut in line by a steady stream of newer arrivals, never overrides priority itself.
+ */
+export function orderCandidatesWithAging(candidates, { drainTracker, now, config = DEFAULT_DRAIN_CONFIG }) {
+  return [...candidates].sort((a, b) => {
+    const rankA = priorityRank(a);
+    const rankB = priorityRank(b);
+    if (rankA !== rankB) return rankA - rankB;
+    const boostA = computeAgingBoost({ waitState: drainTracker.get(a.id), now, config });
+    const boostB = computeAgingBoost({ waitState: drainTracker.get(b.id), now, config });
+    if (boostA !== boostB) return boostB - boostA;
+    return numericId(a) - numericId(b);
+  });
+}
+
 
 /**
  * WIP gate T-D (launch-time contracts, 2026-09-14): reads the 5-hour and weekly windows
@@ -192,12 +224,32 @@ export function createAutoLaunchPoller({
   readUsage = readUsageSnapshot,
   readUsageTelemetryFn = readUsageTelemetry,
   enforcementEnabled = admissionEnforcementEnabledFromEnv(),
+  drainModeEnabled = drainModeEnabledFromEnv(),
+  drainConfig = DEFAULT_DRAIN_CONFIG,
+  drainTracker = createDrainWaitTracker(),
+  drainWaitStateCoordinator = createDrainWaitStateCoordinator({ runsDir }),
   launchFn = launchCardRun,
   now = () => Date.now(),
   logger = console
 }) {
   const effectivelyEnabled = Boolean(enabled) && intervalMs > 0;
   let timer = null;
+  // FIX ROUND 2 (Chat round-3 review of #408, finding 2): "the terminal hold is deleted before
+  // anyone can see it." A card that exits drain into a terminal hold (HELD_WAIT_EXPIRED or
+  // HELD_OVERSIZED) is recorded HERE, deliberately separate from `drainTracker` -- `drainTracker`
+  // is the ordinary-wait/aging bookkeeping a FRESH hold must start clean from (see FIX ROUND 2
+  // finding 1's fresh-deadline requirement), so a terminal hold can never leak back into it.
+  // `getStatus().drain` merges the two, so a terminal hold stays visible for as long as it lasts.
+  // An entry is removed only when the card becomes an eligible candidate again -- i.e. a human
+  // moved it out of `blocked` -- see the reconciliation in `tick()` below. Never reconciled by a
+  // timeout: "resolved" means a human acted, not that time passed.
+  const terminalHolds = new Map();
+  // FIX ROUND 3 (Chat 2026-09-21 review of #408, finding 1): "terminal holds are in-memory only,
+  // so a restart erases them." Runs once, on this poller's own first tick -- never a new
+  // constructor argument the caller has to supply, so recovery never depends on the caller -- and
+  // reconstructs `terminalHolds` from whatever `persistDrainHeldState` wrote before an earlier
+  // process died. See `reconcileTerminalHoldsOnStartup` below.
+  let terminalHoldsInitialized = false;
   // T-0383: state `getStatus()` reports over `GET /api/poller`, so an operator (or the
   // nightly-infra-prep sandbox, which cannot reach this host directly) can see what the poller
   // last did without reading the repo or the systemd drop-in. Updated only from inside `tick()`/
@@ -213,9 +265,48 @@ export function createAutoLaunchPoller({
     return null;
   }
 
+  /**
+   * FIX ROUND 3: reconstructs `terminalHolds` from durable state on this poller's first tick.
+   * Reconciled against the card's OWN current status -- a persisted record only survives if the
+   * card is still `blocked`, so a human who already resolved it (moved it to ready/backlog/
+   * in-progress, or it ran) never sees the stale hold resurrected, and the persisted file is
+   * dropped right here so a FURTHER restart cannot bring it back either. Restoration only ever
+   * repopulates a Map read by `getStatus()` -- it never touches `store` beyond a read, so it can
+   * never itself make a blocked card launchable or bypass capacity admission.
+   */
+  async function reconcileTerminalHoldsOnStartup() {
+    if (terminalHoldsInitialized) return;
+    terminalHoldsInitialized = true;
+    if (!runsDir) return;
+    let persisted;
+    try {
+      persisted = await loadPersistedDrainHeldState({ runsDir });
+    } catch (err) {
+      logger.log(`${LOG_PREFIX}: failed to load persisted terminal drain holds: ${err.message}`);
+      return;
+    }
+    for (const [cardId, heldState] of Object.entries(persisted)) {
+      let current = null;
+      try {
+        current = await store.get(cardId);
+      } catch {
+        current = null;
+      }
+      if (current && current.status === "blocked") {
+        terminalHolds.set(cardId, heldState);
+      } else {
+        drainWaitStateCoordinator.clearHeldState(cardId).catch(() => {});
+      }
+    }
+  }
+
   async function tick() {
     if (!effectivelyEnabled) return null;
     lastTickAtMs = now();
+
+    if (drainModeEnabled) {
+      await reconcileTerminalHoldsOnStartup();
+    }
 
     // Gate 2: usage.
     let usage;
@@ -309,6 +400,29 @@ export function createAutoLaunchPoller({
       return skip(`the card corpus could not be read: ${err.message}`);
     }
 
+    // FIX ROUND 3 followup: "a recovered entry is dropped once the card is no longer in the held
+    // state (a human moved it to ready/backlog/in-progress, or it ran)." Reconciling only against
+    // `candidates` below missed this -- `candidates` requires status exactly "ready" AND
+    // dependency-eligible, so a human moving a held card straight to "backlog" or "in-progress"
+    // (a manual run) never cleared the hold without a full process restart. Reconciling here,
+    // against the FULL task list for this tick, catches every resolution path immediately and
+    // runs even on a tick that is about to skip for an unrelated reason (e.g. another card
+    // mid-run) below.
+    if (terminalHolds.size > 0) {
+      const tasksById = new Map(tasks.map((task) => [task.id, task]));
+      for (const cardId of Array.from(terminalHolds.keys())) {
+        const current = tasksById.get(cardId);
+        if (!current || current.status !== "blocked") {
+          terminalHolds.delete(cardId);
+          if (runsDir) {
+            drainWaitStateCoordinator.clearHeldState(cardId).catch((clearErr) => {
+              logger.log(`${LOG_PREFIX}: failed to clear persisted terminal drain hold for ${cardId}: ${clearErr.message}`);
+            });
+          }
+        }
+      }
+    }
+
     const live = tasks.filter((task) => LIVE_RUN_STATUSES.has(task.status));
     if (live.length > 0) {
       return skip(`cards still at in-progress/validation: ${live.map((task) => task.id).join(", ")}`);
@@ -318,9 +432,17 @@ export function createAutoLaunchPoller({
     // Run button uses -- every launch here is explicitly `trigger: "auto"` (T-0379: the ONE thing
     // that makes the capacity-fit limit apply at all; there is no config surface on this poller to
     // pass anything else, so it can never reach the manual-override path).
-    const candidates = selectEligibleCardsInOrder(tasks);
+    let candidates = selectEligibleCardsInOrder(tasks);
+
     if (candidates.length === 0) {
       return skip("no eligible ready card (dependencies unmet, or nothing ready)");
+    }
+
+    // WIP gate T-F (drain mode, spec §9): off by default (see drainModeEnabled's own docstring) --
+    // ordering is untouched below unless a card has actually been held before, so this can never
+    // change which card launches on a board where nothing has ever failed to fit.
+    if (drainModeEnabled) {
+      candidates = orderCandidatesWithAging(candidates, { drainTracker, now: now(), config: drainConfig });
     }
 
     const passedOver = [];
@@ -328,6 +450,24 @@ export function createAutoLaunchPoller({
       try {
         const launched = await launchFn({ orchestrator, id: candidate.id, logger, trigger: LAUNCH_TRIGGERS.AUTO });
         logger.log(`${LOG_PREFIX}: launched ${candidate.id} (${candidate.priority ?? "no priority"})`);
+        if (drainModeEnabled) {
+          // FIX ROUND 2 finding 1: a successful launch ends this card's wait -- clear the
+          // PERSISTED first-hold timestamp too, not just the in-memory tracker, or a later restart
+          // would resume a deadline for a wait that already finished (see the coordinator's own
+          // docstring in drainMode.js for why this is issued through it rather than called bare).
+          drainTracker.clear(candidate.id);
+          terminalHolds.delete(candidate.id);
+          if (runsDir) {
+            drainWaitStateCoordinator.clearFirstHeld(candidate.id).catch((clearErr) => {
+              logger.log(`${LOG_PREFIX}: failed to clear persisted drain first-hold timestamp for ${candidate.id}: ${clearErr.message}`);
+            });
+            // FIX ROUND 3: a successful launch also resolves any terminal hold -- clear its
+            // persisted sidecar too, not just the in-memory map.
+            drainWaitStateCoordinator.clearHeldState(candidate.id).catch((clearErr) => {
+              logger.log(`${LOG_PREFIX}: failed to clear persisted terminal drain hold for ${candidate.id}: ${clearErr.message}`);
+            });
+          }
+        }
         if (passedOver.length > 0) {
           logger.log(`${LOG_PREFIX}: passed over ${passedOver.length} earlier-queued card(s) that did not fit -- ${passedOver.join("; ")}`);
         }
@@ -343,8 +483,108 @@ export function createAutoLaunchPoller({
             // that doesn't fit. Every OTHER refusal (an unmet dependency the guard alone caught, an
             // already-active run, a round-cap trip, an overrun stop) is unrelated to whether THIS
             // card fits, so it still ends the tick immediately, same as before this card.
-            passedOver.push(`${candidate.id}: ${err.message}`);
-            logger.log(`${LOG_PREFIX}: ${candidate.id} does not fit -- trying the next eligible card: ${err.message}`);
+            let drainNote = "";
+            if (drainModeEnabled) {
+              if (err.drainHeldOversized) {
+                // cardLaunch.js already blocked the card (status + actionable note) and this
+                // launch attempt is the ONLY tick that will ever see it as an eligible candidate --
+                // the next tick's store.list() naturally excludes it (status is no longer "ready").
+                // Clear any prior ORDINARY-wait bookkeeping (including its persisted deadline --
+                // FIX ROUND 2 finding 1: an oversized re-classification of a previously-ordinary
+                // hold must not leave a stale sidecar file behind either), then record the
+                // terminal hold itself (FIX ROUND 2 finding 2) so it stays visible until a human
+                // resolves it, exactly like the wait-expired exit below.
+                drainTracker.clear(candidate.id);
+                if (runsDir) {
+                  drainWaitStateCoordinator.clearFirstHeld(candidate.id).catch((clearErr) => {
+                    logger.log(`${LOG_PREFIX}: failed to clear persisted drain first-hold timestamp for ${candidate.id}: ${clearErr.message}`);
+                  });
+                }
+                terminalHolds.set(candidate.id, {
+                  status: DRAIN_STATUS.HELD_OVERSIZED,
+                  blockingWindow: err.blockingWindow ?? null,
+                  reason: err.reason ?? err.message,
+                  nextReconsiderationAtMs: null,
+                  agingBoost: 0
+                });
+                if (runsDir) {
+                  // FIX ROUND 3: durable, not just in-memory -- a restart must still see this hold.
+                  drainWaitStateCoordinator.persistHeldState(candidate.id, terminalHolds.get(candidate.id)).catch((persistErr) => {
+                    logger.log(`${LOG_PREFIX}: failed to persist terminal drain hold for ${candidate.id}: ${persistErr.message}`);
+                  });
+                }
+                drainNote = " [drain: held_oversized -- auto-blocked, see the card's own note]";
+              } else {
+                const nowMs = now();
+                const priorWaitState = drainTracker.get(candidate.id);
+                const drainState = evaluateDrainState({
+                  admission: err.admission ?? null,
+                  telemetryReadings: err.telemetryReadings ?? null,
+                  waitState: priorWaitState,
+                  now: nowMs,
+                  config: drainConfig
+                });
+                drainTracker.recordHeld(candidate.id, nowMs, drainState);
+                if (!priorWaitState && runsDir) {
+                  // FIX ROUND 1: persist ONLY on the card's first hold -- firstHeldAtMs never
+                  // changes after that, so there is nothing new to write on a repeat hold.
+                  // Fire-and-forget: a failed write must never affect this tick (same posture as
+                  // every other best-effort write in this runner). FIX ROUND 2 finding 1: issued
+                  // through the coordinator (not called bare) so a persist that is still in flight
+                  // can never outlive a clear issued after it -- see drainMode.js's own docstring.
+                  drainWaitStateCoordinator.persistFirstHeld(candidate.id, nowMs).catch((persistErr) => {
+                    logger.log(`${LOG_PREFIX}: failed to persist drain first-hold timestamp for ${candidate.id}: ${persistErr.message}`);
+                  });
+                }
+
+                if (drainState.status === DRAIN_STATUS.HELD_WAIT_EXPIRED) {
+                  // FIX ROUND 1 finding (a): past the bound this is a terminal hold, not an
+                  // indefinite wait -- block the card for a human, exactly like the oversized exit
+                  // above, and NEVER launch it: leaving drain must never bypass capacity admission.
+                  try {
+                    const current = await store.get(candidate.id);
+                    if (current) {
+                      const updated = await store.update(candidate.id, {
+                        status: "blocked",
+                        body: appendNote(current.body ?? "", "WIP Gate: Drain Hold (Wait Expired)", drainState.reason)
+                      });
+                      orchestrator.hub?.broadcast?.({ type: "changed", id: candidate.id, task: updated });
+                    }
+                  } catch (holdErr) {
+                    logger.log(`${LOG_PREFIX}: failed to record the drain-wait-expired hold on ${candidate.id}: ${holdErr.message}`);
+                  }
+                  // No longer ordinary wait bookkeeping -- clear the AGING/deadline tracker (and
+                  // its persisted deadline: FIX ROUND 2 finding 1) so a future fresh hold on this
+                  // card starts clean. FIX ROUND 2 finding 2: the terminal hold itself is recorded
+                  // separately (terminalHolds, set up top) and stays visible in getStatus().drain
+                  // until a human resolves it -- see the reconciliation at the top of tick().
+                  drainTracker.clear(candidate.id);
+                  if (runsDir) {
+                    drainWaitStateCoordinator.clearFirstHeld(candidate.id).catch(() => {});
+                  }
+                  terminalHolds.set(candidate.id, {
+                    status: DRAIN_STATUS.HELD_WAIT_EXPIRED,
+                    blockingWindow: drainState.blockingWindow,
+                    reason: drainState.reason,
+                    nextReconsiderationAtMs: null,
+                    agingBoost: drainState.agingBoost
+                  });
+                  if (runsDir) {
+                    // FIX ROUND 3: durable, not just in-memory -- a restart must still see this hold.
+                    drainWaitStateCoordinator.persistHeldState(candidate.id, terminalHolds.get(candidate.id)).catch((persistErr) => {
+                      logger.log(`${LOG_PREFIX}: failed to persist terminal drain hold for ${candidate.id}: ${persistErr.message}`);
+                    });
+                  }
+                  drainNote = ` [drain: held_wait_expired -- auto-blocked, see the card's own note]`;
+                } else if (drainState.status === DRAIN_STATUS.WAITING) {
+                  const nextIso =
+                    drainState.nextReconsiderationAtMs !== null ? new Date(drainState.nextReconsiderationAtMs).toISOString() : "unknown";
+                  drainNote = ` [drain: waiting on ${drainState.blockingWindow}, next reconsideration ${nextIso}]`;
+                }
+              }
+            }
+            passedOver.push(`${candidate.id}: ${err.message}${drainNote}`);
+            logger.log(`${LOG_PREFIX}: ${candidate.id} does not fit -- trying the next eligible card: ${err.message}${drainNote}`);
             continue;
           }
           // The guarded path refused it for a reason unrelated to capacity fit. Deliberately no
@@ -401,7 +641,14 @@ export function createAutoLaunchPoller({
       lastTickAt: lastTickAtMs !== null ? new Date(lastTickAtMs).toISOString() : null,
       nextTickAt: nextTickAtMs !== null ? new Date(nextTickAtMs).toISOString() : null,
       lastResult,
-      activeRun: Boolean(orchestrator && orchestrator.hasActiveRuns && orchestrator.hasActiveRuns())
+      activeRun: Boolean(orchestrator && orchestrator.hasActiveRuns && orchestrator.hasActiveRuns()),
+      // WIP gate T-F (drain mode, spec §9): "the blocking window and expected next reconsideration
+      // time are shown on ... the board" -- empty whenever drain mode is off (the default), since
+      // drainTracker is never written to in that case. FIX ROUND 2 finding 2: merged with
+      // `terminalHolds` so a card that reached a terminal hold (wait-expired or oversized) stays
+      // reported here too, instead of vanishing the instant the hold fires -- see terminalHolds'
+      // own docstring above for why it is kept separate from drainTracker.
+      drain: { ...drainTracker.snapshot(), ...Object.fromEntries(terminalHolds) }
     };
   }
 
@@ -410,6 +657,10 @@ export function createAutoLaunchPoller({
     start,
     stop,
     getStatus,
+    // FIX ROUND 2 finding 1: test-only (and shutdown-friendly) hook to await every currently
+    // in-flight persist/clear before asserting on-disk state -- see
+    // drainWaitStateCoordinator.flush()'s own docstring.
+    flushDrainPersistence: () => drainWaitStateCoordinator.flush(),
     get enabled() {
       return effectivelyEnabled;
     }

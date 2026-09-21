@@ -238,6 +238,56 @@ describe("renderDetailPanel auto-retry attempt counter", () => {
   });
 });
 
+// FIX ROUND 1 finding (b): "a waiting card shows the blocking window and the next
+// reconsideration time... on both the card view and the board view." `drainState` is this
+// card's own entry from GET /api/poller's `drain` map (or `drain_state`), threaded straight
+// through by app.js -- no reshaping in this module.
+describe("renderDetailPanel drain state (FIX ROUND 1b)", () => {
+  it("shows the blocking window and next reconsideration time while waiting", () => {
+    const root = document.createElement("div");
+    const nextMs = Date.parse("2026-09-21T00:00:00.000Z");
+    const drainState = { status: "waiting", blockingWindow: "five_hour", nextReconsiderationAtMs: nextMs };
+    renderDetailPanel(root, task(), baseOpts({ drainState }));
+
+    const info = root.querySelector(".detail-drain");
+    expect(info).not.toBeNull();
+    expect(info.textContent).toMatch(/five_hour/);
+    expect(info.textContent).toMatch(/2026/);
+  });
+
+  it("shows the terminal hold reason distinctly for held_wait_expired -- requires intervention, not just a wait", () => {
+    const root = document.createElement("div");
+    const drainState = { status: "held_wait_expired", blockingWindow: "five_hour", reason: "bounded wait exceeded -- needs a human to intervene" };
+    renderDetailPanel(root, task({ status: "blocked" }), baseOpts({ drainState }));
+
+    const info = root.querySelector(".detail-drain");
+    expect(info).not.toBeNull();
+    expect(info.textContent).toMatch(/human/i);
+  });
+
+  it("shows the oversized hold reason distinctly", () => {
+    const root = document.createElement("div");
+    const drainState = { status: "held_oversized", blockingWindow: "seven_day", reason: "never fits -- split or re-scope this card" };
+    renderDetailPanel(root, task({ status: "blocked" }), baseOpts({ drainState }));
+
+    const info = root.querySelector(".detail-drain");
+    expect(info).not.toBeNull();
+    expect(info.textContent).toMatch(/split|re-scope/i);
+  });
+
+  it("renders nothing when there is no drain state for this card", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts({ drainState: null }));
+    expect(root.querySelector(".detail-drain")).toBeNull();
+  });
+
+  it("renders nothing when drainState is omitted entirely", () => {
+    const root = document.createElement("div");
+    renderDetailPanel(root, task(), baseOpts());
+    expect(root.querySelector(".detail-drain")).toBeNull();
+  });
+});
+
 describe("renderDetailPanel editable max_attempts (T-0343)", () => {
   it("renders the max attempts field empty when the card carries no override", () => {
     const root = document.createElement("div");

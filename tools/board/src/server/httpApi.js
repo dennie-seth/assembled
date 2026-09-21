@@ -72,7 +72,12 @@ const STATUS_SET = new Set(STATUSES);
 // vetting fields (see computeDependencyStatus/computeLastActivityAt below).
 const DEPENDENCY_STATUS_FIELD = "dependency_status";
 const LAST_ACTIVITY_AT_FIELD = "last_activity_at";
-const COMPUTED_TASK_FIELDS = new Set([DEPENDENCY_STATUS_FIELD, LAST_ACTIVITY_AT_FIELD]);
+// WIP gate T-F (drain mode, spec §9): "the blocking window and expected next reconsideration
+// time are shown on the card" -- sourced from whatever the wired auto-launch poller's own
+// getStatus().drain already tracks (see computeDrainState below), same opt-in projection as the
+// two computed fields above rather than a new always-present field on every task.
+const DRAIN_STATE_FIELD = "drain_state";
+const COMPUTED_TASK_FIELDS = new Set([DEPENDENCY_STATUS_FIELD, LAST_ACTIVITY_AT_FIELD, DRAIN_STATE_FIELD]);
 const PROJECTABLE_FIELDS = new Set([...TASK_FIELDS, ...COMPUTED_TASK_FIELDS]);
 
 /**
@@ -370,13 +375,28 @@ function computeLastActivityAt(task) {
   return stamps.sort().at(-1);
 }
 
-function projectTaskFields(task, fields, byId) {
+/**
+ * The `drain_state` computed field: whatever the wired auto-launch poller's own `getStatus()`
+ * currently tracks for this card (see autoLaunchPoller.js/drainMode.js), or `null` when no poller
+ * is wired in or the poller isn't currently tracking this card (not held, or drain mode is off --
+ * the default). No extra store read, no persistence of its own -- this is a read-through onto
+ * the poller's already-in-memory state, same "answer from process state alone" posture as
+ * `GET /api/poller` itself.
+ */
+function computeDrainState(task, autoLaunchPoller) {
+  const drain = autoLaunchPoller?.getStatus?.()?.drain;
+  return drain?.[task.id] ?? null;
+}
+
+function projectTaskFields(task, fields, byId, autoLaunchPoller) {
   const projected = {};
   for (const field of fields) {
     if (field === DEPENDENCY_STATUS_FIELD) {
       projected[field] = computeDependencyStatus(task, byId);
     } else if (field === LAST_ACTIVITY_AT_FIELD) {
       projected[field] = computeLastActivityAt(task);
+    } else if (field === DRAIN_STATE_FIELD) {
+      projected[field] = computeDrainState(task, autoLaunchPoller);
     } else {
       projected[field] = task[field];
     }
@@ -396,7 +416,7 @@ function projectTaskFields(task, fields, byId) {
  * see computeDependencyStatus/computeLastActivityAt). Either is a 400 on an unknown value,
  * never a silent fallback to the full dump.
  */
-async function handleListTasks(store, res, searchParams) {
+async function handleListTasks(store, res, searchParams, autoLaunchPoller) {
   const hasStatus = searchParams.has("status");
   const hasFields = searchParams.has("fields");
   if (!hasStatus && !hasFields) {
@@ -420,7 +440,7 @@ async function handleListTasks(store, res, searchParams) {
   const fields = parseCommaSeparatedParam(searchParams.get("fields"), "fields");
   assertAllKnown(fields, PROJECTABLE_FIELDS, "fields");
   const byId = new Map(tasks.map((task) => [task.id, task]));
-  const projected = filtered.map((task) => projectTaskFields(task, fields, byId));
+  const projected = filtered.map((task) => projectTaskFields(task, fields, byId, autoLaunchPoller));
   sendJson(res, 200, projected);
 }
 
@@ -1614,7 +1634,7 @@ export function createRequestListener({
         return await handleExportDone(store, res);
       }
       if (pathname === "/api/tasks" && req.method === "GET") {
-        return await handleListTasks(store, res, searchParams);
+        return await handleListTasks(store, res, searchParams, autoLaunchPoller);
       }
       if (pathname === "/api/tasks" && req.method === "POST") {
         return await handleCreateTask(store, idAllocator, req, res, repoRoot, tasksDir, taskStoreKind, hub);

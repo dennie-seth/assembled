@@ -247,6 +247,40 @@ function attemptsInfoFor(task) {
   return info;
 }
 
+const DRAIN_HELD_STATUSES = new Set(["held_oversized", "held_wait_expired"]);
+
+/**
+ * WIP gate T-F (drain mode, spec §9), FIX ROUND 1 finding (b): "a waiting card shows the
+ * blocking window and the next reconsideration time" -- on the card detail panel as well as the
+ * board. `drainState` is this card's own entry from GET /api/poller's `drain` map (or the
+ * `drain_state` computed field), threaded straight through by app.js.
+ */
+function drainSummaryFor(drainState) {
+  if (drainState.status === "waiting") {
+    const windowLabel = drainState.blockingWindow ?? "capacity";
+    const next =
+      typeof drainState.nextReconsiderationAtMs === "number"
+        ? new Date(drainState.nextReconsiderationAtMs).toLocaleString()
+        : "unknown";
+    return `Drain: waiting on ${windowLabel} window -- next reconsideration ${next}`;
+  }
+  if (drainState.status === "held_oversized") {
+    return `Drain hold (oversized): ${drainState.reason ?? "waiting cannot help -- split or re-scope this card"}`;
+  }
+  if (drainState.status === "held_wait_expired") {
+    return `Drain hold (wait expired): ${drainState.reason ?? "bounded wait exceeded -- needs a human to intervene"}`;
+  }
+  return `Drain: ${drainState.status}`;
+}
+
+function drainInfoFor(drainState) {
+  if (!drainState || !drainState.status || drainState.status === "clear") return null;
+  const info = document.createElement("div");
+  info.className = DRAIN_HELD_STATUSES.has(drainState.status) ? "detail-drain detail-drain-held" : "detail-drain";
+  info.textContent = drainSummaryFor(drainState);
+  return info;
+}
+
 function commentsSectionFor(task, onAddComment) {
   const wrap = document.createElement("div");
   wrap.className = "detail-comments";
@@ -423,7 +457,8 @@ export function renderDetailPanel(
     onUploadAttachment,
     onRemoveAttachment,
     agentOptions = [],
-    allTasks = []
+    allTasks = [],
+    drainState = null
   }
 ) {
   const previousTaskId = root.dataset.taskId ?? null;
@@ -568,6 +603,11 @@ export function renderDetailPanel(
   const attemptsInfo = attemptsInfoFor(task);
   if (attemptsInfo) {
     panel.appendChild(attemptsInfo);
+  }
+
+  const drainInfo = drainInfoFor(drainState);
+  if (drainInfo) {
+    panel.appendChild(drainInfo);
   }
 
   if (onAddComment) {
