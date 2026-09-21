@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { collectAddedLines } from "../src/lib/gitAddedLines.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,7 +42,7 @@ describe("collectAddedLines", () => {
   });
 
   afterAll(async () => {
-    await rm(repoDir, { recursive: true, force: true });
+    await rmTemp(repoDir);
   });
 
   it("returns exactly the newly-added lines (trimmed), never lines already present at baseRef", async () => {

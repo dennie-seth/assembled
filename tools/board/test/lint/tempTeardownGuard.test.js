@@ -79,4 +79,35 @@ describe("no-bare-temp-teardown reintroduction guard", () => {
     `);
     expect(messages).toHaveLength(0);
   });
+
+  it("flags a bare rm(dir, { recursive: true, force: true }) from a destructured import", () => {
+    const messages = lint(`
+      import { rm } from "node:fs/promises";
+      afterAll(async () => {
+        await rm(repoRoot, { recursive: true, force: true });
+      });
+    `);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].message).toMatch(/rmTemp/);
+  });
+
+  it("flags a bare rmSync(dir, { recursive: true, force: true }) from a destructured import", () => {
+    const messages = lint(`
+      import { rmSync } from "node:fs";
+      afterAll(() => {
+        rmSync(repoRoot, { recursive: true, force: true });
+      });
+    `);
+    expect(messages).toHaveLength(1);
+  });
+
+  it("does not flag an unrelated bare rm(...) call with different options", () => {
+    const messages = lint(`
+      import { rm } from "node:fs/promises";
+      afterAll(async () => {
+        await rm(path.join(tmpDir, "file.md"));
+      });
+    `);
+    expect(messages).toHaveLength(0);
+  });
 });
