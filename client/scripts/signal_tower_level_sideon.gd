@@ -8,10 +8,15 @@
 ## existing boot sequence. Grey-box only: no props, no final art, no entity
 ## controllers — those are T-0247/T-0235/entity-behaviour cards.
 ##
-## Every room is built at its authored world position
-## (RoomLayout.get_rect_px), all seven coexisting in one continuous
-## coordinate space — the same convention scenes/signal_tower_overview.gd
-## uses. Doors and ladders are press-E interactables (T-0390 fix round 2,
+## Every room is built at its WORLD position (get_room_world_rect() — T-0403
+## bug 1: the authored RoomLayout.get_rect_px() reflected so entry_room ends
+## up at the greatest world y, at the bottom of the tower, and tear_room at
+## the least, at the top, with the chain climbing upward in between), all
+## seven coexisting in one continuous coordinate space. RoomLayout's own
+## authored coordinates are untouched — this is a presentation-layer remap,
+## not an edit to the source-of-truth layout data, so scenes/signal_tower_overview.gd
+## (which still reads RoomLayout.get_rect_px() directly) is unaffected.
+## Doors and ladders are press-E interactables (T-0390 fix round 2,
 ## @DennieSeth): PlayerController.room_connectors is deliberately left empty
 ## so its own overlap check never fires room_transition — standing in a
 ## connector's area does nothing by itself. Pressing E (PlayerController's
@@ -58,10 +63,21 @@ const _WALL_COLOR: Color = Color(0.28, 0.28, 0.28)
 const _FLOOR_COLOR: Color = Color(0.22, 0.22, 0.22)
 ## Grey-box player body colour — deliberately not final art (finding 8).
 const _PLAYER_BODY_COLOR: Color = Color(0.85, 0.72, 0.2)
+## Door visible-block colour (T-0403 bug 2) — warm brown-grey, distinct from
+## the ladder colour below so the two are tellable apart at a glance.
+const _DOOR_VISUAL_COLOR: Color = Color(0.55, 0.42, 0.18)
+## Ladder visible-block colour (T-0403 bug 3) — cool blue-grey.
+const _LADDER_VISUAL_COLOR: Color = Color(0.3, 0.5, 0.62)
 
 var _layout: RefCounted  ## RoomLayout
 var _room_nodes: Dictionary = {}  ## anchor_tag -> Node2D
 var _connector_records: Array = []  ## Array[Dictionary{from, to, type, branch}]
+## anchor_tag -> Rect2i — every room's WORLD-space tile rect (T-0403 bottom-up
+## remap: entry_room ends up at the greatest world y, tear_room at the least),
+## computed once per build_level() by _compute_world_rects(). Authored origins
+## stay untouched in _layout itself — this is a presentation-layer remap, not
+## an edit to the source-of-truth layout data.
+var _world_rect_tiles_by_tag: Dictionary = {}
 ## "<from_tag>|<to_tag>" -> Rect2 — the trigger area, inside from_tag, that
 ## fires a transition to to_tag.
 var _trigger_by_pair: Dictionary = {}
@@ -71,6 +87,13 @@ var _arrivals: Dictionary = {}
 ## "<from_tag>|<to_tag>" -> "door"/"ladder" — the connection type, used by the
 ## contextual interact prompt to choose its verb.
 var _connector_type_by_pair: Dictionary = {}
+## "<from_tag>|<to_tag>" -> CanvasItem — both directions of one connector map
+## to the SAME visible block (T-0403 bugs 2/3), one physical opening.
+var _connector_visual_by_pair: Dictionary = {}
+## Unique visible-block nodes, one per connector — kept separately from
+## _connector_visual_by_pair (which stores each node under both direction
+## keys) so build_level()'s idempotent rebuild frees each node exactly once.
+var _connector_visual_nodes: Array = []
 
 var _player: CharacterBody2D
 var _camera: Camera2D
@@ -137,13 +160,19 @@ func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
 		_player.free()
 	if is_instance_valid(_prompt_label):
 		_prompt_label.free()
+	for visual: Node in _connector_visual_nodes:
+		if is_instance_valid(visual):
+			visual.free()
 
 	_load_error = ""
 	_room_nodes = {}
 	_connector_records = []
+	_world_rect_tiles_by_tag = {}
 	_trigger_by_pair = {}
 	_arrivals = {}
 	_connector_type_by_pair = {}
+	_connector_visual_by_pair = {}
+	_connector_visual_nodes = []
 
 	_layout = _RoomLayoutScript.new()
 	var err: String = _layout.load_from_path(layout_path)
@@ -160,6 +189,8 @@ func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
 		_load_error = joined
 		_layout = null
 		return
+
+	_world_rect_tiles_by_tag = _compute_world_rects(_layout)
 
 	var openings: Dictionary = {}
 	for tag: String in _layout.get_all_tags():
@@ -266,10 +297,67 @@ func get_room_change_count() -> int:
 	return _room_change_count
 
 
+## Returns [param tag]'s WORLD-space pixel rect (T-0403 bug 1): the authored
+## RoomLayout.get_rect_px() remapped so entry_room ends up at the greatest
+## world y (bottom of the tower) and tear_room at the least (top), with the
+## chain climbing upward in between. Same size as the authored rect — only
+## the y origin changes. See _compute_world_rects().
+func get_room_world_rect(tag: String) -> Rect2:
+	return _world_rect_px(tag)
+
+
+## Returns the visible drawable block (T-0403 bugs 2/3) marking the door or
+## ladder connecting [param from_tag] and [param to_tag], or null if no such
+## connector exists. One physical block per connector — looking it up by
+## either direction returns the same node.
+func get_connector_visual(from_tag: String, to_tag: String) -> CanvasItem:
+	return _connector_visual_by_pair.get("%s|%s" % [from_tag, to_tag], null)
+
+
 # ── Room geometry ────────────────────────────────────────────────────────────
 
+## Reflects every room's authored tile rect about the vertical centre of the
+## layout's own bounding box, keeping x and each room's size untouched — only
+## the y origin moves. This is what puts entry_room at the greatest world y
+## (bottom) and tear_room at the least (top) with everything in between
+## climbing upward in the same order the authored connectivity already
+## chains them (T-0403 bug 1, reading B): a reflection is order-reversing, so
+## a chain that was authored top-to-bottom comes out bottom-to-top in world
+## space with no per-room special-casing and no hardcoded tag.
+func _compute_world_rects(layout: RefCounted) -> Dictionary:
+	var tags: Array = layout.get_all_tags()
+	var y_min: int = 0
+	var y_max: int = 0
+	var first: bool = true
+	for tag: String in tags:
+		var rect: Rect2i = layout.get_rect_tiles(tag)
+		if first:
+			y_min = rect.position.y
+			y_max = rect.end.y
+			first = false
+		else:
+			y_min = mini(y_min, rect.position.y)
+			y_max = maxi(y_max, rect.end.y)
+
+	var result: Dictionary = {}
+	for tag: String in tags:
+		var rect: Rect2i = layout.get_rect_tiles(tag)
+		var world_origin_y: int = y_min + y_max - rect.end.y
+		result[tag] = Rect2i(Vector2i(rect.position.x, world_origin_y), rect.size)
+	return result
+
+
+func _world_rect_tiles(tag: String) -> Rect2i:
+	return _world_rect_tiles_by_tag[tag]
+
+
+func _world_rect_px(tag: String) -> Rect2:
+	var rect: Rect2i = _world_rect_tiles(tag)
+	return Rect2(Vector2(rect.position) * _layout.tile_size_px, Vector2(rect.size) * _layout.tile_size_px)
+
+
 func _floor_row_global(tag: String) -> int:
-	var rect: Rect2i = _layout.get_rect_tiles(tag)
+	var rect: Rect2i = _world_rect_tiles(tag)
 	return rect.position.y + rect.size.y - 1
 
 
@@ -282,7 +370,7 @@ func _floor_y_px(tag: String) -> float:
 ## interior inset so a landing point placed within these bounds never spawns
 ## inside a wall collider.
 func _room_interior_x_bounds(tag: String) -> Vector2:
-	var rect: Rect2i = _layout.get_rect_tiles(tag)
+	var rect: Rect2i = _world_rect_tiles(tag)
 	var tile_size: int = _layout.tile_size_px
 	return Vector2(float((rect.position.x + 1) * tile_size), float((rect.end.x - 1) * tile_size))
 
@@ -325,8 +413,8 @@ func _x_in_any_range(x: float, ranges: Array) -> bool:
 func _door_geometry(conn: Dictionary) -> Dictionary:
 	var a_tag: String = conn["from"]
 	var b_tag: String = conn["to"]
-	var rect_a: Rect2i = _layout.get_rect_tiles(a_tag)
-	var rect_b: Rect2i = _layout.get_rect_tiles(b_tag)
+	var rect_a: Rect2i = _world_rect_tiles(a_tag)
+	var rect_b: Rect2i = _world_rect_tiles(b_tag)
 	var tile_size: int = _layout.tile_size_px
 
 	var y0: int = maxi(rect_a.position.y, rect_b.position.y)
@@ -367,8 +455,8 @@ func _add_door_floor_corner_exclusion(openings: Dictionary, tag: String, side: S
 func _ladder_geometry(conn: Dictionary, ladder_index: int) -> Dictionary:
 	var a_tag: String = conn["from"]
 	var b_tag: String = conn["to"]
-	var rect_a: Rect2i = _layout.get_rect_tiles(a_tag)
-	var rect_b: Rect2i = _layout.get_rect_tiles(b_tag)
+	var rect_a: Rect2i = _world_rect_tiles(a_tag)
+	var rect_b: Rect2i = _world_rect_tiles(b_tag)
 	var tile_size: int = _layout.tile_size_px
 
 	## Confine the opening to each room's INTERIOR columns (inset 1 tile from
@@ -428,7 +516,7 @@ func _kept_segments(length: int, excluded: Array) -> Array:
 ## perimeter boundary) — each minus its declared openings.
 func _build_room(tag: String, openings: Dictionary) -> Node2D:
 	var size: Vector2i = _layout.get_size_tiles(tag)
-	var origin_px: Vector2 = _layout.get_rect_px(tag).position
+	var origin_px: Vector2 = get_room_world_rect(tag).position
 	var tile_size: int = _layout.tile_size_px
 
 	var room_node := Node2D.new()
@@ -533,9 +621,34 @@ func _register_connector(conn: Dictionary, geo: Dictionary, ladder_ranges_by_roo
 	_connector_type_by_pair["%s|%s" % [a_tag, b_tag]] = conn["type"]
 	_connector_type_by_pair["%s|%s" % [b_tag, a_tag]] = conn["type"]
 
+	## The visible block (T-0403 bugs 2/3) covers the union of both trigger
+	## areas — for a door that's a plate straddling the shared wall boundary;
+	## for a ladder, since area_a/area_b sit at each room's own floor_y, the
+	## union spans the full vertical run connecting the two floors, reading
+	## as a ladder shaft. Deliberately just a ColorRect: no collision shape,
+	## no Area2D/StaticBody2D, so it never blocks or captures the player
+	## (T-0403 bug 4) — walking is free; only an explicit E press climbs.
+	var visual_color: Color = _DOOR_VISUAL_COLOR if conn["type"] == "door" else _LADDER_VISUAL_COLOR
+	_add_connector_visual(a_tag, b_tag, area_a.merge(area_b), visual_color)
+
 	_connector_records.append({
 		"from": a_tag, "to": b_tag, "type": conn["type"], "branch": conn.get("branch", false),
 	})
+
+
+## Builds the drawable, non-colliding visible block for one connector and
+## registers it under both direction keys of _connector_visual_by_pair.
+func _add_connector_visual(a_tag: String, b_tag: String, rect: Rect2, color: Color) -> void:
+	var visual := ColorRect.new()
+	visual.name = "ConnectorVisual_%s_%s" % [a_tag.replace(".", "_"), b_tag.replace(".", "_")]
+	visual.position = rect.position
+	visual.size = rect.size
+	visual.color = color
+	add_child(visual)
+
+	_connector_visual_nodes.append(visual)
+	_connector_visual_by_pair["%s|%s" % [a_tag, b_tag]] = visual
+	_connector_visual_by_pair["%s|%s" % [b_tag, a_tag]] = visual
 
 
 # ── Player ───────────────────────────────────────────────────────────────────
@@ -606,23 +719,23 @@ func _build_player() -> void:
 	_build_prompt()
 
 
-## Spawn point inside the layout's entry room, derived from its authored
-## rect — horizontal centre, at the room's own floor row.
+## Spawn point inside the layout's entry room, derived from its WORLD rect
+## (T-0403 bug 1) — horizontal centre, at the room's own floor row.
 func _spawn_position() -> Vector2:
-	var rect: Rect2 = _layout.get_rect_px(_layout.entry_room)
+	var rect: Rect2 = get_room_world_rect(_layout.entry_room)
 	return Vector2(rect.position.x + rect.size.x * 0.5, _floor_y_px(_layout.entry_room))
 
 
-## Clamps the following camera to [param tag]'s own authored world rect, so a
-## room wider or taller than the viewport pans instead of showing whatever
-## lies past the room's walls. Called once at spawn and again on every
-## room transition (_on_player_interact()) — the room the player is
+## Clamps the following camera to [param tag]'s own WORLD rect (T-0403 bug
+## 1), so a room wider or taller than the viewport pans instead of showing
+## whatever lies past the room's walls. Called once at spawn and again on
+## every room transition (_on_player_interact()) — the room the player is
 ## logically in is the only thing that changes; the camera itself stays a
 ## permanent child of the player.
 func _update_camera_limits(tag: String) -> void:
 	if _camera == null:
 		return
-	var rect: Rect2 = _layout.get_rect_px(tag)
+	var rect: Rect2 = get_room_world_rect(tag)
 	_camera.limit_left = int(rect.position.x)
 	_camera.limit_top = int(rect.position.y)
 	_camera.limit_right = int(rect.position.x + rect.size.x)
