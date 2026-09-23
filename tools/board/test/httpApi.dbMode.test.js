@@ -14,6 +14,7 @@ vi.mock("../src/runner/gitOps.js", async (importOriginal) => {
 });
 
 import { pullDevelop } from "../src/runner/gitOps.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -72,8 +73,8 @@ afterEach(async () => {
   delete process.env.AUTO_COMMIT_CARDS_ON_CREATE;
   await new Promise((resolve) => server.close(resolve));
   store.close();
-  await fs.rm(repoRoot, { recursive: true, force: true });
-  await fs.rm(dataDir, { recursive: true, force: true });
+  await rmTemp(repoRoot);
+  await rmTemp(dataDir);
 });
 
 async function createTask(overrides = {}) {

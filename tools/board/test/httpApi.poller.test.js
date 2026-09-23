@@ -5,6 +5,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * T-0383: `GET /api/poller` -- the nightly-infra-prep task currently has to read
@@ -49,7 +50,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
   server = null;
-  await fs.rm(tasksDir, { recursive: true, force: true });
+  await rmTemp(tasksDir);
 });
 
 describe("GET /api/poller", () => {

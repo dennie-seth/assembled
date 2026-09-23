@@ -10,6 +10,7 @@ import {
   WARNING_UTILIZATION,
   REJECTED_UTILIZATION
 } from "../../src/runner/usageWindow.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 /** Far enough in the future that a `resetsAt` built from it never reads as an elapsed window. */
 const NOW_MS = 1_788_000_000_000;
@@ -104,7 +105,7 @@ describe("readNewestRateLimitInfo / readUsageSnapshot", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   async function writeLog(name, events, mtimeMs) {
@@ -222,7 +223,7 @@ describe("telemetry EARLY in a large log -- the 2026-09-04 poller stall", () => 
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   async function writeLog(name, events, mtimeMs) {
@@ -328,7 +329,7 @@ describe("genuinely-absent telemetry is distinguished from unreadable telemetry"
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("flags telemetryAbsent when no log carries any rate-limit event", async () => {
@@ -401,7 +402,7 @@ describe("reset-awareness: the poller must know WHEN the limit frees up", () => 
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   async function writeOne(info) {

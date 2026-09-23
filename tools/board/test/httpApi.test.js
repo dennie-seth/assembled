@@ -6,6 +6,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 let tmpDir;
 let agentsDir;
@@ -24,8 +25,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tmpDir, { recursive: true, force: true });
-  await fs.rm(agentsDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
+  await rmTemp(agentsDir);
 });
 
 function validTaskBody(overrides = {}) {
@@ -705,7 +706,7 @@ describe("POST /api/tasks/:id/run and /cancel with an orchestrator", () => {
 
   afterEach(async () => {
     await new Promise((resolve) => orchServer.close(resolve));
-    await fs.rm(orchTmpDir, { recursive: true, force: true });
+    await rmTemp(orchTmpDir);
   });
 
   async function createTask(overrides = {}) {
@@ -886,7 +887,7 @@ describe("GET /api/git/status", () => {
 
   afterEach(async () => {
     await new Promise((resolve) => gitServer.close(resolve));
-    await fs.rm(gitTmpDir, { recursive: true, force: true });
+    await rmTemp(gitTmpDir);
   });
 
   it("returns 200 with branch, head, and headTimestamp", async () => {
@@ -916,7 +917,7 @@ describe("GET /api/git/status", () => {
     expect(payload.head).toBeNull();
     expect(payload.headTimestamp).toBeNull();
     await new Promise((resolve) => bareServer.close(resolve));
-    await fs.rm(bareDir, { recursive: true, force: true });
+    await rmTemp(bareDir);
   });
 
   it("returns 405 for non-GET methods on /api/git/status", async () => {

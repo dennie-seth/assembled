@@ -9,6 +9,7 @@ import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { ClaudeCliRunner } from "../src/runner/claudeCliRunner.js";
 import { makeTask } from "./taskStoreContract.js";
 import { PRE_REGISTRATION_HEADING } from "../src/lib/preRegisteredFinding.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_PATH = path.resolve(
@@ -25,7 +26,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 /**
@@ -151,7 +152,7 @@ describe("checkDeliverable.js in db mode: finding-with-evidence route (T-0342)",
       expect(stdout).toMatch(/deliverable check passed/);
       expect(stdout).toMatch(/pre-registered experiment/);
     } finally {
-      await fs.rm(path.dirname(evidenceAbsPath), { recursive: true, force: true });
+      await rmTemp(path.dirname(evidenceAbsPath));
     }
   });
 

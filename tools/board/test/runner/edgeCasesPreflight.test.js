@@ -91,6 +91,27 @@ describe("checkEdgeCasesPreflight -- Edge cases label present but empty (planner
   });
 });
 
+// T-0405: this preflight has its own local, strict "## Acceptance" heading regex to find where
+// the section starts (separate from parseAcceptanceCriteria's own now-tolerant one). Before this
+// fix that meant a qualified heading passed parseAcceptanceCriteria (so items.length > 0, past the
+// early-return) but then failed this file's OWN section-start scan -- startIdx stayed -1, and the
+// function silently returned no warnings even for a card missing its Edge cases block entirely.
+describe("checkEdgeCasesPreflight -- qualified heading (T-0403 failure mode)", () => {
+  it("still warns when a qualified '## Acceptance (...)' heading has checklist items but no Edge cases block", () => {
+    const body = "## Context\nDo it.\n\n## Acceptance (story-level -- planner expands)\n- [ ] works\n- [ ] also works\n";
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(/Edge cases/);
+  });
+
+  it("returns no warnings when a qualified heading's section has a compliant Edge cases block", () => {
+    const body =
+      "## Acceptance criteria\n- [ ] works\n\n**Edge cases:**\n- [ ] handles the empty-input case\n";
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.warnings).toEqual([]);
+  });
+});
+
 describe("checkEdgeCasesPreflight -- warning text stays observation-only (T-0388, T-0365 follow-up)", () => {
   const body = "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n";
 

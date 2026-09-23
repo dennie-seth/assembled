@@ -6,6 +6,7 @@ import { searchReferences, fetchReference, searchAcrossSources } from "../src/li
 import { ReferenceRejectedError } from "../src/lib/referenceQuarantine.js";
 import { REFERENCE_SOURCES } from "../src/lib/referenceSourcePolicy.js";
 import { createRateLimiter } from "../src/lib/referenceRateLimit.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -20,7 +21,7 @@ let tmpDir;
 
 afterEach(async () => {
   if (tmpDir) {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await rmTemp(tmpDir);
     tmpDir = undefined;
   }
 });

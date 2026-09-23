@@ -9,6 +9,7 @@ import {
   readWindowUsage,
   readUsageTelemetry
 } from "../../src/runner/usageTelemetry.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 /** Far enough in the future that a `resetsAt` built from it never reads as an elapsed window. */
 const NOW_MS = 1_788_000_000_000;
@@ -69,7 +70,7 @@ describe("readWindowUsage", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   /**
@@ -221,7 +222,7 @@ describe("independent windows -- the bug this card fixes", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   async function writeLog(name, events, mtimeMs) {
@@ -299,7 +300,7 @@ describe("receive-timestamp freshness, not log-file mtime (Codex review 2026-09-
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   /** Writes raw JSON lines with no auto-stamping -- full control, matching Codex's own probe. */

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { syncApprovalProvenanceText, refreshApprovalProvenanceFile } from "../src/lib/approvalProvenanceSync.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * `syncApprovalProvenanceText` / `refreshApprovalProvenanceFile` (T-0286, docs/decision-log.md
@@ -140,7 +141,7 @@ describe("refreshApprovalProvenanceFile", () => {
     try {
       await fn(dir);
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
     }
   }
 

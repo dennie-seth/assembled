@@ -15,6 +15,7 @@ import {
   DEFAULT_WEDGED_STALE_MS,
   DEFAULT_KILL_ESCALATION_MS
 } from "../../src/runner/runState.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 let tmpDir;
 
@@ -23,7 +24,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("writeRunState / readRunState / clearRunState", () => {

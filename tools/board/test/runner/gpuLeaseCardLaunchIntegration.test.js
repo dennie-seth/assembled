@@ -5,6 +5,7 @@ import path from "node:path";
 import { launchCardRun, LAUNCH_TRIGGERS, CardLaunchError } from "../../src/runner/cardLaunch.js";
 import { acquireGpuLease, readGpuLease } from "../../src/runner/gpuLease.js";
 import { listActiveReservations } from "../../src/runner/launchReservation.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 /**
  * T-0371 (WIP gate T-E) acceptance: "One shared lease per constrained GPU or ComfyUI server ...
@@ -67,7 +68,7 @@ function makeLogger() {
 async function rmRetrying(dir) {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmTemp(dir);
       return;
     } catch (err) {
       if (err.code !== "ENOTEMPTY" || attempt === 9) throw err;

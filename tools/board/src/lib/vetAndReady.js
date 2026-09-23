@@ -1,4 +1,5 @@
 import { SATISFIED_DEP_STATUSES } from "../runner/autoLaunchPoller.js";
+import { ACCEPTANCE_HEADING_TEXT_SRC } from "./acceptanceCriteria.js";
 
 /**
  * The mechanical vetting rules for T-0384's nightly vet-and-ready job, ported from the external
@@ -135,8 +136,21 @@ export function supersededCheck(task) {
  * flag now: `(?:^|\n)` finds the heading at the body's start or after any newline (so it still
  * doesn't require the heading to be the very first line), and a bare `$` matches only the true
  * end of the body, so the capture only stops early at an actual next heading.
+ *
+ * T-0405: the heading-text portion (`#{1,6}\s+` + ACCEPTANCE_HEADING_TEXT_SRC) is now imported
+ * from acceptanceCriteria.js instead of defined separately here. The two used to disagree on what
+ * counts as "the" Acceptance heading -- this one already tolerated any suffix, while
+ * acceptanceCriteria.js's parseAcceptanceCriteria required an exact "## Acceptance" -- so a card
+ * the nightly vet-and-ready job happily readied (via this regex) could be hard-blocked at run
+ * preflight by that stricter one for the very same heading (T-0403, T-0396). Building both from
+ * the same fragment means they can no longer drift apart; see
+ * test/lib/acceptanceHeadingAgreement.test.js for the guard that pins this.
  */
-const ACCEPTANCE_SECTION_RE = /(?:^|\n)#{1,6}\s*acceptance\b[^\n]*\n([\s\S]*?)(?=\n#{1,6}\s|$)/i;
+const ACCEPTANCE_SECTION_RE = new RegExp(
+  `(?:^|\\n)#{1,6}\\s+${ACCEPTANCE_HEADING_TEXT_SRC}[^\\n]*\\n([\\s\\S]*?)(?=\\n#{1,6}\\s|$)`,
+  "i"
+);
+export { ACCEPTANCE_SECTION_RE };
 
 /**
  * File extensions `extractAcceptancePaths` treats as "this token names a repo path", not just

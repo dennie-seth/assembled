@@ -5,6 +5,7 @@ import path from "node:path";
 import { openDb } from "../src/lib/db/connection.js";
 import { DbTaskStore } from "../src/lib/db/dbTaskStore.js";
 import { runTaskStoreContractTests, makeTask } from "./taskStoreContract.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 async function makeTmpDbStore() {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-dbtaskstore-"));
@@ -15,7 +16,7 @@ async function makeTmpDbStore() {
     store: new DbTaskStore(db),
     dispose: async () => {
       db.close();
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   };
 }
@@ -32,7 +33,7 @@ describe("DbTaskStore construction", () => {
       expect(await store.get(task.id)).toEqual(task);
       store.close();
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 });

@@ -19,6 +19,7 @@ import {
   pendingOutcomePath,
   AdvisoryDecisionMissingError
 } from "../../src/runner/advisoryLogger.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 let runsDir;
 
@@ -27,7 +28,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(runsDir, { recursive: true, force: true });
+  await rmTemp(runsDir);
 });
 
 function reading(overrides) {

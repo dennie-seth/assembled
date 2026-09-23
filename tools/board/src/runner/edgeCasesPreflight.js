@@ -1,6 +1,5 @@
-import { parseAcceptanceCriteria, CHECKBOX_RE } from "../lib/acceptanceCriteria.js";
+import { parseAcceptanceCriteria, CHECKBOX_RE, ACCEPTANCE_HEADING_RE } from "../lib/acceptanceCriteria.js";
 
-const ACCEPTANCE_SECTION_RE = /^##\s+Acceptance\s*$/i;
 const HEADING_RE = /^#{1,6}\s+/;
 const EDGE_CASES_LABEL_RE = /^\*\*Edge cases:?\*\*/i;
 
@@ -30,6 +29,14 @@ const EDGE_CASES_LABEL_RE = /^\*\*Edge cases:?\*\*/i;
  * planner.md requires more than the bold label: the block must be "followed by its own `- [ ]`
  * checklist items, one per edge case" (.claude/rules/planner.md:100-123). A bare `**Edge cases:**`
  * label with nothing underneath doesn't satisfy that convention, so it still warns.
+ *
+ * T-0405: the section-start scan below used to re-derive its own strict `^##\s+Acceptance\s*$`
+ * regex instead of reusing acceptanceCriteria.js's `ACCEPTANCE_HEADING_RE`. Once that regex became
+ * tolerant of a qualified heading ("## Acceptance (story-level -- planner expands)"), this file's
+ * separate copy would still fail to find the section for the exact same body -- items.length > 0
+ * from parseAcceptanceCriteria, but startIdx stayed -1 here, so a card missing its Edge cases block
+ * under a qualified heading silently got no warning at all. Importing the one regex both places
+ * use closes that gap the same way vetAndReady.js's does (see acceptanceCriteria.js).
  */
 export function checkEdgeCasesPreflight(task) {
   const body = task?.body ?? "";
@@ -39,7 +46,7 @@ export function checkEdgeCasesPreflight(task) {
   }
 
   const lines = body.split(/\r?\n/);
-  const startIdx = lines.findIndex((line) => ACCEPTANCE_SECTION_RE.test(line.trim()));
+  const startIdx = lines.findIndex((line) => ACCEPTANCE_HEADING_RE.test(line.trim()));
   if (startIdx === -1) {
     return { warnings: [] };
   }

@@ -13,6 +13,7 @@ import {
   diffPlannerFileView,
   applyPlannerFileViewDiff
 } from "../../src/runner/plannerFileView.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -73,7 +74,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   store.close();
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("materializePlannerFileView", () => {

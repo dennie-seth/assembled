@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../scripts/checkApproval.js");
@@ -39,8 +40,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  await fs.rm(tasksDir, { recursive: true, force: true });
-  await fs.rm(workDir, { recursive: true, force: true });
+  await rmTemp(tasksDir);
+  await rmTemp(workDir);
 });
 
 async function createTask(overrides = {}) {

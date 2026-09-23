@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createOrphanReaper, orphanRecoveryEnabledFromEnv, ORPHANABLE_STATUSES } from "../../src/runner/orphanReaper.js";
 import { writeRunState } from "../../src/runner/runState.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -335,7 +336,7 @@ describe("liveness check (survives a process restart)", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   describe("reapOnStartup", () => {
@@ -496,7 +497,7 @@ describe("T-0287 regression: a live run with an inconclusive pid check is never 
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("sweepOnce never reaps across 10 consecutive sweeps when the pid check is inconclusive but the log keeps growing", async () => {
@@ -623,7 +624,7 @@ describe("wedged-run cross-check (pid alive but run log stale — T-0185)", () =
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   async function writeStaleLog(taskId, staleMs) {
@@ -963,7 +964,7 @@ describe("T-0289 correctness regression: an inconclusive pid check must stay re-
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("sweepOnce defers (does not reap, does not readopt) while the log stays fresh, then reaps once the log actually goes stale", async () => {
@@ -1133,7 +1134,7 @@ describe("T-0289: a missing/malformed runstate file still corroborates against t
   });
 
   afterEach(async () => {
-    await fs.rm(runsDir, { recursive: true, force: true });
+    await rmTemp(runsDir);
   });
 
   it("does not reap when the runstate file is malformed JSON but a recently-touched run log for the same taskId exists", async () => {

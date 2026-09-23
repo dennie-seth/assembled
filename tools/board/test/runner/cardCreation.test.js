@@ -9,6 +9,7 @@ import { IdAllocator } from "../../src/lib/idAllocator.js";
 import { DbTaskStore } from "../../src/lib/db/dbTaskStore.js";
 import { IdAllocatorDb } from "../../src/lib/db/idAllocatorDb.js";
 import { createCard } from "../../src/runner/cardCreation.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,7 +38,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete process.env.AUTO_COMMIT_CARDS_ON_CREATE;
-  await fs.rm(repoRoot, { recursive: true, force: true });
+  await rmTemp(repoRoot);
 });
 
 const minimalFields = {

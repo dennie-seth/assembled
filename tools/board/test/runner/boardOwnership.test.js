@@ -22,6 +22,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { acquireBoardOwnership, boardOwnerLockPath } from "../../src/runner/boardOwnership.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 let dir;
 let lockPath;
@@ -35,7 +36,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await rmTemp(dir);
 });
 
 describe("boardOwnerLockPath", () => {

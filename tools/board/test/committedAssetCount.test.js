@@ -9,6 +9,7 @@ import {
   listCommittedAssetFinalFiles,
   countCommittedAssets
 } from "../src/lib/committedAssetCount.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,7 +36,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("listCommittedAssetFinalFiles", () => {

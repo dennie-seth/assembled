@@ -7,6 +7,7 @@ import path from "node:path";
 import { readTaskBodyAtMergeBase, readRunStartTimestamp } from "../../src/lib/gitTaskHistory.js";
 import { serializeTask } from "../../src/lib/taskParser.js";
 import { PRE_REGISTRATION_HEADING } from "../../src/lib/preRegisteredFinding.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,7 +60,7 @@ describe("readTaskBodyAtMergeBase", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await rmTemp(tmpDir);
   });
 
   it("returns the task body as committed at the point the branch diverged from base", async () => {
@@ -172,7 +173,7 @@ describe("readRunStartTimestamp", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await rmTemp(tmpDir);
   });
 
   it("returns the date of the earliest commit on the branch beyond baseRef, not the latest", async () => {

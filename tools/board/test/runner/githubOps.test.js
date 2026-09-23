@@ -10,6 +10,7 @@ import {
   createPrRest,
   classifyGhError
 } from "../../src/runner/githubOps.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 const FAKE_GH = `#!/usr/bin/env bash
 set -e
@@ -98,7 +99,7 @@ beforeEach(async () => {
 afterEach(async () => {
   process.env.PATH = originalPath;
   process.env.FAKE_GH_STATE = originalState;
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await rmTemp(tmpDir);
 });
 
 describe("checkAvailability", () => {

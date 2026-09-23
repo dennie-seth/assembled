@@ -22,6 +22,7 @@ import {
   loadPersistedDrainWaitState,
   loadPersistedDrainHeldState
 } from "../../src/runner/drainMode.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 function makeTask(overrides = {}) {
   return {
@@ -1213,7 +1214,7 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
     });
 
     afterEach(async () => {
-      await fs.rm(runsDir, { recursive: true, force: true });
+      await rmTemp(runsDir);
     });
 
     it("Chat's fixture: hold at 1000ms, successful (fake) launch at 1500ms, reload at 10000ms with maxWaitMs 1000ms -- the card's next hold starts a FRESH deadline, never held_wait_expired immediately", async () => {
@@ -1320,7 +1321,7 @@ describe("createAutoLaunchPoller -- WIP gate T-F drain mode integration", () => 
     });
 
     afterEach(async () => {
-      await fs.rm(runsDir, { recursive: true, force: true });
+      await rmTemp(runsDir);
     });
 
     function makeReplacementPoller({ store, orchestrator, logger, launchFn, drainConfig, drainTracker, now }) {

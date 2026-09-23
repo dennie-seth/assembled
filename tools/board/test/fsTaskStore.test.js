@@ -5,6 +5,7 @@ import path from "node:path";
 import { TaskStore, StaleWriteError, DependencyLockSetUnstableError } from "../src/lib/taskStore.js";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { runTaskStoreContractTests, makeTask } from "./taskStoreContract.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 describe("TaskStore (abstract interface)", () => {
   it("throws not-implemented for every method when unimplemented", async () => {
@@ -22,7 +23,7 @@ runTaskStoreContractTests("FsTaskStore", async () => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "board-fstaskstore-"));
   return {
     store: new FsTaskStore(tmpDir),
-    dispose: () => fs.rm(tmpDir, { recursive: true, force: true })
+    dispose: () => rmTemp(tmpDir)
   };
 });
 
@@ -38,7 +39,7 @@ describe("FsTaskStore atomic writes", () => {
       const entries = await fs.readdir(tmpDir);
       expect(entries).toEqual(["T-0001.md"]);
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 });
@@ -107,7 +108,7 @@ describe("FsTaskStore conditional-update locking (interleaving regression)", () 
 
       readSpy.mockRestore();
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 
@@ -131,7 +132,7 @@ describe("FsTaskStore conditional-update locking (interleaving regression)", () 
       const final = await store.get("T-9002");
       expect(final.status).toBe("done");
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 });
@@ -203,7 +204,7 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 5 interleaving regress
 
       readSpy.mockRestore();
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 
@@ -224,7 +225,7 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 5 interleaving regress
       expect(r1.status).toBe("ready");
       expect(r2.status).toBe("ready");
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 });
@@ -333,7 +334,7 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 6 stale-peek regressio
 
       readSpy.mockRestore();
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 
@@ -366,7 +367,7 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 6 stale-peek regressio
       expect((await store.get("T-9007")).status).toBe("backlog");
       getSpy.mockRestore();
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 
@@ -410,7 +411,7 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 6 stale-peek regressio
       expect(r2.status).toBe("ready");
       getSpy.mockRestore();
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await rmTemp(tmpDir);
     }
   });
 });

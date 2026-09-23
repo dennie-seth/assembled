@@ -5,6 +5,7 @@ import path from "node:path";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { IdAllocator } from "../src/lib/idAllocator.js";
 import { startHttpServer } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 /**
  * Tests for T-0165: run failures that occur after the 202 is sent must be
@@ -43,7 +44,7 @@ describe("POST /api/tasks/:id/run — async failure surfacing", () => {
 
   afterEach(async () => {
     await new Promise((resolve) => server.close(resolve));
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await rmTemp(tmpDir);
   });
 
   async function createTask(overrides = {}) {

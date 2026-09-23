@@ -11,6 +11,7 @@ import {
   DEFAULT_MAX_ASSETS_PER_RUN
 } from "../src/lib/referenceQuarantine.js";
 import { PREVIEWABLE_IMAGE_MIMES, REJECTED_SNIFFED_MIMES } from "../src/server/httpApi.js";
+import { rmTemp } from "./helpers/rmTemp.js";
 
 // Real, valid 1x1 transparent PNG -- magic bytes matter, this module sniffs bytes not extensions.
 const TINY_PNG = Buffer.from(
@@ -29,7 +30,7 @@ let tmpDir;
 
 afterEach(async () => {
   if (tmpDir) {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await rmTemp(tmpDir);
     tmpDir = undefined;
   }
 });

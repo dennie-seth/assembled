@@ -17,16 +17,23 @@ import {
  * GPU alone before any setup, tests, image inspection or provenance work. The card
  * was unsatisfiable inside a 40-minute bound.
  *
- * A single global constant could not express that: raising it would equally relax
- * server/client/infra phases that have no business running for two hours.
+ * A single global constant could not express that: raising it to fit assets would equally
+ * relax server/infra phases that have no business running for two hours. The `client` entry
+ * added below (T-0407) is a separate, much smaller bump for the same structural reason --
+ * a Godot card's `scons` build plus headless suite runs longer than a server/infra phase, but
+ * nowhere near assets' GPU/training workload -- not evidence the global default should move.
  */
 describe("resolvePhaseTimeoutMs", () => {
   it("gives the assets agent 240 minutes", () => {
     expect(resolvePhaseTimeoutMs("assets")).toBe(240 * 60 * 1000);
   });
 
+  it("gives the client agent 90 minutes", () => {
+    expect(resolvePhaseTimeoutMs("client")).toBe(90 * 60 * 1000);
+  });
+
   it("leaves every other agent on the 40-minute default", () => {
-    for (const agent of ["server", "client", "infra", "generic", "reviewer", "planner", "audio"]) {
+    for (const agent of ["server", "infra", "generic", "reviewer", "planner", "audio"]) {
       expect(resolvePhaseTimeoutMs(agent)).toBe(DEFAULT_PHASE_TIMEOUT_MS);
     }
     expect(DEFAULT_PHASE_TIMEOUT_MS).toBe(40 * 60 * 1000);
@@ -43,9 +50,18 @@ describe("resolvePhaseTimeoutMs", () => {
     expect(resolvePhaseTimeoutMs("toString")).toBe(DEFAULT_PHASE_TIMEOUT_MS);
   });
 
+  it("does not match the client budget for a differently-cased agent name", () => {
+    expect(resolvePhaseTimeoutMs("Client")).toBe(DEFAULT_PHASE_TIMEOUT_MS);
+    expect(resolvePhaseTimeoutMs("CLIENT")).toBe(DEFAULT_PHASE_TIMEOUT_MS);
+  });
+
   // Precedence: explicit override > per-agent map > default.
   it("lets an explicit override beat the per-agent budget", () => {
     expect(resolvePhaseTimeoutMs("assets", { override: 5 * 60 * 1000 })).toBe(5 * 60 * 1000);
+  });
+
+  it("lets an explicit override beat the client budget too", () => {
+    expect(resolvePhaseTimeoutMs("client", { override: 5 * 60 * 1000 })).toBe(5 * 60 * 1000);
   });
 
   it("lets an explicit override beat the default", () => {
@@ -58,6 +74,12 @@ describe("resolvePhaseTimeoutMs", () => {
     }
   });
 
+  it("ignores a non-positive or unparseable override and keeps the client budget", () => {
+    for (const bad of [0, -1, NaN, null, undefined, "abc"]) {
+      expect(resolvePhaseTimeoutMs("client", { override: bad })).toBe(90 * 60 * 1000);
+    }
+  });
+
   it("accepts an injected per-agent map, so future tuning is one line", () => {
     const byAgent = { assets: 1000, audio: 2000 };
     expect(resolvePhaseTimeoutMs("assets", { byAgent })).toBe(1000);
@@ -67,6 +89,7 @@ describe("resolvePhaseTimeoutMs", () => {
 
   it("exposes the budgets as a frozen map keyed by agent name", () => {
     expect(PHASE_TIMEOUT_MS_BY_AGENT.assets).toBe(240 * 60 * 1000);
+    expect(PHASE_TIMEOUT_MS_BY_AGENT.client).toBe(90 * 60 * 1000);
     expect(Object.isFrozen(PHASE_TIMEOUT_MS_BY_AGENT)).toBe(true);
   });
 
