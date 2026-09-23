@@ -239,11 +239,27 @@ func _test_bottom_room_derived_not_hardcoded() -> Array[String]:
 
 	var text: String = FileAccess.get_file_as_string(DEFAULT_LAYOUT_PATH)
 	var data: Dictionary = JSON.parse_string(text) as Dictionary
-	## Double ground_relay's height and shift every later room down —
-	## changes which room has the tallest/greatest authored span without
-	## touching connectivity, so the derivation must still hold.
+	## Double ground_relay's height and shift every OTHER room down by the
+	## same delta — changes which room has the tallest/greatest authored
+	## span without touching connectivity or any room's position RELATIVE to
+	## its neighbours. The shift matters: the world-y mapping reflects each
+	## room about its own authored END row (see _compute_world_rects() in
+	## signal_tower_level_sideon.gd), so two rooms that originally shared an
+	## end row (ground_relay and records_room both end at row 9, per the
+	## floor-row door anchor, finding 5) must still share one after
+	## ground_relay grows — growing ground_relay alone, with every other
+	## room left in place, would break that shared floor and isn't the
+	## "same connectivity graph, different origins/heights" this test means
+	## to exercise.
 	var rooms: Array = data["rooms"]
-	(rooms[0] as Dictionary)["size"]["h"] = 18  # ground_relay: 9 -> 18
+	var ground_relay_room: Dictionary = rooms[0]
+	var old_h: int = int((ground_relay_room["size"] as Dictionary)["h"])
+	var new_h: int = 18
+	(ground_relay_room["size"] as Dictionary)["h"] = new_h  # ground_relay: 9 -> 18
+	var delta: int = new_h - old_h
+	for i in range(1, rooms.size()):
+		var origin: Dictionary = (rooms[i] as Dictionary)["origin"]
+		origin["y"] = int(origin["y"]) + delta
 
 	var tmp_path: String = "user://test_T0403_alt_layout.json"
 	var f := FileAccess.open(tmp_path, FileAccess.WRITE)
@@ -399,9 +415,19 @@ func _test_walking_onto_ladder_does_not_glue() -> Array[String]:
 
 	## Keep walking past the ladder — no E press. The player must be free to
 	## leave the trigger area under their own walking input; nothing may pin
-	## position.x or auto-transition them.
+	## position.x or auto-transition them. Leave TOWARD the room's own centre
+	## (the same convention test_T0390_signal_tower_level_sideon.gd's prompt
+	## test uses), not by an area-position sign guess: this specific ladder's
+	## opening sits flush against ground_relay's own left wall (T-0328's
+	## committed layout — see test_T0390's
+	## _test_interaction_prompt_shows_and_hides comment), so a leave direction
+	## that ignores the room's actual geometry can walk the player straight
+	## into that wall a few px later and never clear the trigger — a false
+	## "glue" reading that's really just an unrelated wall collision.
 	var area: Rect2 = inst.get_trigger_area(GROUND_RELAY, POWER_SUBSTATION)
-	var leave_direction: float = -1.0 if area.position.x > 0.0 else 1.0
+	var room_rect: Rect2 = inst.get_room_world_rect(GROUND_RELAY)
+	var center_x: float = room_rect.position.x + room_rect.size.x * 0.5
+	var leave_direction: float = 1.0 if center_x >= player.position.x else -1.0
 	player.apply_input(leave_direction, true)
 	var moved_off: bool = false
 	for i in range(200):
@@ -458,8 +484,18 @@ func _test_walking_onto_ladder_from_other_side_does_not_glue() -> Array[String]:
 		_free_instance(inst)
 		return failures
 
-	## Continue in the same direction, straight through — must not stop the
-	## player at the ladder.
+	## Leave toward the room's own centre — same reasoning as
+	## _test_walking_onto_ladder_does_not_glue(): this ladder's opening sits
+	## flush against ground_relay's left wall, so "continue in the same
+	## (leftward) direction" would drive the player straight into that wall
+	## a few px later, never clearing the trigger, regardless of whether
+	## ladder-glue is fixed. Leaving toward the centre isolates the
+	## assertion this edge case actually cares about — that arriving from
+	## the opposite side doesn't change whether walking off is free.
+	var room_rect: Rect2 = inst.get_room_world_rect(GROUND_RELAY)
+	var center_x: float = room_rect.position.x + room_rect.size.x * 0.5
+	var leave_direction: float = 1.0 if center_x >= player.position.x else -1.0
+	player.apply_input(leave_direction, true)
 	var moved_off: bool = false
 	for i in range(200):
 		await physics_frame
