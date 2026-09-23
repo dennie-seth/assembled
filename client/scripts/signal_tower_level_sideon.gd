@@ -223,8 +223,23 @@ func build_level(layout_path: String = DEFAULT_LAYOUT_PATH) -> void:
 			var trigger_range := Vector2(geo["opening_x0_px"], geo["opening_x1_px"])
 			ladder_ranges_by_room.get_or_add(conn["from"], []).append(trigger_range)
 			ladder_ranges_by_room.get_or_add(conn["to"], []).append(trigger_range)
-		openings[conn["from"]][geo["a_side"]].append(geo["a_range"])
-		openings[conn["to"]][geo["b_side"]].append(geo["b_range"])
+		## A ladder never carves the FLOOR ("bottom") strip, even when
+		## a_side/b_side resolves to "bottom" for whichever room sits below
+		## its neighbour — only the "top" (ceiling) side, if any, gets a
+		## visual gap. Climbing is E-press only, never a physical
+		## walk-through (see _on_player_interact()), so a ladder needs no
+		## floor opening to function — but PlayerController is a
+		## GROUNDED-mode CharacterBody2D pinned to floor_y every frame, and
+		## a real floor gap mid-room is a ledge it cannot walk across
+		## (confirmed T-0403: equipment_floor's own floor gap, from its
+		## ladder down to power_substation, physically stopped the player
+		## dead partway across while walking on toward the antenna_shaft
+		## connector on the room's far side). Doors are unaffected — they
+		## are only ever "left"/"right" and are meant to be walked through.
+		if not (conn["type"] == "ladder" and geo["a_side"] == "bottom"):
+			openings[conn["from"]][geo["a_side"]].append(geo["a_range"])
+		if not (conn["type"] == "ladder" and geo["b_side"] == "bottom"):
+			openings[conn["to"]][geo["b_side"]].append(geo["b_range"])
 		conn_geos.append({"conn": conn, "geo": geo})
 
 	for tag: String in _layout.get_all_tags():
@@ -406,6 +421,17 @@ func _x_in_any_range(x: float, ranges: Array) -> bool:
 	return false
 
 
+## Returns [param rect]'s own DOOR_OPENING_TILES-tall window, ending at
+## (and including) [param floor_row], clamped within rect's own [position.y,
+## end.y) — the rows a player standing in that specific room actually
+## occupies at its floor. Shared by both sides of _door_geometry() so
+## neither room's share of a door's span can land outside its own box.
+func _door_floor_window(rect: Rect2i, floor_row: int) -> Vector2i:
+	var span1: int = clampi(floor_row + 1, rect.position.y, rect.end.y)
+	var span0: int = clampi(span1 - DOOR_OPENING_TILES, rect.position.y, rect.end.y)
+	return Vector2i(span0, span1)
+
+
 ## Door opening geometry: the opening is anchored at the shared floor row of
 ## both connected rooms, not the vertical midpoint of their overlap — the
 ## committed layout deliberately floor-aligns every door pair (T-0390
@@ -417,11 +443,28 @@ func _door_geometry(conn: Dictionary) -> Dictionary:
 	var rect_b: Rect2i = _world_rect_tiles(b_tag)
 	var tile_size: int = _layout.tile_size_px
 
-	var y0: int = maxi(rect_a.position.y, rect_b.position.y)
-	var y1: int = mini(rect_a.end.y, rect_b.end.y)
-	var floor_row: int = _floor_row_global(a_tag)
-	var span1: int = clampi(floor_row + 1, y0, y1)
-	var span0: int = clampi(span1 - DOOR_OPENING_TILES, y0, y1)
+	## Each room's own DOOR_OPENING_TILES window, anchored at ITS OWN floor
+	## row and clamped within ITS OWN extent, then UNIONED — not a_tag's
+	## window alone. Post-T-0403 world remap, two rooms tied at the same
+	## authored end row (finding 5's floor-sharing pairs) no longer
+	## necessarily share a world FLOOR row too: get_room_world_rect() ties
+	## their world ORIGIN (top), not their floor, when their heights differ
+	## (e.g. ground_relay h=9 vs records_room h=7) — so a_tag's floor and
+	## b_tag's floor can now sit a few rows apart. Anchoring the opening to
+	## a_tag's floor alone left b_tag's own share of the span clamped to
+	## whatever fell inside its shorter box — which, worked out, landed
+	## entirely BELOW b_tag's own floor_y (the room's solid floor tile
+	## itself, not the rows above it the player's body actually occupies),
+	## carving a gap the player could stand next to but never physically
+	## reach (confirmed T-0403: ground_relay <-> records_room). Unioning
+	## each room's own floor-anchored window guarantees both sides open at
+	## the height their own player body actually walks through, even though
+	## the two floors no longer align — a small step across the doorway,
+	## not a legitimate but unreachable hole.
+	var window_a: Vector2i = _door_floor_window(rect_a, _floor_row_global(a_tag))
+	var window_b: Vector2i = _door_floor_window(rect_b, _floor_row_global(b_tag))
+	var span0: int = mini(window_a.x, window_b.x)
+	var span1: int = maxi(window_a.y, window_b.y)
 
 	var a_is_left: bool = rect_a.position.x < rect_b.position.x
 	var boundary_x: int = rect_a.end.x if a_is_left else rect_b.end.x

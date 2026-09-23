@@ -760,17 +760,32 @@ func _test_wall_segments_all_positive_length() -> Array[String]:
 
 
 ## Per-side wall/floor coverage, in tiles, that the authored connections
-## require for these two rooms — hand-derived from signal_tower_v1.json:
-##   antenna_shaft (6x28): top opening cols[1,2) (ladder to equipment_floor),
-##     bottom opening cols[4,5) (ladder to broadcast_deck), no side doors —
-##     left/right fully closed (28 tiles each); top/bottom 6-1=5 tiles each.
-##   ground_relay (30x9): right opening rows[6,9) (door to records_room, 3
-##     tiles) -> right closed 9-3=6; bottom (floor) opening cols[1,2) (ladder
-##     to power_substation) PLUS the door floor-corner exclusion col[29,30)
-##     -> floor 30-1-1=28; top/left have no openings (30 and 9 respectively).
+## require for these two rooms — hand-derived from signal_tower_v1.json,
+## post T-0403 bottom-up world remap (get_room_world_rect()):
+##   - A ladder never carves the FLOOR ("bottom") side, even when it would
+##     otherwise resolve there — see build_level()'s comment on why (a
+##     floor gap is a ledge PlayerController's grounded CharacterBody2D
+##     cannot walk across, confirmed via equipment_floor's own gap
+##     physically stopping the player mid-room). Ladders only ever carve
+##     their room's own "top" (ceiling) side; a ladder that would resolve to
+##     "bottom" leaves that room's floor fully solid instead.
+##   - antenna_shaft's equipment_floor ladder resolves to antenna_shaft's
+##     own "bottom" (equipment_floor sits below it) -> no carve, stays
+##     solid (6). Its broadcast_deck ladder resolves to "top" (broadcast_deck
+##     sits above it) -> carved as usual (6-1=5). No side doors -> left/right
+##     fully closed (28 tiles each).
+##   - ground_relay's power_substation ladder resolves to "top" now
+##     (T-0403 bug 1 puts power_substation above ground_relay) -> carved
+##     (30-1=29); "bottom" no longer hosts a ladder at all -> only the
+##     door's floor-corner exclusion col[29,30) -> 30-1=29. The
+##     ground_relay<->records_room door's own opening now unions each
+##     room's floor-anchored window rather than just ground_relay's (see
+##     _door_geometry()'s comment: their world floors no longer align once
+##     reflected, since they don't share authored height) — 5 rows instead
+##     of 3 -> right closed 9-5=4. left has no openings (9).
 const _NARROW_WIDE_EXPECTED: Dictionary = {
-	"signal_tower.antenna_shaft": {"top": 5, "bottom": 5, "left": 28, "right": 28},
-	"signal_tower.ground_relay": {"top": 30, "bottom": 28, "left": 9, "right": 6},
+	"signal_tower.antenna_shaft": {"top": 5, "bottom": 6, "left": 28, "right": 28},
+	"signal_tower.ground_relay": {"top": 29, "bottom": 29, "left": 9, "right": 4},
 }
 
 
