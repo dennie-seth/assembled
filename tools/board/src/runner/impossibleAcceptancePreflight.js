@@ -3,6 +3,7 @@ import { parseAcceptanceCriteria } from "../lib/acceptanceCriteria.js";
 import { resolveAllowedTools } from "./toolAllowlist.js";
 import { extractBashPrefixes } from "./capabilityPreflight.js";
 import { listSourceIds } from "../lib/referenceSourcePolicy.js";
+import { classifyAcceptanceItem } from "./structuralUnsatisfiability.js";
 
 // Case 3 of the three-way rule (T-0300): a criterion phrased so that only a human's own sensory
 // report can satisfy it -- no test, log, or grant makes it agent-checkable, regardless of who runs
@@ -38,44 +39,12 @@ const HUMAN_OBSERVATION_PATTERNS = [
   }
 ];
 
-// Case 4 (never allowed to reach a card's ## Acceptance at all): push/PR-open/merge happen only
-// inside the orchestrator's PASS handler (see runOrchestrator.js's _handlePass and
-// .claude/rules/conduct.md), so a criterion requiring any of them as a PASS precondition is always
-// a deadlock. capabilityPreflight.js's FORBIDDEN_ACTIONS already hard-blocks the active-voice forms
-// ("open a PR", "push the branch"); this list adds the passive-voice forms that shape has missed in
-// practice (T-0258's "a PR is opened with CI green") and is deliberately redundant with that
-// hard-block on the active-voice forms too, since this module's own job is to be tested directly
-// against all six real fixture cases, independent of which other check also happens to catch one.
-const PR_CI_CIRCULARITY_PATTERNS = [
-  {
-    re: /\bopen(?:s|ed|ing)?\s+(?:a\s+|an\s+)?(?:github\s+)?pull\s*request\b/i,
-    label: "opening a pull request happens only inside the PASS handler -- it cannot be true before PASS is reached"
-  },
-  {
-    re: /\bopen(?:s|ed|ing)?\s+(?:a\s+|an\s+)?pr\b/i,
-    label: "opening a PR happens only inside the PASS handler -- it cannot be true before PASS is reached"
-  },
-  {
-    re: /\bpr\s+is\s+open(?:ed)?\b/i,
-    label: "a PR being open is not achievable before PASS -- push/PR-open happen only inside the PASS handler"
-  },
-  {
-    re: /\bpull\s*request\s+is\s+open(?:ed)?\b/i,
-    label: "a pull request being open is not achievable before PASS -- push/PR-open happen only inside the PASS handler"
-  },
-  {
-    re: /\bci\s+(?:is\s+)?green\b/i,
-    label: "CI status on a PR cannot be observed before PASS -- the PR does not exist yet at that point"
-  },
-  {
-    re: /\bbranch\s+is\s+pushed\b/i,
-    label: "the feature branch being pushed is not achievable before PASS -- push happens only inside the PASS handler"
-  },
-  {
-    re: /\bmerge(?:s|d|ing)?\s+(?:the\s+|this\s+)?(?:pr|pull\s*request)\b/i,
-    label: "merging is a human-only action after a card reaches done -- never something a PASS-gating criterion can require"
-  }
-];
+// Case 4 (never allowed to reach a card's ## Acceptance at all): push/PR-open/merge/`.claude/**`
+// edit/card-body-authorship are all members of the single "structurally unsatisfiable by the
+// running agent" class T-0409 defines once in structuralUnsatisfiability.js -- reviewerPrompt.js
+// reads the same registry, so a warning here and the reviewer's own pass-with-outstanding-note
+// rule can never classify the same item differently. See that module for why each fires and who
+// it's attributed to.
 
 // Case 4 continued: the T-0233 shape (`docs/board-invariants.md` §10, `.claude/rules/conduct.md`'s
 // requires_approval rule). An agent parking a `requires_approval` card must never write its own
@@ -139,9 +108,15 @@ function sourceMentionRe(sourceId) {
  *
  * Unlike acceptancePreflight.js and capabilityPreflight.js, this NEVER blocks. A false positive
  * here must never stop a legitimate card from running (T-0300's own explicit acceptance criterion)
- * -- the four categories below are heuristics over freeform English, not a grant lookup with a
+ * -- the categories below are heuristics over freeform English, not a grant lookup with a
  * definite yes/no answer, so they are surfaced as a warning (card comment + run log, wired in
- * runOrchestrator.js) for a human to read, never as a `_blocked` reason.
+ * runOrchestrator.js) for a human to read, never as a `_blocked` reason. Three of them (a
+ * `.claude/**` edit, card-body authorship in db mode, and push/PR/CI circularity) are the T-0409
+ * "structurally unsatisfiable by the running agent" class -- classified via
+ * structuralUnsatisfiability.js's single registry, the same one reviewerPrompt.js reads, so this
+ * warning and the reviewer's own pass-with-outstanding-note rule never disagree about which items
+ * belong to it. `taskStoreKind` ("fs" default, or "db") gates the card-body-authorship member --
+ * see that module for why.
  *
  * Returns `{ warnings: string[] }` -- deliberately not the `{ok, message}` shape the other two
  * preflights use, since that shape signals "may block" and this one structurally cannot.
@@ -149,7 +124,12 @@ function sourceMentionRe(sourceId) {
 export function checkImpossibleAcceptancePreflight(
   task,
   agentName,
-  { agentsDir = ".claude/agents", readFileFn = fs.readFileSync, resolveAllowedToolsFn = resolveAllowedTools } = {}
+  {
+    agentsDir = ".claude/agents",
+    readFileFn = fs.readFileSync,
+    resolveAllowedToolsFn = resolveAllowedTools,
+    taskStoreKind = "fs"
+  } = {}
 ) {
   const items = parseAcceptanceCriteria(task?.body ?? "");
   if (items.length === 0) {
@@ -177,8 +157,9 @@ export function checkImpossibleAcceptancePreflight(
     for (const { re, label } of HUMAN_OBSERVATION_PATTERNS) {
       if (re.test(text)) addWarning(text, label);
     }
-    for (const { re, label } of PR_CI_CIRCULARITY_PATTERNS) {
-      if (re.test(text)) addWarning(text, label);
+    const structural = classifyAcceptanceItem(text, { agentName, taskStoreKind });
+    if (structural) {
+      addWarning(text, `${structural.reason} (owner: ${structural.owner})`);
     }
     for (const { re, label } of APPROVAL_CIRCULARITY_PATTERNS) {
       if (re.test(text)) addWarning(text, label);
