@@ -90,3 +90,23 @@ describe("loadRules", () => {
     expect(conduct.paths).toEqual(["**"]);
   });
 });
+
+// T-0408 iter-2 (reviewer FAIL): an acceptance criterion required the planner's own docs to state
+// plainly that the card body is the planner's to write and the implementer's to read -- neither
+// doc said so anywhere, which is exactly how T-0403 shipped Acceptance guidance an implementer's
+// worktree can never satisfy (an implementer never has the card file at all; see
+// materializePlannerFileView, runOrchestrator.js).
+describe("planner docs state the card body is the planner's to write, not the implementer's (T-0408 iter-2)", () => {
+  it("says so in .claude/rules/planner.md", () => {
+    const rules = loadRules({ rulesDir: REAL_RULES_DIR });
+    const planner = rules.find((r) => r.name === "planner");
+    expect(planner.body).toMatch(/planner's to write/i);
+    expect(planner.body).toMatch(/implementer's to read/i);
+  });
+
+  it("says so in .claude/agents/planner.md", () => {
+    const def = loadAgentDef("planner", { agentsDir: REAL_AGENTS_DIR });
+    expect(def.body).toMatch(/planner's to write/i);
+    expect(def.body).toMatch(/implementer's to read/i);
+  });
+});

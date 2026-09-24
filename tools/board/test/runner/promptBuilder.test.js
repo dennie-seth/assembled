@@ -539,6 +539,24 @@ describe("buildPlannerPrompt -- self-check converts a human-authored heading-for
   });
 });
 
+// T-0408 iter-2 (reviewer FAIL): step 4/5 said "Rewrite or extend ... always add" with no branch
+// for a card whose ## Acceptance the planner isn't otherwise touching, and no branch for a card
+// that already carries a good block -- both edge cases the card body names explicitly ("not
+// rewritten just to add a block, and the planner says so"; "left alone, not duplicated or
+// reworded"). Neither was previously present anywhere in this prompt.
+describe("buildPlannerPrompt -- doesn't rewrite Acceptance just to bolt on a block, and says so (T-0408 iter-2)", () => {
+  it("instructs leaving an already-good Edge cases block alone rather than rewording it", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("leave it as-is");
+  });
+
+  it("instructs not rewriting ## Acceptance solely to add a block when it's otherwise untouched, and reporting that explicitly instead of silently skipping", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("do not rewrite it solely");
+    expect(prompt.toLowerCase()).toContain("commit summary");
+  });
+});
+
 describe("buildPlannerPrompt -- complexity_points authoring guidance (T-0368)", () => {
   it("instructs the planner to consider setting a complexity_points value while authoring/expanding a card", () => {
     const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
