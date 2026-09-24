@@ -1,4 +1,5 @@
 import { resolveVerifyRoutes, resolveDeliverableRoute } from "./verifyRouter.js";
+import { checkClaudeDirWriteGuard } from "../lib/claudeDirWriteGuard.js";
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -142,6 +143,26 @@ function evaluateRoute(route, invocations) {
 export function crossCheckVerdict({ verdict, events, changedPaths = [], task, baseBranch = "develop" }) {
   if (!verdict || verdict.verdict !== "PASS") {
     return verdict;
+  }
+
+  // T-0411: this function is only ever invoked from runOrchestrator.js's own review pipeline, on
+  // a run the orchestrator itself launched -- see claudeDirWriteGuard.js's header for why that
+  // makes "board-run" provenance here a structural fact rather than something a run could spoof.
+  // Checked before (and independent of) the required-routes logic below: a .claude/ write must
+  // fail the run even when the diff triggers no other required verify route at all.
+  const claudeDirGuard = checkClaudeDirWriteGuard({ changedPaths, branchOrigin: "board-run" });
+  if (!claudeDirGuard.ok) {
+    const files = claudeDirGuard.violations.map((v) => v.file).join(", ");
+    return {
+      verdict: "FAIL",
+      notes:
+        `Self-reported PASS downgraded by harness verdict cross-check: this run's diff writes ` +
+        `under .claude/ (${files}) -- a board-run branch must never do that (T-0411); the ` +
+        `sanctioned route is a human applying the change directly, out-of-band. ` +
+        `Reviewer's own notes: ${verdict.notes}`,
+      downgraded: true,
+      claudeDirViolations: claudeDirGuard.violations
+    };
   }
 
   const routes = [...resolveVerifyRoutes(changedPaths, { baseBranch })];
