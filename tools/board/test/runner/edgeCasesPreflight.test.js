@@ -132,3 +132,34 @@ describe("checkEdgeCasesPreflight -- warning text stays observation-only (T-0388
     expect(result.warnings[0]).toMatch(/- \[ \]/);
   });
 });
+
+// T-0408: this preflight must stay warn-only forever -- @DennieSeth was explicit that promoting
+// it to a blocking gate is out of scope, permanently, regardless of what else changes about how
+// reliably the planner authors the block. This is a structural regression test on the return
+// shape itself (not just the caller's behavior, which runOrchestrator.edgeCasesPreflight.test.js
+// already covers end-to-end): a later change that quietly adds an `ok`/`blocked`/`severity`
+// field -- the shape every OTHER preflight in this file's sibling modules uses to signal a real
+// gate -- would flip this from "advisory" to "actionable" without touching a single call site,
+// and this test exists to catch exactly that.
+describe("checkEdgeCasesPreflight -- return shape can never carry a blocking signal (T-0408 regression)", () => {
+  it("returns an object with only a `warnings` key, for a card missing the block", () => {
+    const body = "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n";
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(Object.keys(result)).toEqual(["warnings"]);
+  });
+
+  it("returns an object with only a `warnings` key, for a compliant card", () => {
+    const body = "## Acceptance\n- [ ] works\n\n**Edge cases:**\n- [ ] handles empty input\n";
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(Object.keys(result)).toEqual(["warnings"]);
+  });
+
+  it("never sets ok: false, blocked: true, or a severity/level field on its result", () => {
+    const body = "## Context\nDo it.\n\n## Acceptance\n- [ ] works\n";
+    const result = checkEdgeCasesPreflight(task(body));
+    expect(result.ok).toBeUndefined();
+    expect(result.blocked).toBeUndefined();
+    expect(result.severity).toBeUndefined();
+    expect(result.level).toBeUndefined();
+  });
+});

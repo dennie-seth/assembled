@@ -36,9 +36,12 @@ const ALL_SEVEN: Array[String] = [
 	STORAGE_CACHE, ANTENNA_SHAFT, BROADCAST_DECK,
 ]
 
-## Floor rows named explicitly by the card's finding 5.
-const GROUND_RELAY_RECORDS_ROOM_FLOOR_ROW: int = 8
-const EQUIPMENT_FLOOR_STORAGE_CACHE_FLOOR_ROW: int = 28
+## Floor rows named explicitly by the card's finding 5 — WORLD rows, per the
+## T-0403 bottom-up remap (@DennieSeth, 2026-09-20): entry_room now renders
+## at the bottom of the world, so these are no longer the raw authored rows
+## (8 and 28) but their post-remap world equivalents.
+const GROUND_RELAY_RECORDS_ROOM_FLOOR_ROW: int = 66
+const EQUIPMENT_FLOOR_STORAGE_CACHE_FLOOR_ROW: int = 47
 
 ## Generous step ceiling for a running walk across the widest authored room
 ## (ground_relay, 30 tiles = 480 px) — physics frames, not wall-clock.
@@ -459,7 +462,10 @@ func _test_seven_rooms_built_matching_layout() -> Array[String]:
 		var room_node: Node2D = inst.get_room_node(tag)
 		if room_node == null:
 			continue
-		var expected_rect: Rect2 = layout.get_rect_px(tag)
+		## T-0403: rooms are built at their post-remap WORLD rect, not the
+		## raw authored layout.get_rect_px() — get_room_world_rect() is the
+		## same bottom-up remap the level itself uses to place them.
+		var expected_rect: Rect2 = inst.get_room_world_rect(tag)
 		var actual_rect: Rect2 = _room_collider_bounds(room_node)
 		if not actual_rect.position.is_equal_approx(expected_rect.position) or not actual_rect.size.is_equal_approx(expected_rect.size):
 			failures.append(
@@ -650,7 +656,7 @@ func _test_spawn_in_ground_relay_clear_of_connectors() -> Array[String]:
 		_free_detached_instance(inst)
 		return failures
 
-	var relay_rect: Rect2 = layout.get_rect_px(layout.entry_room)
+	var relay_rect: Rect2 = inst.get_room_world_rect(layout.entry_room)
 	if not relay_rect.has_point(player.position):
 		failures.append(
 			"spawn: player position %s must be inside entry room rect %s"
@@ -754,17 +760,32 @@ func _test_wall_segments_all_positive_length() -> Array[String]:
 
 
 ## Per-side wall/floor coverage, in tiles, that the authored connections
-## require for these two rooms — hand-derived from signal_tower_v1.json:
-##   antenna_shaft (6x28): top opening cols[1,2) (ladder to equipment_floor),
-##     bottom opening cols[4,5) (ladder to broadcast_deck), no side doors —
-##     left/right fully closed (28 tiles each); top/bottom 6-1=5 tiles each.
-##   ground_relay (30x9): right opening rows[6,9) (door to records_room, 3
-##     tiles) -> right closed 9-3=6; bottom (floor) opening cols[1,2) (ladder
-##     to power_substation) PLUS the door floor-corner exclusion col[29,30)
-##     -> floor 30-1-1=28; top/left have no openings (30 and 9 respectively).
+## require for these two rooms — hand-derived from signal_tower_v1.json,
+## post T-0403 bottom-up world remap (get_room_world_rect()):
+##   - A ladder never carves the FLOOR ("bottom") side, even when it would
+##     otherwise resolve there — see build_level()'s comment on why (a
+##     floor gap is a ledge PlayerController's grounded CharacterBody2D
+##     cannot walk across, confirmed via equipment_floor's own gap
+##     physically stopping the player mid-room). Ladders only ever carve
+##     their room's own "top" (ceiling) side; a ladder that would resolve to
+##     "bottom" leaves that room's floor fully solid instead.
+##   - antenna_shaft's equipment_floor ladder resolves to antenna_shaft's
+##     own "bottom" (equipment_floor sits below it) -> no carve, stays
+##     solid (6). Its broadcast_deck ladder resolves to "top" (broadcast_deck
+##     sits above it) -> carved as usual (6-1=5). No side doors -> left/right
+##     fully closed (28 tiles each).
+##   - ground_relay's power_substation ladder resolves to "top" now
+##     (T-0403 bug 1 puts power_substation above ground_relay) -> carved
+##     (30-1=29); "bottom" no longer hosts a ladder at all -> only the
+##     door's floor-corner exclusion col[29,30) -> 30-1=29. The
+##     ground_relay<->records_room door's own opening now unions each
+##     room's floor-anchored window rather than just ground_relay's (see
+##     _door_geometry()'s comment: their world floors no longer align once
+##     reflected, since they don't share authored height) — 5 rows instead
+##     of 3 -> right closed 9-5=4. left has no openings (9).
 const _NARROW_WIDE_EXPECTED: Dictionary = {
-	"signal_tower.antenna_shaft": {"top": 5, "bottom": 5, "left": 28, "right": 28},
-	"signal_tower.ground_relay": {"top": 30, "bottom": 28, "left": 9, "right": 6},
+	"signal_tower.antenna_shaft": {"top": 5, "bottom": 6, "left": 28, "right": 28},
+	"signal_tower.ground_relay": {"top": 29, "bottom": 29, "left": 9, "right": 4},
 }
 
 
@@ -1169,7 +1190,7 @@ func _test_player_blocked_by_side_wall() -> Array[String]:
 		return failures
 
 	var player: CharacterBody2D = inst.get_player()
-	var relay_rect: Rect2 = inst.get_layout().get_rect_px(GROUND_RELAY)
+	var relay_rect: Rect2 = inst.get_room_world_rect(GROUND_RELAY)
 	var run_px_per_frame: float = PlayerControllerScript.RUN_SPEED / float(Engine.physics_ticks_per_second)
 	var cross_frames: int = int(ceil(relay_rect.size.x / run_px_per_frame)) + 60
 
@@ -1335,7 +1356,7 @@ func _test_full_critical_path_traversal_and_branches_and_reverse() -> Array[Stri
 	## broadcast_deck's far wall must actually block the player, not just be
 	## absent of an outgoing connector. Hold running input long enough to
 	## cross the room's full authored width with margin.
-	var deck_rect: Rect2 = inst.get_layout().get_rect_px(BROADCAST_DECK)
+	var deck_rect: Rect2 = inst.get_room_world_rect(BROADCAST_DECK)
 	var run_px_per_frame: float = PlayerControllerScript.RUN_SPEED / float(Engine.physics_ticks_per_second)
 	var deck_cross_frames: int = int(ceil(deck_rect.size.x / run_px_per_frame)) + 60
 	player.apply_input(1.0, true)
