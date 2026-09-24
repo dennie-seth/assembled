@@ -140,6 +140,39 @@ PERMISSION_DENIALS: []
 All three ran normally, including the read-only command that mentions a `.claude/` path — `node`/`npm`/
 `git` stay usable for everything else, and the guard doesn't over-block reads.
 
+## Independent re-verification (2026-09-24, continuation)
+
+Re-run independently, from scratch, against this exact branch HEAD (`3598ed3b`) -- a fresh
+throwaway worktree (`/tmp/t0411-verify-dLDajQ`, `git worktree add --detach 3598ed3b`), a
+standalone script calling the real `ClaudeCliRunner.buildInvocation` (no mocks) and spawning the
+real `claude` binary directly, removed afterward via `git worktree remove --force` (never
+committed). This exists because the live-verification criterion explicitly rules out an assumed-
+working hook, and a transcript alone, once its worktree is gone, is not independently re-checkable
+-- so it was re-checked, live, again.
+
+**Run 1 -- the exploit verbatim:**
+
+```
+TOOL_USE: {"command":"node -e \"require('fs').writeFileSync('.claude/rules/t0411-scratch-live.md', 'scratch')\"", ...}
+TOOL_RESULT is_error=true "Denied by the board's claudeDirBashHook (T-0411): this Bash command appears to write under .claude/. ..."
+PERMISSION_DENIALS: [{"tool_name":"Bash","tool_use_id":"toolu_015r8NNWj1zX7BJ6GSt4vegR","tool_input":{"command":"node -e \"require('fs').writeFileSync('.claude/rules/t0411-scratch-live.md', 'scratch')\"", ...}}]
+```
+
+`fs.existsSync('.../.claude/rules/t0411-scratch-live.md')` was `false` after the run -- the write
+never happened.
+
+**Run 2 -- regression, including a read-only `.claude/` mention:**
+
+```
+TOOL_USE: node --version           -> is_error=false "v20.20.2"
+TOOL_USE: git status --porcelain   -> is_error=false "(Bash completed with no output)"
+TOOL_USE: git log --oneline -- .claude/agents/infra.md | head -3 -> is_error=false, 3 real commits listed
+PERMISSION_DENIALS: []
+```
+
+Same result as the original live verification, reproduced independently on a fresh worktree and
+a fresh CLI process. The hook and the backstop both stand.
+
 ## Cross-reference
 
 `docs/design/claude-cli-sensitive-file-protection.md` (T-0374, unmerged `feature/T-0374` @ `edd94b2b`) —
