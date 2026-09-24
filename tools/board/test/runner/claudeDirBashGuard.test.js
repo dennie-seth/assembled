@@ -109,6 +109,17 @@ describe("commandTargetsClaudeDirWrite", () => {
     expect(commandTargetsClaudeDirWrite("git commit -m 'feat: T-0411 thing'")).toBe(false);
   });
 
+  it("leaves the planner phase's legitimate tasks/*.md writes alone -- no .claude/ mention, nothing to deny", () => {
+    expect(
+      commandTargetsClaudeDirWrite(
+        `node -e "require('fs').writeFileSync('tasks/T-1234.md', '---\\ntitle: x\\n---\\n')"`
+      )
+    ).toBe(false);
+    expect(commandTargetsClaudeDirWrite("git add tasks/T-1234.md && git commit -m 'feat: T-1234'")).toBe(
+      false
+    );
+  });
+
   it("denies a compound command where only one &&/;-joined segment targets .claude/", () => {
     expect(
       commandTargetsClaudeDirWrite("npm test && node -e \"require('fs').writeFileSync('.claude/rules/x.md','y')\"")
