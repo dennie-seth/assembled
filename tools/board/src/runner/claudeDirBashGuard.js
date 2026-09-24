@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 /**
  * T-0411: the CLI's own sensitive-file protection denies every Edit/Write under `.claude/` in an
  * unattended run (T-0374) -- but that check is scoped to the Edit/Write *tools specifically*, not
@@ -13,13 +16,24 @@
  * `.claude/` path and isn't recognizably read-only, rather than trying to enumerate every possible
  * write shape.
  *
- * This is a best-effort first line, not the guarantee. Static analysis of an arbitrary shell
- * command is fundamentally incomplete -- `node /tmp/script.js`, where `/tmp/script.js` was written
- * by an earlier, unrelated Bash call and its own source never appears in this command's argv at
- * all, cannot be distinguished from any other `node` invocation by looking at the command text
- * alone. `claudeDirWriteGuard.js`'s diff-based backstop is what actually closes that gap: it
- * inspects the committed result, not the command that produced it, so it catches a write
- * regardless of how indirectly the command that made it was expressed.
+ * Two narrow classes of write never mention `.claude/` in the command's own text at all, because
+ * the target path lives inside a *referenced file's content* instead of argv: a `git apply`/`git
+ * am`/`patch` call (the touched path is a diff header inside the patch file) and an interpreter
+ * invocation of a script file (`node`/`python`/`bash`/...) whose own source does the write. Two
+ * prior review rounds on this card both flagged exactly these shapes as unrefused. This module now
+ * reads the referenced file's content for those two cases specifically -- see
+ * `segmentReferencesClaudeDirViaFile` below for the exact scope (patch targets unconditionally;
+ * interpreter scripts only when they resolve *outside* the current worktree, so ordinary in-repo
+ * automation like `tools/board/scripts/*.js` is never re-read on every invocation).
+ *
+ * This is still a best-effort first line, not the guarantee. Static analysis of an arbitrary shell
+ * command is fundamentally incomplete -- a write routed through a symlink whose target resolves
+ * under `.claude/`, with no literal `.claude` mention anywhere this module can see (not command
+ * text, not a referenced file's content), still cannot be caught this way; nor can an in-worktree
+ * scratch script, deliberately left unread for the reason above. `claudeDirWriteGuard.js`'s
+ * diff-based backstop is what actually closes the remaining gap: it inspects the committed result,
+ * not the command that produced it, so it catches a write regardless of how indirectly the command
+ * that made it was expressed.
  */
 
 /**
@@ -195,9 +209,136 @@ function segmentIsClaudeDirWrite(segment) {
   return true;
 }
 
-/** Whether `command` (a raw Bash tool_use command string) appears to write under `.claude/`. */
-export function commandTargetsClaudeDirWrite(command) {
+const DEFAULT_READ_FILE = (resolvedPath) => {
+  try {
+    return fs.readFileSync(resolvedPath, "utf8");
+  } catch {
+    return null;
+  }
+};
+
+/** Resolves a shell-token path argument (`~/x`, a relative path, or an absolute one) against `cwd`. */
+function resolvePathArg(token, cwd) {
+  if (typeof token !== "string" || token.length === 0) return null;
+  let raw = token;
+  if (raw === "~") raw = process.env.HOME ?? "";
+  else if (raw.startsWith("~/")) raw = path.join(process.env.HOME ?? "", raw.slice(2));
+  if (raw.length === 0) return null;
+  return path.isAbsolute(raw) ? path.normalize(raw) : path.resolve(cwd, raw);
+}
+
+/** The target of a single `<` (not `<<` heredoc) stdin redirect in `segment`, if any. */
+function findRedirectInputPath(segment) {
+  const match = segment.match(/(?:^|\s)<(?!<)\s*(\S+)/);
+  return match ? match[1].replace(/^['"]|['"]$/g, "") : null;
+}
+
+/**
+ * A `git apply`/`git am`/`patch` target's own path never has to mention `.claude/` -- the file it
+ * writes to is named inside the patch's own diff headers (`+++ b/.claude/...`). Fails closed: an
+ * unresolvable or unreadable target is treated as risky rather than assumed safe, since these verbs
+ * exist specifically to write arbitrary file content and have no ordinary role in board-run traffic.
+ */
+function patchTargetMentionsClaudeDir(token, cwd, readFile) {
+  const resolved = resolvePathArg(token, cwd);
+  if (!resolved) return true;
+  const content = readFile(resolved);
+  if (content === null) return true;
+  return mentionsClaudeDirPath(content);
+}
+
+/** `git apply`/`git am`: candidate patch-file paths are non-flag args plus a `<` redirect target. */
+function gitApplyCandidates(tokens, segment) {
+  const argPaths = tokens.slice(2).filter((t) => !t.startsWith("-"));
+  const redirectPath = findRedirectInputPath(segment);
+  return redirectPath ? [...argPaths, redirectPath] : argPaths;
+}
+
+/** `patch`: candidate patch-file paths are non-flag args (covers `-i <file>`) plus a `<` redirect target. */
+function patchUtilityCandidates(tokens, segment) {
+  const argPaths = tokens.slice(1).filter((t) => !t.startsWith("-"));
+  const redirectPath = findRedirectInputPath(segment);
+  return redirectPath ? [...argPaths, redirectPath] : argPaths;
+}
+
+const INTERPRETER_VERBS = new Set([
+  "node", "nodejs", "python", "python3", "bash", "sh", "zsh", "ruby", "perl", "ts-node"
+]);
+const INTERPRETER_INLINE_FLAGS = new Set(["-e", "-c", "--eval"]);
+
+/** The interpreter's script-file argument, if any -- skips flags and an `-e`/`-c` inline payload. */
+function findInterpreterScriptToken(tokens) {
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.startsWith("-")) continue;
+    if (INTERPRETER_INLINE_FLAGS.has(tokens[i - 1])) continue; // it's the -e/-c payload, not a file
+    return token;
+  }
+  return null;
+}
+
+/**
+ * Whether `segment` references a file -- outside the command's own text -- whose *content* writes
+ * under `.claude/`. Covers exactly two shapes, both flagged unrefused by prior review rounds on
+ * this card:
+ *
+ * 1. `git apply`/`git am`/`patch`: the patch file's own diff headers name the target.
+ * 2. An interpreter (`node`/`python`/...) running a script file that resolves *outside* the current
+ *    worktree -- the "temp script written elsewhere and then executed" shape. An in-worktree
+ *    script's content is deliberately left unread: re-reading every `tools/board/scripts/*.js` (or
+ *    any other in-repo automation) on every invocation would risk false-positiving on ordinary work
+ *    that merely *mentions* a `.claude/` path (a comment, a test fixture, this very file), which
+ *    the "ordinary Bash is not broken" requirement rules out. That narrower in-worktree case, like
+ *    the symlink-indirection case, is left to the diff-based backstop.
+ */
+function segmentReferencesClaudeDirViaFile(segment, cwd, readFile) {
+  const tokens = tokenize(segment);
+  if (tokens.length === 0) return false;
+  const bareVerb = tokens[0].split("/").pop();
+
+  if (bareVerb === "git" && (tokens[1] === "apply" || tokens[1] === "am")) {
+    const candidates = gitApplyCandidates(tokens, segment);
+    if (candidates.length === 0) return true; // e.g. reading a patch off stdin with no visible source
+    return candidates.some((c) => patchTargetMentionsClaudeDir(c, cwd, readFile));
+  }
+
+  if (bareVerb === "patch") {
+    const candidates = patchUtilityCandidates(tokens, segment);
+    if (candidates.length === 0) return true;
+    return candidates.some((c) => patchTargetMentionsClaudeDir(c, cwd, readFile));
+  }
+
+  if (INTERPRETER_VERBS.has(bareVerb)) {
+    const scriptToken = findInterpreterScriptToken(tokens);
+    if (!scriptToken) return false;
+    const resolved = resolvePathArg(scriptToken, cwd);
+    if (!resolved) return false;
+    const relativeToWorktree = path.relative(cwd, resolved);
+    const isOutsideWorktree = relativeToWorktree.startsWith("..") || path.isAbsolute(relativeToWorktree);
+    if (!isOutsideWorktree) return false;
+    const content = readFile(resolved);
+    if (content === null) return false; // can't read it -- nothing to flag, don't fail closed on ordinary tooling
+    return mentionsClaudeDirPath(content);
+  }
+
+  return false;
+}
+
+/**
+ * Whether `command` (a raw Bash tool_use command string) appears to write under `.claude/`.
+ *
+ * `options.cwd` defaults to `process.cwd()` -- correct as-is for the real hook process, which
+ * inherits the `claude` CLI's own cwd (the card's worktree). `options.readFile` defaults to a real
+ * `fs.readFileSync`; both are overridable for tests so the file-content checks don't require actual
+ * files on disk.
+ */
+export function commandTargetsClaudeDirWrite(command, options = {}) {
   if (typeof command !== "string" || command.length === 0) return false;
-  if (!mentionsClaudeDirPath(command)) return false;
-  return splitTopLevelSegments(command).some(segmentIsClaudeDirWrite);
+  const cwd = options.cwd ?? process.cwd();
+  const readFile = options.readFile ?? DEFAULT_READ_FILE;
+  const segments = splitTopLevelSegments(command);
+  if (mentionsClaudeDirPath(command) && segments.some(segmentIsClaudeDirWrite)) {
+    return true;
+  }
+  return segments.some((segment) => segmentReferencesClaudeDirViaFile(segment, cwd, readFile));
 }
