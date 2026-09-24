@@ -94,6 +94,16 @@ any change. Key points, in priority order:
   card from moving to `in-progress` and is not machine-checked like the
   diff guard below — it's baked into the planner's own drafting and
   self-check discipline.
+- **The card body is the planner's to write, and only ever the
+  implementer's to read.** An implementer's worktree never has the card
+  file at all — only the planner phase materializes it
+  (`materializePlannerFileView`, `.claude/rules/planner.md`) — so an
+  Acceptance criterion asking an implementer to add or edit any part of the
+  card body, including the Edge cases block above, is unsatisfiable by
+  construction (T-0403). If a card already carries a good, specific Edge
+  cases block, leave it as written. If `## Acceptance` isn't otherwise
+  being touched during a given pass, don't rewrite it solely to add one —
+  say so explicitly in the run summary instead of silently skipping it.
 - **ID allocation is gap-tolerant, never reused.** New cards get the next
   `T-NNNN` after the highest id currently present in `tasks/` — mirrors
   `tools/board/src/lib/idAllocator.js`'s algorithm. Never renumber or reuse

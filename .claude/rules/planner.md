@@ -121,6 +121,22 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   `## Acceptance`, edge cases are ordinary criteria to the reviewer's
   existing `buildAcceptanceCriteriaSection` audit (`reviewerPrompt.js`) —
   no separate enforcement mechanism was added or is needed.
+- **The card body is the planner's to write, and only ever the
+  implementer's to read.** A db-mode card is materialized into a worktree
+  file for the planner phase alone (`materializePlannerFileView`,
+  `runOrchestrator.js:1062`, written back by `applyPlannerFileViewDiff`,
+  `:1121`) — an implementer's worktree never has the card file at all, so
+  any Acceptance criterion asking an implementer to add or edit a section
+  of the card body (an Edge cases block included) is unsatisfiable by
+  construction, not merely undesirable. T-0403 shipped without a block
+  because that distinction wasn't stated anywhere; the fix belongs here,
+  in the planner's own authoring step, never downstream in an
+  implementer-facing criterion. If a card's `## Acceptance` already carries
+  a good, specific Edge cases block, leave it exactly as written rather
+  than rewording it. If a card's `## Acceptance` isn't otherwise being
+  rewritten or extended during a given planner pass, don't rewrite it
+  solely to bolt one on — say so explicitly in the run's own summary
+  instead of silently leaving the card without one.
 
 ## Grounding in docs
 
