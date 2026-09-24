@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { buildReviewerPrompt } from "../../src/runner/reviewerPrompt.js";
 import { T0403_ACCEPTANCE_BODY, T0403_ACCEPTANCE_ITEM_COUNT } from "../fixtures/t0403AcceptanceBody.js";
+import {
+  T0405_CLAUDE_DIR_EDIT_BODY,
+  T0405_UNSATISFIABLE_ITEM_TEXT,
+  T0403_CARD_BODY_AUTHORSHIP_BODY,
+  T0403_UNSATISFIABLE_ITEM_TEXT,
+  ALL_UNSATISFIABLE_BODY
+} from "../fixtures/structuralUnsatisfiabilityBodies.js";
 
 const TASK = {
   id: "T-0099",
@@ -389,6 +396,83 @@ describe("buildReviewerPrompt -- acceptance criteria audit (green tests != accep
     }
     expect(prompt).toContain("Seventh criterion");
     expect(prompt).toContain("**Edge cases:**");
+  });
+});
+
+// T-0409: two real cards were judged oppositely on the identical failure shape -- T-0405's
+// `.claude/**` edit item FAILed twice (plus an auto-spawned, since-retired escalation stub),
+// T-0403's card-body item was waved through as "met in substance." These fixtures reproduce both
+// shapes synthetically (never reading or mutating the live cards) and assert the reviewer prompt
+// now teaches the one documented rule for both.
+describe("buildReviewerPrompt -- structurally unsatisfiable acceptance items (T-0409)", () => {
+  it("omits the section entirely when no acceptance item is structurally unsatisfiable", () => {
+    const prompt = buildReviewerPrompt({ task: TASK, agentDef: REVIEWER_AGENT_DEF, implementerAgent: "infra", taskStoreKind: "db" });
+    expect(prompt).not.toContain("Structurally unsatisfiable acceptance items");
+  });
+
+  it("flags the T-0405 .claude/** edit item, names its reason and owner, and says not to FAIL on it", () => {
+    const task = { ...TASK, id: "T-0405", body: T0405_CLAUDE_DIR_EDIT_BODY, agent: "infra" };
+    const prompt = buildReviewerPrompt({
+      task,
+      agentDef: REVIEWER_AGENT_DEF,
+      implementerAgent: "infra",
+      taskStoreKind: "db"
+    });
+    expect(prompt).toContain("Structurally unsatisfiable acceptance items");
+    expect(prompt).toContain(T0405_UNSATISFIABLE_ITEM_TEXT);
+    expect(prompt).toContain("sensitive-file protection");
+    expect(prompt).toContain("Owner: human");
+    expect(prompt).toContain("never grounds to FAIL the card");
+    // The other, genuinely satisfiable criteria on the same card are unaffected -- still judged normally.
+    expect(prompt).toContain("A qualified");
+  });
+
+  it("flags the T-0403 card-body-authorship item in db mode, names its reason and owner", () => {
+    const task = { ...TASK, id: "T-0403", body: T0403_CARD_BODY_AUTHORSHIP_BODY, agent: "infra" };
+    const prompt = buildReviewerPrompt({
+      task,
+      agentDef: REVIEWER_AGENT_DEF,
+      implementerAgent: "infra",
+      taskStoreKind: "db"
+    });
+    expect(prompt).toContain("Structurally unsatisfiable acceptance items");
+    expect(prompt).toContain(T0403_UNSATISFIABLE_ITEM_TEXT);
+    expect(prompt).toContain("materializ");
+    expect(prompt).toContain("Owner: planner");
+  });
+
+  it("does NOT flag the T-0403 item when the task store is fs mode -- the file genuinely exists", () => {
+    const task = { ...TASK, id: "T-0403", body: T0403_CARD_BODY_AUTHORSHIP_BODY, agent: "infra" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF, implementerAgent: "infra", taskStoreKind: "fs" });
+    expect(prompt).not.toContain("Structurally unsatisfiable acceptance items");
+  });
+
+  it("does NOT flag the T-0403 item for a planner-assigned card -- keys on the running agent, not the wording", () => {
+    const task = { ...TASK, id: "T-0403", body: T0403_CARD_BODY_AUTHORSHIP_BODY, agent: "planner" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF, implementerAgent: "planner", taskStoreKind: "db" });
+    expect(prompt).not.toContain("Structurally unsatisfiable acceptance items");
+  });
+
+  it("tells the reviewer to preserve a split when a listed item bundles an independent, judgeable clause", () => {
+    const task = { ...TASK, id: "T-0405", body: T0405_CLAUDE_DIR_EDIT_BODY, agent: "infra" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF, implementerAgent: "infra", taskStoreKind: "db" });
+    expect(prompt.toLowerCase()).toContain("bundles a clause");
+  });
+
+  it("when EVERY acceptance item is structurally unsatisfiable, instructs NEEDS_HUMAN_DECISION instead of a silent PASS", () => {
+    const task = { ...TASK, id: "T-0900", body: ALL_UNSATISFIABLE_BODY, agent: "infra" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF, implementerAgent: "infra", taskStoreKind: "db" });
+    expect(prompt).toContain("Structurally unsatisfiable acceptance items");
+    expect(prompt).toContain("Every acceptance item on this card falls in this class");
+    expect(prompt).toContain("Do not PASS");
+    expect(prompt).toContain("NEEDS_HUMAN_DECISION");
+  });
+
+  it("defaults implementerAgent from task.agent and taskStoreKind to fs when not passed explicitly", () => {
+    const task = { ...TASK, id: "T-0403", body: T0403_CARD_BODY_AUTHORSHIP_BODY, agent: "infra" };
+    const prompt = buildReviewerPrompt({ task, agentDef: REVIEWER_AGENT_DEF });
+    // No taskStoreKind passed -> defaults to "fs" -> the card-body item is an ordinary criterion.
+    expect(prompt).not.toContain("Structurally unsatisfiable acceptance items");
   });
 });
 

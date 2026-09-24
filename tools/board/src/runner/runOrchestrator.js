@@ -765,7 +765,8 @@ export class RunOrchestrator {
       // acceptance criterion). Surfaced as a card comment and a run-log event for a human to read.
       const impossibleAcceptance = checkImpossibleAcceptancePreflight(preFlightTask, effectiveAgent, {
         agentsDir: this.agentsDir,
-        resolveAllowedToolsFn: this.resolveAllowedToolsFn
+        resolveAllowedToolsFn: this.resolveAllowedToolsFn,
+        taskStoreKind: this.taskStoreKind
       });
       if (impossibleAcceptance.warnings.length > 0) {
         await this._logImpossibleAcceptanceWarning(taskId, runLog, impossibleAcceptance.warnings);
@@ -963,7 +964,12 @@ export class RunOrchestrator {
       agentDef: reviewerAgentDef,
       rules: reviewerRules,
       changedPaths,
-      baseBranch: this.baseBranch
+      baseBranch: this.baseBranch,
+      // T-0409: which agent's actions the reviewer is auditing, and in which task-store mode --
+      // structuralUnsatisfiability.js's classifier needs both to tell a genuinely unsatisfiable
+      // acceptance item from an ordinary unmet one.
+      implementerAgent: effectiveAgent,
+      taskStoreKind: this.taskStoreKind
     });
 
     const reviewerResult = await this._runPhase({

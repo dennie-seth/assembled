@@ -2071,12 +2071,6 @@
       "requires_approval": false,
       "approved_by": null,
       "approved_at": null
-    },
-    {
-      "id": "T-0411",
-      "requires_approval": false,
-      "approved_by": null,
-      "approved_at": null
     }
   ]
 }

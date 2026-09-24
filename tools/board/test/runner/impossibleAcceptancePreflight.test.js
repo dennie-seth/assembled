@@ -238,6 +238,67 @@ describe("checkImpossibleAcceptancePreflight -- external reference-source circul
   });
 });
 
+// T-0409: the class this preflight already partly covered (PR/CI circularity) is now defined once
+// in structuralUnsatisfiability.js, shared with reviewerPrompt.js -- extended here with the other
+// two known members (.claude/** edits, card-body authorship in db mode) rather than growing a
+// fourth parallel implementation. Still warn-only throughout.
+describe("checkImpossibleAcceptancePreflight -- .claude/** edit (T-0405)", () => {
+  it("flags a criterion requiring an edit under .claude/**, for any agent", () => {
+    const result = checkImpossibleAcceptancePreflight(
+      task(
+        "## Acceptance\n" +
+          "- [ ] `.claude/rules/planner.md` and `.claude/agents/planner.md` are edited to document the new convention\n"
+      ),
+      "infra",
+      fixtureOpts()
+    );
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings.join(" ")).toContain(".claude/rules/planner.md");
+  });
+
+  it("does not flag a bare mention of a .claude/ path with no edit cue", () => {
+    const result = checkImpossibleAcceptancePreflight(
+      task("## Acceptance\n- [ ] The reviewer loads `.claude/rules/conduct.md` before auditing the diff\n"),
+      "infra",
+      fixtureOpts()
+    );
+    expect(result.warnings).toEqual([]);
+  });
+});
+
+describe("checkImpossibleAcceptancePreflight -- card-body authorship in db mode (T-0403)", () => {
+  it("flags a criterion requiring content in the card's own body when taskStoreKind is db", () => {
+    const result = checkImpossibleAcceptancePreflight(
+      task(
+        "## Acceptance\n" +
+          "- [ ] An **Edge cases:** block, with its own checklist items, is present in this card's own body\n"
+      ),
+      "infra",
+      { ...fixtureOpts(), taskStoreKind: "db" }
+    );
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings.join(" ")).toContain("card's own body");
+  });
+
+  it("does not flag the identical wording when taskStoreKind is not db (fs mode, the file exists)", () => {
+    const result = checkImpossibleAcceptancePreflight(
+      task("## Acceptance\n- [ ] An **Edge cases:** block is present in this card's own body\n"),
+      "infra",
+      fixtureOpts()
+    );
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("does not flag the identical wording for the planner agent in db mode -- keys on the running agent", () => {
+    const result = checkImpossibleAcceptancePreflight(
+      task("## Acceptance\n- [ ] An **Edge cases:** block is present in this card's own body\n"),
+      "planner",
+      { ...fixtureOpts(), taskStoreKind: "db" }
+    );
+    expect(result.warnings).toEqual([]);
+  });
+});
+
 describe("checkImpossibleAcceptancePreflight -- never hard-blocks", () => {
   it("always returns a warnings array, never an ok:false/blocking contract", () => {
     const result = checkImpossibleAcceptancePreflight(

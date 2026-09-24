@@ -3,6 +3,7 @@ import { resolveVerifyRoutes, resolveDeliverableRoute } from "./verifyRouter.js"
 import { parseAcceptanceCriteria } from "../lib/acceptanceCriteria.js";
 import { PRE_REGISTRATION_HEADING, FINDING_HEADING } from "../lib/preRegisteredFinding.js";
 import { DELIVERABLE_HEADING } from "../lib/deliverableCheck.js";
+import { classifyAcceptanceItems } from "./structuralUnsatisfiability.js";
 
 const VERDICT_FOOTER = `## Verdict output format — REQUIRED
 
@@ -116,6 +117,56 @@ function buildAcceptanceCriteriaSection(task) {
 }
 
 /**
+ * Builds the "do not FAIL on these" section (T-0409) for whichever acceptance items
+ * structuralUnsatisfiability.js's single classifier identifies as structurally unsatisfiable by
+ * the agent that actually ran the implementer phase (`implementerAgent`, not the reviewer itself)
+ * in this task-store mode. Returns null when nothing classifies -- an ordinary card's prompt is
+ * byte-identical to before this feature existed.
+ *
+ * This is the one documented rule two real cards were judged oppositely on: T-0405's `.claude/**`
+ * edit criterion FAILed twice (plus an auto-spawned, since-retired escalation stub) while T-0403's
+ * card-body criterion was waved through as "met in substance." Neither reading is what this section
+ * asks for -- an item here is never grounds to FAIL, but it is also never silently "met": it is
+ * outstanding, attributed to whoever can actually satisfy it, and the reviewer still must state
+ * that in its verdict notes.
+ */
+function buildStructuralUnsatisfiabilitySection(task, { implementerAgent, taskStoreKind }) {
+  const items = parseAcceptanceCriteria(task.body);
+  const classified = classifyAcceptanceItems(items, { agentName: implementerAgent, taskStoreKind }).filter(
+    (i) => i.classification !== null
+  );
+  if (classified.length === 0) {
+    return null;
+  }
+
+  const lines = classified.map(
+    (i, idx) => `${idx + 1}. "${i.text}" -- ${i.classification.reason}. Owner: ${i.classification.owner}.`
+  );
+
+  const allImpossible = classified.length === items.length;
+  const allImpossibleNote = allImpossible
+    ? `\n\n**Every acceptance item on this card falls in this class.** Do not PASS -- nothing on this card is ` +
+      `actually verifiable by you. End with \`"verdict": "NEEDS_HUMAN_DECISION"\`, stating plainly that no ` +
+      `criterion here could ever be satisfied by the running agent and citing each item's owner above -- a ` +
+      `human must re-scope, reassign, or manually verify this card.`
+    : "";
+
+  return (
+    `## Structurally unsatisfiable acceptance items -- do not FAIL on these\n\n` +
+    `The following acceptance item(s) were mechanically identified as impossible for you, the running agent ` +
+    `("${implementerAgent}"), to have ever satisfied in this run -- not merely hard, and not something you simply ` +
+    `didn't attempt. Apply the one documented rule: **an item in this class is never grounds to FAIL the card.** ` +
+    `Record each one as **outstanding**, attributed to who can actually satisfy it (named below), in your verdict ` +
+    `notes -- then judge every other acceptance criterion normally, exactly as before.\n\n${lines.join("\n")}\n\n` +
+    `This exemption is narrow and stays that way: it applies ONLY to the exact reasoning cited above for each ` +
+    `item, never to an item you find merely difficult or didn't get to -- that is an ordinary unmet criterion and ` +
+    `still FAILs the card like any other. If a listed item also bundles a clause independent of the cited reason ` +
+    `(part satisfiable, part not), judge that other clause normally and say so explicitly -- do not wave the whole ` +
+    `item through untouched.${allImpossibleNote}`
+  );
+}
+
+/**
  * Builds the prompt handed to `claude -p` for the reviewer's VALIDATION run:
  * task identity, the reviewer's own agent definition, whichever rules match
  * the diff's actually-changed paths, an explicit routed-verification section
@@ -130,8 +181,11 @@ function buildAcceptanceCriteriaSection(task) {
  * (buildAcceptanceCriteriaSection -- every criterion in the card's own
  * `## Acceptance` list must be individually confirmed with evidence, green
  * tests are not sufficient, and a card with no parseable Acceptance section
- * is itself a FAIL), the task body verbatim, and the required
- * machine-readable verdict format. The routed section also spells out that
+ * is itself a FAIL), a structurally-unsatisfiable-items section when any
+ * criterion is impossible for the agent that ran the implementer phase to
+ * have ever satisfied (buildStructuralUnsatisfiabilitySection, T-0409 --
+ * omitted entirely for an ordinary card), the task body verbatim, and the
+ * required machine-readable verdict format. The routed section also spells out that
  * these commands must actually be run, not inferred from reading the diff
  * -- an unrun check is a FAIL, not an "unverified" pass. This closes the
  * T-0136 gap: an uploader CLI shipped with fully mocked tests, ruff+pytest
@@ -145,10 +199,19 @@ function buildAcceptanceCriteriaSection(task) {
  * tool be reported as an explicit FAIL naming what was denied, never an
  * empty or missing verdict.
  */
-export function buildReviewerPrompt({ task, agentDef, rules = [], changedPaths = [], baseBranch = "develop" }) {
+export function buildReviewerPrompt({
+  task,
+  agentDef,
+  rules = [],
+  changedPaths = [],
+  baseBranch = "develop",
+  implementerAgent,
+  taskStoreKind = "fs"
+}) {
   if (!task || typeof task.body !== "string") {
     throw new Error("buildReviewerPrompt requires a task with a body");
   }
+  const effectiveImplementerAgent = implementerAgent ?? task.agent ?? "generic";
 
   const sections = [];
   sections.push(`# Agent Runner Validation ${task.id}: ${task.title}`);
@@ -170,6 +233,14 @@ export function buildReviewerPrompt({ task, agentDef, rules = [], changedPaths =
   }
 
   sections.push(buildAcceptanceCriteriaSection(task));
+
+  const structuralSection = buildStructuralUnsatisfiabilitySection(task, {
+    implementerAgent: effectiveImplementerAgent,
+    taskStoreKind
+  });
+  if (structuralSection) {
+    sections.push(structuralSection);
+  }
 
   sections.push(
     `## Task card ${task.id}\n\n${TASK_BODY_START}\n${escapeTaskBody(task.body)}\n${TASK_BODY_END}`
