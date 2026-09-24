@@ -115,6 +115,17 @@ describe("commandTargetsClaudeDirWrite", () => {
     ).toBe(true);
   });
 
+  it("documents a known gap: a write through a symlink whose target resolves under .claude/, with no literal .claude mention in the command, is NOT caught by this heuristic", () => {
+    // `ln -s .claude/rules sneaky` (denied above, `ln` isn't read-only and mentions .claude/)
+    // followed by a LATER, separate command `echo x > sneaky/scratch.md` has no `.claude` text
+    // anywhere in *this* command string -- static analysis of the command alone cannot resolve
+    // `sneaky` against the real filesystem to see where it points. This is exactly the class of
+    // gap claudeDirWriteGuard.js's diff-based backstop exists to close: a write through a symlink
+    // still lands at a real path under .claude/ once committed, which the backstop catches
+    // regardless of how it got there.
+    expect(commandTargetsClaudeDirWrite("echo x > sneaky/scratch.md")).toBe(false);
+  });
+
   it("handles non-string/empty input without throwing", () => {
     expect(commandTargetsClaudeDirWrite("")).toBe(false);
     expect(commandTargetsClaudeDirWrite(undefined)).toBe(false);
