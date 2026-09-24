@@ -427,6 +427,50 @@ describe("isToolAllowed: .claude/ path guard (T-0376)", () => {
   }
 });
 
+describe("isToolAllowed: Bash .claude/ write guard (T-0411)", () => {
+  // T-0408 attempt 3 wrote .claude/agents/planner.md and .claude/rules/planner.md via
+  // `node -e "require('fs').writeFileSync(...)"` -- Edit/Write is denied under .claude/ (T-0376
+  // above), but a plain `Bash(node:*)` grant has no equivalent check, so the exact same rewrite
+  // sails through via the shell. The board's own permission model must agree with the runtime
+  // denial the PreToolUse hook (claudeDirBashHook.js) enforces, or capability preflight reasoning
+  // from this model is simply wrong about what a Bash-granted agent can do.
+  //
+  // Requested-tool strings here follow this file's existing "Bash(prefix:rest)" convention (see
+  // e.g. the `Bash(git:status)` / `Bash(cd tools/sim:&& ...)` examples above) -- colon standing in
+  // for the first word boundary. A command containing literal unbalanced parens (the T-0408
+  // exploit's actual `node -e "require('fs').writeFileSync(...)"` shape) can't be expressed in this
+  // `Tool(arg)` wire notation at all -- `parseToolPattern`'s `[^)]*` capture group already denies
+  // it outright as unparseable, before any .claude-specific logic runs, so it's already covered by
+  // existing behavior. `commandTargetsClaudeDirWrite` (claudeDirBashGuard.test.js) covers that exact
+  // shape directly, against the real raw command text the CLI's PreToolUse hook actually receives.
+  const bashNodeGrant = ["Read", "Bash(node:*)", "Bash(git:*)", "Bash(tee:*)"];
+
+  it("denies a git-shell write under .claude/ despite a bare Bash(git:*) grant", () => {
+    expect(
+      isToolAllowed("Bash(git:checkout other -- .claude/rules/planner.md)", bashNodeGrant)
+    ).toBe(false);
+  });
+
+  it("denies a tee write under .claude/ despite a bare Bash(tee:*) grant", () => {
+    expect(isToolAllowed("Bash(tee:.claude/rules/scratch.md)", bashNodeGrant)).toBe(false);
+  });
+
+  it("still allows an ordinary, non-.claude Bash call under the same grants", () => {
+    expect(isToolAllowed("Bash(node:tools/board/scripts/validateBacklog.js)", bashNodeGrant)).toBe(true);
+    expect(isToolAllowed("Bash(git:status)", bashNodeGrant)).toBe(true);
+  });
+
+  it("still allows a read-only Bash call mentioning a .claude/ path", () => {
+    expect(isToolAllowed("Bash(git:log -- .claude/agents/infra.md)", bashNodeGrant)).toBe(true);
+  });
+
+  it("names the reason for a Bash .claude/ write denial via checkToolPermission", () => {
+    const result = checkToolPermission("Bash(tee:.claude/rules/scratch.md)", bashNodeGrant);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/\.claude/);
+  });
+});
+
 describe("checkToolPermission", () => {
   const bareWriteEdit = ["Read", "Write", "Edit", "Grep", "Glob"];
 
