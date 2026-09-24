@@ -504,6 +504,59 @@ describe("buildPlannerPrompt -- edge cases as an explicit, verified part of Acce
   });
 });
 
+// T-0408: T-0403 shipped with no Edge cases block despite step 4/5 already describing the rule in
+// prose -- measured across the live board, only 5/342 cards carry a real block. The fix is not a
+// new gate (still warn-only, see edgeCasesPreflight.js's own regression test); it's a sharper
+// worked example inline in the prompt itself, so the correct/incorrect shapes are unmissable
+// rather than something the planner has to infer correctly from a paragraph of prose every time.
+describe("buildPlannerPrompt -- worked example makes the label-vs-heading distinction concrete (T-0408)", () => {
+  it("shows a literal right-form example using the bold **Edge cases:** label", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toMatch(/right:?[\s\S]{0,40}\*\*Edge cases:\*\*/i);
+  });
+
+  it("shows a literal wrong-form example using a '### Edge cases' heading, labeled as wrong", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt).toMatch(/wrong:?[\s\S]{0,40}###\s*Edge cases/i);
+  });
+
+  it("explains why the heading form is wrong -- the AC parser stops at the first heading and silently drops the items", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("silently drop");
+  });
+});
+
+describe("buildPlannerPrompt -- self-check converts a human-authored heading-form block instead of leaving it unparsed (T-0408)", () => {
+  it("instructs the planner to notice an existing '### Edge cases' heading in the card and convert it to the label form", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("already has a heading-form");
+    expect(prompt.toLowerCase()).toContain("convert it to the bold-label form");
+  });
+
+  it("says not to leave a heading-form block as-is, since it would be silently unparsed", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("rather than leaving it");
+  });
+});
+
+// T-0408 iter-2 (reviewer FAIL): step 4/5 said "Rewrite or extend ... always add" with no branch
+// for a card whose ## Acceptance the planner isn't otherwise touching, and no branch for a card
+// that already carries a good block -- both edge cases the card body names explicitly ("not
+// rewritten just to add a block, and the planner says so"; "left alone, not duplicated or
+// reworded"). Neither was previously present anywhere in this prompt.
+describe("buildPlannerPrompt -- doesn't rewrite Acceptance just to bolt on a block, and says so (T-0408 iter-2)", () => {
+  it("instructs leaving an already-good Edge cases block alone rather than rewording it", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("leave it as-is");
+  });
+
+  it("instructs not rewriting ## Acceptance solely to add a block when it's otherwise untouched, and reporting that explicitly instead of silently skipping", () => {
+    const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
+    expect(prompt.toLowerCase()).toContain("do not rewrite it solely");
+    expect(prompt.toLowerCase()).toContain("commit summary");
+  });
+});
+
 describe("buildPlannerPrompt -- complexity_points authoring guidance (T-0368)", () => {
   it("instructs the planner to consider setting a complexity_points value while authoring/expanding a card", () => {
     const prompt = buildPlannerPrompt({ task: UNASSIGNED_TASK, agentDef: PLANNER_AGENT_DEF });
