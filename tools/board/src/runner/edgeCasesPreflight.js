@@ -1,7 +1,5 @@
-import { parseAcceptanceCriteria, CHECKBOX_RE, ACCEPTANCE_HEADING_RE } from "../lib/acceptanceCriteria.js";
-
-const HEADING_RE = /^#{1,6}\s+/;
-const EDGE_CASES_LABEL_RE = /^\*\*Edge cases:?\*\*/i;
+import { parseAcceptanceCriteria } from "../lib/acceptanceCriteria.js";
+import { hasEdgeCasesBlock } from "../lib/edgeCasesAudit.js";
 
 /**
  * Warn-only pre-flight for the T-0186/T-0365 "cards ship without a planner-authored Edge cases
@@ -30,13 +28,18 @@ const EDGE_CASES_LABEL_RE = /^\*\*Edge cases:?\*\*/i;
  * checklist items, one per edge case" (.claude/rules/planner.md:100-123). A bare `**Edge cases:**`
  * label with nothing underneath doesn't satisfy that convention, so it still warns.
  *
- * T-0405: the section-start scan below used to re-derive its own strict `^##\s+Acceptance\s*$`
- * regex instead of reusing acceptanceCriteria.js's `ACCEPTANCE_HEADING_RE`. Once that regex became
+ * T-0405: the section-start scan used to re-derive its own strict `^##\s+Acceptance\s*$` regex
+ * instead of reusing acceptanceCriteria.js's `ACCEPTANCE_HEADING_RE`. Once that regex became
  * tolerant of a qualified heading ("## Acceptance (story-level -- planner expands)"), this file's
  * separate copy would still fail to find the section for the exact same body -- items.length > 0
  * from parseAcceptanceCriteria, but startIdx stayed -1 here, so a card missing its Edge cases block
  * under a qualified heading silently got no warning at all. Importing the one regex both places
  * use closes that gap the same way vetAndReady.js's does (see acceptanceCriteria.js).
+ *
+ * T-0408: the block-detection scan itself (find the label, then a checklist item under it before
+ * the next heading) now lives in `hasEdgeCasesBlock` (lib/edgeCasesAudit.js), shared with the
+ * board-wide `auditEdgeCasesCoverage` re-run -- so "does this card have a real block" can never
+ * quietly diverge between the per-card warning and the board-wide count.
  */
 export function checkEdgeCasesPreflight(task) {
   const body = task?.body ?? "";
@@ -45,30 +48,8 @@ export function checkEdgeCasesPreflight(task) {
     return { warnings: [] };
   }
 
-  const lines = body.split(/\r?\n/);
-  const startIdx = lines.findIndex((line) => ACCEPTANCE_HEADING_RE.test(line.trim()));
-  if (startIdx === -1) {
+  if (hasEdgeCasesBlock(body)) {
     return { warnings: [] };
-  }
-
-  let labelIdx = -1;
-  for (let i = startIdx + 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (HEADING_RE.test(line)) break;
-    if (EDGE_CASES_LABEL_RE.test(line)) {
-      labelIdx = i;
-      break;
-    }
-  }
-
-  if (labelIdx !== -1) {
-    for (let i = labelIdx + 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (HEADING_RE.test(line)) break;
-      if (CHECKBOX_RE.test(line)) {
-        return { warnings: [] };
-      }
-    }
   }
 
   return {
