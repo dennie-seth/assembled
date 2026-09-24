@@ -8,13 +8,19 @@ import { commandTargetsClaudeDirWrite } from "../../src/runner/claudeDirBashGuar
  * (`node -e "require('fs').writeFileSync('.claude/rules/planner.md', ...)"`, cleaned up via
  * `git clean` since `rm` wasn't granted either).
  *
- * This is the pure heuristic a PreToolUse hook (claudeDirBashHook.js) uses to deny a Bash
+ * This is the pure(ish) heuristic a PreToolUse hook (claudeDirBashHook.js) uses to deny a Bash
  * `tool_use` before it runs. It is deliberately conservative (fail-closed: default to "denied"
- * for anything mentioning a .claude/ path that isn't recognizably read-only) because static
- * analysis of an arbitrary shell command can never be complete -- a sufficiently indirect script
- * (e.g. `node /tmp/script.js` whose own source, written by an earlier untracked call, contains
- * the write) can still slip past a command-text heuristic with no `.claude` mention in argv at
- * all. That residual gap is exactly why this card also adds a diff-based backstop
+ * for anything mentioning a .claude/ path that isn't recognizably read-only). Beyond matching the
+ * command *text*, it also reads two narrow classes of *referenced file content* when the .claude/
+ * target could only ever live there, never in argv: (1) a `git apply`/`git am`/`patch` target,
+ * since the touched path lives inside the patch's own diff headers; (2) an interpreter script
+ * (`node`/`python`/`bash`/...) resolving *outside* the current worktree, since that's the "temp
+ * script written elsewhere and then executed" shape -- one indirection past the literal T-0408
+ * exploit. An in-worktree script's content is deliberately left unread (ordinary in-repo
+ * automation like `tools/board/scripts/*.js` isn't re-read on every invocation), and a write
+ * routed through a symlink whose target resolves under .claude/ with no literal `.claude` mention
+ * anywhere -- command text or read file content -- is still outside what static analysis can see.
+ * Both remaining gaps are exactly why this card also adds a diff-based backstop
  * (claudeDirWriteGuard.js) that inspects the committed result instead of the command text -- this
  * hook is a best-effort first line, not the guarantee.
  */
@@ -56,10 +62,81 @@ describe("commandTargetsClaudeDirWrite", () => {
     );
   });
 
-  it("denies git apply of a patch touching .claude/", () => {
-    expect(commandTargetsClaudeDirWrite("git apply /tmp/claude-scratch.patch")).toBe(false);
+  it("denies git apply/am whose command text itself names a .claude/ path", () => {
     // The patch's own target path inside .claude/ is what matters, not the patch file's own name.
     expect(commandTargetsClaudeDirWrite("git apply --include='.claude/*' /tmp/x.patch")).toBe(true);
+  });
+
+  it("denies git apply of a patch file whose own diff content touches .claude/ -- the target path lives inside the referenced file, never in this command's own argv", () => {
+    expect(
+      commandTargetsClaudeDirWrite("git apply /tmp/claude-scratch.patch", {
+        readFile: (p) =>
+          p === "/tmp/claude-scratch.patch"
+            ? "diff --git a/.claude/rules/x.md b/.claude/rules/x.md\n--- a/.claude/rules/x.md\n+++ b/.claude/rules/x.md\n"
+            : null
+      })
+    ).toBe(true);
+    expect(
+      commandTargetsClaudeDirWrite("git am /tmp/claude-scratch.mbox", {
+        readFile: (p) =>
+          p === "/tmp/claude-scratch.mbox" ? "diff --git a/.claude/agents/infra.md b/.claude/agents/infra.md\n" : null
+      })
+    ).toBe(true);
+  });
+
+  it("allows git apply of a patch file whose content provably never touches .claude/", () => {
+    expect(
+      commandTargetsClaudeDirWrite("git apply /tmp/harmless.patch", {
+        readFile: (p) => (p === "/tmp/harmless.patch" ? "diff --git a/README.md b/README.md\n" : null)
+      })
+    ).toBe(false);
+  });
+
+  it("fails closed on git apply/patch when the referenced file can't be read/verified -- a write-capable verb with an unknown target is treated as risky, not assumed safe", () => {
+    expect(commandTargetsClaudeDirWrite("git apply /tmp/t0411-does-not-exist.patch")).toBe(true);
+    expect(commandTargetsClaudeDirWrite("patch -p1 -i /tmp/t0411-does-not-exist.patch")).toBe(true);
+  });
+
+  it("denies the patch utility the same way, including reading its target off a redirect", () => {
+    expect(
+      commandTargetsClaudeDirWrite("patch -p1 < /tmp/claude-scratch.patch", {
+        readFile: (p) => (p === "/tmp/claude-scratch.patch" ? "+++ b/.claude/rules/x.md\n" : null)
+      })
+    ).toBe(true);
+  });
+
+  it("denies a temp script outside the worktree whose own content writes under .claude/ -- the exact residual gap this card's design doc calls out (T-0408's shape, one indirection further)", () => {
+    expect(
+      commandTargetsClaudeDirWrite("node /tmp/scratch-1234.js", {
+        cwd: "/home/example/worktree",
+        readFile: (p) =>
+          p === "/tmp/scratch-1234.js" ? "require('fs').writeFileSync('.claude/rules/x.md', 'y')" : null
+      })
+    ).toBe(true);
+  });
+
+  it("does not flag an outside-worktree interpreter script whose content never mentions .claude/", () => {
+    expect(
+      commandTargetsClaudeDirWrite("node /tmp/harmless.js", {
+        cwd: "/home/example/worktree",
+        readFile: (p) => (p === "/tmp/harmless.js" ? "console.log('hi')" : null)
+      })
+    ).toBe(false);
+  });
+
+  it("does not fail closed on an interpreter script that can't be read -- ordinary tooling isn't punished for an unreadable/nonexistent path", () => {
+    expect(
+      commandTargetsClaudeDirWrite("node /tmp/t0411-does-not-exist-xyz.js", { cwd: "/home/example/worktree" })
+    ).toBe(false);
+  });
+
+  it("leaves an in-worktree script's own content unread -- ordinary in-repo automation (tools/board/scripts/*.js) isn't re-read on every invocation just because it happens to mention .claude/ in a comment or test fixture", () => {
+    expect(
+      commandTargetsClaudeDirWrite("node tools/board/scripts/validateBacklog.js", {
+        cwd: "/home/example/worktree",
+        readFile: () => "this file happens to mention .claude/agents/infra.md in a comment"
+      })
+    ).toBe(false);
   });
 
   it("denies mkdir/touch/rm/chmod under .claude/", () => {
