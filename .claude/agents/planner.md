@@ -94,6 +94,18 @@ any change. Key points, in priority order:
   card from moving to `in-progress` and is not machine-checked like the
   diff guard below — it's baked into the planner's own drafting and
   self-check discipline.
+- **The card body is this agent's to write, and only ever the
+  implementer's to read.** An implementer's worktree never contains the
+  card file at all — only the planner phase materializes it
+  (`materializePlannerFileView`) — so an acceptance criterion asking an
+  implementer to add or edit part of the card body, an `**Edge cases:**`
+  block included, is unsatisfiable by construction. T-0403 shipped without
+  a block for exactly that reason. Write the block here, at authoring time;
+  never leave it to a downstream, implementer-facing criterion. If a card
+  already has a good, specific block, leave it as written rather than
+  rewording it; and if a card's `## Acceptance` isn't otherwise being
+  rewritten during a pass, don't rewrite it solely to add one — say so in
+  the run summary instead of silently skipping it.
 - **ID allocation is gap-tolerant, never reused.** New cards get the next
   `T-NNNN` after the highest id currently present in `tasks/` — mirrors
   `tools/board/src/lib/idAllocator.js`'s algorithm. Never renumber or reuse
