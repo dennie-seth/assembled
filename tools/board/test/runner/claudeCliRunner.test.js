@@ -1,9 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawn as nodeSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { AgentRunner } from "../../src/runner/agentRunner.js";
-import { ClaudeCliRunner, DEFAULT_ENV_ALLOWLIST } from "../../src/runner/claudeCliRunner.js";
+import {
+  ClaudeCliRunner,
+  DEFAULT_ENV_ALLOWLIST,
+  CLAUDE_DIR_BASH_HOOK_PATH
+} from "../../src/runner/claudeCliRunner.js";
 import { DEFAULT_KILL_ESCALATION_MS } from "../../src/runner/runState.js";
+import { commandTargetsClaudeDirWrite } from "../../src/runner/claudeDirBashGuard.js";
 
 const TASK = { id: "T-0099", agent: "infra" };
 
@@ -42,10 +50,70 @@ describe("ClaudeCliRunner argv construction", () => {
       "stream-json",
       "--verbose",
       "--allowedTools",
-      "Read Write Bash(git:*)"
+      "Read Write Bash(git:*)",
+      "--settings",
+      invocation.args[invocation.args.indexOf("--settings") + 1]
     ]);
     expect(invocation.cwd).toBe("/repo/worktrees/T-0099");
     expect(invocation.prompt).toBe("do the thing");
+  });
+
+  describe("T-0411: PreToolUse .claude/ Bash write hook, wired via --settings", () => {
+    function settingsFor(invocation) {
+      const idx = invocation.args.indexOf("--settings");
+      expect(idx).toBeGreaterThan(-1);
+      return JSON.parse(invocation.args[idx + 1]);
+    }
+
+    it("includes a --settings flag with an inline JSON hooks config -- never a .claude/settings.json file on disk", () => {
+      const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+      const invocation = runner.buildInvocation({
+        task: TASK,
+        prompt: "x",
+        allowedTools: ["Read"],
+        worktreeDir: "/wt"
+      });
+      const settings = settingsFor(invocation);
+      expect(settings.hooks.PreToolUse).toHaveLength(1);
+      expect(settings.hooks.PreToolUse[0].matcher).toBe("Bash");
+      expect(settings.hooks.PreToolUse[0].hooks).toHaveLength(1);
+      expect(settings.hooks.PreToolUse[0].hooks[0].type).toBe("command");
+    });
+
+    it("points the hook command at the real, on-disk claudeDirBashHook.js by absolute path", () => {
+      expect(path.isAbsolute(CLAUDE_DIR_BASH_HOOK_PATH)).toBe(true);
+      expect(fs.existsSync(CLAUDE_DIR_BASH_HOOK_PATH)).toBe(true);
+      expect(path.basename(CLAUDE_DIR_BASH_HOOK_PATH)).toBe("claudeDirBashHook.js");
+
+      const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+      const invocation = runner.buildInvocation({
+        task: TASK,
+        prompt: "x",
+        allowedTools: ["Read"],
+        worktreeDir: "/wt"
+      });
+      const command = settingsFor(invocation).hooks.PreToolUse[0].hooks[0].command;
+      expect(command).toContain(CLAUDE_DIR_BASH_HOOK_PATH);
+      // Resolved relative to this module's own location, not the per-card worktree cwd -- a
+      // worktree never contains scripts/claudeDirBashHook.js itself under some configurations
+      // (fs-mode worktrees do, but the hook must work identically either way).
+      expect(CLAUDE_DIR_BASH_HOOK_PATH).toBe(
+        path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/claudeDirBashHook.js")
+      );
+    });
+
+    it("the wired hook path is not itself flagged as a .claude/ write by the guard it enforces (sanity: it's a plain scripts/ path)", () => {
+      expect(commandTargetsClaudeDirWrite(`node "${CLAUDE_DIR_BASH_HOOK_PATH}"`)).toBe(false);
+    });
+
+    it("keeps --settings identical across two invocations for the same runner (deterministic, not per-call random)", () => {
+      const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+      const inv1 = runner.buildInvocation({ task: TASK, prompt: "a", allowedTools: ["Read"], worktreeDir: "/wt" });
+      const inv2 = runner.buildInvocation({ task: TASK, prompt: "b", allowedTools: ["Read"], worktreeDir: "/wt" });
+      expect(inv1.args[inv1.args.indexOf("--settings") + 1]).toBe(
+        inv2.args[inv2.args.indexOf("--settings") + 1]
+      );
+    });
   });
 
   it("includes --model when a model is configured, omits it otherwise", () => {

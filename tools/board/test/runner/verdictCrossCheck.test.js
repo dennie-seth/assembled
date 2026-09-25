@@ -376,3 +376,56 @@ describe("crossCheckVerdict", () => {
     expect(result.downgraded).toBe(true);
   });
 });
+
+describe("crossCheckVerdict: .claude/ write backstop (T-0411)", () => {
+  // crossCheckVerdict is only ever invoked from runOrchestrator.js's own review pipeline, on a run
+  // the orchestrator itself launched -- so every call here is board-run provenance by construction.
+  // See claudeDirWriteGuard.js's header for why that makes branchOrigin: "board-run" trustworthy
+  // (it is never read from the branch itself) and why this must NOT fire for the sanctioned
+  // out-of-band route (a human/driver applying a .claude/** edit directly, outside any run).
+  it("downgrades a self-reported PASS to FAIL when the diff writes under .claude/ -- the T-0408 shape", () => {
+    const events = [...bashCall("1", "cd tools/board && npm test && npx eslint .")];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: [".claude/agents/planner.md", ".claude/rules/planner.md"],
+      task: { id: "T-0408" }
+    });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.downgraded).toBe(true);
+    expect(result.notes).toMatch(/\.claude\/agents\/planner\.md/);
+    expect(result.notes).toMatch(/\.claude\/rules\/planner\.md/);
+  });
+
+  it("fires even when the diff triggers no other required verify routes at all", () => {
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events: [],
+      changedPaths: [".claude/settings.json"],
+      task: { id: "T-0001" }
+    });
+    expect(result.verdict).toBe("FAIL");
+    expect(result.downgraded).toBe(true);
+  });
+
+  it("never upgrades a self-reported FAIL, even when the diff also writes under .claude/", () => {
+    const result = crossCheckVerdict({
+      verdict: FAIL,
+      events: [],
+      changedPaths: [".claude/agents/planner.md"],
+      task: { id: "T-0001" }
+    });
+    expect(result).toBe(FAIL);
+  });
+
+  it("leaves an ordinary PASS with no .claude/ changes untouched", () => {
+    const events = [...bashCall("1", "cd tools/board && npm test && npx eslint .")];
+    const result = crossCheckVerdict({
+      verdict: PASS,
+      events,
+      changedPaths: ["tools/board/src/thing.js"],
+      task: { id: "T-0001" }
+    });
+    expect(result).toEqual(PASS);
+  });
+});

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { splitFrontmatter } from "./frontmatter.js";
+import { commandTargetsClaudeDirWrite } from "./claudeDirBashGuard.js";
 
 /** Safe default for `agent: null` (or any agent def that can't be resolved): read-only, no Bash. */
 export const READ_ONLY_DEFAULT_TOOLS = Object.freeze(["Read", "Grep", "Glob"]);
@@ -69,7 +70,7 @@ const PATH_ARG_TOOLS = new Set(["Edit", "Write"]);
  * path that merely contains the text `.claude` elsewhere (`docs/notes-on-.claude.md`) normalizes
  * to a segment that is not an exact match, so it is left alone.
  */
-function isUnderClaudeDir(requestedPath) {
+export function isUnderClaudeDir(requestedPath) {
   if (typeof requestedPath !== "string" || requestedPath.length === 0) {
     return false;
   }
@@ -91,6 +92,21 @@ export const CLAUDE_DIR_DENIAL_REASON =
   "under .claude/ in an unattended run, regardless of the agent's tool grant.";
 
 /**
+ * Why a Bash call that would write under `.claude/` is denied regardless of grant (T-0411): the
+ * CLI's own sensitive-file check (the reason above) only covers the Edit/Write tools -- a Bash
+ * call carries an opaque command string with no equivalent built-in check, which is exactly how
+ * T-0408 attempt 3 rewrote `.claude/agents/planner.md` and `.claude/rules/planner.md` via
+ * `node -e "require('fs').writeFileSync(...)"`. The board's own model has to agree, or anything
+ * that reasons from it is wrong about what a Bash-granted agent can actually do to `.claude/`.
+ * Runtime enforcement for this is `claudeDirBashHook.js`, wired in as a `PreToolUse` hook by
+ * `claudeCliRunner.js` -- this is that same heuristic, reused here so capability-preflight
+ * reasoning matches runtime reality.
+ */
+export const CLAUDE_DIR_BASH_DENIAL_REASON =
+  "Denied: this Bash command appears to write under .claude/ -- the board's PreToolUse hook " +
+  "(claudeDirBashHook.js) blocks it at runtime, regardless of the agent's Bash grant.";
+
+/**
  * Whether a requested tool call (e.g. "Bash(git:status)") is covered by a resolved allowlist
  * (e.g. ["Read", "Bash(git:*)"]), plus -- for Edit/Write -- why it was denied when the target
  * path resolves under .claude/. This is the single source of truth `isToolAllowed` delegates to.
@@ -105,6 +121,16 @@ export function checkToolPermission(requestedTool, allowedTools) {
 
   if (PATH_ARG_TOOLS.has(requested.tool) && requested.arg !== null && isUnderClaudeDir(requested.arg)) {
     return { allowed: false, reason: CLAUDE_DIR_DENIAL_REASON };
+  }
+
+  if (requested.tool === "Bash" && requested.arg !== null) {
+    // This file's own "Bash(prefix:rest)" convention (see the module docstring examples) stands
+    // a colon in for the first word boundary a real command would spell with a space -- undo that
+    // substitution before handing the text to a heuristic that tokenizes on real shell syntax.
+    const asShellText = requested.arg.replace(":", " ");
+    if (commandTargetsClaudeDirWrite(asShellText)) {
+      return { allowed: false, reason: CLAUDE_DIR_BASH_DENIAL_REASON };
+    }
   }
 
   const allowed = allowedTools.some((pattern) => {

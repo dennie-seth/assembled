@@ -1,6 +1,41 @@
 import { spawn as nodeSpawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { AgentRunner } from "./agentRunner.js";
 import { DEFAULT_KILL_ESCALATION_MS } from "./runState.js";
+
+/**
+ * T-0411: absolute path to the PreToolUse hook that denies a Bash command writing under
+ * `.claude/` (see claudeDirBashGuard.js's header for why Bash needs its own check -- the CLI's
+ * built-in sensitive-file protection only covers Edit/Write). Resolved relative to this module's
+ * own location, not `process.cwd()` or a card's worktree, so it's correct regardless of where the
+ * board process or a spawned child happens to be running from.
+ */
+export const CLAUDE_DIR_BASH_HOOK_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../scripts/claudeDirBashHook.js"
+);
+
+/**
+ * The `--settings` JSON every invocation carries, registering `CLAUDE_DIR_BASH_HOOK_PATH` as a
+ * `PreToolUse` hook for `Bash`. Passed inline on the CLI invocation, never written to
+ * `.claude/settings.json` -- that file (and everything else under `.claude/`) stays off limits to
+ * every agent, this card included (T-0374/T-0411's own "do not" section). `--settings` accepting a
+ * literal JSON string on argv is what makes that possible: the hook is registered without ever
+ * touching a file under `.claude/` at all.
+ */
+function buildClaudeDirBashHookSettings() {
+  return JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [{ type: "command", command: `node "${CLAUDE_DIR_BASH_HOOK_PATH}"` }]
+        }
+      ]
+    }
+  });
+}
 
 // BOARD_TASK_STORE/BOARD_DB_PATH MUST be included: without them, a child `claude` CLI process
 // (and the reviewer/implementer scripts it runs via its own Bash tool -- checkDeliverable.js,
@@ -110,7 +145,9 @@ export class ClaudeCliRunner extends AgentRunner {
       "stream-json",
       "--verbose",
       "--allowedTools",
-      allowedTools.join(" ")
+      allowedTools.join(" "),
+      "--settings",
+      buildClaudeDirBashHookSettings()
     ];
     const resolvedModel = validateModel(model ?? this.model);
     if (resolvedModel) {
