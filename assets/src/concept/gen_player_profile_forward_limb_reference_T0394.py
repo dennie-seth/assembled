@@ -76,6 +76,8 @@ from PIL import Image, ImageDraw, ImageFilter
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "assets" / "src" / "character"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(REPO_ROOT / "tools" / "asset-gate" / "src"))
+sys.path.insert(0, str(REPO_ROOT / "tools" / "comfy-client" / "src"))
 
 from gen_arm_a_idle_T0228 import (  # noqa: E402
     CHECKPOINT,
@@ -97,6 +99,7 @@ from gen_pose_authority_idle_T0249 import (  # noqa: E402
     IDENTITY_LORA_PATH,
     TRIGGER_TOKEN,
 )
+from comfy_client.provenance_sidecar import resolve_run_id  # noqa: E402
 from green_content import count_green_pixels  # noqa: E402
 import pose_rig_forward_limb_controlnet_T0394 as pose_rig  # noqa: E402
 
@@ -625,10 +628,10 @@ ATTEMPT_LOG_HEADER = (
     "produced by a second pass masked to the head bounding box only "
     "(`compute_head_bbox`/`build_head_mask`/`composite_head_detail`), not another skeleton or "
     "prompt move on the full-frame pass. Hard cap of 3 attempts, pre-registered.\n\n"
-    "| Attempt | Seed | Pose denoise | Detail denoise | ControlNet strength/end | GPU seconds "
-    "(pose+detail) | Whole-frame green px | Centred-crop green px | Border max channel | "
+    "| Attempt | Run-Id | Seed | Pose denoise | Detail denoise | ControlNet strength/end | GPU "
+    "seconds (pose+detail) | Whole-frame green px | Centred-crop green px | Border max channel | "
     "Skeleton sha256 | Mask path | What changed | Promoted | Notes |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
 )
 
 
@@ -636,8 +639,14 @@ def append_attempt_log(provenance: dict, change: str = "", notes: str = "") -> N
     if not ATTEMPT_LOG_PATH.exists():
         ATTEMPT_LOG_PATH.write_text(ATTEMPT_LOG_HEADER)
     green = provenance["green_content"]
+    # T-0396: render the run id this attempt was recorded under, or the literal
+    # "none" when it was not run inside a board run -- never blank, never
+    # fabricated. This is a NEW row's format; attempts 1-3's already-committed
+    # rows (predating run-id traceability) are frozen history and not touched.
+    run_id_display = provenance.get("run_id") or "none"
     row = (
-        f"| {provenance['attempt']} | {provenance['seed']} | {provenance['denoise']} "
+        f"| {provenance['attempt']} | {run_id_display} | {provenance['seed']} "
+        f"| {provenance['denoise']} "
         f"| {provenance['detail_pass_denoise']} "
         f"| {provenance['controlnet_strength']}/{provenance['controlnet_end_percent']} "
         f"| {provenance['gpu_seconds']} "
@@ -875,6 +884,11 @@ def run_attempt(
         "skeleton_path": str(SKELETON_PATH.relative_to(REPO_ROOT)),
         "skeleton_sha256": skeleton_sha256,
         "skeleton_keypoints_path": keypoints_relpath,
+        # T-0396: the board's run id (BOARD_RUN_ID), explicit `None` when this
+        # attempt was not run inside a board run -- never omitted, never
+        # fabricated -- so a reviewer can trace this attempt's evidence back
+        # to the run log (tasks/.runs/<id>.jsonl) that produced it.
+        "run_id": resolve_run_id(),
     }
     (out_dir / "provenance_candidate.json").write_text(json.dumps(provenance, indent=2) + "\n")
     return provenance

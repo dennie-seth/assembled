@@ -46,9 +46,10 @@ the shape the canonical records already use
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -75,13 +76,33 @@ except ImportError as _exc:  # pragma: no cover - environment wiring, not logic
 #: needs.  Leading slash (absolute) and leading dash are excluded by the anchor.
 _BARE_REPO_PATH_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.\-/]*$")
 
-#: The one key the writer owns outright.  A record carrying its own `generator`
-#: cannot override the validated value -- otherwise free text would just move one
-#: level down and reappear in the gated field.  `comfyui_version` / `card` /
-#: `_generator_note` are ordinary record fields on some shapes (e.g.
-#: CutoutProvenanceRecord pins comfyui_version), so those are kept and merely
-#: overridden when the corresponding keyword argument is supplied.
-_WRITER_OWNED_KEYS = ("generator",)
+#: The keys the writer owns outright.  A record carrying its own `generator` (or
+#: `run_id`) cannot override the validated/trusted value -- otherwise free text
+#: (or a fabricated run id) would just move one level down and reappear in the
+#: gated field.  `comfyui_version` / `card` / `_generator_note` are ordinary
+#: record fields on some shapes (e.g. CutoutProvenanceRecord pins
+#: comfyui_version), so those are kept and merely overridden when the
+#: corresponding keyword argument is supplied.
+_WRITER_OWNED_KEYS = ("generator", "run_id")
+
+#: Sentinel distinguishing "the `run_id` keyword was not passed at all" from
+#: "it was passed as `None`" -- see `write_provenance_sidecar`'s `run_id`
+#: parameter. Both are meaningfully different states: the former preserves
+#: today's exact behaviour (no `run_id` key at all, for every caller that
+#: predates T-0396), the latter is an explicit, positive "checked, and there
+#: wasn't one" that renders as JSON `null`.
+_UNSET = object()
+
+
+def resolve_run_id(env: Mapping[str, str] | None = None) -> str | None:
+    """The current board run's id from `BOARD_RUN_ID` in *env* (defaults to
+    `os.environ`), or `None` outside a board run (invoked by hand, or from a
+    test). Never raises, never fabricates one -- mirrors the JS
+    `tools/board/src/lib/attemptRecorder.js`'s own `resolveRunId`.
+    """
+    source = os.environ if env is None else env
+    value = source.get("BOARD_RUN_ID")
+    return value if isinstance(value, str) and value != "" else None
 
 
 class GeneratorFieldError(ValueError):
@@ -218,6 +239,7 @@ def write_provenance_sidecar(
     card: str | None = None,
     note: str | None = None,
     extra: dict | None = None,
+    run_id: str | None = _UNSET,  # type: ignore[assignment]
 ) -> dict:
     """Write a `.provenance.json` sidecar with a validated, structural `generator`.
 
@@ -243,6 +265,16 @@ def write_provenance_sidecar(
         note: freeform prose.  Written as ``_generator_note``.  This is the
             only place free text is allowed to go.
         extra: additional structured fields to merge in.
+        run_id: the board run id (``BOARD_RUN_ID``) traceable back to
+            ``tasks/.runs/<id>.jsonl`` (T-0396).  Left at its default (not
+            passed at all) writes exactly what every caller wrote before
+            T-0396 -- no ``run_id`` key at all.  Passed explicitly --
+            including as ``None`` -- writes an explicit ``run_id`` key
+            (``null`` in the JSON for ``None``), because "checked, and there
+            wasn't one" and "this sidecar predates run-id traceability" are
+            different facts a reviewer needs to tell apart.  A ``run_id`` key
+            already present on *record* is discarded either way -- this
+            field is the writer's to set, same idiom as ``generator``.
 
     Returns:
         The dict that was written.
@@ -279,6 +311,8 @@ def write_provenance_sidecar(
         payload["card"] = card
     if note is not None:
         payload["_generator_note"] = note
+    if run_id is not _UNSET:
+        payload["run_id"] = run_id
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2) + "\n")
