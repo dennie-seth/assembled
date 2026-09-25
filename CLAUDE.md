@@ -83,6 +83,17 @@ None of these exist yet — this is Phase 0. Populated as each phase lands:
   OpenRAIL / CC0-derived models. No CC-BY-NC weights (MusicGen, AudioGen) —
   this repo is public; NC would poison forks. Every generated asset logs
   `model + license + prompt + seed` in `ASSET_PROVENANCE.md`.
+- **Per-attempt run-id traceability and commit cadence for asset/GPU cards
+  is a mechanism, not prose.** The board sets `BOARD_RUN_ID` for every run
+  (also documented in the implementer's own prompt); a card that generates
+  assets records an attempt's evidence via
+  `tools/board/src/lib/attemptRecorder.js`'s `recordAttempt` — it stamps the
+  provenance sidecar and a structured attempt-log row with that run id and
+  commits exactly that attempt's evidence as one commit, so per-attempt
+  commit cadence never depends on an agent remembering to commit mid-run.
+  `tools/board/src/lib/attemptCommitCadence.js` is the mechanical backstop
+  `checkDeliverable.js` runs at review time: two different attempts' frames
+  sharing one introducing commit is a FAIL.
 - **Credit:** every Claude-authored commit carries
   `Co-authored-by: Claude <noreply@anthropic.com>`. Docs carry an `Author:`
   line. `CREDITS.md` rolls this up per subsystem.

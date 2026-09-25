@@ -12,11 +12,16 @@ function formatTimestamp(date) {
  */
 export async function createRunLog({ runsDir, taskId, now = () => new Date() }) {
   await fs.mkdir(runsDir, { recursive: true });
-  const filePath = path.join(runsDir, `${taskId}-${formatTimestamp(now())}.jsonl`);
+  const runId = `${taskId}-${formatTimestamp(now())}`;
+  const filePath = path.join(runsDir, `${runId}.jsonl`);
   const handle = await fs.open(filePath, "a");
 
   return {
     path: filePath,
+    // T-0396: the same id this run's own log is named after, threaded through to the spawned
+    // child as BOARD_RUN_ID (see claudeCliRunner.js) so a committed attempt frame can always be
+    // traced back to the run log that produced it.
+    runId,
     async append(event) {
       await handle.appendFile(`${JSON.stringify(event)}\n`, "utf8");
     },

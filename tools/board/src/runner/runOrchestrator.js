@@ -892,7 +892,10 @@ export class RunOrchestrator {
       rules,
       continuing: reused,
       comments: task.comments ?? [],
-      verdictDigest: this.buildVerdictDigestFn(verdictEntries)
+      verdictDigest: this.buildVerdictDigestFn(verdictEntries),
+      // T-0396: this run's own id, so an implementer that generates assets can find
+      // attemptRecorder.js's BOARD_RUN_ID-driven mechanism instead of re-deriving it.
+      runId: runLog.runId
     });
 
     const implementerResult = await this._runPhase({
@@ -1319,7 +1322,12 @@ export class RunOrchestrator {
     // once it knows the fuller classification) carries this SAME id, since they all describe one
     // process's consumption.
     const invocationId = this.generateInvocationIdFn();
-    const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model });
+    // T-0396: boardRunId lands on the child as BOARD_RUN_ID (see ClaudeCliRunner.buildInvocation)
+    // for every phase -- implementer, reviewer, planner, merge-conflict alike, since they all
+    // flow through this one call site. A reviewer/planner phase simply never calls the
+    // asset-generation helpers that read it, so this never produces a stray attempt commit
+    // outside an implementer's own generation work.
+    const run = await this.runner.start({ task, prompt, allowedTools, worktreeDir, model, boardRunId: runLog.runId });
     const entry = { phase, run, worktreeDir, cancelled: false };
     this.activeRuns.set(taskId, entry);
     // run.child is null when start() itself failed to spawn (e.g. a synchronous E2BIG -- see
