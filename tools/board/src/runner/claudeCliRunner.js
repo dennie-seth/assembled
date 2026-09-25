@@ -119,7 +119,7 @@ export class ClaudeCliRunner extends AgentRunner {
     return { ...env, ...this.extraEnv };
   }
 
-  buildInvocation({ task, prompt, allowedTools, worktreeDir, model }) {
+  buildInvocation({ task, prompt, allowedTools, worktreeDir, model, boardRunId }) {
     if (!task || typeof task.id !== "string" || task.id.length === 0) {
       throw new Error("ClaudeCliRunner requires a task with an id");
     }
@@ -161,17 +161,26 @@ export class ClaudeCliRunner extends AgentRunner {
     // `--input-format text` by default) -- see start(), which writes it there. That removes
     // the ceiling entirely rather than raising it, unlike routing it through an env var
     // (env has its own, larger but still finite limit).
+    const env = this.buildEnv();
+    // T-0396: the board's own run id (createRunLog's `runId`, the same id `tasks/.runs/<id>.jsonl`
+    // is named after) -- set only when the caller actually has one, never as an empty-string
+    // placeholder, so a generation helper invoked outside a board run (by hand, or from a test)
+    // sees BOARD_RUN_ID simply absent from its environment and degrades to its own no-run-id path.
+    if (typeof boardRunId === "string" && boardRunId.length > 0) {
+      env.BOARD_RUN_ID = boardRunId;
+    }
+
     return {
       command: this.command,
       args,
       cwd: worktreeDir,
-      env: this.buildEnv(),
+      env,
       prompt
     };
   }
 
-  async start({ task, prompt, allowedTools, worktreeDir, model }) {
-    const invocation = this.buildInvocation({ task, prompt, allowedTools, worktreeDir, model });
+  async start({ task, prompt, allowedTools, worktreeDir, model, boardRunId }) {
+    const invocation = this.buildInvocation({ task, prompt, allowedTools, worktreeDir, model, boardRunId });
     let child;
     try {
       child = this.spawnFn(invocation.command, invocation.args, {

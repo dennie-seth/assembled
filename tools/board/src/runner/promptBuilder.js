@@ -220,6 +220,20 @@ function formatComments(comments) {
 }
 
 /**
+ * T-0396: documents this run's own id (the same id `tasks/.runs/<id>.jsonl` is named after,
+ * also set as the child's `BOARD_RUN_ID` environment variable -- see claudeCliRunner.js) so a
+ * card author's generator script can find the mechanism this replaces "commit each attempt
+ * immediately" prose with: `tools/board/src/lib/attemptRecorder.js`'s `recordAttempt` reads
+ * `BOARD_RUN_ID` automatically and records it in every attempt's provenance sidecar and
+ * attempt-log row.
+ */
+function runIdSection(runId) {
+  return `## Run id
+
+This run's id is \`${runId}\`. The board also sets it as the \`BOARD_RUN_ID\` environment variable for your whole run. If this card generates assets, use \`tools/board/src/lib/attemptRecorder.js\`'s \`recordAttempt\` to write each attempt's provenance sidecar and attempt-log row and commit its evidence -- it reads \`BOARD_RUN_ID\` automatically and commits exactly one attempt per call, so commit cadence is mechanical rather than something you have to remember. Pass \`runId\` through by hand only if you're writing a provenance sidecar or attempt-log row some other way.`;
+}
+
+/**
  * Builds the prompt handed to `claude -p` for an implementer run: task
  * identity, the fixed implementer workflow ordering, the assigned agent's
  * own definition, whichever rules match the agent's path scope, and the
@@ -236,7 +250,15 @@ function formatComments(comments) {
  * the prompt (and eventually the argv/stdin payload, see claudeCliRunner.js's
  * E2BIG history) on every retry. Omitted entirely when empty.
  */
-export function buildPrompt({ task, agentDef, rules = [], continuing = false, comments = [], verdictDigest = "" }) {
+export function buildPrompt({
+  task,
+  agentDef,
+  rules = [],
+  continuing = false,
+  comments = [],
+  verdictDigest = "",
+  runId = null
+}) {
   if (!task || typeof task.body !== "string") {
     throw new Error("buildPrompt requires a task with a body");
   }
@@ -266,6 +288,10 @@ export function buildPrompt({ task, agentDef, rules = [], continuing = false, co
 
   if (comments.length > 0) {
     sections.push(`## Human comments on this card\n\n${formatComments(comments)}`);
+  }
+
+  if (runId) {
+    sections.push(runIdSection(runId));
   }
 
   sections.push(FOOTER_SECTION);

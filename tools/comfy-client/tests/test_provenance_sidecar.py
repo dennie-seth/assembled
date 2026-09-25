@@ -26,6 +26,7 @@ from comfy_client.provenance_sidecar import (
     GeneratorFieldError,
     GeneratorNotCommittedError,
     apply_arm_c_benchmark_fields,
+    resolve_run_id,
     validate_generator_field,
     write_provenance_sidecar,
 )
@@ -410,3 +411,107 @@ def test_apply_arm_c_benchmark_fields_motion_class_does_not_affect_derived_field
     result = apply_arm_c_benchmark_fields({}, [0.05, 0.09, 0.03], motion_class="loop")
     assert result["frame_delta_range"] == [0.03, 0.09]
     assert result["arm_c_benchmark"] == [0.072, 0.112]
+
+
+# ---------------------------------------------------------------------------
+# T-0396: run-id traceability. Mirrors tools/board/src/lib/attemptRecorder.js's
+# `resolveRunId` / the JS "never omitted, never fabricated" rule for `run_id`
+# specifically -- so a reviewer can mechanically trace a committed frame back
+# to the run log (`tasks/.runs/<id>.jsonl`) that produced it. Unlike
+# `comfyui_version`/`card`, `run_id` needs to be positively distinguishable
+# as "checked, and there wasn't one" (explicit `null`) from "this sidecar
+# predates run-id traceability" (key absent entirely) -- the two are not the
+# same fact, and only the writer, never the caller's own record, gets to say
+# which one is true.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_run_id_reads_board_run_id_from_env(monkeypatch):
+    monkeypatch.setenv("BOARD_RUN_ID", "run-42")
+    assert resolve_run_id() == "run-42"
+
+
+def test_resolve_run_id_returns_none_when_absent(monkeypatch):
+    monkeypatch.delenv("BOARD_RUN_ID", raising=False)
+    assert resolve_run_id() is None
+
+
+def test_resolve_run_id_returns_none_when_empty(monkeypatch):
+    monkeypatch.setenv("BOARD_RUN_ID", "")
+    assert resolve_run_id() is None
+
+
+def test_resolve_run_id_reads_from_an_explicit_env_mapping_not_os_environ():
+    assert resolve_run_id({"BOARD_RUN_ID": "run-7"}) == "run-7"
+    assert resolve_run_id({}) is None
+
+
+def test_resolve_run_id_never_fabricates_one(monkeypatch):
+    """No `BOARD_RUN_ID` at all -- outside a board run, e.g. invoked by hand
+    or from a test -- must yield `None`, never a generated/placeholder id."""
+    monkeypatch.delenv("BOARD_RUN_ID", raising=False)
+    assert resolve_run_id(env={}) is None
+
+
+def test_write_provenance_sidecar_writes_run_id_when_given(repo):
+    rel = _commit_recipe(repo)
+    out = repo / "assets/src/concept/sheet.provenance.json"
+
+    write_provenance_sidecar(out, RECORD, generator=rel, repo_root=repo, run_id="run-99")
+
+    written = json.loads(out.read_text())
+    assert written["run_id"] == "run-99"
+
+
+def test_write_provenance_sidecar_writes_explicit_null_run_id_when_none_is_passed(repo):
+    """`run_id=None` must render as JSON `null`, not be silently omitted --
+    that is the whole point of the field: distinguishing 'checked, no run
+    id' from 'never checked'."""
+    rel = _commit_recipe(repo)
+    out = repo / "assets/src/concept/sheet.provenance.json"
+
+    write_provenance_sidecar(out, RECORD, generator=rel, repo_root=repo, run_id=None)
+
+    text = out.read_text()
+    written = json.loads(text)
+    assert "run_id" in written
+    assert written["run_id"] is None
+    assert '"run_id": null' in text
+
+
+def test_write_provenance_sidecar_omits_run_id_entirely_when_kwarg_not_passed(repo):
+    """Backward compatible: every existing caller that has not been updated
+    to pass `run_id` writes exactly what it always has -- no `run_id` key at
+    all, which is a different, weaker claim than an explicit `null`."""
+    rel = _commit_recipe(repo)
+    out = repo / "assets/src/concept/sheet.provenance.json"
+
+    write_provenance_sidecar(out, RECORD, generator=rel, repo_root=repo)
+
+    written = json.loads(out.read_text())
+    assert "run_id" not in written
+
+
+def test_write_provenance_sidecar_strips_a_records_own_run_id_when_kwarg_not_supplied(repo):
+    """`run_id` is the writer's to set, same idiom as `generator` -- a record
+    cannot smuggle its own `run_id` through when the caller didn't ask for
+    one."""
+    rel = _commit_recipe(repo)
+    out = repo / "assets/src/concept/sheet.provenance.json"
+    smuggled = {**RECORD, "run_id": "smuggled"}
+
+    write_provenance_sidecar(out, smuggled, generator=rel, repo_root=repo)
+
+    written = json.loads(out.read_text())
+    assert "run_id" not in written
+
+
+def test_write_provenance_sidecar_run_id_kwarg_overrides_a_records_own_value(repo):
+    rel = _commit_recipe(repo)
+    out = repo / "assets/src/concept/sheet.provenance.json"
+    smuggled = {**RECORD, "run_id": "smuggled"}
+
+    write_provenance_sidecar(out, smuggled, generator=rel, repo_root=repo, run_id="run-100")
+
+    written = json.loads(out.read_text())
+    assert written["run_id"] == "run-100"

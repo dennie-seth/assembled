@@ -652,3 +652,22 @@ describe("buildMergeConflictPrompt", () => {
     expect(prompt).toContain("Implements board tooling.");
   });
 });
+
+describe("buildPrompt run id (T-0396)", () => {
+  it("includes a Run id section documenting BOARD_RUN_ID when runId is given", () => {
+    const prompt = buildPrompt({
+      task: TASK,
+      agentDef: INFRA_AGENT_DEF,
+      rules: ALL_RULES,
+      runId: "T-0099-2026-09-25T00-00-00-000Z"
+    });
+    expect(prompt).toContain("## Run id");
+    expect(prompt).toContain("T-0099-2026-09-25T00-00-00-000Z");
+    expect(prompt).toContain("BOARD_RUN_ID");
+  });
+
+  it("omits the Run id section entirely when no runId is given", () => {
+    const prompt = buildPrompt({ task: TASK, agentDef: INFRA_AGENT_DEF, rules: ALL_RULES });
+    expect(prompt).not.toContain("## Run id");
+  });
+});

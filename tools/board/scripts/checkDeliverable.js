@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { promises as fs } from "node:fs";
 import { parseTask } from "../src/lib/taskParser.js";
 import { checkDeliverable } from "../src/lib/deliverableCheck.js";
+import { checkAttemptCommitCadence, defaultIntroducingCommit, listEvidenceFiles } from "../src/lib/attemptCommitCadence.js";
 import { readTaskBodyAtMergeBase, readRunStartTimestamp as readGitRunStartTimestamp } from "../src/lib/gitTaskHistory.js";
 import { readTaskBodyBeforeRun, readRunStartTimestamp as readDbRunStartTimestamp } from "../src/lib/db/dbTaskHistory.js";
 import { FINDING_HEADING } from "../src/lib/preRegisteredFinding.js";
@@ -80,6 +81,24 @@ async function main() {
     const runStartTime = isDbMode
       ? readDbRunStartTimestamp(db, id)
       : await readGitRunStartTimestamp({ cwd: REPO_ROOT, baseRef: "develop" });
+
+    // T-0396: a per-attempt commit cadence check, independent of deliverable_type -- it applies
+    // even to a card whose run never produces a promoted deliverable at all (e.g. T-0387's own
+    // stop-and-report FALSIFIED outcome), because the thing it verifies is not "does a
+    // deliverable exist" but "did each attempt's own evidence frames land in a distinct commit,
+    // instead of being batched together the way T-0387's three attempts were in 22a2867".
+    const cadence = await checkAttemptCommitCadence({
+      evidenceFiles: await listEvidenceFiles(path.join(REPO_ROOT, "docs/assets/evidence", id)),
+      introducingCommit: (filePath) => defaultIntroducingCommit(REPO_ROOT, filePath)
+    });
+    if (cadence.applicable && !cadence.ok) {
+      console.error(`${id}: attempt commit cadence check FAILED.\n`);
+      for (const message of cadence.errors) {
+        console.error(`  ${message}`);
+      }
+      process.exitCode = 1;
+      return;
+    }
 
     const report = await checkDeliverable(task, {
       attachmentsDir,

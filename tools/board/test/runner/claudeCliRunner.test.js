@@ -310,6 +310,46 @@ describe("ClaudeCliRunner argv construction", () => {
   });
 });
 
+describe("ClaudeCliRunner BOARD_RUN_ID (T-0396)", () => {
+  it("sets BOARD_RUN_ID in the child env when boardRunId is provided", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    const invocation = runner.buildInvocation({
+      task: TASK,
+      prompt: "x",
+      allowedTools: ["Read"],
+      worktreeDir: "/wt",
+      boardRunId: "T-0396-2026-09-25T00-00-00-000Z"
+    });
+    expect(invocation.env.BOARD_RUN_ID).toBe("T-0396-2026-09-25T00-00-00-000Z");
+  });
+
+  it("omits BOARD_RUN_ID entirely when no boardRunId is given -- never an empty-string placeholder", () => {
+    const runner = new ClaudeCliRunner({ spawnFn: vi.fn(), hostEnv: {} });
+    const invocation = runner.buildInvocation({
+      task: TASK,
+      prompt: "x",
+      allowedTools: ["Read"],
+      worktreeDir: "/wt"
+    });
+    expect(invocation.env.BOARD_RUN_ID).toBeUndefined();
+  });
+
+  it("start() threads boardRunId through to the spawned child's env", async () => {
+    const child = fakeChild();
+    const spawnFn = vi.fn(() => child);
+    const runner = new ClaudeCliRunner({ spawnFn, hostEnv: {} });
+    await runner.start({
+      task: TASK,
+      prompt: "x",
+      allowedTools: ["Read"],
+      worktreeDir: "/wt",
+      boardRunId: "T-0099-run-id"
+    });
+    const [, , options] = spawnFn.mock.calls[0];
+    expect(options.env.BOARD_RUN_ID).toBe("T-0099-run-id");
+  });
+});
+
 describe("ClaudeCliRunner env isolation", () => {
   it("drops arbitrary host env vars, keeping only the explicit allowlist", () => {
     const hostEnv = {
