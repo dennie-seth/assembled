@@ -81,6 +81,13 @@ describe("createRunLog", () => {
 
     expect(logA.path).not.toBe(logB.path);
   });
+
+  it("exposes runId matching the file's own basename (T-0396: threaded through as BOARD_RUN_ID so a committed attempt frame can be traced back to this exact run log)", async () => {
+    const log = await createRunLog({ runsDir: tmpDir, taskId: "T-0396" });
+    expect(log.runId).toBe(path.basename(log.path, ".jsonl"));
+    expect(log.runId.startsWith("T-0396-")).toBe(true);
+    await log.close();
+  });
 });
 
 describe("readRunLog", () => {
