@@ -85,15 +85,28 @@ None of these exist yet — this is Phase 0. Populated as each phase lands:
   `model + license + prompt + seed` in `ASSET_PROVENANCE.md`.
 - **Per-attempt run-id traceability and commit cadence for asset/GPU cards
   is a mechanism, not prose.** The board sets `BOARD_RUN_ID` for every run
-  (also documented in the implementer's own prompt); a card that generates
-  assets records an attempt's evidence via
-  `tools/board/src/lib/attemptRecorder.js`'s `recordAttempt` — it stamps the
-  provenance sidecar and a structured attempt-log row with that run id and
-  commits exactly that attempt's evidence as one commit, so per-attempt
-  commit cadence never depends on an agent remembering to commit mid-run.
-  `tools/board/src/lib/attemptCommitCadence.js` is the mechanical backstop
-  `checkDeliverable.js` runs at review time: two different attempts' frames
-  sharing one introducing commit is a FAIL.
+  (also documented in the implementer's own prompt). Two mechanisms record
+  it, one per side of the pipeline — a card should use whichever one its own
+  generation path actually calls, not restate the rule as prose:
+  - **Board/JS side:** `tools/board/src/lib/attemptRecorder.js`'s
+    `recordAttempt` — it stamps the provenance sidecar and a structured
+    attempt-log row with that run id and commits exactly that attempt's
+    evidence as one commit, so per-attempt commit cadence never depends on
+    an agent remembering to commit mid-run.
+    `tools/board/src/lib/attemptCommitCadence.js` is the mechanical backstop
+    `checkDeliverable.js` runs at review time: two different attempts'
+    frames sharing one introducing commit is a FAIL.
+  - **Python asset-generation side (the actual production path under
+    `assets/src/**`):** `comfy_client.provenance_sidecar`'s
+    `resolve_run_id()` (reads `BOARD_RUN_ID`, `None` outside a board run,
+    never fabricates one) and `write_provenance_sidecar`'s `run_id=` keyword
+    (an explicit key, `null` when there was none — distinct from leaving the
+    keyword out entirely, which preserves a sidecar writer's pre-T-0396
+    behaviour). A per-card generator script threads `resolve_run_id()` into
+    its own provenance dict and attempt-log row the same way
+    `gen_player_profile_forward_limb_reference_T0394.py`'s `run_attempt`/
+    `append_attempt_log` do — that is the reference example new generator
+    scripts should copy, not the JS module above.
 - **Credit:** every Claude-authored commit carries
   `Co-authored-by: Claude <noreply@anthropic.com>`. Docs carry an `Author:`
   line. `CREDITS.md` rolls this up per subsystem.
