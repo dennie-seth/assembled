@@ -23,6 +23,9 @@ RED state: gen_player_profile_forward_limb_reference_T0394 does not exist yet.
 
 from __future__ import annotations
 
+import io
+import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -425,3 +428,172 @@ def test_skeleton_paths_are_this_cards_own_not_T0387s():
 def test_mask_path_helper_is_this_cards_own_per_attempt():
     path = gen.mask_path_for_attempt(1)
     assert path.name == "player_profile_forward_limb_head_mask_T0394_attempt_1.png"
+
+
+# ── T-0396: run-id traceability -- the board's BOARD_RUN_ID must land on ────
+# every committed frame's provenance and its own attempt-log row, so a
+# reviewer can trace a committed frame back to the run log
+# (tasks/.runs/<id>.jsonl) that produced it. `resolve_run_id` itself (never
+# fabricates, None when absent/empty) is tested exhaustively in
+# tools/comfy-client/tests/test_provenance_sidecar.py; these tests cover this
+# card's own wiring of it into `run_attempt`'s provenance dict and
+# `append_attempt_log`'s row -- the actual production call site.
+
+
+def test_resolve_run_id_is_the_shared_comfy_client_helper():
+    """This card must not hand-roll its own env lookup -- it imports the one
+    shared helper every future generator is meant to use."""
+    from comfy_client.provenance_sidecar import resolve_run_id as shared_resolve_run_id
+
+    assert gen.resolve_run_id is shared_resolve_run_id
+
+
+def test_attempt_log_header_has_a_run_id_column():
+    header_row = gen.ATTEMPT_LOG_HEADER.splitlines()[-2]
+    assert "Run-Id" in header_row
+
+
+def test_attempt_log_header_column_count_matches_its_own_separator_row():
+    """A hand-edited header is easy to get column-count wrong on -- this
+    catches a header row and separator row that have silently drifted apart."""
+    header_row, separator_row = gen.ATTEMPT_LOG_HEADER.splitlines()[-2:]
+    assert header_row.count("|") == separator_row.count("|")
+
+
+def test_append_attempt_log_renders_the_run_id_when_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(gen, "ATTEMPT_LOG_PATH", tmp_path / "log.md")
+    provenance = {
+        "attempt": 1,
+        "run_id": "run-xyz789",
+        "seed": 380002,
+        "denoise": 0.87,
+        "detail_pass_denoise": 0.55,
+        "controlnet_strength": 1.5,
+        "controlnet_end_percent": 1.0,
+        "gpu_seconds": 12.3,
+        "green_content": {},
+    }
+    gen.append_attempt_log(provenance)
+
+    lines = gen.ATTEMPT_LOG_PATH.read_text().splitlines()
+    row = next(line for line in lines if line.startswith("| 1 "))
+    assert "run-xyz789" in row
+
+
+def test_append_attempt_log_renders_the_literal_none_when_run_id_is_absent(tmp_path, monkeypatch):
+    """Never blank, never fabricated -- an attempt with no run id (invoked by
+    hand, outside a board run) still gets a visible, honest cell."""
+    monkeypatch.setattr(gen, "ATTEMPT_LOG_PATH", tmp_path / "log.md")
+    provenance = {
+        "attempt": 2,
+        "run_id": None,
+        "seed": 380003,
+        "denoise": 0.87,
+        "detail_pass_denoise": 0.55,
+        "controlnet_strength": 1.5,
+        "controlnet_end_percent": 1.0,
+        "gpu_seconds": 10.0,
+        "green_content": {},
+    }
+    gen.append_attempt_log(provenance)
+
+    lines = gen.ATTEMPT_LOG_PATH.read_text().splitlines()
+    row = next(line for line in lines if line.startswith("| 2 "))
+    assert "| none |" in row
+    assert "None" not in row
+
+
+def test_append_attempt_log_renders_the_literal_none_when_run_id_key_is_missing(tmp_path, monkeypatch):
+    """Same rule for a provenance dict that predates this field entirely (a
+    caller that has not been updated) -- `.get` must not blow up, and the
+    cell must still read 'none', not blank."""
+    monkeypatch.setattr(gen, "ATTEMPT_LOG_PATH", tmp_path / "log.md")
+    provenance = {
+        "attempt": 3,
+        "seed": 380004,
+        "denoise": 0.87,
+        "detail_pass_denoise": 0.55,
+        "controlnet_strength": 1.5,
+        "controlnet_end_percent": 1.0,
+        "gpu_seconds": 9.0,
+        "green_content": {},
+    }
+    gen.append_attempt_log(provenance)
+
+    lines = gen.ATTEMPT_LOG_PATH.read_text().splitlines()
+    row = next(line for line in lines if line.startswith("| 3 "))
+    assert "| none |" in row
+
+
+def _scratch_dir(name: str) -> Path:
+    """A throwaway directory *under* `REPO_ROOT`, inside the already-gitignored
+    `assets/out/` tree (`**/assets/out/` in `.gitignore`) -- unlike pytest's own
+    `tmp_path` (outside the repo entirely), paths here satisfy `run_attempt`'s
+    own `.relative_to(REPO_ROOT)` calls (e.g. for `skeleton_keypoints_path`,
+    `detail_pass_mask_path`), and never touch a tracked file or show up in
+    `git status` even if a test's cleanup is skipped."""
+    d = gen.REPO_ROOT / "assets" / "out" / "_t0396_test_scratch" / name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _stub_out_network_and_tracked_writes(monkeypatch, scratch_dir: Path):
+    """Redirect every write `run_attempt` performs against a *tracked* repo
+    path (the shared skeleton PNG/JSON, this attempt's own head mask) into
+    `scratch_dir`, and replace every ComfyUI HTTP call with an in-process
+    stub. No live ComfyUI server is needed, and no tracked file is touched --
+    `run_attempt`'s own provenance-dict construction (the actual production
+    call site T-0396 wires `run_id` into) is exercised for real."""
+    monkeypatch.setattr(gen, "SKELETON_PATH", scratch_dir / "skeleton.png")
+    monkeypatch.setattr(gen, "SKELETON_KEYPOINTS_PATH", scratch_dir / "skeleton.json")
+    monkeypatch.setattr(
+        gen, "mask_path_for_attempt", lambda attempt: scratch_dir / f"mask_{attempt}.png"
+    )
+
+    def _fake_fetch_save_image(info, node_id):
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 64), (0, 0, 0)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    monkeypatch.setattr(gen, "upload_image", lambda path: "uploaded.png")
+    monkeypatch.setattr(gen, "submit_prompt", lambda graph: "fake-prompt-id")
+    monkeypatch.setattr(gen, "wait_for_completion", lambda prompt_id, timeout_s=300: {})
+    monkeypatch.setattr(gen, "fetch_save_image", _fake_fetch_save_image)
+
+
+def _out_dir_for_attempt(attempt):
+    return gen.REPO_ROOT / "assets" / "out" / "forward_limb_reference_T0394" / f"attempt_{attempt}"
+
+
+def test_run_attempt_records_the_current_board_run_id_in_provenance(monkeypatch):
+    monkeypatch.setenv("BOARD_RUN_ID", "run-abc123")
+    attempt = 900001
+    scratch_dir = _scratch_dir(f"attempt_{attempt}")
+    _stub_out_network_and_tracked_writes(monkeypatch, scratch_dir)
+    out_dir = _out_dir_for_attempt(attempt)
+    try:
+        provenance = gen.run_attempt(attempt=attempt, seed=1)
+        assert provenance["run_id"] == "run-abc123"
+
+        on_disk = json.loads((out_dir / "provenance_candidate.json").read_text())
+        assert on_disk["run_id"] == "run-abc123"
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+
+
+def test_run_attempt_records_an_explicit_none_run_id_outside_a_board_run(monkeypatch):
+    monkeypatch.delenv("BOARD_RUN_ID", raising=False)
+    attempt = 900002
+    scratch_dir = _scratch_dir(f"attempt_{attempt}")
+    _stub_out_network_and_tracked_writes(monkeypatch, scratch_dir)
+    out_dir = _out_dir_for_attempt(attempt)
+    try:
+        provenance = gen.run_attempt(attempt=attempt, seed=1)
+        assert "run_id" in provenance
+        assert provenance["run_id"] is None
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
