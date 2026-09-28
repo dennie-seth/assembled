@@ -351,7 +351,76 @@
       "panel": "legs",
       "method_used": "sam3",
       "oklab_foreground_px": 235408,
-      "sam3_foreground_px": 547,
+      "sam3_foreground_px": 173562,
+      "sam3_degenerate_mask": false,
+      "prompts": [
+        {
+          "x": 358,
+          "y": 312,
+          "polarity": "positive",
+          "derivation": "right_thigh = midpoint(HIP[8], KNEE[9])"
+        },
+        {
+          "x": 276,
+          "y": 757,
+          "polarity": "positive",
+          "derivation": "right_lower_leg = midpoint(KNEE[9], ANKLE[10])"
+        },
+        {
+          "x": 225,
+          "y": 983,
+          "polarity": "positive",
+          "derivation": "right_boot = ANKLE[10]"
+        },
+        {
+          "x": 665,
+          "y": 312,
+          "polarity": "positive",
+          "derivation": "left_thigh = midpoint(HIP[11], KNEE[12])"
+        },
+        {
+          "x": 747,
+          "y": 757,
+          "polarity": "positive",
+          "derivation": "left_lower_leg = midpoint(KNEE[12], ANKLE[13])"
+        },
+        {
+          "x": 798,
+          "y": 983,
+          "polarity": "positive",
+          "derivation": "left_boot = ANKLE[13]"
+        },
+        {
+          "x": 4,
+          "y": 4,
+          "polarity": "negative",
+          "derivation": "corner_top_left"
+        },
+        {
+          "x": 1020,
+          "y": 4,
+          "polarity": "negative",
+          "derivation": "corner_top_right"
+        },
+        {
+          "x": 4,
+          "y": 1020,
+          "polarity": "negative",
+          "derivation": "corner_bottom_left"
+        },
+        {
+          "x": 1020,
+          "y": 1020,
+          "polarity": "negative",
+          "derivation": "corner_bottom_right"
+        },
+        {
+          "x": 512,
+          "y": 25,
+          "polarity": "negative",
+          "derivation": "legs_panel_upper_body_collapse_point (NECK[1], not real anatomy on this panel)"
+        }
+      ],
       "before": "docs/assets/evidence/T-0337/panel_legs_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_legs_oklab_after.png",
       "sam3_after": "docs/assets/evidence/T-0337/panel_legs_sam3_after.png",
