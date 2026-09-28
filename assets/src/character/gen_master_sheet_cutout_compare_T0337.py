@@ -25,21 +25,25 @@ synthetic stand-in -- which is what this card's own comparison needs; T-0337
 does not require T-0351's own acceptance criteria to have passed, only a
 real sheet to segment.
 
-**SAM3's own model input has no real loader on this host** (this module's
-own `char_gen.cutout_sam3` docstring has the full finding). `_sam3_model_loader`
-below wires the SDXL checkpoint through as a structurally-valid but
-semantically wrong placeholder -- not to pretend it will work, but so every
-panel's SAM3 attempt is a genuine round trip against the live host, proving
-the exact same failure mode (`AttributeError: ... forward_segment`) panel by
-panel rather than asserting it once and skipping the rest.
+**[FIX ROUND 1] `_sam3_model_loader` builds the real loader.** SAM3's model
+input is satisfied by `UNETLoader` (ComfyUI core), naming the now-installed
+`sam3.1_multiplex_fp16.safetensors` checkpoint -- see
+`char_gen.cutout_sam3`'s module docstring for the full loader-location
+correction and `docs/assets/evidence/T-0337/README.md` for the weight
+installation's verification. There is no placeholder checkpoint substituted
+anywhere in this script: if `evaluate_sam3_availability` reports the
+prerequisite unmet, `main()` reports that and performs no comparison, full
+stop -- it never wires a structurally-valid-but-wrong model in its place.
 
 Usage (from the repo root, against the WSL2->Windows ComfyUI host):
     python3 assets/src/character/gen_master_sheet_cutout_compare_T0337.py
 
-Writes (always):
-    docs/assets/evidence/T-0337/panel_<key>_before.png
-    docs/assets/evidence/T-0337/panel_<key>_oklab_after.png
-    docs/assets/evidence/T-0337/panel_<key>_descended_32x64.png (+.provenance.json)
+Writes (always, when SAM3 is available -- see `main()` for the unavailable
+short-circuit):
+    docs/assets/evidence/T-0337/panel_{key}_before.png
+    docs/assets/evidence/T-0337/panel_{key}_oklab_after.png
+    docs/assets/evidence/T-0337/panel_{key}_sam3_after.png (when SAM3 succeeds for that panel)
+    docs/assets/evidence/T-0337/panel_{key}_descended_32x64.png (+.provenance.json)
     docs/assets/evidence/T-0337/comparison.json
 """
 
@@ -110,10 +114,13 @@ PANEL_KEYS = [
     "legs",
 ]
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
-#: The SDXL checkpoint already on the host -- type-compatible (MODEL) with
-#: SAM3_Detect's required `model` input but not a real SAM3 model, per this
-#: card's own live-host finding (char_gen.cutout_sam3's module docstring).
-_PLACEHOLDER_CHECKPOINT = "sd_xl_base_1.0.safetensors"
+#: The now-installed SAM3.1 checkpoint (docs/assets/evidence/T-0337/README.md
+#: has the sha256 + source verification), loaded via the generic `UNETLoader`
+#: node -- the real loader location, per char_gen.cutout_sam3's [FIX ROUND 1]
+#: module docstring. Never substituted with a placeholder: if this filename
+#: isn't in UNETLoader's own unet_name option list, `_probe_sam3_availability`
+#: reports unavailable and `main()` performs no comparison.
+SAM3_UNET_CHECKPOINT = "sam3.1_multiplex_fp16.safetensors"
 #: COCO/OpenPose joint index 1 = NECK, same numbering
 #: `pose_rig_master_sheet_T0351.py` uses throughout.
 _NECK_JOINT = 1
@@ -121,8 +128,8 @@ _NECK_JOINT = 1
 
 def _sam3_model_loader() -> dict:
     return {
-        "class_type": "CheckpointLoaderSimple",
-        "inputs": {"ckpt_name": _PLACEHOLDER_CHECKPOINT},
+        "class_type": "UNETLoader",
+        "inputs": {"unet_name": SAM3_UNET_CHECKPOINT, "weight_dtype": "default"},
     }
 
 
@@ -137,14 +144,22 @@ def _neck_pixel(points_norm: dict[int, tuple[float, float]]) -> dict[str, int]:
 
 
 def _probe_sam3_availability(client: ComfyUIClient) -> tuple[dict, str | None]:
+    """[FIX ROUND 1] Probes the real loader location -- `UNETLoader`'s own
+    `unet_name` option list -- not `models/detection`, which `UNETLoader`
+    never reads (see `char_gen.cutout_sam3`'s module docstring)."""
     try:
-        resp = client.session.get(f"{COMFY_BASE_URL}/object_info/SAM3_Detect", timeout=15)
-        node_types = set(resp.json().keys()) if resp.ok else set()
-        models_resp = client.session.get(f"{COMFY_BASE_URL}/models/detection", timeout=15)
-        model_files = models_resp.json() if models_resp.ok else []
+        detect_resp = client.session.get(f"{COMFY_BASE_URL}/object_info/SAM3_Detect", timeout=15)
+        node_types = set(detect_resp.json().keys()) if detect_resp.ok else set()
+        loader_resp = client.session.get(f"{COMFY_BASE_URL}/object_info/UNETLoader", timeout=15)
+        unet_filenames: list[str] = []
+        if loader_resp.ok:
+            required = loader_resp.json().get("UNETLoader", {}).get("input", {}).get("required", {})
+            options = required.get("unet_name")
+            if options:
+                unet_filenames = options[0]
     except Exception as exc:  # noqa: BLE001 -- evidence gathering, never fatal
         return {"nodes_present": None, "available": None, "reason": None}, str(exc)
-    availability = evaluate_sam3_availability(node_types, model_files)
+    availability = evaluate_sam3_availability(node_types, unet_filenames)
     return {
         "nodes_present": availability.nodes_present,
         "available": availability.available,
@@ -188,6 +203,26 @@ def main() -> None:
 
     availability, availability_error = _probe_sam3_availability(client)
 
+    if not availability.get("available"):
+        # [FIX ROUND 1] SAM3's prerequisite is unmet on this host -- report
+        # it and stop. Never substitute another model for SAM3_Detect's
+        # required `model` input; there is nothing to compare.
+        comparison = {
+            "sheet": str(SHEET_PATH.relative_to(REPO_ROOT)),
+            "sam3_availability": availability,
+            "sam3_availability_probe_error": availability_error,
+            "run_id": run_id,
+            "panels": [],
+            "note": (
+                "SAM3 prerequisite unmet on this host -- no comparison performed. "
+                f"reason={availability.get('reason')!r}"
+            ),
+        }
+        comparison_path = EVIDENCE_DIR / "comparison.json"
+        comparison_path.write_text(json.dumps(comparison, indent=2) + "\n")
+        print(f"SAM3 unavailable ({availability.get('reason')}); wrote {comparison_path}")
+        return
+
     panel_results = []
     for index, key in enumerate(PANEL_KEYS):
         crop = _panel_crop(sheet, index)
@@ -217,15 +252,25 @@ def main() -> None:
         )
         oklab_fg_px = int(oklab_mask.sum())
 
-        after_arr = np.array(crop).copy()
-        after_arr[~oklab_mask] = (255, 0, 255)  # magenta marks Oklab's own background call
-        after_path = EVIDENCE_DIR / f"panel_{key}_oklab_after.png"
-        Image.fromarray(after_arr).save(after_path)
+        oklab_after_arr = np.array(crop).copy()
+        oklab_after_arr[~oklab_mask] = (255, 0, 255)  # magenta marks Oklab's own background call
+        oklab_after_path = EVIDENCE_DIR / f"panel_{key}_oklab_after.png"
+        Image.fromarray(oklab_after_arr).save(oklab_after_path)
 
+        sam3_fg_px = None
+        sam3_after_path = None
+        if method == "sam3":
+            sam3_fg_px = int(mask.sum())
+            sam3_after_arr = np.array(crop).copy()
+            sam3_after_arr[~mask] = (255, 0, 255)  # magenta marks SAM3's own background call
+            sam3_after_path = EVIDENCE_DIR / f"panel_{key}_sam3_after.png"
+            Image.fromarray(sam3_after_arr).save(sam3_after_path)
+
+        # Descend whichever mask cut_master_sheet_part actually used
+        # (method-labelled) -- not hard-coded to Oklab, so the descended
+        # evidence matches the primary path that really produced it.
         descended_path = EVIDENCE_DIR / f"panel_{key}_descended_32x64.png"
-        descended = box_descend_part(
-            crop, oklab_mask, palette_list, target_size=(32, 64), margin_px=4
-        )
+        descended = box_descend_part(crop, mask, palette_list, target_size=(32, 64), margin_px=4)
         save_sprite_sheet(descended, descended_path, palette=palette_list)
         write_provenance_sidecar(
             EVIDENCE_DIR / f"panel_{key}_descended_32x64.provenance.json",
@@ -240,8 +285,8 @@ def main() -> None:
             card="T-0337",
             note=(
                 "Evidence/demonstration descent, not a curated final -- descends the "
-                "whole-figure cutout (no per-limb SAM3 mask was available for this panel; "
-                "see docs/assets/evidence/T-0337/README.md)."
+                f"whole-figure cutout produced by the {method} method for this panel; "
+                "see docs/assets/evidence/T-0337/README.md."
             ),
             run_id=run_id,
         )
@@ -251,13 +296,16 @@ def main() -> None:
                 "panel": key,
                 "method_used": method,
                 "oklab_foreground_px": oklab_fg_px,
-                "sam3_foreground_px": int(mask.sum()) if method == "sam3" else None,
+                "sam3_foreground_px": sam3_fg_px,
                 "before": str(before_path.relative_to(REPO_ROOT)),
-                "oklab_after": str(after_path.relative_to(REPO_ROOT)),
+                "oklab_after": str(oklab_after_path.relative_to(REPO_ROOT)),
+                "sam3_after": (
+                    str(sam3_after_path.relative_to(REPO_ROOT)) if sam3_after_path else None
+                ),
                 "descended_part": str(descended_path.relative_to(REPO_ROOT)),
             }
         )
-        print(f"{key}: method_used={method} oklab_foreground_px={oklab_fg_px}")
+        print(f"{key}: method_used={method} oklab_fg_px={oklab_fg_px} sam3_fg_px={sam3_fg_px}")
 
     comparison = {
         "sheet": str(SHEET_PATH.relative_to(REPO_ROOT)),
