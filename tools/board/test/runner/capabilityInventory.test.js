@@ -17,6 +17,40 @@ describe("capabilityInventory", () => {
     expect(INSTALLED_MODELS).toContain("player_identity_v1.safetensors");
   });
 
+  it("lists the SAM3.1 checkpoint installed on the host for T-0337's cutout work", () => {
+    // Installed 2026-09-28 into F:\ComfyUI\models\diffusion_models\ (the folder UNETLoader reads).
+    // Its absence here blocked T-0337's fix round at capabilityPreflight even though the weights
+    // were genuinely present -- the same false block this inventory's own header warns about.
+    expect(INSTALLED_MODELS).toContain("sam3.1_multiplex_fp16.safetensors");
+  });
+
+  it("lists every other model verified present in the host's ComfyUI model folders", () => {
+    // Enumerated from F:\ComfyUI\models\{loras,controlnet,ipadapter,clip_vision} on 2026-09-28.
+    // Each was on disk long before this commit; none had ever been added, so an AC naming any of
+    // them would have falsely blocked exactly as sam3.1 did.
+    for (const name of [
+      "player_identity_profile_v1.safetensors",
+      "player_identity_v2.safetensors",
+      "player_identity_v2_checkpoint_demo.safetensors",
+      "smoke_test_T0248.safetensors",
+      "controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+      "ip-adapter-plus_sdxl_vit-h.safetensors",
+      "ip-adapter_sdxl.safetensors",
+      "ip-adapter_sdxl_vit-h.safetensors",
+      "CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors",
+      "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+    ]) {
+      expect(INSTALLED_MODELS).toContain(name);
+    }
+  });
+
+  it("still excludes a model that is not on the host, so the guard keeps its teeth", () => {
+    // The inventory is an allowlist, not a wildcard: capabilityPreflight must still refuse an AC
+    // naming something nobody installed (T-0221's SolidMask precedent, model-side).
+    expect(INSTALLED_MODELS).not.toContain("sam3_not_installed.safetensors");
+    expect(INSTALLED_MODELS).not.toContain("sd_xl_refiner_1.0.safetensors");
+  });
+
   it("lists only ComfyUI node classes actually confirmed reachable here, not an exhaustive built-in catalog", () => {
     expect(INSTALLED_COMFYUI_NODES).toContain("CheckpointLoaderSimple");
     expect(INSTALLED_COMFYUI_NODES).toContain("ImageQuantize");
