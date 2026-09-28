@@ -4,48 +4,41 @@ itself is untouched here and stays available as the documented fallback
 (seven tuning rounds are embodied in it; this card exists to stop retuning
 it, not to retune it further).
 
-**Live-host finding this module encodes** (full evidence:
-`docs/assets/evidence/T-0337/README.md`). Probed 2026-09-28 against the real
-ComfyUI host (`172.18.192.1:8188`, `GET /system_stats` confirms it's the
-same RTX 3070 Ti host every other generator in this package targets):
+**[FIX ROUND 1] Corrected loader diagnosis.** An earlier version of this
+module claimed "no SAM3 loader exists on this host" -- that claim was false,
+and the installed ComfyUI source itself proves it: `F:\\ComfyUI\\nodes.py:966-989`
+is the generic **`UNETLoader`**, which loads from the **`diffusion_models`**
+model folder via `comfy.sd.load_diffusion_model` (never from `detection`,
+which is what the earlier, wrong diagnosis probed). `comfy/model_detection.py:1060-1066`
+recognises SAM3/SAM3.1 checkpoints by their state-dict shape;
+`comfy/supported_models.py:2255-2295` registers `SAM3` and (`:2302`) `SAM31`,
+both listed at `:2466-2467`; `comfy/model_base.py:2570-2572` instantiates
+`comfy.ldm.sam3.detector.SAM3Model` for them, and that module's files exist
+on this host. The real prerequisite was never a missing loader -- it was
+**weights in `diffusion_models`**, and they are now installed:
+`sam3.1_multiplex_fp16.safetensors` (`Comfy-Org/sam3.1`, sha256
+`9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03`; full
+verification, including the three `model_detection.py` state-dict gates
+this file was confirmed to satisfy, in `docs/assets/evidence/T-0337/README.md`).
+`GET /object_info/UNETLoader` on the live host now lists it in `unet_name`'s
+option list (was empty before the weights landed).
 
-- `GET /object_info/SAM3_Detect`, `.../SAM3_VideoTrack`, `.../SAM3_TrackPreview`,
-  `.../SAM3_TrackToMask` all resolve -- the card's own premise ("SAM3 nodes are
-  already installed... never tried") is correct, these four node types really
-  are registered.
-- No loader node anywhere in this host's `/object_info` registry can produce
-  a SAM3 `MODEL` -- `python_module: "comfy_extras.nodes_sam3"` accounts for
-  exactly those four node types and nothing else, and no other node's name
-  contains "sam" (case-insensitively) besides the unrelated `Sampler*`
-  family. `GET /models/detection` (the model-folder type a SAM3 checkpoint
-  would live in -- ComfyUI's `/models` endpoint lists it as a registered
-  folder type, but no "sam3"-named folder type exists at all) returns `[]`:
-  empty.
-- Wiring a same-typed-but-wrong `MODEL` into `SAM3_Detect`'s required `model`
-  input (ComfyUI's graph validator only checks the string type name `MODEL`,
-  not what produced it) does not fail at submission. With no query given at
-  all (no `positive_coords`/`negative_coords`/`conditioning`) it runs to
-  "success" and silently produces an all-zero mask -- SAM3_Detect's own
-  no-op-if-nothing-to-detect behaviour, not evidence either way. Given a real
-  query (`positive_coords=[{"x": 512, "y": 500}]`) it crashes:
-  `AttributeError: 'UNetModel' object has no attribute 'forward_segment'`
-  at `comfy_extras/nodes_sam3.py:187` (`sam3_model.forward_segment(...)`).
+`SAM3_Detect`'s required inputs are `model` + `image` + `threshold` +
+`refine_iterations` + `individual_masks`; `positive_coords` (this module's
+point-prompt path) is optional and needs only the `MODEL` input -- so
+`UNETLoader` alone is sufficient here, no CLIP/checkpoint loader required.
 
-That crash is the decisive evidence: `SAM3_Detect`'s own code expects its
-`model` input to be a real SAM3 model wrapper object exposing
-`forward_segment`, and nothing on this host can currently produce one. This
-is not a segmentation-quality problem (the card's own escape hatch, "SAM3
-cannot segment the parts cleanly") -- it is a total inability to construct a
-runnable graph, which the escape hatch's spirit still covers: an honest
-negative result, reported with evidence, Oklab stays primary in practice.
-
-`evaluate_sam3_availability` is the pure decision logic over that finding
-(never makes an HTTP call itself -- a caller fetches `/object_info` and
-`/models/detection` and hands the results in, so this stays testable without
-a live host). `cut_master_sheet_part` is what keeps SAM3 wired as the
-attempted-first PRIMARY path while still resulting in the Oklab flood being
-used today: it always tries `sam3_runner` first when `method="sam3"`, and
-only ever falls back to the flood when that raises
+`evaluate_sam3_availability` is the pure decision logic over already-fetched
+ComfyUI state (never makes an HTTP call itself -- a caller fetches
+`/object_info/SAM3_Detect` and `/object_info/UNETLoader` and hands the
+results in, so this stays testable without a live host). It probes
+`UNETLoader`'s own `unet_name` option list -- the location `UNETLoader`
+actually reads -- for an entry that looks SAM3-compatible, not merely "some
+file exists somewhere"; an unrelated checkpoint dropped into
+`diffusion_models` must not make this report available.
+`cut_master_sheet_part` is what keeps SAM3 wired as the attempted-first
+PRIMARY path: it always tries `sam3_runner` first when `method="sam3"`, and
+only ever falls back to the Oklab flood when that raises
 `Sam3SegmentationUnavailable` -- never a silent default, always visible in
 the returned `method` string.
 """
@@ -72,19 +65,32 @@ from char_gen.cutout import cutout_foreground_mask
 #: `SAM3_Detect -> SAM3_TrackToMask`.
 SAM3_REQUIRED_NODE_TYPES: tuple[str, ...] = ("SAM3_Detect",)
 
-#: The ComfyUI `/models` folder type a SAM3 checkpoint would need to live in
-#: to be loadable at all -- confirmed against the live host's own
-#: `GET /models` folder-type listing; no "sam3"-named folder type exists.
-SAM3_MODEL_FOLDER = "detection"
+#: The generic ComfyUI-core loader node that actually produces SAM3's
+#: `model` input -- confirmed against the live host's own
+#: `GET /object_info/UNETLoader`, whose `unet_name` option list reads the
+#: `diffusion_models` model folder via `comfy.sd.load_diffusion_model`
+#: [FIX ROUND 1]. There is no SAM3-specific loader node; this is it.
+SAM3_UNET_LOADER_NODE_TYPE = "UNETLoader"
+
+#: Case-insensitive substring a `UNETLoader` `unet_name` entry must contain
+#: to be treated as a SAM3-compatible checkpoint -- deliberately a substring
+#: match, not one hard-coded filename, so a future SAM3 checkpoint rename or
+#: quantization variant (e.g. a differently-suffixed multiplex build) still
+#: counts, while an unrelated diffusion checkpoint (SDXL, a LoRA base, etc.)
+#: still doesn't.
+SAM3_CHECKPOINT_SUBSTRING = "sam3"
+
+
+def _is_sam3_compatible_filename(filename: str) -> bool:
+    return SAM3_CHECKPOINT_SUBSTRING in filename.lower()
 
 
 class Sam3SegmentationUnavailable(RuntimeError):
     """Raised whenever the SAM3 path cannot produce a usable mask -- a
-    missing required node type, an empty model folder, or a runtime
-    execution error surfaced by ComfyUI itself (this card's own live-host
-    finding: `'UNetModel' object has no attribute 'forward_segment'`, see
-    this module's docstring). Callers are expected to catch this and fall
-    back to the Oklab flood; it is never meant to propagate as fatal."""
+    missing required node type, no SAM3-compatible entry in `UNETLoader`'s
+    own option list, or a runtime execution error surfaced by ComfyUI
+    itself. Callers are expected to catch this and fall back to the Oklab
+    flood; it is never meant to propagate as fatal."""
 
 
 @dataclass(frozen=True)
@@ -97,44 +103,47 @@ class Sam3Availability:
 
 def evaluate_sam3_availability(
     object_info_node_types: set[str],
-    detection_model_files: list[str] | tuple[str, ...],
+    unet_loader_filenames: list[str] | tuple[str, ...],
 ) -> Sam3Availability:
     """Pure decision logic over already-fetched ComfyUI state -- never makes
     an HTTP call itself, so it's testable without a live host.
     `object_info_node_types` is (a subset of) `GET /object_info`'s own top-
-    level keys; `detection_model_files` is `GET /models/detection`'s file
-    list."""
+    level keys; `unet_loader_filenames` is `GET /object_info/UNETLoader`'s
+    own `unet_name` option list [FIX ROUND 1] -- the location `UNETLoader`
+    actually reads (`diffusion_models`), not the never-consulted
+    `models/detection` folder an earlier version of this function probed."""
     missing_nodes = [n for n in SAM3_REQUIRED_NODE_TYPES if n not in object_info_node_types]
     if missing_nodes:
         return Sam3Availability(
             nodes_present=False,
-            model_files=tuple(detection_model_files),
+            model_files=(),
             available=False,
             reason=(
                 f"required SAM3 node type(s) not registered on this ComfyUI host: "
                 f"{missing_nodes}"
             ),
         )
-    if not detection_model_files:
+    sam3_files = tuple(f for f in unet_loader_filenames if _is_sam3_compatible_filename(f))
+    if not sam3_files:
         return Sam3Availability(
             nodes_present=True,
             model_files=(),
             available=False,
             reason=(
-                "SAM3_Detect is registered but models/detection is empty -- no SAM3 "
-                "checkpoint is loadable, so SAM3_Detect's required `model` input cannot "
-                "be satisfied by any node on this host (verified 2026-09-28: feeding it a "
-                "same-typed-but-wrong model crashes at comfy_extras/nodes_sam3.py:187 with "
-                "\"AttributeError: 'UNetModel' object has no attribute 'forward_segment'\" "
-                "the moment a real query is given -- see this module's own docstring and "
-                "docs/assets/evidence/T-0337/README.md)"
+                "SAM3_Detect is registered but UNETLoader's own unet_name option list has no "
+                f"entry containing {SAM3_CHECKPOINT_SUBSTRING!r} -- no SAM3-compatible "
+                "diffusion_models checkpoint is loadable, so SAM3_Detect's required `model` "
+                "input cannot be satisfied by any node on this host"
             ),
         )
     return Sam3Availability(
         nodes_present=True,
-        model_files=tuple(detection_model_files),
+        model_files=sam3_files,
         available=True,
-        reason="SAM3_Detect is registered and at least one detection-folder model file exists",
+        reason=(
+            "SAM3_Detect is registered and UNETLoader lists a SAM3-compatible diffusion_models "
+            f"checkpoint: {sam3_files!r}"
+        ),
     )
 
 

@@ -93,7 +93,10 @@ class TestEvaluateSam3Availability:
     def test_nodes_and_sam3_compatible_unet_file_present_is_available(self):
         result = evaluate_sam3_availability(
             object_info_node_types=set(SAM3_REQUIRED_NODE_TYPES),
-            unet_loader_filenames=["sd_xl_base_1.0.safetensors", "sam3.1_multiplex_fp16.safetensors"],
+            unet_loader_filenames=[
+                "sd_xl_base_1.0.safetensors",
+                "sam3.1_multiplex_fp16.safetensors",
+            ],
         )
         assert result.nodes_present is True
         assert result.available is True
