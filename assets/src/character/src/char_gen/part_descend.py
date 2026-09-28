@@ -59,20 +59,34 @@ def _srgb_to_oklab(rgb: np.ndarray) -> np.ndarray:
     return np.stack([lightness, a, b2], axis=-1)
 
 
-def _quantize_to_palette(rgb_arr: np.ndarray, palette: list[tuple[int, int, int]]) -> np.ndarray:
+def _quantize_to_palette(
+    rgb_arr: np.ndarray,
+    palette: list[tuple[int, int, int]],
+    exclude_indices: tuple[int, ...] = (),
+) -> np.ndarray:
     """Nearest-neighbour quantize in Oklab space, no dithering -- same rule
     `gen_arm_a_idle_T0228.quantize_to_palette` already applies at the sheet
     level, reimplemented here against the locked-palette list shape
     `sprite_io.save_sprite_sheet` itself takes (index == list position)
     rather than that function's `asset_gate.palette.Palette` type, to avoid
     this shared package taking on a dependency the rest of `char_gen`
-    doesn't have."""
+    doesn't have.
+
+    `exclude_indices` removes palette slots from the nearest-neighbour search
+    entirely -- `box_descend_part` uses this to keep `BACKGROUND_INDEX`
+    reserved for mask-selected background, [FIX ROUND 1]: without it, dark
+    foreground pixels can quantize nearest to slot 0's own colour, and
+    `sprite_io.save_sprite_sheet`'s tRNS is per-INDEX (not per-pixel), so
+    every pixel landing on that index -- foreground included -- goes fully
+    transparent."""
     h, w = rgb_arr.shape[:2]
     pixels_oklab = _srgb_to_oklab(rgb_arr.reshape(-1, 3))
-    slot_oklab = _srgb_to_oklab(np.array(palette, dtype=np.float64))
+    allowed = [i for i in range(len(palette)) if i not in exclude_indices]
+    slot_oklab = _srgb_to_oklab(np.array([palette[i] for i in allowed], dtype=np.float64))
     diff = pixels_oklab[:, None, :] - slot_oklab[None, :, :]
     dist2 = np.einsum("pnc,pnc->pn", diff, diff)
-    nearest = np.argmin(dist2, axis=1)
+    nearest_local = np.argmin(dist2, axis=1)
+    nearest = np.array(allowed, dtype=np.uint8)[nearest_local]
     return nearest.reshape(h, w).astype(np.uint8)
 
 
@@ -94,11 +108,15 @@ def box_descend_part(
 ) -> Image.Image:
     """Crop `img` to `mask`'s own bounding box (+`margin_px`), BOX-downscale
     the RGB crop and its mask independently to `target_size` = `(width,
-    height)`, quantize the descended RGB to `palette`, then force every
-    pixel the descended-and-rethresholded mask calls background to
-    `BACKGROUND_INDEX` -- quantize-before-mask, the same order the sheet-
-    level pipeline already uses. Returns a mode-`'P'` image; save it with
-    `sprite_io.save_sprite_sheet` for the true-RGBA/tRNS contract (P-6)."""
+    height)`, quantize the descended RGB to `palette` -- **excluding
+    `BACKGROUND_INDEX` from the candidate slots**, so foreground never lands
+    on the background index no matter how close its colour sits to slot 0 in
+    Oklab space [FIX ROUND 1] -- then force every pixel the
+    descended-and-rethresholded mask calls background to `BACKGROUND_INDEX`.
+    Returns a mode-`'P'` image; save it with `sprite_io.save_sprite_sheet`
+    for the true-RGBA/tRNS contract (P-6): that contract marks
+    `BACKGROUND_INDEX` transparent per-INDEX, not per-pixel, so any
+    foreground pixel quantized onto it would silently vanish too."""
     y0, y1, x0, x1 = mask_bbox(mask, margin_px)
     rgb_crop = np.array(img.convert("RGB"))[y0:y1, x0:x1]
     mask_crop = mask[y0:y1, x0:x1]
@@ -106,6 +124,6 @@ def box_descend_part(
     descended_rgb = np.array(Image.fromarray(rgb_crop).resize(target_size, Image.Resampling.BOX))
     descended_mask = _resize_mask_box(mask_crop, target_size)
 
-    indices = _quantize_to_palette(descended_rgb, palette)
+    indices = _quantize_to_palette(descended_rgb, palette, exclude_indices=(BACKGROUND_INDEX,))
     indices[~descended_mask] = BACKGROUND_INDEX
     return to_indexed_image(indices, palette)
