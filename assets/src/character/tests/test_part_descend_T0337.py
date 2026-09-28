@@ -91,3 +91,57 @@ class TestBoxDescendPart:
         reloaded = Image.open(path)
         assert reloaded.mode == "P"
         assert transparency_index(reloaded) == BACKGROUND_INDEX
+
+
+class TestBoxDescendPartDoesNotEraseDarkForeground:
+    """[FIX ROUND 1] Regression -- reviewer's repro. `_quantize_to_palette`
+    used to choose from every palette slot including `BACKGROUND_INDEX == 0`,
+    and only mask-selected background pixels were repaired to index 0 after
+    the fact -- so dark foreground that happened to quantize nearest to slot
+    0's own colour got silently classified as background and `tRNS` (which
+    is per-INDEX, not per-pixel) made every such pixel transparent, not just
+    the real background. Asserts decoded RGBA alpha, per the card's own
+    instruction -- a tRNS-metadata-only check (`transparency_index`, above)
+    would not catch this: it confirms *which* index is transparent, not
+    which pixels quantized into it.
+    """
+
+    def test_all_true_mask_on_slot_zeros_own_colour_stays_fully_opaque(self, tmp_path):
+        # 8x8 image filled with palette slot 0's own RGB, all-foreground mask
+        # -- every pixel's nearest palette slot, unpatched, is index 0.
+        slot0_rgb = PALETTE[0]
+        arr = np.zeros((8, 8, 3), dtype=np.uint8)
+        arr[:, :] = slot0_rgb
+        img = Image.fromarray(arr, mode="RGB")
+        mask = np.ones((8, 8), dtype=bool)
+
+        out = box_descend_part(img, mask, PALETTE, target_size=(4, 4))
+        path = save_sprite_sheet(out, tmp_path / "slot0_foreground.png", palette=PALETTE)
+        reloaded = Image.open(path).convert("RGBA")
+        alphas = np.array(reloaded)[:, :, 3]
+
+        assert np.all(alphas == 255)
+
+    def test_mixed_foreground_background_mask_keeps_background_transparent(self, tmp_path):
+        slot0_rgb = PALETTE[0]
+        arm_rgb = PALETTE[1]
+        arr = np.zeros((8, 8, 3), dtype=np.uint8)
+        arr[:, :] = slot0_rgb
+        arr[2:6, 2:6] = arm_rgb
+        mask = np.zeros((8, 8), dtype=bool)
+        mask[2:6, 2:6] = True
+        img = Image.fromarray(arr, mode="RGB")
+
+        out = box_descend_part(img, mask, PALETTE, target_size=(4, 4), margin_px=2)
+        path = save_sprite_sheet(out, tmp_path / "mixed_foreground.png", palette=PALETTE)
+        reloaded = Image.open(path).convert("RGBA")
+        alphas = np.array(reloaded)[:, :, 3]
+
+        # The two blocks entirely outside the mask's foreground square are
+        # real background and must stay transparent.
+        assert alphas[0, 0] == 0
+        assert alphas[3, 3] == 0
+        # The block squarely inside the mask's foreground square is real
+        # foreground and must stay opaque, even though its source colour is
+        # slot 0's own RGB.
+        assert alphas[1, 1] == 255
