@@ -177,6 +177,28 @@ background only. Regression tests
 (`tests/test_part_descend_T0337.py::TestBoxDescendPartDoesNotEraseDarkForeground`) assert decoded
 RGBA alpha end-to-end through `save_sprite_sheet`, not tRNS metadata alone.
 
+## [FIX ROUND 1] Open finding — SAM3 checkpoint license is UNVERIFIED, not registered
+
+`sam3.1_multiplex_fp16.safetensors` is **not** in
+`tools/gen-client-base/config/checkpoint_allowlist.json`, the file
+`gen_client_base.license_allowlist.assert_checkpoint_allowed` reads. This
+generation ran via `gen_master_sheet_cutout_compare_T0337.py` calling
+`ComfyUIClient.submit()`/`wait_for_completion()` directly against a
+hand-built `SAM3_Detect` graph — never through `comfy_client.pipeline.generate()`,
+the only call site that actually invokes that hook — so this checkpoint's
+license was **never checked** by the enforced gate `.claude/rules/assets.md`
+describes. This implementer session has no internet access at all
+(`WebSearch`/`WebFetch` both denied session-wide, confirmed via a separate
+subagent attempt) and could not confirm `Comfy-Org/sam3.1`'s actual upstream
+license (Meta AI's own SAM3/SAM 3.1 terms) to determine whether it is
+Apache-2.0/OpenRAIL/CC0/Stability-Community or something more restrictive.
+See the `ASSET_PROVENANCE.md` entry for this evidence, which records the
+same gap rather than asserting a license this session could not verify. A
+human or a future card needs to confirm the real license and either
+register it in `checkpoint_allowlist.json` (if approved) or revisit whether
+SAM3 can stay wired as primary at all (if not) — this is reported, not
+resolved, here.
+
 ## Files in this directory
 
 - `README.md` — this file
