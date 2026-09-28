@@ -83,7 +83,64 @@
       "panel": "back_tpose",
       "method_used": "sam3",
       "oklab_foreground_px": 410555,
-      "sam3_foreground_px": 7467,
+      "sam3_foreground_px": 389238,
+      "sam3_degenerate_mask": false,
+      "prompts": [
+        {
+          "x": 512,
+          "y": 215,
+          "polarity": "positive",
+          "derivation": "neck (torso anchor) = NECK[1]"
+        },
+        {
+          "x": 71,
+          "y": 230,
+          "polarity": "positive",
+          "derivation": "right_wrist (arm extremity) = WRIST[4]"
+        },
+        {
+          "x": 952,
+          "y": 230,
+          "polarity": "positive",
+          "derivation": "left_wrist (arm extremity) = WRIST[7]"
+        },
+        {
+          "x": 327,
+          "y": 952,
+          "polarity": "positive",
+          "derivation": "right_ankle (leg extremity) = ANKLE[10]"
+        },
+        {
+          "x": 696,
+          "y": 952,
+          "polarity": "positive",
+          "derivation": "left_ankle (leg extremity) = ANKLE[13]"
+        },
+        {
+          "x": 4,
+          "y": 4,
+          "polarity": "negative",
+          "derivation": "corner_top_left"
+        },
+        {
+          "x": 1020,
+          "y": 4,
+          "polarity": "negative",
+          "derivation": "corner_top_right"
+        },
+        {
+          "x": 4,
+          "y": 1020,
+          "polarity": "negative",
+          "derivation": "corner_bottom_left"
+        },
+        {
+          "x": 1020,
+          "y": 1020,
+          "polarity": "negative",
+          "derivation": "corner_bottom_right"
+        }
+      ],
       "before": "docs/assets/evidence/T-0337/panel_back_tpose_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_back_tpose_oklab_after.png",
       "sam3_after": "docs/assets/evidence/T-0337/panel_back_tpose_sam3_after.png",
