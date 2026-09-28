@@ -164,9 +164,12 @@ def build_sam3_part_workflow(
 
     `model_loader` is an injected node dict (`class_type` + `inputs`)
     providing `SAM3_Detect`'s `model` input -- deliberately not hard-coded,
-    since no SAM3 loader node exists on the host today (this module's own
-    finding); a caller supplies whatever loader a fixed host eventually
-    exposes, once one does."""
+    so this module stays free of any specific checkpoint filename or the
+    live host's own `UNETLoader` wiring. [FIX ROUND 1] The real loader is
+    `UNETLoader` naming `sam3.1_multiplex_fp16.safetensors` (see this
+    module's own docstring); a caller (e.g.
+    `gen_master_sheet_cutout_compare_T0337.py`'s `_sam3_model_loader`)
+    supplies that node dict here."""
     sam3_inputs: dict[str, Any] = {
         "model": ["2", 0],
         "image": ["1", 0],
