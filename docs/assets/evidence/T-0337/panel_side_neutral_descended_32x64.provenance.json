@@ -1,7 +1,7 @@
 {
   "source_sheet": "docs/assets/evidence/T-0351/attempt_19_first_per_panel_reference_run_front_back_neutral_clean_sides_malformed.png",
   "panel": "side_neutral",
-  "cutout_method": "oklab",
+  "cutout_method": "sam3",
   "target_size": [
     32,
     64
@@ -9,6 +9,6 @@
   "palette": "assets/final/palette/home_palette.json",
   "generator": "assets/src/character/gen_master_sheet_cutout_compare_T0337.py",
   "card": "T-0337",
-  "_generator_note": "Evidence/demonstration descent, not a curated final -- descends the whole-figure cutout (no per-limb SAM3 mask was available for this panel; see docs/assets/evidence/T-0337/README.md).",
-  "run_id": "T-0337-2026-09-28T13-12-21-830Z"
+  "_generator_note": "Evidence/demonstration descent, not a curated final -- descends the whole-figure cutout produced by the sam3 method for this panel; see docs/assets/evidence/T-0337/README.md.",
+  "run_id": "T-0337-2026-09-28T14-44-18-700Z"
 }

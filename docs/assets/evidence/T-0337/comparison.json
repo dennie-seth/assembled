@@ -2,65 +2,73 @@
   "sheet": "docs/assets/evidence/T-0351/attempt_19_first_per_panel_reference_run_front_back_neutral_clean_sides_malformed.png",
   "sam3_availability": {
     "nodes_present": true,
-    "available": false,
-    "reason": "SAM3_Detect is registered but models/detection is empty -- no SAM3 checkpoint is loadable, so SAM3_Detect's required `model` input cannot be satisfied by any node on this host (verified 2026-09-28: feeding it a same-typed-but-wrong model crashes at comfy_extras/nodes_sam3.py:187 with \"AttributeError: 'UNetModel' object has no attribute 'forward_segment'\" the moment a real query is given -- see this module's own docstring and docs/assets/evidence/T-0337/README.md)",
-    "model_files": []
+    "available": true,
+    "reason": "SAM3_Detect is registered and UNETLoader lists a SAM3-compatible diffusion_models checkpoint: ('sam3.1_multiplex_fp16.safetensors',)",
+    "model_files": [
+      "sam3.1_multiplex_fp16.safetensors"
+    ]
   },
   "sam3_availability_probe_error": null,
-  "run_id": "T-0337-2026-09-28T13-12-21-830Z",
+  "run_id": "T-0337-2026-09-28T14-44-18-700Z",
   "panels": [
     {
       "panel": "front_tpose",
-      "method_used": "oklab",
+      "method_used": "sam3",
       "oklab_foreground_px": 392045,
-      "sam3_foreground_px": null,
+      "sam3_foreground_px": 16777,
       "before": "docs/assets/evidence/T-0337/panel_front_tpose_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_front_tpose_oklab_after.png",
+      "sam3_after": "docs/assets/evidence/T-0337/panel_front_tpose_sam3_after.png",
       "descended_part": "docs/assets/evidence/T-0337/panel_front_tpose_descended_32x64.png"
     },
     {
       "panel": "back_tpose",
-      "method_used": "oklab",
+      "method_used": "sam3",
       "oklab_foreground_px": 410555,
-      "sam3_foreground_px": null,
+      "sam3_foreground_px": 7467,
       "before": "docs/assets/evidence/T-0337/panel_back_tpose_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_back_tpose_oklab_after.png",
+      "sam3_after": "docs/assets/evidence/T-0337/panel_back_tpose_sam3_after.png",
       "descended_part": "docs/assets/evidence/T-0337/panel_back_tpose_descended_32x64.png"
     },
     {
       "panel": "side_left_forward",
-      "method_used": "oklab",
+      "method_used": "sam3",
       "oklab_foreground_px": 415174,
-      "sam3_foreground_px": null,
+      "sam3_foreground_px": 369605,
       "before": "docs/assets/evidence/T-0337/panel_side_left_forward_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_side_left_forward_oklab_after.png",
+      "sam3_after": "docs/assets/evidence/T-0337/panel_side_left_forward_sam3_after.png",
       "descended_part": "docs/assets/evidence/T-0337/panel_side_left_forward_descended_32x64.png"
     },
     {
       "panel": "side_right_forward",
-      "method_used": "oklab",
+      "method_used": "sam3",
       "oklab_foreground_px": 299515,
-      "sam3_foreground_px": null,
+      "sam3_foreground_px": 418705,
       "before": "docs/assets/evidence/T-0337/panel_side_right_forward_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_side_right_forward_oklab_after.png",
+      "sam3_after": "docs/assets/evidence/T-0337/panel_side_right_forward_sam3_after.png",
       "descended_part": "docs/assets/evidence/T-0337/panel_side_right_forward_descended_32x64.png"
     },
     {
       "panel": "side_neutral",
-      "method_used": "oklab",
+      "method_used": "sam3",
       "oklab_foreground_px": 130298,
-      "sam3_foreground_px": null,
+      "sam3_foreground_px": 214653,
       "before": "docs/assets/evidence/T-0337/panel_side_neutral_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_side_neutral_oklab_after.png",
+      "sam3_after": "docs/assets/evidence/T-0337/panel_side_neutral_sam3_after.png",
       "descended_part": "docs/assets/evidence/T-0337/panel_side_neutral_descended_32x64.png"
     },
     {
       "panel": "legs",
-      "method_used": "oklab",
+      "method_used": "sam3",
       "oklab_foreground_px": 235408,
-      "sam3_foreground_px": null,
+      "sam3_foreground_px": 547,
       "before": "docs/assets/evidence/T-0337/panel_legs_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_legs_oklab_after.png",
+      "sam3_after": "docs/assets/evidence/T-0337/panel_legs_sam3_after.png",
       "descended_part": "docs/assets/evidence/T-0337/panel_legs_descended_32x64.png"
     }
   ]
