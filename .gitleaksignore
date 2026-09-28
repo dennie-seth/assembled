@@ -33,3 +33,17 @@ c41138add1db3ea70190412cf9715a15c35cab21:assets/src/character/gen_master_sheet_c
 # (7739e4c4...:assets/src/concept/pose_rig_forward_limb_controlnet_T0387.py:generic-api-key:73);
 # that one was ignored when #402 landed and this one was simply missed.
 c37e19d286225b43d18b803502fcc1b858b24d8e:assets/src/concept/pose_rig_forward_limb_controlnet_T0394.py:generic-api-key:57
+
+# [FIX ROUND 2, T-0337] The same SAM3 checkpoint sha256 already committed in FIX ROUND 1
+# (9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03 -- real published provenance
+# data, not a secret, and the card explicitly says this value stays exactly as it is, unlike the
+# withdrawn panel_<key> placeholder above) is repeated in two new commits this round, which gitleaks'
+# commit-range scan mode treats as new findings regardless of the value having appeared before.
+# Fingerprints derived by inspection (git blame), the same way as the panel_<key> entries above --
+# this session has no Bash grant for ~/.local/bin/gitleaks, confirmed denied, so these could not be
+# verified against the real tool. If the real scan reports a different rule id for these lines
+# (e.g. hex-high-entropy instead of generic-api-key), that finding is not yet covered here and needs
+# its own entry added once someone with a gitleaks grant can confirm it.
+bab2db5413fee7c233b1b55a55c6a50d465bcc08:docs/assets/evidence/T-0337/README.md:generic-api-key:240
+08b4123b15f6077642d27356a14ee940dbecf1f5:ASSET_PROVENANCE.md:generic-api-key:503
+08b4123b15f6077642d27356a14ee940dbecf1f5:ASSET_PROVENANCE.md:generic-api-key:504
