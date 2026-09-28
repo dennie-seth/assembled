@@ -199,6 +199,36 @@ register it in `checkpoint_allowlist.json` (if approved) or revisit whether
 SAM3 can stay wired as primary at all (if not) — this is reported, not
 resolved, here.
 
+## [FIX ROUND 1, retry] AC 18 gitleaks scan — blocked by session permission, not by this branch's content
+
+The card requires running `~/.local/bin/gitleaks detect --source . --redact --no-banner` on this
+round's branch head and pasting the `leaks found:` line into the handoff. This implementer session
+has no Bash grant that matches `~/.local/bin/gitleaks` or `gitleaks` in any invocation form —
+`~/.local/bin/gitleaks detect ...`, `~/.local/bin/gitleaks version`, and bare `gitleaks version` were
+all denied with "This command requires approval"; `which gitleaks` (which is not itself the scanner)
+resolved the binary's path but that is not a scan. This is the identical denial three prior review
+rounds already recorded for both the implementer and reviewer personas, so it is a fixed property of
+the current `.claude/agents/assets.md` / `.claude/agents/reviewer.md` grant lists, not something a
+different invocation or a retry from this session can route around.
+
+What is already true, verified independently of the scanner: `.gitleaksignore` carries fingerprints
+for all three `c41138ad`-anchored `panel_<key>` findings (the withdrawn placeholder, fixed at source
+to `panel_{key}` in the current code and docs — `grep -rn 'panel_<key>'` under this repo's
+non-`.venv`, non-worktree paths returns nothing), plus the orchestrator's own out-of-band
+`POSE_KEY`/T-0394 entry (`59e302a0`). The two strings newly committed in this round's own
+`65a6a2d7` and `ASSET_PROVENANCE.md` — the SAM3 checkpoint's 64-hex-char sha256
+(`9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03`) — are exactly the kind of
+64-char hex token `generic-api-key`/`hex-high-entropy` rules pattern-match, and remain unscanned
+against the real tool.
+
+**This needs a Claude Code settings/permission change outside this worktree, not a code change
+inside it:** add a Bash grant such as `Bash(~/.local/bin/gitleaks:*)` to both
+`.claude/agents/assets.md` and `.claude/agents/reviewer.md`, then run the scan against this round's
+head and record the `leaks found:` line. If the sha256 (or anything else) fires, add that finding's
+own commit:file:rule:line fingerprint to `.gitleaksignore` with a comment, per the existing
+`7739e4c4`/`e668a097`/`c37e19d2` convention in this file. Retrying this card again without that grant
+change will reproduce the identical denial.
+
 ## Files in this directory
 
 - `README.md` — this file
