@@ -1,13 +1,20 @@
-# T-0337 evidence — SAM3 wired and running; a mixed, evidence-based comparison against Oklab
+# T-0337 evidence — SAM3 wired and running; panel/part-aware prompts, six clean real masks
 
-## Status: [FIX ROUND 1] SAM3 genuinely runs on this host now. Six real panels measured, real
+## Status: [FIX ROUND 2] The FIX ROUND 1 comparison below queried every panel — including the
 
-## masks, real pixel counts. The result is mixed, not a clean win either way: SAM3 is
-## competitive-to-better on the three side-profile panels and badly worse on the two T-pose
-## panels and the legs panel — a single-point-prompt query-strategy limitation this round's
-## scope does not extend to fixing, not a segmentation-capability failure. Oklab stays primary
-## in code today (see "What happens next" below); this is reported as the mixed finding the
-## measurements actually show, not asserted either way.
+## legs-only panel — with one fixed point on that panel's NECK keypoint. The review correctly
+## found that invalid for `legs` (whose NECK is a collapsed placeholder, not real anatomy) and
+## insufficient for the five whole-figure panels (a T-pose spreads both arms/legs well clear of
+## the torso; one torso point does not reliably grow to the whole figure). This round replaces
+## that single-point query with `panel_prompt_points` — a bounded, one-configuration-per-panel
+## set of positive points derived from each panel's own real joints (thigh/lower_leg/boot for
+## `legs`; neck+both-wrist+both-ankle for the other five) plus four corner negatives — and
+## re-ran the live six-panel comparison. **All six panels now produce a non-degenerate SAM3
+## mask** (`is_degenerate_mask_fraction` false on every one), including `legs`, which is the
+## case the card has named explicitly from the start: it now cleanly isolates both thighs and
+## lower legs with no coat/torso bleed. The withdrawn single-neck-point run's own results are
+## archived, not deleted, under `initial_single_point_experiment/` — see that finding was a
+## query-strategy defect, not a SAM3 segmentation-capability limitation.
 
 ## What changed since the prior (withdrawn) verdict
 
@@ -46,99 +53,107 @@ The old `_PLACEHOLDER_CHECKPOINT` / `CheckpointLoaderSimple` substitution is del
 SAM3 had still been unavailable this round, `main()` would report that and perform no comparison at
 all, never wire another model in its place.
 
-## The measured comparison (acceptance criterion 2) — real run, real host, 2026-09-28
+## [FIX ROUND 2] The measured comparison (acceptance criteria 2, 12, 13, 14) — panel/part-aware prompts, real run, real host, 2026-09-28
 
-`gen_master_sheet_cutout_compare_T0337.py` ran against **T-0351's own real, committed attempt-19
-six-panel sheet**
+`gen_master_sheet_cutout_compare_T0337.py` ran against the same **T-0351 attempt-19 six-panel
+sheet** as FIX ROUND 1
 (`docs/assets/evidence/T-0351/attempt_19_first_per_panel_reference_run_front_back_neutral_clean_sides_malformed.png`).
-For every one of the six panels, `cut_master_sheet_part(..., method="sam3", sam3_runner=<real
-ComfyUIClient call>)` tried SAM3 first (primary, as wired) via a single point-prompt on that panel's
-own NECK keypoint (`pose_rig_master_sheet_T0351.keypoints_for`) — the same single-point query the
-prior (withdrawn) round used, so this is a direct re-run against the fixed graph, not a new
-strategy. Every one of the six real submissions this time completed successfully (no
-`forward_segment` crash, no exception) — SAM3 is genuinely usable on this host now.
+This round replaces the single-fixed-neck-point query with `panel_prompt_points` (see
+`gen_master_sheet_cutout_compare_T0337.py`) — one deterministic, bounded set of point prompts per
+panel, derived from that panel's own real keypoints:
 
-| Panel | Method used | Oklab foreground px (of 1,048,576) | SAM3 foreground px | SAM3 vs Oklab |
-|---|---|---|---|---|
-| front_tpose | sam3 | 392,045 (37.4%) | 16,777 (1.6%) | SAM3 far worse |
-| back_tpose | sam3 | 410,555 (39.1%) | 7,467 (0.7%) | SAM3 far worse |
-| side_left_forward | sam3 | 415,174 (39.6%) | 369,605 (35.3%) | comparable |
-| side_right_forward | sam3 | 299,515 (28.6%) | 418,705 (39.9%) | SAM3 better |
-| side_neutral | sam3 | 130,298 (12.4%) | 214,653 (20.5%) | SAM3 better |
-| legs | sam3 | 235,408 (22.4%) | 547 (0.05%) | SAM3 far worse |
+- **`legs`** (the case the ticket names explicitly): the panel's only real anatomy is hip/knee/ankle,
+  both sides. Six positive points — one each for **thigh** (`midpoint(HIP, KNEE)`), **lower leg**
+  (`midpoint(KNEE, ANKLE)`), and **boot** (`ANKLE` itself), per side — plus four corner negatives and
+  a fifth negative on the panel's own collapsed upper-body placeholder point (real pixel coordinates
+  on this panel, but never real anatomy, so explicitly suppressed rather than queried).
+- **The five whole-figure panels** (`front_tpose`, `back_tpose`, `side_left_forward`,
+  `side_right_forward`, `side_neutral`): five positive points — NECK plus both WRIST and both ANKLE
+  extremities — spread the query across the whole spread figure instead of relying on one torso
+  point, plus four corner negatives.
 
-Full machine-readable record, including the SAM3-availability probe: `comparison.json`.
+Every point used is recorded per panel in `panel_{key}_prompts.json` (`{"x", "y", "polarity",
+"derivation"}`, one entry per point) and echoed into `comparison.json`'s own `panels[].prompts`
+field. This is **one fixed configuration per panel, decided up front** — not a sweep — and no
+threshold in `SAM3_Detect` itself (`threshold=0.5`, `refine_iterations=2`, both `build_sam3_part_workflow`'s
+own defaults) was tuned to get here.
+
+| Panel | Method used | Oklab px (of 1,048,576) | SAM3 px (round 2) | SAM3 px (round 1, withdrawn) | Degenerate? |
+|---|---|---|---|---|---|
+| front_tpose | sam3 | 392,045 (37.4%) | 300,221 (28.6%) | 16,777 (1.6%) | No |
+| back_tpose | sam3 | 410,555 (39.1%) | 389,238 (37.1%) | 7,467 (0.7%) | No |
+| side_left_forward | sam3 | 415,174 (39.6%) | 319,667 (30.5%) | 369,605 (35.3%) | No |
+| side_right_forward | sam3 | 299,515 (28.6%) | 381,032 (36.3%) | 418,705 (39.9%) | No |
+| side_neutral | sam3 | 130,298 (12.4%) | 157,031 (15.0%) | 214,653 (20.5%) | No |
+| legs | sam3 | 235,408 (22.4%) | **173,562 (16.6%)** | 547 (0.05%) | No |
+
+Full machine-readable record, including the SAM3-availability probe and every panel's own
+`prompts` list: `comparison.json`. The round-1 column above is reproduced from the archived
+`initial_single_point_experiment/comparison.json`, not re-derived.
 
 **`method_used` reads `sam3` for all six panels** because `cut_master_sheet_part`'s fallback only
 triggers on `Sam3SegmentationUnavailable` (a submit/execution/fetch failure) — none of the six
-submissions raised one, so none fell back, exactly as designed (AC 1: SAM3 wired as the
-attempted-first primary path). That is a statement about *code path taken*, not *mask quality*: the
-`front_tpose`/`back_tpose`/`legs` masks that code path used are visibly bad (see below), even though
-no exception fired.
+submissions raised one this round either. Unlike round 1, this is now also a statement about *mask
+quality*: `is_degenerate_mask_fraction` (thresholds `0.03`-`0.55` of the 1024x1024 panel, justified
+against round 1's own 0.016/0.007/0.0005 failures and Oklab's own observed 0.124-0.396 range) reads
+`False` on all six — no panel's SAM3 mask is near-empty or near-full this round.
 
 ### Before/after image pairs — what the numbers above actually look like
 
 `panel_{key}_before.png` (raw crop) / `panel_{key}_oklab_after.png` (Oklab's background call painted
-magenta) / `panel_{key}_sam3_after.png` (SAM3's, same convention), one triple per panel:
+magenta) / `panel_{key}_sam3_after.png` (SAM3's, same convention, **this round's panel/part-aware
+prompts**), one triple per panel:
 
-- **`side_left_forward`** and **`side_right_forward`**: SAM3's mask is a clean, tight silhouette of
-  the coat/torso/arm/leg with no background bleed — visually competitive with, arguably cleaner
-  than, Oklab's flood on these two panels (Oklab is prone to vignette bleed near the frame edges on
-  this sheet, the same "border colours span 26-33x tolerance" condition the flood's own `UserWarning`
-  already flags on every panel here).
-- **`side_neutral`**: SAM3 captured *more* foreground than Oklab (214,653 vs 130,298 px) and visually
-  reads as a fuller, cleaner standing silhouette — Oklab under-segments this panel specifically
-  because of that same vignette/background-bleed condition.
-- **`front_tpose`** / **`back_tpose`**: SAM3's mask is a thin vertical sliver around the neck/collar
-  only — 16,777 and 7,467 px respectively, versus Oklab's ~392-410K. A T-pose spreads both arms
-  horizontally well clear of the torso; a single point placed on the neck gives SAM3 no signal that
-  the two outstretched arms belong to the same instance, so its point-prompt segmentation stayed
-  local to the part actually under the point rather than growing to the whole figure.
-- **`legs`**: SAM3 essentially found nothing (547 px) — the neck keypoint for this panel is, by
-  T-0351's own design, a collapsed placeholder point near the top edge of the frame
-  (`pose_rig_master_sheet_T0351.LEGS_KEYPOINTS_NORM`'s `_LEGS_UPPER_BODY_COLLAPSE_POINT`), because
-  the legs panel has no real neck to click — it is a waist-down crop. Prompting SAM3 with a point
-  that was never designed to land on this panel's actual figure produced exactly the near-empty mask
-  you would expect; it is not evidence that SAM3 cannot segment legs/boots, only that the neck
-  keypoint is the wrong anchor for this one panel.
+- **`front_tpose`** / **`back_tpose`**: no longer a neck/collar sliver — the neck+wrist+ankle
+  extremity points give SAM3 enough spread to capture the whole T-pose figure (coat, hood, both
+  outstretched arms, both legs), competitive with Oklab's flood on both panels now (300,221 vs
+  392,045; 389,238 vs 410,555).
+- **`side_left_forward`** and **`side_right_forward`**: still clean, tight full-figure silhouettes
+  with no background bleed, same as round 1 — the five-point prompt doesn't regress the panels that
+  already worked.
+- **`side_neutral`**: still a clean, tight standing silhouette, comparable to round 1 (157,031 vs the
+  prior 214,653 — a smaller but still clearly correct figure mask under the richer point set).
+- **`legs`** — **the case the ticket named explicitly**: `panel_legs_sam3_after.png` now shows both
+  legs cleanly separated from background — trousers, wraps, and boots — with no torso/coat bleed
+  (there is no torso in this panel to bleed from) and no stray fragment at the top edge. This is the
+  anatomical-part result (thigh/lower_leg/boot, both sides) this card has required from the start;
+  the round-1 547px top-edge fragment is now understood as exactly what an invalid collapsed-neck
+  query produces, not a SAM3 segmentation-capability limit.
 
 ### Reading the result honestly
 
-This is a **mixed** result, not a clean win either way, and it is reported that way per the card's
-own instruction not to pre-judge the winner:
+Every one of the six panels now produces a **non-degenerate, visually correct** SAM3 mask under
+panel/part-aware prompting — a materially different picture than round 1's mixed result, which was
+itself an artifact of querying every panel (including the anatomically invalid `legs` panel) with the
+same single neck point. This round does not claim SAM3 strictly beats Oklab pixel-for-pixel on every
+panel (see the table: Oklab is still somewhat larger on `front_tpose`, `side_left_forward`, `legs`,
+and somewhat smaller on `back_tpose`, `side_right_forward`, `side_neutral`) — only that, with valid
+part-aware prompts, SAM3 is a genuinely usable segmenter on every one of these six panels, including
+the legs-only one that the invalid single-point query could never fairly test.
 
-- Where SAM3 got a query point that actually sits inside a single, reasonably compact figure region
-  (the three side-profile panels), it produced masks that are competitive with or better than
-  Oklab's flood, and cleaner on the two panels where Oklab's own vignette sensitivity already shows
-  up as a logged warning.
-- Where the query strategy breaks down — a point that doesn't cover a T-pose's spread limbs, or a
-  point that isn't even on the panel's own figure — SAM3's result is far worse than Oklab's, but that
-  is a **query-strategy limitation of the single-point "minimal equivalent" this card scoped**, not
-  a demonstrated inability of SAM3 itself to segment these shapes. A bounding-box prompt spanning the
-  pose rig's own known keypoint extent, or multiple positive points (one per limb/torso region),
-  would very plausibly close this gap — but implementing and tuning that query strategy is exactly
-  the kind of further iteration this card's own "do not re-tune" instruction and FIX ROUND 1's
-  bounded scope exclude. It is a real, reportable finding for a future card, not a fix owed by this
-  one.
+**Chroma-key** (the card's named acceptable alternative) was not separately implemented, unchanged
+from round 1's reasoning: with SAM3 now genuinely running and producing clean masks on every panel,
+there is nothing a chroma-key arm would additionally decide.
 
-**Chroma-key** (the card's named acceptable alternative) was not separately implemented: with SAM3
-now genuinely running and the real comparison already showing a mixed, evidence-backed result, there
-was nothing a chroma-key arm would additionally decide — it would need to beat both Oklab (already
-measured) and SAM3 (already measured) to change the outcome, and this card's scope does not ask for
-a three-way tournament.
+## What happens next — Oklab stays primary in code, unchanged; SAM3 is now backed by clean per-panel evidence
 
-## What happens next — Oklab stays primary in code, unchanged, SAM3 stays wired for real
+`cut_master_sheet_part`'s default (`method="sam3"`) is unchanged by this round — SAM3 stays wired as
+the attempted-first primary path (AC 1), exactly as before FIX ROUND 1 and FIX ROUND 2 both. `char_gen/cutout.py`'s
+Oklab flood is untouched by this round too (see "[FIX ROUND 2] Do NOT re-tune the Oklab flood" note
+below), its own tests
+(`test_cutout_absolute_background_distance_T0315.py`, `test_force_border_background_T0319.py`) still
+pass unmodified, and it remains the documented, selectable fallback (`method="oklab"`). No code
+change to `cut_master_sheet_part`'s own method-selection logic is made in this round — the
+improvement is entirely in the *prompts* handed to SAM3, per the reviewer's own distinction between
+"prompt tuning" (permitted) and "re-tuning the Oklab flood" (prohibited).
 
-`cut_master_sheet_part`'s default (`method="sam3"`) is unchanged by this finding — SAM3 stays wired
-as the attempted-first primary path (AC 1), exactly as before, and now for real: it actually runs
-against a real SAM3 model instead of crashing immediately. `char_gen/cutout.py`'s Oklab flood is
-untouched, its own tests (`test_cutout_absolute_background_distance_T0315.py`,
-`test_force_border_background_T0319.py`) still pass unmodified, and it remains the documented,
-selectable fallback (`method="oklab"`). Given the mixed result above, no code change to prefer one
-method's *output* over the other's per-panel is made in this round — that would be exactly the
-re-tuning the card's "do not re-tune" instruction rules out, and the honest per-panel quality gap
-here is a query-strategy problem, not something a threshold or heuristic in `cut_master_sheet_part`
-should paper over without its own measurement pass.
+## [FIX ROUND 2] Do NOT re-tune the Oklab flood
+
+Per the card's standing instruction and the round-2 review's own explicit permission ("choosing
+valid SAM3 point prompts is permitted and is not the prohibited tuning"), `char_gen/cutout.py` and
+its own tests are untouched by this round — `git diff` against the pre-round-2 head confirms neither
+file appears in the diffstat. Only the SAM3 query strategy (`gen_master_sheet_cutout_compare_T0337.py`'s
+`panel_prompt_points`) changed.
 
 ## Box-descend (acceptance criterion 4)
 
@@ -155,11 +170,16 @@ run). Each panel now descends **whichever mask `cut_master_sheet_part` actually 
 `front_tpose`/`back_tpose`/`legs` descended parts are honestly small/sliver-shaped in this evidence
 set — a faithful record of the SAM3 mask that produced them, not a curated final.
 
-**Important scope note, unchanged from the prior round:** these are whole-figure descents, not
-per-anatomical-limb ones — a single point-prompt call per panel, not per limb. `box_descend_part`
-and `cut_master_sheet_part` are both written generically against *any* boolean mask, so a future
-per-limb query strategy (multiple points, one per anatomical part) runs through the exact same
-descent code unmodified.
+**Important scope note:** each panel still descends to **one** part image — for the five
+whole-figure panels that is the whole figure; for `legs` it is both legs together (thigh + lower_leg
++ boot on each side, one combined mask). [FIX ROUND 2] made the *prompt* panel/part-aware (multiple
+points targeting the actual anatomy of that panel, instead of one fixed neck point), which is what
+let `legs` isolate cleanly from the coat/torso — but it did not split a panel's own mask into
+separate per-limb output files (e.g. a `legs` panel producing a standalone thigh-only sprite and a
+separate boot-only sprite). `box_descend_part` and `cut_master_sheet_part` are both written
+generically against *any* boolean mask, so a future finer-grained split (per-limb *output files*, not
+just per-limb *prompts*) runs through the exact same descent code unmodified — that is the
+per-pose selection/extraction mechanism T-0416 scopes separately, not this card.
 
 ## [FIX ROUND 1] The palette bug — dark foreground erased as transparent
 
@@ -199,48 +219,60 @@ register it in `checkpoint_allowlist.json` (if approved) or revisit whether
 SAM3 can stay wired as primary at all (if not) — this is reported, not
 resolved, here.
 
-## [FIX ROUND 1, retry] AC 18 gitleaks scan — blocked by session permission, not by this branch's content
+## [FIX ROUND 1, retry] AC 18 gitleaks scan — historical, superseded by FIX ROUND 2's own AC 18
 
-The card requires running `~/.local/bin/gitleaks detect --source . --redact --no-banner` on this
-round's branch head and pasting the `leaks found:` line into the handoff. This implementer session
-has no Bash grant that matches `~/.local/bin/gitleaks` or `gitleaks` in any invocation form —
-`~/.local/bin/gitleaks detect ...`, `~/.local/bin/gitleaks version`, and bare `gitleaks version` were
-all denied with "This command requires approval"; `which gitleaks` (which is not itself the scanner)
-resolved the binary's path but that is not a scan. This is the identical denial three prior review
-rounds already recorded for both the implementer and reviewer personas, so it is a fixed property of
-the current `.claude/agents/assets.md` / `.claude/agents/reviewer.md` grant lists, not something a
-different invocation or a retry from this session can route around.
+FIX ROUND 1's own AC 18 required running `~/.local/bin/gitleaks` on that round's head and pasting a
+`leaks found:` line; that command was denied session-wide for both the implementer and reviewer
+personas across three prior rounds (kept below for the historical record). **FIX ROUND 2's own AC 18
+text supersedes this**: it states plainly that *"No agent persona currently holds a grant to execute
+`~/.local/bin/gitleaks`. ... satisfy this by keeping new content free of secret-shaped strings and
+reporting that honestly — do not claim a scan you could not run."* This session hit the identical
+denial (`~/.local/bin/gitleaks detect --source . --redact --no-banner` → "This command requires
+approval"), confirming the grant gap is still unchanged, and is reporting that honestly rather than
+fabricating a scan result.
 
-What is already true, verified independently of the scanner: `.gitleaksignore` carries fingerprints
-for all three `c41138ad`-anchored `panel_<key>` findings (the withdrawn placeholder, fixed at source
-to `panel_{key}` in the current code and docs — `grep -rn 'panel_<key>'` under this repo's
-non-`.venv`, non-worktree paths returns nothing), plus the orchestrator's own out-of-band
-`POSE_KEY`/T-0394 entry (`59e302a0`). The two strings newly committed in this round's own
-`65a6a2d7` and `ASSET_PROVENANCE.md` — the SAM3 checkpoint's 64-hex-char sha256
-(`9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03`) — are exactly the kind of
-64-char hex token `generic-api-key`/`hex-high-entropy` rules pattern-match, and remain unscanned
-against the real tool.
+What this round adds beyond round 1's own content: the six new `panel_{key}_prompts.json` files
+(small integer pixel coordinates plus short derivation strings — no hex/base64/entropy-shaped
+tokens), regenerated `panel_{key}_sam3_after.png`/`descended_32x64.png` binaries, this `README.md`'s
+prose, and the `initial_single_point_experiment/` archive (a straight copy of already-committed
+round-1 content, git-mv'd, introducing no new byte sequences). No new checkpoint hash, API key,
+token, or other secret-shaped string is introduced by this round's own commits — the one 64-hex-char
+sha256 in this evidence set (`9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03`) was
+already committed in round 1 and is unchanged here.
 
-**This needs a Claude Code settings/permission change outside this worktree, not a code change
-inside it:** add a Bash grant such as `Bash(~/.local/bin/gitleaks:*)` to both
-`.claude/agents/assets.md` and `.claude/agents/reviewer.md`, then run the scan against this round's
-head and record the `leaks found:` line. If the sha256 (or anything else) fires, add that finding's
-own commit:file:rule:line fingerprint to `.gitleaksignore` with a comment, per the existing
-`7739e4c4`/`e668a097`/`c37e19d2` convention in this file. Retrying this card again without that grant
-change will reproduce the identical denial.
+**Original FIX ROUND 1 denial record, for history:** `~/.local/bin/gitleaks detect ...`,
+`~/.local/bin/gitleaks version`, and bare `gitleaks version` were all denied with "This command
+requires approval"; `.gitleaksignore` carries fingerprints for all three `c41138ad`-anchored
+`panel_<key>` findings (the withdrawn placeholder, fixed at source to `panel_{key}`), plus the
+orchestrator's own out-of-band `POSE_KEY`/T-0394 entry (`59e302a0`). Adding a Bash grant such as
+`Bash(~/.local/bin/gitleaks:*)` to `.claude/agents/assets.md` and `.claude/agents/reviewer.md` would
+let a future round actually run the scan instead of reasoning about content by inspection.
 
 ## Files in this directory
 
 - `README.md` — this file
-- `comparison.json` — full machine-readable SAM3-availability + per-panel comparison record (this
-  round's real run)
-- `panel_{key}_before.png` — raw panel crop, one per panel (6 panels)
-- `panel_{key}_oklab_after.png` / `panel_{key}_sam3_after.png` — before/after per method per panel
+- `comparison.json` — full machine-readable SAM3-availability + per-panel comparison record,
+  **[FIX ROUND 2]'s panel/part-aware-prompt run** (current)
+- `panel_{key}_before.png` — raw panel crop, one per panel (6 panels), unchanged since round 1
+- `panel_{key}_oklab_after.png` — Oklab's own background call, unchanged since round 1 (the flood is
+  untouched by this card)
+- `panel_{key}_sam3_after.png` — SAM3's background call, **[FIX ROUND 2]'s panel/part-aware-prompt
+  result** (current; overwrites round 1's own file of the same name — round 1's is archived, see
+  below)
+- `panel_{key}_prompts.json` — **[FIX ROUND 2], new.** Every point prompt used for that panel:
+  `{"x", "y", "polarity", "derivation"}`, one entry per point — positive points derived from the
+  panel's own real joints, negative points at the four corners (plus, for `legs`, the panel's own
+  collapsed upper-body placeholder point)
 - `panel_{key}_descended_32x64.png` / `.provenance.json` — box-descended demonstration part per
-  panel, descended from whichever mask `cut_master_sheet_part` actually used
+  panel, descended from whichever mask `cut_master_sheet_part` actually used — **[FIX ROUND 2]'s
+  panel/part-aware-prompt result** (current; round 1's is archived, see below)
+- `initial_single_point_experiment/` — **[FIX ROUND 2], new.** The withdrawn round-1
+  single-neck-point run's own `panel_{key}_sam3_after.png`, `panel_{key}_descended_32x64.png` +
+  `.provenance.json`, and a copy of that run's own `comparison.json` — archived, not deleted, and
+  not presented as the anatomical-part result. See that directory's own `README.md`.
 - `probe_sam3_graph.json` / `probe_sam3_graph_coords.json` / `probe_sam3_mask_output.png` —
-  **historical, superseded.** These are the two minimal probe graphs from the *prior, withdrawn*
+  **historical, superseded.** These are the two minimal probe graphs from the *original, withdrawn*
   round that established the (wrong) "no SAM3 loader exists" diagnosis, submitted directly to
   `/prompt` against a deliberately-wrong `CheckpointLoaderSimple`-loaded SDXL model. Kept for the
-  historical record of that diagnosis process; they are not part of this round's real comparison and
-  must not be read as current evidence of anything about SAM3's segmentation quality.
+  historical record of that diagnosis process; they are not part of any real comparison and must not
+  be read as current evidence of anything about SAM3's segmentation quality.
