@@ -52,6 +52,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PIL import Image
@@ -69,14 +70,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pose_rig_master_sheet_T0351 as rig  # noqa: E402
 from asset_gate.palette import load_palette  # noqa: E402
-from comfy_client.comfyui_client import ComfyUIClient  # noqa: E402
-from comfy_client.errors import (  # noqa: E402
-    ExecutionError,
-    PollTimeoutError,
-    SubmitError,
-    UploadError,
-)
-from comfy_client.provenance_sidecar import resolve_run_id, write_provenance_sidecar  # noqa: E402
+
+# comfy_client pulls in `requests`, which is not a declared dependency of
+# char-gen's own pyproject.toml (nor of tools/comfy-client's own, at this
+# checkpoint) -- so importing it at module scope breaks collection of this
+# module (and anything that imports it, incl. the test module) in a clean
+# char-gen venv that never installed `requests`. Deferred into the functions
+# that actually call ComfyUIClient/resolve_run_id/write_provenance_sidecar at
+# runtime, same lazy-import shape T-0363 applied to asset_gate.cli. Only used
+# as type hints at module scope, which `from __future__ import annotations`
+# above already turns into unevaluated strings.
+if TYPE_CHECKING:
+    from comfy_client.comfyui_client import ComfyUIClient
 
 from char_gen.cutout import (  # noqa: E402
     BACKGROUND_MASK_MARGIN_FRAC,
@@ -319,6 +324,8 @@ def _make_sam3_runner(
     ]
 
     def _run() -> np.ndarray:
+        from comfy_client.errors import ExecutionError, PollTimeoutError, SubmitError
+
         workflow = build_sam3_part_workflow(
             image_filename,
             _sam3_model_loader(),
@@ -366,6 +373,9 @@ def _run_one_panel(
     single GPU job can be foregrounded and its evidence committed before the
     next panel runs, per the card's own "one GPU job at a time... commit per
     panel" instruction, instead of batching all six into one commit."""
+    from comfy_client.errors import UploadError
+    from comfy_client.provenance_sidecar import write_provenance_sidecar
+
     crop = _panel_crop(sheet, index)
     points = rig.keypoints_for(key)
     prompts = panel_prompt_points(key, points, PANEL_SIZE)
@@ -459,6 +469,9 @@ def _run_one_panel(
 
 def main() -> None:
     import argparse
+
+    from comfy_client.comfyui_client import ComfyUIClient
+    from comfy_client.provenance_sidecar import resolve_run_id
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
