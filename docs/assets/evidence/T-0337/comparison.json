@@ -9,13 +9,71 @@
     ]
   },
   "sam3_availability_probe_error": null,
-  "run_id": "T-0337-2026-09-28T14-44-18-700Z",
+  "run_id": "T-0337-2026-09-28T18-01-24-097Z",
+  "prompt_strategy": "[FIX ROUND 2] panel/part-aware point prompts derived from pose_rig_master_sheet_T0351.keypoints_for(pose_key) -- see gen_master_sheet_cutout_compare_T0337.panel_prompt_points. Supersedes the single-fixed-neck-point query the withdrawn initial experiment used; see initial_single_point_experiment/ for that run's own archived record.",
   "panels": [
     {
       "panel": "front_tpose",
       "method_used": "sam3",
       "oklab_foreground_px": 392045,
-      "sam3_foreground_px": 16777,
+      "sam3_foreground_px": 300221,
+      "sam3_degenerate_mask": false,
+      "prompts": [
+        {
+          "x": 512,
+          "y": 215,
+          "polarity": "positive",
+          "derivation": "neck (torso anchor) = NECK[1]"
+        },
+        {
+          "x": 71,
+          "y": 230,
+          "polarity": "positive",
+          "derivation": "right_wrist (arm extremity) = WRIST[4]"
+        },
+        {
+          "x": 952,
+          "y": 230,
+          "polarity": "positive",
+          "derivation": "left_wrist (arm extremity) = WRIST[7]"
+        },
+        {
+          "x": 327,
+          "y": 952,
+          "polarity": "positive",
+          "derivation": "right_ankle (leg extremity) = ANKLE[10]"
+        },
+        {
+          "x": 696,
+          "y": 952,
+          "polarity": "positive",
+          "derivation": "left_ankle (leg extremity) = ANKLE[13]"
+        },
+        {
+          "x": 4,
+          "y": 4,
+          "polarity": "negative",
+          "derivation": "corner_top_left"
+        },
+        {
+          "x": 1020,
+          "y": 4,
+          "polarity": "negative",
+          "derivation": "corner_top_right"
+        },
+        {
+          "x": 4,
+          "y": 1020,
+          "polarity": "negative",
+          "derivation": "corner_bottom_left"
+        },
+        {
+          "x": 1020,
+          "y": 1020,
+          "polarity": "negative",
+          "derivation": "corner_bottom_right"
+        }
+      ],
       "before": "docs/assets/evidence/T-0337/panel_front_tpose_before.png",
       "oklab_after": "docs/assets/evidence/T-0337/panel_front_tpose_oklab_after.png",
       "sam3_after": "docs/assets/evidence/T-0337/panel_front_tpose_sam3_after.png",
