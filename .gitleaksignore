@@ -26,3 +26,10 @@ e668a097b8d47e39f041d41366421f359079f614:tools/board/ops/board-assets-drivemap.p
 c41138add1db3ea70190412cf9715a15c35cab21:docs/assets/evidence/T-0337/README.md:generic-api-key:103
 c41138add1db3ea70190412cf9715a15c35cab21:docs/assets/evidence/T-0337/README.md:generic-api-key:142
 c41138add1db3ea70190412cf9715a15c35cab21:assets/src/character/gen_master_sheet_cutout_compare_T0337.py:generic-api-key:42
+
+# Inherited from merged T-0394 (commit c37e19d2), not introduced by any open branch: the
+# generic-api-key rule matches `POSE_KEY = ...`, a pose-rig joint-name constant, not a secret.
+# Same false-positive class as the T-0387 sibling already ignored above
+# (7739e4c4...:assets/src/concept/pose_rig_forward_limb_controlnet_T0387.py:generic-api-key:73);
+# that one was ignored when #402 landed and this one was simply missed.
+c37e19d286225b43d18b803502fcc1b858b24d8e:assets/src/concept/pose_rig_forward_limb_controlnet_T0394.py:generic-api-key:57
