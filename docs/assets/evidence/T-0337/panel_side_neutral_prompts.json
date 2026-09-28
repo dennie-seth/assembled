@@ -1,0 +1,56 @@
+[
+  {
+    "x": 512,
+    "y": 215,
+    "polarity": "positive",
+    "derivation": "neck (torso anchor) = NECK[1]"
+  },
+  {
+    "x": 542,
+    "y": 573,
+    "polarity": "positive",
+    "derivation": "right_wrist (arm extremity) = WRIST[4]"
+  },
+  {
+    "x": 489,
+    "y": 573,
+    "polarity": "positive",
+    "derivation": "left_wrist (arm extremity) = WRIST[7]"
+  },
+  {
+    "x": 527,
+    "y": 952,
+    "polarity": "positive",
+    "derivation": "right_ankle (leg extremity) = ANKLE[10]"
+  },
+  {
+    "x": 501,
+    "y": 952,
+    "polarity": "positive",
+    "derivation": "left_ankle (leg extremity) = ANKLE[13]"
+  },
+  {
+    "x": 4,
+    "y": 4,
+    "polarity": "negative",
+    "derivation": "corner_top_left"
+  },
+  {
+    "x": 1020,
+    "y": 4,
+    "polarity": "negative",
+    "derivation": "corner_top_right"
+  },
+  {
+    "x": 4,
+    "y": 1020,
+    "polarity": "negative",
+    "derivation": "corner_bottom_left"
+  },
+  {
+    "x": 1020,
+    "y": 1020,
+    "polarity": "negative",
+    "derivation": "corner_bottom_right"
+  }
+]
