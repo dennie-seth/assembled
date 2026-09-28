@@ -103,6 +103,10 @@ SHEET_PATH = (
     / "attempt_19_first_per_panel_reference_run_front_back_neutral_clean_sides_malformed.png"
 )
 EVIDENCE_DIR = REPO_ROOT / "docs" / "assets" / "evidence" / "T-0337"
+#: [FIX ROUND 2] Where the withdrawn single-neck-point run's own SAM3
+#: results are archived, relabelled -- not deleted, not presented as the
+#: anatomical-part result. See `main()`'s `_archive_initial_experiment`.
+INITIAL_EXPERIMENT_DIR = EVIDENCE_DIR / "initial_single_point_experiment"
 GENERATOR_PATH = "assets/src/character/gen_master_sheet_cutout_compare_T0337.py"
 PANEL_SIZE = 1024
 PANEL_KEYS = [
@@ -121,9 +125,146 @@ PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 #: isn't in UNETLoader's own unet_name option list, `_probe_sam3_availability`
 #: reports unavailable and `main()` performs no comparison.
 SAM3_UNET_CHECKPOINT = "sam3.1_multiplex_fp16.safetensors"
-#: COCO/OpenPose joint index 1 = NECK, same numbering
-#: `pose_rig_master_sheet_T0351.py` uses throughout.
-_NECK_JOINT = 1
+
+# ── [FIX ROUND 2] Standard 18-keypoint COCO/OpenPose joint indices --------
+# Mirrored deliberately from `pose_rig_master_sheet_T0351.py`'s own (private,
+# unexported) numbering rather than importing it: this module already
+# depends on that one via `rig.keypoints_for`, and duplicating a handful of
+# stable integer constants keeps this card's own prompt-derivation logic
+# free of a second, informal coupling to that module's private names (same
+# rationale `char_gen.part_descend`'s own docstring gives for duplicating
+# `_srgb_to_oklab` rather than importing it).
+_NECK = 1
+_R_WRIST, _L_WRIST = 4, 7
+_R_HIP, _R_KNEE, _R_ANKLE = 8, 9, 10
+_L_HIP, _L_KNEE, _L_ANKLE = 11, 12, 13
+
+#: Panel keys whose pose has no real upper-body anatomy -- T-0351's own
+#: `LEGS_KEYPOINTS_NORM` collapses every upper-body joint (including NECK)
+#: to one placeholder point near the top edge, since the panel is a
+#: waist-down crop. Point-prompting any of those collapsed joints (the
+#: withdrawn initial experiment's own `_neck_pixel` did exactly this) always
+#: produced a near-empty mask -- not a segmentation failure, an invalid
+#: query.
+_LEGS_ONLY_PANEL_KEYS = frozenset({"legs"})
+
+#: [FIX ROUND 2] Degenerate-mask fraction thresholds for a 1024x1024 panel.
+#: Justified against this round's own committed numbers
+#: (docs/assets/evidence/T-0337/comparison.json's withdrawn
+#: single-neck-point experiment): the three unusable masks measured
+#: 16,777 / 7,467 / 547 px of 1,048,576 -- fractions 0.016 / 0.007 / 0.0005
+#: -- while Oklab's own flood on the same six panels spans roughly
+#: 0.124-0.396. DEGENERATE_MASK_FRACTION_LOW (0.03) sits strictly between
+#: the worst of those three failures (0.016) and the smallest plausible
+#: Oklab result (0.124), so a comparably bad SAM3 result is still caught
+#: without rejecting a legitimately smaller *part* mask (this round's
+#: per-part prompting on the legs panel can validly produce a foreground
+#: fraction well below a whole-figure flood's). DEGENERATE_MASK_FRACTION_HIGH
+#: (0.55) sits strictly above the largest plausible Oklab result (0.396),
+#: catching the opposite failure -- a mask that grew to cover most of the
+#: panel including background.
+DEGENERATE_MASK_FRACTION_LOW = 0.03
+DEGENERATE_MASK_FRACTION_HIGH = 0.55
+
+
+def is_degenerate_mask_fraction(foreground_px: int, total_px: int) -> bool:
+    """True when `foreground_px / total_px` falls outside the plausible
+    range for a real part/figure mask on a 1024x1024 T-0351 panel -- pure
+    arithmetic, no ComfyUI/host dependency, so it runs offline."""
+    if total_px <= 0:
+        raise ValueError("total_px must be positive")
+    fraction = foreground_px / total_px
+    return fraction < DEGENERATE_MASK_FRACTION_LOW or fraction > DEGENERATE_MASK_FRACTION_HIGH
+
+
+def _px(point_norm: tuple[float, float], panel_size: int) -> tuple[int, int]:
+    x, y = point_norm
+    return int(x * panel_size), int(y * panel_size)
+
+
+def _midpoint(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
+    return (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+
+
+def panel_prompt_points(
+    pose_key: str, points_norm: dict[int, tuple[float, float]], panel_size: int = PANEL_SIZE
+) -> list[dict]:
+    """[FIX ROUND 2] Bounded, panel/part-aware SAM3 point-prompt derivation
+    -- one fixed configuration per panel, decided up front, never a sweep.
+    Replaces the withdrawn single-neck-point query
+    (`_neck_pixel`/`_NECK_JOINT`, removed this round) that queried every
+    panel -- including the legs-only panel, whose neck is a collapsed,
+    invalid placeholder -- with the same one point regardless of what that
+    panel is actually meant to isolate.
+
+    Returns a flat list of `{"x": int, "y": int, "polarity": "positive" |
+    "negative", "derivation": str}` records -- every point used is
+    recorded, not just the final mask, and `derivation` names exactly which
+    joint(s) (or which corner) produced it so the evidence is self-
+    explaining without cross-referencing this function's source.
+
+    `pose_key in _LEGS_ONLY_PANEL_KEYS` (today, just `"legs"`): the panel's
+    only real anatomy is hip/knee/ankle, both sides -- six positive points,
+    one each for thigh (`midpoint(HIP, KNEE)`), lower leg
+    (`midpoint(KNEE, ANKLE)`), and boot (`ANKLE` itself), per side. Negatives
+    are the four corners plus the panel's own collapsed upper-body
+    placeholder point (real coordinates on this panel, but never real
+    anatomy), suppressing exactly the invalid anchor the withdrawn
+    experiment queried.
+
+    Every other panel is a whole-figure pose: T-0351's T-pose and profile
+    rigs spread both arms/legs well clear of the torso, and the withdrawn
+    experiment's own committed numbers (16,777 / 7,467 px of 1,048,576 for
+    front/back_tpose) show a single torso point does not reliably grow to
+    cover a spread figure. Five positive points -- NECK plus both WRIST and
+    both ANKLE extremities -- give SAM3 enough spatial spread; negatives are
+    the four corners."""
+    records: list[dict] = []
+
+    def positive(point_norm: tuple[float, float], derivation: str) -> None:
+        x, y = _px(point_norm, panel_size)
+        records.append({"x": x, "y": y, "polarity": "positive", "derivation": derivation})
+
+    def negative(x: int, y: int, derivation: str) -> None:
+        records.append({"x": x, "y": y, "polarity": "negative", "derivation": derivation})
+
+    if pose_key in _LEGS_ONLY_PANEL_KEYS:
+        for side, hip_idx, knee_idx, ankle_idx in (
+            ("right", _R_HIP, _R_KNEE, _R_ANKLE),
+            ("left", _L_HIP, _L_KNEE, _L_ANKLE),
+        ):
+            hip, knee, ankle = points_norm[hip_idx], points_norm[knee_idx], points_norm[ankle_idx]
+            positive(
+                _midpoint(hip, knee),
+                f"{side}_thigh = midpoint(HIP[{hip_idx}], KNEE[{knee_idx}])",
+            )
+            positive(
+                _midpoint(knee, ankle),
+                f"{side}_lower_leg = midpoint(KNEE[{knee_idx}], ANKLE[{ankle_idx}])",
+            )
+            positive(ankle, f"{side}_boot = ANKLE[{ankle_idx}]")
+        negative(4, 4, "corner_top_left")
+        negative(panel_size - 4, 4, "corner_top_right")
+        negative(4, panel_size - 4, "corner_bottom_left")
+        negative(panel_size - 4, panel_size - 4, "corner_bottom_right")
+        collapse_x, collapse_y = _px(points_norm[_NECK], panel_size)
+        negative(
+            collapse_x,
+            collapse_y,
+            "legs_panel_upper_body_collapse_point (NECK[1], not real anatomy on this panel)",
+        )
+    else:
+        positive(points_norm[_NECK], "neck (torso anchor) = NECK[1]")
+        for side, wrist_idx in (("right", _R_WRIST), ("left", _L_WRIST)):
+            positive(points_norm[wrist_idx], f"{side}_wrist (arm extremity) = WRIST[{wrist_idx}]")
+        for side, ankle_idx in (("right", _R_ANKLE), ("left", _L_ANKLE)):
+            positive(points_norm[ankle_idx], f"{side}_ankle (leg extremity) = ANKLE[{ankle_idx}]")
+        negative(4, 4, "corner_top_left")
+        negative(panel_size - 4, 4, "corner_top_right")
+        negative(4, panel_size - 4, "corner_bottom_left")
+        negative(panel_size - 4, panel_size - 4, "corner_bottom_right")
+
+    return records
 
 
 def _sam3_model_loader() -> dict:
@@ -136,11 +277,6 @@ def _sam3_model_loader() -> dict:
 def _panel_crop(sheet: Image.Image, index: int) -> Image.Image:
     x0 = index * PANEL_SIZE
     return sheet.crop((x0, 0, x0 + PANEL_SIZE, PANEL_SIZE))
-
-
-def _neck_pixel(points_norm: dict[int, tuple[float, float]]) -> dict[str, int]:
-    x, y = points_norm[_NECK_JOINT]
-    return {"x": int(x * PANEL_SIZE), "y": int(y * PANEL_SIZE)}
 
 
 def _probe_sam3_availability(client: ComfyUIClient) -> tuple[dict, str | None]:
@@ -169,13 +305,25 @@ def _probe_sam3_availability(client: ComfyUIClient) -> tuple[dict, str | None]:
 
 
 def _make_sam3_runner(
-    client: ComfyUIClient, image_filename: str, positive_point: dict, filename_prefix: str
+    client: ComfyUIClient, image_filename: str, prompt_records: list[dict], filename_prefix: str
 ):
+    """[FIX ROUND 2] `prompt_records` is `panel_prompt_points`'s own output --
+    a flat list of `{"x", "y", "polarity", "derivation"}` records, split here
+    into the `positive_coords`/`negative_coords` lists `SAM3_Detect` actually
+    takes (`derivation` is evidence-only, not part of the graph)."""
+    positive_coords = [
+        {"x": r["x"], "y": r["y"]} for r in prompt_records if r["polarity"] == "positive"
+    ]
+    negative_coords = [
+        {"x": r["x"], "y": r["y"]} for r in prompt_records if r["polarity"] == "negative"
+    ]
+
     def _run() -> np.ndarray:
         workflow = build_sam3_part_workflow(
             image_filename,
             _sam3_model_loader(),
-            positive_coords=[positive_point],
+            positive_coords=positive_coords,
+            negative_coords=negative_coords,
             filename_prefix=filename_prefix,
         )
         try:
@@ -192,7 +340,140 @@ def _make_sam3_runner(
     return _run
 
 
+def _load_existing_comparison() -> dict | None:
+    comparison_path = EVIDENCE_DIR / "comparison.json"
+    if not comparison_path.exists():
+        return None
+    return json.loads(comparison_path.read_text())
+
+
+def _write_comparison(comparison: dict) -> Path:
+    comparison_path = EVIDENCE_DIR / "comparison.json"
+    comparison_path.write_text(json.dumps(comparison, indent=2) + "\n")
+    return comparison_path
+
+
+def _run_one_panel(
+    client: ComfyUIClient,
+    sheet: Image.Image,
+    index: int,
+    key: str,
+    palette_list: list[tuple[int, int, int]],
+    run_id: str | None,
+) -> dict:
+    """[FIX ROUND 2] Runs exactly one panel's SAM3-vs-Oklab comparison and
+    writes exactly that panel's evidence files -- split out of `main()` so a
+    single GPU job can be foregrounded and its evidence committed before the
+    next panel runs, per the card's own "one GPU job at a time... commit per
+    panel" instruction, instead of batching all six into one commit."""
+    crop = _panel_crop(sheet, index)
+    points = rig.keypoints_for(key)
+    prompts = panel_prompt_points(key, points, PANEL_SIZE)
+
+    before_path = EVIDENCE_DIR / f"panel_{key}_before.png"
+    crop.save(before_path)
+
+    prompts_path = EVIDENCE_DIR / f"panel_{key}_prompts.json"
+    prompts_path.write_text(json.dumps(prompts, indent=2) + "\n")
+
+    image_filename = f"T0337_panel_{key}.png"
+    try:
+        client.upload_image(_png_bytes(crop), image_filename)
+    except UploadError as exc:
+        print(f"{key}: upload failed, SAM3 attempt will fail to submit: {exc}")
+
+    runner = _make_sam3_runner(client, image_filename, prompts, f"T0337_sam3_{key}")
+    mask, method = cut_master_sheet_part(
+        crop,
+        points,
+        CUTOUT_OKLAB_TOLERANCE,
+        BACKGROUND_MASK_MARGIN_FRAC,
+        method="sam3",
+        sam3_runner=runner,
+    )
+
+    oklab_mask = cutout_foreground_mask(
+        crop, points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
+    )
+    oklab_fg_px = int(oklab_mask.sum())
+
+    oklab_after_arr = np.array(crop).copy()
+    oklab_after_arr[~oklab_mask] = (255, 0, 255)  # magenta marks Oklab's own background call
+    oklab_after_path = EVIDENCE_DIR / f"panel_{key}_oklab_after.png"
+    Image.fromarray(oklab_after_arr).save(oklab_after_path)
+
+    sam3_fg_px = None
+    sam3_after_path = None
+    sam3_degenerate = None
+    if method == "sam3":
+        sam3_fg_px = int(mask.sum())
+        sam3_degenerate = is_degenerate_mask_fraction(sam3_fg_px, mask.size)
+        sam3_after_arr = np.array(crop).copy()
+        sam3_after_arr[~mask] = (255, 0, 255)  # magenta marks SAM3's own background call
+        sam3_after_path = EVIDENCE_DIR / f"panel_{key}_sam3_after.png"
+        Image.fromarray(sam3_after_arr).save(sam3_after_path)
+
+    # Descend whichever mask cut_master_sheet_part actually used
+    # (method-labelled) -- not hard-coded to Oklab, so the descended
+    # evidence matches the primary path that really produced it.
+    descended_path = EVIDENCE_DIR / f"panel_{key}_descended_32x64.png"
+    descended = box_descend_part(crop, mask, palette_list, target_size=(32, 64), margin_px=4)
+    save_sprite_sheet(descended, descended_path, palette=palette_list)
+    write_provenance_sidecar(
+        EVIDENCE_DIR / f"panel_{key}_descended_32x64.provenance.json",
+        {
+            "source_sheet": str(SHEET_PATH.relative_to(REPO_ROOT)),
+            "panel": key,
+            "cutout_method": method,
+            "target_size": [32, 64],
+            "palette": str(PALETTE_PATH.relative_to(REPO_ROOT)),
+        },
+        generator=GENERATOR_PATH,
+        card="T-0337",
+        note=(
+            "Evidence/demonstration descent, not a curated final -- descends the "
+            f"cutout produced by the {method} method (panel/part-aware prompts, "
+            "[FIX ROUND 2]) for this panel; see docs/assets/evidence/T-0337/README.md."
+        ),
+        run_id=run_id,
+    )
+
+    result = {
+        "panel": key,
+        "method_used": method,
+        "oklab_foreground_px": oklab_fg_px,
+        "sam3_foreground_px": sam3_fg_px,
+        "sam3_degenerate_mask": sam3_degenerate,
+        "prompts": prompts,
+        "before": str(before_path.relative_to(REPO_ROOT)),
+        "oklab_after": str(oklab_after_path.relative_to(REPO_ROOT)),
+        "sam3_after": str(sam3_after_path.relative_to(REPO_ROOT)) if sam3_after_path else None,
+        "descended_part": str(descended_path.relative_to(REPO_ROOT)),
+    }
+    print(
+        f"{key}: method_used={method} oklab_fg_px={oklab_fg_px} sam3_fg_px={sam3_fg_px} "
+        f"sam3_degenerate={sam3_degenerate}"
+    )
+    return result
+
+
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--panel",
+        choices=PANEL_KEYS,
+        default=None,
+        help=(
+            "[FIX ROUND 2] run exactly one panel and merge its result into the existing "
+            "comparison.json, instead of all six -- lets each panel's live ComfyUI job be "
+            "foregrounded and its evidence committed on its own, per the card's own "
+            "'one GPU job at a time... commit per panel' instruction."
+        ),
+    )
+    args = parser.parse_args()
+
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     palette = load_palette(PALETTE_PATH)
     palette_list = [palette.rgb_by_index[i] for i in sorted(palette.rgb_by_index)]
@@ -218,105 +499,40 @@ def main() -> None:
                 f"reason={availability.get('reason')!r}"
             ),
         }
-        comparison_path = EVIDENCE_DIR / "comparison.json"
-        comparison_path.write_text(json.dumps(comparison, indent=2) + "\n")
+        comparison_path = _write_comparison(comparison)
         print(f"SAM3 unavailable ({availability.get('reason')}); wrote {comparison_path}")
         return
 
-    panel_results = []
-    for index, key in enumerate(PANEL_KEYS):
-        crop = _panel_crop(sheet, index)
-        points = rig.keypoints_for(key)
+    existing = _load_existing_comparison() or {}
+    existing_panels_by_key = {p["panel"]: p for p in existing.get("panels", [])}
+    keys_to_run = [args.panel] if args.panel else PANEL_KEYS
 
-        before_path = EVIDENCE_DIR / f"panel_{key}_before.png"
-        crop.save(before_path)
+    for key in keys_to_run:
+        index = PANEL_KEYS.index(key)
+        result = _run_one_panel(client, sheet, index, key, palette_list, run_id)
+        existing_panels_by_key[key] = result
 
-        image_filename = f"T0337_panel_{key}.png"
-        try:
-            client.upload_image(_png_bytes(crop), image_filename)
-        except UploadError as exc:
-            print(f"{key}: upload failed, SAM3 attempt will fail to submit: {exc}")
-
-        runner = _make_sam3_runner(client, image_filename, _neck_pixel(points), f"T0337_sam3_{key}")
-        mask, method = cut_master_sheet_part(
-            crop,
-            points,
-            CUTOUT_OKLAB_TOLERANCE,
-            BACKGROUND_MASK_MARGIN_FRAC,
-            method="sam3",
-            sam3_runner=runner,
-        )
-
-        oklab_mask = cutout_foreground_mask(
-            crop, points, CUTOUT_OKLAB_TOLERANCE, BACKGROUND_MASK_MARGIN_FRAC
-        )
-        oklab_fg_px = int(oklab_mask.sum())
-
-        oklab_after_arr = np.array(crop).copy()
-        oklab_after_arr[~oklab_mask] = (255, 0, 255)  # magenta marks Oklab's own background call
-        oklab_after_path = EVIDENCE_DIR / f"panel_{key}_oklab_after.png"
-        Image.fromarray(oklab_after_arr).save(oklab_after_path)
-
-        sam3_fg_px = None
-        sam3_after_path = None
-        if method == "sam3":
-            sam3_fg_px = int(mask.sum())
-            sam3_after_arr = np.array(crop).copy()
-            sam3_after_arr[~mask] = (255, 0, 255)  # magenta marks SAM3's own background call
-            sam3_after_path = EVIDENCE_DIR / f"panel_{key}_sam3_after.png"
-            Image.fromarray(sam3_after_arr).save(sam3_after_path)
-
-        # Descend whichever mask cut_master_sheet_part actually used
-        # (method-labelled) -- not hard-coded to Oklab, so the descended
-        # evidence matches the primary path that really produced it.
-        descended_path = EVIDENCE_DIR / f"panel_{key}_descended_32x64.png"
-        descended = box_descend_part(crop, mask, palette_list, target_size=(32, 64), margin_px=4)
-        save_sprite_sheet(descended, descended_path, palette=palette_list)
-        write_provenance_sidecar(
-            EVIDENCE_DIR / f"panel_{key}_descended_32x64.provenance.json",
-            {
-                "source_sheet": str(SHEET_PATH.relative_to(REPO_ROOT)),
-                "panel": key,
-                "cutout_method": method,
-                "target_size": [32, 64],
-                "palette": str(PALETTE_PATH.relative_to(REPO_ROOT)),
-            },
-            generator=GENERATOR_PATH,
-            card="T-0337",
-            note=(
-                "Evidence/demonstration descent, not a curated final -- descends the "
-                f"whole-figure cutout produced by the {method} method for this panel; "
-                "see docs/assets/evidence/T-0337/README.md."
+        # Write/merge comparison.json after every single panel -- not
+        # batched at the end -- so a run that only does one panel this call
+        # still leaves a consistent, committable comparison.json behind.
+        comparison = {
+            "sheet": str(SHEET_PATH.relative_to(REPO_ROOT)),
+            "sam3_availability": availability,
+            "sam3_availability_probe_error": availability_error,
+            "run_id": run_id,
+            "prompt_strategy": (
+                "[FIX ROUND 2] panel/part-aware point prompts derived from "
+                "pose_rig_master_sheet_T0351.keypoints_for(pose_key) -- see "
+                "gen_master_sheet_cutout_compare_T0337.panel_prompt_points. Supersedes the "
+                "single-fixed-neck-point query the withdrawn initial experiment used; see "
+                "initial_single_point_experiment/ for that run's own archived record."
             ),
-            run_id=run_id,
-        )
-
-        panel_results.append(
-            {
-                "panel": key,
-                "method_used": method,
-                "oklab_foreground_px": oklab_fg_px,
-                "sam3_foreground_px": sam3_fg_px,
-                "before": str(before_path.relative_to(REPO_ROOT)),
-                "oklab_after": str(oklab_after_path.relative_to(REPO_ROOT)),
-                "sam3_after": (
-                    str(sam3_after_path.relative_to(REPO_ROOT)) if sam3_after_path else None
-                ),
-                "descended_part": str(descended_path.relative_to(REPO_ROOT)),
-            }
-        )
-        print(f"{key}: method_used={method} oklab_fg_px={oklab_fg_px} sam3_fg_px={sam3_fg_px}")
-
-    comparison = {
-        "sheet": str(SHEET_PATH.relative_to(REPO_ROOT)),
-        "sam3_availability": availability,
-        "sam3_availability_probe_error": availability_error,
-        "run_id": run_id,
-        "panels": panel_results,
-    }
-    comparison_path = EVIDENCE_DIR / "comparison.json"
-    comparison_path.write_text(json.dumps(comparison, indent=2) + "\n")
-    print(f"wrote {comparison_path}")
+            "panels": [
+                existing_panels_by_key[k] for k in PANEL_KEYS if k in existing_panels_by_key
+            ],
+        }
+        comparison_path = _write_comparison(comparison)
+        print(f"wrote {comparison_path}")
 
 
 def _png_bytes(img: Image.Image) -> bytes:
