@@ -518,13 +518,30 @@ def test_cli_character_gate_fails_when_frame_generation_count_mismatches_layout(
     assert "mismatched_walk.provenance.json" in proc.stdout
 
 
-def test_cli_character_gate_still_exits_zero_on_the_committed_asset_tree():
+def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_fidelity_failure():
     """T-0357 PR review 2026-09-11: the P1 fix (missing rig evidence FAILS a
-    locomotion/transition/loop asset) must not regress the committed tree --
-    the shipped walk records no `motion_class` at all, so it is unaffected,
-    and the interim-walk exemption stays confined to
-    `character_motion_class_declared`, not this path."""
+    locomotion/transition/loop asset) must not regress the committed tree
+    with a NEW, unexpected failure mode.
+
+    T-0359 changed this test's own premise: the shipped walk now DOES record
+    `motion_class: "locomotion"` (confirmed from its own `frame_generation`
+    rig keypoints, docs/decision-log.md DL-31), so it no longer rides the
+    "missing motion_class" path this docstring used to describe. That is by
+    design -- the walk's own committed pixels genuinely fail the T-0340
+    pose-fidelity/identity-stability floor (pose IoU 0.3935 < 0.70,
+    identity-stability distance 0.3203 > 0.15; DL-31's own calibration table)
+    and T-0360's motion-score-binding check correctly reports that no score
+    has been self-reported to bind. `character_motion_class_baseline.txt`'s
+    own "EXPLICIT INTERIM-PLACEHOLDER EXEMPTION" note names exactly this
+    consequence and says it is correct, not a regression, pending T-0338's
+    replacement walk.
+
+    So this test no longer asserts a clean exit -- it asserts the exit is
+    non-zero for EXACTLY those two already-known, already-documented reasons
+    and nothing else, so it still catches a genuine NEW regression anywhere
+    else in the committed tree."""
     import os
+    import re
     import subprocess
     import sys
     from pathlib import Path
@@ -547,4 +564,16 @@ def test_cli_character_gate_still_exits_zero_on_the_committed_asset_tree():
         env=env,
     )
 
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    fail_lines = [line for line in proc.stdout.splitlines() if line.startswith("[FAIL]")]
+    failures = set()
+    for line in fail_lines:
+        match = re.match(r"\[FAIL\] (\S+): (\S+)", line)
+        assert match, f"unparseable FAIL line: {line!r}"
+        failures.add((match.group(1), match.group(2).rstrip(":")))
+
+    expected_failures = {
+        ("character_motion_fidelity", "character/player_walk_sheet_hybrid.provenance.json"),
+        ("character_motion_score_binding", "character/player_walk_sheet_hybrid.provenance.json"),
+    }
+    assert failures == expected_failures, proc.stdout + proc.stderr
+    assert proc.returncode == 1, proc.stdout + proc.stderr

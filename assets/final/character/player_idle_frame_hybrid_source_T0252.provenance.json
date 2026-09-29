@@ -30,6 +30,8 @@
   "method": "Single 384x384 generation: procedurally drawn OpenPose-format skeleton (gen_arm_a_idle_T0228.draw_pose_skeleton_cell) -> ControlNetApplyAdvanced (xinsir OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, chained) -> IPAdapterAdvanced (PLUS, T-0209 concept, applied after both LoRAs) -> KSampler -> area descent to 48x48 -> Oklab-nearest palette quantization (dithering off, §3.1) -> per-pixel background cutout (see cutout_method) -> orphan cleanup. This is the only diffusion-model call in the entire hybrid pipeline (T-0252) -- every other animation frame is derived from this one frame's own pixels by char_gen.synth_entities.generate_player_idle_sheet_hybrid_T0252.",
   "generator": "assets/src/character/gen_hybrid_source_idle_T0252.py",
   "card": "T-0252",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: this sidecar's own generator field names gen_hybrid_source_idle_T0252.py -- an idle-pose generation script -- not a walk-gait or transition rig",
   "bake_off_arm": "round 2, hybrid (HANDOFF §24-e)",
   "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5",
   "attempt": 3,

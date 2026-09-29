@@ -27,6 +27,8 @@
   "ip_adapter": null,
   "controlnet": null,
   "generator": "assets/src/character/comfyui_submit_T0218.json",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: card T-0218 is this repo's idle-sheet SDXL bake-off; this sidecar's own generator/prompt describe a single static idle pose sheet, not a walk-gait or transition rig",
   "spike_outcome": "generation_loses",
   "spike_reason": "Stage-1 produced character reference sheet (multiple viewing angles) not idle animation frames (same angle, subtle variation). ControlNet not installed; failure mode: wrong_subject. Visual quality at 40px is excellent — descent is not the problem."
 }
