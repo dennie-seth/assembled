@@ -7,6 +7,7 @@ import json
 
 import pytest
 import responses
+from gen_client_base.license_allowlist import CheckpointNotAllowedError
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from comfy_client.comfyui_client import ComfyUIClient
@@ -218,6 +219,53 @@ def test_upload_image_raises_on_non_2xx(fake_clock):
     client = make_client(fake_clock)
     with pytest.raises(UploadError):
         client.upload_image(b"data", filename="template.png")
+
+
+# ---- T-0418: the checkpoint-allowlist gate fires on the direct-submit path,
+# not only inside comfy_client.pipeline.generate() ---------------------------
+
+
+@responses.activate
+def test_submit_refuses_a_hand_built_graph_naming_an_unregistered_checkpoint(fake_clock):
+    """This is the regression that would have caught T-0337: a hand-built
+    graph (never passed through pipeline.generate()'s own gate) submitted
+    straight to ComfyUIClient.submit(), the same call
+    assets/src/character/gen_master_sheet_cutout_compare_T0337.py's SAM3
+    runner uses. No responses.add() is registered for /prompt -- if the gate
+    didn't fire first and the code actually tried the HTTP call, this test
+    would fail with a connection error, not a CheckpointNotAllowedError."""
+    graph = {
+        "2": {
+            "class_type": "UNETLoader",
+            "inputs": {
+                "unet_name": "unregistered_checkpoint.safetensors",
+                "weight_dtype": "default",
+            },
+        },
+    }
+    client = make_client(fake_clock)
+    with pytest.raises(CheckpointNotAllowedError):
+        client.submit(graph)
+    assert responses.calls == []
+
+
+@responses.activate
+def test_submit_allows_a_hand_built_graph_naming_no_checkpoint_at_all(fake_clock):
+    """A SAM3_Detect segmentation graph fed a MASK/IMAGE, naming no checkpoint
+    at all, must still submit -- the gate refuses unregistered checkpoints,
+    it does not require every graph to have one."""
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/prompt",
+        json={"prompt_id": "seg1", "node_errors": {}},
+        status=200,
+    )
+    graph = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}},
+        "3": {"class_type": "SAM3_Detect", "inputs": {"image": ["1", 0], "threshold": 0.5}},
+    }
+    client = make_client(fake_clock)
+    assert client.submit(graph) == "seg1"
 
 
 @responses.activate
