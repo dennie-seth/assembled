@@ -520,12 +520,18 @@ def main() -> None:
 
     availability, availability_error = _probe_sam3_availability(client)
     if not availability.get("available"):
+        # "Performs no comparison" means exactly that -- any part evidence
+        # already on disk from a prior run stays untouched. Unconditionally
+        # writing `"panels": {}` here would destroy that record every time
+        # this short-circuit fires, which is a materially different failure
+        # from merely skipping this run's own decomposition.
+        existing = _load_existing_part_comparison() or {}
         comparison = {
             "sheet": str(SHEET_PATH.relative_to(REPO_ROOT)),
             "sam3_availability": availability,
             "sam3_availability_probe_error": availability_error,
             "run_id": run_id,
-            "panels": {},
+            "panels": existing.get("panels", {}),
             "note": (
                 "SAM3 prerequisite unmet on this host -- no part decomposition performed. "
                 f"reason={availability.get('reason')!r}"

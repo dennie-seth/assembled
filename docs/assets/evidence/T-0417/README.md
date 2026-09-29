@@ -98,11 +98,13 @@ an `int()` truncation artifact on two independently-rounded midpoints — see
 `test_left_right_mirroring_uses_the_same_rule`), confirming the same rule produced both, even
 though the two sides' *results* differ.
 
-## Oklab stays the selected primary path
+## SAM3 stays the attempted-first path in code, unchanged; Oklab stays the untouched fallback
 
-No part of this evidence changes `cut_master_sheet_part`'s method selection or
-`char_gen/cutout.py`'s Oklab border-flood, which is untouched by this card (per its own "do not
-re-tune" requirement). Per-part SAM3 requests have no Oklab fallback (see
+No part of this evidence changes `cut_master_sheet_part`'s method selection: `char_gen/cutout_sam3.py`
+still defaults to `method="sam3"` (SAM3 attempted first), exactly as T-0337 established and this
+card's own "do not re-tune" requirement preserves. `char_gen/cutout.py`'s Oklab border-flood is
+untouched by this card too, and remains the documented, selectable fallback (`method="oklab"`).
+Per-part SAM3 requests have no Oklab fallback (see
 `gen_master_sheet_part_cutouts_T0417.py`'s own module docstring for why a whole-image content
 flood can't stand in for "this specific limb segment") — when SAM3 is unavailable, the script
 reports the prerequisite and performs no part decomposition, the same shape as

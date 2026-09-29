@@ -15,9 +15,13 @@ ImportError.
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 from pathlib import Path
+
+import numpy as np
+from PIL import Image
 
 _CHARACTER_DIR = Path(__file__).resolve().parents[1]
 if str(_CHARACTER_DIR) not in sys.path:
@@ -29,6 +33,31 @@ import pose_rig_master_sheet_T0351 as rig  # noqa: E402
 from char_gen.cutout_sam3 import build_sam3_part_workflow  # noqa: E402
 
 PANEL_SIZE = gen.PANEL_SIZE
+
+
+class _StubComfyClient:
+    """Minimal stand-in for `ComfyUIClient`'s `submit`/`wait_for_completion`/
+    `fetch_output` surface -- enough for the production
+    `_make_part_sam3_runner`'s own `_run()` closure to execute for real,
+    offline, with no network. Records every submitted workflow so a test can
+    assert on how many genuinely separate `SAM3_Detect` requests were made."""
+
+    def __init__(self):
+        self.submitted_workflows: list[dict] = []
+
+    def submit(self, workflow: dict) -> str:
+        self.submitted_workflows.append(workflow)
+        return f"job-{len(self.submitted_workflows)}"
+
+    def wait_for_completion(self, job_id: str, timeout: float = 60.0) -> dict:
+        return {"job_id": job_id}
+
+    def fetch_output(self, result: dict) -> bytes:
+        arr = np.zeros((PANEL_SIZE, PANEL_SIZE), dtype=np.uint8)
+        arr[0:4, 0:4] = 255
+        buf = io.BytesIO()
+        Image.fromarray(arr, mode="L").save(buf, format="PNG")
+        return buf.getvalue()
 
 
 class TestPartsByPanelIsExplicit:
@@ -203,32 +232,23 @@ class TestBuildSam3PartWorkflowIsCalledSeparatelyPerPart:
         assert len(positive_sets) == 6
 
     def test_runner_invocations_are_six_separate_calls_not_one_combined_call(self):
-        """A stub client records how many times a SAM3 "run" actually
-        happens when driving all six parts through `_make_part_sam3_runner`
-        -- this is what would have caught the withdrawn round-2 shape,
-        which built exactly one combined runner for the whole panel."""
+        """Drives the actual production `_make_part_sam3_runner` -- not a
+        local stand-in -- once per part, against a stub `ComfyUIClient`
+        that records every `submit()` call. This is what would have caught
+        the withdrawn round-2 shape, which built exactly one combined
+        runner for the whole panel: if `_make_part_sam3_runner` were ever
+        called once per PANEL instead of once per PART, this test would see
+        one submitted workflow carrying six positive coords, not six
+        workflows each carrying one.
+
+        (This replaces an earlier version of this test whose own docstring
+        claimed to drive `_make_part_sam3_runner`, but which actually built
+        a local `_fake_runner_factory` and looped over it itself -- proving
+        only that its own loop ran six times, nothing about the production
+        driver.)"""
         points = rig.keypoints_for("legs")
-        call_log = []
+        client = _StubComfyClient()
 
-        def _fake_runner_factory(part_key, positive_coords, negative_coords):
-            def _run():
-                call_log.append(
-                    {
-                        "part_key": part_key,
-                        "positive_coords": positive_coords,
-                        "negative_coords": negative_coords,
-                    }
-                )
-                import numpy as np
-
-                mask = np.zeros((PANEL_SIZE, PANEL_SIZE), dtype=bool)
-                x, y = positive_coords[0]["x"], positive_coords[0]["y"]
-                mask[max(0, y - 5) : y + 5, max(0, x - 5) : x + 5] = True
-                return mask
-
-            return _run
-
-        results = {}
         for part_key in gen.PARTS_BY_PANEL["legs"]:
             records = gen.part_prompt_points("legs", part_key, points, PANEL_SIZE)
             positive_coords = [
@@ -237,15 +257,23 @@ class TestBuildSam3PartWorkflowIsCalledSeparatelyPerPart:
             negative_coords = [
                 {"x": r["x"], "y": r["y"]} for r in records if r["polarity"] == "negative"
             ]
-            runner = _fake_runner_factory(part_key, positive_coords, negative_coords)
-            results[part_key] = runner()
+            runner = gen._make_part_sam3_runner(
+                client,
+                "panel_legs.png",
+                positive_coords,
+                negative_coords,
+                filename_prefix=f"T0417_sam3_legs_{part_key}",
+            )
+            mask = runner()
+            assert mask.shape == (PANEL_SIZE, PANEL_SIZE)
 
-        assert len(call_log) == 6
-        assert len({c["part_key"] for c in call_log}) == 6
-        # Every call's own positive_coords is a singleton -- never the
-        # six-point combined list the round-2 shape used.
-        for call in call_log:
-            assert len(call["positive_coords"]) == 1
+        assert len(client.submitted_workflows) == 6
+        positive_sets = set()
+        for workflow in client.submitted_workflows:
+            coords = json.loads(workflow["3"]["inputs"]["positive_coords"])
+            assert len(coords) == 1  # never the six-point combined list the round-2 shape used
+            positive_sets.add((coords[0]["x"], coords[0]["y"]))
+        assert len(positive_sets) == 6  # six genuinely distinct requests, not six copies of one
 
 
 class TestApplyOverlapRejection:
@@ -398,3 +426,42 @@ class TestMainSam3UnavailableEdgeCase:
         written = json.loads((evidence_dir / "part_comparison.json").read_text())
         assert written["sam3_availability"]["available"] is False
         assert written["panels"] == {}
+
+    def test_unavailable_prerequisite_never_destroys_existing_evidence(self, tmp_path, monkeypatch):
+        # The destructive shape this pins against: an earlier version of
+        # main() unconditionally wrote `"panels": {}` on this short-circuit,
+        # wiping out any part evidence a prior successful run had already
+        # committed to part_comparison.json -- turning "SAM3 down this run"
+        # into "SAM3 down this run AND we lost last run's results."
+        evidence_dir = tmp_path / "evidence"
+        evidence_dir.mkdir(parents=True)
+        existing_panels = {
+            "legs": {
+                "parts": {"right_boot": {"present": True, "isolated": True}},
+                "overlaps": [],
+            }
+        }
+        (evidence_dir / "part_comparison.json").write_text(
+            json.dumps({"panels": existing_panels, "run_id": "prior-run"}, indent=2) + "\n"
+        )
+
+        monkeypatch.setattr(gen, "EVIDENCE_DIR", evidence_dir)
+        monkeypatch.setattr(
+            gen,
+            "_probe_sam3_availability",
+            lambda client: ({"available": False, "reason": "host down"}, None),
+        )
+
+        from comfy_client.comfyui_client import ComfyUIClient
+
+        def _fail_if_submitted(self, workflow):
+            raise AssertionError("submit() must never be called when SAM3 is unavailable")
+
+        monkeypatch.setattr(ComfyUIClient, "submit", _fail_if_submitted)
+        monkeypatch.setattr(sys, "argv", ["gen_master_sheet_part_cutouts_T0417.py"])
+
+        gen.main()
+
+        written = json.loads((evidence_dir / "part_comparison.json").read_text())
+        assert written["sam3_availability"]["available"] is False
+        assert written["panels"] == existing_panels
