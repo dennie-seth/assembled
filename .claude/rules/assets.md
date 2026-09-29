@@ -5,9 +5,25 @@ paths: ["assets/**"]
 # Asset conventions
 
 - **License allowlist, enforced by a hook, not a convention:** generated
-  assets only from Apache-2.0 / OpenRAIL / CC0-derived models. The asset
-  agent must refuse to run a workflow whose checkpoint isn't on the
-  approved-license list.
+  assets only from Apache-2.0 / OpenRAIL / CC0-derived models, plus the
+  approved-with-caveat families below. The asset agent must refuse to run a
+  workflow whose checkpoint isn't on the approved-license list. The enforced
+  set lives in `gen_client_base.license_allowlist.APPROVED_LICENSE_FAMILIES`
+  and the per-checkpoint register in
+  `tools/gen-client-base/config/checkpoint_allowlist.json` — those files are
+  the authority; this list mirrors them.
+  - **Approved-with-caveat, NOT the plain Apache-2.0/OpenRAIL/CC0 tier:**
+    - **`Stability-Community`** (`stabilityai/stable-audio-open-1.0`, T-0081) —
+      free while the project stays under $1M annual revenue; Stability
+      registration/commercial licensing is required above it.
+    - **`SAM`** (`sam3.1_multiplex_fp16.safetensors`, T-0337) — Meta's SAM
+      License (2025-11-19). Commercial use is permitted and no claim is made
+      over outputs, but redistribution of the *weights* would require carrying
+      the Agreement with them, so the checkpoint stays on the ComfyUI host and
+      is never vendored into this repo. Trade Controls / ITAR-style prohibited
+      end uses and a research-publication acknowledgement also apply.
+  - Adding a family is a human decision, not an agent's. An agent that meets an
+    unregistered checkpoint reports it and stops.
 - **No CC-BY-NC weights** (MusicGen, AudioGen, or any NC-licensed model).
   This repo is public; NC would poison every fork.
 - `ASSET_PROVENANCE.md` is mandatory, non-optional, written by the asset
