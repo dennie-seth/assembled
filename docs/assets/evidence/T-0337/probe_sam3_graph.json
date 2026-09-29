@@ -1,0 +1,39 @@
+{
+  "prompt": {
+    "1": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "attempt_19_first_per_panel_reference_run_front_back_neutral_clean_sides_malformed.png"
+      }
+    },
+    "2": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "sd_xl_base_1.0.safetensors"
+      }
+    },
+    "3": {
+      "class_type": "SAM3_Detect",
+      "inputs": {
+        "model": ["2", 0],
+        "image": ["1", 0],
+        "threshold": 0.5,
+        "refine_iterations": 2,
+        "individual_masks": false
+      }
+    },
+    "4": {
+      "class_type": "MaskToImage",
+      "inputs": {
+        "mask": ["3", 0]
+      }
+    },
+    "5": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": ["4", 0],
+        "filename_prefix": "T0337_sam3_probe"
+      }
+    }
+  }
+}
